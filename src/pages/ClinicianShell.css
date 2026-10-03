@@ -1,0 +1,1993 @@
+/* ==========================================================================
+   Clinician Shell Platform Styles (Architecture Boundary)
+   ==========================================================================
+   This file ONLY contains styles for the global application frame:
+   - Sidebar, Top Navigation, User Profile, and Root Layout wrappers.
+   - Shared generic primitives (orb-panel, orb-metric-card).
+
+   Design language: flat warm surfaces, hairline borders, one clay accent.
+   The sidebar is a quiet rail on --bg-secondary; the canvas is --bg-primary;
+   nothing blurs, glows, or moves on hover. All three themes flow from tokens —
+   no per-theme overrides should be needed in this file.
+
+   FORBIDDEN:
+   Do NOT place module-specific styles here.
+   - Vigil components belong in Vigil.css
+   - Relay components belong in Relay.css
+   - Sage components belong in sage/Sage.css
+   ========================================================================== */
+
+/* ─── Cross-panel primitives that used to live in a lazy chunk ─────────────
+   Both of these were styled in Vigil.css, which is imported ONLY by
+   VigilPanel.tsx — a lazily-loaded chunk. AppointmentsPanel.tsx and
+   ForecastPanel.tsx import no stylesheet at all and use both classes, so their
+   numbers rendered in the body font with proportional digits (columns that do
+   not line up) and their section headings lost the micro-caps treatment —
+   UNLESS the user happened to open the Patients tab first, which loads Vigil.css
+   and fixes it retroactively. A defect that depends on visit order is one that
+   manual testing almost never sees.
+
+   This is the rule at the top of this file working as intended: a class used by
+   more than one panel is a shell primitive and belongs here, in the eagerly
+   loaded stylesheet. Vigil.css keeps using them; it just no longer owns them. */
+.metric-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.detail__section-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+/* ─── Shell Layout ─── */
+.shell {
+  display: flex;
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+/* ─── Sidebar ─── */
+.shell__sidebar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--sidebar-w);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 16px 12px 12px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+
+/* THE RAIL SCROLLS, AND NOW IT LOOKS LIKE IT DOES.
+   There are 20+ pillars. On a 720px-tall laptop the last two — Admin among
+   them — fall below the fold. The container already scrolled, but it also
+   carried `::-webkit-scrollbar { width: 0 }`, so it hid the one piece of
+   chrome that says "there is more". On macOS, where the overlay scrollbar is
+   invisible until something scrolls, the rail simply ended: an entire pillar
+   was unreachable-looking, which is the likeliest reason a whole sweep of the
+   admin screens never happened.
+
+   Two affordances, no new scrollbar styling:
+     · the suppression is gone, so the slim neutral scrollbar defined once in
+       index.css (8px, --radius-full, theme-aware thumb) applies here like it
+       does everywhere else — one convention, not a second one;
+     · a pair of scroll shadows. The cover gradients are `local` (they travel
+       with the content) and the shadows are `scroll` (they stay pinned to the
+       viewport), so each edge shadow is visible ONLY while there is content
+       past it and fades away at the ends. Pure CSS — no scroll listener, and
+       it stays honest without one. */
+.shell__sidebar-top {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background:
+    linear-gradient(var(--bg-secondary) 30%, transparent) local top / 100% 26px no-repeat,
+    linear-gradient(transparent, var(--bg-secondary) 70%) local bottom / 100% 26px no-repeat,
+    radial-gradient(farthest-side at 50% 0, var(--edge-shadow), transparent)
+      scroll top / 100% 11px no-repeat,
+    radial-gradient(farthest-side at 50% 100%, var(--edge-shadow), transparent)
+      scroll bottom / 100% 11px no-repeat;
+}
+
+.shell__logo {
+  display: flex;
+  align-items: center;
+  padding: 4px 10px 0;
+}
+
+.shell__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.shell__nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1.35;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  width: 100%;
+  text-align: left;
+}
+
+.shell__nav-item svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: color var(--transition-fast);
+}
+
+.shell__nav-item:hover {
+  color: var(--text-primary);
+  background: var(--bg-glass);
+}
+
+.shell__nav-item:hover svg {
+  color: var(--text-secondary);
+}
+
+.shell__nav-item--active {
+  color: var(--text-primary);
+  background: var(--bg-glass-hover);
+  font-weight: 550;
+}
+
+.shell__nav-item--active svg {
+  color: var(--accent-text);
+}
+
+.shell__nav-label {
+  letter-spacing: -0.006em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── Sidebar Bottom ─── */
+.shell__sidebar-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0 0;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* ─── Admit Patient — the one primary action in the rail ─── */
+.shell__admit-patient {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 12px;
+  width: 100%;
+  font-size: var(--text-sm);
+  font-weight: 550;
+  letter-spacing: -0.006em;
+  color: var(--btn-primary-text);
+  border-radius: var(--radius-sm);
+  background: var(--accent-deep);
+  transition: background var(--transition-fast);
+  cursor: pointer;
+}
+
+.shell__admit-patient:hover {
+  background: var(--btn-gradient-hover);
+}
+
+.shell__admit-patient:active {
+  filter: brightness(0.96);
+}
+
+.shell__admit-patient svg {
+  width: 16px;
+  height: 16px;
+  color: var(--btn-primary-text);
+}
+
+/* ─── User Card ─── */
+.shell__user-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+
+.shell__user-card:hover {
+  background: var(--bg-glass);
+}
+
+.shell__user-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  background: var(--accent-glow);
+  border: 1px solid var(--border-focus);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent-text);
+  flex-shrink: 0;
+}
+
+.shell__user-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.shell__user-name {
+  font-size: 0.82rem;
+  font-weight: 550;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shell__user-role {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shell__user-security {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+/* --bg-glass, not --bg-glass-hover: the heavier hover fill lifts the backdrop
+   enough that --accent-text reads 3.97:1 in dark. The lighter fill still marks
+   the hover and holds 4.50:1. */
+.shell__user-security:hover {
+  color: var(--accent-text);
+  background: var(--bg-glass);
+}
+
+/* ─── Sign-Out ─── */
+.shell__logout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 12px;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+  cursor: pointer;
+}
+
+.shell__logout:hover {
+  color: var(--status-danger-text);
+  background: color-mix(in srgb, var(--status-danger) 8%, transparent);
+  border-color: color-mix(in srgb, var(--status-danger) 30%, transparent);
+}
+
+/* ─── Main ─── */
+.shell__main {
+  flex: 1;
+  margin-left: var(--sidebar-w);
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: visible;
+  /* Shrink to the shell width instead of growing to content min-width
+     (e.g. the Vigil patient timeline), which the shell would clip. */
+  min-width: 0;
+  isolation: isolate;
+  background: var(--bg-primary);
+}
+
+/* ─── Header — fixed-height bar, everything vertically centred on one line ─── */
+.shell__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: var(--topbar-h);
+  padding: 8px var(--page-x);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-primary);
+}
+
+.shell__header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.shell__page-title {
+  font-family: var(--font-display);
+  font-variation-settings: 'SOFT' 0, 'WONK' 0, 'opsz' 22;
+  font-size: 1.15rem;
+  font-weight: 560;
+  letter-spacing: -0.008em;
+  line-height: 1.25;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shell__page-subtitle {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shell__header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 20;
+}
+
+/* ─── Offline / sync badge ─── */
+.shell__offline-badge {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--text-xs);
+  font-weight: 550;
+  color: var(--status-warn-text);
+  padding: 5px 12px;
+  background: color-mix(in srgb, var(--status-warn) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 26%, transparent);
+  border-radius: var(--radius-full);
+}
+
+.shell__offline-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--status-warn);
+  animation: pulse-offline 2s infinite ease-in-out;
+}
+
+@keyframes pulse-offline {
+  0% { opacity: 0.4; }
+  50% { opacity: 1; }
+  100% { opacity: 0.4; }
+}
+
+/* Online but queue still draining */
+.shell__offline-badge--syncing {
+  color: var(--status-warn-text);
+}
+
+/* Queue drained — brief green confirmation */
+.shell__offline-badge--synced {
+  color: var(--status-ok-text);
+  background: color-mix(in srgb, var(--status-ok) 9%, transparent);
+  border-color: color-mix(in srgb, var(--status-ok) 26%, transparent);
+  animation: fade-in 0.3s ease-out;
+}
+
+.shell__offline-badge--synced .shell__offline-dot {
+  background: var(--status-ok);
+  animation: none;
+}
+
+.shell__synced-check {
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* A queued mutation failed permanently on replay — needs re-entry. */
+.shell__offline-badge--failed {
+  color: var(--status-danger-text);
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-danger) 30%, transparent);
+  font-weight: 600;
+}
+
+.shell__offline-badge--failed .shell__offline-dot {
+  background: var(--status-danger);
+  animation: none;
+}
+
+.shell__offline-dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  /* Quiet by colour, not alpha: this ✕ only ever renders inside the failed-sync
+     alert, and dimming it would fade the glyph and the badge tint together. */
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.shell__offline-dismiss:hover {
+  color: inherit; /* back to the badge's own status colour */
+  background: color-mix(in srgb, var(--status-danger) 16%, transparent);
+}
+
+/* ─── Header icon buttons (theme, notifications, recorder…) ─── */
+.shell__theme-toggle {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.shell__theme-toggle:hover {
+  color: var(--text-primary);
+  background: var(--bg-glass);
+  border-color: var(--border-glass);
+}
+
+/* ─── Shared header icon toggle ───
+   The recipe .shell__theme-toggle uses, available to any header control that is
+   an icon in a 34px box. Added so the critical-alert bell could stop carrying
+   its own inline geometry (36px, radius 10, a --glass-sheen fill and an
+   8px backdrop-filter) and simply match its neighbours. */
+.shell__icon-toggle {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  transition: background var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.shell__icon-toggle svg {
+  width: 18px;
+  height: 18px;
+}
+
+.shell__icon-toggle:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-glass);
+  border-color: var(--border-glass);
+}
+
+/* "Alerts will sound" is a live state, so it takes the accent — as text, via
+   --accent-text, which is the token guaranteed ≥4.5:1 on canvas and surface.
+   --accent-gold is a fill token and measured 3.07:1 as a rendered glyph here. */
+.shell__icon-toggle--on {
+  color: var(--accent-text);
+  border-color: var(--border-focus);
+}
+
+/* Flat neutral pair, never opacity — see the disabled block in index.css. */
+.shell__icon-toggle:disabled {
+  cursor: not-allowed;
+  color: var(--btn-disabled-text);
+  background: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-border);
+}
+
+/* ─── Language switcher (en / hi) ─── */
+.shell__lang-toggle {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.shell__lang-toggle:hover {
+  color: var(--text-primary);
+  background: var(--bg-glass);
+  border-color: var(--border-glass);
+}
+
+/* The 34px min-width above outranks the global coarse-pointer floor, which left
+   this one header control under the 44px tap target on a tablet. */
+@media (pointer: coarse) {
+  .shell__lang-toggle {
+    min-width: var(--tap-min);
+  }
+}
+
+.shell__status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--status-ok);
+}
+
+/* ─── Body ───
+   THIS ELEMENT OWNS THE PAGE GUTTER. One declaration, plus the two responsive
+   steps at the bottom of this file — and no panel adds any of its own.
+
+   That rule had drifted. Orders and Revenue each added 32px, Lens and Scribe
+   32px, Simulator 28px, Command 16px, on top of the 28px here. Measured across
+   the twelve doctor tabs, the first line of content started at x=260 on
+   Patients, Ward Round, Forecast and Appointments; 276 on Command; 288 on
+   Simulator; 292 on Orders and Revenue. Every tab switch slid the page
+   sideways by up to 39px and down by up to 100px. Nobody reads that as
+   "different padding" — they read it as software assembled by different people
+   who never sat in the same room.
+
+   A panel that wants breathing room inside itself uses gap/padding on its own
+   sections. The distance from the sidebar to the first pixel of content is a
+   property of the shell, not of the panel that happens to be mounted in it. */
+.shell__body {
+  flex: 1;
+  padding: var(--page-y) var(--page-x);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* The scroll container for every hospital-administration module (Billing to
+   ABDM). The shell body clips; this scrolls, so a module never has to. The
+   bottom padding is the floating Sage orb's corner: without it the last row's
+   actions sit under the orb with nothing left to scroll. */
+.shell__module-scroll {
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: var(--fab-clearance);
+}
+
+/* ─── Panels common (Namespaced primitives) ─── */
+.orb-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.orb-panel.detail {
+  gap: 0;
+  position: relative;
+  overflow: visible;
+  /* Allow the panel (a flex item) to shrink to its container instead of
+     growing to the timeline's intrinsic width. */
+  min-width: 0;
+}
+
+.orb-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+}
+
+.orb-metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 20px;
+}
+
+.orb-metric-value {
+  font-size: 1.9rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--text-primary);
+}
+
+.orb-metric-value--warn {
+  color: var(--status-warn-text);
+}
+
+.orb-metric-value--danger {
+  color: var(--status-danger-text);
+}
+
+.orb-metric-label {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.orb-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.orb-section-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.orb-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* ─── Forecast tiles ───
+   ForecastPanel has no stylesheet of its own and these classes had no rules
+   anywhere: the KPI tiles rendered as bare text, the Admission Patterns strip
+   did not lay out at all and the discharge board ran its columns together.
+   Here, in the eagerly loaded sheet, by the same rule as .metric-mono above. */
+.forecast-hero {
+  padding: var(--space-4) var(--space-5);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.forecast-hero-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 6px;
+  font-size: var(--text-lg);
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.forecast-hero-title > svg {
+  flex-shrink: 0;
+  color: var(--accent-amber);
+}
+
+.forecast-hero-desc {
+  margin: 0;
+  max-width: 72ch;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.forecast-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.forecast-metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: var(--space-4);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.forecast-metric-label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.forecast-metric-value {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  line-height: 1.15;
+}
+
+.forecast-metric-unit {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.forecast-metric-subtitle {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* The discharge board: a row of columns, scrolling sideways on a phone rather
+   than wrapping a patient's numbers under someone else's name. */
+.forecast-discharge-list {
+  display: flex;
+  flex-direction: column;
+  overflow-x: auto;
+}
+
+.forecast-discharge-header,
+.forecast-discharge-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 640px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.forecast-discharge-header > span,
+.forecast-discharge-row > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.forecast-discharge-header {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.forecast-discharge-row {
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  border-left: 2px solid var(--acuity-color, transparent);
+}
+
+.forecast-discharge-row--likely {
+  background: color-mix(in srgb, var(--status-ok) 6%, transparent);
+}
+
+.forecast-trajectory {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.forecast-trajectory--improving { color: var(--status-ok-text); }
+.forecast-trajectory--worsening { color: var(--status-danger-text); }
+
+.forecast-footer {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.forecast-footer > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* ─── Sort chips (shared by Vigil patient list + Relay case rooms) ───
+   Live here, not in a panel stylesheet: panels are lazy chunks, and a chip
+   styled in another panel's CSS renders unstyled until that tab is visited. */
+.relay-chat__sort-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sort-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.sort-btn:hover {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-glass);
+  color: var(--text-primary);
+}
+
+/* Active sort = quiet accent tint; tokens keep it legible in every theme. */
+.sort-btn--active {
+  background: var(--accent-glow);
+  color: var(--accent-text);
+  border-color: var(--accent-glow-strong);
+}
+
+/* Header icon sizing floor (SVGs arrive with mixed intrinsic sizes). */
+.shell__theme-toggle svg,
+.pulse-trigger svg {
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  min-height: 18px !important;
+  display: block !important;
+  stroke: currentColor !important;
+  fill: none !important;
+}
+
+/* ==========================================================================
+   Responsive — Tablet / iPad (the shell frame only; panels handle their own)
+   ==========================================================================
+   Desktop keeps the fixed rail. At ≤1024px the rail collapses to an icon-only
+   strip; at ≤768px it becomes a horizontal, scrollable top bar so the main
+   content gets the full width and never forces horizontal scroll.
+   ========================================================================== */
+
+/* ─── ≤1024px — icon-only sidebar rail ─── */
+@media (max-width: 1024px) {
+  .shell__sidebar {
+    width: var(--sidebar-w-rail);
+    padding: 12px 8px 8px;
+    align-items: center;
+  }
+
+  .shell__sidebar-top {
+    align-items: center;
+    gap: 16px;
+  }
+
+  .shell__logo {
+    padding: 4px 0 0;
+  }
+
+  .shell__nav {
+    width: 100%;
+  }
+
+  .shell__nav-item {
+    justify-content: center;
+    gap: 0;
+    padding: 10px;
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Hide text labels; icons remain (button title attr keeps them discoverable) */
+  .shell__nav-label,
+  .shell__admit-patient span,
+  .shell__logout span,
+  .shell__user-info {
+    display: none;
+  }
+
+  .shell__admit-patient,
+  .shell__logout {
+    justify-content: center;
+    gap: 0;
+    padding: 10px;
+    min-height: 44px;
+  }
+
+  .shell__user-card {
+    justify-content: center;
+    padding: 6px;
+  }
+
+  .shell__main {
+    margin-left: var(--sidebar-w-rail);
+  }
+
+  .shell__header {
+    padding: 8px 20px;
+  }
+
+  .shell__body {
+    padding: 20px;
+  }
+}
+
+/* ─── The icon rail, on a device with no pointer to hover with ──────────────
+ *
+ * The block above collapses the rail to icons and leaves the meaning of each
+ * one in a `title` attribute. On a mouse that is a fair trade; on the bedside
+ * tablet this product ships to it is not a trade at all, because a touch device
+ * never fires hover and a `title` tooltip therefore never appears. A clinician
+ * met fourteen near-identical 20px glyphs with no way to learn which was Ward
+ * Round and which was Orders except by tapping each in turn — on a screen where
+ * one of the taps admits a patient.
+ *
+ * So: coarse pointers get the words back, stacked under the glyph in a narrow
+ * cap. The rail widens by 20px, which the layout already absorbs (the header
+ * and body both offset from the same token). Fine pointers are untouched — a
+ * narrow desktop window keeps the dense icon rail and its tooltips. */
+@media (max-width: 1024px) and (pointer: coarse) {
+  .shell__sidebar {
+    width: calc(var(--sidebar-w-rail) + 20px);
+  }
+
+  .shell__main {
+    margin-left: calc(var(--sidebar-w-rail) + 20px);
+  }
+
+  .shell__nav-item {
+    flex-direction: column;
+    gap: 3px;
+    padding: 8px 2px;
+  }
+
+  /* 0.7rem is the spec's floor, and it fits: the rail is 88px wide here
+     (--sidebar-w-rail + 20px) less 2px of item padding each side, and the
+     longest label ("Housekeeping") measures 77px at this size. The previous
+     0.5625rem rendered a live 9px — below the floor, on the one device where
+     the words exist precisely because the reader cannot hover for a tooltip. */
+  .shell__nav-label {
+    display: block;
+    max-width: 100%;
+    font-size: 0.7rem;
+    line-height: 1.1;
+    letter-spacing: 0.01em;
+    text-align: center;
+  }
+}
+
+/* ─── ≤768px — horizontal top bar, content stacks below ─── */
+@media (max-width: 768px) {
+  .shell {
+    flex-direction: column;
+  }
+
+  .shell__sidebar {
+    position: sticky;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: auto;
+    width: 100%;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 12px;
+    border-right: none;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .shell__sidebar-top {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex: 1;
+    min-width: 0;
+    /* The vertical scroll shadows belong to the vertical rail. Here the rail is
+       a short horizontal strip whose tabs visibly run off the right edge, and
+       the bar has no vertical room to spare — so drop both the top/bottom
+       shadows and the horizontal scrollbar rather than eat 8px of a 44px tap. */
+    background: none;
+  }
+
+  .shell__sidebar-top::-webkit-scrollbar {
+    height: 0;
+  }
+
+  .shell__logo {
+    flex-shrink: 0;
+    padding: 0;
+  }
+
+  .shell__nav {
+    flex-direction: row;
+    gap: 4px;
+    width: auto;
+  }
+
+  .shell__nav-item {
+    /* Reset the vertical-rail width:100% — in the horizontal top bar each item
+       must size to its icon (44px), or the first (active) item stretches to the
+       full nav width, centering its icon off-screen and pushing every other tab
+       thousands of px past the scroll viewport. */
+    width: auto;
+    flex-shrink: 0;
+  }
+
+  .shell__sidebar-bottom {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 0;
+    border-top: none;
+    flex-shrink: 0;
+  }
+
+  .shell__admit-patient {
+    margin-bottom: 0;
+    width: auto;
+  }
+
+  .shell__user-card {
+    display: none;
+  }
+
+  .shell__main {
+    margin-left: 0;
+    height: auto;
+    min-height: 0;
+  }
+
+  .shell__header {
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 10px 16px;
+  }
+
+  /* The base rule's flex-shrink: 0 kept this row one line wide however narrow
+     the phone, so the wrap below never happened and theme, language, alerts
+     and shortcuts sat off the right edge. Here it takes its own full line and
+     wraps inside it. */
+  .shell__header-right {
+    flex: 1 1 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .shell__body {
+    padding: 16px 12px;
+  }
+}
+
+/* ── AI model-warmth chip (header) ── */
+.ai-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  font-size: 0.74rem;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+  cursor: default;
+  white-space: nowrap;
+}
+.ai-status-chip__label { color: var(--text-muted); }
+.ai-status-chip__model {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+.ai-status-chip__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+.ai-status-chip__model.is-warm .ai-status-chip__dot {
+  background: var(--status-ok);
+}
+.ai-status-chip__model.is-cold .ai-status-chip__dot { background: var(--status-warn); }
+
+/* ── AI model configuration popover ── */
+.ai-chip-root { position: relative; }
+.ai-status-chip { cursor: pointer; }
+.ai-status-chip:hover { background: var(--bg-glass); border-color: var(--border-glass); }
+.ai-status-chip__caret { color: var(--text-muted); font-size: 0.65rem; margin-left: 1px; }
+
+.ai-config {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 300;
+  width: 372px;
+  padding: 14px 16px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  box-shadow: var(--elev-3);
+  text-align: left;
+  white-space: normal;
+}
+.ai-config__head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; margin-bottom: 10px; font-size: 0.95rem;
+}
+.ai-config__engine { font-size: 0.74rem; font-weight: 600; }
+.ai-config__engine.is-up { color: var(--status-ok-text); }
+.ai-config__engine.is-down { color: var(--status-danger-text); }
+
+.ai-config__error {
+  margin-bottom: 10px; padding: 7px 10px; border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+  color: var(--status-danger-text); font-size: 0.78rem;
+}
+
+.ai-config__row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 0; border-top: 1px solid var(--border-subtle);
+}
+.ai-config__info { min-width: 0; }
+.ai-config__name {
+  display: flex; align-items: center; gap: 7px;
+  font-family: var(--font-mono); font-size: 0.82rem; color: var(--text-primary);
+}
+.ai-config__name .is-warm-dot { background: var(--status-ok); }
+.ai-config__name .is-cold-dot { background: var(--text-muted); }
+.ai-config__meta { margin-top: 3px; font-size: 0.74rem; color: var(--text-muted); }
+
+.ai-config__btn {
+  flex-shrink: 0; padding: 6px 13px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-glass); background: transparent;
+  color: var(--text-primary); font-size: 0.78rem; font-weight: 550; cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.ai-config__btn:hover:not(:disabled) { background: var(--bg-glass-hover); }
+/* Bordered ghost button: mute the label, not the alpha. The wait cursor stays —
+   the usual disabled case is a load/unload already in flight. Outranks the
+   --on/--off/--danger colours below on specificity despite coming first. */
+.ai-config__btn:disabled {
+  color: var(--text-muted);
+  border-color: var(--btn-disabled-border);
+  cursor: wait;
+}
+.ai-config__btn--on { border-color: color-mix(in srgb, var(--status-ok) 45%, transparent); color: var(--status-ok-text); }
+.ai-config__btn--off { border-color: color-mix(in srgb, var(--status-warn) 45%, transparent); color: var(--status-warn-text); }
+.ai-config__btn--danger {
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--status-danger) 45%, transparent);
+  color: var(--status-danger-text);
+}
+
+.ai-config__confirm {
+  margin-top: 12px; padding: 12px; border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--status-warn) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 32%, transparent);
+}
+.ai-config__confirm-title { font-weight: 650; font-size: 0.88rem; margin-bottom: 6px; }
+.ai-config__confirm-body { font-size: 0.79rem; color: var(--text-secondary); margin: 0 0 7px; }
+.ai-config__impacts {
+  margin: 0 0 9px; padding-left: 18px;
+  font-size: 0.78rem; color: var(--text-secondary);
+}
+.ai-config__impacts li { margin-bottom: 3px; }
+.ai-config__confirm-note { font-size: 0.74rem; color: var(--text-muted); margin: 0 0 10px; }
+.ai-config__confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+.ai-config__foot {
+  margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--border-subtle);
+  font-size: 0.72rem; color: var(--text-muted);
+}
+.ai-config__state { flex-shrink: 0; font-size: 0.76rem; font-weight: 600; }
+.ai-config__state.is-warm { color: var(--status-ok-text); }
+.ai-config__state.is-cold { color: var(--text-muted); }
+
+/* ==========================================================================
+   SHARED HOME PRIMITIVES  —  DUAL_EXPERIENCE_VISUAL_SPEC.md §5
+   ==========================================================================
+   STYLESHEET OWNERSHIP IS A CORRECTNESS QUESTION HERE, NOT A STYLE ONE.
+
+   Every panel stylesheet ships inside that panel's lazy chunk. A class used by
+   two panels but styled inside one of them renders UNSTYLED until that panel is
+   visited — this repo has already shipped that bug twice (see the header of
+   NursePanel.css and the sort-chip note above). The doctor home and the nurse
+   home share a row chassis, a section header, a count chip, three state blocks,
+   a skeleton and the NEWS2 badge; a doctor has no `shift` tab at all, so every
+   one of those would have painted naked on Today.
+
+   Rule: if both homes use it, it lives here.
+
+   The five house rules these obey, restated because they are the ones broken at
+   2am (spec §0):
+     1. Never `opacity` for de-emphasis or state — muted/secondary/disabled
+        tokens only. Opacity multiplies down the tree and fades label and fill
+        by the same factor, so contrast can only get worse.
+     2. Two token families per status: --status-x for fills and borders,
+        --status-x-text for small text, --status-on-fill for text on a solid
+        status fill. Chip tint caps at 20%; these use 12%.
+     3. 24px targets everywhere, --tap-min (44px) under (pointer: coarse).
+     4. No hover-only affordances. A meaning that appears only on hover does not
+        exist on a bedside tablet.
+     5. Every text/surface pair clears 4.5:1 in dark, light and night.
+   ========================================================================== */
+
+/* ─── Suspense fallback + panel error boundary ───
+   `.orb-panel-loading` had ZERO matching rules anywhere in the repo. Every
+   lazy panel's Suspense fallback, the stale-chunk "Updating…" note and several
+   panel error states rendered as unstyled body text on the canvas — the first
+   paint of all seventeen tabs. It is styled here, with the shell, because the
+   shell is what renders it before any panel chunk exists. */
+.orb-panel-loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-self: flex-start;
+  max-width: var(--home-col-max);
+  padding: var(--space-6) var(--space-5);
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 450;
+  line-height: 1.5;
+}
+
+/* A panel that failed must never read as a panel that is empty. */
+.orb-panel-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  align-self: flex-start;
+  max-width: var(--home-col-max);
+  padding: var(--space-6) var(--space-5);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 34%, transparent);
+  border-left: 4px solid var(--status-danger);
+  color: var(--status-danger-text);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  text-align: left;
+}
+
+.orb-panel-error button {
+  min-height: 36px;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: 550;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.orb-panel-error button:hover {
+  background: var(--bg-glass);
+  border-color: var(--border-focus);
+}
+
+@media (pointer: coarse) {
+  .orb-panel-error button { min-height: var(--tap-min); }
+}
+
+/* ─── NEWS2 badge (spec §5.1) ───
+   MOVED VERBATIM from NursePanel.css. Both homes render it, and the nurse
+   panel is a lazy chunk: a doctor opening Today has never visited My Shift, so
+   the badge would have been a bare number with no box, no border and no band —
+   and THE BAND IS THE CLINICAL SIGNAL, not decoration.
+
+   The only changes to the moved rules: the 0.62rem (9.9px) label and flag are
+   raised to the spec's 0.7rem floor, `lining-nums` joins `tabular-nums`, and
+   the filled bands declare their own `color` so the contrast gate can actually
+   see the pair (a colour on `.news2` and a background on `.news2--critical` are
+   two different selectors, and the call-site scanner correctly refuses to
+   guess that they meet). */
+.news2 {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  position: relative;
+  min-width: 52px;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-glass);
+  color: var(--text-primary);
+}
+
+.news2__label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.news2__value {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums lining-nums;
+  color: var(--text-primary);
+}
+
+.news2--lg { min-width: 84px; padding: var(--space-2) var(--space-4); }
+.news2--lg .news2__value { font-size: var(--text-2xl); }
+
+/* Filled status backgrounds — text on them MUST use --status-on-fill. */
+.news2--critical {
+  background: var(--status-danger);
+  border-color: var(--status-danger);
+  color: var(--status-on-fill);
+}
+.news2--critical .news2__value,
+.news2--critical .news2__label { color: var(--status-on-fill); }
+
+.news2--elevated {
+  background: var(--status-warn);
+  border-color: var(--status-warn);
+  color: var(--status-on-fill);
+}
+.news2--elevated .news2__value,
+.news2--elevated .news2__label { color: var(--status-on-fill); }
+
+.news2--stable {
+  background: color-mix(in srgb, var(--status-ok) 16%, transparent);
+  border-color: color-mix(in srgb, var(--status-ok) 45%, transparent);
+  color: var(--status-ok-text);
+}
+.news2--stable .news2__value { color: var(--status-ok-text); }
+
+.news2--none .news2__value { color: var(--text-muted); }
+
+/* ─── Home header (spec §5.2), and the page header for every screen ───
+   Revenue and Command use it too: six screens each styled their own header,
+   at six sizes, under a topbar that already names the page. One primitive. */
+.orb-home__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+/* The one Fraunces element a home is allowed. Not the .font-display class:
+   that sets opsz 28 at weight 540, and the home wants the shell title's tuning
+   at a larger size. */
+.orb-home__title {
+  font-family: var(--font-display);
+  font-variation-settings: 'SOFT' 0, 'WONK' 0, 'opsz' 28;
+  font-size: var(--text-xl);
+  font-weight: 560;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--text-primary);
+}
+
+/* Fraunces ships no Devanagari, so a Hindi title falls through to Georgia →
+   Times → whatever system face the tablet has, at a different optical size and
+   weight. App-wide condition, but the homes make it visible because the title
+   is the biggest text on the page. Stopgap only; a real Devanagari display face
+   is a separate decision with a download-size cost (spec §12.6). */
+[lang="hi"] .orb-home__title {
+  font-family: var(--font-family);
+  font-variation-settings: normal;
+}
+
+.orb-home__context {
+  margin-top: var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: 450;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+/* A clock a clinician compares against her own watch is read digit by digit. */
+.orb-home__clock {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* Staleness ladder (spec §6.5): 3–10 min old turns the whole context line warn,
+   >10 min turns it danger and the home adds an inline Retry. No banner — a
+   banner for a four-minute-old board is crying wolf. */
+.orb-home__context--stale { color: var(--status-warn-text); }
+.orb-home__context--very-stale { color: var(--status-danger-text); }
+
+.orb-home__refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 550;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.orb-home__refresh:hover:not(:disabled) {
+  background: var(--bg-glass);
+  border-color: var(--border-glass);
+  color: var(--text-primary);
+}
+
+/* Flat neutral pair, never opacity. */
+.orb-home__refresh:disabled {
+  cursor: not-allowed;
+  background: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-border);
+  color: var(--btn-disabled-text);
+}
+
+@media (pointer: coarse) {
+  .orb-home__refresh { min-height: var(--tap-min); }
+}
+
+@media (max-width: 560px) {
+  .orb-home__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* ─── Section header + count chip (spec §5.3) ─── */
+.orb-section-header__label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  /* NEVER a status colour. The label is constant; the count chip carries the
+     tint. "OVERDUE" in red on every shift is how a colour stops meaning
+     anything — the whole anti-cry-wolf rule in one declaration. */
+  color: var(--text-muted);
+}
+
+.orb-section-header .orb-section-header__label { flex: 1; }
+
+.orb-count-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: var(--text-sm);
+  font-weight: 650;
+  line-height: 1;
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: center;
+  /* A ZERO ADVERSE COUNT RENDERS NEUTRAL, NEVER GREEN. Green means "actively
+     achieved" on these screens, not "not currently bad". */
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+/* 12%, not the documented 20% ceiling: 20% leaves 0.01–0.04 of headroom on
+   --bg-elevated (measured 4.50–4.54:1). 12% holds 5.06–5.31:1 on every surface
+   in every theme. The ceiling is for emergencies, not for a chip on every
+   screen. */
+.orb-count-chip--danger {
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--status-danger) 40%, transparent);
+  color: var(--status-danger-text);
+}
+
+.orb-count-chip--warn {
+  background: color-mix(in srgb, var(--status-warn) 12%, transparent);
+  border-color: color-mix(in srgb, var(--status-warn) 40%, transparent);
+  color: var(--status-warn-text);
+}
+
+.orb-count-chip--info {
+  background: color-mix(in srgb, var(--status-info) 12%, transparent);
+  border-color: color-mix(in srgb, var(--status-info) 40%, transparent);
+  color: var(--status-info-text);
+}
+
+/* ─── Row chassis (spec §5.4) ───
+   The single most important component: everything on either home that is a
+   line of work is one of these. A row looks the same on both homes; what it
+   does when you press it is what differs. */
+.orb-row {
+  width: 100%;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+/* NO hover-lift, no shadow, no scale, no colour-shift on the primary text. A
+   row that moves under a descending thumb causes a mis-tap, and a mis-tapped
+   task row on this product is a clinical error.
+
+   --bg-glass, NOT --bg-glass-hover: the heavier hover fill lifts the backdrop
+   until --text-muted inside the row measures 4.17:1 in dark — below AA. The
+   lighter fill still marks the hover and holds 4.78:1. Same reasoning as
+   .shell__user-security above; the palette gate could not see either, which is
+   why scripts/check-contrast.mjs now composites hover fills (spec §10.2). */
+.orb-row--link,
+button.orb-row { cursor: pointer; }
+
+/* `color` is restated at its base value on purpose. It is not a hover shift —
+   it is what makes the pair VISIBLE TO THE CONTRAST GATE, which pairs a colour
+   and a background declared on the same selector and rightly refuses to guess
+   that a colour on `.orb-row` meets a background on `.orb-row--link:hover`. */
+.orb-row--link:hover,
+button.orb-row:hover {
+  background: var(--bg-glass);
+  border-color: var(--border-glass);
+  color: var(--text-primary);
+}
+
+.orb-row--link:active,
+button.orb-row:active {
+  background: var(--bg-glass);
+  border-color: var(--border-focus);
+  color: var(--text-primary);
+}
+
+/* Status left rules. Weight is a second, colour-blind-safe differentiator:
+   4px danger vs 3px warn, and the trailing words say "late" vs "in". */
+.orb-row--overdue { border-left: 4px solid var(--status-danger); }
+.orb-row--soon { border-left-color: var(--status-warn); }
+.orb-row--done { border-left-color: var(--status-ok); }
+
+.orb-row__lead {
+  flex: 0 0 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.orb-row__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.orb-row__primary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.006em;
+  color: var(--text-primary);
+}
+
+.orb-row__secondary {
+  font-size: var(--text-sm);
+  font-weight: 450;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* For a row whose second line is its only explanation: an ellipsis there cut
+   off the one sentence that said why the row exists. */
+.orb-row__secondary--wrap {
+  white-space: normal;
+  text-overflow: clip;
+}
+
+.orb-row__meta {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.orb-row__trailing {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+  text-align: right;
+}
+
+/* Inter + tabular-nums, not mono: these are compared by magnitude, and mono at
+   12–14px is narrower and slower to scan for size. Declared explicitly because
+   none of the homes' class names match the global tabular-nums selectors, and a
+   count that jitters 1px wider when it ticks 9 → 10 is how a calm screen
+   becomes a twitchy one. */
+.orb-row__value {
+  font-size: var(--text-sm);
+  font-weight: 650;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums lining-nums;
+  color: var(--text-secondary);
+}
+
+.orb-row--overdue .orb-row__value { color: var(--status-danger-text); }
+.orb-row--soon .orb-row__value { color: var(--status-warn-text); }
+
+.orb-row__note {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--status-warn-text);
+}
+
+.orb-row__go {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  font-size: var(--text-md);
+  line-height: 1;
+  color: var(--text-muted);
+}
+
+@media (pointer: coarse) {
+  .orb-row {
+    min-height: var(--tap-min);
+    padding-block: var(--space-4);
+  }
+}
+
+@media (max-width: 768px) {
+  /* The trailing column drops BELOW the body rather than shrinking — at ~540px
+     a two-line row starts wrapping its trailing value mid-word. One
+     implementation, used by both homes. */
+  .orb-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding-inline: var(--space-4);
+  }
+  .orb-row__secondary { white-space: normal; }
+  .orb-row__trailing {
+    flex-basis: 100%;
+    flex-direction: row;
+    align-items: baseline;
+    gap: var(--space-2);
+    text-align: left;
+  }
+  /* A trailing cell holding only the chevron has nothing to drop below the
+     body: given a full line it stranded a lone › at the left edge. It stays
+     on the body's line, at the right. */
+  .orb-row__trailing:has(> .orb-row__go:only-child) {
+    flex-basis: auto;
+    align-self: center;
+    margin-left: auto;
+  }
+}
+
+/* ─── Two list rhythms (spec §5.5) ───
+   Chosen by what the row IS, never by which home it is on: --cards when every
+   row is a discrete unit of work you act on and leave behind, --rows when they
+   are readings you scan. */
+.orb-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  max-width: var(--home-col-max);
+  /* Focus rings are drawn outside the row's box. A scrolling/clipping list
+     container eats them, and an invisible focus ring is an inaccessible list. */
+  overflow: visible;
+}
+
+.orb-list--cards { gap: var(--space-2); }
+
+.orb-list--rows {
+  gap: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  /* overflow:hidden clips the corners AND the child rows' focus rings. The 1px
+     of padding plus the negative offset below draws the ring inside the box, so
+     it survives the clip. Do not ship a clipped ring. */
+  padding: 1px;
+}
+
+.orb-list--rows > li + li .orb-row { border-top: 1px solid var(--border-subtle); }
+
+.orb-list--rows .orb-row {
+  background: transparent;
+  border: none;
+  border-left: 3px solid transparent;
+  border-radius: 0;
+}
+
+.orb-list--rows .orb-row:focus-visible { outline-offset: -2px; }
+
+/* ─── Micro-caps tag (spec §5.6) ───
+   A tag is never the only carrier of meaning: it always sits immediately before
+   text that says the same thing in words ("OBS · Observations"), which is why
+   0.7rem is permitted here and nowhere else. */
+.orb-tag {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 1px var(--space-2);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.6;
+  text-transform: uppercase;
+  border-radius: var(--radius-sm);
+  color: var(--status-on-fill);
+}
+
+.orb-tag--obs { background: var(--status-info); color: var(--status-on-fill); }
+.orb-tag--sign { background: var(--status-info); color: var(--status-on-fill); }
+.orb-tag--ack { background: var(--status-danger); color: var(--status-on-fill); }
+
+/* DELIBERATE DEVIATION FROM SPEC §5.6, and the reason is measured.
+   The spec keeps --accent-warm for MED "for continuity" with the existing
+   .task-row__kind--med. But --status-on-fill on --accent-warm measures 3.12:1
+   in the LIGHT theme (dark 6.90, night 13.33) — a live AA failure the palette
+   gate never saw, because the colour is declared on .task-row__kind and the
+   background on .task-row__kind--med, two selectors the call-site scanner
+   rightly refuses to assume meet. No ink in the system clears 4.5:1 on
+   --accent-warm in all three themes; --accent-deep + --btn-primary-text does
+   (5.05 / 5.81 / 6.31). Spec §0.5 outranks spec §5.6: the contrast floor is
+   load-bearing, "continuity" is not. */
+.orb-tag--med { background: var(--accent-deep); color: var(--btn-primary-text); }
+
+/* ─── State blocks (spec §5.7) ───
+   Ported from components/round/RoundStates.tsx, whose docstring is the
+   doctrine: a blank region on a clinical screen is a hazard, because "there is
+   nothing to report" and "we could not find out" look identical when both
+   render as nothing. EACH STATE HAS A DISTINCT SHAPE, not just distinct words. */
+.orb-state {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-5);
+  border-radius: var(--radius-md);
+  max-width: var(--home-col-max);
+}
+
+.orb-state__icon {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  color: var(--text-muted);
+}
+
+.orb-state__content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 480px;
+}
+
+.orb-state__title {
+  font-size: var(--text-md);
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.orb-state__detail {
+  font-size: var(--text-sm);
+  font-weight: 450;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.orb-state__reassure {
+  font-size: var(--text-xs);
+  font-weight: 450;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.orb-state--loading {
+  flex-direction: column;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+/* Dashed says ABSENCE. */
+.orb-state--empty {
+  background: transparent;
+  border: 1px dashed var(--border-glass);
+  color: var(--text-secondary);
+}
+
+/* …and solid says THIS IS THE ANSWER. The calm variant is for an emptiness
+   that is an achievement ("nothing due right now"), which must not look like
+   the box that also means "we found nothing". */
+.orb-state--calm {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.orb-state--calm .orb-state__icon {
+  width: 36px;
+  height: 36px;
+  padding: 6px;
+  border-radius: var(--radius-full);
+  /* The only green on either home, alongside a handover item already given.
+     Green is "actively achieved", never "not currently bad". */
+  color: var(--status-ok-text);
+  background: color-mix(in srgb, var(--status-ok) 12%, transparent);
+}
+
+/* THE MOST IMPORTANT STATE RULE ON EITHER HOME: a section that failed must
+   never render as empty. Failure gets this block and the sentence "This is a
+   display failure, not an all-clear." A silently empty section after a failed
+   read is indistinguishable from a calm ward. */
+.orb-state--error {
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 34%, transparent);
+  border-left: 4px solid var(--status-danger);
+  color: var(--status-danger-text);
+}
+
+.orb-state--error .orb-state__title,
+.orb-state--error .orb-state__icon { color: var(--status-danger-text); }
+
+.orb-state__warn {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--status-danger-text);
+}
+
+@media (max-width: 768px) {
+  .orb-state { padding: var(--space-5); }
+}
+
+/* ─── Skeleton (spec §5.8) ───
+   Skeletons only, never a spinner: the geometry equals the loaded row's
+   geometry, so nothing shifts when data lands. */
+.orb-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.orb-skeleton__bar {
+  height: 10px;
+  border-radius: var(--radius-full);
+  background: var(--bg-glass-hover);
+  animation: orb-skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+/* Animates BACKGROUND, not opacity — same reason as the house rule, and the
+   pattern Round.css already proved. */
+@keyframes orb-skeleton-pulse {
+  0%, 100% { background: var(--bg-glass); }
+  50% { background: var(--bg-glass-hover); }
+}
+
+/* Explicitly `none`, not the global kill switch: that sets animation-duration
+   to 0.01ms with iteration-count 1, which parks the bar on its END keyframe.
+   `none` parks it on the quieter --bg-glass. */
+@media (prefers-reduced-motion: reduce) {
+  .orb-skeleton__bar { animation: none; }
+}
+
+/* ─── The one per-theme override either home is allowed (spec §8) ───
+   Night's canvas is #000000 and its card surface is #101010 — a luminance step
+   of about 0.6%. In every other theme the surface itself separates a card from
+   the canvas and the border is a refinement; in night the 1px border is the
+   ONLY thing that exists, and --border-subtle (alpha 0.14) on a screen dimmed
+   for a dark ward can vanish. --border-glass (0.22) restores the edge. Borders
+   carry no text, so this adds no contrast pair — verify it by eye in the night
+   captures. If a build agent finds itself writing a second [data-theme] rule
+   for these components, the token is wrong, not the component. */
+[data-theme="night"] .orb-list--rows,
+[data-theme="night"] .orb-state:not(.orb-state--error),
+[data-theme="night"] .orb-panel-loading {
+  border-color: var(--border-glass);
+}
+
+/* Three sides, never `border-color`. The row's LEFT border is the status-rule
+   slot (4px danger / 3px warn / 3px ok), and a blanket border-color here — at
+   (0,2,0) against the modifiers' (0,1,0) — would repaint every one of those
+   saturated rules as a hairline. The error state block is excluded above for
+   the same reason: its left rule is the signal. */
+[data-theme="night"] .orb-row {
+  border-top-color: var(--border-glass);
+  border-right-color: var(--border-glass);
+  border-bottom-color: var(--border-glass);
+}
+
+[data-theme="night"] .orb-list--rows > li + li .orb-row {
+  border-top-color: var(--border-glass);
+}

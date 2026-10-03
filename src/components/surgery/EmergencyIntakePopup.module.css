@@ -1,0 +1,177 @@
+/* Emergency Intake Popup — Quiet Clinical: flat elevated modal,
+   danger status tints carry the urgency, no glass/glow. */
+
+.overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7); /* functional dimming scrim */
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.popup {
+  width: 480px;
+  background: var(--bg-elevated);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 40%, transparent);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-3);
+  display: flex;
+  flex-direction: column;
+  animation: scaleIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+@keyframes scaleIn {
+  from { transform: scale(0.9); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.header {
+  padding: 16px 24px;
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.urgentBadge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--status-danger-text);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}
+
+/* Pulsing dot — live-state signal, keep the animation */
+.pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--status-danger);
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.5); opacity: 0.5; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.source {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.body {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.patient {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.details {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  padding: 16px;
+  border-radius: var(--radius-sm);
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.label {
+  color: var(--text-muted);
+  width: 80px;
+  flex-shrink: 0;
+}
+
+.value {
+  font-weight: 500;
+}
+
+.footer {
+  padding: 16px 24px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  background: var(--bg-glass);
+}
+
+/* Class selectors only. CSS Modules hashes classes, never element names, so
+   the bare `button` and `button:disabled` that stood here were GLOBAL rules:
+   opening Surgical Suite once restyled every button in the app until reload. */
+.btnPrimary,
+.btnSecondary {
+  padding: 10px 20px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+/* Covers .btnPrimary's solid danger fill too: repaint to the neutral pair
+   rather than fade both label and fill together. */
+.btnPrimary:disabled,
+.btnSecondary:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+@media (pointer: coarse) {
+  .btnPrimary,
+  .btnSecondary {
+    min-height: var(--tap-min);
+  }
+}
+
+.btnPrimary {
+  background: var(--status-danger);
+  color: var(--status-on-fill);
+}
+
+.btnPrimary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-danger) 85%, #000);
+}
+
+.btnSecondary {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-glass);
+}
+
+.btnSecondary:hover:not(:disabled) {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-glass);
+}

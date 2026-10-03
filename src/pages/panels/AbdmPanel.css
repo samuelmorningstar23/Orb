@@ -1,0 +1,525 @@
+/* AbdmPanel.css — Orb "Quiet Clinical" (flat).
+ *
+ * RULES THIS FILE FOLLOWS, and the reasons:
+ *
+ *  · NO `opacity` FOR DE-EMPHASIS, anywhere. A faded "Not verified" chip is a
+ *    chip somebody stops reading, and an unverified national health id that
+ *    nobody reads is the exact failure this module exists to prevent. Quiet text
+ *    is a quieter TOKEN (--text-secondary / --text-muted), never a faded one.
+ *  · STATUS FILLS use --status-x with --status-on-fill for the text on top;
+ *    status TEXT on a normal surface uses --status-x-text. One token cannot do
+ *    both jobs and still clear 4.5:1 in all three themes.
+ *  · ABHA NUMBERS are tabular-lining, so a column of them lines up and a
+ *    transposed digit is visible rather than camouflaged by proportional
+ *    spacing.
+ *  · TAP TARGETS are >=24px, and >=44px under `@media (pointer: coarse)` — the
+ *    registration counter is a tablet as often as a mouse.
+ *  · Everything is scoped under .abdm-panel / .abdm-modal. The modal is
+ *    portalled to document.body, so it is scoped by its own root class rather
+ *    than by nesting.
+ */
+
+.abdm-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 1240px;
+  margin: 0 auto;
+  width: 100%;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+}
+
+/* ─── Header ─── */
+
+.abdm-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.abdm-title {
+  margin: 0;
+  font-size: var(--text-xl);
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.abdm-sub {
+  margin: 4px 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  max-width: 62ch;
+}
+
+/* ─── The notice ───
+   Deliberately NOT a dismissible toast and NOT a low-contrast aside. It is a
+   bordered block in ordinary body colour, because it is a statement of fact
+   about what this software does — and does not do — not a hint. */
+
+.abdm-notice {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-glass);
+  border-left: 3px solid var(--status-info);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.abdm-notice--inline {
+  font-size: var(--text-xs);
+  padding: 8px 12px;
+}
+
+.abdm-callout {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.abdm-callout--warn {
+  border-left: 3px solid var(--status-warn);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.abdm-callout strong { color: var(--text-primary); font-weight: 600; }
+
+.abdm-error {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--status-danger);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+  color: var(--status-danger-text);
+  font-size: var(--text-sm);
+}
+
+.abdm-empty {
+  margin: 0;
+  padding: 18px 4px;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/* ─── Metrics ─── */
+
+.abdm-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.abdm-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.abdm-metric__value {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.abdm-metric__value--warn { color: var(--status-warn-text); }
+.abdm-metric__value--danger { color: var(--status-danger-text); }
+
+.abdm-metric__label {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* ─── View switcher ─── */
+
+.abdm-views {
+  display: flex;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 8px;
+}
+
+.abdm-view {
+  min-height: 32px;
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.abdm-view:hover {
+  background: var(--bg-glass);
+  color: var(--text-primary);
+}
+
+.abdm-view--on {
+  background: var(--accent-glow);
+  border-color: var(--border-focus);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+/* ─── Buckets ─── */
+
+.abdm-buckets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.abdm-bucket {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+  min-height: 44px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.abdm-bucket:hover { border-color: var(--border-glass); }
+
+.abdm-bucket--on {
+  border-color: var(--border-focus);
+  background: var(--accent-glow);
+  color: var(--accent-text);
+}
+
+.abdm-bucket__n {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.abdm-bucket__label {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* The bucket tone is carried by a left rule, not by a fill: these are counts on
+   a surface, and a filled tile with a count in it is a badge, which reads as a
+   status rather than as a filter. */
+.abdm-bucket--ok { border-left: 3px solid var(--status-ok); }
+.abdm-bucket--warn { border-left: 3px solid var(--status-warn); }
+.abdm-bucket--danger { border-left: 3px solid var(--status-danger); }
+
+/* ─── Rows ─── */
+
+.abdm-section { display: flex; flex-direction: column; }
+
+.abdm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.abdm-row {
+  display: grid;
+  grid-template-columns: minmax(200px, 1.4fr) minmax(220px, 1.3fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.abdm-row__main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+
+.abdm-row__name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.abdm-row__meta {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.abdm-row__reason {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.abdm-row__note {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  max-width: 28ch;
+}
+
+.abdm-row__state {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.abdm-row__abha {
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.abdm-row__actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+@media (max-width: 720px) {
+  .abdm-row { grid-template-columns: 1fr; }
+  .abdm-row__actions { justify-content: flex-start; }
+}
+
+/* ─── ABHA value ─── */
+
+.abdm-abha { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+
+.abdm-abha__number {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: 0.02em;
+}
+
+.abdm-abha__none {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.abdm-abha__address {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* ─── Chips ───
+   Filled, with --status-on-fill on top. A chip is the one place a status is the
+   whole message, so it gets the fill; everything else uses the -text tokens. */
+
+.abdm-chip-group { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+.abdm-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.abdm-chip--ok { background: var(--status-ok); color: var(--status-on-fill); }
+/* A tint, not a fill: these are states to watch, and a solid amber chip beside
+   a clay button read as a second primary action in the light theme. */
+.abdm-chip--warn {
+  background: color-mix(in srgb, var(--status-warn) 14%, transparent);
+  color: var(--status-warn-text);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 35%, transparent);
+}
+.abdm-chip--danger { background: var(--status-danger); color: var(--status-on-fill); }
+.abdm-chip--info { background: var(--status-info); color: var(--status-on-fill); }
+
+.abdm-chip--muted {
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  font-weight: 500;
+}
+
+/* ─── Age ─── */
+
+.abdm-age { display: flex; gap: 5px; align-items: baseline; font-size: var(--text-xs); }
+
+.abdm-age__n {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.abdm-age__unit { color: var(--text-secondary); }
+.abdm-age--stale .abdm-age__n { color: var(--status-warn-text); }
+.abdm-age--unknown { color: var(--text-muted); font-style: italic; }
+
+/* ─── Buttons ─── */
+
+.abdm-btn {
+  min-height: 32px;
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.abdm-btn:hover:not(:disabled) { background: var(--accent-amber); }
+
+.abdm-btn:disabled {
+  background: var(--bg-glass);
+  color: var(--text-muted);
+  border-color: var(--border-subtle);
+  cursor: not-allowed;
+}
+
+.abdm-btn--quiet {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-color: var(--border-glass);
+  font-weight: 500;
+}
+
+.abdm-btn--quiet:hover:not(:disabled) {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+}
+
+.abdm-btn--danger {
+  background: var(--bg-surface);
+  color: var(--status-danger-text);
+  border-color: var(--status-danger);
+}
+
+.abdm-btn--danger:hover:not(:disabled) { background: var(--bg-glass-hover); }
+
+@media (pointer: coarse) {
+  .abdm-btn, .abdm-view, .abdm-bucket, .abdm-input { min-height: 44px; }
+  .abdm-chip { min-height: 28px; }
+}
+
+/* ─── Fields ─── */
+
+.abdm-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+
+.abdm-field__label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.abdm-field__hint { font-size: var(--text-xs); color: var(--text-muted); }
+
+.abdm-input {
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  width: 100%;
+}
+
+.abdm-input:focus { outline: none; border-color: var(--border-focus); }
+
+.abdm-input--area { resize: vertical; line-height: 1.5; }
+
+.abdm-check {
+  margin: -6px 0 12px;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.abdm-check--ok { color: var(--text-secondary); }
+.abdm-check--bad { color: var(--status-danger-text); }
+
+.abdm-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+
+/* ─── Modal (portalled to document.body) ─── */
+
+.abdm-modal__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--scrim);
+}
+
+.abdm-modal {
+  width: min(560px, 100%);
+  max-height: 86vh;
+  overflow-y: auto;
+  padding: 20px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.abdm-modal__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.abdm-modal__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.abdm-modal__sub {
+  margin: 3px 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.abdm-modal__body { display: flex; flex-direction: column; }

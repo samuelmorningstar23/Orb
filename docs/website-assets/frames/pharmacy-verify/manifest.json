@@ -1,0 +1,32 @@
+{
+  "id": "pharmacy-verify",
+  "title": "Pharmacist verification",
+  "subtitle": "Nothing AI-extracted is given until a pharmacist has verified it",
+  "user": "PHA001",
+  "theme": "dark",
+  "viewport": {
+    "width": 1512,
+    "height": 1024
+  },
+  "steps": [
+    {
+      "n": 1,
+      "caption": "Helix: the pharmacy overview.",
+      "file": "01.png",
+      "hold": 3200
+    },
+    {
+      "n": 2,
+      "caption": "The verify queue: medications extracted from signed notes wait here for a pharmacist before they become active orders. Each is run against the interaction knowledge base; when a drug is outside it, Orb says NOT SCREENED instead of pretending.",
+      "file": "02.png",
+      "hold": 3200
+    },
+    {
+      "n": 3,
+      "caption": "One row per extracted medication: dose, route and frequency editable, the source marked AI EXTRACTED, the safety line in plain words. Verify or Reject, and either decision is on the record in the pharmacist's name.",
+      "file": "03.png",
+      "hold": 4500
+    }
+  ],
+  "video": "video/pharmacy-verify.webm"
+}

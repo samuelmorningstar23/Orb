@@ -1,0 +1,79 @@
+/* The staleness label.
+ *
+ * Danger-toned rather than the softer "warn" amber, deliberately. A stale
+ * clinical record is not a degraded convenience — for the seconds a nurse is
+ * reading a NEWS2 off it, it is the same class of hazard as a wrong value. It
+ * should sit in her eye the way an overdue-obs row does.
+ *
+ * Colour pairs are lifted from .nurse-note--danger rather than invented, so the
+ * call-site contrast scanner resolves them through the same theme tables in all
+ * three themes (see scripts/lib/contrast-callsites.mjs). No opacity: the fill
+ * is a color-mix wash over the surface, which composites predictably.
+ */
+
+.offline-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--status-danger-text);
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 45%, transparent);
+}
+
+/* A shape, not just a colour — the one cue that survives a night-shift screen
+   turned down to nothing and a clinician with a colour vision deficiency. */
+.offline-banner__dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--status-danger);
+}
+
+.offline-banner__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.offline-banner__heading {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--status-danger-text);
+}
+
+.offline-banner__line {
+  margin: 0;
+  color: var(--status-danger-text);
+}
+
+/* The refusal sentence. Same colour as the rest — this is not the place for a
+   quieter "secondary" grey, because it is the line that stops a nurse walking
+   away believing she charted a dose. */
+.offline-banner__line--write {
+  font-weight: 600;
+}
+
+/* Inherits the banner's text colour rather than taking a link/accent token, so
+   it is measured on the same fill the surrounding sentence was measured on. */
+.offline-banner__retry {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--status-danger-text);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.offline-banner__retry:hover {
+  text-decoration: none;
+}

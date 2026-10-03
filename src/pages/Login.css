@@ -1,0 +1,280 @@
+/* Login — Quiet Clinical: one opaque card on the canvas, hairline borders,
+   flat clay primary action. No glass, no glow. */
+
+.login {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login__content {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  max-width: 440px;
+  padding: 24px;
+}
+
+/* ─── Pre-login topbar ─────────────────────────────────────────────────────
+   Clock + theme switch, available before anyone signs in. z-index 3 so it
+   clears both Aurora canvases (0 and 1) and the card column (2); the row is
+   `position: fixed` rather than in flow so it cannot shift the vertically
+   centred card off-centre. */
+.login__topbar {
+  position: fixed;
+  top: 20px;
+  right: 24px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Same 34px icon-in-a-box recipe as the clinician header's controls, so the
+   switch a nurse learns on this screen looks identical to the one she uses
+   inside. Duplicated rather than shared because .shell__* rules belong to the
+   post-login shell stylesheet, which this route never loads. */
+.login__icon-toggle {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  /* Opaque, like .clock-widget beside it — a transparent box over the aurora
+     reads as a hole rather than a control. */
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  transition: background var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.login__icon-toggle:hover {
+  color: var(--text-primary);
+  background: var(--bg-glass);
+  border-color: var(--border-glass);
+}
+
+/* On a phone the fixed row would sit on top of the card, so give the card
+   column headroom and let the topbar span the width it needs. */
+@media (max-width: 520px) {
+  .login__topbar {
+    top: 12px;
+    right: 12px;
+    left: 12px;
+    justify-content: flex-end;
+  }
+
+  .login__content {
+    padding-top: 76px;
+  }
+}
+
+.login__back {
+  position: fixed;
+  top: 32px;
+  left: 32px;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-full);
+  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+  z-index: 10;
+}
+
+.login__back:hover {
+  color: var(--text-primary);
+  border-color: var(--border-focus);
+  background: var(--bg-glass-hover);
+}
+
+.login__card {
+  padding: 40px;
+}
+
+.login__card-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 36px;
+  text-align: center;
+}
+
+.login__card-title {
+  font-size: 1.5rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.login__card-subtitle {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.login__form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.login__field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.login__label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.login__input {
+  width: 100%;
+  padding: 14px 16px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.login__input::placeholder {
+  color: var(--text-muted);
+}
+
+/* Focus affordance: clay border plus a soft functional ring — no glow. */
+.login__input:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* Fix date input on dark theme */
+.login__input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+}
+
+.login__submit {
+  width: 100%;
+  padding: 14px;
+  margin-top: 4px;
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  font-size: 0.95rem;
+  font-weight: 500;
+  border: none;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+  letter-spacing: -0.01em;
+}
+
+.login__submit:hover {
+  background: var(--btn-gradient-hover);
+  color: var(--btn-primary-text);
+}
+
+.login__submit:active {
+  filter: brightness(0.96);
+}
+
+.login__error {
+  padding: 12px 14px;
+  margin-bottom: 20px;
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent);
+  border-radius: var(--radius-sm);
+  color: var(--status-danger-text);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+/* MFA second-step field revealed after a correct password on an MFA account. */
+.login__field--mfa {
+  animation: none;
+}
+
+.login__code-input {
+  text-align: center;
+  letter-spacing: 0.55em;
+  /* Offset the trailing letter-spacing so the digits look centered. */
+  padding-left: calc(16px + 0.55em);
+  font-size: 1.35rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+.login__mfa-hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.login__mfa-cancel {
+  align-self: center;
+  margin-top: 4px;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  transition: color var(--transition-fast);
+}
+
+.login__mfa-cancel:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.login__mfa-cancel:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+/* ── PIN-on-device (shared ward tablet) ────────────────────────────────────
+   The PIN pad is the DEFAULT sign-in on an enrolled tablet, so it uses the
+   ordinary field styling rather than a special treatment — the point is that
+   signing in as yourself is the least effortful path, not that it looks
+   different. Only the tablet badge and the hint text are new. */
+
+.login__device-badge {
+  padding: 4px 12px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+}
+
+.login__hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* Textarea, not an input: an enrolment secret is a 43-character token and a
+   single-line field truncates it out of sight, which is how it gets pasted
+   half-copied. */
+.login__secret-input {
+  resize: vertical;
+  min-height: 76px;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}

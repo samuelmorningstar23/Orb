@@ -1,0 +1,17 @@
+/* Per-answer speed footer. Imported by the component itself so the styles
+   travel with every chunk that renders it (the panel is a lazy route; the
+   floating orb is not). Quiet by token, never by opacity. */
+.sage-answer-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 6px;
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.sage-answer-meta__num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}

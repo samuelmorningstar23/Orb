@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orb workflow player</title>
+<style>
+  :root { --bg:#0b0d12; --panel:#121620; --line:#242a36; --text:#f5f4ee; --muted:#9aa1ad; --accent:#4a9e8e; --accent-ink:#0b0d12; }
+  :root[data-theme="light"] { --bg:#f6f5f1; --panel:#ffffff; --line:#e3e1da; --text:#15171c; --muted:#5f6672; --accent:#2f7f70; --accent-ink:#ffffff; }
+  * { box-sizing:border-box }
+  html,body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 "Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  .player { max-width:1200px; margin:0 auto; padding:16px; }
+  .head { display:flex; gap:12px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; margin-bottom:12px; }
+  .head h1 { font-size:18px; margin:0 0 2px; font-weight:650; letter-spacing:-0.01em }
+  .head p { margin:0; color:var(--muted); font-size:14px }
+  .flows { display:flex; gap:6px; flex-wrap:wrap }
+  .flows button { border:1px solid var(--line); background:var(--panel); color:var(--text); border-radius:999px; padding:6px 12px; font:inherit; font-size:13px; cursor:pointer }
+  .flows button[aria-current="true"] { background:var(--accent); color:var(--accent-ink); border-color:var(--accent) }
+  .stage { position:relative; background:var(--panel); border:1px solid var(--line); border-radius:14px; overflow:hidden; aspect-ratio:1512/1024; }
+  .stage img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity .35s ease }
+  .stage img.on { opacity:1 }
+  .stage .badge { position:absolute; top:12px; left:12px; background:rgba(11,13,18,.72); color:#f5f4ee; font-size:12px; padding:4px 9px; border-radius:999px; backdrop-filter:blur(6px) }
+  .caption { display:grid; grid-template-columns:1fr auto; gap:12px; align-items:start; margin-top:12px; padding:14px 16px; background:var(--panel); border:1px solid var(--line); border-radius:12px; min-height:84px }
+  .caption p { margin:0; font-size:16px }
+  .caption .step { color:var(--muted); font-size:13px; white-space:nowrap }
+  .bar { height:3px; background:var(--line); border-radius:2px; margin-top:10px; overflow:hidden; grid-column:1/-1 }
+  .bar i { display:block; height:100%; width:0; background:var(--accent); transition:width .25s linear }
+  .controls { display:flex; gap:8px; align-items:center; margin-top:10px }
+  .controls button { border:1px solid var(--line); background:var(--panel); color:var(--text); border-radius:10px; padding:8px 14px; font:inherit; cursor:pointer }
+  .controls button.primary { background:var(--accent); color:var(--accent-ink); border-color:var(--accent) }
+  .dots { display:flex; gap:6px; margin-left:auto }
+  .dots button { width:10px; height:10px; padding:0; border-radius:50%; border:1px solid var(--muted); background:transparent }
+  .dots button[aria-current="true"] { background:var(--accent); border-color:var(--accent) }
+  .foot { color:var(--muted); font-size:12px; margin-top:10px }
+  @media (prefers-reduced-motion: reduce) { .stage img { transition:none } }
+  @media (max-width:640px) { .caption { grid-template-columns:1fr } .caption .step { white-space:normal } }
+</style>
+</head>
+<body>
+<div class="player" id="player">
+  <div class="head">
+    <div><h1 id="title"></h1><p id="subtitle"></p></div>
+    <div class="flows" id="flows" role="tablist" aria-label="Workflows"></div>
+  </div>
+  <div class="stage" id="stage"><span class="badge" id="badge"></span></div>
+  <div class="caption"><p id="caption"></p><span class="step" id="step"></span><div class="bar"><i id="bar"></i></div></div>
+  <div class="controls">
+    <button id="prev" aria-label="Previous step">‹ Prev</button>
+    <button id="play" class="primary" aria-label="Play">Play</button>
+    <button id="next" aria-label="Next step">Next ›</button>
+    <div class="dots" id="dots"></div>
+  </div>
+  <p class="foot">Real screens from a running Orb appliance on seeded demo data. Keyboard: ← → to step, space to play/pause.</p>
+</div>
+<script id="manifest" type="application/json">[{"id": "ward-is-alive", "title": "The ward watches itself", "subtitle": "Live vitals, NEWS2 ordering, and a chart that explains its own score", "user": "DOC001", "steps": [{"caption": "Sign in as a doctor. Orb Today lists what needs you first: deteriorating patients, new results, pending signatures.", "image": "frames/ward-is-alive/01.webp", "hold": 3200}, {"caption": "Patients: the ward ordered by risk. Vitals move because a monitor feed is running; the order is NEWS2-derived, not hand-placed.", "image": "frames/ward-is-alive/02.webp", "hold": 3200}, {"caption": "Open a chart. The NEWS2 band is computed by Orb's deterministic engine, never by a model.", "image": "frames/ward-is-alive/03.webp", "hold": 3200}, {"caption": "Why this score? Every parameter's contribution is shown. Orb will not give you a number without showing where it came from.", "image": "frames/ward-is-alive/04.webp", "hold": 3200}, {"caption": "Patient Story: alerts, notes, doses given, handovers and bundles in one scrollable narrative, with a bookmark for what is new since you last looked.", "image": "frames/ward-is-alive/05.webp", "hold": 4200}], "gif": "gifs/ward-is-alive.gif", "video": "video/ward-is-alive.webm"}, {"id": "allergy-interlock", "title": "The allergy interlock", "subtitle": "A sepsis bundle is applied whole or not at all", "user": "DOC001", "steps": [{"caption": "Orders, then Order sets: cited protocols. Every item still goes through the allergy interlock, the dose guard and terminology validation.", "image": "frames/allergy-interlock/01.webp", "hold": 3200}, {"caption": "Pick Sepsis Six. The gates are patient-specific, so there is nothing honest to show until Orb knows whose chart this is.", "image": "frames/allergy-interlock/02.webp", "hold": 3200}, {"caption": "Apply to Suresh Reddy, 55, community-acquired pneumonia with early sepsis.", "image": "frames/allergy-interlock/03.webp", "hold": 3200}, {"caption": "Eight items clear. Ceftriaxone is STOPPED: a documented anaphylaxis to IV ceftriaxone in 2023. The Apply button is disabled, because a half-applied sepsis bundle is its own emergency.", "image": "frames/allergy-interlock/04.webp", "hold": 5000}, {"caption": "Same set, different patient: Ananya Kapoor has a moderate penicillin rash. Orb raises a cross-reactivity alert but does not block. Four patients, four different answers.", "image": "frames/allergy-interlock/05.webp", "hold": 4500}], "gif": "gifs/allergy-interlock.gif", "video": "video/allergy-interlock.webm"}, {"id": "wrong-room-warning", "title": "The wrong-room warning", "subtitle": "Wrong patient, right ward: the most common serious error, caught without a modal", "user": "DOC001", "steps": [{"caption": "Messages: every patient has a case room. Open Suresh Reddy's.", "image": "frames/wrong-room-warning/01.webp", "hold": 3200}, {"caption": "Type an order about a different patient into this room: \"Give Rajesh Iyer 40mg prednisolone now.\"", "image": "frames/wrong-room-warning/02.webp", "hold": 3200}, {"caption": "Sent, not blocked. A nurse mid-emergency does not need a modal. Orb delivers it and says: this looks like it belongs to Rajesh Iyer, want me to move it?", "image": "frames/wrong-room-warning/03.webp", "hold": 5000}], "gif": "gifs/wrong-room-warning.gif", "video": "video/wrong-room-warning.webm"}, {"id": "sage-ask", "title": "Ask Sage", "subtitle": "A local 27B model that cites what it read, on a box with no internet", "user": "DOC001", "steps": [{"caption": "Sage runs entirely on the appliance. No PHI leaves the box.", "image": "frames/sage-ask/01.webp", "hold": 3200}, {"caption": "Fast mode answers general questions with the small model. Patient, medication and dose questions still go to the careful model. That floor is not a toggle in the UI.", "image": "frames/sage-ask/02.webp", "hold": 3200}, {"caption": "Ask: what are the classic ECG findings in hyperkalaemia?", "image": "frames/sage-ask/03.webp", "hold": 3200}, {"caption": "The answer, with a safety line inline and the guidelines it retrieved listed under \"Show details\".", "image": "frames/sage-ask/04.webp", "hold": 6000}], "gif": "gifs/sage-ask.gif", "video": "video/sage-ask.webm"}, {"id": "sage-refusal", "title": "The cross-department refusal", "subtitle": "A real doctor with a real login, and Orb still says no", "user": "DOC001", "steps": [{"caption": "New chat. This login is General Medicine; cardiology is not its ward.", "image": "frames/sage-refusal/01.webp", "hold": 3200}, {"caption": "Ask for the potassium result of the patient in cardiology bed C-201.", "image": "frames/sage-refusal/02.webp", "hold": 3200}, {"caption": "No result. The cardiology chart is outside this login's scope, so Sage is never shown it. Scoping is enforced in the server, not hidden in the UI: a direct API call for that chart returns 404, as if the patient were not there at all.", "image": "frames/sage-refusal/03.webp", "hold": 6000}], "gif": "gifs/sage-refusal.gif", "video": "video/sage-refusal.webm"}, {"id": "nurse-shift", "title": "The nurse's shift", "subtitle": "Same database, a different product: a list of what is due, and a score you see before you save", "user": "NUR001", "steps": [{"caption": "A nurse lands on My Shift, not on a chart: medications and observations due now, each with how late it is.", "image": "frames/nurse-shift/01.webp", "hold": 3200}, {"caption": "My patients: the ward as this nurse owns it.", "image": "frames/nurse-shift/02.webp", "hold": 3200}, {"caption": "Record observations: big numeric targets built for a tablet on a trolley.", "image": "frames/nurse-shift/03.webp", "hold": 3200}, {"caption": "NEWS2 computes live as the values go in, with the RCP escalation sentence underneath. She sees what she is about to trigger before she saves it.", "image": "frames/nurse-shift/04.webp", "hold": 5000}, {"caption": "Handover: an I-PASS draft written from recorded data, to be read against the patient before handing over.", "image": "frames/nurse-shift/05.webp", "hold": 4500}], "gif": "gifs/nurse-shift.gif", "video": "video/nurse-shift.webm"}, {"id": "show-your-work", "title": "Show your work", "subtitle": "Live compliance posture, a tamper-evident audit chain, and an honest model register", "user": "ADM001", "steps": [{"caption": "Trust Center: compliance posture aggregated from the running system, not a PDF. Amber is amber; an all-green screen should be trusted less.", "image": "frames/show-your-work/01.webp", "hold": 3200}, {"caption": "Flight Recorder: a SHA-256 hash chain over every audit row. Alter or delete one and the chain breaks. Every question Sage was asked is in there, and every refusal.", "image": "frames/show-your-work/02.webp", "hold": 3200}, {"caption": "Model Governance: each model, its version, and whether it has been validated. The forecast model says \"untrained\". The validated one is the deterministic score that drives escalation.", "image": "frames/show-your-work/03.webp", "hold": 5000}, {"caption": "Pilot Scorecard: how the pilot will be measured. Shadow-mode episodes, adjudication, outcomes, denominators included.", "image": "frames/show-your-work/04.webp", "hold": 4500}], "gif": "gifs/show-your-work.gif", "video": "video/show-your-work.webm"}, {"id": "scribe-note", "title": "Scribe", "subtitle": "Dictation to a structured, verified note, on-device", "user": "DOC001", "steps": [{"caption": "Scribe: dictate or type. Nothing is sent to a cloud transcription service.", "image": "frames/scribe-note/01.webp", "hold": 3200}, {"caption": "Pick the patient, then the free-text consultation goes in.", "image": "frames/scribe-note/02.webp", "hold": 3200}, {"caption": "Structure Note: the local model drafts a SOAP note, then a second pass checks it against the transcript for unsupported claims and omissions before anyone signs it.", "image": "frames/scribe-note/03.webp", "hold": 6000}, {"caption": "Sign & Finalize. This note was typed, never verified against audio, so Orb stops and makes the clinician type SIGN: accepting an unverified AI note is recorded in their own name.", "image": "frames/scribe-note/04.webp", "hold": 4500}, {"caption": "Signed. Signing is the trigger: medications named in the note are extracted, screened, and queued for a pharmacist before they become active orders.", "image": "frames/scribe-note/05.webp", "hold": 5000}], "gif": "gifs/scribe-note.gif", "video": "video/scribe-note.webm"}, {"id": "pharmacy-verify", "title": "Pharmacist verification", "subtitle": "Nothing AI-extracted is given until a pharmacist has verified it", "user": "PHA001", "steps": [{"caption": "Helix: the pharmacy overview.", "image": "frames/pharmacy-verify/01.webp", "hold": 3200}, {"caption": "The verify queue: medications extracted from signed notes wait here for a pharmacist before they become active orders. Each is run against the interaction knowledge base; when a drug is outside it, Orb says NOT SCREENED instead of pretending.", "image": "frames/pharmacy-verify/02.webp", "hold": 3200}, {"caption": "One row per extracted medication: dose, route and frequency editable, the source marked AI EXTRACTED, the safety line in plain words. Verify or Reject, and either decision is on the record in the pharmacist's name.", "image": "frames/pharmacy-verify/03.webp", "hold": 4500}], "gif": "gifs/pharmacy-verify.gif", "video": "video/pharmacy-verify.webm"}, {"id": "patient-portal", "title": "Bridge, the patient portal", "subtitle": "The patient sees their own care in plain language", "user": "P001", "steps": [{"caption": "Bridge: care team, medications, results and documents for the patient, with a one-time login issued at admission.", "image": "frames/patient-portal/01.webp", "hold": 3200}, {"caption": "Ask a question in plain language. The answer is scoped to this patient and never gives medical advice; it points back to the nurse or doctor.", "image": "frames/patient-portal/02.webp", "hold": 5000}], "gif": "gifs/patient-portal.gif", "video": "video/patient-portal.webm"}]</script>
+<script>
+(function(){
+  const flows = JSON.parse(document.getElementById('manifest').textContent);
+  const q = new URLSearchParams(location.search);
+  const wanted = q.get('flow');
+  const auto = q.get('autoplay') === '1';
+  if (q.get('theme')) document.documentElement.setAttribute('data-theme', q.get('theme'));
+  let flow = flows.find(f => f.id === wanted) || flows[0];
+  let i = 0, playing = false, timer = null, tick = null, t0 = 0;
+  const $ = id => document.getElementById(id);
+  const stage = $('stage'), flowsEl = $('flows'), dotsEl = $('dots');
+
+  function renderFlows(){
+    flowsEl.innerHTML = '';
+    for (const f of flows){
+      const b = document.createElement('button'); b.textContent = f.title; b.setAttribute('role','tab');
+      b.setAttribute('aria-current', f === flow ? 'true' : 'false');
+      b.onclick = () => { flow = f; i = 0; load(); if (history.replaceState) history.replaceState(null,'', '?flow=' + f.id + (auto?'&autoplay=1':'')); };
+      flowsEl.appendChild(b);
+    }
+  }
+  function load(){
+    $('title').textContent = flow.title; $('subtitle').textContent = flow.subtitle || '';
+    for (const img of stage.querySelectorAll('img')) img.remove();
+    flow.steps.forEach((s, k) => { const img = new Image(); img.src = s.image; img.alt = s.caption; img.loading = k < 2 ? 'eager' : 'lazy'; stage.appendChild(img); });
+    dotsEl.innerHTML = '';
+    flow.steps.forEach((s, k) => { const d = document.createElement('button'); d.setAttribute('aria-label', 'Step ' + (k+1)); d.onclick = () => { go(k); }; dotsEl.appendChild(d); });
+    renderFlows(); show();
+  }
+  function show(){
+    const imgs = stage.querySelectorAll('img');
+    imgs.forEach((img, k) => img.classList.toggle('on', k === i));
+    const s = flow.steps[i];
+    $('caption').textContent = s.caption; $('step').textContent = 'Step ' + (i+1) + ' of ' + flow.steps.length;
+    $('badge').textContent = flow.user ? 'signed in as ' + flow.user : '';
+    dotsEl.querySelectorAll('button').forEach((d, k) => d.setAttribute('aria-current', k === i ? 'true' : 'false'));
+    $('bar').style.width = '0%';
+    if (playing) arm();
+  }
+  function go(k){ i = (k + flow.steps.length) % flow.steps.length; show(); }
+  function arm(){
+    clearTimeout(timer); clearInterval(tick);
+    const hold = flow.steps[i].hold || 3200; t0 = Date.now();
+    tick = setInterval(() => { $('bar').style.width = Math.min(100, (Date.now()-t0)/hold*100) + '%'; }, 100);
+    timer = setTimeout(() => { go(i+1); }, hold);
+  }
+  function setPlaying(p){ playing = p; $('play').textContent = p ? 'Pause' : 'Play'; $('play').setAttribute('aria-label', p ? 'Pause' : 'Play'); if (p) arm(); else { clearTimeout(timer); clearInterval(tick); } }
+  $('prev').onclick = () => go(i-1); $('next').onclick = () => go(i+1); $('play').onclick = () => setPlaying(!playing);
+  document.addEventListener('keydown', e => { if (e.key === 'ArrowRight') go(i+1); else if (e.key === 'ArrowLeft') go(i-1); else if (e.key === ' ') { e.preventDefault(); setPlaying(!playing); } });
+  load(); if (auto) setPlaying(true);
+})();
+</script>
+</body>
+</html>

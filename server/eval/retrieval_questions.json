@@ -1,0 +1,144 @@
+{
+  "description": "Sage RAG retrieval evaluation set. Each question maps a realistic clinical query to the guideline document(s) it should surface. 'expected_source' holds document_id(s) from the seeded CLINICAL_DOCUMENTS corpus (services.clinical_knowledge) plus the sample loader corpus (server/corpus/). Used by services.retrieval_eval / scripts/eval_retrieval.py.",
+  "questions": [
+    {
+      "id": "Q-CDIFF-ISO",
+      "category": "Infection Control",
+      "query": "How should we isolate a patient with Clostridioides difficile and what hand hygiene is required?",
+      "expected_source": ["SOP-INF-001", "SOP-HH-001"],
+      "expected_keywords": ["soap", "spores"]
+    },
+    {
+      "id": "Q-CODEBLUE",
+      "category": "Emergency",
+      "query": "Code Blue defibrillation energy in joules and epinephrine dosing from the code cart",
+      "expected_source": ["SOP-CODE-001"]
+    },
+    {
+      "id": "Q-EMPIRIC-SEPSIS-ABX",
+      "category": "Antibiotics",
+      "query": "Empiric antibiotic choice for sepsis given high local ESBL rates piperacillin tazobactam or meropenem",
+      "expected_source": ["FORM-ID-001"]
+    },
+    {
+      "id": "Q-QSOFA",
+      "category": "Sepsis",
+      "query": "qSOFA screening criteria respiratory rate altered mentation systolic blood pressure lactate",
+      "expected_source": ["EXT-SEPSIS-001"]
+    },
+    {
+      "id": "Q-SEPSIS-1HR-BUNDLE",
+      "category": "Sepsis",
+      "query": "Surviving Sepsis Campaign one hour bundle blood cultures before antibiotics crystalloid vasopressors",
+      "expected_source": ["EXT-SEPSIS-002"]
+    },
+    {
+      "id": "Q-SEPSIS-VASOPRESSORS",
+      "category": "Sepsis",
+      "query": "First line vasopressor norepinephrine and second line vasopressin for septic hypoperfusion fluid resuscitation",
+      "expected_source": ["EXT-SEPSIS-003"]
+    },
+    {
+      "id": "Q-SEPTIC-SHOCK-STEROIDS",
+      "category": "Sepsis",
+      "query": "Hydrocortisone corticosteroid dosing for refractory septic shock on vasopressors fludrocortisone",
+      "expected_source": ["EXT-SEPSIS-004"]
+    },
+    {
+      "id": "Q-STEMI",
+      "category": "Cardiac",
+      "query": "STEMI door to balloon time target primary PCI ticagrelor aspirin fibrinolytic therapy",
+      "expected_source": ["EXT-CARD-001"]
+    },
+    {
+      "id": "Q-ACUTE-HF",
+      "category": "Cardiac",
+      "query": "Acute decompensated heart failure intravenous furosemide nitroglycerin guideline directed medical therapy",
+      "expected_source": ["EXT-CARD-002"]
+    },
+    {
+      "id": "Q-ARDS",
+      "category": "Respiratory",
+      "query": "ARDS Berlin criteria low tidal volume ventilation prone positioning PaO2 FiO2 ratio",
+      "expected_source": ["EXT-RESP-001"]
+    },
+    {
+      "id": "Q-DKA",
+      "category": "Metabolic",
+      "query": "DKA management insulin infusion rate potassium replacement and when to give bicarbonate",
+      "expected_source": ["EXT-METAB-001"]
+    },
+    {
+      "id": "Q-STROKE-TPA",
+      "category": "Neurology",
+      "query": "Acute ischemic stroke intravenous alteplase tPA dosing door to needle blood pressure thrombectomy",
+      "expected_source": ["EXT-STROKE-001"]
+    },
+    {
+      "id": "Q-CAP-INPATIENT-ABX",
+      "category": "Antibiotics",
+      "query": "Inpatient community acquired pneumonia treatment beta-lactam plus macrolide or respiratory fluoroquinolone",
+      "expected_source": ["EXT-ID-001", "REF-CAP-CURB65-001"]
+    },
+    {
+      "id": "Q-UTI",
+      "category": "Antibiotics",
+      "query": "Uncomplicated cystitis first line nitrofurantoin fosfomycin and pyelonephritis treatment",
+      "expected_source": ["EXT-ID-002"]
+    },
+    {
+      "id": "Q-VTE-PROPHYLAXIS",
+      "category": "Hematology",
+      "query": "VTE prophylaxis enoxaparin dosing Padua score medical patients contraindications",
+      "expected_source": ["EXT-VTE-001"]
+    },
+    {
+      "id": "Q-POTASSIUM",
+      "category": "Metabolic",
+      "query": "Hypokalemia potassium replacement protocol correct magnesium and hyperkalemia calcium gluconate insulin",
+      "expected_source": ["EXT-LYTES-001"]
+    },
+    {
+      "id": "Q-VENT-WEANING",
+      "category": "Respiratory",
+      "query": "Ventilator weaning spontaneous breathing trial readiness criteria rapid shallow breathing index extubation",
+      "expected_source": ["EXT-VENT-001"]
+    },
+    {
+      "id": "Q-TRANSFUSION",
+      "category": "Hematology",
+      "query": "Restrictive blood transfusion threshold hemoglobin platelets massive transfusion ratio",
+      "expected_source": ["EXT-TRANS-001"]
+    },
+    {
+      "id": "Q-ICU-SEDATION",
+      "category": "Critical Care",
+      "query": "ICU sedation targets dexmedetomidine versus benzodiazepines delirium screening CAM-ICU RASS",
+      "expected_source": ["EXT-SEDATION-001"]
+    },
+    {
+      "id": "Q-CURB65",
+      "category": "Respiratory",
+      "query": "CURB-65 severity score confusion urea respiratory rate blood pressure age pneumonia disposition",
+      "expected_source": ["REF-CAP-CURB65-001"]
+    },
+    {
+      "id": "Q-NICE-SEPSIS-SIX",
+      "category": "Sepsis",
+      "query": "NICE NEWS2 high risk sepsis stratification deliver the Sepsis Six bundle within one hour",
+      "expected_source": ["REF-SEPSIS-NICE-001"]
+    },
+    {
+      "id": "Q-AKI-KDIGO",
+      "category": "Renal",
+      "query": "KDIGO acute kidney injury staging serum creatinine urine output indications for renal replacement therapy",
+      "expected_source": ["REF-AKI-KDIGO-001"]
+    },
+    {
+      "id": "Q-HAND-HYGIENE",
+      "category": "Infection Control",
+      "query": "WHO five moments for hand hygiene contact precautions gown gloves sporicidal wipe isolation",
+      "expected_source": ["SOP-HH-001", "SOP-INF-001"]
+    }
+  ]
+}

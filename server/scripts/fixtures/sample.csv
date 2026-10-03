@@ -1,0 +1,15 @@
+patient_id,name,code,value,unit,observed_at
+PAT001,Heart Rate,8867-4,98,bpm,2024-01-15T14:40:00Z
+PAT001,Systolic Blood Pressure,8480-6,110,mmHg,2024-01-15T14:40:00Z
+PAT001,Diastolic Blood Pressure,8462-4,72,mmHg,2024-01-15T14:40:00Z
+PAT001,Oxygen Saturation,2708-6,96,%,2024-01-15T14:40:00Z
+PAT001,Body Temperature,8310-5,37.4,Cel,2024-01-15T14:40:00Z
+PAT001,Respiratory Rate,9279-1,18,/min,2024-01-15T14:40:00Z
+PAT001,Hemoglobin,718-7,11.5,g/dL,2024-01-15T14:40:00Z
+PAT001,Glucose,2345-7,145,mg/dL,2024-01-15T14:40:00Z
+PAT001,Heart Rate,8867-4,95,bpm,2024-01-15T14:45:00Z
+PAT001,Systolic Blood Pressure,8480-6,115,mmHg,2024-01-15T14:45:00Z
+PAT001,Diastolic Blood Pressure,8462-4,74,mmHg,2024-01-15T14:45:00Z
+PAT001,Oxygen Saturation,2708-6,97,%,2024-01-15T14:45:00Z
+PAT001,Body Temperature,8310-5,37.2,Cel,2024-01-15T14:45:00Z
+PAT001,Respiratory Rate,9279-1,16,/min,2024-01-15T14:45:00Z

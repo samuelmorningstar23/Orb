@@ -1,0 +1,13 @@
+{
+  "document_id": "SOP-HH-001",
+  "title": "Hospital Hand Hygiene and Contact Precautions Protocol",
+  "source": "Orb General Hospital Infection Prevention & Control",
+  "source_type": "hospital_sop",
+  "source_origin": "demo_local",
+  "trust_tier": 1,
+  "version": "v3.0",
+  "category": "Infection Control",
+  "specialty": "Infectious Disease",
+  "effective_date": "2025-06-01",
+  "is_synthetic": true
+}

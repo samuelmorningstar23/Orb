@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="mSphere" cx="0.35" cy="0.28" r="0.78">
+      <stop offset="0" stop-color="#F7FEFB"/>
+      <stop offset="0.07" stop-color="#C9F5E8"/>
+      <stop offset="0.19" stop-color="#7CE7DE"/>
+      <stop offset="0.32" stop-color="#3ED3E0"/>
+      <stop offset="0.45" stop-color="#17A9AC"/>
+      <stop offset="0.58" stop-color="#0E7C66"/>
+      <stop offset="0.72" stop-color="#14485C"/>
+      <stop offset="0.86" stop-color="#12294A"/>
+      <stop offset="1" stop-color="#0B1530"/>
+    </radialGradient>
+    <radialGradient id="mHi" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.85"/>
+      <stop offset="0.5" stop-color="#EAF7F2" stop-opacity="0.24"/>
+      <stop offset="1" stop-color="#EAF7F2" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="mBounce" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#4FB39A" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#4FB39A" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mBack" gradientUnits="userSpaceOnUse" x1="49.9" y1="375" x2="462.1" y2="137">
+      <stop offset="0" stop-color="#20505F"/>
+      <stop offset="0.35" stop-color="#15294E"/>
+      <stop offset="0.65" stop-color="#17325C"/>
+      <stop offset="1" stop-color="#175A62"/>
+    </linearGradient>
+    <linearGradient id="mFront" gradientUnits="userSpaceOnUse" x1="49.9" y1="375" x2="462.1" y2="137">
+      <stop offset="0" stop-color="#3F9C87"/>
+      <stop offset="0.28" stop-color="#37C8C4"/>
+      <stop offset="0.5" stop-color="#64E2E4"/>
+      <stop offset="0.74" stop-color="#3ED3E0"/>
+      <stop offset="1" stop-color="#4FB39A"/>
+    </linearGradient>
+    <linearGradient id="mPulse" gradientUnits="userSpaceOnUse" x1="357.0" y1="324.9" x2="203.2" y2="397.4">
+      <stop offset="0" stop-color="#FFC24B" stop-opacity="0"/>
+      <stop offset="0.32" stop-color="#FFB84A" stop-opacity="0.42"/>
+      <stop offset="0.5" stop-color="#FFE2A0" stop-opacity="0.98"/>
+      <stop offset="0.68" stop-color="#F2A93B" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#FFC24B" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="mGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FFC24B" stop-opacity="0.5"/>
+      <stop offset="0.45" stop-color="#FFC24B" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#FFC24B" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="mSpark" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FFF7E6"/>
+      <stop offset="0.55" stop-color="#FFD285" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#FFB84A" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <path d="M 462.1 137.0 A 238 132 -30 0 0 49.9 375.0 L 75.9 360.0 A 208 100 -30 0 1 436.1 152.0 Z" fill="url(#mBack)"/>
+  <circle cx="256" cy="256" r="152" fill="url(#mSphere)"/>
+  <ellipse cx="212" cy="194" rx="58" ry="42" transform="rotate(-28 212 194)" fill="url(#mHi)"/>
+  <ellipse cx="228" cy="350" rx="62" ry="24" transform="rotate(-16 228 350)" fill="url(#mBounce)"/>
+  <path d="M 462.1 137.0 A 238 132 -30 0 1 350.0 352.6 C 345.7 355.6 342.5 357.8 338.1 360.5 C 333.7 363.3 327.4 365.6 323.7 369.3 C 320.0 373.1 315.4 384.3 313.3 385.4 C 311.2 386.5 301.3 386.0 298.5 382.9 C 295.7 379.9 280.2 348.0 279.7 348.7 C 279.1 349.4 280.7 402.3 279.6 405.4 C 278.6 408.5 267.6 395.3 263.7 395.2 C 259.8 395.1 251.6 402.3 246.3 404.5 C 241.0 406.7 234.2 408.4 228.5 409.9 C 222.8 411.5 217.6 412.8 212.1 414.1 C 206.6 415.3 201.0 416.4 195.5 417.3 A 238 132 -30 0 1 49.9 375.0 L 75.9 360.0 A 208 100 -30 0 0 196.7 386.0 C 201.5 384.9 206.2 383.8 210.9 382.6 C 215.7 381.3 220.1 380.0 225.0 378.5 C 229.9 377.0 235.8 375.4 240.3 373.3 C 244.9 371.2 251.9 364.3 255.3 364.5 C 258.7 364.7 268.5 378.2 269.3 375.2 C 270.2 372.1 267.5 319.6 268.0 319.0 C 268.5 318.3 282.9 350.6 285.5 353.7 C 288.1 356.9 297.0 357.8 298.9 356.8 C 300.7 355.8 304.3 345.1 307.5 341.7 C 310.7 338.3 316.2 336.5 320.1 334.1 C 323.9 331.7 326.8 329.8 330.6 327.3 A 208 100 -30 0 0 436.1 152.0 Z" fill="url(#mFront)"/>
+  <circle cx="276.1" cy="343.6" r="46" fill="url(#mGlow)"/>
+  <path d="M 350.0 352.6 C 345.7 355.6 342.5 357.8 338.1 360.5 C 333.7 363.3 327.4 365.6 323.7 369.3 C 320.0 373.1 315.4 384.3 313.3 385.4 C 311.2 386.5 301.3 386.0 298.5 382.9 C 295.7 379.9 280.2 348.0 279.7 348.7 C 279.1 349.4 280.7 402.3 279.6 405.4 C 278.6 408.5 267.6 395.3 263.7 395.2 C 259.8 395.1 251.6 402.3 246.3 404.5 C 241.0 406.7 234.2 408.4 228.5 409.9 C 222.8 411.5 217.6 412.8 212.1 414.1 C 206.6 415.3 201.0 416.4 195.5 417.3 L 196.7 386.0 C 201.5 384.9 206.2 383.8 210.9 382.6 C 215.7 381.3 220.1 380.0 225.0 378.5 C 229.9 377.0 235.8 375.4 240.3 373.3 C 244.9 371.2 251.9 364.3 255.3 364.5 C 258.7 364.7 268.5 378.2 269.3 375.2 C 270.2 372.1 267.5 319.6 268.0 319.0 C 268.5 318.3 282.9 350.6 285.5 353.7 C 288.1 356.9 297.0 357.8 298.9 356.8 C 300.7 355.8 304.3 345.1 307.5 341.7 C 310.7 338.3 316.2 336.5 320.1 334.1 C 323.9 331.7 326.8 329.8 330.6 327.3 Z" fill="url(#mPulse)"/>
+  <circle cx="269.3" cy="324.8" r="8" fill="url(#mSpark)"/>
+</svg>

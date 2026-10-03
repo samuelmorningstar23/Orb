@@ -1,0 +1,169 @@
+/* ═══ Sage Provenance — incident review ═══
+   Read-only surface. Table primitives come from Admin.css; this file only adds
+   the detail layout. Flat Quiet Clinical: no gradients, no blur, no opacity
+   de-emphasis — muted text uses --text-muted, state uses --status-* tokens. */
+
+.prov-review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.prov-review__note {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+/* ── Detail view ── */
+.prov-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.prov-detail__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.prov-detail__id {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.prov-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.prov-back-btn:hover {
+  border-color: var(--border-glass);
+  color: var(--text-primary);
+}
+
+@media (pointer: coarse) {
+  .prov-back-btn {
+    min-height: 44px;
+  }
+}
+
+.prov-section {
+  padding: var(--space-4);
+}
+
+.prov-section__title {
+  margin: 0 0 var(--space-3);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.prov-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-3) var(--space-4);
+}
+
+.prov-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.prov-field__label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.prov-field__value {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.prov-field__value--mono {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+/* Stored evidence is rendered verbatim, in mono, and scrolls inside its own
+   box — a pasted discharge letter must never widen the page. */
+.prov-pre {
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-x: auto;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.prov-none {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.prov-guideline {
+  border-top: 1px solid var(--border-subtle);
+  padding: var(--space-2) 0;
+}
+
+.prov-guideline:first-of-type {
+  border-top: none;
+}
+
+.prov-guideline__summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  min-height: 24px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+@media (pointer: coarse) {
+  .prov-guideline__summary {
+    min-height: 44px;
+    align-items: center;
+  }
+}
+
+.prov-guideline__doc {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.prov-guideline__title {
+  color: var(--text-secondary);
+}
+
+.prov-guideline[open] .prov-pre {
+  margin-top: var(--space-2);
+}

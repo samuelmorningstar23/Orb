@@ -1,0 +1,36 @@
+/* The standing "investigational" label (InvestigationalBanner.tsx). A flat
+   warn tint with the lead in the warn TEXT token, never the fill token, so the
+   small type keeps its contrast in every theme. */
+.orb-investigational {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--status-warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 32%, transparent);
+  border-radius: var(--radius-md);
+}
+
+.orb-investigational__lead {
+  font-weight: 700;
+  color: var(--status-warn-text);
+}
+
+/* The floating Sage card: a strip under the header, not a boxed callout. */
+.orb-investigational--compact {
+  padding: 6px 16px;
+  font-size: var(--text-xs);
+  border-width: 0 0 1px;
+  border-radius: 0;
+}
+
+/* Sage panel: aligned to the reading column the messages use (.sage-main sets
+   --sage-col and --sage-gutter). */
+.orb-investigational--sage {
+  width: calc(100% - 2 * var(--sage-gutter, 28px));
+  max-width: var(--sage-col, 740px);
+  margin: 12px auto 0;
+  box-sizing: border-box;
+}

@@ -1,0 +1,334 @@
+/* ══════════════════════════════════════════════════
+   WHAT-IF CAPACITY & SURGE SIMULATOR
+   Quiet Clinical: flat opaque surfaces, hairline
+   borders, token-driven. Theme-aware, responsive.
+   ══════════════════════════════════════════════════ */
+
+.capsim {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  /* Page gutter is .shell__body's job — see ClinicianShell.css. */
+  padding: 0;
+  gap: 24px;
+  overflow-y: auto;
+  box-sizing: border-box;
+  color: var(--text-primary);
+}
+
+/* ── Header ── */
+.capsim__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 20px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 16px;
+}
+.capsim__title {
+  margin: 0;
+  font-size: 1.7rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.capsim__title-icon {
+  color: var(--accent-gold);
+}
+.capsim__subtitle {
+  margin: 4px 0 0;
+  font-size: 0.86rem;
+  color: var(--text-muted);
+}
+.capsim__baseline-chip {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+}
+.capsim__baseline-chip .lbl {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.capsim__baseline-chip .val {
+  font-size: 1.05rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Layout: controls | results ── */
+.capsim__grid {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .capsim__grid { grid-template-columns: 1fr; }
+}
+
+.capsim__card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+}
+.capsim__card-title {
+  margin: 0 0 6px;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* ── Scenario presets ── */
+.capsim__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.capsim__preset {
+  font-size: 0.74rem;
+  font-weight: 500;
+  padding: 8px 12px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-glass);
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.capsim__preset:hover {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+  color: var(--text-primary);
+}
+
+/* ── Knob rows ── */
+.capsim__knob { margin-bottom: 16px; }
+.capsim__knob:last-child { margin-bottom: 0; }
+.capsim__knob-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+.capsim__knob-label {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.capsim__knob-hint {
+  display: block;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.capsim__knob-value {
+  font-size: 0.92rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-text);
+  padding: 2px 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent-gold) 12%, transparent);
+}
+
+/* Range slider — the input itself is 24px tall for a comfortable hit target;
+   the 6px visual track is drawn by the track pseudo-elements. */
+.capsim__range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 24px;
+  background: transparent;
+  cursor: pointer;
+}
+.capsim__range::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--bg-glass-hover);
+}
+.capsim__range::-moz-range-track {
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--bg-glass-hover);
+}
+.capsim__range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -6px; /* center 18px thumb on 6px track */
+  border-radius: 50%;
+  background: var(--accent-gold);
+  border: 2px solid var(--bg-primary);
+  cursor: pointer;
+}
+.capsim__range::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent-gold);
+  border: 2px solid var(--bg-primary);
+  cursor: pointer;
+}
+
+.capsim__reset {
+  width: 100%;
+  margin-top: 20px;
+  padding: 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-glass);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.capsim__reset:hover { background: var(--bg-glass); color: var(--text-primary); }
+
+/* ── Results column ── */
+.capsim__results { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+
+/* Summary stat tiles */
+.capsim__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+}
+.capsim__stat {
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  position: relative;
+  overflow: hidden;
+}
+/* Semantic edge stripe: encodes tile status, not decoration, so it is drawn at
+   full token strength, never faded. A tile with no tone has no result yet, so
+   its stripe is neutral: full-strength accent reads as the danger red in dark
+   and the warn amber in night. */
+.capsim__stat::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--text-muted);
+}
+.capsim__stat--danger::before { background: var(--status-danger); }
+.capsim__stat--warn::before { background: var(--status-warn); }
+.capsim__stat--ok::before { background: var(--status-ok); }
+.capsim__stat-label {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.capsim__stat-value {
+  font-size: 1.65rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
+  color: var(--text-primary);
+}
+.capsim__stat--danger .capsim__stat-value { color: var(--status-danger-text); }
+.capsim__stat--warn .capsim__stat-value { color: var(--status-warn-text); }
+.capsim__stat--ok .capsim__stat-value { color: var(--status-ok-text); }
+.capsim__stat-sub {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+/* Chart card */
+.capsim__chart-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 20px 16px 8px;
+}
+.capsim__chart-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 6px 10px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.capsim__chart-title { font-size: 0.9rem; font-weight: 600; }
+.capsim__legend { display: flex; gap: 16px; font-size: 0.72rem; color: var(--text-secondary); }
+.capsim__legend i { display: inline-block; width: 12px; height: 3px; border-radius: var(--radius-full); margin-right: 6px; vertical-align: middle; }
+.capsim__chart-wrap { width: 100%; height: 320px; }
+
+/* Custom tooltip — floating layer: elevated surface, hairline border. */
+.capsim__tip {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font-size: 0.76rem;
+  box-shadow: var(--elev-3);
+}
+.capsim__tip strong { display: block; margin-bottom: 4px; color: var(--text-primary); }
+.capsim__tip .row { display: flex; justify-content: space-between; gap: 16px; color: var(--text-secondary); }
+.capsim__tip .row.over { color: var(--status-danger-text); font-weight: 600; }
+
+/* Assumptions footnote */
+.capsim__assumptions {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+.capsim__assumptions summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+.capsim__assumptions ul { margin: 6px 0 0; padding-left: 16px; }
+.capsim__assumptions li { margin-bottom: 5px; }
+.capsim__assumptions code { color: var(--accent-text); font-size: 0.7rem; }
+
+.capsim__error {
+  padding: 16px 20px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent);
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  color: var(--status-danger-text);
+  font-size: 0.84rem;
+}
+
+.capsim__busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+/* Live-state pulse, kept: it signals an in-flight computation. The dot stays
+   solid and pulses by size, never by fading. */
+.capsim__busy-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent-gold);
+  animation: capsim-pulse 1s ease-in-out infinite;
+}
+@keyframes capsim-pulse { 0%,100% { transform: scale(0.6); } 50% { transform: scale(1); } }

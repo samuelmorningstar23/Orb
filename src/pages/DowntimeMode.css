@@ -1,0 +1,336 @@
+/* ==========================================================================
+   EHR Downtime Mode — high-contrast, print-friendly, read-only snapshot view.
+
+   Deliberately a LIGHT, paper-like document, independent of the app theme:
+   this is the ward's fallback when everything else is down, so it must read
+   like a printed clinical sheet and stay legible on any screen or on paper.
+   The local --dt-* palette is fixed (print-color-adjust: exact) so output is
+   identical in every app theme — do not swap it for theme tokens.
+   ========================================================================== */
+
+.downtime-mode {
+  --dt-ink: #111318;
+  --dt-ink-soft: #444a56;
+  --dt-line: #c9ced8;
+  --dt-line-strong: #111318;
+  --dt-paper: #ffffff;
+  --dt-paper-2: #f4f6fa;
+  --dt-danger: #b3261e;
+  --dt-danger-bg: #fdecea;
+  --dt-warn: #8a5a00;
+  --dt-warn-bg: #fff4e0;
+  --dt-ok: #1b5e20;
+  --dt-ok-bg: #e7f5e9;
+
+  /* 100vh, not 100%: a percentage resolves against ancestors that do not set a
+     height, so a short page — the empty state, or the scope refusal — painted
+     paper only as far as its content and left the app's dark background showing
+     below it. The downtime sheet is the ward's fallback when everything else is
+     down; it must not look half-broken on the one screen a clinician falls back
+     to. Matches the shell's own min-height: 100vh. */
+  min-height: 100vh;
+  background: var(--dt-paper-2);
+  color: var(--dt-ink);
+  font-family: var(--font-family);
+  padding: 0 0 48px;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* ── Toolbar (screen only) — fixed emergency chrome, always dark ─────── */
+.dt-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  /* Wraps: the page clips horizontal overflow (index.css), so at phone width
+     an unwrapped row pushed Print and Print ward pack off-screen for good. */
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  padding: 12px 24px;
+  background: #14161c;
+  color: #f5f6f8;
+  border-bottom: 3px solid var(--dt-danger);
+}
+
+.dt-toolbar__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+}
+
+.dt-toolbar__sub {
+  font-weight: 400;
+  font-size: 0.8rem;
+  color: #aeb4c0;
+  margin-left: 4px;
+}
+
+.dt-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--dt-danger);
+  display: inline-block;
+}
+
+.dt-toolbar__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.dt-btn {
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid #3a3f4b;
+  background: #232732;
+  color: #f5f6f8;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.dt-btn:hover:not(:disabled) { background: #2e3442; }
+/* Fixed hexes, not --btn-disabled-*: this toolbar is theme-independent dark
+   chrome, so a light-theme disabled fill would outshout the enabled buttons and
+   read as the white --primary variant. Label is 5.6:1 on this fill.
+   border-color is required to beat .dt-btn--primary's white border. */
+.dt-btn:disabled {
+  background: #1b1e26;
+  color: #8f96a3;
+  border-color: #2b303b;
+  cursor: not-allowed;
+}
+.dt-btn--primary {
+  background: #ffffff;
+  color: #14161c;
+  border-color: #ffffff;
+}
+.dt-btn--primary:hover:not(:disabled) { background: #e9ebf0; }
+
+/* Tap-target law: 44px minimum under a coarse pointer. */
+@media (pointer: coarse) {
+  .dt-btn { min-height: 44px; }
+}
+
+/* ── States ──────────────────────────────────────────────────────────── */
+.dt-alert {
+  margin: 20px auto;
+  max-width: 860px;
+  padding: 12px 16px;
+  border: 1px solid var(--dt-danger);
+  background: var(--dt-danger-bg);
+  color: var(--dt-danger);
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+}
+.dt-empty {
+  margin: 48px auto;
+  max-width: 640px;
+  text-align: center;
+  color: var(--dt-ink-soft);
+  line-height: 1.6;
+}
+.dt-empty-inline { color: var(--dt-ink-soft); font-style: italic; }
+
+/* ── The printable document — flat paper, hairline rules, no shadow ──── */
+.downtime-print-layout {
+  max-width: 900px;
+  margin: 24px auto;
+  background: var(--dt-paper);
+  border: 1px solid var(--dt-line);
+  border-radius: var(--radius-md);
+  padding: 28px 32px 32px;
+}
+
+/* Banner */
+.dt-banner {
+  border: 2px solid var(--dt-line-strong);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  margin-bottom: 24px;
+  background: #fff;
+}
+.dt-banner__label {
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--dt-danger);
+}
+.dt-banner__time { font-size: 1rem; font-weight: 700; margin-top: 2px; }
+.dt-banner__note { font-size: 0.8rem; color: var(--dt-ink-soft); margin-top: 2px; }
+
+/* Sections */
+.dt-section { margin-bottom: 20px; page-break-inside: avoid; }
+.dt-section-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--dt-ink);
+  border-bottom: 2px solid var(--dt-line-strong);
+  padding-bottom: 4px;
+  margin: 0 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Demographics */
+.dt-patient-name { font-size: 1.6rem; font-weight: 800; margin: 0 0 10px; }
+.dt-demo-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 24px;
+}
+.dt-demo-grid > div { display: flex; gap: 8px; font-size: 0.92rem; padding: 3px 0; border-bottom: 1px dotted var(--dt-line); }
+.dt-k { min-width: 128px; color: var(--dt-ink-soft); font-weight: 600; }
+.dt-v { color: var(--dt-ink); font-weight: 500; }
+.dt-v--strong { font-weight: 800; }
+.dt-escalation { display: block; }
+
+/* Allergies — front and centre */
+.dt-allergies--present {
+  border: 2px solid var(--dt-danger);
+  background: var(--dt-danger-bg);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+}
+.dt-allergies--present .dt-section-title { border-bottom-color: var(--dt-danger); color: var(--dt-danger); }
+.dt-allergy-list { list-style: none; margin: 0; padding: 0; }
+.dt-allergy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--dt-danger) 25%, transparent);
+}
+.dt-allergy:last-child { border-bottom: none; }
+.dt-allergy__name { font-weight: 800; font-size: 1.05rem; color: var(--dt-danger); text-transform: capitalize; }
+.dt-allergy__sev {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--dt-danger);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+}
+.dt-allergy__rx { color: var(--dt-ink); }
+.dt-allergy__cls { color: var(--dt-ink-soft); font-size: 0.85rem; }
+.dt-nkda { font-weight: 600; color: var(--dt-ok); }
+
+/* Vitals */
+.dt-vitals-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+.dt-vital {
+  border: 1px solid var(--dt-line);
+  border-radius: var(--radius-sm);
+  padding: 8px 6px;
+  text-align: center;
+  background: var(--dt-paper-2);
+}
+.dt-vital__v { display: block; font-size: 1.2rem; font-weight: 800; }
+.dt-vital__k { display: block; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--dt-ink-soft); margin-top: 2px; }
+.dt-meta { font-size: 0.78rem; color: var(--dt-ink-soft); margin-top: 8px; }
+.dt-drivers { font-size: 0.85rem; margin-top: 4px; color: var(--dt-ink); }
+
+/* NEWS2 badge in section title */
+.dt-badge {
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--dt-line-strong);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.dt-badge--critical { background: var(--dt-danger-bg); color: var(--dt-danger); border-color: var(--dt-danger); }
+.dt-badge--elevated { background: var(--dt-warn-bg); color: var(--dt-warn); border-color: var(--dt-warn); }
+.dt-badge--stable { background: var(--dt-ok-bg); color: var(--dt-ok); border-color: var(--dt-ok); }
+
+/* Lists / tables */
+.dt-list { margin: 0; padding-left: 20px; line-height: 1.6; }
+.dt-code { color: var(--dt-ink-soft); font-family: var(--font-mono); font-size: 0.85rem; }
+
+/* A wide table scrolls inside its own box; the page itself never can. */
+.dt-table-wrap { overflow-x: auto; }
+.dt-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.dt-table th, .dt-table td { border: 1px solid var(--dt-line); padding: 6px 10px; text-align: left; }
+.dt-table th { background: var(--dt-paper-2); font-weight: 700; text-transform: uppercase; font-size: 0.72rem; letter-spacing: 0.03em; }
+
+/* Notes */
+.dt-notes { list-style: none; margin: 0; padding: 0; }
+.dt-notes--after-table { margin-top: 10px; }
+.dt-note { border: 1px solid var(--dt-line); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 8px; page-break-inside: avoid; }
+.dt-note__head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.dt-note__fmt { font-weight: 700; font-size: 0.72rem; letter-spacing: 0.04em; color: var(--dt-ink-soft); }
+.dt-note__meta { font-size: 0.78rem; color: var(--dt-ink-soft); }
+.dt-note__body { white-space: pre-wrap; font-size: 0.9rem; line-height: 1.5; }
+
+.dt-footer { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--dt-line); font-size: 0.75rem; color: var(--dt-ink-soft); }
+
+@media (max-width: 720px) {
+  .dt-demo-grid { grid-template-columns: 1fr; }
+  .dt-vitals-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .downtime-print-layout { margin: 12px; padding: 16px; }
+  /* Phone: title over a full-width button grid, and not sticky, so the
+     wrapped bar does not sit over a third of the sheet while reading. */
+  .dt-toolbar { position: static; padding: 12px 16px; }
+  .dt-toolbar__title { flex-wrap: wrap; }
+  .dt-toolbar__sub { flex-basis: 100%; margin-left: 0; }
+  .dt-toolbar__actions { width: 100%; }
+  .dt-toolbar__actions .dt-btn { flex: 1 1 calc(50% - 4px); }
+  .dt-k { min-width: 0; flex: 0 0 40%; }
+}
+
+/* ==========================================================================
+   Print — reveal ONLY the snapshot document.
+
+   The global print.css (src/print.css) does `body * { visibility: hidden }` and
+   only re-shows the discharge/handoff portals, and `.shell { display:none }`.
+   These rules override that so the downtime document prints cleanly whether the
+   page is mounted standalone or inside the app shell.
+   ========================================================================== */
+@media print {
+  /* If mounted inside the app shell, keep it in the layout tree so our subtree
+     is not removed by the global `.shell { display: none }` rule. */
+  .shell:has(.downtime-print-layout) { display: block !important; }
+
+  .downtime-mode { background: #fff !important; padding: 0 !important; }
+  .dt-toolbar, .dt-alert, .dt-empty { display: none !important; }
+  /* Paper cannot scroll: a scroll box would print only its visible part. */
+  .dt-table-wrap { overflow: visible !important; }
+
+  .downtime-print-layout,
+  .downtime-print-layout * { visibility: visible !important; }
+
+  .downtime-print-layout {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  /* Preserve the safety-critical colour cues on paper. */
+  .dt-banner__label, .dt-allergy__name { color: #b3261e !important; }
+  .dt-allergies--present { border: 2px solid #b3261e !important; }
+  .dt-allergy__sev { background: #b3261e !important; color: #fff !important; }
+}

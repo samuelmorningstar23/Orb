@@ -1,0 +1,306 @@
+{
+ "phase": "g1",
+ "run_at": "2026-08-04T16:17:07",
+ "records": [
+  {
+   "n": 1,
+   "group": "G1",
+   "q": "What is the mechanism of action of aspirin?",
+   "scope": "simple",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "Aspirin inhibits cyclooxygenase (COX)-1 and COX-2 enzymes, which are responsible for producing prostaglandins that mediate inflammation, pain, and fever. This inhibition reduces thromboxane A2 production, leading to platelet aggregation inhibition and antiplatelet effects.\n\nNOACT|\n",
+     "ttft_ms": 2884.9,
+     "total_ms": 3769.7,
+     "prompt_tokens": 815,
+     "prefill_ms": 857.9,
+     "prefill_tps": 950.0,
+     "decode_tokens": 58,
+     "decode_ms": 886.0,
+     "decode_tps": 65.5
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| Aspirin irreversibly inhibits cyclooxygenase (COX)-1 and COX-2 enzymes. This inhibition prevents the synthesis of thromboxane A2 (TXA2) in platelets, which reduces platelet aggregation and vasoconstriction. It also decreases the production of prostaglandins involved in inflammation and pain.\n\n<details><cited_sources>[\"EXT\"]</cited_sources></details>",
+     "ttft_ms": 8966.9,
+     "total_ms": 13945.6,
+     "prompt_tokens": 815,
+     "prefill_ms": 5786.6,
+     "prefill_tps": 140.8,
+     "decode_tokens": 79,
+     "decode_ms": 4979.2,
+     "decode_tps": 15.9
+    }
+   }
+  },
+  {
+   "n": 2,
+   "group": "G1",
+   "q": "A patient has a serum sodium of 118 mmol/L. What is the most likely complication of correcting this too rapidly?",
+   "scope": "clinical",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "The most likely complication of correcting hyponatremia too rapidly is **osmotic demyelination syndrome**. This occurs because the rapid increase in serum osmolality draws water from brain cells, leading to damage. <details><cited_sources>[HYP-001]</cited_sources></details>\n",
+     "ttft_ms": 2133.1,
+     "total_ms": 2939.8,
+     "prompt_tokens": 483,
+     "prefill_ms": 414.0,
+     "prefill_tps": 1166.6,
+     "decode_tokens": 63,
+     "decode_ms": 806.6,
+     "decode_tps": 78.1
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| The most likely complication of overly rapid correction of severe hyponatremia (like Na+ 118 mmol/L) is **osmotic demyelination syndrome** (ODS), previously known as central pontine myelinolysis. This occurs because the brain cells have adapted to the low extracellular osmolality by losing intracellular solutes. If the serum sodium rises too quickly, water shifts out of the brain cells faster than they can regain these solutes, leading to cell shrinkage and damage, particularly in the pons. Symptoms can range from mild paresthesias and dysarthria to quadriplegia, locked-in syndrome, and death. Guidelines generally recommend limiting the rate of correction to no more than **4-6 mEq/L in the first 24 hours**, or **8 mEq/L in the first 48 hours**.\n",
+     "ttft_ms": 1740.3,
+     "total_ms": 12854.5,
+     "prompt_tokens": 483,
+     "prefill_ms": 1423.9,
+     "prefill_tps": 339.2,
+     "decode_tokens": 176,
+     "decode_ms": 11115.5,
+     "decode_tps": 15.8
+    }
+   }
+  },
+  {
+   "n": 3,
+   "group": "G1",
+   "q": "Which acid-base disturbance is characterised by a high anion gap, and name four causes.",
+   "scope": "simple",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "The acid-base disturbance characterized by a high anion gap is **metabolic acidosis**. Four common causes include:\n\n*   **Lactic acidosis**: caused by anaerobic metabolism of tissues such as muscles from hypoperfusion.\n*   **Diabetic ketoacidosis (DKA)**: due to insulin deficiency leading to increased ketone body production.\n*   **Uremic acidosis**: arising from kidney failure causing accumulation of uremic toxins.\n*   **Assortment Acidosis**: this occurs in patients who have had extensive surgery or trauma where there has been significant fluid shifts which can lead to an increase in lactic acid levels.\n\n<details><cited_sources>[DOC-ID]</cited_sources></details>\n",
+     "ttft_ms": 724.8,
+     "total_ms": 2646.9,
+     "prompt_tokens": 474,
+     "prefill_ms": 421.4,
+     "prefill_tps": 1124.8,
+     "decode_tokens": 149,
+     "decode_ms": 1922.0,
+     "decode_tps": 77.5
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| An **anion gap metabolic acidosis** is characterized by a high anion gap. The anion gap represents the difference between measured cations (primarily sodium) and measured anions (chloride and bicarbonate). In metabolic acidosis, there is a loss of bicarbonate or gain of non-volatile acids, leading to a decrease in serum bicarbonate concentration. When the body compensates by increasing chloride levels, it results in a normal anion gap metabolic acidosis. However, if the increase in unmeasured anions (like lactate, ketones, phosphates, sulfates, toxins) exceeds the compensatory increase in chloride, the anion gap increases.\n\nFour common causes include:\n-   **MUDPILES**: Mnemonic for remembering causes\n    -   **M**ethanol ingestion\n    -   **U**remia (renal failure)\n    -   **D**iabetic ketoacidosis (DKA) / Alcoholic ketoacidosis\n    -   **P**araldehyde/Propylene glycol ingestion\n    -   **I**soniazid/Iron ingestion\n    -   **L**actic acidosis (e.g., due to shock, sepsis, hypoxia)\n    -   **E**thylene glycol ingestion\n    -   **S**alicylates (aspirin overdose)",
+     "ttft_ms": 1880.3,
+     "total_ms": 19770.9,
+     "prompt_tokens": 474,
+     "prefill_ms": 1556.4,
+     "prefill_tps": 304.6,
+     "decode_tokens": 257,
+     "decode_ms": 17887.7,
+     "decode_tps": 14.4
+    }
+   }
+  },
+  {
+   "n": 4,
+   "group": "G1",
+   "q": "A 55-year-old presents with crushing chest pain radiating to the jaw. ECG shows ST elevation in II, III and aVF. Which coronary artery is most likely occluded, and what complication should you anticipate?",
+   "scope": "simple",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "The **inferior wall of the left ventricle** is most likely occluded. A common complication is **right ventricular infarction**, which can lead to hypotension and cardiac arrest. <details><cited_sources>[CORONARY ARTERY ANATOMY]</cited_sources></details>\n",
+     "ttft_ms": 2523.2,
+     "total_ms": 3267.0,
+     "prompt_tokens": 568,
+     "prefill_ms": 533.2,
+     "prefill_tps": 1065.3,
+     "decode_tokens": 58,
+     "decode_ms": 743.7,
+     "decode_tps": 78.0
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| The ECG findings of **ST elevation in leads II, III, and aVF** indicate an inferior myocardial infarction. The coronary artery most commonly occluded in this situation is the **right coronary artery (RCA)** or, less frequently, the left circumflex artery (LCx) if it supplies the posterior descending artery (PDA). A significant anticipated complication associated with inferior MI, especially involving the RCA, is **bradycardia or heart block**, due to ischemia affecting the sinoatrial (SA) node or atrioventricular (AV) node which are often supplied by the RCA. Another potential complication is **right ventricular infarction** if the proximal RCA is involved.\n\n<details><cited_sources>[\"DOC-ID\"]</cited_sources></details>\n",
+     "ttft_ms": 2405.7,
+     "total_ms": 13782.9,
+     "prompt_tokens": 568,
+     "prefill_ms": 2085.9,
+     "prefill_tps": 272.3,
+     "decode_tokens": 161,
+     "decode_ms": 11377.3,
+     "decode_tps": 14.2
+    }
+   }
+  },
+  {
+   "n": 5,
+   "group": "G1",
+   "q": "Explain the pathophysiology of diabetic ketoacidosis and why the potassium is often normal or high on presentation despite total body depletion.",
+   "scope": "clinical",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "The pathophysiology of DKA involves hyperglycemia leading to osmotic diuresis, resulting in dehydration and electrolyte loss including potassium. The kidneys excrete glucose and electrolytes, but the rate of excretion can be overwhelmed, especially early in the course of DKA when the patient is severely dehydrated. This leads to a relative excess of sodium compared to water, which causes hypernatremia. Furthermore, insulin deficiency impairs cellular uptake of glucose and promotes lipolysis, increasing free fatty acids. These are converted into ketone bodies (beta-hydroxybutyrate, acetoacetate, acetone), further contributing to metabolic acidosis.\n\nPotassium levels may appear normal or even elevated initially because serum potassium measurements do not accurately reflect total body stores during DKA. Total body potassium is depleted due to urinary losses from osmotic diuresis and intracellular shifts caused by insulin deficiency and acidosis. However, extracellular fluid volume is expanded with hypernatremia, diluting the serum potassium concentration. As DKA treatment progresses, fluids are administered, correcting the hypernatremia and allowing for accurate assessment of total body potassium depletion. Insulin administration also drives potassium back into cells, eventually lowering serum potassium levels. Therefore, it's crucial to monitor serum potassium closely throughout DKA management as patients often present with normal or high values that decline significantly after initial interventions.\n",
+     "ttft_ms": 1172.5,
+     "total_ms": 4658.5,
+     "prompt_tokens": 927,
+     "prefill_ms": 838.6,
+     "prefill_tps": 1105.4,
+     "decode_tokens": 260,
+     "decode_ms": 3486.9,
+     "decode_tps": 74.6
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| Diabetic ketoacidosis (DKA) occurs primarily due to insulin deficiency, leading to hyperglycemia, increased lipolysis, and subsequent ketone production. The lack of insulin prevents glucose uptake into cells, causing **hyperglycemia**. Simultaneously, it promotes fat breakdown (**lipolysis**), releasing free fatty acids that are converted to ketone bodies in the liver (**ketogenesis**). These ketones (acetoacetate, beta-hydroxybutyrate, acetone) cause metabolic acidosis.\n\nThe osmotic effect of hyperglycemia leads to fluid loss through glycosuria, causing dehydration and electrolyte imbalances. Insulin normally drives potassium into cells. In DKA, although there's a significant **total body potassium deficit** due to urinary losses from osmotic diuresis and gastrointestinal losses (if present), several factors contribute to presenting serum potassium levels being normal or even elevated:\n-   **Acidosis**: Hydrogen ions move into cells in exchange for intracellular potassium, shifting potassium out into the extracellular space.\n-   **Insulin Deficiency**: Lack of insulin impairs the cellular uptake of potassium.\n-   **Hyperosmolality**: Increased plasma osmolality can draw water and potassium out of cells.\n-   **Catecholamine Release**: Stress response releases catecholamines which also shift potassium extracellularly.\n\nTherefore, despite total body depletion, the measured serum potassium is often normal or high initially, masking the true extent of the deficiency. This is why careful monitoring and replacement are crucial during DKA treatment as insulin therapy will drive potassium back into cells, potentially leading to severe hypokalemia if not managed appropriately.",
+     "ttft_ms": 4605.6,
+     "total_ms": 25724.2,
+     "prompt_tokens": 927,
+     "prefill_ms": 4301.6,
+     "prefill_tps": 215.5,
+     "decode_tokens": 320,
+     "decode_ms": 21118.9,
+     "decode_tps": 15.2
+    }
+   }
+  },
+  {
+   "n": 6,
+   "group": "G1",
+   "q": "A patient on lithium develops tremor, confusion and a creatinine rise after starting a thiazide. Explain the interaction mechanism and the management priority.",
+   "scope": "clinical",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "Lithium can cause nephrogenic diabetes insipidus which can lead to dehydration and electrolyte imbalances such as hypokalemia and hypercalcemia. Thiazides also increase serum sodium levels, which can exacerbate these effects.\n\nThe management priority is to address the potential side effects of both drugs while monitoring renal function closely. The first step would be to discontinue the thiazide diuretic. Monitor electrolytes and renal function frequently. Consider alternative antihypertensive medications that do not have this interaction or are less likely to affect renal function. Lithium should be held if there is evidence of toxicity.\n\n<details><cited_sources>[EXT-CARD-001]</cited_sources></details>\n",
+     "ttft_ms": 805.5,
+     "total_ms": 2692.1,
+     "prompt_tokens": 892,
+     "prefill_ms": 440.2,
+     "prefill_tps": 2026.1,
+     "decode_tokens": 137,
+     "decode_ms": 1886.7,
+     "decode_tps": 72.6
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| The interaction between lithium and thiazide diuretics is well-known. Thiazides decrease renal excretion of lithium by increasing sodium reabsorption in the proximal tubule, which secondarily enhances lithium reabsorption. This can lead to increased serum lithium levels, potentially causing toxicity.\n\nSymptoms of lithium toxicity include **tremor**, **confusion**, ataxia, nausea/vomiting, diarrhea, polyuria, polydipsia, and seizures. A **creatinine rise** suggests potential nephrotoxicity associated with lithium or dehydration exacerbated by the diuretic.\n\nManagement priorities are:\n1.  **Stop the thiazide diuretic**.\n2.  Check a **serum lithium level** immediately.\n3.  Assess renal function (**creatinine**) and hydration status.\n4.  Manage symptoms (e.g., supportive care, IV fluids if dehydrated).\n5.  If lithium level is high or symptomatic, consider interventions like hemodialysis depending on severity.\n6.  Once stable, carefully restart lithium at a lower dose once renal function normalizes and the offending agent is stopped. Close monitoring is essential.\n",
+     "ttft_ms": 3675.9,
+     "total_ms": 19715.2,
+     "prompt_tokens": 892,
+     "prefill_ms": 3264.5,
+     "prefill_tps": 273.2,
+     "decode_tokens": 230,
+     "decode_ms": 16039.3,
+     "decode_tps": 14.3
+    }
+   }
+  },
+  {
+   "n": 7,
+   "group": "G1",
+   "q": "Differentiate SIADH from cerebral salt wasting in a post-neurosurgical patient, including the single most useful distinguishing measurement.",
+   "scope": "simple",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "SIADH (Syndrome of Inappropriate Antidiuretic Hormone secretion) and Cerebral Salt Wasting (CSW) can both present with hyponatremia after neurosurgery, but they have distinct pathophysiology and management strategies.\n\n*   **SIADH:** Characterized by excessive ADH release leading to water retention and dilutional hyponatremia. It often presents with euvolemia or mild hypervolemia. The kidneys retain sodium, so patients don't typically lose significant amounts of sodium in their urine.\n\n*   **CSW:** Results from renal damage following brain injury, causing impaired sodium reabsorption and subsequent loss of sodium in the urine, along with increased free water excretion. Patients are usually hypovolemic due to fluid losses.\n\nThe **single most useful distinguishing measurement** between SIADH and CSW is serum osmolality. A low serum osmolality (<275 mOsm/kg) suggests SIADH because it indicates an excess of free water relative to solutes. A normal or elevated serum osmolality (>275 mOsm/kg) favors CSW as it signifies inadequate water excretion despite the presence of sodium wasting. Urine electrolytes (sodium concentration), especially when corrected for urine osmolality, also help differentiate; high urinary sodium points towards CSW. However, osmolality remains more helpful initially.\n\n<details><cited_sources>[\"DOC-ID\"]</cited_sources></details>\n",
+     "ttft_ms": 438.1,
+     "total_ms": 4352.6,
+     "prompt_tokens": 481,
+     "prefill_ms": 111.7,
+     "prefill_tps": 4308.1,
+     "decode_tokens": 294,
+     "decode_ms": 3914.4,
+     "decode_tps": 75.1
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| Differentiating Syndrome of Inappropriate Antidiuretic Hormone secretion (SIADH) from Cerebral Salt Wasting (CSW) can be challenging, especially in neurosurgical patients, as both present with hyponatremia. Here\u2019s a breakdown:\n\n*   **SIADH:** Characterized by **euvolemia** or mild hypervolemia despite low serum sodium due to excessive water retention driven by inappropriate ADH release. Urine osmolality is typically inappropriately high (>100 mOsm/kg), and urine sodium concentration is also usually elevated (>40 mmol/L). Patients often have normal or increased plasma volume status markers like CVP or PCWP. The underlying cause is often related to CNS injury, pain, stress, or medications.\n*   **CSW:** Characterized by **hypovolemia** due to renal loss of sodium, leading to hyponatremia. This occurs secondary to impaired renal sodium reabsorption, possibly mediated by natriuretic peptides released in response to brain injury. Patients exhibit signs of hypovolemia (tachycardia, hypotension, dry mucous membranes), decreased CVP/PCWP, and concentrated urine (high osmolality >300 mOsm/kg) but with very **low urine sodium (<20 mmol/L)** reflecting the salt wasting.\n\nThe single most useful distinguishing measurement is **urine sodium**. High urine sodium (>40 mmol/L) points towards SIADH (as the kidneys are trying to excrete excess free water relative to solute load, but can't get rid of enough Na), while low urine sodium (<20 mmol/L) strongly suggests CSW (the body is actively losing sodium through the kidneys despite being volume depleted). Volume status assessment (clinical signs, CVP/PCWP if available) also helps: euvolemic/hypervolemic favors SIADH, hypovolemic favors CSW.",
+     "ttft_ms": 1036.9,
+     "total_ms": 26576.1,
+     "prompt_tokens": 481,
+     "prefill_ms": 621.9,
+     "prefill_tps": 773.4,
+     "decode_tokens": 392,
+     "decode_ms": 25538.5,
+     "decode_tps": 15.3
+    }
+   }
+  },
+  {
+   "n": 8,
+   "group": "G1",
+   "q": "A 30-year-old with asthma is deteriorating despite nebulisers. ABG shows a normal pCO2. Why is that ominous, and what does it change about your management?",
+   "scope": "broad",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "**CRITICAL**\n\n*   **Ananya Kapoor | GM-101 | Diabetic ketoacidosis | Severe tachypnea (RR 28), Hypotension (SBP 100), Tachycardia (HR 118)** CRITICAL(0.35)\n*   **Rajesh Iyer | GM-102 | COPD exacerbation | Severe tachypnea (RR 26), Severe hypoxia (SpO2 89%), On supplemental oxygen** CRITICAL(0.65)\n*   **Priya Nair | GM-103 | Dengue fever with thrombocytopenia | Hypotension (SBP 95), Mild tachycardia (HR 108), High fever (39.2\u00b0C)** ELEVATED(0.25)\n\n**STABLE**\n\n*   **Suresh Reddy | GM-104 | CAP with early sepsis | All vitals within normal range** STABLE(0.0)\n*   **Lakshmi Devi | GM-105 | UTI with delirium | Mild hypoxia (SpO2 94%), Mild tachycardia (HR 96), Fever (38.4\u00b0C)** STABLE(0.15)\n\nA normal pCO2 in the setting of diabetic ketoacidosis can be ominous because it suggests that the patient is not compensating for metabolic acidosis by hyperventilating, which would normally lower the pCO2. In DKA, a normal or low pCO2 may indicate impending respiratory failure and/or severe acidemia. It also means that the patient's kidneys are likely unable to excrete bicarbonate effectively enough to compensate for the elevated anion gap. This could lead to worsening acidosis and potentially life-threatening complications such as cerebral edema. Therefore, this finding warrants close monitoring and aggressive treatment aimed at correcting both hyperglycemia and dehydration while closely watching for signs of respiratory compromise.\n",
+     "ttft_ms": 2882.1,
+     "total_ms": 8221.6,
+     "prompt_tokens": 1009,
+     "prefill_ms": 873.7,
+     "prefill_tps": 1154.9,
+     "decode_tokens": 395,
+     "decode_ms": 5340.1,
+     "decode_tps": 74.0
+    },
+    "medgemma:27b": {
+     "answer": "**Critical Patients:**\n\n*   **Ananya Kapoor** (**GM-101**) has diabetic ketoacidosis with critical vital signs including severe tachypnea (**RR:36**), hypotension (**BP:82/50**), tachycardia (**HR:146**), hypoxemia (**SpO2:83%**), and fever (**T:39.5**).\n*   **Rajesh Iyer** (**GM-102**) has a COPD exacerbation with critical vital signs including severe tachypnea (**RR:35**), severe hypoxemia (**SpO2:80%**), tachycardia (**HR:124**), and hypotension (**BP:83/35**).\n\n**Elevated Risk Patient:**\n\n*   **Priya Nair** (**GM-103**) has dengue fever with thrombocytopenia and elevated risk due to hypotension (**BP:111/54**), mild tachycardia (**HR:104**), and high fever (**T:38.1**).\n\n**Stable Patients:**\n\n*   **Suresh Reddy** (**GM-104**) has CAP with early sepsis, currently stable with normal vitals (**HR:88**, **BP:118/0**, **SpO2:96%**, **T:37.0**, **RR:18**).\n*   **Lakshmi Devi** (**GM-105**) has UTI with delirium, currently stable with near-normal vitals (**HR:74**, **BP:117/78**, **SpO2:98%**, **T:36.8**, **RR:17**).\n\nRegarding the 30-year-old asthma patient not listed in your census: I do not have information about patients outside of the General Medicine department. Therefore, I cannot provide specific advice based on their ABG results or clinical status.",
+     "ttft_ms": 9894.9,
+     "total_ms": 37227.2,
+     "prompt_tokens": 1009,
+     "prefill_ms": 6818.8,
+     "prefill_tps": 148.0,
+     "decode_tokens": 411,
+     "decode_ms": 27339.6,
+     "decode_tps": 15.0
+    }
+   }
+  },
+  {
+   "n": 9,
+   "group": "G1",
+   "q": "Explain why a patient with severe sepsis may have a normal lactate, and how that should alter your interpretation of the sepsis bundle.",
+   "scope": "clinical",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "A patient with severe sepsis can present with a normal lactate despite having significant systemic inflammation and potential end-organ damage due to several factors.\n\n*   **Early Lactate:** In early stages of sepsis, the body's compensatory mechanisms might be sufficient to maintain relatively stable lactate levels even in the face of tissue hypoperfusion and anaerobic metabolism. The liver is able to clear lactate at this stage so it remains within an acceptable range.\n*   **Organ Dysfunction Masking Lactate Elevation:** If one or more organs are severely affected by sepsis (e.g., kidney failure leading to lactic acidosis compensation, impaired hepatic function reducing lactate clearance), the elevated lactate level may not reflect the true severity of the underlying condition.\n*   **Lactate as a Late Marker:** Lactate elevation typically occurs later in the course of sepsis when tissues become significantly ischemic and anaerobic metabolism becomes widespread. A normal lactate does not rule out sepsis; it simply means the lactate has not yet reached its expected value.\n*   **Other Factors Influencing Lactate:** Other conditions such as diabetes, alcohol use disorder, or certain medications can also affect lactate levels independently of sepsis.\n*   **Clinical Context Matters**: Clinical judgement must always take precedence over lab values alone. Consider other clinical findings like vital signs, mental status, urine output, and presence/absence of organ dysfunction based on qSOFA scores for assessment of sepsis.\n\nTherefore, a normal lactate should prompt clinicians to consider alternative explanations for the patient's presentation and reassess their interpretation of the sepsis bundle. It doesn't necessarily mean that the patient isn't septic, but rather that you need to investigate further with additional information from physical exam and labs before administering antibiotics immediately. You would want to re-measure lactate if initial is >2 mmol/L, obtain blood cultures prior to antibiotic administration (as per 1-hour bundle) and administer broad spectrum antibiotics after obtaining consent.\n",
+     "ttft_ms": 2792.5,
+     "total_ms": 8073.8,
+     "prompt_tokens": 836,
+     "prefill_ms": 781.6,
+     "prefill_tps": 1069.6,
+     "decode_tokens": 392,
+     "decode_ms": 5281.4,
+     "decode_tps": 74.2
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| A patient with severe sepsis can still present with a normal lactate level early in the course, especially if resuscitation efforts are prompt and effective. Lactate elevation reflects tissue hypoperfusion and anaerobic metabolism; it takes time to accumulate significantly even under severe stress.\n\nTherefore, a normal lactate does not rule out sepsis or severe sepsis. The SSC 1-hour bundle emphasizes obtaining lactate *and* blood cultures before antibiotics, but clinical judgment remains paramount. If suspicion for sepsis is high based on other signs (e.g., source control issues, vital sign abnormalities like hypotension, tachycardia, tachypnea, altered mental status, elevated inflammatory markers), treatment shouldn't be delayed solely due to a normal initial lactate. Prompt administration of broad-spectrum antibiotics is crucial according to the bundle, regardless of the initial lactate value, as long as cultures were obtained first. Subsequent lactate measurements are important to assess response to therapy.\n",
+     "ttft_ms": 8884.6,
+     "total_ms": 21651.3,
+     "prompt_tokens": 836,
+     "prefill_ms": 5990.6,
+     "prefill_tps": 139.6,
+     "decode_tokens": 187,
+     "decode_ms": 12767.3,
+     "decode_tps": 14.6
+    }
+   }
+  },
+  {
+   "n": 10,
+   "group": "G1",
+   "q": "In a patient with cirrhosis, ascites and a rising creatinine, distinguish hepatorenal syndrome from pre-renal azotaemia and ATN, and justify your first three management steps.",
+   "scope": "clinical",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "The key difference between hepatorenal syndrome (HRS) and other causes of renal dysfunction in the setting of cirrhosis is that HRS is characterized by functional kidney injury despite normal or near-normal serum creatinine levels. This means the kidneys are still structurally intact but unable to adequately filter waste products due to severe vasoconstriction of the splanchnic circulation, leading to decreased effective circulating volume.\n\nPre-renal azotemia occurs when there's reduced blood flow to the kidneys, often due to dehydration, heart failure, or low vascular tone. Acute tubular necrosis (ATN) results from direct damage to the kidney tubules, typically caused by ischemia, toxins, or nephrotoxic medications.\n\nTherefore, the initial management should focus on identifying whether the elevated creatinine reflects true renal impairment or simply inadequate perfusion. The first three management steps would be:\n\n1.  **Assess Volume Status:** Evaluate for signs of hypovolemia such as hypotension, tachycardia, and poor skin turgor. If hypovolemic, administer intravenous fluids cautiously, monitoring renal function closely. However, if fluid resuscitation leads to worsening ascites/edema without improvement in renal function, it may suggest a different etiology.\n2.  **Check for Other Causes of Azotemia:** Rule out pre-renal azotemia with appropriate investigations like urine electrolytes, BUN/creatinine ratio, and assessment of cardiac output. Also, consider other potential causes of ATN, such as sepsis, drug toxicity, or contrast-induced nephropathy.\n3.  **Monitor Renal Function Closely:** Serial measurements of serum creatinine, urea, and fractional excretion of sodium are crucial to differentiate between HRS and other forms of acute kidney injury. In HRS, you might see a relatively stable creatinine despite worsening liver dysfunction; this is because the kidneys have adapted to the low effective circulating volume but cannot compensate fully when further volume depletion occurs. A high fractional excretion of sodium (FENa) > 1% suggests intrinsic renal damage rather than prerenal azotemia.\n\n<details><cited_sources>[EXT-CARD-001][EXT-RESP-001][EXT-VTE-001]</cited_sources></details>\n",
+     "ttft_ms": 2809.3,
+     "total_ms": 8790.8,
+     "prompt_tokens": 902,
+     "prefill_ms": 802.9,
+     "prefill_tps": 1123.4,
+     "decode_tokens": 447,
+     "decode_ms": 5980.9,
+     "decode_tps": 74.7
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| Cirrhosis complicates differentiating causes of acute kidney injury (AKI), especially when ascites is present. Here's how to approach distinguishing hepatorenal syndrome (HRS) from other AKI types in this setting, along with initial management steps:\n\n**Differential Diagnosis:**\n\n*   **Pre-renal Azotemia:** Often due to intravascular volume depletion (e.g., aggressive diuresis, GI bleeding, infection). Characterized by increased BUN/Cr ratio (>20:1 typically), concentrated urine (high osmolality, low sodium), and improvement with volume repletion. Ascites can mask signs of dehydration.\n*   **Acute Tubular Necrosis (ATN):** Can be caused by ischemia (due to hypotension/hypovolemia common in cirrhotic patients) or nephrotoxins. Urine sediment may show muddy brown casts. Fractional excretion of sodium (FeNa) < 1% suggests prerenal, while FeNa > 2% suggests intrinsic renal damage like ATN (though FeNa interpretation is less reliable in cirrhosis).\n*   **Hepatorenal Syndrome (HRS):** A functional renal failure specific to advanced liver disease (Child-Pugh C usually). It occurs *without* underlying structural kidney disease, severe hemodynamic abnormalities, or shock. HRS is triggered by splanchnic vasodilation leading to systemic arterial vasodilation, reduced effective circulating volume, activation of RAAS and vasoconstriction of renal arteries.\n\n    *   **Type 1 HRS (rapid onset):** Spontaneous development or precipitated by an event (like SBP, variceal bleed). Severe AKI (doubling Cr to >2.5 mg/dL within 2 weeks). Poor prognosis.\n    *   **Type 2 HRS (slow onset):** Develops over longer periods with persistent ascites unresponsive to diuretics. Milder AKI (Cr >1.5 but <2.5 mg/dL).\n\n**Diagnostic Approach:**\n\n1.  **Rule out pre-renal causes:** Stop potential offending agents (diuretics if possible), ensure adequate intravascular volume (cautiously, as cirrhotic patients retain sodium/water; albumin infusion may be needed for effective volume expansion). Assess response: improvement suggests pre-renal.\n2.  **Assess for signs of infection/SBP:** Infection can precipitate both pre-renal azotemia and HRS. Perform paracentesis if not done recently.\n3.  **Evaluate for other intrinsic causes:** Check urine",
+     "ttft_ms": 4814.8,
+     "total_ms": 38599.1,
+     "prompt_tokens": 902,
+     "prefill_ms": 4424.4,
+     "prefill_tps": 203.9,
+     "decode_tokens": 512,
+     "decode_ms": 33785.1,
+     "decode_tps": 15.2
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,11 @@
+MSH|^~\&|CHEAP_OEM|HOSPITAL_A|ORB|ORB_OS|NOT-A-TIMESTAMP||ORU^R01|HOSTILE001|P|2.3
+PID|1||PAT001||Patel^Raj
+ZZZ|this is a vendor Z-segment nobody documented|||||
+OBR|1||||||
+OBX|1|NM|8867-4^Heart Rate^LN||NaN|bpm||||F|||NOT-A-TIMESTAMP
+OBX|2|NM|2708-6^Oxygen Saturation^LN||900|%|95-100|H|||F|||
+OBX|3|NM|8480-6^Systolic Blood Pressure^LN|||mmHg||||F|||
+OBX|4
+OBX|5|NM|8310-5^Body Temperature^LN||38.6|Cel|36.1-37.2|H|||F|||
+OBX|6|NM|8867-4^Heart Rate^LN||-17|bpm||||F|||
+OBX|7|TX|11529-5^Comment^LN||Patient moved\S\artefact on lead II|||||F

@@ -1,0 +1,32 @@
+{
+  "id": "sage-refusal",
+  "title": "The cross-department refusal",
+  "subtitle": "A real doctor with a real login, and Orb still says no",
+  "user": "DOC001",
+  "theme": "dark",
+  "viewport": {
+    "width": 1512,
+    "height": 1024
+  },
+  "steps": [
+    {
+      "n": 1,
+      "caption": "New chat. This login is General Medicine; cardiology is not its ward.",
+      "file": "01.png",
+      "hold": 3200
+    },
+    {
+      "n": 2,
+      "caption": "Ask for the potassium result of the patient in cardiology bed C-201.",
+      "file": "02.png",
+      "hold": 3200
+    },
+    {
+      "n": 3,
+      "caption": "No result. The cardiology chart is outside this login's scope, so Sage is never shown it. Scoping is enforced in the server, not hidden in the UI: a direct API call for that chart returns 404, as if the patient were not there at all.",
+      "file": "03.png",
+      "hold": 6000
+    }
+  ],
+  "video": "video/sage-refusal.webm"
+}

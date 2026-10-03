@@ -1,0 +1,179 @@
+/* ─── Sage Proactive — "needs your attention" feed ───
+   Container pairs with the shared .glass-card class (flat surface card);
+   the rules here only add feed-specific spacing and the entrance fade. No
+   margin: the board's .orb-panel gap already spaces it from its neighbours. */
+.sage-insights {
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  animation: sage-insights-in 0.35s ease;
+}
+@keyframes sage-insights-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.sage-insights__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.sage-insights__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+.sage-insights__count {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  background: var(--bg-glass);
+  border-radius: var(--radius-full);
+  padding: 2px 8px;
+}
+
+.sage-insights__toast {
+  font-size: 0.8rem;
+  color: var(--status-ok-text);
+  background: color-mix(in srgb, var(--status-ok) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-ok) 28%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.sage-insights__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Insight rows: quiet interactive fills on the surface card. Hover is a
+   background/border shift only — nothing lifts. */
+.sage-insight {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid transparent;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+/* --bg-glass, not --bg-glass-hover: the hover fill sits under the muted
+   "Raised ..." line, and --text-muted on --bg-glass-hover fails AA (3.98:1
+   dark, 4.23:1 light). The border shift marks the hover; the fill holds. */
+.sage-insight:hover {
+  background: var(--bg-glass);
+  border-color: var(--border-glass);
+}
+/* Severity accents use the theme status tokens; the :hover variants re-assert
+   border-left-color because the hover rule's border-color shorthand resets it. */
+.sage-insight--critical,
+.sage-insight--critical:hover { border-left-color: var(--status-danger); }
+.sage-insight--warning,
+.sage-insight--warning:hover { border-left-color: var(--status-warn); }
+.sage-insight--info,
+.sage-insight--info:hover { border-left-color: var(--status-info); }
+
+.sage-insight__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+
+.sage-insight__body {
+  flex: 1;
+  min-width: 0;
+}
+.sage-insight__title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.sage-insight__detail {
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  margin-top: 3px;
+}
+
+/* When the card was raised: small print under the detail. */
+.sage-insight__when {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.sage-insight__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+/* Primary action: flat clay button. */
+.sage-insight__act {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--btn-primary-text);
+  background: var(--accent-deep);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition-fast);
+}
+.sage-insight__act:hover:not(:disabled) {
+  background: var(--btn-gradient-hover);
+}
+/* Secondary action: surface fill with a hairline border. */
+.sage-insight__dismiss {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.sage-insight__dismiss:hover:not(:disabled) {
+  border-color: var(--border-focus);
+}
+/* Filled clay button swaps to the neutral disabled pair; the bordered secondary
+   keeps its surface fill and only loses ink, so the two stay distinguishable
+   from each other even when both are unavailable. */
+.sage-insight__act:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  cursor: not-allowed;
+}
+.sage-insight__dismiss:disabled {
+  color: var(--text-muted);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+.sage-insights__more {
+  margin-top: 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent-text);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px 0;
+}
+.sage-insights__more:hover { text-decoration: underline; }

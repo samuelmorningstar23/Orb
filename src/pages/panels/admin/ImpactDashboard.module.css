@@ -1,0 +1,305 @@
+/* Orb Impact — quantified ROI / outcomes dashboard (the money slide).
+   Quiet Clinical: flat opaque surfaces, hairline borders, one clay accent.
+   Theme-aware via the global CSS variables (dark default, [data-theme="light"]). */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.intro {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  max-width: 760px;
+  line-height: 1.6;
+}
+
+/* ── Hero headline ── */
+.hero {
+  border-radius: var(--radius-lg);
+  padding: 32px 36px;
+  /* Faint clay border marks the hero — the page's one accent moment. */
+  border: 1px solid color-mix(in srgb, var(--accent-gold) 28%, transparent);
+  background: var(--bg-surface);
+}
+
+.heroLabel {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: var(--text-xs);
+  color: var(--accent-text);
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+
+.heroFigures {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px 32px;
+}
+
+.heroPrimary {
+  font-family: var(--font-display);
+  font-size: clamp(2.4rem, 6vw, 3.6rem);
+  font-weight: 700;
+  line-height: 1;
+  /* Solid accent token — guaranteed readable in both themes. */
+  color: var(--accent-text);
+}
+
+.heroPrimary small {
+  color: var(--text-secondary);
+  font-family: var(--font-family);
+  font-size: var(--text-md);
+  font-weight: 500;
+  margin-left: 6px;
+}
+
+.heroSecondary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.heroSecondary span {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.heroSub {
+  margin-top: 16px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* ── Metric card grid ── */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 16px;
+}
+
+.card {
+  position: relative;
+  border-radius: var(--radius-md);
+  padding: 24px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  transition: border-color var(--transition-base), background var(--transition-base);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.card:hover {
+  border-color: var(--border-glass);
+}
+
+.cardLabel {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  font-weight: 600;
+  /* Reserve two lines so the big dollar value below aligns across all cards even
+     when a label wraps (e.g. "Throughput & length of stay"). */
+  min-height: 2.4em;
+  line-height: 1.2;
+  display: flex;
+  align-items: flex-start;
+}
+
+.cardDollars {
+  font-size: 2rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-text);
+  line-height: 1.1;
+}
+
+.cardValue {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.cardValue b { color: var(--text-primary); font-weight: 700; }
+
+.evidence {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid color-mix(in srgb, var(--status-ok) 28%, transparent);
+  align-self: flex-start;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--status-ok-text);
+  background: color-mix(in srgb, var(--status-ok) 10%, transparent);
+}
+
+/* Light green-on-green-tint lands at ~2.95:1; darken the label (dark unchanged). */
+[data-theme="light"] .evidence { color: color-mix(in srgb, var(--status-ok) 72%, #000); }
+
+.evidenceDot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--status-ok);
+}
+
+.assumption {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-subtle);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* ── Assumptions expander ── */
+.assumptionsPanel {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+.assumptionsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 16px 20px;
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  background: transparent;
+  text-align: left;
+}
+
+.assumptionsHeader:hover { background: var(--bg-glass-hover); }
+
+.chevron {
+  transition: transform var(--transition-base);
+  color: var(--text-muted);
+}
+.chevronOpen { transform: rotate(180deg); }
+
+.assumptionsBody {
+  padding: 4px 20px 20px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.assumptionRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.assumptionTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.assumptionName {
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.assumptionField {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.assumptionField input {
+  width: 92px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-glass);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  text-align: right;
+}
+
+.assumptionField input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.unit {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.citation {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+  grid-column: 1 / -1;
+}
+
+.btn {
+  padding: 9px 18px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.btnPrimary {
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+}
+.btnPrimary:hover { background: var(--btn-gradient-hover); }
+/* No border-color here — .btnPrimary draws no border, so the neutral pair alone
+   carries the disabled state. */
+.btnPrimary:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  cursor: not-allowed;
+}
+
+.btnGhost {
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-glass);
+}
+.btnGhost:hover { background: var(--bg-glass-hover); }
+
+.noData {
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 28%, transparent);
+  background: color-mix(in srgb, var(--status-warn) 10%, transparent);
+  color: var(--status-warn-text);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.footNote {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-align: right;
+}

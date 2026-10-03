@@ -1,0 +1,146 @@
+[
+  {
+    "model": "medgemma:1.5-4b",
+    "case": "a. simple definition",
+    "run": 0,
+    "marker": "NONE",
+    "at": -1,
+    "chars": 1043
+  },
+  {
+    "model": "medgemma:1.5-4b",
+    "case": "a. simple definition",
+    "run": 1,
+    "marker": "ACT|",
+    "at": 1443,
+    "chars": 1767
+  },
+  {
+    "model": "medgemma:1.5-4b",
+    "case": "a. simple definition",
+    "run": 2,
+    "marker": "ACT|",
+    "at": 844,
+    "chars": 2009
+  },
+  {
+    "model": "medgemma:1.5-4b",
+    "case": "b. general clinical",
+    "run": 0,
+    "marker": "ACT|",
+    "at": 712,
+    "chars": 1120
+  },
+  {
+    "model": "medgemma:1.5-4b",
+    "case": "b. general clinical",
+    "run": 1,
+    "marker": "NONE",
+    "at": -1,
+    "chars": 948
+  },
+  {
+    "model": "medgemma:1.5-4b",
+    "case": "b. general clinical",
+    "run": 2,
+    "marker": "NONE",
+    "at": -1,
+    "chars": 984
+  },
+  {
+    "model": "medgemma:1.5-4b",
+    "case": "c. patient question",
+    "run": 0,
+    "marker": "NONE",
+    "at": -1,
+    "chars": 1640
+  },
+  {
+    "model": "medgemma:1.5-4b",
+    "case": "c. patient question",
+    "run": 1,
+    "marker": "NONE",
+    "at": -1,
+    "chars": 2823
+  },
+  {
+    "model": "medgemma:1.5-4b",
+    "case": "c. patient question",
+    "run": 2,
+    "marker": "NONE",
+    "at": -1,
+    "chars": 2981
+  },
+  {
+    "model": "medgemma:27b",
+    "case": "a. simple definition",
+    "run": 0,
+    "marker": "NOACT|",
+    "at": 0,
+    "chars": 548
+  },
+  {
+    "model": "medgemma:27b",
+    "case": "a. simple definition",
+    "run": 1,
+    "marker": "NOACT|",
+    "at": 0,
+    "chars": 560
+  },
+  {
+    "model": "medgemma:27b",
+    "case": "a. simple definition",
+    "run": 2,
+    "marker": "NOACT|",
+    "at": 0,
+    "chars": 489
+  },
+  {
+    "model": "medgemma:27b",
+    "case": "b. general clinical",
+    "run": 0,
+    "marker": "NOACT|",
+    "at": 0,
+    "chars": 826
+  },
+  {
+    "model": "medgemma:27b",
+    "case": "b. general clinical",
+    "run": 1,
+    "marker": "NOACT|",
+    "at": 0,
+    "chars": 654
+  },
+  {
+    "model": "medgemma:27b",
+    "case": "b. general clinical",
+    "run": 2,
+    "marker": "NOACT|",
+    "at": 0,
+    "chars": 849
+  },
+  {
+    "model": "medgemma:27b",
+    "case": "c. patient question",
+    "run": 0,
+    "marker": "NOACT|",
+    "at": 0,
+    "chars": 3134
+  },
+  {
+    "model": "medgemma:27b",
+    "case": "c. patient question",
+    "run": 1,
+    "marker": "NOACT|",
+    "at": 0,
+    "chars": 2467
+  },
+  {
+    "model": "medgemma:27b",
+    "case": "c. patient question",
+    "run": 2,
+    "marker": "NOACT|",
+    "at": 0,
+    "chars": 3694
+  }
+]

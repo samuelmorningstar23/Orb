@@ -1,0 +1,490 @@
+/* ScribePanel.css - Orb Quiet Clinical (flat) design */
+.scribe-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* Page gutter is .shell__body's job — see ClinicianShell.css. */
+  padding: 0;
+  max-width: 1200px;
+  margin: 0 auto;
+  font-family: var(--font-family);
+}
+
+.scribe-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  text-align: center;
+  animation: fade-in-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.scribe-empty__title {
+  font-size: 2.5rem;
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin-top: 24px;
+  margin-bottom: 12px;
+  font-family: var(--font-display);
+}
+
+.scribe-empty__hint {
+  font-size: 1.1rem;
+  color: var(--text-secondary);
+  max-width: 500px;
+  line-height: 1.6;
+}
+
+/* Card styling — SCOPED to the scribe panel. Previously this redefined the
+   GLOBAL .glass-card (unscoped), so its background leaked onto every card
+   app-wide in dark mode and, by source order, clobbered the emergency
+   patient-row's red safety surface. Scoping keeps the scribe look local
+   without touching the shared kit. Flat surface: opaque background, 1px
+   hairline border, no blur, no shadow. */
+.scribe-container .glass-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.scribe-output {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  animation: fade-in-up 0.6s ease-out forwards;
+}
+
+.scribe-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.scribe-section__title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+.scribe-section__content {
+  padding: 24px;
+  font-size: 1.05rem;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+
+.scribe-cursor {
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+.scribe-actions {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.scribe-format-select {
+  padding: 10px 16px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  outline: none;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.scribe-format-select:hover {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+}
+
+.scribe-format-select:focus {
+  border-color: var(--border-focus);
+}
+
+.scribe-btn {
+  padding: 10px 24px;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.scribe-btn--structure {
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  border: none;
+}
+
+.scribe-btn--structure:hover:not(:disabled) {
+  background: var(--btn-gradient-hover);
+}
+
+/* Flat neutral fill, not opacity: opacity fades label and fill together and
+   compounds with any dimmed ancestor, so the label can never stay legible.
+   border-color is inert on --structure (border: none) but carries the state
+   for any bordered .scribe-btn variant. */
+.scribe-btn:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+.scribe-status {
+  text-align: center;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+  animation: fade-in-up 0.3s ease;
+}
+
+/* Input Area */
+.scribe-input-area {
+  display: flex;
+  align-items: center;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-xl);
+  padding: 8px 16px;
+  margin-top: auto;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.scribe-input-area:focus-within {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.scribe-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 1.05rem;
+  padding: 12px;
+  outline: none;
+}
+
+.scribe-input::placeholder {
+  color: var(--text-muted);
+}
+
+.scribe-record {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  transition: background 0.2s ease;
+}
+
+.scribe-record:hover {
+  background: var(--btn-gradient-hover);
+}
+
+.scribe-record--active {
+  background: color-mix(in srgb, var(--status-danger) 20%, transparent);
+  color: var(--status-danger-text);
+  animation: pulse-record 2s infinite;
+}
+
+/* Disabled (no speech service on this appliance, or a note is processing):
+   the neutral disabled pair. The class's own cursor: pointer outranks the
+   global zero-specificity :disabled rule, so without this the mic kept its
+   terracotta fill and pointer and read as live. */
+.scribe-record:disabled,
+.scribe-record:disabled:hover {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  box-shadow: inset 0 0 0 1px var(--btn-disabled-border);
+  cursor: not-allowed;
+  animation: none;
+}
+
+/* Expanding ring signals an active recording — functional, keep. */
+@keyframes pulse-record {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--status-danger) 40%, transparent); }
+  70% { box-shadow: 0 0 0 10px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ═══ Live Streaming Mode ═══ */
+
+.scribe-live-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 12px;
+  font-size: 0.7rem;
+  font-weight: 400;
+}
+
+.scribe-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--status-ok);
+  animation: pulse-live 1.5s infinite;
+}
+
+.scribe-live-dot--speaking {
+  background: var(--status-danger);
+  animation: pulse-live 0.8s infinite;
+}
+
+.scribe-live-dot--processing {
+  background: var(--status-warn);
+  animation: pulse-live 0.5s infinite;
+}
+
+.scribe-audio-level {
+  width: 60px;
+  height: 4px;
+  background: var(--bg-glass);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.scribe-audio-level__bar {
+  height: 100%;
+  background: var(--status-ok);
+  border-radius: var(--radius-sm);
+  transition: width 0.05s ease-out;
+}
+
+.scribe-audio-level__bar--speaking {
+  background: var(--status-danger);
+}
+
+.scribe-utterance {
+  margin-bottom: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  line-height: 1.7;
+}
+
+.scribe-utterance:last-child {
+  border-bottom: none;
+}
+
+.scribe-utterance--interim {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.scribe-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.scribe-mode-toggle:hover {
+  border-color: var(--accent-gold);
+  color: var(--accent-text);
+}
+
+.scribe-mode-toggle--active {
+  background: color-mix(in srgb, var(--accent-gold) 10%, transparent);
+  border-color: var(--accent-gold);
+  color: var(--accent-text);
+}
+
+.scribe-stream-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--status-ok) 12%, transparent);
+  color: var(--status-ok-text);
+  transition: background 0.2s ease;
+  margin-left: 8px;
+}
+
+.scribe-stream-btn:hover {
+  background: color-mix(in srgb, var(--status-ok) 20%, transparent);
+}
+
+.scribe-stream-btn--active {
+  /* Capped at 20%: the strongest status tint a chip may carry and still hold
+     --status-ok-text at 4.5:1. scripts/check-contrast.mjs enforces the ceiling. */
+  background: color-mix(in srgb, var(--status-ok) 20%, transparent);
+  color: var(--status-ok-text);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-ok) 30%, transparent);
+  animation: pulse-stream 2s infinite;
+}
+
+/* Disabled: neutral pair, no pulse, and the icon's green "ready" dot (an SVG
+   fill attribute, which CSS outranks) goes neutral too, so nothing on the
+   button says live when it cannot be pressed. */
+.scribe-stream-btn:disabled,
+.scribe-stream-btn:disabled:hover {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  box-shadow: inset 0 0 0 1px var(--btn-disabled-border);
+  cursor: not-allowed;
+  animation: none;
+}
+.scribe-stream-btn:disabled circle { fill: currentColor; }
+
+/* Expanding ring signals live streaming — functional, keep. */
+@keyframes pulse-stream {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--status-ok) 40%, transparent); }
+  70% { box-shadow: 0 0 0 10px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+
+
+/* ═══ Scribe modals ═══
+   These rules did not exist. `.admission-modal-backdrop`, `.admission-modal`,
+   `.admission-modal__header`, `.admission-modal__close`, `.admission-modal__form`
+   and `.animate-scale-up` were referenced by all three Scribe dialogs — the
+   credential prompt, the quick-admit form and the Structured AI Note — and were
+   defined by no stylesheet in the project. Verified at runtime by walking
+   document.styleSheets: zero matching rules.
+
+   With no `position: fixed` the "overlay" was an ordinary block in the document
+   flow, so a dialog did not cover the page, was not centred, did not trap the
+   eye, and pushed the panel below it down instead. The only reason it looked
+   like anything at all is that the inner element also carries `.glass-card`.
+   The Structured AI Note dialog papered over part of this with inline
+   `backdropFilter: blur(16px)` and `zIndex: 100`, which is both the retired
+   glass language and a z-index below every other overlay in the app (9999).
+
+   Recipe matches .modal-overlay in Vigil.css / PatientShell.css so all of Orb's
+   dialogs behave identically. */
+.admission-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  background: rgba(0, 0, 0, 0.6);
+  /* Same tier as every other app modal. */
+  z-index: 9999;
+  animation: fade-in 0.2s ease-out;
+}
+
+.admission-modal {
+  width: 100%;
+  max-width: 560px;
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: var(--space-5);
+  /* Ephemeral layer: elevated surface, stronger border, the one real shadow. */
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--elev-3);
+}
+
+.admission-modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.admission-modal__header h2,
+.admission-modal__header h3 {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.admission-modal__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  font-size: 1.25rem;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.admission-modal__close:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-glass);
+  border-color: var(--border-glass);
+}
+
+.admission-modal__close:disabled {
+  cursor: not-allowed;
+  color: var(--btn-disabled-text);
+  background: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-border);
+}
+
+.admission-modal__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* The `scale-up` keyframe and `.animate-scale-up` live in index.css, not here:
+   panel stylesheets are lazy chunks, and SurgicalSuitePanel's confirmation
+   dialog also asks for `scale-up`. Defined in this file it would exist only
+   after someone had opened Scribe. */
+
+/* Responsive — ward tablet (≤768px) → ~600px.
+   No padding steps here: .shell__body already tightens the page gutter at both
+   of these breakpoints, and re-adding it inside the panel double-counted it. */
+@media (max-width: 600px) {
+  .scribe-empty__title { font-size: 1.8rem; }
+  .admission-modal { padding: var(--space-4); }
+}

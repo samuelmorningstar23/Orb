@@ -1,0 +1,44 @@
+{
+  "id": "scribe-note",
+  "title": "Scribe",
+  "subtitle": "Dictation to a structured, verified note, on-device",
+  "user": "DOC001",
+  "theme": "dark",
+  "viewport": {
+    "width": 1512,
+    "height": 1024
+  },
+  "steps": [
+    {
+      "n": 1,
+      "caption": "Scribe: dictate or type. Nothing is sent to a cloud transcription service.",
+      "file": "01.png",
+      "hold": 3200
+    },
+    {
+      "n": 2,
+      "caption": "Pick the patient, then the free-text consultation goes in.",
+      "file": "02.png",
+      "hold": 3200
+    },
+    {
+      "n": 3,
+      "caption": "Structure Note: the local model drafts a SOAP note, then a second pass checks it against the transcript for unsupported claims and omissions before anyone signs it.",
+      "file": "03.png",
+      "hold": 6000
+    },
+    {
+      "n": 4,
+      "caption": "Sign & Finalize. This note was typed, never verified against audio, so Orb stops and makes the clinician type SIGN: accepting an unverified AI note is recorded in their own name.",
+      "file": "04.png",
+      "hold": 4500
+    },
+    {
+      "n": 5,
+      "caption": "Signed. Signing is the trigger: medications named in the note are extracted, screened, and queued for a pharmacist before they become active orders.",
+      "file": "05.png",
+      "hold": 5000
+    }
+  ],
+  "video": "video/scribe-note.webm"
+}

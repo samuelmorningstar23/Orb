@@ -1,0 +1,900 @@
+/* Sage.css — Clinical AI Workspace
+   Flat, calm chat surface in the app-wide design language: opaque warm
+   surfaces, hairline borders, clay accent used sparingly. One reading column
+   (--sage-col) is the single source of truth — the messages, the stage status
+   and the composer all align to the same two edges. */
+
+.sage-workspace {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
+  font-family: var(--font-family);
+}
+
+/* ─────────────────────────  History Sidebar  ───────────────────────── */
+.sage-sidebar {
+  width: 264px;
+  border-right: 1px solid var(--border-subtle);
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.sage-sidebar__header {
+  padding: 20px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sage-sidebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px;
+}
+.sage-sidebar__brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+.sage-sidebar__brand-name {
+  font-family: var(--font-display);
+  font-variation-settings: 'SOFT' 0, 'WONK' 0, 'opsz' 22;
+  font-size: 1.05rem;
+  font-weight: 560;
+  color: var(--text-primary);
+  letter-spacing: -0.005em;
+}
+.sage-sidebar__brand-sub {
+  font-size: 0.66rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+}
+
+.sage-new-chat-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  font-weight: 550;
+  font-size: var(--text-sm);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.sage-new-chat-btn:hover {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+}
+.sage-new-chat-btn svg { color: var(--accent-text); }
+
+.sage-sidebar__list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 12px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.sage-history-group { display: flex; flex-direction: column; gap: 2px; }
+.sage-history-group-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0 8px;
+  margin-bottom: 4px;
+}
+
+/* A <button> now — resets keep it rendering exactly as the <div> did. */
+.sage-history-item {
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  background: none;
+  text-align: left;
+  font-family: inherit;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  transition: background var(--transition-fast);
+}
+.sage-history-item:hover { background: var(--bg-glass); }
+.sage-history-item--active {
+  background: var(--bg-glass-hover);
+}
+.sage-history-item__title {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sage-history-item__preview {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sage-sidebar__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  color: var(--text-muted);
+  padding: 32px 16px;
+}
+/* The icon already inherits the muted colour from the block — dimming it again
+   with opacity would stack alpha on top of an already-quiet token. */
+.sage-sidebar__empty svg { color: var(--text-muted); }
+.sage-sidebar__empty-text { font-size: var(--text-xs); }
+
+/* ─────────────────────────  Main Chat Area  ───────────────────────── */
+.sage-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+  /* Single source of truth for the reading column. Every child aligns to
+     these two numbers instead of inventing its own padding. */
+  --sage-col: 740px;
+  --sage-gutter: 28px;
+}
+
+.sage-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px var(--sage-gutter) 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* Messages — assistant turns are prose on the canvas; user turns are a quiet
+   bubble sharing the same column edges. Exactly ONE element (__content) draws
+   the bubble; __bubble inside it is plain text. */
+.sage-msg {
+  display: flex;
+  gap: 12px;
+  max-width: var(--sage-col);
+  margin: 0 auto;
+  width: 100%;
+  animation: sage-msg-enter 0.25s ease-out;
+}
+
+@keyframes sage-msg-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.sage-msg--user { justify-content: flex-end; }
+/* The user's own turn needs no avatar — dropping it keeps both roles on the
+   same column edges. */
+.sage-msg--user .sage-msg__avatar { display: none; }
+
+.sage-msg__avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--accent-text);
+  background: var(--accent-glow);
+  border: 1px solid var(--border-subtle);
+}
+
+.sage-msg__content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  /* `min-width: 0` alone does NOT contain an unbreakable token — measured at
+     18,284px of scrollWidth in a 696px column for a 2,000-character run with no
+     spaces (a pasted accession number or identifier, which is exactly what gets
+     pasted into a clinical question). The wrap rule is what actually bounds it;
+     it inherits to the markdown body and to code spans. */
+  overflow-wrap: anywhere;
+}
+
+.sage-msg--user .sage-msg__content {
+  flex: 0 1 auto;
+  max-width: 82%;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-sm);
+  padding: 10px 16px;
+}
+
+.sage-msg--assistant .sage-msg__content {
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+.sage-msg__bubble {
+  font-size: 0.95rem;
+  line-height: 1.68;
+  color: var(--text-primary);
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+/* Streaming caret */
+.sage-msg__caret {
+  display: inline-block;
+  width: 7px; height: 1.1em;
+  vertical-align: text-bottom;
+  margin-left: 2px;
+  border-radius: 2px;
+  background: var(--accent-gold);
+  animation: sage-caret 1s steps(2, start) infinite;
+}
+@keyframes sage-caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+/* Per-answer speed footer — a sibling row in the message column, pulled up
+   against the answer it belongs to (the column's 24px gap separates turns,
+   not an answer from its own footer). Left edge sits under the answer text:
+   30px avatar + 12px gap. Base look lives in components/SageAnswerMeta.css. */
+.sage-answer-meta--panel {
+  width: 100%;
+  max-width: var(--sage-col);
+  margin: -16px auto 0;
+  padding-left: 42px;
+}
+
+/* Status Banners */
+.sage-banner {
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  margin-bottom: 4px;
+}
+.sage-banner--danger {
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  color: var(--status-danger-text);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent);
+}
+.sage-banner--warning {
+  background: color-mix(in srgb, var(--status-warn) 10%, transparent);
+  color: var(--status-warn-text);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 28%, transparent);
+}
+.sage-banner--stopped {
+  background: var(--bg-glass);
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+}
+/* The safety floor fired: fast mode was on, and Orb used the careful model
+   anyway. This is REASSURANCE, not a warning — the guardrail worked — so it
+   takes the info tokens rather than the amber ones. A doctor should read it as
+   "good, it noticed", not as "something went wrong". */
+.sage-banner--floor {
+  background: color-mix(in srgb, var(--status-info) 10%, transparent);
+  color: var(--status-info-text);
+  border: 1px solid color-mix(in srgb, var(--status-info) 28%, transparent);
+}
+
+/* ── Streaming stage status — sits on the SAME left edge as the column ── */
+.sage-stage-status {
+  width: 100%;
+  max-width: var(--sage-col);
+  margin: 0 auto 4px;
+  padding: 0 2px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  animation: sageStagePulse 2s ease-in-out infinite;
+}
+/* The "still working" pulse breathes between two readable text tokens instead of
+   fading alpha. This is live status text a clinician reads mid-stream, so it has
+   to stay legible at the quiet end of every cycle, not just the bright end. */
+@keyframes sageStagePulse {
+  0%, 100% { color: var(--text-muted); }
+  50% { color: var(--text-secondary); }
+}
+
+/* ─────────────────────────  Composer  ───────────────────────── */
+.sage-composer-wrapper {
+  padding: 12px var(--sage-gutter) 20px;
+  max-width: calc(var(--sage-col) + var(--sage-gutter) * 2);
+  margin: 0 auto;
+  width: 100%;
+}
+
+.sage-composer {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  padding: 10px 10px 10px 16px;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  box-shadow: var(--elev-1);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.sage-composer:focus-within {
+  border-color: var(--accent-gold);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.sage-composer__input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  font-size: 0.95rem;
+  line-height: 1.55;
+  resize: none;
+  min-height: 24px;
+  max-height: 200px;
+  outline: none;
+  padding: 6px 0;
+}
+.sage-composer__input::placeholder { color: var(--text-muted); }
+
+.sage-composer__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sage-btn-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.sage-btn-icon:hover {
+  background: var(--bg-glass);
+  color: var(--text-primary);
+}
+.sage-btn-icon--active {
+  color: var(--accent-text);
+  background: var(--accent-glow);
+}
+
+/* Send — the one filled control in the composer. */
+.sage-btn-send {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.sage-btn-send:hover:not(:disabled) {
+  background: var(--btn-gradient-hover);
+  color: var(--btn-primary-text);
+}
+.sage-btn-send:active:not(:disabled) { filter: brightness(0.96); }
+/* Filled control: swap to the neutral disabled pair. The arrow is currentColor,
+   so it follows the label instead of staying clay on a faded fill. */
+.sage-btn-send:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  cursor: not-allowed;
+}
+/* The abort control for a runaway answer (and for a live dictation). The raw
+   --status-danger token is tuned bright so it works AS TEXT on a dark canvas;
+   as a plain fill under a white label it measures 2.92:1 dark / 2.99:1 night.
+   Darkening it 72% with black is the same fix SafetyAlertModal.css:281 and
+   AdministerModal.css:258 already carry, and it clears 4.5:1 in all three
+   themes. */
+.sage-btn-stop {
+  background: color-mix(in srgb, var(--status-danger) 72%, #000);
+  color: #fff;
+}
+/* Hover goes DARKER, not brighter. The 82% variant used elsewhere lightens the
+   fill and drops white to 4.20:1 in dark / 4.30:1 in night; 62% holds ≥6.5:1
+   in all three. Literal #fff, not --btn-primary-text: that token is dark ink in
+   the night theme and would land at 3.55:1 on this fill. */
+.sage-btn-stop:hover {
+  background: color-mix(in srgb, var(--status-danger) 62%, #000);
+  color: #fff;
+}
+
+/* Night: amber send button needs its dark ink label. ENABLED only: this
+   selector outranks .sage-btn-send:disabled, and dark ink on the disabled fill
+   measured 1.19:1, so a disabled Send read as a live one. */
+[data-theme="night"] .sage-btn-send:not(:disabled) { color: var(--btn-primary-text); }
+
+/* ── Thinking-mode toggle ──────────────────────────────────────────────────
+   A labelled pill, sized to sit on the same 34px baseline as the icon buttons
+   beside it. No opacity anywhere: both states are carried by status TEXT
+   tokens over glass, which the palette gate already guarantees against every
+   surface these can land on. */
+.sage-think-toggle {
+  height: 34px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-family);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast),
+              border-color var(--transition-fast);
+}
+.sage-think-toggle__label { line-height: 1; }
+
+/* ON — the quiet, expected state. Reads as "normal", not as a feature. */
+.sage-think-toggle--on {
+  color: var(--text-secondary);
+  border-color: var(--border-subtle);
+}
+.sage-think-toggle--on:hover {
+  background: var(--bg-glass);
+  color: var(--text-primary);
+}
+
+/* OFF — deliberately the LOUD state. A clinician glancing at the composer must
+   be able to tell, without clicking anything, that the next answer is coming
+   from the small model. Warning tokens, not accent tokens: this is a caution,
+   not a highlight. */
+.sage-think-toggle--off {
+  color: var(--status-warn-text);
+  background: color-mix(in srgb, var(--status-warn) 12%, transparent);
+  border-color: color-mix(in srgb, var(--status-warn) 34%, transparent);
+}
+.sage-think-toggle--off:hover {
+  background: color-mix(in srgb, var(--status-warn) 18%, transparent);
+}
+.sage-think-toggle:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
+}
+
+/* Standing "fast mode is armed" strip under the composer. */
+.sage-fast-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 7px 11px;
+  border-radius: var(--radius-sm);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  color: var(--status-warn-text);
+  background: color-mix(in srgb, var(--status-warn) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 26%, transparent);
+}
+.sage-fast-notice strong { font-weight: 700; }
+
+/* The composer collapses to icons on narrow tablets; the pill keeps its label
+   because the label is the entire point of the control. The voice button is
+   the one that gives up space. */
+@media (max-width: 520px) {
+  .sage-think-toggle { padding: 0 8px; font-size: 0.72rem; }
+}
+
+/* ── Phone width ──
+   The 264px history rail sat beside the chat with flex-shrink 0, so at 390px
+   the chat column was ~100px wide, the textarea 0px and Send off-screen. The
+   rail stacks above the chat instead, its list capped so a long history
+   cannot push the composer out of reach, and the composer wraps its controls
+   onto their own row so the textarea keeps the full width.
+
+   Height: the shell lets the PAGE scroll at this width and its body clips
+   (overflow hidden), so a sticky composer has nothing to stick to. Instead
+   the workspace is content-high but never taller than the screen below the
+   shell's top bar: a short chat keeps the composer right under it, and a long
+   one scrolls inside the message list with the composer pinned at the foot,
+   which also keeps follow-the-stream working. */
+@media (max-width: 768px) {
+  .sage-workspace {
+    flex-direction: column;
+    height: auto;
+    max-height: calc(100dvh - 72px);
+  }
+
+  .sage-sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .sage-sidebar__header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 12px 8px;
+    gap: 12px;
+  }
+  .sage-new-chat-btn { width: auto; }
+  .sage-sidebar__list {
+    flex: none;
+    max-height: 140px;
+    padding: 4px 12px 12px;
+  }
+  .sage-sidebar__empty { padding: 8px 12px; }
+
+  .sage-main { --sage-gutter: 12px; min-height: 0; }
+  .sage-messages { min-height: 0; padding-top: 16px; }
+  /* Scoped to .sage-main so it outranks the base .sage-empty rule further
+     down the file. Unscoped, the base rule won: the empty state stayed
+     centred in a short scroll box, and the greeting slid up under the
+     investigational banner on a phone. */
+  .sage-main .sage-empty {
+    min-height: 0;
+    overflow-y: auto;
+    justify-content: flex-start;
+    padding: 24px 12px;
+  }
+
+  .sage-composer-wrapper { flex-shrink: 0; padding-bottom: 12px; }
+  .sage-composer { flex-wrap: wrap; }
+  /* The floating Sage orb sits over the right end of this row at phone width
+     (it is raised to clear the action row, not the wrapped input), so typed
+     text stops short of it. */
+  .sage-composer__input { flex: 1 1 100%; padding-right: 56px; }
+  .sage-composer__actions { margin-left: auto; }
+}
+
+/* Touch: every composer and history control reaches the 44px floor. */
+@media (pointer: coarse) {
+  .sage-btn-icon,
+  .sage-btn-send {
+    width: var(--tap-min);
+    height: var(--tap-min);
+  }
+  .sage-think-toggle,
+  .sage-new-chat-btn,
+  .sage-history-item { min-height: var(--tap-min); }
+  .sage-think-toggle { height: var(--tap-min); }
+}
+
+/* ─────────────────────────  Empty / Landing State  ───────────────────────── */
+.sage-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  animation: sage-msg-enter 0.4s ease-out;
+}
+
+.sage-empty__logo {
+  margin-bottom: 22px;
+  display: grid;
+  place-items: center;
+}
+
+.sage-empty__eyebrow {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+
+.sage-empty__title {
+  font-family: var(--font-display);
+  font-variation-settings: 'SOFT' 0, 'WONK' 0, 'opsz' 40;
+  font-size: 2.1rem;
+  font-weight: 540;
+  line-height: 1.15;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+  letter-spacing: -0.012em;
+  text-align: center;
+}
+.sage-empty__title em {
+  font-style: normal;
+  color: var(--accent-text);
+}
+.sage-empty__subtitle {
+  font-size: 1rem;
+  color: var(--text-secondary);
+  margin-bottom: 40px;
+  text-align: center;
+}
+
+.sage-empty__suggestions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  max-width: 640px;
+  width: 100%;
+}
+
+.sage-suggestion {
+  position: relative;
+  padding: 16px 18px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.sage-suggestion:hover {
+  border-color: var(--border-focus);
+  background: var(--bg-glass);
+}
+
+.sage-suggestion__icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 8px;
+  border-radius: var(--radius-sm);
+  font-size: 1rem;
+  background: var(--accent-glow);
+  color: var(--accent-text);
+}
+.sage-suggestion__title {
+  font-size: 0.92rem;
+  font-weight: 550;
+  color: var(--text-primary);
+}
+.sage-suggestion__desc {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* ─────────────────────────  Message Details / Chart Action  ───────────────────────── */
+.sage-details-btn {
+  background: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 5px 11px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+  margin-top: 12px;
+}
+.sage-details-btn:hover { border-color: var(--border-glass); color: var(--text-secondary); }
+.sage-details-panel {
+  margin-top: 12px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  animation: sage-msg-enter 0.2s ease-out;
+}
+.sage-details-section { margin-bottom: 16px; }
+.sage-details-section:last-child { margin-bottom: 0; }
+.sage-details-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.sage-details-content {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  padding-left: 12px;
+  border-left: 2px solid var(--border-glass);
+}
+
+/* ── Evidence trail ──
+   The documents Sage retrieved for a turn, cited ones first. This list is the
+   answer to "why should I believe this", so it is styled to be scanned in a
+   corridor: title on its own line, provenance underneath, cited ones marked. */
+.sage-sources__caveat {
+  font-size: 0.78rem;
+  color: var(--status-warn-text);
+  line-height: 1.45;
+  margin: 0 0 8px;
+  padding-left: 12px;
+  border-left: 2px solid var(--status-warn);
+}
+
+.sage-sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sage-source {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+}
+
+/* A cited source is marked with a border, not a fill — a coloured block behind
+   small text is what pushed the old status chips under AA. */
+.sage-source--cited {
+  border-color: var(--accent-deep);
+}
+
+.sage-source__title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.35;
+}
+
+.sage-source__meta {
+  grid-column: 1 / -1;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.sage-source__badge {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent-text);
+  white-space: nowrap;
+}
+
+/* Action Card */
+.sage-action-card {
+  margin-bottom: 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  animation: sage-msg-enter 0.25s ease-out forwards;
+}
+.sage-action-card__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.sage-action-card__icon { font-size: 1.1rem; }
+.sage-action-card__title { font-weight: 600; font-size: 0.9rem; color: var(--text-primary); flex-grow: 1; }
+.sage-action-card__badge {
+  font-size: 0.72rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  letter-spacing: 0.05em;
+}
+.sage-action-card__badge--unsupported {
+  background: color-mix(in srgb, var(--status-warn) 12%, transparent);
+  color: var(--status-warn-text);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 30%, transparent);
+}
+.sage-action-card__badge--warning {
+  background: color-mix(in srgb, var(--status-warn) 12%, transparent);
+  color: var(--status-warn-text);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 30%, transparent);
+}
+.sage-action-card__badge--danger {
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+  color: var(--status-danger-text);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 30%, transparent);
+}
+.sage-action-card__badge--success {
+  background: color-mix(in srgb, var(--status-ok) 12%, transparent);
+  color: var(--status-ok-text);
+  border: 1px solid color-mix(in srgb, var(--status-ok) 30%, transparent);
+}
+.sage-action-card__body { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.sage-action-card__row { display: flex; align-items: flex-start; gap: 12px; font-size: 0.85rem; }
+.sage-action-card__label { color: var(--text-muted); font-weight: 500; width: 80px; flex-shrink: 0; }
+.sage-action-card__value { color: var(--text-primary); font-weight: 500; }
+.sage-action-card__footer {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* Approve action — the clinician-in-the-loop commit button. */
+.sage-action-approve {
+  padding: 7px 14px;
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 550;
+  font-size: 0.82rem;
+  transition: background var(--transition-fast);
+}
+.sage-action-approve:hover:not(:disabled) { background: var(--btn-gradient-hover); }
+/* cursor stays `wait`: this only greys out while the commit is in flight, which
+   means busy, not unavailable. */
+.sage-action-approve:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  cursor: wait;
+}
+[data-theme="night"] .sage-action-approve { color: var(--btn-primary-text); }
+
+/* ── Rendered markdown in Sage answers (react-markdown) ── */
+.sage-markdown { line-height: 1.68; }
+.sage-markdown > :first-child { margin-top: 0; }
+.sage-markdown > :last-child { margin-bottom: 0; }
+.sage-markdown p { margin: 0 0 0.65em; }
+.sage-markdown strong { font-weight: 600; color: var(--text-primary); }
+.sage-markdown ul,
+.sage-markdown ol { margin: 0.4em 0 0.7em; padding-left: 1.3em; }
+.sage-markdown li { margin: 0.25em 0; }
+.sage-markdown h1,
+.sage-markdown h2,
+.sage-markdown h3,
+.sage-markdown h4 { font-size: 1em; font-weight: 650; margin: 0.8em 0 0.3em; color: var(--text-primary); }
+.sage-markdown code {
+  background: var(--bg-glass-hover);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+}
+.sage-markdown table { border-collapse: collapse; margin: 0.6em 0; font-size: 0.92em; }
+.sage-markdown th,
+.sage-markdown td { border: 1px solid var(--border-subtle); padding: 6px 10px; text-align: left; }
+.sage-markdown th { background: var(--bg-glass); font-weight: 600; }
+.sage-markdown a { color: var(--accent-text); text-decoration: underline; }

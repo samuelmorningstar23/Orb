@@ -1,0 +1,12 @@
+
+.suite__header-back, .suite__header-back svg {
+  flex-shrink: 0 !important;
+}
+
+.suite__header-back svg {
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  min-height: 18px !important;
+  display: block;
+}

@@ -1,0 +1,965 @@
+.container {
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  height: 100%;
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+/* Layout, title, context line and Refresh come from the shared .orb-home__*
+   header in ClinicianShell.css, so the pharmacist's two screens read like every
+   other home. Only the divider above the views is Helix's own. */
+.header {
+  border-bottom: 1px solid var(--border-glass);
+  padding-bottom: 24px;
+}
+
+.headerActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+/* The tab panel stands between .container and the view, so it passes the
+   column flex down: .contentArea is still the one thing that scrolls. */
+.viewPanel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Nav Tabs — flat segmented control: quiet fill, hairline border, no shadow. */
+.tabs {
+  display: flex;
+  gap: 8px;
+  background: var(--bg-glass);
+  padding: 4px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-glass);
+}
+
+.tab {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.tab:hover {
+  color: var(--text-secondary);
+}
+
+.activeTab {
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+}
+
+.activeTab:hover {
+  color: var(--btn-primary-text);
+}
+
+/* Common Layouts */
+.contentArea {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* Bento Grid Dashboard */
+.bentoGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+/* Stat cards — opaque surface, hairline border; hover is a border shift only. */
+.bentoCard {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.bentoCard:hover {
+  border-color: var(--border-glass);
+}
+
+.bentoHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.bentoIcon {
+  color: var(--accent-text);
+}
+
+.bentoValue {
+  font-size: 2.5rem;
+  font-weight: 300;
+  letter-spacing: -0.04em;
+  color: var(--text-primary);
+}
+
+.bentoSubtext {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.bentoCardCritical {
+  border-color: color-mix(in srgb, var(--status-danger) 28%, transparent);
+  /* Mixed with the surface (not transparent) so the card stays opaque. */
+  background: color-mix(in srgb, var(--status-danger) 10%, var(--bg-surface));
+}
+
+.bentoCardCritical .bentoIcon {
+  color: var(--status-danger-text);
+}
+
+/* A card that opens a list (Rejected). Same card, made a real button so it
+   takes focus; the border shift is its hover, as on every other card. */
+.bentoCardButton {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bentoCardButton.bentoCardCritical:hover {
+  border-color: color-mix(in srgb, var(--status-danger) 45%, transparent);
+}
+
+/* Tables — opaque panel, hairline border, no shadow.
+   flex: none, and no height cap on the scroll area: .contentArea is the one
+   scroller. Each table used to shrink into its own capped box inside it, so
+   at 1440x900 the Fulfillment Pipeline showed its header and no rows. */
+.tableContainer {
+  flex: none;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.tableGap {
+  margin-bottom: 16px;
+}
+
+/* Sideways only, for a narrow screen. */
+.tableScrollArea {
+  overflow-x: auto;
+  width: 100%;
+}
+
+.tableHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-glass);
+  background: var(--bg-glass);
+  flex-shrink: 0;
+}
+
+.tableTitle {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.table th {
+  padding: 12px 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-glass);
+  background: var(--bg-secondary); /* Solid, theme-aware background for the sticky header */
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.table td {
+  padding: 16px 20px;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.table tr:last-child td {
+  border-bottom: none;
+}
+
+.table tr:hover td {
+  background: var(--bg-glass-hover);
+}
+
+.clickableRow {
+  cursor: pointer;
+}
+
+.clickableRow:hover td {
+  background: var(--bg-glass-hover);
+}
+
+/* The keyboard entry point into a queue row. A <tr> cannot take focus, so the
+   patient cell carries a real button that looks exactly like the text it
+   replaced; the global :focus-visible ring is what makes it visible on Tab. */
+.rowBtn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Inside the row button the two lines stack, exactly as the <div>s they
+   replaced did. Scoped here on purpose: .cellPrimary/.cellSecondary are also
+   used as inline spans in table headers and order lists. */
+.rowBtn .cellPrimary,
+.rowBtn .cellSecondary {
+  display: block;
+}
+
+.cellPrimary {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.cellSecondary {
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+}
+
+/* ═══ Badges (all workflow states) ═══ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+/* Tinted with --accent-gold, not with --accent-text. Washing the surface with
+   the same colour as the label is self-defeating: it lightens the backdrop by
+   exactly the ink's own hue, and the pending badge measured 4.47:1 in dark.
+   The gold wash is the pattern .chipResulted and .codeChip already use. */
+.badgePending {
+  background: color-mix(in srgb, var(--accent-gold) 10%, transparent);
+  color: var(--accent-text);
+  border: 1px solid color-mix(in srgb, var(--accent-gold) 28%, transparent);
+}
+
+.badgeReviewing {
+  background: color-mix(in srgb, var(--status-info) 10%, transparent);
+  color: var(--status-info-text);
+  border: 1px solid color-mix(in srgb, var(--status-info) 28%, transparent);
+}
+
+.badgeVerified {
+  background: color-mix(in srgb, var(--status-ok) 10%, transparent);
+  color: var(--status-ok-text);
+  border: 1px solid color-mix(in srgb, var(--status-ok) 28%, transparent);
+}
+
+.badgeRejected {
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  color: var(--status-danger-text);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent);
+}
+
+.badgeSubstitute {
+  /* No status token for this purple; keep the hue but darken it in light mode
+     so the label clears 3:1 on the pale tint. */
+  --badge-substitute: #A855F7;
+  background: color-mix(in srgb, var(--badge-substitute) 10%, transparent);
+  color: var(--badge-substitute);
+  border: 1px solid color-mix(in srgb, var(--badge-substitute) 28%, transparent);
+}
+
+.badgeScheduled {
+  background: color-mix(in srgb, var(--status-info) 10%, transparent);
+  color: var(--status-info-text);
+  border: 1px solid color-mix(in srgb, var(--status-info) 28%, transparent);
+}
+
+.badgeDispensed {
+  background: color-mix(in srgb, var(--status-ok) 10%, transparent);
+  color: var(--status-ok-text);
+  border: 1px solid color-mix(in srgb, var(--status-ok) 28%, transparent);
+}
+
+.badgeDelivered {
+  /* No status token for this indigo; keep the hue but darken it in light mode. */
+  --badge-delivered: #818CF8;
+  background: color-mix(in srgb, var(--badge-delivered) 10%, transparent);
+  color: var(--badge-delivered);
+  border: 1px solid color-mix(in srgb, var(--badge-delivered) 28%, transparent);
+}
+
+/* Light-mode darkened overrides for the two token-less purples (must clear 3:1). */
+[data-theme="light"] .badgeSubstitute {
+  --badge-substitute: #7C3AED;
+}
+
+[data-theme="light"] .badgeDelivered {
+  --badge-delivered: #4F46E5;
+}
+
+/* Legacy aliases */
+.badgeSuccess {
+  background: color-mix(in srgb, var(--status-ok) 10%, transparent);
+  color: var(--status-ok-text);
+  border: 1px solid color-mix(in srgb, var(--status-ok) 28%, transparent);
+}
+
+.badgeCritical {
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  color: var(--status-danger-text);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent);
+}
+
+.badgeWarning {
+  background: color-mix(in srgb, var(--status-warn) 10%, transparent);
+  color: var(--status-warn-text);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 28%, transparent);
+}
+
+.badgeNeutral {
+  background: var(--bg-glass-hover);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-glass);
+}
+
+/* ═══ Order Review Modal ═══ */
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.15s ease;
+}
+
+/* Ephemeral layer: opaque elevated surface with a real shadow — no blur. */
+.modalPanel {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  width: 560px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: var(--elev-3);
+}
+
+.modalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border-glass);
+}
+
+.modalTitle {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.modalClose {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.modalClose:hover {
+  color: var(--text-primary);
+  background: var(--bg-glass-hover);
+}
+
+.modalBody {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.modalSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* A status badge sizes to its label. Stretched by the column above, the
+   modal's "Current Status" pill drew as a full-width coloured bar. */
+.modalSection > .badge {
+  align-self: flex-start;
+}
+
+.modalSectionTitle {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.modalRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+}
+
+.modalLabel {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.modalValue {
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.modalDivider {
+  height: 1px;
+  background: var(--border-glass);
+}
+
+.modalActions {
+  display: flex;
+  gap: 8px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--border-glass);
+  flex-wrap: wrap;
+}
+
+/* Primary — flat clay fill, no glow, no lift. */
+.btnPrimary {
+  padding: 8px 16px;
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.btnPrimary:hover {
+  background: var(--btn-gradient-hover);
+}
+
+.btnPrimary:active {
+  filter: brightness(0.96);
+}
+
+/* Colour tokens, not opacity — this button nests inside .modalActions, and
+   stacked opacity multiplies the label down to an unreadable alpha. */
+.btnPrimary:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+.btnDanger {
+  padding: 8px 16px;
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  color: var(--status-danger-text);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.btnDanger:hover {
+  background: color-mix(in srgb, var(--status-danger) 18%, transparent);
+}
+
+/* Secondary — bordered surface. */
+.btnSecondary {
+  padding: 8px 16px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.btnSecondary:hover {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+  color: var(--text-primary);
+}
+
+/* Disabled: the same neutral pair as .btnPrimary. Without it "Suggest
+   Substitute" with no substitute chosen, and every action while one is in
+   flight, kept its live surface and pointer. After the :hover rules so a
+   hovered disabled button does not light up. */
+.btnDanger:disabled,
+.btnSecondary:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+/* Pharmacy has dispensed and the ward has not yet signed for it. A status
+   line, not a control: the next step belongs to a different person. */
+.awaitingReceipt {
+  margin: 4px 20px 16px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--status-info) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-info) 24%, transparent);
+  border-radius: var(--radius-sm);
+  color: var(--status-info-text);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.textarea {
+  width: 100%;
+  min-height: 60px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  padding: 10px 12px;
+  font-size: 0.875rem;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.selectInput {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.selectInput:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.selectInput option {
+  /* Opaque, theme-aware background — a translucent bg is unreliable in native
+     dropdown rendering and can wash out option text. */
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+/* ═══ Timeline / Fulfillment Steps ═══ */
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 4px 0;
+}
+
+.timelineStep {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  position: relative;
+}
+
+.timelineStep:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 28px;
+  bottom: -8px;
+  width: 1px;
+  background: var(--border-glass);
+}
+
+.timelineDot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--border-glass);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.timelineDotActive {
+  border-color: var(--accent-gold);
+  background: var(--accent-glow-strong);
+}
+
+.timelineDotComplete {
+  border-color: var(--status-ok);
+  background: color-mix(in srgb, var(--status-ok) 20%, transparent);
+}
+
+.timelineContent {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.timelineLabel {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.timelineTime {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* Loading & Empty State */
+.loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  animation: pulse 2s infinite ease-in-out;
+}
+
+.emptyState {
+  padding: 48px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+/* Load failure, distinct from .emptyState on purpose: an empty pharmacy queue
+   and an unreachable one look identical otherwise, and only one of them means
+   "nothing to verify". Uses the status-danger TEXT token on a 10% tint — the
+   fill token would need --status-on-fill and this is a panel, not a chip. */
+.loadError {
+  margin: 24px;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent);
+  color: var(--status-danger-text);
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+
+.loadErrorRetry {
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.loadErrorRetry:hover { background: var(--bg-glass-hover); border-color: var(--border-focus); }
+
+.emptyStateIcon {
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+
+@keyframes pulse {
+  0% { opacity: 0.4; }
+  50% { opacity: 1; }
+  100% { opacity: 0.4; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Utility layout */
+.flexBetween {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.flexCol {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.flexRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gap12 {
+  gap: 12px;
+}
+
+/* ═══ Pharmacist verification queue ═══
+   It used to be all inline styles: saturated green and red fills where Helix
+   uses clay and a tinted danger, 7px-padded buttons no media query could
+   reach, and a 920px table. It shares the Helix buttons and these rules now. */
+.verifyPage {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.verifyCard {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  color: var(--text-primary);
+}
+
+.verifyTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.verifyTable th {
+  text-align: left;
+  padding: 10px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-glass);
+  white-space: nowrap;
+}
+
+.verifyTable td {
+  padding: 12px;
+  font-size: 13px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.verifyPatient {
+  font-weight: 600;
+}
+
+.verifySafety {
+  max-width: 280px;
+}
+
+.verifyInput {
+  width: 100%;
+  min-width: 72px;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--bg-glass-hover);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+
+.verifyInput:focus {
+  border-color: var(--border-focus);
+}
+
+.verifyActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.verifyHint {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.verifyFlash {
+  font-size: 13px;
+  color: var(--status-ok-text);
+}
+
+.verifyError {
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--status-danger-text);
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent);
+  border-radius: var(--radius-md);
+}
+
+/* The inline reason panel, for a reject or for verifying past severe alerts.
+   A reject used to ask through window.prompt: a browser dialog with no drug
+   name in view, blocked outright by some kiosk browsers. */
+.reasonPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent);
+  border-radius: var(--radius-md);
+}
+
+.reasonTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--status-danger-text);
+}
+
+.reasonNote {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.reasonWarn {
+  font-size: 12px;
+  color: var(--status-warn-text);
+}
+
+/* Responsive — ward tablet (≤768px) → ~600px. The medication grid already
+   auto-fills; here we tighten chrome and cap the review modal to the viewport. */
+@media (max-width: 768px) {
+  .container { padding: 20px; }
+}
+
+/* Under 900px the queue is a stack of cards, one per medicine, each cell
+   labelled. The 920px table put Verify and Reject off the right edge of a
+   ward tablet. */
+@media (max-width: 900px) {
+  .verifyTable thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .verifyTable,
+  .verifyTable tbody,
+  .verifyTable tr,
+  .verifyTable td {
+    display: block;
+    width: 100%;
+  }
+  .verifyTable tr {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-glass);
+  }
+  .verifyTable tr:last-child { border-bottom: none; }
+  .verifyTable td {
+    padding: 6px 0;
+    border-bottom: none;
+  }
+  .verifyTable td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+  }
+  .verifySafety { max-width: none; }
+}
+
+@media (max-width: 600px) {
+  .container { padding: 16px 12px; }
+  .modalPanel { width: calc(100vw - 24px); max-width: 560px; }
+  .verifyPage { padding: 16px 12px; }
+  /* Two columns, not one: six full-width stat cards pushed the work queue a
+     whole phone screen below the fold. */
+  .bentoGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .bentoCard { padding: 14px; gap: 8px; }
+  .bentoValue { font-size: 2rem; }
+}
+
+@media (pointer: coarse) {
+  .tab,
+  .btnPrimary,
+  .btnDanger,
+  .btnSecondary,
+  .loadErrorRetry,
+  .verifyInput {
+    min-height: var(--tap-min);
+  }
+}

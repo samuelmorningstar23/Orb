@@ -1,0 +1,780 @@
+/* ============================================================================
+   Orb Design System — "Quiet Clinical"
+   ----------------------------------------------------------------------------
+   A calm, flat, warm-neutral system built for legibility at speed. Surfaces are
+   opaque paper with 1px borders — no frosted glass, no gradients, no glows.
+   Hierarchy comes from type, spacing, and a single clay accent used sparingly.
+   Semantic status colour (green/amber/red) is the only thing allowed to shout.
+
+   Fonts are self-hosted via @fontsource (imported in src/main.tsx) — no CDN,
+   so the app satisfies a strict CSP and works fully offline.
+     · Inter          — all UI and body text
+     · Fraunces       — display serif: brand, page titles, hero moments only
+     · JetBrains Mono — data: IDs, doses, codes, timestamps
+
+   Every colour pair in this file was verified against WCAG 2.x:
+   text ≥ 4.5:1 on every surface it sits on, UI fills/rings ≥ 3:1.
+   Verify changes with a contrast checker before shipping them.
+   ========================================================================== */
+
+/* ─── Design Tokens — Dark (default) ─── */
+:root {
+  /* Backgrounds — warm charcoal paper. Rail darker than canvas, cards lighter. */
+  --bg-primary: #262624;
+  --bg-secondary: #1e1d1b;
+  --bg-surface: #2f2e2b;
+  --bg-elevated: #33322e;
+  /* Subtle interactive fills (hover states, quiet chips) — flat, no blur. */
+  --bg-glass: rgba(255, 255, 255, 0.055);
+  --bg-glass-hover: rgba(255, 255, 255, 0.095);
+
+  /* Text — warm off-whites. muted ≥4.5:1 on every base surface AND on each of
+     them with --bg-glass composited over it (a chip inside a card). That last
+     set is why #a09e94 was retired: it cleared the base surfaces but landed at
+     4.29:1 on surface+glass, which is the single most common real surface in
+     the app. Verified by scripts/check-contrast.mjs. */
+  --text-primary: #f5f4ee;
+  --text-secondary: #c2c0b6;
+  --text-muted: #a9a79e;
+  --text-tertiary: var(--text-muted);
+
+  /* Accent — terracotta clay. Fills use --accent-gold (name kept for compat;
+     the value is now clay). Text uses --accent-text, which is guaranteed
+     ≥4.5:1 on canvas and surface. Buttons use --accent-deep + white. */
+  --accent-gold: #d97757;
+  --accent-amber: #c96442;
+  --accent-deep: #b0542f;
+  --accent-warm: #e0906f;
+  --accent-glow: rgba(217, 119, 87, 0.10);
+  --accent-glow-strong: rgba(217, 119, 87, 0.22);
+  --accent-cyan: #4cc9f0;
+  --accent-text: #e19475;
+  --accent-primary: var(--accent-gold);
+  --btn-primary-text: #ffffff;
+  --focus-ring: #d97757;
+
+  /* Orb brand rings */
+  --orb-ring-1: rgba(217, 119, 87, 0.14);
+  --orb-ring-2: rgba(217, 119, 87, 0.26);
+  --orb-ring-3: rgba(217, 119, 87, 0.40);
+
+  /* Semantic status — the only loud colours. All pass 4.5:1 as text on canvas
+     and surface. Never use the accent for status, or status for branding. */
+  --status-ok: #66bb85;
+  --status-warn: #d9a84e;
+  --status-danger: #e8756a;
+  --status-info: #6faedd;
+  /* Label colour for text sitting ON a solid status fill. The dark/night
+     status colours are light (tuned to work AS text), so their fills need an
+     ink label; light theme's deep status fills carry white. ≥4.5:1 verified
+     against all four fills in every theme. */
+  --status-on-fill: #1b1b18;
+  /* ── Status colours used AS TEXT ──
+     Separate tokens, because one value cannot do both jobs. --status-danger
+     must stay dark enough that color-mix(danger 75%, #000) — the emergency row
+     fill — still carries white at 4.87:1; but at that value it reads only
+     4.03:1 as small text on a glass-over-surface chip. These variants are
+     tuned purely for legibility and must never be used as a fill. */
+  --status-ok-text: #80c79a;
+  --status-warn-text: #deb467;
+  --status-danger-text: #ee9c94;
+  --status-info-text: #8cbee4;
+
+  /* ── Disabled controls ──
+     Never express "disabled" with opacity. Opacity multiplies down the tree
+     (a 0.4 button inside a 0.4 group renders its label at alpha 0.16 — measured
+     at 1.11:1, i.e. unreadable), and it dims the label and the fill by the same
+     factor so contrast can only get worse. A disabled control swaps to this
+     flat neutral pair instead, which stays readable at 6.3:1. */
+  --btn-disabled-bg: #3a3936;
+  --btn-disabled-text: #c2c0b6;
+  --btn-disabled-border: rgba(255, 255, 255, 0.10);
+
+  /* Borders — hairlines do the work shadows used to do. */
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-glass: rgba(255, 255, 255, 0.14);
+  --border-light: var(--border-subtle);
+  --border-focus: rgba(217, 119, 87, 0.55);
+
+  /* Chart kit — resolved via useChartTheme() for recharts (which cannot read
+     var()) and consumed directly by hand-rolled SVG. */
+  --chart-axis: rgba(245, 244, 238, 0.40);
+  --chart-grid: rgba(245, 244, 238, 0.09);
+  --chart-tick: var(--text-secondary);
+  --chart-tooltip-bg: #33322e;
+  --chart-tooltip-text: #f5f4ee;
+  --chart-tooltip-border: rgba(255, 255, 255, 0.14);
+
+  /* Radii — one scale, used everywhere. Buttons/inputs md, cards lg,
+     composer/modals xl, chips full. */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  /* Minimum hit target on a coarse pointer (bedside tablet). WCAG 2.2 §2.5.5
+     Enhanced. Desktop keeps the §2.5.8 floor of 24px — see the target-size
+     block below. Theme-independent, so it is declared once here. */
+  --tap-min: 44px;
+
+  /* Reading measure for a home column (doctor "Today", nurse "My Shift", and
+     later the nurse patient sheet). Both homes clamp their lists to it so a
+     2560px monitor does not stretch a task row until the lateness value is
+     1,400px from the patient's name. Derived from the widest legitimate row:
+     56px NEWS2 lead + 12 + a full drug name/dose/route/frequency on one line at
+     --text-sm (~640) + 16 + a 120px trailing column + 2×16 padding ≈ 940; 960 is
+     the next value on the 4px grid with headroom. Theme-independent like
+     --tap-min, and a length, so it carries no contrast implication.
+     (DUAL_EXPERIENCE_VISUAL_SPEC.md §1.6.) */
+  --home-col-max: 960px;
+
+  /* Blur — retired. Tokens kept so stale references degrade to no-ops. */
+  --blur-glass: 0px;
+  --blur-light: 0px;
+  --glass-saturate: 100%;
+
+  /* Typography */
+  --font-family: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'Fraunces Variable', Georgia, 'Times New Roman', serif;
+  --font-serif: 'Fraunces Variable', Georgia, 'Times New Roman', serif;
+  --font-mono: 'JetBrains Mono Variable', 'SF Mono', ui-monospace, monospace;
+
+  /* Type scale — sized for a clinical console read at arm's length. */
+  --text-xs: 0.78rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-md: 1.125rem;
+  --text-lg: 1.3rem;
+  --text-xl: 1.65rem;
+  --text-2xl: 2.2rem;
+
+  /* Spacing rhythm — 4px base. Align everything to this grid. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 40px;
+  --space-8: 48px;
+
+  /* Shared layout constants — every page aligns to these, none invents its own. */
+  --sidebar-w: 232px;
+  --sidebar-w-rail: 68px;
+  --topbar-h: 60px;
+  --page-x: 28px;
+  --page-y: 24px;
+  /* Room a scroller leaves at its foot for the floating Sage orb (48px disc,
+     24px off the bottom edge, plus 16px air) so the last row is never under it. */
+  --fab-clearance: 88px;
+
+  /* Motion — calm and quick. */
+  --transition-fast: 140ms cubic-bezier(0.3, 0, 0.2, 1);
+  --transition-base: 220ms cubic-bezier(0.3, 0, 0.2, 1);
+  --transition-slow: 360ms cubic-bezier(0.3, 0, 0.2, 1);
+
+  /* Shadows — near-silent. Borders define surfaces; shadows only lift
+     ephemeral layers (menus, popovers, modals). */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.28);
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.30);
+  --shadow-lg: 0 16px 44px rgba(0, 0, 0, 0.42);
+  --shadow-glow: none;
+  --shadow-card: none;
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.22);
+  --elev-2: 0 4px 12px rgba(0, 0, 0, 0.26);
+  --elev-3: 0 16px 40px rgba(0, 0, 0, 0.38);
+  /* Edge hint on a scrolling list: a shadow, so always darker than the
+     surface. It was mixed from --text-muted, which is LIGHT in dark and
+     night, so the hint glowed instead of shading. */
+  --edge-shadow: rgba(0, 0, 0, 0.5);
+  /* Behind a drawer or modal. One value for every theme: it only has to dim
+     what is behind, never carry meaning. */
+  --scrim: rgba(0, 0, 0, 0.45);
+
+  /* Legacy glass aliases — resolve to flat fills so any stale reference
+     degrades safely. Do not use in new code. */
+  --glass-highlight: none;
+  --glass-edge: none;
+  --glass-sheen: var(--bg-glass);
+  --glass-sheen-hover: var(--bg-glass-hover);
+
+  /* Buttons — flat clay. White label verified ≥4.5:1 in rest AND hover. */
+  --btn-gradient: var(--accent-deep);
+  --btn-gradient-hover: #b85632;
+  --btn-glow: none;
+  --btn-glow-hover: none;
+  --btn-sheen: none;
+}
+
+/* ─── Reset ─── */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  /* Inter alternates: open digits/punctuation. cv11 (single-storey a) retired —
+     the double-storey default reads better at clinical densities. */
+  font-feature-settings: 'cv02', 'cv03', 'cv04';
+  overflow-x: hidden !important;
+  max-width: 100vw;
+}
+
+body {
+  font-family: var(--font-family);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+  line-height: 1.6;
+  letter-spacing: -0.006em;
+  font-weight: 400;
+}
+
+/* Headings stay in the UI sans, tightened. The display serif is OPT-IN via
+   .font-display / .shell__page-title — brand and hero moments only, so dense
+   clinical surfaces never inherit a serif by accident. */
+h1, h2, h3 {
+  font-family: var(--font-family);
+  letter-spacing: -0.015em;
+  font-weight: 600;
+}
+
+.font-display {
+  font-family: var(--font-display);
+  font-weight: 540;
+  letter-spacing: -0.01em;
+  font-variation-settings: 'SOFT' 0, 'WONK' 0, 'opsz' 28;
+}
+
+/* Tabular, lining figures everywhere numbers carry clinical meaning (vitals,
+   scores, doses, dollars) so digits align in columns and never reflow width. */
+.tabular-nums,
+[class*="stat"], [class*="metric"], [class*="kpi"], [class*="score"],
+td, th, input, .mono, code, pre {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+code, pre, .mono { font-family: var(--font-mono); }
+
+::selection {
+  background: var(--accent-glow-strong);
+}
+
+/* Forecast chart legend (ForecastPanel has no stylesheet of its own). */
+.forecast-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+}
+.forecast-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.forecast-legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+a { color: inherit; text-decoration: none; }
+/* color: inherit matters — without it button text with no explicit color
+   falls back to the UA's buttontext (black) and vanishes in dark theme. */
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+input, textarea { font-family: inherit; }
+
+/* ─── Screen-reader-only, still focusable ───
+   The `hidden` attribute removes an element from the tab order AND the
+   accessibility tree — fine for decoration, wrong for a real control such as a
+   file input that a visible button proxies for. This hides it visually while
+   keeping it reachable and announceable. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ─── Keyboard focus — one convention for the whole app ───
+   :focus-visible only fires for keyboard/AT navigation, so pointer users see
+   no ring. !important is deliberate: it must beat per-component outline:none. */
+:focus-visible {
+  outline: 2px solid var(--focus-ring) !important;
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Composite fields own their focus indicator: the wrapper shows a focus ring
+   via :focus-within, so the inner control's outline would draw a second box.
+   Accessibility-safe because the wrapper's indicator remains visible. */
+:where(.sage-composer, .scribe-input-wrap, .relay-chat__input, .admit-field)
+  :where(input, textarea, select):focus-visible {
+  outline: none !important;
+}
+
+/* ─── Disabled controls — one convention ───
+   The rule this replaces was `opacity: 0.5` repeated in a dozen stylesheets.
+   Opacity is the wrong tool: it compounds through the tree (a dimmed button
+   inside a dimmed group rendered its label at alpha 0.16 — measured at 1.11:1,
+   invisible), and because it fades label and fill by the SAME factor it can
+   never improve contrast. Disabled here means "swap to the flat neutral pair",
+   which holds 6.3:1 and reads identically at every nesting depth.
+
+   Zero-specificity :where() on purpose — a component that needs a different
+   disabled treatment (a quiet icon button that should only lose its colour,
+   not gain a grey pill) overrides this with a plain class selector. */
+:where(button, [role='button'], input[type='submit'], input[type='button']):disabled,
+:where(button, [role='button'])[aria-disabled='true'] {
+  cursor: not-allowed;
+}
+
+/* Filled buttons opt in to the neutral swap. Applied to the shared primitives
+   here; component-owned filled buttons carry .is-disabled-fill or restate it. */
+:where(.btn-primary, .btn-danger, .btn-accent):disabled,
+:where(.btn-primary, .btn-danger, .btn-accent)[aria-disabled='true'] {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+}
+
+/* ─── Native checkboxes and radios ───
+   Eight stylesheets set `accent-color` on their own controls; BillingPanel and
+   WorkforcePanel did not, so the GST radios on "New service item" and the
+   "Currently employed" tick on an employment record rendered in the browser's
+   default system blue — the one hue that appears nowhere in this palette, on a
+   screen otherwise built entirely from warm clay and neutral. It reads as an
+   unstyled control, which on a money screen reads as an unfinished one.
+
+   `accent-color` inherits, so declaring it once here covers every native
+   control in the app, including the ones the twelfth module has not written
+   yet. Zero-specificity :where() so a panel that genuinely wants a different
+   accent (FlightRecorder's info-blue scrubber) still wins with a plain class. */
+:where(input[type='checkbox'], input[type='radio'], input[type='range'], progress) {
+  accent-color: var(--accent-deep);
+}
+
+/* ─── Target size ───
+   WCAG 2.2 §2.5.8 floors interactive targets at 24×24 CSS px; the audit gate
+   uses that number. Orb also ships to bedside tablets, where 24px is legal but
+   miserable, so coarse pointers get the §2.5.5 Enhanced 44px instead. Two
+   experiences, one rule — desktop stays dense, touch gets thumbs. */
+:where(button, a[href], [role='button'], [role='tab'], summary) {
+  min-height: 24px;
+}
+/* Inline text-in-a-sentence links are exempt: forcing 24px on them would break
+   line rhythm inside prose, and 2.5.8 excludes targets in a sentence. */
+:where(p, li, .prose, .sage-msg__text) :where(a[href]) {
+  min-height: 0;
+}
+
+@media (pointer: coarse) {
+  :where(button, a[href], [role='button'], [role='tab'], summary) {
+    min-height: var(--tap-min);
+  }
+  /* min-width only on real controls — widening every anchor would stretch nav
+     labels and inline chips that are already tall enough to hit. */
+  :where(button, [role='button'], [role='tab']) {
+    min-width: var(--tap-min);
+  }
+  :where(p, li, .prose, .sage-msg__text) :where(a[href]) {
+    min-height: 0;
+  }
+}
+
+/* ─── Surfaces — flat panels (the classes formerly known as glass) ───
+   One look: opaque surface, hairline border, lg radius. No blur, no sheen. */
+.glass {
+  position: relative;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.glass-card {
+  position: relative;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+/* Interactive cards get a border shift, not a lift — nothing on a clinical
+   screen should move because a cursor passed over it. */
+.glass-card:hover {
+  border-color: var(--border-glass);
+}
+
+/* Ephemeral layers: modals, popovers, menus — opaque, real shadow. */
+.glass-strong {
+  position: relative;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-3);
+}
+
+/* ─── Buttons ─── */
+.btn-primary,
+.btn-glass,
+.btn-ghost {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: inherit;
+  font-weight: 550;
+  font-size: var(--text-sm);
+  letter-spacing: -0.006em;
+  line-height: 1;
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+/* Primary — flat clay fill, white label. */
+.btn-primary {
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+}
+.btn-primary:hover { background: var(--btn-gradient-hover); }
+.btn-primary:active { filter: brightness(0.96); }
+/* No opacity here — this rule used to carry `opacity: 0.5`, which is the one
+   thing the block at the top of this file forbids, and it silently undid the
+   neutral-pair swap two rules above. Measured on the real tokens, the disabled
+   label went 6.33:1 → 2.79:1 (dark), 5.97:1 → 2.08:1 (light) and 10.56:1 →
+   3.67:1 (night): all three below AA. check-contrast.mjs reported them as
+   passing because it resolves the token PAIR and has no model of opacity, so
+   the gate could not see it. The `:where(.btn-primary…):disabled` rule above
+   already supplies the flat disabled pair; cursor is all that is needed here. */
+.btn-primary:disabled { cursor: not-allowed; }
+
+/* Secondary — bordered surface. */
+.btn-glass {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-color: var(--border-glass);
+}
+.btn-glass:hover {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+}
+
+/* Ghost — quiet until hovered. */
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: transparent;
+}
+.btn-ghost:hover {
+  background: var(--bg-glass);
+  color: var(--text-primary);
+}
+
+/* ─── Animations ─── */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes orb-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Dialog entrance. Lives here rather than in a panel stylesheet because panel
+   CSS ships in that panel's lazy chunk: `scale-up` is asked for by Scribe's
+   three dialogs AND by the Surgical Suite's confirmation dialog, and until this
+   was declared anywhere at all, both simply had no entrance. ≤8px of travel and
+   a hair of scale, per the motion rules; the reduced-motion block below
+   zeroes it. */
+@keyframes scale-up {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.animate-fade-in { animation: fade-in 0.25s ease-out both; }
+.animate-slide-up { animation: slide-up 0.25s ease-out both; }
+.animate-scale-up { animation: scale-up 0.22s cubic-bezier(0.3, 0, 0.2, 1) both; }
+
+.stagger-1 { animation-delay: 0.04s; }
+.stagger-2 { animation-delay: 0.08s; }
+.stagger-3 { animation-delay: 0.12s; }
+.stagger-4 { animation-delay: 0.16s; }
+.stagger-5 { animation-delay: 0.2s; }
+
+/* ─── Theme flip — repaint, never animate ───
+   Set on <html> for two frames while data-theme changes (ClinicianShell.tsx).
+
+   Without it, any element carrying `background` in its transition list keeps
+   the OLD theme's background permanently: the transition is driven by a custom
+   property that changes beneath it, and the computed value stays pinned at the
+   start instead of landing on the end. Flipping light → night left 12 of 34
+   painted elements behind, including the entire left nav, the primary CTA and
+   two header chips — a true-black page still wearing an ivory rail.
+
+   It is not a motion preference, so it is NOT inside the prefers-reduced-motion
+   block below: it must run for everyone, and only for the two frames of the
+   swap. */
+:root.orb-theme-switching,
+:root.orb-theme-switching *,
+:root.orb-theme-switching *::before,
+:root.orb-theme-switching *::after {
+  transition: none !important;
+}
+
+/* ─── Reduced motion ─── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    /* Without this, stagger delays keep 'both'-fill elements invisible. */
+    animation-delay: 0s !important;
+  }
+}
+
+/* ─── Scrollbar — slim and neutral ─── */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-full);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+  background-clip: padding-box;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+/* ═══════════════════════════════════════════════════
+   LIGHT — warm ivory paper, ink text, clay accent
+   ═══════════════════════════════════════════════════ */
+[data-theme="light"] {
+  --bg-primary: #faf9f5;
+  --bg-secondary: #f2f0e9;
+  --bg-surface: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-glass: rgba(41, 40, 38, 0.045);
+  --bg-glass-hover: rgba(41, 40, 38, 0.08);
+
+  --text-primary: #292826;
+  --text-secondary: #57554e;
+  --text-muted: #6a6860;
+
+  --accent-gold: #c6613f;
+  --accent-amber: #b0542f;
+  --accent-deep: #a54a2a;
+  --accent-warm: #d97757;
+  --accent-glow: rgba(198, 97, 63, 0.08);
+  --accent-glow-strong: rgba(198, 97, 63, 0.18);
+  --accent-cyan: #0e6e96;
+  /* Darkened from #a84a28: --accent-text is used as the label on accent WASHES
+     (an 8–18% --accent-gold tint) in four places — the coding code chip, the
+     resulted-order chip, the Scribe mode toggle and the capacity knob — where
+     the old value measured 4.07–4.49:1 against ivory. The call-site pass in
+     scripts/check-contrast.mjs is what found them; the palette pass never
+     asked the question. On a plain surface it now reads 5.76:1. */
+  --accent-text: #9b4223;
+  --btn-primary-text: #ffffff;
+  --focus-ring: #b0542f;
+
+  --orb-ring-1: rgba(198, 97, 63, 0.14);
+  --orb-ring-2: rgba(198, 97, 63, 0.28);
+  --orb-ring-3: rgba(198, 97, 63, 0.45);
+
+  --status-ok: #047857;
+  --status-warn: #b45309;
+  --status-danger: #c71f1f;
+  --status-info: #0369a1;
+  --status-on-fill: #ffffff;
+  --status-ok-text: #04684b;
+  --status-warn-text: #964507;
+  --status-danger-text: #ad1b1b;
+  --status-info-text: #035f91;
+
+  --btn-disabled-bg: #e8e6df;
+  --btn-disabled-text: #57554e;
+  --btn-disabled-border: rgba(41, 40, 38, 0.14);
+
+  --border-subtle: rgba(41, 40, 38, 0.11);
+  --border-glass: rgba(41, 40, 38, 0.18);
+  --border-focus: rgba(176, 84, 47, 0.5);
+
+  --chart-axis: rgba(41, 40, 38, 0.42);
+  --chart-grid: rgba(41, 40, 38, 0.09);
+  --chart-tick: var(--text-secondary);
+  --chart-tooltip-bg: #ffffff;
+  --chart-tooltip-text: #292826;
+  --chart-tooltip-border: rgba(41, 40, 38, 0.14);
+
+  --shadow-xs: 0 1px 2px rgba(41, 40, 38, 0.05);
+  --shadow-sm: 0 1px 3px rgba(41, 40, 38, 0.06);
+  --shadow-md: 0 6px 18px rgba(41, 40, 38, 0.08);
+  --shadow-lg: 0 16px 44px rgba(41, 40, 38, 0.12);
+  --elev-1: 0 1px 2px rgba(41, 40, 38, 0.05);
+  --elev-2: 0 4px 12px rgba(41, 40, 38, 0.07);
+  --elev-3: 0 16px 40px rgba(41, 40, 38, 0.14);
+  --edge-shadow: rgba(41, 40, 38, 0.16);
+
+  --btn-gradient: var(--accent-amber);
+  --btn-gradient-hover: var(--accent-deep);
+}
+
+[data-theme="light"] body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(41, 40, 38, 0.16);
+}
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(41, 40, 38, 0.3);
+}
+[data-theme="light"] * {
+  scrollbar-color: rgba(41, 40, 38, 0.18) transparent;
+}
+
+/* ═══════════════════════════════════════════════════
+   NIGHT SHIFT / OR — true black, warm amber, maximum contrast
+   ───────────────────────────────────────────────────
+   For dim wards, night rounds and the OR: true-black surfaces to minimise
+   light pollution, AAA-leaning text for reading under fatigue, a warm amber
+   accent (low blue light), and brighter semantic colours so acuity reads at
+   a glance. Same flat surface language as the other themes — crisper borders,
+   never blur.
+   ═══════════════════════════════════════════════════ */
+[data-theme="night"] {
+  --bg-primary: #000000;
+  --bg-secondary: #070707;
+  --bg-surface: #101010;
+  --bg-elevated: #191817;
+  --bg-glass: rgba(255, 245, 225, 0.06);
+  --bg-glass-hover: rgba(255, 245, 225, 0.11);
+
+  --text-primary: #ffffff;
+  --text-secondary: #d8d2c6;
+  --text-muted: #a69f91;
+
+  --accent-gold: #ffb454;
+  --accent-amber: #ff9e3d;
+  --accent-deep: #e07b1a;
+  --accent-warm: #ffd08a;
+  --accent-glow: rgba(255, 180, 84, 0.12);
+  --accent-glow-strong: rgba(255, 180, 84, 0.26);
+  --accent-cyan: #6fd0ea;
+  --accent-text: #ffc978;
+  --btn-primary-text: #1a0f00;
+  --focus-ring: #ffb454;
+
+  --orb-ring-1: rgba(255, 180, 84, 0.14);
+  --orb-ring-2: rgba(255, 180, 84, 0.26);
+  --orb-ring-3: rgba(255, 180, 84, 0.42);
+
+  --status-ok: #3dff88;
+  --status-warn: #ffc043;
+  --status-danger: #ff5e5e;
+  --status-info: #6fd0ea;
+  --status-on-fill: #101006;
+  /* Night's status colours are already bright enough to double as text on a
+     near-black canvas (min 5.1:1), so these alias rather than diverge. */
+  --status-ok-text: #3dff88;
+  --status-warn-text: #ffc043;
+  --status-danger-text: #ff6060;
+  --status-info-text: #6fd0ea;
+
+  --btn-disabled-bg: #232220;
+  --btn-disabled-text: #d8d2c6;
+  --btn-disabled-border: rgba(255, 245, 225, 0.16);
+
+  --border-subtle: rgba(255, 245, 225, 0.14);
+  --border-glass: rgba(255, 245, 225, 0.22);
+  --border-focus: rgba(255, 180, 84, 0.55);
+
+  --chart-axis: rgba(255, 245, 225, 0.48);
+  --chart-grid: rgba(255, 245, 225, 0.14);
+  --chart-tick: var(--text-secondary);
+  --chart-tooltip-bg: #191817;
+  --chart-tooltip-text: #ffffff;
+  --chart-tooltip-border: rgba(255, 245, 225, 0.22);
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.6);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.6);
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 16px 44px rgba(0, 0, 0, 0.7);
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --elev-2: 0 4px 12px rgba(0, 0, 0, 0.55);
+  --elev-3: 0 16px 40px rgba(0, 0, 0, 0.7);
+  --edge-shadow: rgba(0, 0, 0, 0.6);
+
+  --btn-gradient: var(--accent-deep);
+  --btn-gradient-hover: var(--accent-amber);
+}
+
+[data-theme="night"] body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* Night buttons: amber fill needs the dark ink label from the token. */
+[data-theme="night"] .btn-primary {
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+}
+[data-theme="night"] .btn-primary:hover { background: var(--accent-amber); }
+
+[data-theme="night"] ::-webkit-scrollbar-thumb {
+  background: rgba(255, 245, 225, 0.18);
+}
+[data-theme="night"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 245, 225, 0.32);
+}

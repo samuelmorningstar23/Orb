@@ -1,0 +1,679 @@
+/* HousekeepingPanel.css — Orb "Quiet Clinical" (flat).
+ *
+ * RULES THIS FILE FOLLOWS, and why each earns its place here specifically:
+ *
+ *  · NO `opacity` FOR DE-EMPHASIS OR STATE, ANYWHERE. A bed state that is quiet
+ *    because it is faded is a bed state somebody misreads across a corridor. A
+ *    DISABLED control swaps to the --btn-disabled-* pair instead.
+ *  · STATUS FILLS use --status-x with --status-on-fill for the text on top;
+ *    status TEXT on an ordinary surface uses --status-x-text. One token cannot do
+ *    both jobs and clear 4.5:1 in all three themes.
+ *  · A TERMINAL CLEAN IS VISIBLY DISTINCT, not a lighter version of a standard
+ *    one. It is a different job with different PPE and a longer expectation, and
+ *    the distinction is carried by a FILLED tag with an icon — shape and colour,
+ *    never colour alone, because a board is read by people at a distance and some
+ *    of them do not distinguish red from green.
+ *  · EVERY NUMBER IN A COLUMN is tabular-lining. A turnaround column that jitters
+ *    is a column people stop scanning.
+ *  · TAP TARGETS are ≥24px, and ≥44px under `@media (pointer: coarse)`. A ward
+ *    housekeeping board is a tablet far more often than it is a mouse.
+ *  · WIDE CONTENT SCROLLS INSIDE ITSELF (.hk-table-wrap), never the page.
+ *  · The drawer is portalled to document.body, so it is scoped by its own root
+ *    class rather than by nesting under .hk-panel.
+ */
+
+.hk-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 1240px;
+  margin: 0 auto;
+  width: 100%;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+}
+
+/* ─── Header ─── */
+
+.hk-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.hk-title {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.hk-sub {
+  margin: 4px 0 0;
+  max-width: 62ch;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.hk-head__controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* ─── The capacity notice ───
+   NOT a dismissible toast and NOT a low-contrast aside. It states which system
+   owns which number, and somebody who misses it offers a dirty bed. Ordinary
+   body colour, bordered block, always present. */
+
+.hk-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-info);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.hk-notice--danger {
+  border-left-color: var(--status-danger);
+  color: var(--status-danger-text);
+}
+
+.hk-notice--warn {
+  border-left-color: var(--status-warn);
+  color: var(--status-warn-text);
+}
+
+.hk-notice--ok {
+  border-left-color: var(--status-ok);
+  color: var(--status-ok-text);
+}
+
+.hk-notice .hk-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* ─── View tabs ─── */
+
+.hk-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.hk-tab {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 10px 14px;
+  min-height: 24px;
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.hk-tab:hover { color: var(--text-primary); }
+
+.hk-tab.is-active {
+  color: var(--accent-text);
+  border-bottom-color: var(--accent-primary);
+}
+
+.hk-tab:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ─── Sections, tiles ─── */
+
+.hk-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.hk-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.hk-tile {
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.hk-tile__value {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums lining-nums;
+  color: var(--text-primary);
+  line-height: 1.1;
+}
+
+.hk-tile__value--warn { color: var(--status-warn-text); }
+.hk-tile__value--danger { color: var(--status-danger-text); }
+
+.hk-tile__caption {
+  margin-top: 6px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+/* ─── Tables ───
+   Wide content scrolls inside its own box. The page body never scrolls
+   sideways: a horizontally-scrolling page hides the right-hand column, and on
+   this screen the right-hand column is the action. */
+
+.hk-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.hk-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  min-width: 720px;
+}
+
+.hk-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  padding: 10px 14px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.hk-table tbody td,
+.hk-table tbody th {
+  padding: 12px 14px;
+  border-top: 1px solid var(--border-subtle);
+  vertical-align: top;
+  text-align: left;
+  font-weight: 400;
+  color: var(--text-primary);
+}
+
+.hk-table tbody th { font-weight: 600; }
+
+/* Every number in a column lines up under every other one. Scoped to the table
+   as well, not !important: `.hk-table tbody td` (0,1,2) outranks a bare class,
+   which is also why the readiness colours below never reached a cell. */
+.hk-num,
+.hk-table .hk-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums lining-nums;
+  white-space: nowrap;
+}
+
+.hk-row--overdue { background: color-mix(in srgb, var(--status-danger) 7%, transparent); }
+
+.hk-late,
+.hk-table .hk-late { color: var(--status-danger-text); font-weight: 600; }
+.hk-ok,
+.hk-table .hk-ok { color: var(--status-ok-text); }
+.hk-warn,
+.hk-table .hk-warn { color: var(--status-warn-text); }
+.hk-danger,
+.hk-table .hk-danger { color: var(--status-danger-text); }
+
+/* "Unknown" is a WORD, never a dash and never a zero. A ward whose bed count
+   nobody has configured is not a ward with no beds. */
+.hk-unknown {
+  font-style: normal;
+  color: var(--text-secondary);
+}
+
+.hk-of {
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.hk-cell-unit {
+  display: table-cell;
+  white-space: nowrap;
+}
+
+.hk-unit-code {
+  display: block;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.hk-unit-ward {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.hk-cell-request {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hk-cell-note {
+  margin-top: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  line-height: 1.4;
+  max-width: 40ch;
+}
+
+.hk-actions-col {
+  white-space: nowrap;
+}
+
+.hk-actions-col .hk-btn + .hk-btn { margin-left: 6px; }
+
+.hk-foot {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--text-secondary);
+  max-width: 82ch;
+}
+
+/* ─── Badges and chips ───
+   A filled badge always pairs --status-x with --status-on-fill. */
+
+.hk-badge {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--status-on-fill);
+}
+
+.hk-badge--ok { background: var(--status-ok); }
+.hk-badge--warn { background: var(--status-warn); }
+.hk-badge--danger { background: var(--status-danger); }
+.hk-badge--info { background: var(--status-info); }
+
+.hk-badge--neutral {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+/* Priority: three visibly different weights, because "immediate" and "routine"
+   sitting in one queue is the entire reason priority exists here. */
+
+.hk-chip {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.hk-chip--routine {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border-color: var(--border-subtle);
+}
+
+.hk-chip--urgent {
+  background: color-mix(in srgb, var(--status-warn) 12%, transparent);
+  color: var(--status-warn-text);
+  border-color: color-mix(in srgb, var(--status-warn) 32%, transparent);
+}
+
+.hk-chip--immediate {
+  background: var(--status-danger);
+  color: var(--status-on-fill);
+}
+
+/* The terminal-clean tag: SHAPE + ICON + FILL, never colour alone. */
+
+.hk-terminal {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.hk-terminal svg { flex-shrink: 0; }
+
+/* ─── Buttons ─── */
+
+.hk-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.hk-btn:hover:not(:disabled) { border-color: var(--border-light); }
+
+.hk-btn:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* --accent-deep, NOT --accent-primary. `--btn-primary-text` on
+   `--accent-primary` measures 3.12:1 in dark and 4.05:1 in light — both under
+   4.5 — and scripts/check-contrast.mjs catches it at the call site. The deep
+   variant is the token this system pairs with button text, and it is what every
+   other panel's primary action uses. */
+.hk-btn--primary {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+  color: var(--btn-primary-text);
+}
+
+.hk-btn--quiet {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.hk-btn--quiet:hover:not(:disabled) { color: var(--text-primary); }
+
+/* The neutral disabled pair, never opacity. (0,2,0) beats the variant fills. */
+.hk-btn:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+/* ─── Forms ─── */
+
+.hk-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.hk-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 140px;
+}
+
+.hk-field__label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.hk-input,
+.hk-select {
+  min-height: 32px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+}
+
+.hk-input--num {
+  max-width: 110px;
+  text-align: right;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.hk-textarea {
+  resize: vertical;
+  min-height: 68px;
+  line-height: 1.5;
+}
+
+.hk-input:focus-visible,
+.hk-select:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+.hk-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.hk-check input {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  accent-color: var(--accent-primary);
+}
+
+.hk-check__hint {
+  display: block;
+  margin-top: 3px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.hk-radios {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.hk-radios legend {
+  padding: 0 0 6px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.hk-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 24px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.hk-radio input { accent-color: var(--accent-primary); }
+
+.hk-radio--urgent { border-color: color-mix(in srgb, var(--status-warn) 40%, transparent); }
+.hk-radio--immediate { border-color: color-mix(in srgb, var(--status-danger) 45%, transparent); }
+
+/* ─── Empty + loading ─── */
+
+.hk-empty {
+  padding: 28px 24px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  text-align: center;
+}
+
+.hk-empty__title {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.hk-empty__detail {
+  margin: 8px auto 0;
+  max-width: 60ch;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.hk-loading {
+  padding: 32px;
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+/* ─── Drawer (portalled to body) ─── */
+
+.hk-drawer-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.hk-drawer__scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: rgba(4, 8, 14, 0.55);
+  cursor: pointer;
+}
+
+.hk-drawer {
+  position: relative;
+  width: min(480px, 100vw);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font-family);
+  color: var(--text-primary);
+}
+
+.hk-drawer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.hk-drawer__title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.hk-drawer__body {
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.hk-drawer__form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.hk-drawer__form .hk-field { min-width: 0; }
+
+.hk-drawer__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+/* ─── Coarse pointer: a ward tablet ─── */
+
+@media (pointer: coarse) {
+  .hk-btn,
+  .hk-tab,
+  .hk-radio {
+    min-height: 44px;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .hk-input,
+  .hk-select {
+    min-height: 44px;
+  }
+
+  .hk-check input {
+    width: 24px;
+    height: 24px;
+  }
+
+  .hk-actions-col .hk-btn + .hk-btn { margin-left: 8px; }
+}
+
+@media (max-width: 720px) {
+  .hk-head__controls { width: 100%; }
+  .hk-form { flex-direction: column; align-items: stretch; }
+  .hk-field { min-width: 0; }
+}

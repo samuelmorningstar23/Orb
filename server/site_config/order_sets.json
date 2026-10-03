@@ -1,0 +1,473 @@
+{
+  "config_version": 1,
+  "_comment": [
+    "ORDER SETS / PROTOCOLS: site-configurable clinical content.",
+    "",
+    "Every set below is a STARTER. The drug choices, especially the empirical",
+    "antibiotic, are the ones a general medical ward in India would most often",
+    "reach for, and they are NOT a substitute for this hospital's own antibiotic",
+    "policy, microbiology advice, or formulary. Edit this file to match local",
+    "policy, restart Orb, and the ward sees the change.",
+    "",
+    "Every set MUST cite the guideline it encodes. A protocol with no provenance",
+    "is deleted by the first consultant who disagrees with it, and rightly so.",
+    "",
+    "A medication item names drug_name / dose / route / frequency SEPARATELY from",
+    "its description, because the dose guard reads those fields. Writing the dose",
+    "only into the prose would leave the guard nothing to check."
+  ],
+  "sets": [
+    {
+      "id": "sepsis_six",
+      "name": "Sepsis Six (1-hour bundle)",
+      "indication": "Suspected sepsis: NEWS2 5 or more, or any red-flag sepsis criterion.",
+      "guideline": {
+        "name": "Surviving Sepsis Campaign 2021: 1-hour bundle; UK Sepsis Trust 'Sepsis Six'",
+        "citation": "Evans L, Rhodes A, Alhazzani W, et al. Surviving Sepsis Campaign: International Guidelines for Management of Sepsis and Septic Shock 2021. Crit Care Med 2021;49(11):e1063-e1143.",
+        "reviewed_by": "SITE TO COMPLETE: name the consultant who signed this set off",
+        "reviewed_on": "SITE TO COMPLETE: YYYY-MM-DD"
+      },
+      "items": [
+        {
+          "order_type": "lab",
+          "description": "Serum lactate",
+          "code": "2524-7",
+          "code_system": "LOINC",
+          "priority": "stat"
+        },
+        {
+          "order_type": "lab",
+          "description": "Blood culture, two sets: BEFORE the first antibiotic dose",
+          "code": "ORB-LAB-BLOOD-CULTURE",
+          "code_system": "LOCAL",
+          "priority": "stat"
+        },
+        {
+          "order_type": "lab",
+          "description": "Full blood count",
+          "code": "58410-2",
+          "code_system": "LOINC",
+          "priority": "stat"
+        },
+        {
+          "order_type": "lab",
+          "description": "Creatinine and electrolytes",
+          "code": "51990-0",
+          "code_system": "LOINC",
+          "priority": "stat"
+        },
+        {
+          "order_type": "medication",
+          "description": "Oxygen, titrated to SpO2 94-98% (88-92% if at risk of hypercapnia)",
+          "code": "ORB-MED-OXYGEN",
+          "code_system": "LOCAL",
+          "priority": "stat",
+          "drug_name": "Oxygen",
+          "dose": "titrated to target saturation",
+          "route": "inhaled",
+          "frequency": "continuous"
+        },
+        {
+          "order_type": "medication",
+          "description": "Ceftriaxone 2 g IV: first dose STAT, after cultures are drawn",
+          "code": "ORB-MED-CEFTRIAXONE",
+          "code_system": "LOCAL",
+          "priority": "stat",
+          "drug_name": "Ceftriaxone",
+          "dose": "2 g",
+          "route": "IV",
+          "frequency": "once daily",
+          "note": "EMPIRICAL CHOICE: replace with this hospital's own antibiotic policy for suspected sepsis of unknown source."
+        },
+        {
+          "order_type": "medication",
+          "description": "Sodium chloride 0.9% 500 mL IV over 15 minutes; reassess and repeat to 30 mL/kg if hypotensive",
+          "code": "ORB-MED-NACL09",
+          "code_system": "LOCAL",
+          "priority": "stat",
+          "drug_name": "Sodium chloride 0.9%",
+          "dose": "500 mL",
+          "route": "IV infusion",
+          "frequency": "once, then reassess"
+        },
+        {
+          "order_type": "nursing",
+          "description": "Measure hourly urine output: catheterise if not passing urine",
+          "priority": "stat"
+        },
+        {
+          "order_type": "nursing",
+          "description": "Repeat NEWS2 observations hourly for 6 hours",
+          "priority": "urgent"
+        }
+      ]
+    },
+    {
+      "id": "acs_initial",
+      "name": "Acute coronary syndrome: initial management",
+      "indication": "Ischaemic-sounding chest pain with ECG change or a raised troponin.",
+      "guideline": {
+        "name": "ESC 2023 Guidelines for the management of acute coronary syndromes",
+        "citation": "Byrne RA, Rossello X, Coughlan JJ, et al. 2023 ESC Guidelines for the management of acute coronary syndromes. Eur Heart J 2023;44(38):3720-3826.",
+        "reviewed_by": "SITE TO COMPLETE: name the consultant who signed this set off",
+        "reviewed_on": "SITE TO COMPLETE: YYYY-MM-DD"
+      },
+      "items": [
+        {
+          "order_type": "procedure",
+          "description": "12-lead ECG within 10 minutes of arrival; repeat if pain recurs",
+          "code": "ORB-PROC-ECG",
+          "code_system": "LOCAL",
+          "priority": "stat"
+        },
+        {
+          "order_type": "lab",
+          "description": "High-sensitivity cardiac troponin I, baseline sample",
+          "code": "10839-9",
+          "code_system": "LOINC",
+          "priority": "stat"
+        },
+        {
+          "order_type": "lab",
+          "description": "Full blood count",
+          "code": "58410-2",
+          "code_system": "LOINC",
+          "priority": "urgent"
+        },
+        {
+          "order_type": "lab",
+          "description": "Creatinine and electrolytes",
+          "code": "51990-0",
+          "code_system": "LOINC",
+          "priority": "urgent"
+        },
+        {
+          "order_type": "medication",
+          "description": "Aspirin 300 mg orally, chewed, loading dose",
+          "code": "ORB-MED-ASPIRIN",
+          "code_system": "LOCAL",
+          "priority": "stat",
+          "drug_name": "Aspirin",
+          "dose": "300 mg",
+          "route": "oral",
+          "frequency": "once"
+        },
+        {
+          "order_type": "medication",
+          "description": "Clopidogrel 300 mg orally, loading dose",
+          "code": "ORB-MED-CLOPIDOGREL",
+          "code_system": "LOCAL",
+          "priority": "stat",
+          "drug_name": "Clopidogrel",
+          "dose": "300 mg",
+          "route": "oral",
+          "frequency": "once",
+          "note": "Confirm against the local antiplatelet policy and the planned reperfusion strategy before giving."
+        },
+        {
+          "order_type": "medication",
+          "description": "Glyceryl trinitrate 500 micrograms sublingual, repeat after 5 minutes if pain persists and systolic BP is above 90 mmHg",
+          "code": "ORB-MED-GTN",
+          "code_system": "LOCAL",
+          "priority": "stat",
+          "drug_name": "Glyceryl trinitrate",
+          "dose": "500 micrograms",
+          "route": "sublingual",
+          "frequency": "as required"
+        },
+        {
+          "order_type": "medication",
+          "description": "Morphine 2.5 mg IV, titrated to pain",
+          "code": "ORB-MED-MORPHINE",
+          "code_system": "LOCAL",
+          "priority": "stat",
+          "drug_name": "Morphine",
+          "dose": "2.5 mg",
+          "route": "IV",
+          "frequency": "as required"
+        },
+        {
+          "order_type": "medication",
+          "description": "Atorvastatin 80 mg orally at night",
+          "code": "ORB-MED-ATORVASTATIN",
+          "code_system": "LOCAL",
+          "priority": "routine",
+          "drug_name": "Atorvastatin",
+          "dose": "80 mg",
+          "route": "oral",
+          "frequency": "once daily at night"
+        },
+        {
+          "order_type": "imaging",
+          "description": "Portable chest X-ray",
+          "code": "ORB-IMG-CXR",
+          "code_system": "LOCAL",
+          "priority": "urgent"
+        },
+        {
+          "order_type": "nursing",
+          "description": "Continuous cardiac monitoring until pain-free and troponin trend known",
+          "priority": "stat"
+        }
+      ]
+    },
+    {
+      "id": "dka_initial",
+      "name": "Diabetic ketoacidosis: first hour",
+      "indication": "Capillary ketones 3.0 mmol/L or above, or urine ketones 2+ or more, with glucose above 11 mmol/L and acidosis.",
+      "guideline": {
+        "name": "Joint British Diabetes Societies for Inpatient Care: The Management of Diabetic Ketoacidosis in Adults",
+        "citation": "Joint British Diabetes Societies for Inpatient Care. The Management of Diabetic Ketoacidosis in Adults (3rd edition, 2023). See also: American Diabetes Association, Standards of Care in Diabetes.",
+        "reviewed_by": "SITE TO COMPLETE: name the consultant who signed this set off",
+        "reviewed_on": "SITE TO COMPLETE: YYYY-MM-DD"
+      },
+      "items": [
+        {
+          "order_type": "lab",
+          "description": "Capillary blood ketones (beta-hydroxybutyrate): repeat hourly",
+          "code": "ORB-LAB-BLOOD-KETONES",
+          "code_system": "LOCAL",
+          "priority": "stat"
+        },
+        {
+          "order_type": "lab",
+          "description": "Venous blood gas for pH and bicarbonate. Repeat at 1 hour, then 2-hourly",
+          "code": "ORB-LAB-VBG",
+          "code_system": "LOCAL",
+          "priority": "stat"
+        },
+        {
+          "order_type": "lab",
+          "description": "Serum glucose",
+          "code": "2345-7",
+          "code_system": "LOINC",
+          "priority": "stat"
+        },
+        {
+          "order_type": "lab",
+          "description": "Creatinine and electrolytes: potassium guides replacement",
+          "code": "51990-0",
+          "code_system": "LOINC",
+          "priority": "stat"
+        },
+        {
+          "order_type": "medication",
+          "description": "Sodium chloride 0.9% 1000 mL IV over 1 hour",
+          "code": "ORB-MED-NACL09",
+          "code_system": "LOCAL",
+          "priority": "stat",
+          "drug_name": "Sodium chloride 0.9%",
+          "dose": "1000 mL",
+          "route": "IV infusion",
+          "frequency": "once, then reassess"
+        },
+        {
+          "order_type": "medication",
+          "description": "Insulin (soluble human) fixed-rate IV infusion at 0.1 units/kg/hour",
+          "code": "ORB-MED-INSULIN-REG",
+          "code_system": "LOCAL",
+          "priority": "stat",
+          "drug_name": "Insulin soluble human",
+          "dose": "0.1 units/kg/hour",
+          "route": "IV infusion",
+          "frequency": "continuous",
+          "note": "Weight-based rate. Orb's dose guard declines to judge per-kg-per-hour rates and says so. The prescriber owns this number."
+        },
+        {
+          "order_type": "medication",
+          "description": "Potassium chloride 40 mmol added to each litre of IV fluid, adjusted to serum potassium. Diluted and infused, never by IV push.",
+          "code": "ORB-MED-KCL",
+          "code_system": "LOCAL",
+          "priority": "stat",
+          "drug_name": "Potassium chloride",
+          "dose": "40 mmol",
+          "route": "IV infusion",
+          "frequency": "per litre of fluid",
+          "note": "Withhold if serum potassium is above 5.5 mmol/L."
+        },
+        {
+          "order_type": "nursing",
+          "description": "Hourly capillary blood glucose",
+          "priority": "stat"
+        },
+        {
+          "order_type": "nursing",
+          "description": "Hourly fluid balance: catheterise if no urine passed within 60 minutes",
+          "priority": "stat"
+        },
+        {
+          "order_type": "nursing",
+          "description": "Continue the patient's usual long-acting basal insulin at the usual dose",
+          "priority": "urgent"
+        }
+      ]
+    },
+    {
+      "id": "post_operative",
+      "name": "Routine post-operative care (adult, ward)",
+      "indication": "Adult returning to a general ward after uncomplicated surgery.",
+      "guideline": {
+        "name": "ERAS Society perioperative care guidelines; WHO Surgical Safety Checklist",
+        "citation": "ERAS Society. Guidelines for Perioperative Care (procedure-specific series), https://erassociety.org/guidelines/. World Health Organization. WHO Surgical Safety Checklist, 2009.",
+        "reviewed_by": "SITE TO COMPLETE: name the consultant who signed this set off",
+        "reviewed_on": "SITE TO COMPLETE: YYYY-MM-DD"
+      },
+      "items": [
+        {
+          "order_type": "nursing",
+          "description": "NEWS2 observations every 30 minutes for 2 hours, then hourly for 4 hours, then 4-hourly",
+          "priority": "stat"
+        },
+        {
+          "order_type": "medication",
+          "description": "Paracetamol 1 g every 6 hours, maximum 4 g in 24 hours",
+          "code": "ORB-MED-PARACETAMOL",
+          "code_system": "LOCAL",
+          "priority": "routine",
+          "drug_name": "Paracetamol",
+          "dose": "1 g",
+          "route": "oral",
+          "frequency": "every 6 hours"
+        },
+        {
+          "order_type": "medication",
+          "description": "Morphine 2.5 mg IV every 2 hours as required for severe pain",
+          "code": "ORB-MED-MORPHINE",
+          "code_system": "LOCAL",
+          "priority": "routine",
+          "drug_name": "Morphine",
+          "dose": "2.5 mg",
+          "route": "IV",
+          "frequency": "every 2 hours as required"
+        },
+        {
+          "order_type": "medication",
+          "description": "Ondansetron 4 mg IV every 8 hours as required for nausea",
+          "code": "ORB-MED-ONDANSETRON",
+          "code_system": "LOCAL",
+          "priority": "routine",
+          "drug_name": "Ondansetron",
+          "dose": "4 mg",
+          "route": "IV",
+          "frequency": "every 8 hours as required"
+        },
+        {
+          "order_type": "medication",
+          "description": "Enoxaparin 40 mg subcutaneously once daily for VTE prophylaxis, starting 6-12 hours after surgery",
+          "code": "ORB-MED-ENOXAPARIN",
+          "code_system": "LOCAL",
+          "priority": "routine",
+          "drug_name": "Enoxaparin",
+          "dose": "40 mg",
+          "route": "subcutaneous",
+          "frequency": "once daily",
+          "note": "Withhold if actively bleeding, if the surgeon has asked for it to be held, or if creatinine clearance is below 30 mL/min without dose adjustment."
+        },
+        {
+          "order_type": "lab",
+          "description": "Full blood count on the first post-operative morning",
+          "code": "58410-2",
+          "code_system": "LOINC",
+          "priority": "routine"
+        },
+        {
+          "order_type": "nursing",
+          "description": "Check the wound site and record drain output once per shift",
+          "priority": "routine"
+        },
+        {
+          "order_type": "nursing",
+          "description": "Sit out of bed and mobilise on day 0 if safe to do so",
+          "priority": "routine"
+        }
+      ]
+    },
+    {
+      "id": "acute_asthma",
+      "name": "Acute severe asthma (adult)",
+      "indication": "Acute asthma with PEF below 50% predicted, or any life-threatening feature.",
+      "guideline": {
+        "name": "BTS/SIGN 158 British guideline on the management of asthma; GINA report",
+        "citation": "British Thoracic Society / Scottish Intercollegiate Guidelines Network. SIGN 158: British guideline on the management of asthma, 2019. Global Initiative for Asthma. Global Strategy for Asthma Management and Prevention.",
+        "reviewed_by": "SITE TO COMPLETE: name the consultant who signed this set off",
+        "reviewed_on": "SITE TO COMPLETE: YYYY-MM-DD"
+      },
+      "items": [
+        {
+          "order_type": "medication",
+          "description": "Oxygen, titrated to SpO2 94-98%",
+          "code": "ORB-MED-OXYGEN",
+          "code_system": "LOCAL",
+          "priority": "stat",
+          "drug_name": "Oxygen",
+          "dose": "titrated to target saturation",
+          "route": "inhaled",
+          "frequency": "continuous"
+        },
+        {
+          "order_type": "medication",
+          "description": "Salbutamol 5 mg nebulised, driven by oxygen. Repeat every 15-20 minutes, or continuously if life-threatening",
+          "code": "ORB-MED-SALBUTAMOL",
+          "code_system": "LOCAL",
+          "priority": "stat",
+          "drug_name": "Salbutamol",
+          "dose": "5 mg",
+          "route": "nebulised",
+          "frequency": "every 20 minutes"
+        },
+        {
+          "order_type": "medication",
+          "description": "Ipratropium bromide 500 micrograms nebulised every 4-6 hours",
+          "code": "ORB-MED-IPRATROPIUM",
+          "code_system": "LOCAL",
+          "priority": "stat",
+          "drug_name": "Ipratropium bromide",
+          "dose": "500 micrograms",
+          "route": "nebulised",
+          "frequency": "every 6 hours"
+        },
+        {
+          "order_type": "medication",
+          "description": "Prednisolone 40 mg orally once daily for 5 days",
+          "code": "ORB-MED-PREDNISOLONE",
+          "code_system": "LOCAL",
+          "priority": "stat",
+          "drug_name": "Prednisolone",
+          "dose": "40 mg",
+          "route": "oral",
+          "frequency": "once daily",
+          "note": "Use hydrocortisone 100 mg IV instead if the oral route is not available."
+        },
+        {
+          "order_type": "lab",
+          "description": "Arterial blood gas if SpO2 is below 92% or any life-threatening feature is present",
+          "code": "ORB-LAB-ABG",
+          "code_system": "LOCAL",
+          "priority": "urgent"
+        },
+        {
+          "order_type": "imaging",
+          "description": "Portable chest X-ray only if pneumothorax or consolidation is suspected, or the patient fails to respond",
+          "code": "ORB-IMG-CXR",
+          "code_system": "LOCAL",
+          "priority": "urgent"
+        },
+        {
+          "order_type": "nursing",
+          "description": "Continuous pulse oximetry, target SpO2 94-98%",
+          "priority": "stat"
+        },
+        {
+          "order_type": "nursing",
+          "description": "Record peak expiratory flow before and after each nebuliser",
+          "priority": "stat"
+        },
+        {
+          "order_type": "nursing",
+          "description": "Escalate to critical care if PEF is below 33% predicted, the patient is exhausted, or PaCO2 is rising",
+          "priority": "stat"
+        }
+      ]
+    }
+  ]
+}

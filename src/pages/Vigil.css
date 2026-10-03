@@ -1,0 +1,989 @@
+/* ==========================================================================
+   Vigil Clinical Dashboard Styles (Architecture Boundary)
+   ==========================================================================
+   This file ONLY contains styles for the Vigil module.
+   Do NOT place generic platform shell styles here.
+   Quiet Clinical: flat opaque surfaces, 1px hairline borders, token colours.
+   No blur, no gradients, no glows — semantic status colour is the only loud
+   thing on this board.
+   ========================================================================== */
+
+/* ─── Patient rows (Vigil) ─── */
+.vigil-patients-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.patient-row {
+  display: grid;
+  grid-template-columns: 12px 220px 1fr 60px;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  cursor: pointer;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  transition: border-color var(--transition-base), background var(--transition-base);
+}
+
+/* Hover = background + border shift only. Nothing on a clinical list moves. */
+.patient-row:not(.patient-row--emergency):hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-glass);
+}
+
+.patient-row__risk {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.patient-row__risk--critical {
+  background: var(--status-danger);
+}
+
+.patient-row__risk--elevated {
+  background: var(--status-warn);
+}
+
+.patient-row__risk--stable {
+  background: var(--status-ok);
+}
+
+.patient-row__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.patient-row__name {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.patient-row__bed {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.patient-row__meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.patient-row__diagnosis {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.patient-row__score {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+/* ═══ VIGIL — Patient Monitoring Dashboard ═══ */
+/* `.metric-mono` moved to ClinicianShell.css: Appointments and Forecast use it
+   too and import no stylesheet, so styling it in this lazy chunk left their
+   numbers proportional until somebody opened Patients. Same for
+   `.detail__section-title` below. */
+
+/* ─── Command Bar ───
+   Sticky page bar: opaque canvas + hairline. The border does the separating
+   work a shadow used to do; the token background themes automatically. */
+.command-bar {
+  display: flex; align-items: center; gap: 20px;
+  padding: 16px 24px; margin-bottom: 8px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-glass);
+  position: sticky; top: 0; z-index: 100;
+}
+.command-bar__back {
+  display: flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; border-radius: var(--radius-sm);
+  color: var(--text-secondary); background: var(--bg-glass);
+  border: 1px solid var(--border-subtle); transition: all var(--transition-fast);
+}
+.command-bar__back:hover { background: var(--bg-glass-hover); color: var(--text-primary); }
+.command-bar__identity { display: flex; flex-direction: column; min-width: 140px; }
+.command-bar__name { font-size: 1.2rem; font-weight: 700; color: var(--text-primary); margin: 0; }
+.command-bar__mrn { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted); }
+.command-bar__bed-badge {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 8px 16px; border-radius: var(--radius-md);
+  background: var(--bg-glass); border: 1px solid var(--border-glass);
+}
+/* Tinted status fills — derived from the semantic tokens so every theme
+   re-tints them automatically. */
+.command-bar__bed-badge--low { border-color: color-mix(in srgb, var(--status-ok) 28%, transparent); background: color-mix(in srgb, var(--status-ok) 10%, transparent); }
+.command-bar__bed-badge--elevated { border-color: color-mix(in srgb, var(--status-warn) 28%, transparent); background: color-mix(in srgb, var(--status-warn) 10%, transparent); }
+.command-bar__bed-badge--critical { border-color: color-mix(in srgb, var(--status-danger) 28%, transparent); background: color-mix(in srgb, var(--status-danger) 10%, transparent); }
+.command-bar__bed-badge--stable { border-color: color-mix(in srgb, var(--status-ok) 28%, transparent); background: color-mix(in srgb, var(--status-ok) 10%, transparent); }
+.command-bar__bed-label { font-size: 0.7rem; font-weight: 600; color: var(--text-secondary); letter-spacing: 0.06em; }
+.command-bar__risk-pct { font-size: 0.95rem; font-weight: 700; color: var(--text-primary); }
+.command-bar__dx { flex: 1; display: flex; flex-direction: column; border-left: 1px solid var(--border-subtle); padding-left: 20px; }
+.command-bar__dx-label { font-size: 0.74rem; font-weight: 600; color: var(--text-muted); letter-spacing: 0.06em; margin-bottom: 4px; }
+.command-bar__dx-value { font-size: 0.95rem; font-weight: 600; color: var(--text-primary); margin-bottom: 6px; }
+.command-bar__comorbidities { display: flex; flex-wrap: wrap; gap: 6px; }
+.command-bar__comorbidity-tag { background: var(--bg-glass); border: 1px solid var(--border-subtle); padding: 2px 8px; border-radius: var(--radius-sm); font-size: 0.7rem; color: var(--text-secondary); }
+.command-bar__vitals { display: flex; gap: 16px; border-left: 1px solid var(--border-subtle); padding-left: 20px; }
+.command-bar__vital { display: flex; flex-direction: column; position: relative; align-items: center; min-width: 44px; }
+.command-bar__vital-label { font-size: 0.72rem; font-weight: 600; color: var(--text-muted); margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.06em; }
+.command-bar__vital-value { font-size: 1.1rem; font-weight: 700; color: var(--text-primary); font-family: var(--font-mono); }
+.command-bar__vital-unit { font-size: 0.74rem; color: var(--text-muted); }
+/* NEWS2 on the bar. A number is coloured ONLY by the breakdown row that scored
+   it (VigilPanel reads it with breakdownRowFor), never by a cutoff of its own:
+   the old HR/SBP/SpO2 cutoffs disagreed with the breakdown printed under them.
+   The number takes a status TEXT token (points 3: danger; 1 and 2: warn). The
+   "+N" chip sits beside the label, not under the value, so a scored cell stays
+   the height of an unscored one and the chip cannot sit on top of the number
+   when the vitals row wraps on a tablet. Its fills are copied declaration for
+   declaration from .news2-drivers__points--1/2/3, so the bar and the "Why this
+   NEWS2" list are one scale (VigilPanel.commandbar.test pins the copy). */
+.command-bar__vital-head { display: flex; align-items: center; gap: 3px; margin-bottom: 2px; white-space: nowrap; }
+.command-bar__vital-head .command-bar__vital-label { margin-bottom: 0; }
+.command-bar__vital-scored--warn { color: var(--status-warn-text); }
+.command-bar__vital-scored--danger { color: var(--status-danger-text); }
+.command-bar__vital-points {
+  flex: 0 0 auto;
+  padding: 0 4px; border: 1px solid transparent; border-radius: var(--radius-sm);
+  font-family: var(--font-mono); font-size: 0.68rem; font-weight: 700; line-height: 1.3;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.command-bar__vital-points--3 {
+  background: var(--status-danger);
+  color: var(--status-on-fill);
+}
+.command-bar__vital-points--2 {
+  background: var(--status-warn);
+  color: var(--status-on-fill);
+}
+.command-bar__vital-points--1 {
+  background: color-mix(in srgb, var(--status-warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 45%, transparent);
+  color: var(--status-warn-text);
+}
+.command-bar__vital-tooltip {
+  position: absolute; top: calc(100% + 10px); left: 50%; transform: translateX(-50%);
+  background: var(--bg-elevated); border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm); box-shadow: var(--elev-3);
+  z-index: 1000;
+  opacity: 0; visibility: hidden; transition: all 0.2s ease;
+  font-size: 0.74rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em;
+}
+/* The tooltip holds the 6-hour trend sparkline — real clinical data, not a
+   label gloss. Hover alone made it unreachable on the tablet the ward round is
+   run from, so focus opens it too: the cell carries tabindex=0 (VigilPanel),
+   and a tap on a focusable element focuses it on touch. Same pattern as
+   .lab-trend-block below, which already paired :hover with :focus-visible. */
+.command-bar__vital:hover .command-bar__vital-tooltip,
+.command-bar__vital:focus .command-bar__vital-tooltip,
+.command-bar__vital:focus-within .command-bar__vital-tooltip { opacity: 1; visibility: visible; }
+.vital-trend-header { font-size: 0.72rem; font-weight: 600; color: var(--text-muted); letter-spacing: 0.06em; }
+.command-bar__actions { display: flex; gap: 6px; border-left: 1px solid var(--border-subtle); padding-left: 20px; flex-wrap: wrap; }
+/* Groups (view, hand over, print, discharge) are told apart by a hairline
+   between them, not by giving each group its own button style. */
+.command-bar__group { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.command-bar__group + .command-bar__group { border-left: 1px solid var(--border-subtle); padding-left: 6px; }
+.command-bar__btn {
+  padding: 6px 12px; border-radius: var(--radius-sm); font-size: 0.75rem; font-weight: 600;
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+  transition: all var(--transition-fast); border: 1px solid var(--border-glass); white-space: nowrap;
+  background: var(--bg-surface); color: var(--text-secondary); cursor: pointer;
+}
+.command-bar__btn:hover { background: var(--bg-glass-hover); border-color: var(--border-focus); color: var(--text-primary); }
+@media (pointer: coarse) { .command-bar__btn { min-height: 44px; } }
+
+/* ─── Patient Timeline ─── */
+.patient-timeline {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  /* Scroll internally instead of blowing the detail panel past the shell width
+     (nodes have min-width and don't wrap). Thin scrollbar comes from the global
+     scrollbar styles in index.css. */
+  overflow-x: auto;
+  min-width: 0;
+  padding: 16px 8px 8px;
+  position: relative;
+  min-height: 100px;
+}
+/* Connecting track line */
+.patient-timeline::before {
+  content: '';
+  position: absolute;
+  top: 32px;
+  left: 24px;
+  right: 24px;
+  height: 2px;
+  background: var(--border-subtle);
+  z-index: 0;
+}
+
+.timeline-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 60px;
+  flex: 1;
+  position: relative;
+  z-index: 2;
+  cursor: pointer;
+  padding: 0 2px;
+}
+/* Ghost = future date with no data yet. It's marked by a dashed, faint dot —
+   NOT by dimming the whole node, which used to drag the date text under the
+   contrast floor. The label drops to the muted text token and stays legible. */
+.timeline-node--ghost .timeline-node__dot--orb {
+  border-style: dashed;
+  opacity: 0.55;
+}
+.timeline-node--ghost .timeline-node__label { color: var(--text-muted); }
+
+/* Collapsed "quiet run" segment — narrow spacer that folds many uneventful days
+   into one marker so a long admission stays readable. */
+.timeline-node--collapsed {
+  min-width: 40px;
+  flex: 0 0 auto;
+  cursor: default;
+}
+.timeline-collapsed-rail {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.timeline-collapsed-rail__dots {
+  color: var(--text-muted);
+  font-weight: 700;
+  letter-spacing: 1px;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.timeline-node__orbiter {
+  position: relative;
+  margin-bottom: 8px;
+}
+.timeline-node__dot--orb {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2.5px solid var(--border-glass);
+  background: var(--bg-surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+  position: relative;
+}
+.timeline-node--has-data .timeline-node__dot--orb {
+  border-color: var(--accent-gold);
+  background: var(--accent-glow);
+}
+/* Active/today marker — solid accent fill. --accent-deep + --btn-primary-text
+   is the verified AA pairing on accent fills in every theme. */
+.timeline-node--active .timeline-node__dot--orb,
+.timeline-node__dot--today {
+  border-color: var(--accent-deep);
+  background: var(--accent-deep);
+}
+.timeline-node--active .timeline-node__day-num,
+.timeline-node__dot--today .timeline-node__day-num {
+  color: var(--btn-primary-text) !important;
+  font-weight: 800 !important;
+}
+.timeline-node--discharge .timeline-node__dot--orb {
+  border-color: var(--status-ok);
+  background: color-mix(in srgb, var(--status-ok) 15%, transparent);
+}
+.timeline-node__day-num {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+.timeline-node:hover .timeline-node__dot--orb {
+  border-color: var(--accent-gold);
+}
+
+.timeline-node__orbiters {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  justify-content: center;
+  z-index: 10;
+}
+.timeline-orbiter {
+  font-size: 0.72rem;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+}
+.timeline-orbiter:not(:first-child) {
+  margin-left: -6px;
+}
+.timeline-orbiter--diagnostic {
+  border-color: var(--accent-glow-strong);
+}
+.timeline-orbiter--lab {
+  border-color: color-mix(in srgb, var(--status-info) 28%, transparent);
+}
+.timeline-node__label {
+  text-align: center;
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.timeline-node__date {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+/* Timeline Tooltip — floating layer: opaque elevated surface + real shadow. */
+.timeline-tooltip, .timeline-tooltip--rich {
+  position: absolute; top: calc(100% + 14px); left: 50%; transform: translateX(-50%) translateY(-8px);
+  background: var(--bg-elevated); border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md); padding: 14px; width: 260px;
+  box-shadow: var(--elev-3);
+  opacity: 0; visibility: hidden; transition: all 0.2s ease; z-index: 1000; pointer-events: none;
+}
+.timeline-node:hover .timeline-tooltip, .timeline-node:hover .timeline-tooltip--rich { opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+.timeline-tooltip__header { font-size: 0.85rem; font-weight: 700; color: var(--text-primary); border-bottom: 1px solid var(--border-subtle); padding-bottom: 6px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+.timeline-tooltip__section { margin-bottom: 10px; }
+.timeline-tooltip__section:last-child { margin-bottom: 0; }
+.timeline-tooltip__section-title { font-size: 0.7rem; font-weight: 600; color: var(--accent-text); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; display: flex; align-items: center; gap: 4px; }
+.timeline-tooltip__item { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--text-secondary); line-height: 1.3; margin-bottom: 4px; cursor: pointer; padding: 3px 4px; border-radius: var(--radius-sm); transition: background 0.15s; }
+.timeline-tooltip__item:hover { background: var(--bg-glass-hover); }
+.timeline-tooltip__item-icon { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.timeline-tooltip__empty { font-size: 0.72rem; color: var(--text-muted); font-style: italic; padding: 2px 0; }
+.timeline-tooltip__med { display: flex; flex-direction: column; gap: 1px; margin-bottom: 4px; padding: 3px 4px; border-radius: var(--radius-sm); }
+.timeline-tooltip__med-name { font-size: 0.78rem; font-weight: 600; color: var(--text-primary); }
+.timeline-tooltip__med-detail { font-size: 0.75rem; color: var(--text-muted); }
+
+/* ─── Detail Layout ─── */
+.detail__row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; overflow: visible; }
+/* `.detail__section-title` is styled in ClinicianShell.css — shared with
+   AppointmentsPanel and ForecastPanel. See the note beside `.metric-mono`. */
+.detail__risk-panel {
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+.detail__risk-top-section { display: flex; gap: 16px; align-items: center; }
+.detail__risk-gauge { flex-shrink: 0; }
+.detail__risk-drivers { flex: 1; }
+.detail__driver { font-size: 0.85rem; color: var(--text-secondary); padding: 4px 12px; border-left: 2px solid var(--border-glass); margin-bottom: 4px; }
+.detail__trend { font-size: 0.85rem; font-weight: 600; margin-top: 8px; padding: 6px 12px; border-radius: var(--radius-sm); }
+.detail__trend--stable { color: var(--text-secondary); background: var(--bg-glass); }
+.detail__trend--improving { color: var(--status-ok-text); background: color-mix(in srgb, var(--status-ok) 10%, transparent); }
+.detail__trend--deteriorating { color: var(--status-danger-text); background: color-mix(in srgb, var(--status-danger) 10%, transparent); }
+/* NO EARLIER WINDOW TO COMPARE AGAINST. Deliberately unlike --stable: an absent
+   baseline is a fact about the record, and it used to be painted in the same
+   quiet grey box as "this patient is steady" on every chart the server returned
+   `insufficient_data` for. Dashed and muted, so it reads as a gap, not a
+   finding. Any future trend value the server adds lands here too. */
+.detail__trend--unknown {
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px dashed var(--border-glass);
+  font-weight: 500;
+}
+
+/* ─── Sage-Deduced Clinical Course Timeline ─── */
+.course-timeline { padding: 16px 20px 18px; margin-top: 8px; margin-bottom: 4px; }
+.course-timeline__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.course-timeline__meta { display: flex; align-items: center; gap: 8px; }
+.course-timeline__los {
+  font-size: 0.78rem; font-weight: 700; color: var(--text-primary);
+  padding: 4px 10px; border-radius: var(--radius-full);
+  background: var(--bg-glass); border: 1px solid var(--border-glass);
+}
+.course-timeline__source {
+  font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 4px 10px; border-radius: var(--radius-full);
+}
+.course-timeline__source--sage { color: var(--accent-text); background: var(--accent-glow); border: 1px solid var(--border-focus); }
+.course-timeline__source--est { color: var(--text-muted); background: var(--bg-glass); border: 1px solid var(--border-subtle); }
+
+.course-timeline__loading {
+  display: flex; align-items: center; gap: 10px;
+  color: var(--text-muted); font-size: 0.85rem; padding: 18px 0;
+}
+/* Live pulse — kept: the animation signals an in-flight Sage deduction. */
+.course-timeline__pulse {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--accent-gold);
+  animation: course-pulse 1.4s ease-in-out infinite;
+}
+@keyframes course-pulse { 0%, 100% { opacity: 0.4; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1.1); } }
+
+.course-rail {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  min-width: 0;
+}
+.course-phase {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px 14px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-glass);
+  background: var(--bg-glass);
+  min-width: 150px;
+  transition: border-color var(--transition-base), background var(--transition-base);
+}
+/* Connector between phases */
+.course-phase::after {
+  content: '';
+  position: absolute; top: 26px; right: -10px; width: 10px; height: 2px;
+  background: var(--border-glass);
+}
+.course-phase:last-child::after { display: none; }
+
+.course-phase__marker {
+  width: 26px; height: 26px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 0.8rem; font-weight: 700;
+  color: var(--text-muted);
+  background: var(--bg-surface); border: 1.5px solid var(--border-glass);
+  margin-bottom: 2px;
+}
+.course-phase__name {
+  font-size: 0.9rem; font-weight: 700; color: var(--text-primary);
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.course-phase__now {
+  font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--btn-primary-text); background: var(--accent-deep);
+  padding: 1px 6px; border-radius: var(--radius-full);
+}
+.course-phase__days { font-size: 0.7rem; font-weight: 600; color: var(--accent-text); font-family: var(--font-mono); }
+.course-phase__focus { font-size: 0.78rem; color: var(--text-secondary); line-height: 1.4; }
+
+/* Phase states — past and future phases read quieter via the text token, not by
+   dimming the whole card: an opacity here fell on the marker and the focus copy
+   too, and would have stacked with any parent that dims. The state itself is
+   still carried by the marker (tick colour for done, dashed ring for future). */
+.course-phase--done .course-phase__name { color: var(--text-secondary); }
+.course-phase--done .course-phase__marker { color: var(--status-ok-text); border-color: var(--status-ok); background: color-mix(in srgb, var(--status-ok) 10%, transparent); }
+.course-phase--done::after { background: var(--status-ok); opacity: 0.5; }
+
+.course-phase--current {
+  border-color: var(--border-focus);
+  background: var(--accent-glow);
+}
+.course-phase--current .course-phase__marker {
+  color: var(--btn-primary-text);
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+}
+.course-phase--future .course-phase__name { color: var(--text-secondary); }
+.course-phase--future .course-phase__marker { border-style: dashed; }
+
+.course-timeline__rationale {
+  margin-top: 14px; padding: 10px 14px;
+  font-size: 0.82rem; color: var(--text-secondary); line-height: 1.5;
+  background: var(--bg-glass); border-left: 2px solid var(--border-focus);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.course-timeline__dc { margin-top: 12px; }
+.course-timeline__dc-label {
+  font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.course-timeline__dc-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.course-timeline__dc-item {
+  font-size: 0.76rem; color: var(--text-secondary);
+  padding: 4px 10px; border-radius: var(--radius-full);
+  background: var(--bg-glass); border: 1px solid var(--border-subtle);
+}
+
+/* ─── Lab Trends Panel ─── */
+.timeline-wrapper { z-index: 10; }
+.timeline-wrapper:hover { z-index: 30 !important; }
+
+.detail__labs-panel {
+  display: flex; flex-direction: column; padding: 20px;
+  overflow: visible !important; position: relative; z-index: 15;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+.detail__labs-panel:hover { z-index: 30 !important; }
+.detail__labs-panel.glass-card { overflow: visible !important; }
+.detail__labs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 4px; overflow: visible; position: relative; }
+/* A real <button> so the lab strip is keyboard-reachable — the tile is the
+   only route to the full trend chart. Resets keep it looking like the div. */
+.lab-trend-block {
+  position: relative; display: block; width: 100%; text-align: left;
+  padding: 0; border: none; background: none; font-family: inherit; cursor: pointer;
+}
+.lab-trend-block__inner { display: block; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--bg-glass); transition: background 0.15s; }
+.lab-trend-block:hover .lab-trend-block__inner,
+.lab-trend-block:focus-visible .lab-trend-block__inner { background: var(--bg-glass-hover); }
+.lab-trend-block__name { display: block; font-size: 0.7rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 2px; }
+.lab-trend-block__value { font-size: 1rem; font-weight: 700; font-family: var(--font-mono); display: flex; align-items: baseline; gap: 2px; }
+.lab-trend-block__unit { font-size: 0.72rem; font-weight: 400; color: var(--text-muted); margin-left: 2px; }
+.lab-trend-block__arrow { margin-left: 4px; font-size: 0.8rem; }
+.lab-trend-block__ref { display: block; font-size: 0.72rem; color: var(--text-muted); margin-top: 1px; }
+
+/* Lab Trend Tooltip — floating layer: opaque elevated surface + real shadow. */
+.lab-trend-tooltip {
+  position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%) translateY(6px);
+  background: var(--bg-elevated); border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm); padding: 10px; width: 200px;
+  box-shadow: var(--elev-3);
+  opacity: 0; visibility: hidden; transition: all 0.15s ease; z-index: 1000; pointer-events: none;
+}
+/* Keyboard users get the sparkline too — :focus-visible mirrors :hover. */
+.lab-trend-block:hover .lab-trend-tooltip,
+.lab-trend-block:focus-visible .lab-trend-tooltip { opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0); }
+.lab-trend-tooltip__header { display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; font-weight: 700; color: var(--text-primary); margin-bottom: 6px; }
+.lab-trend-tooltip__footer { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 0.7rem; }
+
+/* ─── Risk Gauge ─── */
+.risk-gauge { position: relative; width: 80px; height: 80px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.risk-gauge svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; }
+.risk-gauge__label { display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1; margin-top: 2px; }
+.risk-gauge__pct { font-size: 1.25rem; font-weight: 800; font-family: var(--font-mono); line-height: 1; }
+.risk-gauge__level { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 2px; color: var(--text-muted); }
+
+/* ─── Modals — opaque elevated surface, hairline border, one real shadow. ─── */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 9999;
+  animation: fade-in 0.2s ease-out;
+}
+/* !important kept: this class co-exists with the shared .glass classes on the
+   same element and must win regardless of stylesheet order. */
+.modal {
+  /* overscroll-behavior: reaching the end of a long discharge summary must not
+     chain the gesture past the modal. useFocusTrap already locks <body>, but a
+     bedside tablet can still chain into any scrollable ancestor. */
+  max-width: 700px; width: 90%; max-height: 85vh; overflow-y: auto; overscroll-behavior: contain; padding: 28px;
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border-glass) !important;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--elev-3) !important;
+}
+.modal__title { font-size: 1.2rem; font-weight: 700; color: var(--text-primary); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+.modal__body { display: flex; flex-direction: column; gap: 16px; }
+.modal__text { font-size: 0.95rem; color: var(--text-secondary); line-height: 1.6; }
+.modal__patient-summary { background: var(--bg-glass); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 16px; font-size: 0.9rem; color: var(--text-secondary); display: flex; flex-direction: column; gap: 6px; }
+.modal__actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 8px; }
+.modal__cancel { padding: 10px 20px; border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); border: 1px solid var(--border-glass); font-weight: 600; transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast); }
+.modal__cancel:hover { background: var(--bg-glass-hover); border-color: var(--border-focus); color: var(--text-primary); }
+.modal__confirm { padding: 10px 20px; border-radius: var(--radius-sm); background: var(--accent-deep); color: var(--btn-primary-text); border: 1px solid transparent; font-weight: 600; transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast); }
+.modal__confirm:hover { background: var(--btn-gradient-hover); }
+.modal__confirm:active { filter: brightness(0.96); }
+/* Disabled = a flat neutral repaint, never opacity: these two nest inside the
+   modal and an alpha here multiplied down to an unreadable label on the
+   discharge / add-med confirms. Confirm is a filled button, cancel a bordered
+   quiet one, so they take different halves of the disabled token set. */
+.modal__confirm:disabled { background: var(--btn-disabled-bg); color: var(--btn-disabled-text); border-color: var(--btn-disabled-border); cursor: not-allowed; }
+.modal__cancel:disabled { color: var(--text-muted); border-color: var(--btn-disabled-border); cursor: not-allowed; }
+.modal__success { background: color-mix(in srgb, var(--status-ok) 10%, transparent); border: 1px solid color-mix(in srgb, var(--status-ok) 28%, transparent); border-radius: var(--radius-sm); padding: 12px 16px; color: var(--status-ok-text); font-weight: 600; text-align: center; }
+.modal__summary-content { border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 16px; max-height: 300px; overflow-y: auto; }
+.modal__btn { padding: 8px 16px; border-radius: var(--radius-sm); font-weight: 600; font-size: 0.85rem; transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast); }
+/* Ghost/secondary modal button — token-based so it reads correctly in every
+   theme. Replaces the inline `background: rgba(255,255,255,0.1); color: white`
+   that rendered white-on-white (invisible) on the light + night surfaces. */
+.modal__btn--ghost { background: var(--bg-glass); color: var(--text-primary); border: 1px solid var(--border-glass); }
+.modal__btn--ghost:hover { background: var(--bg-glass-hover); }
+/* The eMAR "Administer" button on an already-active med row. It inherited the
+   browser's default disabled styling — the label composited to alpha 0.25
+   (2.07:1 dark, 1.65:1 light). WCAG exempts disabled controls, so the gate only
+   reported it, but a nurse still has to READ the greyed button to know what it
+   would do; an unreadable label on a medication-administration control is not
+   something to leave in because a spec permits it. */
+.modal__btn:disabled,
+.modal__btn[aria-disabled='true'] {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+.modal__qr { text-align: center; }
+.modal__qr-image { max-width: 200px; border-radius: var(--radius-sm); margin-top: 8px; }
+.modal__qr-hint { font-size: 0.8rem; color: var(--text-muted); margin-top: 6px; }
+.modal__timeline { display: flex; flex-direction: column; gap: 8px; }
+.modal__timeline-event { display: flex; gap: 12px; align-items: flex-start; }
+.modal__timeline-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex-shrink: 0; background: var(--text-muted); }
+.modal__timeline-dot--note { background: var(--accent-gold); }
+.modal__timeline-dot--medication { background: var(--status-ok); }
+.modal__timeline-dot--lab { background: var(--status-info); }
+.modal__timeline-info { display: flex; flex-direction: column; gap: 2px; }
+.modal__timeline-title { font-size: 0.85rem; font-weight: 600; color: var(--text-primary); }
+.modal__timeline-detail { font-size: 0.8rem; color: var(--text-secondary); }
+.modal__timeline-date { font-size: 0.7rem; color: var(--text-muted); }
+.discharge-preview { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6; }
+
+/* ─── Reports Modal ─── */
+.reports-modal__search { position: relative; margin-bottom: 12px; }
+.reports-modal__search-input { width: 100%; padding: 10px 16px 10px 36px; background: var(--bg-glass); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.9rem; }
+.reports-modal__search-input:focus { outline: none; border-color: var(--border-focus); }
+.reports-modal__clear { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--text-muted); cursor: pointer; }
+.reports-modal__list { display: flex; flex-direction: column; gap: 8px; max-height: 400px; overflow-y: auto; }
+.reports-modal__empty { text-align: center; padding: 24px; color: var(--text-muted); font-size: 0.9rem; }
+/* A real <button>, so the reset below (width/text-align/font/color) is what
+   keeps it looking like a card. Was a <div onClick>: styled as interactive,
+   reachable only by mouse. */
+.reports-modal__card { display: flex; width: 100%; text-align: left; font: inherit; color: inherit; gap: 12px; padding: 12px; border-radius: var(--radius-sm); background: var(--bg-glass); border: 1px solid var(--border-subtle); cursor: pointer; transition: background var(--transition-fast), border-color var(--transition-fast); }
+.reports-modal__card:hover { background: var(--bg-glass-hover); border-color: var(--border-focus); }
+.reports-modal__card-icon { width: 40px; height: 40px; border-radius: var(--radius-sm); background: var(--accent-glow); display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 1.1rem; }
+.reports-modal__card-icon--diag { background: var(--accent-glow); }
+.reports-modal__card-body { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.reports-modal__card-header { display: flex; justify-content: space-between; align-items: center; }
+.reports-modal__card-type { font-size: 0.8rem; font-weight: 600; color: var(--text-primary); }
+.reports-modal__card-date { font-size: 0.7rem; color: var(--text-muted); }
+/* display:block because these are <span>s inside a <button> now, and
+   text-overflow: ellipsis needs a block box to clip against. */
+.reports-modal__card-context { display: block; font-size: 0.78rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reports-modal__card-preview { display: block; font-size: 0.72rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reports-modal__critical-badge { font-size: 0.72rem; font-weight: 700; color: var(--status-danger-text); background: color-mix(in srgb, var(--status-danger) 10%, transparent); padding: 1px 6px; border-radius: var(--radius-sm); }
+
+/* ─── Notes & Meds (detail view) ─── */
+.detail__notes-list { display: flex; flex-direction: column; gap: 8px; }
+/* Notes History cards are real buttons that open the full note. They used to
+   render as flat static cards — identical to the non-interactive
+   .detail__no-data block above them — so the click was unadvertised. Matches
+   .reports-modal__card:hover, the sibling list that always got this right. */
+.detail__note {
+  display: block; width: 100%; text-align: left; font-family: inherit;
+  padding: 12px; border-radius: var(--radius-sm);
+  background: var(--bg-glass); border: 1px solid var(--border-subtle);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.detail__note:hover { background: var(--bg-glass-hover); border-color: var(--border-focus); }
+.detail__note-header { display: flex; justify-content: space-between; margin-bottom: 6px; }
+.detail__note-date { font-size: 0.72rem; color: var(--text-muted); }
+.detail__note-content { display: block; font-size: 0.88rem; color: var(--text-secondary); line-height: 1.5; }
+.detail__meds-list { display: flex; flex-direction: column; gap: 4px; }
+.detail__meds-table { width: 100%; }
+.detail__med-name { font-weight: 600; color: var(--text-primary); font-size: 0.9rem; }
+.detail__med-dose { font-size: 0.85rem; color: var(--text-secondary); }
+.detail__med-freq { font-size: 0.78rem; color: var(--text-muted); }
+.detail__med-note { font-size: 0.75rem; color: var(--text-muted); font-style: italic; }
+.detail__no-data { text-align: center; padding: 20px; color: var(--text-muted); font-size: 0.9rem; }
+.detail__add-btn { padding: 8px 16px; border-radius: var(--radius-sm); background: var(--bg-glass); color: var(--text-primary); border: 1px solid var(--border-glass); font-weight: 600; font-size: 0.82rem; transition: background var(--transition-fast), border-color var(--transition-fast); }
+.detail__add-btn:hover { background: var(--bg-glass-hover); border-color: var(--border-focus); }
+.detail__reports-list { display: flex; flex-direction: column; gap: 8px; }
+/* Also a real <button> (Reports History, and the patient portal's report list).
+   The width/text-align/font/color declarations are the button reset that keeps
+   the card looking like a card. */
+.detail__report { display: flex; width: 100%; text-align: left; font: inherit; color: inherit; gap: 12px; padding: 10px; border-radius: var(--radius-sm); background: var(--bg-glass); border: 1px solid var(--border-subtle); cursor: pointer; }
+.detail__report:hover { background: var(--bg-glass-hover); }
+.detail__report-thumb { width: 48px; height: 48px; border-radius: var(--radius-sm); background: var(--bg-glass); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.detail__report-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.detail__report-title { font-size: 0.85rem; font-weight: 600; color: var(--text-primary); }
+
+/* ─── Vitals Card (overview) ─── */
+.vital-card__icon { margin-right: 4px; }
+.vital-card__label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; }
+.vital-card__value { font-size: 1.1rem; font-weight: 700; color: var(--text-primary); font-family: var(--font-mono); }
+.vital-card__unit { font-size: 0.7rem; color: var(--text-muted); }
+
+/* ─── Sage Input (inside Vigil) ─── */
+.sage-input { width: 100%; padding: 10px 16px; background: var(--bg-glass); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.9rem; }
+.sage-input:focus { outline: none; border-color: var(--border-focus); }
+
+/* ─── Search ─── */
+.search-wrapper { position: relative; }
+.search-input { width: 100%; padding: 10px 16px 10px 36px; background: var(--bg-glass); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.9rem; }
+.search-input:focus { outline: none; border-color: var(--border-focus); }
+
+/* Critical safety indicator — must stay a solid danger fill in EVERY theme
+   regardless of the card treatment the row also carries, so force it past any
+   override. Darkening the semantic danger token with black keeps the white
+   text below at ≥4.5:1 in dark, light AND night palettes (the bright night
+   red as a plain fill would fail white text). */
+.patient-row--emergency {
+  background: color-mix(in srgb, var(--status-danger) 75%, #000) !important;
+  border: 1px solid var(--status-danger);
+}
+
+/* White text on the darkened danger fill passes AA in all three themes; the
+   theme text tokens do NOT (night flips --btn-primary-text to dark ink), so
+   the literal is deliberate here. EVERY field stays solid #FFFFFF: on a status
+   fill, hierarchy comes from weight and size — the name is 600/1.15rem, bed and
+   diagnosis stay normal weight at 0.9rem and below — never from alpha. Alpha is
+   the one axis that also destroys contrast: an 0.88 override on these two
+   dropped the highest-acuity row in the product to 4.17:1. */
+.patient-row--emergency .patient-row__name,
+.patient-row--emergency .patient-row__bed,
+.patient-row--emergency .patient-row__diagnosis {
+  color: #FFFFFF !important;
+}
+
+/* The score cell is the shared News2Badge (ClinicianShell.css), whose critical
+   fill is the same red family as this row. An on-fill outline keeps it a
+   distinct box on the darkened field, as the "Red score" pill does inside a
+   critical badge. Its text needs nothing here: the badge already pairs its
+   fill with --status-on-fill. */
+.patient-row--emergency .news2 {
+  border-color: var(--status-on-fill);
+}
+
+.emergency-badge {
+  display: inline-block;
+  margin-left: 12px;
+  padding: 2px 6px;
+  background-color: color-mix(in srgb, var(--status-danger) 75%, #000);
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: var(--radius-sm);
+  letter-spacing: 1px;
+}
+
+/* "N NEW" — chart events since THIS clinician last marked the chart reviewed.
+   An OPAQUE status fill with the on-fill label token, not a translucent wash:
+   this pill has to stay legible on the ordinary board row AND on the emergency
+   row, whose own rule forces white text on a red field. A wash would sample
+   whichever of the two it landed on and fail on one of them — the exact defect
+   the I-PASS severity chips had before Wave C (§C14). */
+.patient-row__new-badge {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 2px 6px;
+  background-color: var(--status-warn);
+  color: var(--status-on-fill);
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: var(--radius-sm);
+  letter-spacing: 0.06em;
+  vertical-align: middle;
+}
+
+.command-bar__back {
+  flex-shrink: 0;
+}
+
+.command-bar__back svg {
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  min-height: 18px !important;
+  flex-shrink: 0;
+  display: block;
+}
+
+
+/* ==========================================================================
+   Responsive — Tablet / iPad (Vigil module)
+   ==========================================================================
+   Collapse the multi-column roster + detail grids so nothing overflows the
+   narrower viewport and touch targets stay comfortable.
+   ========================================================================== */
+
+/* ─── ≤1024px ─── */
+@media (max-width: 1024px) {
+  /* Patient roster row: drop the fixed 220px name column to a fluid one */
+  .patient-row {
+    grid-template-columns: 10px minmax(0, 1.4fr) minmax(0, 1fr) 48px;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+
+  /* Command bar wraps its sections instead of overflowing */
+  .command-bar {
+    flex-wrap: wrap;
+    gap: 12px 16px;
+    padding: 14px 16px;
+  }
+
+  .command-bar__dx {
+    flex-basis: 100%;
+    order: 5;
+    border-left: none;
+    padding-left: 0;
+  }
+
+  .command-bar__vitals,
+  .command-bar__actions {
+    border-left: none;
+    padding-left: 0;
+    flex-wrap: wrap;
+  }
+
+  /* Detail body: stack the two-column rows */
+  .detail__row {
+    grid-template-columns: 1fr;
+  }
+
+  /* Touch-friendly command buttons. 44px, not 40 — this row carries DISCHARGE,
+     PRINT RECORD and PRINT MEDS, and it is read on the ward tablet, so it is
+     held to the same 44px minimum as the nav rail rather than one size below
+     it. Measured at 40.0px on a coarse pointer before this change. */
+  .command-bar__btn {
+    min-height: 44px;
+    padding: 8px 14px;
+  }
+}
+
+/* ─── ≤768px ─── */
+@media (max-width: 768px) {
+  /* Desktop is a 4-col auto-placed grid (risk|name|diagnosis|score). On phones
+     that overflows, so switch to a named 2-row layout: risk rail on the left,
+     name over diagnosis in the middle, score pinned right. Without explicit
+     grid-area assignment the score child had no cell and wrapped/clipped to the
+     left edge. */
+  .patient-row {
+    grid-template-columns: 8px minmax(0, 1fr) auto;
+    grid-template-areas:
+      'risk info score'
+      'risk meta score';
+    align-items: center;
+    gap: 4px 10px;
+    padding: 14px 12px;
+  }
+  .patient-row__risk { grid-area: risk; align-self: center; }
+  .patient-row__info { grid-area: info; }
+  .patient-row__meta { grid-area: meta; }
+  .patient-row__score { grid-area: score; align-self: center; }
+
+  .patient-row__name {
+    font-size: 1rem;
+  }
+
+  .command-bar {
+    align-items: flex-start;
+  }
+
+  .command-bar__identity {
+    min-width: 0;
+  }
+
+  .command-bar__vitals {
+    gap: 12px;
+  }
+
+  .command-bar__vital {
+    min-width: 40px;
+  }
+
+  /* Detail sub-sections that sit side-by-side collapse to a single column */
+  .detail__risk-top-section {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .detail__labs-grid {
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  }
+
+  /* Modals take near-full width on small screens */
+  .modal {
+    width: 95%;
+    max-height: 90vh;
+    padding: 20px;
+  }
+}
+
+/* ═══ Ward-board header actions ═══
+   The sort chips are a *view* control; "Shift outcomes" is a write surface, so
+   it sits in the same row but is not dressed as a sort chip. Quiet fill, token
+   colours only, no opacity for de-emphasis. */
+.vigil-board-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vigil-outcome-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.vigil-outcome-entry:hover {
+  color: var(--text-primary);
+  background: var(--bg-glass-hover);
+  border-color: var(--border-glass);
+}
+
+/* 44px under pointer:coarse comes from the global :where(button) rule in
+   index.css — same as .sort-btn beside it. */
+
+/* ═══ Vigil board "Load more" (pagination) ═══
+   Token-styled secondary CTA under the patient list; quiet fill, hover =
+   background + border shift only. Readable in every theme. */
+.vigil-load-more {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px 16px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.vigil-load-more:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+}
+
+/* Disabled here only ever means "a page fetch is in flight", not "forbidden",
+   so the neutral cursor stays; only the dimming changes from alpha to a token
+   so the "Loading…" label keeps its contrast while it waits. */
+.vigil-load-more:disabled {
+  color: var(--text-muted);
+  border-color: var(--btn-disabled-border);
+  cursor: default;
+}
+
+/* REMOVED 2026-08-15 with the panel it belonged to: `.ai-narrative__expand`,
+   the "Expand to Glass Window" control on the chart's streaming AI narrative.
+   That panel opened a 27B generation on every chart open, never resolved on the
+   ward, and competed with the alert lane for the same LLM slot — see the note
+   at the foot of src/pages/panels/VigilPanel.tsx. */
+

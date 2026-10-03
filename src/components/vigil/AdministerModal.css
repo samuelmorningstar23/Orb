@@ -1,0 +1,432 @@
+/* eMAR administer modal — flat elevated surface, tokenized for every theme.
+   Tinted panels derive from the status tokens via color-mix so each theme
+   palette re-tints them automatically. */
+
+.administer-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  /* Orb modal stacking ladder — keep these four in sync:
+       9999  .modal-overlay (Vigil medications), PatientShell overlay
+      10000  .nurse-sheet-backdrop (med round / obs sheet), PatientStory
+      10050  .administer-modal-backdrop        ← THIS
+      10100  .safety-alert-backdrop (allergy / dose interlock)
+      10200  .session-expired-backdrop
+     Administer opens FROM the nurse med-round sheet, so an equal z-index left
+     DOM order to decide and the sheet (mounted first, but later in body order)
+     won — the five-rights confirmation rendered fully populated and completely
+     invisible, and the eMAR round could not be completed. */
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  background: rgba(0, 0, 0, 0.55);
+  animation: fade-in 0.2s ease-out;
+}
+
+/* Softer scrim in light mode — semantic, not a glass re-skin. */
+[data-theme='light'] .administer-modal-backdrop {
+  background: rgba(40, 48, 62, 0.35);
+}
+
+.administer-modal {
+  width: 100%;
+  max-width: 520px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+
+.administer-modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-5) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.administer-modal__title {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.administer-modal__close {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.administer-modal__close:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--border-focus);
+  background: var(--bg-glass-hover);
+}
+
+.administer-modal__body {
+  padding: var(--space-4) var(--space-5) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.administer-modal__error {
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  color: var(--status-danger-text);
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 40%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+/* ─── Charted allergies, repeated at the moment of administration ───
+   Flat tinted panels, no opacity for de-emphasis: the four states (unavailable,
+   matching allergy, other allergies, none recorded) are told apart by border
+   weight, tint and wording. Text uses the --status-x-text tokens so it clears
+   4.5:1 on the glass surface in all three themes. */
+.administer-modal__allergy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-glass);
+  background: var(--bg-glass);
+}
+
+.administer-modal__allergy--danger,
+.administer-modal__allergy--unknown {
+  /* The two states that must stop a nurse: a named allergy to this drug, and
+     an allergy list that could not be read at all. */
+  border-width: 2px;
+  border-color: color-mix(in srgb, var(--status-danger) 55%, transparent);
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+}
+
+.administer-modal__allergy--warn {
+  border-color: color-mix(in srgb, var(--status-warn) 35%, transparent);
+  background: color-mix(in srgb, var(--status-warn) 7%, transparent);
+}
+
+.administer-modal__allergy-title {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--text-primary);
+}
+
+.administer-modal__allergy--danger .administer-modal__allergy-title,
+.administer-modal__allergy--unknown .administer-modal__allergy-title {
+  color: var(--status-danger-text);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.administer-modal__allergy--warn .administer-modal__allergy-title {
+  color: var(--status-warn-text);
+}
+
+.administer-modal__allergy-subtitle {
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.administer-modal__allergy-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.administer-modal__allergy-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.administer-modal__allergen {
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.administer-modal__allergy-severity {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.administer-modal__allergy--danger .administer-modal__allergy-severity {
+  color: var(--status-danger-text);
+}
+
+.administer-modal__allergy-reaction,
+.administer-modal__allergy-note {
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+/* ─── Five-rights summary ─── */
+.administer-modal__rights {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.administer-modal__right {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+}
+
+.administer-modal__right + .administer-modal__right {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.administer-modal__right dt {
+  flex-shrink: 0;
+  width: 64px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.administer-modal__right dd {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.administer-modal__drug-name {
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+
+/* ─── Type-to-confirm ─── */
+.administer-modal__label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin-bottom: calc(-1 * var(--space-2));
+}
+
+.administer-modal__confirm,
+.administer-modal__select,
+.administer-modal__detail {
+  width: 100%;
+  padding: var(--space-3);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-base);
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.administer-modal__confirm {
+  font-family: var(--font-mono);
+}
+
+.administer-modal__confirm::placeholder,
+.administer-modal__detail::placeholder {
+  color: var(--text-muted);
+}
+
+/* Focus rings (functional indicators, not decoration). */
+.administer-modal__confirm:focus,
+.administer-modal__select:focus,
+.administer-modal__detail:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.administer-modal__confirm--ok {
+  border-color: color-mix(in srgb, var(--status-ok) 55%, transparent);
+}
+
+.administer-modal__confirm--ok:focus {
+  border-color: var(--status-ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-ok) 15%, transparent);
+}
+
+.administer-modal__hint {
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+/* ─── The allergy override ───
+   Heavier than the refusal panel above it, deliberately: this is the panel that
+   authorises a dose across a documented allergy. Flat fill + a 2px danger
+   border, no opacity anywhere — the whole panel must stay fully legible while
+   the button it leads to is still refusing the press. */
+.administer-modal__override {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-sm);
+  border: 2px solid color-mix(in srgb, var(--status-danger) 55%, transparent);
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+}
+
+.administer-modal__override-title {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--status-danger-text);
+}
+
+.administer-modal__override-note {
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.administer-modal__override-reason {
+  width: 100%;
+  min-height: 84px;
+  padding: var(--space-3);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-base);
+  line-height: 1.45;
+  resize: vertical;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.administer-modal__override-reason::placeholder {
+  color: var(--text-muted);
+}
+
+.administer-modal__override-reason:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* ─── Not-given reason ─── */
+.administer-modal__not-given {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: color-mix(in srgb, var(--status-warn) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 30%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+/* ─── Actions ─── */
+.administer-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
+}
+
+.administer-btn {
+  padding: 10px 18px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  background: var(--bg-glass);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.administer-btn:hover:not(:disabled) {
+  border-color: var(--border-focus);
+  background: var(--bg-glass-hover);
+}
+
+/* Every variant falls through to this rule, including the filled --primary
+   ("Given") and --danger ("Record not given") confirms, so it has to repaint the
+   fill rather than fade it — a nurse must be able to read the button that
+   records a dose even while it is refusing the press. */
+.administer-btn:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+.administer-btn--ghost {
+  background: transparent;
+  margin-right: auto;
+}
+
+/* Ghost keeps its transparent fill when disabled — taking the neutral pill would
+   make Cancel the heaviest-looking control in the row. */
+.administer-btn--ghost:disabled {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.administer-btn--secondary {
+  color: var(--status-warn-text);
+  border-color: color-mix(in srgb, var(--status-warn) 40%, transparent);
+}
+
+.administer-btn--primary {
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  border-color: transparent;
+}
+
+.administer-btn--primary:hover:not(:disabled) {
+  background: var(--btn-gradient-hover);
+}
+
+/* Darkened danger fill: the bright semantic red (tuned for status dots) fails
+   AA with white text as a plain fill; mixing it 72% with black passes in every
+   theme. Mirrors .safety-btn--danger in SafetyAlertModal.css. */
+.administer-btn--danger {
+  background: color-mix(in srgb, var(--status-danger) 72%, #000);
+  color: #fff;
+  border-color: color-mix(in srgb, var(--status-danger) 55%, #fff);
+}
+
+.administer-btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-danger) 82%, #000);
+  border-color: var(--status-danger);
+}

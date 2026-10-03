@@ -1,0 +1,144 @@
+/* Patient picker — flat "Quiet Clinical" surface, tokenised for every theme.
+   No opacity on text or borders: every colour resolves to a token that the
+   contrast gate already validates. */
+
+.patient-picker {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 4px);
+  min-width: 260px;
+  max-width: 460px;
+}
+
+.patient-picker__label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.patient-picker__control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+}
+
+.patient-picker__input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 12px);
+}
+
+.patient-picker__input:focus-visible {
+  outline: 2px solid var(--accent-deep);
+  outline-offset: 1px;
+}
+
+.patient-picker__clear,
+.patient-picker__link {
+  padding: 0;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.patient-picker__clear:hover,
+.patient-picker__link:hover { color: var(--text-primary); }
+
+/* The list is positioned, not portalled: it belongs to this control and the
+   panels that host it do not clip it. */
+.patient-picker__list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  margin: 4px 0 0;
+  padding: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+  list-style: none;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 12px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.patient-picker__option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  font: inherit;
+  color: var(--text-primary);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm, 8px);
+  cursor: pointer;
+}
+
+/* The keyboard highlight has to LOOK like the mouse highlight, because it is the
+   same thing: focus never leaves the input (aria-activedescendant), so without
+   this rule an arrow-key user moves an invisible cursor. */
+.patient-picker__option:hover,
+.patient-picker__option:focus-visible,
+.patient-picker__option--active {
+  background: var(--bg-elevated, var(--bg-canvas));
+}
+
+.patient-picker__option--active {
+  box-shadow: inset 2px 0 0 var(--accent-deep);
+}
+
+.patient-picker__option--on {
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+}
+
+.patient-picker__option--on .patient-picker__opt-meta,
+.patient-picker__option--on .patient-picker__opt-dx {
+  color: var(--btn-primary-text);
+}
+
+.patient-picker__opt-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.patient-picker__opt-meta,
+.patient-picker__opt-dx {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.patient-picker__msg {
+  padding: 10px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.patient-picker__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2, 8px);
+  font-size: 0.75rem;
+}
+
+.patient-picker__note { color: var(--text-secondary); }
+.patient-picker__error { color: var(--status-danger-text); }

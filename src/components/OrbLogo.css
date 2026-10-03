@@ -1,0 +1,24 @@
+.orb-logo {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.orb-logo__ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--accent-gold);
+  border-right-color: var(--orb-ring-2);
+  animation: orb-spin 3s linear infinite;
+}
+
+.orb-logo__core {
+  width: 50%;
+  height: 50%;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--accent-warm), var(--accent-deep));
+  animation: pulse-soft 3s ease-in-out infinite;
+}

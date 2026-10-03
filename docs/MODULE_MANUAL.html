@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<base href="file:///Users/samuelmorningstar/Documents/Projects/Orb/docs/">
+<title>Orb Hospital OS, Module Manual</title>
+<style>
+@page {
+  size: A4;
+  margin: 20mm 18mm 18mm 18mm;
+  @bottom-center { content: counter(page); }
+}
+:root {
+  --ink: #16181d;
+  --ink-soft: #4a4f5a;
+  --rule: #d9dde4;
+  --accent: #9a6b00;
+  --accent-soft: #fdf7e8;
+  --code-bg: #f5f6f8;
+}
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.55;
+  color: var(--ink);
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Cover ── */
+.cover {
+  height: 247mm;              /* one full page inside the margin box */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  page-break-after: always;
+  text-align: center;
+}
+.cover__mark {
+  width: 74px; height: 74px; margin: 0 auto 26px;
+  border-radius: 50%;
+  border: 3px solid var(--accent);
+  border-right-color: transparent;
+  transform: rotate(-35deg);
+}
+.cover h1 { font-size: 30pt; margin: 0 0 6px; letter-spacing: -0.5px; }
+.cover .sub { font-size: 13pt; color: var(--ink-soft); margin-bottom: 30px; }
+.cover .meta { font-size: 10pt; color: var(--ink-soft); line-height: 1.9; }
+.cover .note {
+  margin: 34px auto 0; max-width: 118mm; padding: 12px 16px;
+  border-left: 3px solid var(--accent); background: var(--accent-soft);
+  font-size: 9.5pt; text-align: left; color: var(--ink-soft);
+}
+
+/* ── Headings ── */
+h1 { font-size: 20pt; margin: 0 0 12px; }
+h2 {
+  font-size: 17pt; margin: 0 0 14px; padding-bottom: 8px;
+  border-bottom: 2px solid var(--accent); color: var(--ink);
+  page-break-after: avoid;
+}
+h3 { font-size: 12.5pt; margin: 20px 0 7px; page-break-after: avoid; }
+h4 { font-size: 11pt; margin: 15px 0 5px; color: var(--ink-soft); page-break-after: avoid; }
+
+/* Each chapter starts on a fresh page. */
+h2 { page-break-before: always; }
+.toc + hr + h2, h2:first-of-type { page-break-before: auto; }
+
+p { margin: 0 0 9px; orphans: 3; widows: 3; }
+ul, ol { margin: 0 0 10px; padding-left: 20px; }
+li { margin-bottom: 3px; }
+strong { font-weight: 650; }
+
+/* ── Tables ── */
+table {
+  width: 100%; border-collapse: collapse; margin: 12px 0 16px;
+  font-size: 9.5pt; page-break-inside: avoid;
+}
+th {
+  text-align: left; background: #eef0f4; border-bottom: 1.5px solid var(--rule);
+  padding: 7px 9px; font-weight: 650;
+}
+td { padding: 6px 9px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+tr:nth-child(even) td { background: #fafbfc; }
+
+/* ── Code ── */
+code {
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 9pt; background: var(--code-bg); padding: 1px 4px;
+  border-radius: 3px; color: #1d3b53;
+}
+pre {
+  background: var(--code-bg); border: 1px solid var(--rule); border-radius: 5px;
+  padding: 10px 12px; overflow-x: auto; page-break-inside: avoid; margin: 10px 0 14px;
+}
+pre code { background: none; padding: 0; font-size: 8.6pt; line-height: 1.45; }
+
+blockquote {
+  margin: 12px 0; padding: 9px 14px;
+  border-left: 3px solid var(--accent); background: var(--accent-soft);
+  color: var(--ink-soft);
+}
+blockquote p:last-child { margin-bottom: 0; }
+
+hr { border: 0; border-top: 1px solid var(--rule); margin: 22px 0; }
+
+/* ── Table of contents ── */
+.toc { page-break-after: always; }
+.toc h2 {
+  page-break-before: auto;   /* the TOC heading must not push a blank page */
+  border-bottom-color: var(--rule);
+}
+.toc ul { list-style: none; padding-left: 0; margin: 0; }
+.toc ul ul { padding-left: 16px; }
+.toc li { margin-bottom: 2px; font-size: 9.8pt; }
+.toc > ul > li { margin-top: 8px; font-weight: 600; font-size: 10.5pt; }
+.toc > ul > li > ul > li { font-weight: 400; color: var(--ink-soft); }
+.toc a { color: inherit; text-decoration: none; }
+
+/* ── Figures ──
+   Screenshots are 1440x900 captures of the real app. Constrain by width and
+   keep each image with the italic caption that follows it. */
+img {
+  display: block;
+  width: 100%;
+  max-width: 165mm;
+  margin: 14px auto 6px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  page-break-inside: avoid;
+}
+/* python-markdown wraps a lone image in <p>; the caption is the next <p><em>. */
+p > img { margin-bottom: 4px; }
+p > em:only-child {
+  display: block;
+  text-align: center;
+  font-size: 8.8pt;
+  color: var(--ink-soft);
+  margin: 0 auto 16px;
+  max-width: 165mm;
+  page-break-before: avoid;
+}
+</style></head>
+<body>
+
+<div class="cover">
+  <div class="cover__mark"></div>
+  <h1>Orb Hospital OS</h1>
+  <div class="sub">Module Manual, Architecture &amp; Clinical Claims</div>
+  <div class="meta">
+    Every module: what it is built from, and how it is meant to<br>
+    make the clinician's day easier &middot; Edition: August 2026
+  </div>
+  <div class="note">
+    Orb is pre-pilot. Every claim in this manual is a design claim pending
+    shadow-mode validation with real patients; where a module today runs on
+    simulated data or an unvalidated model, its Status line says so. All AI
+    output is decision support for a qualified clinician, never
+    autonomous care.
+  </div>
+</div>
+
+<section class="toc"><h2>Table of Contents</h2>
+<ul>
+<li><a href="#how-to-read-this-manual">How to read this manual</a></li>
+<li><a href="#the-system-at-a-glance">The system at a glance</a></li>
+<li><a href="#1-vigil-deterioration-early-warning">1. Vigil, deterioration early warning</a></li>
+<li><a href="#2-forecast-census-and-discharge-prediction">2. Forecast, census and discharge prediction</a></li>
+<li><a href="#3-command-center-one-screen-for-whoever-runs-the-house">3. Command Center, one screen for whoever runs the house</a></li>
+<li><a href="#4-sage-the-clinical-ai-assistant">4. Sage, the clinical AI assistant</a></li>
+<li><a href="#5-sage-ambient-intelligence-the-half-that-comes-to-you">5. Sage Ambient Intelligence, the half that comes to you</a></li>
+<li><a href="#6-lens-medical-image-drafts">6. Lens, medical image drafts</a></li>
+<li><a href="#7-scribe-voice-to-text-documentation">7. Scribe, voice-to-text documentation</a></li>
+<li><a href="#8-rounds-the-ward-round-as-a-driven-queue">8. Rounds, the ward round as a driven queue</a></li>
+<li><a href="#9-relay-messaging-where-machines-page-humans">9. Relay, messaging where machines page humans</a></li>
+<li><a href="#10-i-pass-handoff-the-shift-handoff-that-drafts-itself">10. I-PASS Handoff, the shift handoff that drafts itself</a></li>
+<li><a href="#11-care-bundles-the-sepsis-six-stopwatch">11. Care Bundles, the Sepsis Six stopwatch</a></li>
+<li><a href="#12-orders-emar-ordering-and-the-bedside-record">12. Orders &amp; eMAR, ordering and the bedside record</a></li>
+<li><a href="#13-medication-safety-gate-one-choke-point-for-every-drug">13. Medication Safety Gate, one choke point for every drug</a></li>
+<li><a href="#14-pharmacy-verification-queue-the-human-gate-on-ai-medications">14. Pharmacy Verification Queue, the human gate on AI medications</a></li>
+<li><a href="#15-helix-pharmacy-and-inventory">15. Helix, pharmacy and inventory</a></li>
+<li><a href="#16-admission-discharge-the-intake-to-exit-spine">16. Admission &amp; Discharge, the intake-to-exit spine</a></li>
+<li><a href="#17-appointments-follow-up-booking">17. Appointments, follow-up booking</a></li>
+<li><a href="#18-surgical-suite-the-operating-theatre-command-surface">18. Surgical Suite, the operating-theatre command surface</a></li>
+<li><a href="#19-nurse-mode-my-shift-the-task-shaped-home">19. Nurse Mode (My Shift), the task-shaped home</a></li>
+<li><a href="#20-bridge-the-patients-own-window">20. Bridge, the patient's own window</a></li>
+<li><a href="#21-discharge-access-the-link-the-patient-takes-home">21. Discharge Access, the link the patient takes home</a></li>
+<li><a href="#22-pulse-outside-world-awareness">22. Pulse, outside-world awareness</a></li>
+<li><a href="#23-revenue-integrity-coding-and-cdi">23. Revenue Integrity, coding and CDI</a></li>
+<li><a href="#24-impact-roi-dashboard-the-money-model">24. Impact &amp; ROI Dashboard, the money model</a></li>
+<li><a href="#25-ehr-downtime-mode-the-worst-hour-of-the-cios-year">25. EHR Downtime Mode, the worst hour of the CIO's year</a></li>
+<li><a href="#26-platform-runtime-the-box-everything-sits-on">26. Platform &amp; Runtime, the box everything sits on</a></li>
+<li><a href="#27-security-audit-who-you-are-whether-you-may-can-we-prove-it">27. Security &amp; Audit, who you are, whether you may, can we prove it</a></li>
+<li><a href="#28-governance-interop-the-honesty-layer">28. Governance &amp; Interop, the honesty layer</a></li>
+<li><a href="#29-shadow-mode-scorecard-the-pilots-evidence-instrument">29. Shadow Mode Scorecard, the pilot's evidence instrument</a></li>
+<li><a href="#appendix-the-claims-we-are-not-yet-allowed-to-make">Appendix, the claims we are not yet allowed to make</a></li>
+</ul></section>
+<h2 id="1-vigil-deterioration-early-warning">1. Vigil, deterioration early warning</h2>
+<p><em>Part I, Watching patients</em></p>
+<p>Vigil is the screen a ward keeps open all shift: every admitted patient, continuously scored with the RCP <strong>NEWS2</strong> early-warning system (including the COPD Scale-2 SpO2 variant and the single-parameter-3 rule), sickest floated to the top in real time. Any non-stable score automatically posts an alert into the patient's Relay case room and starts a timed nurse → registrar → consultant escalation ladder.</p>
+<p><strong>The claim.</strong> A deterioration is surfaced and paged within seconds of the numbers crossing a threshold, instead of waiting for the next obs round, an unread chart, or whoever happens to glance at a monitor.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Every vitals tick is scored with the full 7-parameter NEWS2; alerts carry the vitals snapshot, plain-language reasons, and the raw NEWS2 integer plus band, never a fabricated "probability."</li>
+<li>An unanswered alert cannot die in a channel: escalation chains climb tiers on timers until a bedside clinician acknowledges, and resolving one requires a typed reason.</li>
+<li>Alert fatigue is engineered against, not hoped away: a 120-second per-patient cooldown that a <em>worsening</em> patient bypasses (band escalation or NEWS2 rise re-pages within 30 s), mirrored client-side so a backgrounded tab chimes once, not every five seconds. Every suppressed alert is still logged, so the suppression rate is measurable.</li>
+<li>The score explains itself: a per-parameter "why this NEWS2" breakdown, an explicit "this is a MINIMUM" note when obs are incomplete, and a trend that says "insufficient data" rather than inventing a baseline of zero.</li>
+<li>A nurse's typed reading travels the same pipeline as a monitor reading, same score, same alerting, same audit, provenance-stamped <code>manual_entry</code> forever.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Errors caught: the window between "the numbers turned bad" and "a human knew" shrinks from the obs-round interval to seconds. Secondarily, cognition offloaded, the ward scan starts from a worst-first, already-scored board.</p>
+<p><strong>Architecture.</strong> A deterministic NEWS2 rule engine (~130 lines from the published RCP table) is the displayed <em>and deciding</em> score. A learned CfC (liquid neural network) overlay predicting deterioration/sepsis/mortality at 1–24 h horizons is fully wired but may only <em>escalate</em> the NEWS2 band, never lower it. Every reading enters through the <code>VitalsSource</code> abstraction, in which the simulator, an HL7 v2 MLLP monitor adapter (Philips/GE vendor profiles, bounded queue, NACK backpressure, clock-skew tracking), and manual entry are peers with mandatory provenance.</p>
+<ul>
+<li><strong>AI:</strong> none in the deciding path. MedGemma 27B streams a narrative chart assessment (SSE); the 4B tier appends a one-sentence recommendation to alerts, with a circuit breaker and a static fallback sentence.</li>
+<li><strong>Data flow:</strong> source → sink (dedup, backfill guard) → ingestion → NEWS2 per tick → <code>vitals:update</code> to department-scoped Socket.IO rooms → alert bridge into Relay + shadow episodes stamped at threshold-crossing time.</li>
+<li><strong>Guardrails worth naming:</strong> alert dispatch is gated solely by the NEWS2 band (reason strings are cosmetic and can never suppress an alert); alerts with no case room are recorded as <code>alert.dropped</code>, never silently skipped; out-of-scope requests return 404, not 403, so patient existence is not disclosed.</li>
+</ul>
+<p><strong>Status.</strong> Pre-pilot, simulated vitals only. The NEWS2 engine is deterministic per the published table; the CfC overlay is inert (no trained checkpoint exists). The HL7 monitor adapter is bench-testable but its vendor mappings are flagged <code>verified_against_device=False</code> until a real monitor message is captured.</p>
+<p><strong>Key code:</strong> <code>server/services/vigil_service.py</code>, <code>server/services/bot_service.py</code>, <code>server/services/vitals_source/</code>, <code>server/services/escalation_service.py</code>, <code>src/pages/panels/VigilPanel.tsx</code></p>
+<h2 id="2-forecast-census-and-discharge-prediction">2. Forecast, census and discharge prediction</h2>
+<p><em>Part I, Watching patients</em></p>
+<p>Four operational views: a 7-day census projection, a per-ward bed-capacity view with a 48-hour projection, a Discharge Readiness Board ranking every admitted patient by discharge likelihood, and retrospective admission-pattern analysis. Built around a multi-task LSTM for length-of-stay, discharge probability, and acuity trajectory, which <strong>fails closed</strong>: until a validated checkpoint is installed, every number comes from a transparent rule-based heuristic, and the UI says so.</p>
+<p><strong>The claim.</strong> The morning bed-and-discharge huddle starts from a ranked, always-current board instead of a whiteboard reconstruction.</p>
+<p>How, concretely:</p>
+<ul>
+<li>The Discharge Board ranks every patient by discharge probability with estimated remaining days and a trajectory arrow, so discharge planning, pharmacy reconciliation, transport, family calls, works the top of a list instead of being rediscovered patient-by-patient on rounds.</li>
+<li>The census projection fits the hospital's own last 30 days of admissions (Poisson mean), adjusted by day-of-week and live Pulse environmental factors, "how full will Thursday be" is answered from the site's actual history.</li>
+<li>Numbers are deliberately calm: expected values only, no random draws, a 1-hour server cache, the figure quoted in the huddle is the same figure an hour later.</li>
+<li>Every prediction carries provenance (<code>prediction_source: lstm | heuristic</code>); the panel's chip reads Untrained/Unvalidated/Validated straight from Model Governance. The doctor always knows whether they're looking at a rule of thumb or a model.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Cognition offloaded at the start of the day shift, the 08:00 bed meeting consumes a pre-built board. The safety angle is honesty: an untrained network is never allowed to masquerade as a prediction.</p>
+<p><strong>Architecture.</strong> A PyTorch multi-task BiLSTM (<code>LayerNorm(19) → 2-layer BiLSTM → temporal attention → 4 heads</code>; ~160k params, MPS/CPU) behind a service that extracts 48-step × 19-channel feature windows from SQLite, caches predictions on a ~10-minute bot cycle, and aggregates them into the flow/capacity/discharge views.</p>
+<ul>
+<li><strong>AI:</strong> the LSTM only, no LLM. The single checkpoint ever produced is synthetic-data, gitignored, and marked "NOT for any clinical use" in its model card.</li>
+<li><strong>Guardrails worth naming:</strong> untrained gate routes to the heuristic (random-init weights are never surfaced); the ICU-transfer head is omitted entirely unless the checkpoint declares it trained; the discharge board is department-scoped and PHI-read audited (2026-08-05 fix); <code>torch.load(weights_only=True)</code>.</li>
+</ul>
+<p><strong>Status.</strong> Pre-pilot; runtime is in heuristic mode. Clinical use requires MIMIC-IV training plus external validation per the training playbook.</p>
+<p><strong>Key code:</strong> <code>server/services/forecast_service.py</code>, <code>server/models/forecast_lstm.py</code>, <code>src/pages/panels/ForecastPanel.tsx</code>, <code>docs/MODEL_CARD_forecast_lstm.md</code></p>
+<h2 id="3-command-center-one-screen-for-whoever-runs-the-house">3. Command Center, one screen for whoever runs the house</h2>
+<p><em>Part I, Watching patients</em></p>
+<p>A single-pane operations board for the CMO, bed manager, or duty administrator: house census vs capacity, a ward acuity heatmap, a live list of deteriorating patients with NEWS2 scores, sepsis-bundle compliance, downtime-snapshot readiness, a 24-hour capacity forecast, and today's OR schedule, refreshed every 20 seconds. Beside it, the <strong>What-If Capacity Simulator</strong>: slider-driven surge scenarios projected hour-by-hour, reporting hours-to-overflow, beds short at peak, discharges needed, and the extra-nurse gap.</p>
+<p><strong>The claim.</strong> The person running the house stops phoning wards for numbers, and when a surge threatens, the simulator sizes the response in beds, discharges, and nurses <em>before</em> the bed meeting.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Active Deteriorations lists every critical/elevated patient in the caller's department, critical first, NEWS2 computed live, the "who needs eyes now" column without walking the wards.</li>
+<li>The acuity heatmap weights a critical patient 3× and elevated 1.5×, exposing the workload mismatch that raw occupancy hides: a 6/8 ward of critical patients glows hot; a 6/8 ward of stable ones doesn't.</li>
+<li>The Downtime Readiness tile shows what fraction of patients have a paper-fallback snapshot fresher than 24 h; its one button snapshots the whole house in a click.</li>
+<li>The simulator turns "flu surge at 1.5× with 8 beds closed" from an argument into arithmetic, deterministic, with every assumption (LoS, nurse ratio, admission fit) disclosed with citations, so the same scenario re-run in the meeting gives the same numbers.</li>
+<li>All surfaces share one source of truth with Forecast (the same capacity dict, imported by reference), so the Command Center header can never contradict the Forecast tab, a real bug class this codebase fixed and documented.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Time saved for the operational layer across the whole shift; safety from the deterioration list, bundle compliance, and one-click outage preparedness.</p>
+<p><strong>Architecture.</strong> A pure-read aggregation service composing views over Vigil risk scores, sepsis bundles, the Forecast flow model, downtime snapshots, and the surgery schedule, every section independently try/except-guarded so one failing subsystem degrades to zeros while the board keeps rendering. The simulator is a deterministic hourly difference-equation engine seeded from the live Forecast baseline. <strong>No neural network anywhere in this module.</strong></p>
+<ul>
+<li><strong>Guardrails worth naming:</strong> pure reads by contract (the single write is the downtime Capture-all); deteriorations department-scoped and PHI-read audited; server-side clamps on every simulator knob.</li>
+</ul>
+<p><strong>Status.</strong> Pre-pilot. Board mechanics are real and deterministic; the clinical signal feeding them is simulated or heuristic today.</p>
+<p><strong>Key code:</strong> <code>server/services/command_center_service.py</code>, <code>server/services/capacity_sim_service.py</code>, <code>src/components/command/CommandCenter.tsx</code>, <code>src/components/capacity/CapacitySimulator.tsx</code></p>
+<h2 id="4-sage-the-clinical-ai-assistant">4. Sage, the clinical AI assistant</h2>
+<p><em>Part II, Thinking with the doctor</em></p>
+<p>Sage is Orb's chat-style decision-support assistant. A clinician asks in plain language, about one patient, the whole ward, a drug, or a protocol, and Sage assembles an evidence pack (live chart facts, hospital SOPs and formulary, external guidelines), sends it to a local MedGemma model, and streams back a cited, badge-annotated answer. It is deliberately <strong>read-only against the chart</strong>: anything that looks like an order becomes a draft a clinician must explicitly approve.</p>
+<p><strong>The claim.</strong> Sage answers the questions a ward round actually generates, "how is bed 4 doing," "what does our sepsis protocol say," "what dose?", from the hospital's own records and policies, in seconds, without the clinician leaving the chart or the data leaving the building.</p>
+<p>How, concretely:</p>
+<ul>
+<li>A patient-scoped question automatically pulls demographics, latest vitals with trends, the deterministic NEWS2 with its per-parameter breakdown, active medications, recent labs, the last signed note, and the latest imaging read, and explicitly lists what is <em>missing</em> ("No recent labs"), so an answer formed on partial data says so.</li>
+<li>Hospital policy outranks the textbook: retrieval is trust-tiered (local SOP &gt; local formulary &gt; external guideline), so "empiric antibiotics for sepsis?" answers with the hospital's own antibiogram before the Surviving Sepsis Campaign.</li>
+<li>One toggle a doctor understands: <strong>Thinking ON</strong> = the careful 27B, <strong>OFF</strong> = the fast 4B, with a safety floor that routes patient-specific, dosing, and score questions to the 27B regardless, because the 4B was <em>measured</em> wrong on 40% of drug-recall questions. Every answer says which brain answered.</li>
+<li>Drafts, never executes: "add paracetamol 500 mg for Ajay" trips two independent gates (a deterministic order-grammar widened with the hospital's own formulary brand names, plus the model's declared intent marker). The model's prose is discarded; a policy-written message and an "Approve &amp; Send to Helix" card take its place, and approval leads to the pharmacist verification queue, not the chart.</li>
+<li>Citations you can check: model-cited document IDs are validated against what was actually retrieved; fabricated IDs are dropped server-side (in one 70-turn eval, 3 of 4 model citations were invented) and confidence downgrades to "Limited evidence."</li>
+<li>Ward questions without ward disclosure: census answers are hard-scoped to the clinician's department; pure counts come from GROUP BY aggregates with k-anonymity small-cell masking, zero patient rows.</li>
+<li>Every answer is replayable: question, chart-as-it-was, retrieved passages, model/floor decision, and the <em>raw pre-guardrail model output</em> are stored append-only (DB triggers forbid UPDATE), so "why did Sage say that?" is answerable months later.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Time (chart, protocol, and census lookup collapse into one box that streams first words in ~2–8 s on the appliance, measured, and the docs are honest that sub-3 s is not reachable for chart-carrying turns) and safety (the guardrail stack exists so the time saved never costs an invented dose or a phantom "order placed"). It lands at ward rounds, handoff, and the junior doctor's "what dose?" moment.</p>
+<p><strong>Architecture.</strong> A FastAPI SSE route orchestrates each turn: deterministic pre-LLM gates → department-scoped retrieval (chart assembly + hybrid RAG) → thinking-mode model selection → streaming generation through an incremental sentence sanitizer → citation validation, action-state override, provenance capture, shadow instrumentation.</p>
+<ul>
+<li><strong>AI:</strong> MedGemma 27B and 4B via Ollama, chosen per turn by <code>thinking_mode</code> + a residency-aware <code>model_router</code> (an evicted 27B becomes a <em>labelled</em> downgrade, not an 80-second reload). RAG: BGE-M3 embeddings into <code>sqlite-vec</code> + FTS5 BM25, reciprocal-rank fusion, BGE cross-encoder rerank, the ~2 GB embedder isolated in a worker process after in-process loads froze the API's GIL.</li>
+<li><strong>Guardrails worth naming:</strong> forbidden-phrase strip (fail-closed after 32 passes) removes any "order placed" self-confirmation on every lane including voice; Orb's deterministic NEWS2 is <em>pinned</em> into the prompt and the model forbidden to recalculate it, closing a measured "NEWS2 7 where Orb computes 13" failure; chart content is fenced as data with injection-hardened delimiters; a no-such-patient rule forbids inventing vitals.</li>
+</ul>
+<p><strong>Status.</strong> Pre-pilot; functional end-to-end on the appliance, clinically unvalidated. The corpus is ~19 seeded documents (several synthetic, flagged as such); real hospital SOPs need ingestion and sign-off before pilot. The 2026-08 evals candidly document the failure modes the guardrails compensate for.</p>
+<p><strong>Key code:</strong> <code>server/services/sage_service.py</code>, <code>server/routes/sage_routes.py</code>, <code>server/services/clinical_knowledge.py</code>, <code>server/services/thinking_mode.py</code>, <code>server/services/sage_provenance_service.py</code>, <code>src/pages/panels/SagePanel.tsx</code></p>
+<h2 id="5-sage-ambient-intelligence-the-half-that-comes-to-you">5. Sage Ambient Intelligence, the half that comes to you</h2>
+<p><em>Part II, Thinking with the doctor</em></p>
+<p>Ask-Sage is pull. Sage Ambient is <strong>push</strong>: always-on observers subscribed to what is already happening, every Relay case-room message, a 15-second vitals/risk sweep, every event on the hospital nervous system, maintaining a live picture per room and per ward. It surfaces as a case-room sidebar (current concern, rolling summary, standing risk cards, suggested actions), a "Sage noticed" insights feed, and a state-of-the-ward brief for whoever comes on shift.</p>
+<p><strong>The claim.</strong> Sage watches every case-room conversation and every patient's numbers so the doctor doesn't have to re-read the room, it keeps the picture current, taps them on the shoulder only when something needs them, and turns one Confirm into the whole downstream clerical chain.</p>
+<p>How, concretely:</p>
+<ul>
+<li>A doctor joining a busy case room mid-shift reads a five-line sidebar instead of scrolling fifty messages; it updates live as colleagues type.</li>
+<li>A critical value typed in ward shorthand ("K 6.8," "BP 85/50," "peaked T waves") becomes a standing risk card via <em>deterministic</em> guideline-thresholded rules, even when the model is busy, evicted, or wrong. A later retraction ("haemolysed sample, repeat is 4.1") deterministically takes the card down, so a withdrawn emergency never reads as live.</li>
+<li>A directive in chat ("start IV ceftriaxone 2g," "book the OR") becomes a one-tap action card; on Confirm, Sage does the cross-module clerical work, a pharmacy order flagged REVIEW REQUIRED into the pharmacist queue, or an admission transfer + emergency surgery record + targeted team alerts, all audited.</li>
+<li>Every 15 seconds, LLM-free rules sweep every patient and raise addressed insights, risk turned critical, SpO2 sliding across three readings, SIRS pattern with the actual numbers, antibiotics past 72 h, templated from real stored values so they <em>cannot</em> hallucinate a patient, auto-resolving when the condition clears.</li>
+<li>Coming on shift, the ward brief answers "who needs eyes first": census, risk mix, a worst-first watchlist, refreshed by the event bus when ward truth changes, scoped to the doctor's department.</li>
+<li>For "catch me up," Sage quotes the last six room messages verbatim and attributed, deliberately raw quotes, so a small model's paraphrase never wears the chart's authority.</li>
+</ul>
+<p><strong>Where the win lands.</strong> The two worst moments of the day: shift change and mid-shift catch-up (cognition offload), plus errors caught in the stream of work and clerical chains collapsed to one Confirm. The safety wins are deliberately deterministic; the AI only drafts and summarizes.</p>
+<p><strong>Architecture.</strong> Event-driven observers around a deterministic core. Three input streams, Relay messages (background task per message), the 15-second sweep, and the <code>event_bus</code> nervous system (<code>vigil.alert.*</code>, <code>scribe.note.signed</code>, <code>bridge.emergency.flag</code>), feed bounded per-room memory, a rules-based insights table, a versioned world model, and an in-memory ward brief.</p>
+<ul>
+<li><strong>AI:</strong> the ambient 4B tier for message classification and the ward narrative, background priority, micro-batched, skipped entirely when evicted (deterministic paths remain). The 27B is used ambiently exactly twice, deliberately: signed-note EHR extraction (it writes to the chart, so accuracy beats latency) and chart-open KV-cache prewarm.</li>
+<li><strong>Guardrails worth naming:</strong> every action requires clinician Confirm; the order-time medication safety gate is fail-closed (an <em>unavailable</em> gate also blocks, proven after a live near-miss injection test); room text is fenced as data; classifier-proposed actions pass a routable-verb whitelist with a confidence cap; autonomously charted vitals are bounded by plausibility ranges and extraction fails closed to writing nothing (a prior version fabricated a metoprolol order on the error path, removed); the sidebar renders an explicit <em>broken</em> state rather than a blank one, so "no warnings" can never mean "the warning system is down."</li>
+</ul>
+<p><strong>Status.</strong> Pre-pilot. The deterministic layers are code-complete with regression tests and are the honest core of the claim. The 4B layers are unvalidated and were measured misclassifying emergencies, which is exactly why the deterministic fast-paths exist. The post-Confirm surgical "AI package" is hardcoded demo content.</p>
+<p><strong>Key code:</strong> <code>server/services/sage_ambient_service.py</code>, <code>server/services/sage_proactive_service.py</code>, <code>server/services/sage_narrator_service.py</code>, <code>server/services/sage_handoff_service.py</code>, <code>server/services/nervous_system_triggers.py</code>, <code>src/components/relay/SageAmbientSidebar.tsx</code></p>
+<h2 id="6-lens-medical-image-drafts">6. Lens, medical image drafts</h2>
+<p><em>Part II, Thinking with the doctor</em></p>
+<p>A clinician drops an image (X-ray, ECG, CT slice, clinical photo) into the panel, optionally types one line of clinical context, and the local MedGemma 27B multimodal model streams back a structured first-pass reading in a fixed <strong>Findings / Impression / Recommendations</strong> skeleton. The text lands in an editable textarea; the clinician corrects it, ticks a responsibility declaration, and files it to the patient's record. Lens contains no purpose-built radiology algorithm and no regulatory clearance, and is engineered so that fact cannot be forgotten.</p>
+<p><strong>The claim.</strong> A structured, editable first draft of an image read in under two minutes, on-site, at 2 a.m., with no radiologist in the building, so the clinician edits a page instead of writing one, while the system makes it structurally impossible to file the AI's words as anyone's diagnosis.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Drag-and-drop to draft: the read streams in token by token, typically 30 s to 2 min, in a report skeleton the clinician already knows how to scan and correct.</li>
+<li>One line of context steers the read ("62M, 3 days productive cough, ?consolidation"), fenced as data-only, so pasted record text can never act as instructions to the model.</li>
+<li>The streamed text <em>is</em> the working copy, labelled "DRAFT · CLINICIAN REVIEW REQUIRED"; the doctor's edited version, not the machine's, is what reaches the care team.</li>
+<li>One click files everywhere: linking to the Vigil record auto-posts a "Clinician-reviewed AI imaging reference" to the patient's Relay case room and makes the read available to Sage and discharge documents.</li>
+<li>The filing button is hard-disabled until a patient is selected <em>and</em> the clinician ticks "I take clinical responsibility", enforced in UI logic, not requested in a tooltip.</li>
+<li>An "INVESTIGATIONAL, NOT FOR DIAGNOSTIC USE" banner is appended <em>by the application</em> after every completed stream, stored with the analysis, and travels with the report. It cannot be omitted or reworded by the model.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Time and cognition at night and in wards where a radiologist read may be hours or days away, a second-opinion draft while waiting for (never instead of) the formal read. The safety posture is the inverse claim: Lens is engineered so its speed cannot quietly become diagnosis.</p>
+<p><strong>Architecture.</strong> A thin FastAPI streaming route hands a validated, encrypted-at-rest upload to MedGemma 27B via Ollama with the base64 image inline, streams tokens over SSE, and persists only on natural completion, cancelled streams save nothing.</p>
+<ul>
+<li><strong>Guardrails worth naming:</strong> production-default-off gate (<code>ORB_LENS_ENABLED</code>; without it the endpoint 403s with an explicit "no validated imaging model" message); 25 MB cap, extension allowlist <em>plus</em> magic-byte sniffing, server-chosen filenames; department-scoped listings with PHI-read audit; a provenance chip on every draft linking to Model Governance.</li>
+</ul>
+<p><strong>Status.</strong> Pre-pilot, demo-profile only in practice: analysis ships disabled in production by default, precisely because MedGemma has no clinical validation for image interpretation. The not-a-diagnostic-device stance is enforced in code, not just stated in docs.</p>
+<p><strong>Key code:</strong> <code>server/services/lens_service.py</code>, <code>server/routes/lens_routes.py</code>, <code>src/pages/panels/LensPanel.tsx</code></p>
+<h2 id="7-scribe-voice-to-text-documentation">7. Scribe, voice-to-text documentation</h2>
+<p><em>Part III, Documenting and communicating</em></p>
+<p>The doctor or nurse dictates (or types) an encounter; local Whisper large-v3 transcribes it, a drug-name dictionary and an LLM pass clean up the clinical vocabulary, and MedGemma drafts it into a SOAP note, discharge summary, or I-PASS handoff. A background verifier then compares the drafted note against the original transcript and flags anything the model invented or dropped. The note is held as an editable draft until a doctor signs it, with every lifecycle step audited.</p>
+<p><strong>The claim.</strong> The doctor talks through the encounter once and edits a pre-structured draft instead of composing the note, with an automated hallucination check standing between the AI's draft and the doctor's signature.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Whisper is primed with <em>this patient's actual chart</em> before it listens: name, diagnosis, active medication names, and attending are pulled into the decoder prompt, so the hardest words in medicine, drug names, come out right on the first pass.</li>
+<li>Misheard drugs are corrected deterministically first: an RxNorm metaphone index rewrites phonetic manglings ("phosphomycin" → "Fosfomycin"), then an LLM pass fixes acoustic confusions ("hyper" vs "hypo"), skipped entirely for short dictations to save 20–30 s.</li>
+<li>One click structures the transcript into SOAP, discharge, or I-PASS, streamed token-by-token so the doctor watches the draft write itself.</li>
+<li>A designed-in second reader: the verifier reports unsupported claims, omissions, and entity mismatches (drug names, doses, vitals) as clickable findings; the sign-gate refuses one-click signing (HTTP 428) of any note that failed, <em>or never received</em>, verification.</li>
+<li>Ward-rounds mode streams live: browser-side voice-activity detection chunks speech into utterances, each transcribed on the warm daemon and appended in real time.</li>
+<li>Built for the India market: per-session language picker with English, Hindi, and auto-detect for Hindi–English code-switching, on the same local multilingual model.</li>
+<li>The note has a real clinical lifecycle: nurses can dictate and edit drafts; only doctors sign or reject (reason mandatory); signed notes are immutable, amendable only through versioned revisions. The raw transcript is stored beside every note, so "what was said" vs "what was documented" is always comparable.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Time first, documentation at the speed of speech, the doctor's job shifted from composing to editing (the pipeline even reports its own per-stage timings in the UI). Safety second: the transcript-vs-note verifier plus the fail-closed sign-gate catches fabrications before signature.</p>
+<p><strong>Architecture.</strong> A four-stage local pipeline, ASR → LLM correction → LLM drafting → LLM verification, with the ASR isolated in a persistent warm daemon process (ZMQ REQ/REP, subprocess fallback) so Whisper and the 27B never contend inside the server process.</p>
+<ul>
+<li><strong>AI:</strong> Whisper large-v3 on Apple MLX; correction/verification on the 4B (dev) or 27B (prod); drafting always the 27B ("drafting always prioritizes quality"). The RxNorm corrector is deterministic. The only possible egress path, a browser Web Speech live preview, is off unless the operator sets <code>ORB_CLOUD_SPEECH_ALLOWED</code>.</li>
+<li><strong>Guardrails worth naming:</strong> a verifier that errors, returns empty, or emits unparseable JSON produces an explicit "unverifiable" verdict demanding manual review, never a silent pass; uploaded audio is encrypted at rest and decrypted only to a temp file for the ASR call; transcript and note are fenced as untrusted data in all three LLM stages; out-of-department note requests 404 identically to missing notes.</li>
+</ul>
+<p><strong>Status.</strong> Pre-pilot; implemented end-to-end but not yet operational in its default deployed shape: verification defaults OFF while the sign-gate fail-closes on unverified notes (so the Sign button cannot currently succeed from the UI without configuration), and the ASR runtime is deferred-at-setup, a Week-13 blocker for dictation, though typing + structuring works without it.</p>
+<p><strong>Key code:</strong> <code>server/services/scribe_service.py</code>, <code>server/services/whisper_daemon.py</code>, <code>server/services/rxnorm_corrector.py</code>, <code>server/ws/scribe_stream.py</code>, <code>src/pages/panels/ScribePanel.tsx</code></p>
+<h2 id="8-rounds-the-ward-round-as-a-driven-queue">8. Rounds, the ward round as a driven queue</h2>
+<p><em>Part III, Documenting and communicating</em></p>
+<p>Built around one design sentence written at the top of the file: <em>a doctor at a bed with a tablet in one hand and roughly 90 seconds per patient.</em> Orb orders the beds the way a person walks the corridor, tracks seen/skipped/not-reached, survives interruptions, and shows a single non-scrolling screen per patient: what changed overnight, what is wrong now, what must be decided today, with allergies permanently on screen. The plan is dictated at the bedside and saved as a Ward Round note.</p>
+<p><strong>The claim.</strong> The doctor stops navigating the chart and starts walking the ward: Orb drives the sequence, pre-reads every chart into one 90-second screen, and takes the plan by voice so nothing has to be typed at the bed.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Beds sort in physical walk order (GM-9 before GM-10, not string order), with keyboard shortcuts and big touch targets for one-handed tablet use.</li>
+<li>Skip is genuinely usable: never-reached beds first, skipped beds only when nothing else is left, the patient in radiology doesn't stall the round, and a skip can never quietly become a patient nobody saw.</li>
+<li>One screen answers three questions without tabs: overnight feed since the 20:00 handover, current issues worst-first (server-computed NEWS2 with drivers, overdue obs, overdue meds), and today's decisions (pharmacist-unverified meds, Sage suggestions with provenance, a "no plan documented today" prompt).</li>
+<li>The next patient's story is prefetched while the doctor is still at the current bed, the walk between beds is off the critical path.</li>
+<li>The round ends with the artefact that matters: a hand-on list of skipped/not-reached patients, plus an explicit red list of plans dictated but never saved.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Time and cognition at the highest-frequency moment of the inpatient day. Specific error-catching: absence of observations renders as a warning, never a clean bill; allergies show "UNKNOWN" rather than an empty row; marking a patient seen is blocked while an unsaved dictated plan would otherwise die on the tablet.</p>
+<p><strong>Architecture.</strong> A pure-frontend orchestration layer over endpoints that already exist and are already department-scoped server-side. The queue/resume state machine lives in a React-free, exhaustively tested module. It computes <strong>no clinical score of its own</strong>, a stated rule, so a second, subtly different NEWS2 can never disagree with the nurse's screen.</p>
+<ul>
+<li><strong>AI:</strong> local Whisper for dictation only; the panel makes no LLM calls.</li>
+<li><strong>Guardrails worth naming:</strong> offline saves are <em>refused</em>, not queued (the offline queue dies at sign-out, and a round ends in a sign-out, the code documents this failure mode); the dictation component is keyed by patient so a held recording can never transcribe into the wrong patient's plan; any other clinician's round state is purged from the shared tablet on mount; dictated text is never mirrored to localStorage.</li>
+</ul>
+<p><strong>Status.</strong> Pre-pilot; well-tested at the unit level, including offline-refusal and cross-patient dictation attack tests. Displayed scores derive from simulated vitals today.</p>
+<p><strong>Key code:</strong> <code>src/pages/panels/RoundPanel.tsx</code>, <code>src/components/round/roundQueue.ts</code>, <code>src/components/round/roundSummary.ts</code>, <code>src/components/round/RoundDictation.tsx</code></p>
+<h2 id="9-relay-messaging-where-machines-page-humans">9. Relay, messaging where machines page humans</h2>
+<p><em>Part III, Documenting and communicating</em></p>
+<p>Every admitted patient gets a case room tied to their record; departments get channels; clinicians get audited DMs. Relay is also the delivery surface for Orb's automated systems: Vigil alerts, surgical action cards, and the NEWS2 escalation chain post into the same stream as the human conversation, context and decision never separate.</p>
+<p><strong>The claim.</strong> The doctor stops carrying the hospital in their head: everything about a patient, team chat, monitoring alerts, and the record of who answered, is in one room, and a deterioration nobody answers escalates itself up the seniority ladder instead of scrolling away.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Case rooms sort by Vigil risk (critical first) with unread counts and 24 h alert dots, start-of-shift triage is "sort by Urgency, work the Action Required list" rather than a handover phone round.</li>
+<li>Vigil pages the room, not a pager: alerts carry reasons, a vitals snapshot, and the raw NEWS2 band; a one-sentence MedGemma recommendation is appended to critical alerts, and if the model is down, the alert ships without it.</li>
+<li>A deterioration cannot die in a scrolled-past line: NEWS2 ≥ 5 opens an escalation chain addressed to a <em>named human</em>, with 10/15-minute acknowledgement timeouts. Unacknowledged, it climbs a tier automatically; it closes only with a written reason; a worse reading re-opens an acknowledged chain, ack is not a mute button.</li>
+<li>Confirm/Escalate is one-tap and race-safe: alert cards resolve exactly once hospital-wide (compare-and-swap; the loser sees who won), and every view and acknowledgement is timestamped for the shadow instrument, the pilot's evidence of how long alerts sat unopened.</li>
+<li>The chart can't quietly get the wrong patient's note: a wrong-room detector runs after every send (never delaying it), attaches a durable room-visible warning, and offers redirect. Originals are annotated, never deleted.</li>
+<li>AI suggestions never touch the chart alone: agentic medication dispatch demands the clinician's signing PIN (rate-limited, 15-min lockout), an explicit dose and frequency (a TBD dose is never dispatched), RxNorm and stock reconciliation, the allergy/interaction gate, and a cryptographic delegation hash sealing conversation → suggestion → signer onto the audit chain.</li>
+<li>Every automated post carries an AUTO badge; offline sends are refused up front with the text preserved rather than silently queued into oblivion on a shared ward tablet.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Time: no pager round-trips, no "which nurse has the phone." Safety: the escalation ladder converts the classic failed-escalation mode, a line scrolled off a busy channel, into a timed process that only gets louder; wrong-chart documentation is caught at the moment of sending, not at next week's audit.</p>
+<p><strong>Architecture.</strong> A FastAPI route layer over the encrypted SQLite messaging store, with one deliberately singular access-control function (<code>get_channels_for_user</code>) authorizing every read path, REST and websocket alike, and Socket.IO for live delivery. Every read-then-write race is resolved in SQL (compare-and-swap or optimistic versions).</p>
+<ul>
+<li><strong>AI:</strong> additive only, the 27B's one-sentence alert recommendation and the ambient 4B's wrong-room adjudication (promote-only). Everything that pages, escalates, or gates is deterministic.</li>
+<li><strong>Guardrails worth naming:</strong> DMs are explicit membership rows with deliberately no admin bypass, every grant a fail-closed security audit event; unknown channel types fail closed; three separate PHI leak doors were found and closed in the 2026-08-05 audit; escalation writes share the transaction with the state change.</li>
+</ul>
+<p><strong>Status.</strong> Pre-pilot. Messaging and escalation logic is deterministic and extensively race-tested; the alert feed is simulated today. The honest gap is stated in the code's own docstring: Orb has no duty roster, pager, or push channel yet, so tier targeting is a best-approximation over the user table and delivery is in-app only.</p>
+<p><strong>Key code:</strong> <code>server/services/relay_service.py</code>, <code>server/services/escalation_service.py</code>, <code>server/routes/relay_routes.py</code>, <code>src/pages/panels/RelayPanel.tsx</code></p>
+<h2 id="10-i-pass-handoff-the-shift-handoff-that-drafts-itself">10. I-PASS Handoff, the shift handoff that drafts itself</h2>
+<p><em>Part III, Documenting and communicating</em></p>
+<p>An auto-drafted structured handoff in the I-PASS standard (Illness severity / Patient summary / Action list / Situation awareness / Synthesis by receiver), assembled <strong>purely from database rows</strong>, demographics, problems, allergies, medications, open care bundles, the 12-hour vitals window, and the live NEWS2 band mapped to Stable/Watcher/Unstable. Two surfaces consume it: a per-patient view from the chart, and a nurse end-of-shift HandoverSheet that walks the whole ward list.</p>
+<p><strong>The claim.</strong> The outgoing clinician verifies a handoff instead of composing one: the sheet is already filled in from the chart, so handover time goes into judgement and worries, not transcription.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Illness severity is pre-assigned from the live NEWS2 band with the raw score and drivers shown, triage of the handover list is done before the huddle starts.</li>
+<li>The action list is assembled from what is actually open: active and PRN meds, open care bundles with overdue elements called out ("OVERDUE (sepsis6): Give IV antibiotics").</li>
+<li>Situation awareness computes the 12-hour trend and flags ACTIVE DETERIORATION; contingency lines ("if hypoxia → titrate O2 and call the covering doctor") are pre-drafted from the patient's actual risk drivers.</li>
+<li>The synthesis section is a deliberate read-back placeholder, the receiving clinician confirms understanding. The human closure step is kept, not automated away.</li>
+<li>The nurse sheet appends nurse commentary under an explicit heading, so a reader can always tell auto-drafted content from the human's; typed comments survive interruption via localStorage until saved.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Time at every shift change, and safety in what a tired human forgets: allergies, PRN meds, an open sepsis bundle with two elements overdue, and pre-written escalation contingencies appear whether or not anyone remembered them.</p>
+<p><strong>Architecture.</strong> Deliberately deterministic, no LLM call exists in this module, so it can never fabricate content and works when Ollama is down. Persistence reuses the existing notes schema (<code>note_format='handoff'</code>).</p>
+<ul>
+<li><strong>Guardrails worth naming:</strong> every sentence is templated from real rows; missing data degrades to ", " and "NEWS2 unavailable," never invented values; problems/allergies/meds each state "none recorded" explicitly rather than omitting the line; a breached Sepsis Six can never read as 100%.</li>
+</ul>
+<p><strong>Status.</strong> Pre-pilot, deterministic, covered by <code>test_ipass.py</code>. The contingency templates are clinically sensible heuristics that must be reviewed against the pilot site's own escalation protocol.</p>
+<p><strong>Key code:</strong> <code>server/services/ipass_service.py</code>, <code>src/components/handoff/IpassHandoffView.tsx</code>, <code>src/pages/panels/nurse/HandoverSheet.tsx</code></p>
+<h2 id="11-care-bundles-the-sepsis-six-stopwatch">11. Care Bundles, the Sepsis Six stopwatch</h2>
+<p><em>Part III, Documenting and communicating</em></p>
+<p>A time-boxed protocol tracker, currently implementing the Sepsis Six (oxygen, blood cultures, IV antibiotics, IV fluids, lactate, urine output, each with a 60-minute target). A bundle opens manually from the chart or <strong>automatically</strong> when NEWS2 reaches 7 or a critical alert fires. A bedside widget shows a second-by-second clock, the six elements with per-element state, and one-tap "Mark done."</p>
+<p><strong>The claim.</strong> When sepsis is suspected, the team gets a running clock and a shared checklist instead of a verbal "start the Sepsis Six" that nobody can later prove happened on time.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Auto-trigger: the hour starts counting from <em>deterioration</em>, not from whenever someone opened the right screen, idempotently (never stacked), and clinician-cancellable.</li>
+<li>Each element is one tap, timestamped at the tap, with pending/overdue/on-time/late states, so the outstanding items are obvious at the bedside.</li>
+<li>Open bundles and their overdue elements automatically appear in the I-PASS action list and on the chart timeline, an unfinished bundle follows the patient across shifts instead of dying with the alert.</li>
+<li>Compliance is honest by construction: <em>completion</em> (how much is done) and <em>compliance</em> (how much was done within target) are computed separately, so a bundle finished late can never report 100%, exactly the number a pilot needs to be able to trust.</li>
+<li>The UI wording is engineered against misreading: an earlier "0% at risk" badge was read by every reviewer as "no risk" next to a NEWS2 16 patient, and the code documents why the phrasing changed. A days-old abandoned bundle displays as an age ("9d 3h"), not a 13,000-minute timer.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Safety first, sepsis mortality rises measurably per hour of delayed antibiotics, and the bundle converts an alert into tracked, time-stamped execution. It is also the pilot's measurable-outcome instrument: demonstrable door-to-antibiotic compliance.</p>
+<p><strong>Architecture.</strong> A small deterministic service over one <code>care_bundles</code> table with element-timestamp columns; all state computed at read time; idempotent, non-raising triggers callable safely from the monitoring hot path. <strong>No AI anywhere.</strong></p>
+<p><strong>Status.</strong> Pre-pilot, deterministic, tested. The 60-minute targets encode the widely-taught bundle but must be confirmed against the pilot hospital's own sepsis protocol before go-live.</p>
+<p><strong>Key code:</strong> <code>server/services/sepsis_bundle_service.py</code>, <code>server/routes/bundle_routes.py</code>, <code>src/components/vigil/CareBundleTimer.tsx</code></p>
+<h2 id="12-orders-emar-ordering-and-the-bedside-record">12. Orders &amp; eMAR, ordering and the bedside record</h2>
+<p><em>Part IV, Medication safety</em></p>
+<p>Doctors place lab, imaging, medication, procedure, and nursing orders through a CPOE-lite panel validated against local LOINC/SNOMED/ICD-10 tables; orders move through a guarded state machine (draft → active → in progress → completed/resulted/cancelled) with an append-only event trail. Order sets apply a whole reviewed protocol as individually editable draft orders in one action. The eMAR is the bedside endpoint: each dose recorded as given or withheld (reason mandatory) into an append-only administration history, with the allergy interlock and dose guard firing <strong>at the moment the drug goes in</strong>, not just when it was ordered.</p>
+<p><strong>The claim.</strong> The doctor orders in seconds with the chart guaranteed to stay truthful, and the nurse charts a dose in one confirmed tap, while the system quietly catches the errors that chart clean everywhere else: the drug given after the allergy was reported, the 10× decimal slip, the double dose across a brand and its generic.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Validating a code auto-fills the official display name, so a correctly-worded coded order is <em>faster</em> to write than a free-text one; the server independently re-validates every code.</li>
+<li>Applying an order set replaces typing eight orders at 03:00 with one action, and every item passes the identical safety screen a hand-typed order would. If any single item is blocked, the whole set is refused with per-item reasons: a protocol can never be the quiet path around the interlocks.</li>
+<li>The allergy interlock re-screens at administration time against the allergy list <em>as it is now</em>, catching the antibiotic ordered at 02:00 before the daughter reported the penicillin reaction at 09:00, resolving brands through the hospital's own formulary (a charted "Monocef" screens as ceftriaxone), and failing closed: an unreadable allergy list blocks rather than reading as "no allergies."</li>
+<li>The dose guard blocks only the indefensible, the order-of-magnitude slip on ISMP high-alert drugs (digoxin 1.25 mg for 0.125 mg), KCl by IV push, intrathecal vincristine, warns on high-but-plausible, and deliberately stays silent on anything it cannot parse confidently, because a guard that cries wolf gets clicked through.</li>
+<li>Withholding is deliberately friction-free: a structured reason dropdown, never an interlock. Charting honesty is never punished.</li>
+<li>A per-modal idempotency key means a Wi-Fi drop and retry returns the already-charted record instead of a second dose; every override needs a typed clinical reason (junk like "ok" rejected) and commits in the <em>same transaction</em> as the dose, "the dose charted but the reason didn't" is not a reachable state.</li>
+<li>A discharged patient cannot receive a dose, a hole found by internal red-teaming on 2026-08-06 (enoxaparin administered post-discharge, 200 OK) and closed.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Both, at the two highest-stakes moments of the day: signing the order and giving the drug. The errors this catches are exactly the ones that look clean on paper MARs and most EMRs.</p>
+<p><strong>Architecture.</strong> Deterministic Python services over encrypted SQLite. <code>orders_service</code> owns the state machine with a <code>pre_persist_gate</code> seam through which the safety screen runs before any write; <code>emar_service</code> is the single write path for a dose, replay dedupe, discharged-patient guard, allergy interlock, dose guard, override ledgers, and audit all execute in one transaction. <strong>No AI</strong>, AI-authored medications enter from other lanes and are structurally non-administrable here until pharmacist-verified.</p>
+<ul>
+<li><strong>Guardrails worth naming:</strong> the duplicate-dose window is bounded by <em>time</em>, not row count (the LIMIT-400 bug that lost a week-old methotrexate dose is documented and fixed); override carry-forward is fingerprint-scoped, any change to the allergy picture, dose, or route re-arms the guard; a malformed order-set file stops the server at startup with file/line/field.</li>
+</ul>
+<p><strong>Status.</strong> Pre-pilot; functionally complete server-side and battle-tested by red-teaming. Honest gaps: the bedside override round-trip isn't in the AdministerModal UI yet (a BLOCK surfaces as raw error text); "barcode" confirmation is an enum with no scanner behind it; no scheduled due-time worklist yet.</p>
+<p><strong>Key code:</strong> <code>server/services/orders_service.py</code>, <code>server/services/emar_service.py</code>, <code>server/services/allergy_interlock.py</code>, <code>server/services/order_sets_service.py</code>, <code>src/components/vigil/AdministerModal.tsx</code></p>
+<h2 id="13-medication-safety-gate-one-choke-point-for-every-drug">13. Medication Safety Gate, one choke point for every drug</h2>
+<p><em>Part IV, Medication safety</em></p>
+<p>Order-time drug safety as a single enforcement function: <code>enforce_medication_safety</code> is called by <strong>every code path that writes a medication</strong>, CPOE, Vigil med-add, Relay ambient actions, Sage agentic handoff, signed-note auto-extraction, Helix approve, so a drug cannot reach the chart without the same allergy and interaction screen, regardless of which door it came through.</p>
+<p><strong>The claim.</strong> The doctor gets the check a pharmacist would do in the first minute of reviewing an order, allergy, class, cross-reactivity, and interactions against the current med list, at the instant of ordering, on every entry path including the AI ones, with the system stating plainly when it could <em>not</em> check rather than implying safety.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Ordering amoxicillin for a charted penicillin allergy, or a cephalosporin for a penicillin-anaphylaxis patient (cross-reactivity), stops the order with a 428 before anything persists; overriding requires a ≥10-character clinical justification written permanently to the tamper-evident audit chain.</li>
+<li>Class allergies work the way clinicians actually chart them: an allergy recorded as "NSAIDs" correctly flags aceclofenac, nimesulide, etoricoxib, the most-prescribed drugs on an Indian ward, via stems plus enumerated members where a stem would over-fire (nystatin is not a statin).</li>
+<li>Coverage honesty is a feature the doctor sees: a drug outside the class map returns "drug–drug interactions were NOT screened, verify manually," because an unscreened drug must never look identical to a clean one. If the screen itself errors, ordering fails closed (503) rather than proceeding unchecked.</li>
+<li><strong>No AI can self-approve:</strong> non-interactive paths can never acknowledge a severe alert away, a severe hit blocks the medication and routes it to human review, structurally, not as policy.</li>
+<li>Every screen, clean, alerting, blocked, or overridden, is audited with the entry point named, so "how often is this alert overridden, by whom, from where" is a query, not a chart review.</li>
+<li>In the voice lanes, ASR-mangled drug names ("amoxcilin," "metopro lol") are corrected in ~2 ms against a local RxNorm phonetic index; Relay reconciles spoken names to the hospital's own formulary IDs with a 0.8 similarity threshold, below it, no match is claimed.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Errors caught at the cheapest possible moment, order time, before the drug reaches the chart, on every path at once. The audit trail also offloads the defensive-documentation burden: overrides record themselves.</p>
+<p><strong>Architecture.</strong> A single Python enforcement function wrapping a pure, shared pharmacology layer plus a SQLite interaction table, with a 428/503 HTTP contract mirrored across every surface. The same class map and name matcher serve order time, pharmacist verification, and the bedside interlock, one vocabulary, no drift between screening moments. <strong>Deterministic by design</strong>, so a screening verdict is reproducible and auditable.</p>
+<p><strong>Status.</strong> Pre-pilot. The machinery is complete and consistent; the clinical knowledge behind it is an explicitly hand-curated <em>starter</em> set (12 drug classes, 55 interaction pairs, ~19 cited dose rules), the code and docs both say a licensed source must be bulk-loaded before go-live, and the schema is ready for it. Known gap: a classified drug with no curated pair reads "No alerts," indistinguishable from a genuinely clean screen.</p>
+<p><strong>Key code:</strong> <code>server/services/medication_safety_gate.py</code>, <code>server/services/drug_safety_service.py</code>, <code>server/services/interaction_db.py</code>, <code>server/services/rxnorm_corrector.py</code></p>
+<h2 id="14-pharmacy-verification-queue-the-human-gate-on-ai-medications">14. Pharmacy Verification Queue, the human gate on AI medications</h2>
+<p><em>Part IV, Medication safety</em></p>
+<p>One of only three tabs the pharmacist role gets. When Sage or any agentic pathway charts a medication, it lands with provenance <code>source='llm_extracted'</code> and a placeholder dose of <strong>REVIEW REQUIRED</strong>, on the chart but explicitly unverified, and structurally non-administrable. A pharmacist reviews each one, corrects dose/route/frequency, and verifies or rejects (reason recorded).</p>
+<p><strong>The claim.</strong> AI can draft a medication onto the chart, but no AI-extracted drug ever becomes an active order until a pharmacist has looked at it, and the safety screen re-runs at the exact moment they decide.</p>
+<p>How, concretely:</p>
+<ul>
+<li>The backlog is one queue, not a chart-by-chart hunt; verify optionally dose-corrects in the same action.</li>
+<li>The full drug-safety screen re-runs on every verify and reject, failing closed on errors, so the decision screen always shows <em>current</em> alerts, a severe or failed screen demands an acknowledged reason (428) that lands on the audit chain.</li>
+<li>The placeholder dose makes the unverified state visible on the chart itself, not just in the queue.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Safety first, the interlock between AI extraction and administration. With a time dividend: history import and ambient extraction can be aggressive <em>because</em> nothing they produce is trusted until this queue clears it.</p>
+<p><strong>Architecture.</strong> A provenance-gated review workflow over the medications table; deterministic; write-session re-guards against concurrent verification.</p>
+<p><strong>Status.</strong> Implemented, pre-pilot. It is the enforcement point of Orb's "AI drafts, humans decide" provenance model for medications.</p>
+<p><strong>Key code:</strong> <code>server/routes/pharmacy_routes.py</code>, <code>server/services/pharmacy_verification_service.py</code>, <code>src/components/helix/PharmacyVerifyQueue.tsx</code></p>
+<h2 id="15-helix-pharmacy-and-inventory">15. Helix, pharmacy and inventory</h2>
+<p><em>Part IV, Medication safety</em></p>
+<p>The pharmacy pillar: the medication master catalog, lot-level physical stock, and a fixed audited state machine for every medication order (pending → reviewing → verified/rejected → scheduled → dispensed → delivered) where only legal next steps are ever offered. Two pharmacist workspaces: the Pharmacy panel (work queue, patient medication board, formulary with live stock) and the Verify Queue (Module 14).</p>
+<p><strong>The claim.</strong> No drug reaches a patient without a pharmacist's named sign-off, and the ward finds out the moment it happens, no phone calls to pharmacy, no guessing where a dose is.</p>
+<p>How, concretely:</p>
+<ul>
+<li>The review dialog only ever offers the legal next steps for the order's current state; an illegal transition is refused server-side, and an idempotency key on every transition means a double-click or replayed request returns the recorded result instead of applying twice.</li>
+<li>Clicking Verify automatically posts "Pharmacy has verified the order… dispensing will commence" into the patient's Relay case room, the doctor and nurses see the sign-off unprompted.</li>
+<li>Dispensing decrements stock atomically with the status change, always from the earliest-expiring lot (FIFO); a stockout refuses with a clear error, and the remedy (restock, or a clinically-mapped substitute suggestion) is in the same dialog.</li>
+<li>A bare patient name on an approve request must match <em>exactly one</em> patient (case-insensitive equality, never a LIKE scan) or the order is refused, a medication can never be charted to the wrong patient by name ambiguity.</li>
+<li>The Patient Board answers "where is this patient's dose?" at a glance, "2/3 delivered, 1 in transit", so a nurse's call about a missing dose is a ten-second lookup, not an investigation.</li>
+<li>A failed panel load renders an explicit "connection failure, not an empty queue" error, the pharmacist can never mistake a dead backend for a clear queue.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Errors caught at the pharmacy bench and at approve time (wrong patient, allergy/interaction, unverified AI meds, double-dispense), plus status phone calls between ward and pharmacy replaced by the auto-message and the board.</p>
+<p><strong>Architecture.</strong> A deterministic FastAPI service layer over six Helix-owned tables; no AI runs inside Helix, it is deliberately the deterministic human checkpoint downstream of Sage's AI drafting, protected by the shared medication safety gate.</p>
+<p><strong>Status.</strong> Pre-pilot. The state machine, idempotency, audit ledger, and stock deduction are real and tested; physical dispensing/delivery events are explicitly simulated (flagged <code>is_mock</code> in the DB so demo telemetry can't be mistaken for real supply-chain data), and each dispense deducts one unit regardless of quantity, demo-scale inventory, not a validated perpetual-inventory system.</p>
+<p><strong>Key code:</strong> <code>server/services/helix_service.py</code>, <code>server/services/helix_db.py</code>, <code>server/routes/helix_routes.py</code>, <code>src/pages/panels/HelixPanel.tsx</code></p>
+<h2 id="16-admission-discharge-the-intake-to-exit-spine">16. Admission &amp; Discharge, the intake-to-exit spine</h2>
+<p><em>Part V, The patient journey</em></p>
+<p>Admission is a single transaction that lights up every module at once: the patient record, the encounter, the longitudinal profile, initial vitals with a seeded NEWS2 baseline, a Relay case room pre-populated with a structured admission brief, Sage's per-patient memory, and a unique one-time patient-portal login, all from one tabbed form. During the stay, one unified chart timeline merges <strong>fourteen event streams</strong> into a single rail with a per-clinician "since you last looked" watermark. Discharge produces a drafted summary anchored by a deterministic medication reconciliation, and a DOB-guarded QR link the patient takes home.</p>
+<p><strong>The claim.</strong> Admission stops being data entry into five systems, the chart answers "what happened since I last looked" in one glance, and the discharge summary, the hour-long chore that delays every bed, arrives pre-drafted with the medication list <em>computed</em>, not remembered.</p>
+<p>How, concretely:</p>
+<ul>
+<li>One form, seven tabs, one transaction, the patient is live on Vigil, Relay, and Sage the moment admission completes.</li>
+<li>A doctor returning after a night off sees a divider and an exact "6 new since you last looked" count, computed by the database over all rows, so it stays true above a truncated list.</li>
+<li>The timeline never lets an unvetted extraction read like a charted drug: pharmacist-unverified medications carry an explicit UNVERIFIED marker, and "NOT given, reason" rows render with warning severity.</li>
+<li>The discharge narrative is LLM-drafted, but the DISCHARGE MEDICATIONS section is computed deterministically from the medication record, continued, stopped, PRN preserved (a dropped PRN opioid is named in code as the real safety defect this prevents), and injected as authoritative text the model must reproduce verbatim.</li>
+<li>The patient leaves with a QR link to their own summary, meds, and timeline, unlocked with their date of birth, no app, no account.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Both ends of the stay: admission collapses to one form; discharge becomes review-and-sign. The safety weight is at discharge (deterministic med rec, PRN preservation) and in the timeline's honesty rules, an unparseable timestamp drops its row <em>visibly</em> rather than mis-ordering a chart a clinician reads specifically to establish sequence.</p>
+<p><strong>Architecture.</strong> Three cooperating layers: a transactional admission orchestrator; a declarative read-only timeline projection (each of the 14 streams generates both its detail SQL and its count SQL, so rail and badge can never disagree); and a discharge pipeline combining deterministic med rec, an LLM-drafted narrative (with a deterministic fallback if the model is down), and hashed access tokens. The timeline layer states its own epistemology: "if it disagreed with the eMAR, the eMAR is right."</p>
+<ul>
+<li><strong>Guardrails worth naming:</strong> discharge is idempotent and atomic (the status flip is claimed first, so a double-click cannot write duplicate summaries or tokens); the review watermark never moves backwards, so offline replays cannot resurrect false "new" badges; admission generates a unique one-time portal password per patient, replacing a shared <code>patient123</code> default, called out in code.</li>
+</ul>
+<p><strong>Status.</strong> Pre-pilot; deterministic parts tested. The discharge narrative and the expected-course projection are unvalidated AI and framed as drafts, with heuristic floors.</p>
+<p><strong>Key code:</strong> <code>server/services/admission_service.py</code>, <code>server/services/patient_timeline_service.py</code>, <code>server/services/discharge_service.py</code>, <code>src/components/AdmitPatientModal.tsx</code></p>
+<h2 id="17-appointments-follow-up-booking">17. Appointments, follow-up booking</h2>
+<p><em>Part V, The patient journey</em></p>
+<p>Patients book their own follow-ups from the Bridge portal; clinicians book on a patient's behalf, cancel, and mark attended. The clinician-facing tab shows a day-by-day schedule grid with a KPI strip and acuity badges.</p>
+<p><strong>The claim.</strong> Patients book their own follow-up from their phone and the clinic list builds itself, no phone tag, no paper diary, and a double-tap can never create two slots.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Patients book for themselves only, the patient row is resolved from their login; any <code>patient_id</code> in the request body is ignored.</li>
+<li>Booking honours an idempotency key <em>and</em> a duplicate-slot guard; slot validation rejects past dates and anything beyond a 730-day horizon (a typo'd year once booked a slot 180 years out that never appeared anywhere).</li>
+<li>A completed appointment is a clinical fact, it cannot be cancelled, and "attended" is finally distinguishable from "no-show, still open."</li>
+</ul>
+<p><strong>Architecture.</strong> A small CRUD-with-guarantees router over one table, consumed by two very different frontends. No AI.</p>
+<p><strong>Status.</strong> Implemented, pre-pilot. One thing a reader must know: the clinician grid merges <em>real</em> bookings (badged "Booked") with deterministic, date-seeded <strong>predicted</strong> follow-up rows generated from the census, only the badged rows are real.</p>
+<p><strong>Key code:</strong> <code>server/routes/appointments_routes.py</code>, <code>src/pages/panels/AppointmentsPanel.tsx</code></p>
+<h2 id="18-surgical-suite-the-operating-theatre-command-surface">18. Surgical Suite, the operating-theatre command surface</h2>
+<p><em>Part V, The patient journey</em></p>
+<p>A three-tier drill-down (week → day agenda → full case detail) over the theatre schedule, with per-case risk dots fed live from the patient's latest risk score. Emergency cases don't come from the booking book: Sage's ambient layer drafts a surgical-prep action from a live Relay conversation, and a clinician's confirmation creates the case, generates a prep package within a bounded 60 seconds, and pushes a live EMERGENCY INTAKE popup to every Suite screen. The backend also keeps a WHO Surgical Safety Checklist (2009) record per case with per-item attribution.</p>
+<p><strong>The claim.</strong> A surgeon sees the whole week of theatre, risk-ranked, in one glance, and an emergency case goes from a chat message to a staffed, briefed, allergy-checked theatre without a single phone call; the system will not let the case start until the team has actually confirmed.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Opening a case streams a structured pre-op risk assessment (ASA class, risk grade, anesthetic considerations, first-48h monitoring priorities) from the local MedGemma model, built from the patient's real chart, a pre-op briefing in seconds instead of paging through the chart. If the model is offline, a clearly labelled static fallback appears, never silence.</li>
+<li>Team assembly is accountable: each member gets a personal targeted alert (not a department blast); each Confirm/Decline posts a system message; and <strong>Start Surgery is refused by the server</strong>, not just greyed out, until every alerted member has responded and at least one confirmed.</li>
+<li>The case detail leads with what the anaesthetist must see, with a deliberate honesty rule: an empty allergy field renders "Allergies not recorded", an open question to ask the patient, never a fabricated "NKDA," because Orb has no basis to assert a negative.</li>
+<li>Completion is idempotent and files a post-op note with a compensating rollback, a failed note write reverts the status, so a completed operation can never exist without an operative record.</li>
+<li>The WHO checklist keeps per-item who/when attribution, concurrency-safe for two team members ticking simultaneously, every tick on the audit chain.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Both, at the sharpest point of the hospital day: time assembling pre-op context and mustering an emergency team, and errors caught by hard server-side interlocks.</p>
+<p><strong>Architecture.</strong> A FastAPI route layer over three services, schedule/detail/streamed risk, Relay-escalated emergency intake, and the WHO checklist, feeding a socket-first React panel with polling fallbacks. This module is where the sync-SQLite-on-the-event-loop wedge was found; all blocking DB work now runs off the loop.</p>
+<p><strong>Status.</strong> Pre-pilot, and the most demo-weighted module in this group. Real and solid: the schedule, state machine, server-side gates, team alerting, auditing, checklist backend, and the streamed risk assessment (a genuine, unvalidated model call). Demo: the emergency prep package is a hardcoded template the UI badges "AI Generated" although no model ran (flagged for relabelling before shadow mode); the WHO checklist backend has <strong>no frontend consumer yet</strong>.</p>
+<p><strong>Key code:</strong> <code>server/routes/surgery_routes.py</code>, <code>server/services/surgery_escalation_service.py</code>, <code>server/services/who_checklist.py</code>, <code>src/pages/panels/SurgicalSuitePanel.tsx</code></p>
+<h2 id="19-nurse-mode-my-shift-the-task-shaped-home">19. Nurse Mode (My Shift), the task-shaped home</h2>
+<p><em>Part V, The patient journey</em></p>
+<p>The ward nurse's landing tab, deliberately not patient-shaped but <strong>task-shaped</strong>: a flat cross-patient "Due now" queue of overdue and due-soon observations and medication doses, sorted by deterioration first, lateness second. Three views, Due now, My patients, and Handover (I-PASS across the whole list). Nurses record bedside obs with a live NEWS2 preview as they type, run the med round, and keep working from a cached snapshot when the tablet loses network in a corridor dead zone.</p>
+<p><strong>The claim.</strong> A nurse opens one screen and sees every obs set and dose she owes across the whole bay, ranked so the deteriorating patient's late obs always outranks a stable patient's late paracetamol.</p>
+<p>How, concretely:</p>
+<ul>
+<li>The board assembles the whole shift as tasks from existing tables: obs due times follow the RCP NEWS2 escalation table; med due times derive from order frequency anchored on the last given dose, each carrying a <code>due_basis</code> saying which anchor was used.</li>
+<li>The obs entry sheet scores the candidate set server-side on every keystroke, the same scoring code as the record path, so the nurse sees the NEWS2 she is about to create before saving.</li>
+<li>Recording obs dispatches a Vigil escalation into the case room, so a peri-arrest set summons the response without a second app.</li>
+<li>Med administration routes through the existing eMAR AdministerModal, there is exactly one medication-administration write path in the system.</li>
+<li>Unschedulable meds (PRN, continuous, unparseable frequency) are excluded from the owed-task list rather than guessed at, a med Orb cannot time is a med it must not imply is late.</li>
+</ul>
+<p><strong>Architecture.</strong> Three sync FastAPI endpoints over a pure-composition service: no new clinical rules, one genuinely new write (nurse-entered obs, tagged <code>nurse_manual</code>). Deterministic throughout.</p>
+<ul>
+<li><strong>Guardrails worth naming:</strong> ward scope is derived server-side from the authenticated user, the old <code>?department=</code> params were removed, so a client cannot widen scope from any request field; the board read is audited fail-closed <em>before</em> it is built; obs writes are idempotent on (patient, source, taken_at); even the persist-nothing NEWS2 preview is scope-checked, it previously leaked patient existence and the SpO2 Scale-2 flag (a diagnosis) to any <code>vitals.read</code> holder.</li>
+</ul>
+<p><strong>Status.</strong> Implemented and wired as the nurse landing tab; pre-pilot. Derived due times are explicitly a working list, not a prescription schedule.</p>
+<p><strong>Key code:</strong> <code>server/routes/nurse_routes.py</code>, <code>server/services/nurse_shift_service.py</code>, <code>src/pages/panels/nurse/NursePanel.tsx</code></p>
+<h2 id="20-bridge-the-patients-own-window">20. Bridge, the patient's own window</h2>
+<p><em>Part V, The patient journey</em></p>
+<p>The one screen designed to be handed to the patient or a family member at the bedside: how they're doing in calm, jargon-free language (reassurance-first status wording), who is looking after them, vitals trends against plain-English normal ranges, medications, reports, discharge summary, a FHIR download of their whole record, and self-service follow-up booking. At the bottom, an AI question box streams answers in simple words from the hospital's own local model.</p>
+<p><strong>The claim.</strong> Bridge keeps patients and families informed and calm without a staff member in the room, so the doctor and nurses field fewer "what does this number mean?" interruptions and have a better-informed patient at every conversation.</p>
+<p>How, concretely:</p>
+<ul>
+<li>The status card derives from the same risk scores clinicians see in Vigil, worded reassurance-first, the family stops flagging down a nurse every time a monitor number changes.</li>
+<li>The chat answers everyday questions ("what is this tablet for?") in simple language, hard-instructed to redirect every clinical decision to "please ask your nurse or doctor."</li>
+<li>A deterministic regex screen catches emergency and self-harm language <em>before any LLM call</em>, returns a fixed press-your-call-button response, and publishes a real-time <code>bridge.emergency.flag</code> event to the duty team, the chatbot becomes an extra escalation channel instead of a reassurance trap.</li>
+<li>The AI context is minimal by design: name, status level, one-line condition, four current vitals, never notes, labs, or the full chart.</li>
+<li>Every endpoint is structurally self-scoped: the patient record is resolved from the signed-in account; the client never supplies a patient identifier.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Cognition offloaded from nurses and doctors during rounds and family visits, the repetitive explanation load is absorbed by the portal. Secondary safety win: patient-typed crisis language becomes a real-time alert instead of a chatbot reply.</p>
+<p><strong>Architecture.</strong> A FastAPI route module in which every endpoint depends on <code>require_patient_self()</code>, ownership is structural, not conventional. Chat streams from local Ollama on the background LLM lane, so clinical interactive traffic keeps GPU priority.</p>
+<p><strong>Status.</strong> Pre-pilot. Implemented end-to-end; the assistant is unvalidated and has never met a real patient. A known gap for the Mumbai market: the red-flag regexes are English-only, a patient typing in Hindi or Marathi will not trip the emergency screen.</p>
+<p><strong>Key code:</strong> <code>server/services/bridge_service.py</code>, <code>server/routes/bridge_routes.py</code>, <code>src/pages/PatientShell.tsx</code></p>
+<h2 id="21-discharge-access-the-link-the-patient-takes-home">21. Discharge Access, the link the patient takes home</h2>
+<p><em>Part V, The patient journey</em></p>
+<p>A public, unauthenticated page at <code>/discharge/:token</code>. The hospital issues a secure link at discharge; the patient opens it, enters their date of birth, and gets their discharge summary, medications, and timeline in a printable view, no account, no password, no app install.</p>
+<p><strong>The claim.</strong> The patient leaves with a link, not a login, their summary, med list, and follow-up instructions are one DOB entry away, which is the realistic bar for patients who will never create a portal account.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Two-step flow: token + DOB returns a short-lived JWT grant; the record never rides on the token alone.</li>
+<li>Per-token attempt lockout <em>plus</em> a per-IP sliding-window throttle across all tokens, holding many tokens does not bypass the lockout.</li>
+<li>Expiry and revocation are first-class states with distinct patient-readable messages; the printable view is the same <code>DischargePrintView</code> used clinically, so the patient's printout matches the clinical document.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Time saved on medical-records requests and readmission risk reduced (the med list actually reaches the patient), while the CIO conversation about "an unauthenticated PHI surface" gets a concrete answer.</p>
+<p><strong>Architecture.</strong> A deliberately tiny public API (verify, summary) over a hardened token service: SHA-256-hashed-at-rest tokens (a documented fix, plaintext tokens once leaked into audit logs via correlation IDs), constant-time DOB comparison, uniform 401s that leak nothing about which part failed.</p>
+<p><strong>Status.</strong> Implemented and specifically hardened; pre-pilot. The per-IP throttle is in-process only (single-worker safe), a documented deferral.</p>
+<p><strong>Key code:</strong> <code>server/services/discharge_access_service.py</code>, <code>src/pages/DischargeAccess.tsx</code></p>
+<h2 id="22-pulse-outside-world-awareness">22. Pulse, outside-world awareness</h2>
+<p><em>Part V, The patient journey</em></p>
+<p>A popover in the shell header that pulls four public feeds, weather and 7-day forecast, air quality, influenza-like-illness surveillance, drug recalls, and converts them into ranked clinical alerts using fixed deterministic thresholds, each naming the at-risk patient groups and concrete prep actions. Strictly one-directional: the only thing that ever leaves the hospital is a pair of map coordinates, and every pull is written to an INBOUND_ONLY audit trail with a hash of the response.</p>
+<p><strong>The claim.</strong> Pulse tells the doctor what tomorrow's case mix will look like before the patients arrive, a heat wave, pollution spike, flu surge, or drug recall shows up as a badge in the header with concrete prep actions, instead of being discovered as a full ED.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Heat advisory at ≥38 °C flags dehydration/heat-stroke/cardiac risk and recommends IV-fluid monitoring, electrolyte pre-positioning, and more frequent geriatric rounding, the exact prep a medicine ward does before a Mumbai heat wave.</li>
+<li>AQI above 100 names asthma/COPD patients and recommends notifying respiratory therapy and checking inhaler availability, routine in the target geography.</li>
+<li>Every card opens a detail view with the raw numbers and a source-attribution link, so a skeptical clinician can verify the data in one click.</li>
+</ul>
+<p><strong>Architecture.</strong> A pull-only aggregation service with per-feed TTL caches and a fully deterministic rules engine, no AI anywhere in the path. It is the only module allowed to make external HTTP calls, on a purpose-built transport lane that resolves proxy/CA configuration once per process (the fix for the configd event-loop wedge that once froze <code>/api/health</code> for 3.5 hours).</p>
+<ul>
+<li><strong>Guardrails worth naming:</strong> fail-soft caching, a dead feed serves last-good data, and the flu feed degrades to an explicitly labelled "(seasonal estimate)"; the UI never presents a guess as surveillance.</li>
+</ul>
+<p><strong>Status.</strong> Shipped and deterministic, but geographically mismatched for the pilot: weather/AQI are locally meaningful today (Open-Meteo covers Mumbai), while flu surveillance is US CDC data and recalls are US FDA actions, both need India-specific sources (IDSP, CDSCO) before their alerts mean anything at the pilot site.</p>
+<p><strong>Key code:</strong> <code>server/services/pulse_service.py</code>, <code>src/components/PulseWidget.tsx</code></p>
+<h2 id="23-revenue-integrity-coding-and-cdi">23. Revenue Integrity, coding and CDI</h2>
+<p><em>Part VI, Running the hospital</em></p>
+<p>The "Revenue" tab: pick a patient and Orb scans their diagnosis, coded problem list, comorbidities, notes, and Scribe transcripts to suggest ICD-10/SNOMED codes (each with an evidence sentence and confidence), flag documentation gaps, and show a headline "Reimbursement: ₹captured → ₹potential (+₹uplift)" derived from a transparent, editable assumption table.</p>
+<p><strong>The claim.</strong> Before the bill goes out, the hospital sees which documented conditions were never coded, revenue already earned but left on the table, with the evidence sentence that supports each one.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Whole-token lexical matching of ~27 curated concepts with synonym lists, so "MI" matches but "admission" never does; medication→condition rules fire the classic CDI signal (metformin charted but diabetes never coded means its complication weight is uncaptured).</li>
+<li>Every emitted code is validated against the deployment's loaded terminology table, a partial load yields fewer suggestions, never bogus codes.</li>
+<li>A coder works from a ranked list, highest-value gaps first, instead of re-reading the chart.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Money and time for the back office, the one module aimed at the revenue side of the buyer's P&amp;L.</p>
+<p><strong>Architecture.</strong> A read-only deterministic engine, lexical mapper + rules + arithmetic, behind one endpoint. Despite the "AI-assisted" framing, the LLM refinement hook is a documented no-op stub today.</p>
+<p><strong>Status.</strong> Implemented, deterministic-only, pre-pilot. Rupee figures are structurally labelled ILLUSTRATIVE (CMS relative-weight concept with placeholder rates); a site must load its own PM-JAY or private tariff before any figure means money. A fixed honesty bug worth knowing: an unknown patient ID used to return the same all-zero report as a fully-documented patient, a typo'd ID read as a clean CDI review. It now 404s.</p>
+<p><strong>Key code:</strong> <code>server/services/coding_service.py</code>, <code>src/components/coding/RevenueIntegrityPanel.tsx</code></p>
+<h2 id="24-impact-roi-dashboard-the-money-model">24. Impact &amp; ROI Dashboard, the money model</h2>
+<p><em>Part VI, Running the hospital</em></p>
+<p>The "Impact" admin tab converts actually-recorded activity, Scribe notes authored, Vigil escalations, Sepsis-Six bundles started, pharmacist verifications, drug-safety reviews, discharge reconciliations, into rupee figures and prevented-harm estimates. Every figure is (counted event) × (named, cited assumption), denominated in INR with lakh/crore grouping.</p>
+<p><strong>The claim.</strong> The CFO does not get a vendor's savings claim, they get a model where every rupee traces to a counted event in this hospital's own database times an assumption they can replace, live.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Each metric carries the human-readable assumption that produced it (e.g. 7 min saved per note, vs published ambient-scribe studies) with its citation.</li>
+<li>Every assumption is overridable per-request, doc minutes per note, clinician hourly cost, ICU-day cost, ADE cost, avoidance rates, so diligence is interactive rather than adversarial.</li>
+<li>An empty database returns zeros with "no data yet" framing, never an exception or a fabricated figure.</li>
+</ul>
+<p><strong>Where the win lands.</strong> This is the buying-decision module: it lands in the CIO/CFO meeting and in fundraising. It is deliberately distinct from the Shadow Scorecard (Module 29), the scorecard is the clinical evidence (<em>was Orb right?</em>), Impact is the money model (<em>what was it worth?</em>). They are the two halves of the pilot's business case.</p>
+<p><strong>Architecture.</strong> Pure-read arithmetic, no writes, no AI; one admin endpoint; a dashboard that renders figure + assumption + evidence count together.</p>
+<p><strong>Status.</strong> Implemented; explicitly a diligence artifact on placeholder unit-economics a deploying site must replace.</p>
+<p><strong>Key code:</strong> <code>server/services/impact_service.py</code>, <code>src/pages/panels/admin/ImpactDashboard.tsx</code></p>
+<h2 id="25-ehr-downtime-mode-the-worst-hour-of-the-cios-year">25. EHR Downtime Mode, the worst hour of the CIO's year</h2>
+<p><em>Part VI, Running the hospital</em></p>
+<p>A durable local snapshot system plus a paper-like fallback page at <code>/downtime/:patientId</code>. Orb freezes each patient's must-know data, demographics, allergies severity-sorted and front-and-center, problems, active meds, latest vitals with rule-based NEWS2, recent signed notes, into local rows, served read-only with <strong>zero external dependencies</strong>: no live data, no streaming, no LLM, no network.</p>
+<p><strong>The claim.</strong> When everything else is down, the ward still has a safe, current, printable picture of every patient, something a cloud EHR structurally cannot promise.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Capture is pure DB reads plus in-process rule-based NEWS2 (deliberately bypassing the optional neural overlay), so a snapshot can always be taken on a box with no models and no connectivity.</li>
+<li>"Capture all" snapshots the whole admitted census in one admin action, with per-patient failure accounting, for drills and pre-downtime jobs; the Command Center's readiness tile tracks freshness.</li>
+<li>The page is high-contrast, print-on-one-tap, and renders entirely from the frozen snapshot, with allergies at the top, called out in code as the single most safety-critical field in a downtime view.</li>
+</ul>
+<p><strong>Architecture.</strong> A snapshot-capture service with a hard no-Ollama/no-network design contract. One deliberate inversion: the degraded-mode <em>read</em> path is not fail-closed-audited, wiring a fail-closed audit write into the surface whose job is to work when things are broken is exactly backwards (captures <em>are</em> audited).</p>
+<p><strong>Status.</strong> Implemented; not yet through a clinical pilot. Snapshot freshness depends on capture discipline, the operational cadence is a deployment decision.</p>
+<p><strong>Key code:</strong> <code>server/services/downtime_service.py</code>, <code>src/pages/DowntimeMode.tsx</code></p>
+<h2 id="26-platform-runtime-the-box-everything-sits-on">26. Platform &amp; Runtime, the box everything sits on</h2>
+<p><em>Part VII, The foundation</em></p>
+<p>One encrypted appliance in the hospital cupboard runs the whole record and all its AI: a single-process FastAPI + Socket.IO application on one Apple Silicon Mac Studio, all data in one SQLite file (WAL mode, <code>sqlite-vec</code>, SQLCipher), all inference local via Ollama plus a spawned knowledge-worker child process. Around it: a durable at-least-once event bus, a two-lane LLM admission queue over a ref-counted GPU gate, a residency-aware model router, and out-of-band liveness daemons that can report even when the event loop is frozen.</p>
+<p><strong>The claim.</strong> Indirect but real: answers arrive in seconds instead of minutes, the system stays up through network outages and background load, and no patient chart ever leaves the building, so there is no cloud-consent conversation to have. The doctor never sees this module; they feel it as "it answers fast and it was up at 3 a.m."</p>
+<p>How, concretely:</p>
+<ul>
+<li>The interactive lane is reserved for the clinician: a dedicated semaphore separates clinician turns from background work, built after a measured incident where a Sage question sat 31 seconds behind a ward-narrator stream against a ~2-second answer.</li>
+<li>Models are kept warm on Sage's own system prompt every 5 minutes, 0.4 s vs 6.9 s to first words on question one, and if the 27B is evicted to reclaim ~17 GB, the router routes to the resident 4B with an explicit "downgraded" flag rather than an 80-second cold reload.</li>
+<li>The event bus gives ambient AI at-least-once delivery: every publish writes a per-subscriber ledger row, and a replay poller re-dispatches after crashes, "patient deteriorated" can never be silently dropped.</li>
+<li>A daemon-thread loop watchdog and an outbound no-PHI heartbeat detect event-loop freezes that <code>/api/health</code> structurally cannot see (the health endpoint is served by the loop that froze), writing pre-diagnosed incident dumps.</li>
+</ul>
+<p><strong>Architecture.</strong> Concurrency disciplined by workload class: threads for work that releases the GIL in C (SQLite, HTTP), processes for work that does not (tokenizers, torch). The ~2 GB embedder lives in a spawn child because in-process loads froze the API. One SQLite writer, one uvicorn worker, enforced by design.</p>
+<p><strong>Status.</strong> Pre-pilot, battle-hardened by real incidents, three production event-loop freezes (GIL starvation, the configd proxy lookup, a SQLCipher close deadlock) are diagnosed in code comments and fixed, with measured soak results: 60-bed simulation, <code>/api/health</code> p99 of 41 ms over 1,797 probes; 2.7–3.2 s to first Sage words.</p>
+<p><strong>Key code:</strong> <code>server/main.py</code>, <code>server/services/event_bus.py</code>, <code>server/services/llm_queue_service.py</code>, <code>server/services/gpu_coordinator.py</code>, <code>server/services/model_router.py</code>, <code>server/services/loop_watchdog.py</code></p>
+<h2 id="27-security-audit-who-you-are-whether-you-may-can-we-prove-it">27. Security &amp; Audit, who you are, whether you may, can we prove it</h2>
+<p><em>Part VII, The foundation</em></p>
+<p>The identity, authorization, crypto, and evidence layer. Auth is bcrypt + 24 h JWTs in HttpOnly cookies with CSRF double-submit, token-version revocation, per-IP rate limiting plus per-account lockout, a stdlib TOTP MFA implementation, and a <strong>separate signing PIN</strong> so a stolen session cannot commit an order. At rest: SQLCipher whole-database encryption plus AES-256-GCM envelopes for uploads and PHI-derived fields. Every mutation lands on a SHA-256 hash-chained, trigger-enforced append-only audit log.</p>
+<p><strong>The claim.</strong> Indirect: the doctor can trust the chart (nothing can be edited after the fact without leaving evidence), keep working through an outage, and the hospital adopts without a data-leaves-the-building fight, while the login machinery is engineered <em>not</em> to lock a clinician out at 3 a.m.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Tampering is evident, not just forbidden: <code>BEFORE UPDATE/DELETE</code> triggers on the audit table <code>RAISE(ABORT)</code>, each row hash-chains to the previous, a unique index rejects chain forks, and the whole chain is re-verifiable on demand.</li>
+<li>Backups are proven before anything is rotated: size floor, SQLCipher decrypt, integrity check, and row-count assertions, built after a silent failure where zero-byte "backups" passed integrity checks while rotation pruned the real ones to make room.</li>
+<li>Lockout design is clinician-shaped: the per-account lockout is a throttle, not a permanent DoS; MFA's "no code yet" step never counts as a failure; an enrolment-ticket flow exists so the first admin on a fresh appliance can never brick themselves.</li>
+<li>Role is read from the DB on every request, never from the token, a demotion takes effect on the next request, which is what makes 24-hour tokens tolerable.</li>
+<li>Fail-closed audit categories: a PHI access refuses to proceed if its audit row cannot be durably written, verified by execution on 17 of 18 PHI surfaces.</li>
+</ul>
+<p><strong>Where the win lands.</strong> Safety and continuity rather than minutes: errors-of-record become impossible to hide, and the CIO-facing Trust Center turns MFA adoption, the RBAC matrix, and chain verification into live evidence instead of a policy PDF.</p>
+<p><strong>Architecture.</strong> One dependency makes all auth decisions from a single-statement DB snapshot per request, off the event loop. Two crypto layers under different keys; two audit layers (rich route-level events inside the caller's transaction, plus a middleware safety net for every mutation). All deterministic, no AI.</p>
+<p><strong>Status.</strong> Pre-pilot; encryption at rest shipped 2026-07-30, backup hardening done. Open items the repo itself states: the key-escrow ceremony (a lost <code>ORB_DB_ENCRYPTION_KEY</code> makes every backup permanently unreadable), per-device revocation, external audit-chain anchoring, and one live defect, cookie-authenticated mutations write middleware audit rows with a NULL actor (route-level events carry the actor correctly).</p>
+<p><strong>Key code:</strong> <code>server/auth.py</code>, <code>server/permissions.py</code>, <code>server/services/audit_service.py</code>, <code>server/services/mfa_service.py</code>, <code>server/services/pin_security.py</code>, <code>scripts/backup.sh</code></p>
+<h2 id="28-governance-interop-the-honesty-layer">28. Governance &amp; Interop, the honesty layer</h2>
+<p><em>Part VII, The foundation</em></p>
+<p>Four surfaces that make Orb auditable to the people who must sign off on it: a <strong>model governance registry</strong> (every AI surface's version, training-data lineage, live checkpoint presence, validation status), <strong>FHIR R4 ingest/export</strong> with provenance tags, the <strong>flight recorder</strong> (a read-only forensics timeline over the audit chain with cryptographic verification), and the shadow instrument (Module 29).</p>
+<p><strong>The claim.</strong> The direct beneficiary is the CMO and CIO, this is what lets the hospital adopt AI without taking Orb's word for anything, but the provenance chips also protect the doctor from ever unknowingly acting on an unvalidated model's output.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Every AI output can carry a provenance chip readable by any clinician: NEWS2 is marked <em>validated</em> (published RCP standard); the CfC overlay is registered "UNTRAINED, no checkpoint"; the forecast LSTM "SYNTHETIC v1, NOT trained/validated on real clinical data." <code>checkpoint_present</code> is computed from the filesystem at seed time, so the governance UI cannot over-claim a model Orb no longer ships.</li>
+<li>FHIR export marks every resource with an Orb source tag, marks AI-derived content <code>ai-draft</code>, and downgrades any unverified AI-suggested MedicationRequest to draft/proposal, it can never land in a receiving EHR as an active order.</li>
+<li>Ingest accepts HL7 ORU^R01, JSON webhooks, CSV replay, and FHIR behind a constant-time API-key check, with raw-payload provenance capture and fingerprint dedup, then recomputes NEWS2 and runs the same Vigil alert logic as native data.</li>
+<li>The flight recorder merges audit logs, the event bus, and order events into one time-ordered timeline, and its <code>verify_chain</code> imports the <em>writer's exact hash function</em>, including catching the erased-hash-restart tampering move.</li>
+</ul>
+<p><strong>Architecture.</strong> Write/read separation everywhere; the registry is seeded from one code-defined source of truth with live filesystem checks. No AI runs here, this layer observes and governs the models rather than executing them.</p>
+<p><strong>Status.</strong> Pre-pilot. The registry reflects reality today: only NEWS2 is validated. FHIR ingest is a constrained profile, not a general interface engine.</p>
+<p><strong>Key code:</strong> <code>server/services/model_governance_service.py</code>, <code>server/services/fhir_export_service.py</code>, <code>server/services/ingestion_service.py</code>, <code>server/services/flight_recorder_service.py</code>, <code>src/components/ProvenanceChip.tsx</code></p>
+<h2 id="29-shadow-mode-scorecard-the-pilots-evidence-instrument">29. Shadow Mode Scorecard, the pilot's evidence instrument</h2>
+<p><em>Part VII, The foundation</em></p>
+<p>For the silent phase of the pilot, Orb ingests two wards' data, runs the full Vigil → Sage → Relay loop <strong>without clinicians seeing it</strong>, and accumulates a scorecard against what clinicians actually did: detection lead time, false-alert rate, sensitivity and misses, clinician agreement. This is the artifact the Week-13 go/no-go decision rests on, and arguably the most CIO-relevant module in the product.</p>
+<p><strong>The claim.</strong> At the end of the pilot the CIO gets four numbers they can be cross-examined on, every figure carries its denominator, its date range, and its insufficient-data state, and the instrument is built so it cannot flatter Orb even by accident.</p>
+<p>How, concretely:</p>
+<ul>
+<li>Episodes are threaded from alert birth through outcome, and a sweeper writes the <em>negatives</em>, alerts never opened, proposals never actioned, so the scorecard cannot score only successes.</li>
+<li>Never a bare 0%: every metric carries state, n-observed, and n-required; a metric below its floor renders the count and the floor, never a number. The UI's Figure component takes denominator and date range as <em>required props</em>, so a bare percentage cannot be written.</li>
+<li>Negative detection leads (clinician ahead of the machine) are reported, not clipped; a confirmed deterioration with no qualifying alert is a counted miss, never an imputed absence.</li>
+<li>The false-alert headline is per <em>alert</em>, because that is the unit a nurse experiences, the per-episode figure understated interruption burden 49× in pilot-shaped data.</li>
+<li>Evidence generation is incentive-isolated: charge nurses hold a write-only outcome permission and cannot watch the metrics move as they enter ground truth; the adjudication queue is blinded; "nothing happened" is distinguished from "nobody logged it," and uncovered shifts surface as uncovered time on the scorecard's face.</li>
+<li>Simulator-lane rows are excluded from every metric by default, with the excluded volume reported, simulated alerts cannot masquerade as evidence.</li>
+</ul>
+<p><strong>Architecture.</strong> Strict write/read separation: the event writer is fail-<em>open</em> (a shadow write must never fail a clinical action, the exact opposite failure policy from the fail-closed audit log, on purpose); the scorecard reads a corrections-aware view so revised adjudications never double-count. One verdict vocabulary shared by writer and reader, a local copy once silently discarded every clinician adjudication ever recorded.</p>
+<p><strong>Status.</strong> The instrument is implemented, hardened, and self-checking; <strong>the evidence is zero until the pilot runs</strong>, by design, it can only accumulate against real ward data.</p>
+<p><strong>Key code:</strong> <code>server/services/shadow_service.py</code>, <code>server/services/shadow_scorecard_service.py</code>, <code>server/routes/shadow_routes.py</code>, <code>src/pages/panels/admin/Scorecard.tsx</code>, <code>docs/SHADOW_MODE.md</code></p>
+<hr />
+<h2 id="appendix-the-claims-we-are-not-yet-allowed-to-make">Appendix, the claims we are not yet allowed to make</h2>
+<p>A manual that only lists strengths is marketing. These are the system-wide truths that bound every claim above, collected in one place:</p>
+<ul>
+<li><strong>No real patient has ever been scored, paged, transcribed, or summarized.</strong> Vitals come from a simulator behind <code>VitalsSource</code>; the pilot's shadow phase is where every clinical claim gets tested.</li>
+<li><strong>Both neural networks ship untrained</strong> (Vigil CfC, Forecast LSTM) and fail closed to deterministic rules. Today, "AI risk score" means NEWS2, and that is stated in the UI.</li>
+<li><strong>The LLMs are not clinically validated.</strong> MedGemma 27B/4B are measured, not trusted: internal evals documented invented citations, fabricated chart data on the 4B, and wrong drug recalls, which is why the guardrail stack (citation validation, score pinning, mutation gates, verification sign-gates, pharmacist quarantine) is deterministic.</li>
+<li><strong>Curated knowledge bases are starters, not licensed databases</strong>: 55 interaction pairs, ~19 dose rules, ~19 corpus documents. Licensed sources must be bulk-loaded per site before go-live.</li>
+<li><strong>Some demo content still wears an AI badge</strong>, the surgical prep package is a hardcoded template labelled "AI Generated"; the clinician appointments grid mixes predicted rows with real ones; Helix dispensing is mock. Each is flagged in its module's status line.</li>
+<li><strong>Known open engineering items</strong>: key escrow, per-device revocation, external audit anchoring, the Scribe verification default, Hindi/Marathi red-flag coverage in Bridge, India-specific Pulse feeds, and in-app-only escalation delivery (no pager/push integration yet).</li>
+</ul>
+<p>The shadow scorecard (Module 29) exists precisely so that, at Week 13, the sentence "Vigil detects deterioration earlier than the ward noticed it" either has a number behind it or is retired. Until then, every claim in this manual is a design claim, engineered honestly, and awaiting evidence.</p>
+</body></html>

@@ -1,0 +1,26 @@
+# Orb — slim dependency set for running the automated test suite (CI + local).
+#
+# Why a separate file: requirements.txt pulls Mac-/GPU-specific, slow-to-build
+# packages that the test suite does NOT import:
+#   - FlagEmbedding (BGE-M3 embeddings) → drags in transformers + a 2nd torch
+#   - lightning-whisper-mlx            → Apple-MLX only, won't install on Linux CI
+# Those are loaded lazily at runtime and are not exercised by tests/, so they are
+# intentionally omitted here. `torch` IS required: services/forecast_service.py
+# imports it at module load, and 5 tests import the full app via `from main`.
+
+# Core app (kept in sync with requirements.txt)
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+python-socketio==5.12.1
+python-multipart==0.0.20
+pyjwt==2.10.1
+passlib[bcrypt]==1.7.4
+httpx==0.28.1
+sqlite-vec==0.1.6
+aiosqlite==0.21.0
+numpy==2.2.4
+torch==2.6.0
+
+# Test tooling
+pytest==8.3.4
+pytest-asyncio==0.25.3

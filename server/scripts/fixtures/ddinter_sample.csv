@@ -1,0 +1,9 @@
+DDInterID_A,Drug_A,DDInterID_B,Drug_B,Level
+DDInter1001,Simvastatin,DDInter2001,Clarithromycin,Major
+DDInter1002,Sildenafil,DDInter2002,Isosorbide mononitrate,Major
+DDInter1003,Fluconazole,DDInter2003,Warfarin,Major
+DDInter1004,Ciprofloxacin,DDInter2004,Theophylline,Major
+DDInter1005,Metformin,DDInter2005,Iohexol,Moderate
+DDInter1006,Amlodipine,DDInter2006,Simvastatin,Moderate
+DDInter1007,Omeprazole,DDInter2007,Clopidogrel,Moderate
+DDInter1008,Sertraline,DDInter2008,Ibuprofen,Minor

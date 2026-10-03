@@ -1,0 +1,1006 @@
+/* ══════════════════════════════════════════════════════════════
+   Admin Panel — Quiet Clinical: flat opaque surfaces, hairline
+   borders, one clay accent, semantic status colours only.
+   All colors use design tokens so light/dark swap automatically.
+   ══════════════════════════════════════════════════════════════ */
+
+.admin-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  width: 100%;
+  /* Its own scroller, like .orb-panel: the shell body clips, so without this
+     the sections below the first screen were cut off. The foot is the floating
+     Sage orb's corner, so the last row's actions can scroll clear of it. */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: var(--fab-clearance);
+  /* Theme-aware badge inks consumed by the inline-styled admin badges
+     (AdminBadges / AlertOperations / ModelGovernance). The status tokens are
+     contrast-safe in every theme now, so only the token-less indigo lane
+     still needs a light-theme override. */
+  --admin-indigo: #818cf8;
+  --admin-ok-badge: var(--status-ok);
+  --admin-warn-badge: var(--status-warn);
+}
+
+[data-theme="light"] .admin-panel {
+  --admin-indigo: #4f46e5;
+}
+
+/* ─── Sub-navigation tabs ─── */
+.admin-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  overflow-x: auto;
+}
+
+/* Fifteen sections wrapped into eight rows of pills on a phone, pushing the
+   content below the fold. Under 760px they become one row that scrolls
+   sideways and snaps to each pill. */
+@media (max-width: 760px) {
+  .admin-tabs {
+    flex-wrap: nowrap;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .admin-tabs::-webkit-scrollbar { display: none; }
+  .admin-tab { scroll-snap-align: start; flex-shrink: 0; }
+}
+
+@media (pointer: coarse) {
+  .admin-tab { min-height: 44px; }
+}
+
+.admin-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-full);
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--transition-base), background var(--transition-base),
+    border-color var(--transition-base);
+}
+
+.admin-tab svg {
+  flex-shrink: 0;
+}
+
+.admin-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+}
+
+.admin-tab--active {
+  color: var(--btn-primary-text);
+  background: var(--accent-deep);
+  border-color: transparent;
+}
+
+.admin-tab--active:hover {
+  color: var(--btn-primary-text);
+  background: var(--btn-gradient-hover);
+}
+
+/* ─── Content shell ─── */
+.admin-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  animation: fade-in var(--transition-base);
+}
+
+.admin-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.admin-section__title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+}
+
+/* ═══ Overview ═══ */
+.admin-overview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.admin-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-4);
+}
+
+.admin-stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-5);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+}
+
+.admin-stat-card__label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.admin-stat-card__value {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-stat-card__sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+/* ─── Small inline stat chips (must never run together) ─── */
+.admin-stat-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.admin-stat-chip--ok {
+  background: color-mix(in srgb, var(--status-ok) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-ok) 28%, transparent);
+  color: var(--status-ok-text);
+}
+
+.admin-stat-chip--warn {
+  background: color-mix(in srgb, var(--status-warn) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-warn) 28%, transparent);
+  color: var(--status-warn-text);
+}
+
+.admin-stat-chip--danger {
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-danger) 28%, transparent);
+  color: var(--status-danger-text);
+}
+
+/* ─── Auth summary chips ─── */
+.admin-auth-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.admin-auth-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.admin-auth-chip > span:first-child {
+  color: var(--text-primary);
+}
+
+.admin-auth-chip__count {
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-category-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+/* ═══ Tables ═══ */
+.admin-table-wrap {
+  overflow-x: auto;
+  width: 100%;
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.admin-table thead th {
+  position: sticky;
+  top: 0;
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  /* Opaque so rows never bleed through the sticky header (no blur to hide it). */
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.admin-table tbody td {
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+.admin-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.admin-table tbody tr:hover td {
+  background: var(--bg-glass-hover);
+}
+
+.admin-tr--failure td {
+  background: color-mix(in srgb, var(--status-danger) 6%, transparent);
+}
+
+.admin-td--mono {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.admin-td--small {
+  font-size: 0.76rem;
+}
+
+.admin-td--truncate {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-audit-log,
+.admin-ingestion,
+.admin-security,
+.admin-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* ═══ Filter bar & form controls ═══ */
+.admin-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.admin-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.admin-filter-label {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.admin-filter-input,
+.admin-filter-select {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-family: inherit;
+  /* Keyboard focus stays visible via the global :focus-visible ring. */
+  outline: none;
+  transition: border-color var(--transition-base), background var(--transition-base);
+}
+
+.admin-filter-input {
+  min-width: 160px;
+}
+
+.admin-filter-input::placeholder {
+  color: var(--text-muted);
+}
+
+.admin-filter-input:focus,
+.admin-filter-select:focus {
+  border-color: var(--border-focus);
+  background: var(--bg-glass-hover);
+}
+
+.admin-filter-select option {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.admin-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-base);
+}
+
+.admin-filter-btn:hover {
+  background: var(--btn-gradient-hover);
+}
+
+.admin-filter-btn:active {
+  background: var(--accent-deep);
+}
+
+.admin-filter-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+/* ═══ Pagination ═══ */
+.admin-pagination {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.admin-page-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+  color: var(--text-primary);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--transition-base), border-color var(--transition-base);
+}
+
+.admin-page-btn:hover:not(:disabled) {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+}
+
+.admin-page-btn:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+.admin-page-info {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ═══ Badges & inline chips ═══ */
+.admin-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: 0.7rem;
+  font-weight: 600;
+  /* No text-transform: labels arrive in sentence case (humaniseEnum), and
+     capitalize turned "clinical record(s)" into "Clinical Record(S)". */
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+.admin-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+
+/* ═══ Correlation cell ═══ */
+.admin-correlation-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.admin-correlation-link {
+  padding: 0;
+  border: none;
+  background: none;
+  /* --accent-text (not --accent-gold): the text-safe accent token darkens
+     itself on the light theme, so no per-theme override is needed. */
+  color: var(--accent-text);
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  cursor: pointer;
+  transition: color var(--transition-base);
+}
+
+/* Hover shifts the colour rather than fading it. An 0.85 opacity hover on an
+   accent-coloured link ate 15% of an already-marginal contrast ratio, and the
+   underline alone is a stronger affordance than a barely-perceptible fade. */
+.admin-correlation-link:hover {
+  text-decoration: underline;
+  color: var(--accent-gold);
+}
+
+.admin-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--transition-base), background var(--transition-base);
+}
+
+.admin-copy-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-glass-hover);
+}
+
+.admin-retry-btn {
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-base);
+}
+
+.admin-retry-btn:hover {
+  background: var(--btn-gradient-hover);
+}
+
+.admin-retry-btn:active {
+  background: var(--accent-deep);
+}
+
+/* ═══ Empty / loading states ═══ */
+.admin-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+
+.admin-empty__icon {
+  color: var(--text-muted);
+}
+
+.admin-empty__title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.admin-empty__message {
+  margin: 0;
+  max-width: 380px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.admin-loading-spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--border-glass);
+  border-top-color: var(--accent-gold);
+  border-radius: var(--radius-full);
+  animation: orb-spin 0.8s linear infinite;
+}
+
+/* ═══ Correlation Trace timeline ═══ */
+.admin-trace {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.admin-trace__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.admin-trace__timeline {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4) 0;
+}
+
+.admin-trace__pipeline-label {
+  padding-left: 28px;
+  margin-bottom: var(--space-1);
+}
+
+.admin-trace__node {
+  position: relative;
+  display: flex;
+  gap: var(--space-4);
+  padding-left: 4px;
+  animation: slide-up var(--transition-base) both;
+}
+
+.admin-trace__connector {
+  position: absolute;
+  left: 9px;
+  top: 20px;
+  bottom: calc(-1 * var(--space-4));
+  width: 2px;
+  border-left: 2px solid var(--border-subtle);
+}
+
+.admin-trace__dot {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  margin-top: 4px;
+  border-radius: var(--radius-full);
+  background: var(--text-secondary);
+}
+
+.admin-trace__content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1;
+  min-width: 0;
+  padding-bottom: var(--space-2);
+}
+
+.admin-trace__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.admin-trace__action {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: capitalize;
+}
+
+.admin-trace__time {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.admin-trace__summary {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.admin-trace__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.admin-trace__node--failure .admin-trace__action {
+  color: var(--status-danger-text);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   User Management (UsersPanel) — appended, no existing rules changed
+   ══════════════════════════════════════════════════════════════ */
+
+/* ─── Row actions ─── */
+.admin-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* ─── Ghost + danger buttons (shared by table rows and modals) ─── */
+.admin-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-base), border-color var(--transition-base);
+}
+
+.admin-btn-ghost:hover:not(:disabled) {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+}
+
+.admin-btn-ghost:disabled {
+  color: var(--text-muted);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+.admin-btn-ghost--sm,
+.admin-btn-danger--sm {
+  padding: 4px 10px;
+  font-size: 0.76rem;
+}
+
+.admin-btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 30%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+  color: var(--status-danger-text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-base), border-color var(--transition-base);
+}
+
+.admin-btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-danger) 20%, transparent);
+  border-color: color-mix(in srgb, var(--status-danger) 45%, transparent);
+}
+
+/* Drops the danger tint entirely: an unavailable destructive action should read
+   as unavailable, not as a live warning. */
+.admin-btn-danger:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+/* ─── Modal overlay + shell ─── */
+.admin-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: rgba(0, 0, 0, 0.55);
+  animation: fade-in var(--transition-base);
+}
+
+.admin-modal {
+  width: 100%;
+  max-width: 520px;
+  max-height: calc(100vh - 2 * var(--space-6));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  box-shadow: var(--elev-3);
+  animation: slide-up var(--transition-base) both;
+}
+
+.admin-modal--sm {
+  max-width: 420px;
+}
+
+.admin-modal__title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.admin-modal__text {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.admin-modal__text strong {
+  color: var(--text-primary);
+}
+
+.admin-modal__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+/* ─── Forms inside modals ─── */
+.admin-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.admin-form__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.admin-form__row .admin-field {
+  flex: 1 1 160px;
+}
+
+.admin-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.admin-field__label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.01em;
+}
+
+.admin-field__opt {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.admin-field__inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.admin-field__inline .admin-filter-input {
+  flex: 1 1 160px;
+}
+
+.admin-form__error {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent);
+  color: var(--status-danger-text);
+  font-size: 0.8rem;
+}
+
+/* ─── Toast ─── */
+.admin-toast {
+  position: fixed;
+  bottom: var(--space-5);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1100;
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  box-shadow: var(--elev-3);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 500;
+  animation: slide-up var(--transition-base) both;
+}
+
+/* ── Visual-audit contrast fix (2026-07-29): status-coloured badge text on the
+   danger-tinted failure row fell below 3:1; force neutral ink there. ── */
+.admin-tr--failure .admin-badge { color: var(--text-secondary); }
+[data-theme="light"] .admin-tr--failure .admin-badge { color: var(--text-muted); }
+
+/* ═══ Roster Import ═══
+   The three-step wizard (preview → dry run → commit). Flat surfaces and token
+   colours only: status meaning is carried by the *-text tokens on normal
+   surfaces, never by opacity, so the contrast gate can reason about it. */
+.admin-roster {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.admin-section__hint {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* Numbered step header — the wizard's spine. */
+.admin-roster__step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.admin-roster__step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  font-size: 0.75rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.admin-roster__step-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+}
+
+/* The "which line is the header?" question, and the absent-from-roster notice.
+   Both are the app asking rather than guessing, so they share one calm surface
+   — neither is an error and neither should read as one. */
+.admin-roster__ask,
+.admin-roster__absent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+}
+
+.admin-roster__ask-title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.admin-roster__required {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.admin-roster__issues {
+  margin: 0;
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.admin-roster__checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Selected header-line candidate. */
+.admin-roster .admin-filter-btn--active {
+  background: var(--accent-deep);
+  border-color: var(--text-primary);
+}
+
+/* Commit is the only destructive control here, and it stays locked until a dry
+   run for the CURRENT mapping has been seen. The disabled state must therefore
+   read as "not yet", not as "broken". */
+.admin-roster .admin-filter-btn:disabled {
+  background: var(--bg-glass);
+  color: var(--text-muted);
+  border-color: var(--border-subtle);
+  cursor: not-allowed;
+}
+
+.admin-roster__commit {
+  align-self: flex-start;
+}

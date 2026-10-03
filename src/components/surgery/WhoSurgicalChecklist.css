@@ -1,0 +1,203 @@
+/* ══════════════════════════════════════════════════
+   WHO SURGICAL SAFETY CHECKLIST — Tier-3 case card
+   Quiet Clinical: flat surface, hairline borders,
+   semantic status tokens; de-emphasis via text tokens,
+   never opacity.
+   ══════════════════════════════════════════════════ */
+
+.who-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+}
+
+.who-checklist__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.who-checklist__title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0;
+}
+
+.who-checklist__version {
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.who-checklist__count {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.who-checklist__progress {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--bg-glass);
+  overflow: hidden;
+}
+
+.who-checklist__progress-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--status-ok);
+  transition: width var(--transition-base);
+}
+
+.who-checklist__actor {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.who-checklist__complete {
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--status-ok) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-ok) 28%, transparent);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--status-ok-text);
+}
+
+.who-checklist__error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  color: var(--status-danger-text);
+  line-height: 1.4;
+}
+
+.who-checklist__retry {
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.who-checklist__loading {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.who-checklist__phase {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.who-checklist__phase-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.who-checklist__phase-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.who-checklist__phase-when {
+  flex: 1;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.who-checklist__phase-count {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.who-checklist__phase-count--done {
+  color: var(--status-ok-text);
+}
+
+.who-checklist__items {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 24px minimum target; 44px on coarse pointers per the design floor. */
+.who-checklist__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 24px;
+  padding: 4px 0;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.who-checklist__item:last-child {
+  border-bottom: none;
+}
+
+@media (pointer: coarse) {
+  .who-checklist__item {
+    min-height: 44px;
+    align-items: center;
+  }
+}
+
+.who-checklist__item input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  accent-color: var(--accent-deep);
+  cursor: pointer;
+}
+
+.who-checklist__item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.who-checklist__item-text {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.who-checklist__item-text--done {
+  color: var(--text-primary);
+}
+
+.who-checklist__attest {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}

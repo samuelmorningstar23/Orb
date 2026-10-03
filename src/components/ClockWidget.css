@@ -1,0 +1,73 @@
+.clock-widget {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: var(--radius-full);
+  /* Opaque surface chip — theme-aware, legible on the flat topbar. */
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 500;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+  user-select: none;
+}
+
+/* --bg-glass, not --bg-glass-hover: the heavier hover fill lifts the backdrop
+   until .clock-widget__seconds-dot (--accent-text) inside measures 4.16:1 in dark — below AA. The lighter fill still
+   marks the hover. Found by the hover-surface pass in
+   scripts/check-contrast.mjs (spec §10.2); it composites a state fill under
+   the DESCENDANT text it lands beneath, which is what the old gate could not see. */
+.clock-widget:hover {
+  background: var(--bg-glass);
+  border-color: var(--border-glass);
+}
+
+.clock-widget__date {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.clock-widget__divider {
+  width: 1px;
+  height: 14px;
+  background: var(--border-subtle);
+}
+
+.clock-widget__time-container {
+  display: flex;
+  align-items: baseline;
+  gap: 1px;
+}
+
+.clock-widget__time {
+  font-weight: 600;
+}
+
+/* A static colon. It used to blink to opacity 0 every half second, so a
+   glance could land on "12:14 35" with the seconds cut loose from the time;
+   the ticking seconds already show the clock is live. */
+.clock-widget__seconds-dot {
+  color: var(--accent-text);
+  margin: 0 1px;
+}
+
+.clock-widget__seconds {
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+  width: 14px;
+  text-align: left;
+}
+
+.clock-widget__ampm {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--accent-text);
+  margin-left: 3px;
+}

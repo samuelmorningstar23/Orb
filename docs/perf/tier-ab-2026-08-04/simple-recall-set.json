@@ -1,0 +1,446 @@
+{
+ "phase": "simple_set",
+ "run_at": "2026-08-04T16:37:49",
+ "records": [
+  {
+   "n": 1,
+   "q": "What is the antidote for paracetamol overdose?",
+   "truth": "N-acetylcysteine",
+   "scope": "simple",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "NOACT|\nThe antidote for paracetamol overdose is **N-acetylcysteine** (NAC). It works by replenishing glutathione stores in the liver, which helps to detoxify the toxic metabolite of acetaminophen. NAC should be administered as soon as possible after ingestion, ideally within 8 hours, but can still be effective even later. The usual dose is typically **100 mg/kg IV over 15 minutes**, followed by continuous infusion at **50 mg/kg per hour**. In severe cases or when there are signs of hepatic dysfunction, higher doses may be considered under expert supervision. <details><cited_sources>[DOC-23456789]</cited_sources></details>\n",
+     "ttft_ms": 2242.5,
+     "total_ms": 4095.3,
+     "prompt_tokens": 531,
+     "decode_tokens": 148
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| The antidote for paracetamol (acetaminophen) overdose is **N-acetylcysteine** (NAC). It works by replenishing glutathione stores in the liver, which helps to detoxify the toxic metabolite of paracetamol, N-acetyl-p-benzoquinone imine (NAPQI). NAC can be administered orally or intravenously. Oral administration typically involves four doses over 24 hours, while intravenous administration usually consists of an initial loading dose followed by continuous infusion over 21 hours.\n",
+     "ttft_ms": 1310.8,
+     "total_ms": 7676.5,
+     "prompt_tokens": 531,
+     "decode_tokens": 103
+    }
+   }
+  },
+  {
+   "n": 2,
+   "q": "What is the first-line drug for anaphylaxis, and what is the adult intramuscular dose?",
+   "truth": "Adrenaline/epinephrine 0.5 mg IM (0.5 mL of 1:1000), anterolateral thigh",
+   "scope": "simple",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "The first-line medication for anaphylaxis is epinephrine. The adult intramuscular dose is 0.3 mg of epinephrine hydrochloride in 1 mL of a solution containing 1:1000 epinephrine hydrochloride.\n\nNOACT|\n",
+     "ttft_ms": 1025.0,
+     "total_ms": 1620.9,
+     "prompt_tokens": 799,
+     "decode_tokens": 48
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| The first-line treatment for anaphylaxis is **epinephrine**.\n\nThe standard adult intramuscular dose of epinephrine for anaphylaxis is **0.3 to 0.5 mg** administered into the mid-outer thigh. This can be given via a prefilled auto-injector (like EpiPen, Auvi-Q) or by drawing up the medication from a vial and syringe. Repeat doses may be needed every 5-15 minutes if symptoms persist or worsen.\n",
+     "ttft_ms": 2872.4,
+     "total_ms": 9091.2,
+     "prompt_tokens": 799,
+     "decode_tokens": 100
+    }
+   }
+  },
+  {
+   "n": 3,
+   "q": "What is the maximum daily paracetamol dose for a healthy 70 kg adult?",
+   "truth": "4 g in 24 h (1 g QDS)",
+   "scope": "simple",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "The maximum recommended daily dose of paracetamol for a healthy adult is **4 grams**. This includes all formulations (tablets, capsules, liquids).\nNOACT|\n",
+     "ttft_ms": 509.6,
+     "total_ms": 936.8,
+     "prompt_tokens": 473,
+     "decode_tokens": 35
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| The standard maximum daily dose of paracetamol for adults is **4 grams** (or 4000 mg). This equates to roughly **15 mg/kg** per day based on your provided weight of 70 kg (70 kg * 15 mg/kg = 1050 mg, which is less than 4000mg), but the absolute limit is usually cited as 4g regardless of weight in otherwise healthy adults. Doses should be spaced appropriately, typically every 4-6 hours as needed, without exceeding the total daily amount.\n",
+     "ttft_ms": 903.6,
+     "total_ms": 8661.2,
+     "prompt_tokens": 473,
+     "decode_tokens": 125
+    }
+   }
+  },
+  {
+   "n": 4,
+   "q": "What is the first-line drug treatment for torsades de pointes?",
+   "truth": "IV magnesium sulfate 2 g",
+   "scope": "clinical",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "NOACT|\nThe first-line drug treatment for Torsades de Pointes is **magnesium sulfate**.\n\n<details><cited_sources>[EXT-SEDATION-001]</cited_sources></details>\n",
+     "ttft_ms": 854.3,
+     "total_ms": 1463.0,
+     "prompt_tokens": 832,
+     "decode_tokens": 48
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| Torsades de Pointes (TdP) is a specific type of polymorphic ventricular tachycardia associated with QT interval prolongation. The immediate management focuses on stopping any offending drugs that prolong the QT interval and correcting electrolyte abnormalities like hypomagnesemia and hypokalemia.\n\nThe **first-line pharmacological treatment** for acute TdP is **intravenous magnesium sulfate**. It's typically given as a bolus followed by an infusion. Isoproterenol can also be used if magnesium is ineffective, but it carries risks.\n",
+     "ttft_ms": 3062.2,
+     "total_ms": 9857.2,
+     "prompt_tokens": 832,
+     "decode_tokens": 109
+    }
+   }
+  },
+  {
+   "n": 5,
+   "q": "What is the earliest ECG change in hyperkalaemia?",
+   "truth": "Tall peaked/tented T waves",
+   "scope": "simple",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "The earliest ECG changes associated with hyperkalemia include peaked T waves. These can be followed by widening of the QRS complex, prolongation of the PR interval, flattening of the P wave, and eventually sine wave patterns as potassium levels rise further.\n\nNOACT|\n",
+     "ttft_ms": 473.5,
+     "total_ms": 1177.5,
+     "prompt_tokens": 467,
+     "decode_tokens": 55
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| The earliest ECG change typically associated with hyperkalemia is **peaked T waves**. These usually appear when serum potassium levels rise above 5.5-6.0 mEq/L. As potassium continues to increase, other changes may follow, such as PR interval prolongation, QRS widening, loss of P waves, and eventually sine wave pattern leading to ventricular fibrillation or asystole.\n",
+     "ttft_ms": 1004.4,
+     "total_ms": 6191.7,
+     "prompt_tokens": 467,
+     "decode_tokens": 84
+    }
+   }
+  },
+  {
+   "n": 6,
+   "q": "Which vitamin must be given before glucose in a malnourished or alcohol-dependent patient, and why?",
+   "truth": "Thiamine (vitamin B1), to avoid precipitating Wernicke encephalopathy",
+   "scope": "simple",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "Thiamine should be administered intravenously before glucose in malnourished or alcohol-dependent patients due to the risk of Wernicke's encephalopathy. Glucose administration without thiamine can precipitate this condition. <details><cited_sources>[WERNICKES]</cited_sources></details>\n",
+     "ttft_ms": 481.5,
+     "total_ms": 1218.6,
+     "prompt_tokens": 475,
+     "decode_tokens": 58
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| Thiamine (Vitamin B1) should be administered before or concurrently with glucose in patients who are malnourished or have chronic alcohol dependence. This is because these conditions often lead to thiamine deficiency. Administering glucose without prior thiamine supplementation can precipitate Wernicke encephalopathy by increasing the metabolic demand for thiamine in susceptible individuals. The recommended dose is typically **500 mg IV** or IM, but may need repeating depending on ongoing risk.\n",
+     "ttft_ms": 907.3,
+     "total_ms": 6797.5,
+     "prompt_tokens": 475,
+     "decode_tokens": 95
+    }
+   }
+  },
+  {
+   "n": 7,
+   "q": "What ascitic fluid neutrophil count makes the diagnosis of spontaneous bacterial peritonitis?",
+   "truth": "Polymorphonuclear/neutrophil count >= 250 cells/mm3",
+   "scope": "simple",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "A **ascitic fluid neutrophil count** greater than **250 cells/mm\u00b3** suggests spontaneous bacterial peritonitis (SBP).\n\nNOACT|\n",
+     "ttft_ms": 477.9,
+     "total_ms": 893.5,
+     "prompt_tokens": 472,
+     "decode_tokens": 33
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| The diagnostic criterion for Spontaneous Bacterial Peritonitis (SBP) is an ascitic fluid absolute neutrophil count (ANC) \u2265 **250 cells/mm\u00b3**. This threshold has good sensitivity and specificity for diagnosing SBP in patients with ascites.\n",
+     "ttft_ms": 900.7,
+     "total_ms": 4343.3,
+     "prompt_tokens": 472,
+     "decode_tokens": 56
+    }
+   }
+  },
+  {
+   "n": 8,
+   "q": "What is the target oxygen saturation range for a COPD patient at risk of hypercapnic respiratory failure?",
+   "truth": "88-92%",
+   "scope": "clinical",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "NOACT|\nThe target oxygen saturation range for a COPD patient at risk of hypercapnic respiratory failure is typically **88-92%**.\n\n<details><cited_sources>[EXT-RESP-001]</cited_sources></details>\n",
+     "ttft_ms": 859.3,
+     "total_ms": 1565.0,
+     "prompt_tokens": 886,
+     "decode_tokens": 55
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| The target oxygen saturation range for a COPD patient at risk of hypercapnic respiratory failure is typically **88% to 92%**. This aims to provide adequate oxygenation while minimizing the risk of worsening CO2 retention due to ventilation-perfusion mismatch or suppression of hypoxic drive (though the latter is less significant than previously thought). Close monitoring of arterial blood gases (ABGs), particularly PaCO2 and pH, is crucial when titrating supplemental oxygen in these patients.\n\n<details><cited_sources>[\"General\"]</cited_sources></details>",
+     "ttft_ms": 3471.6,
+     "total_ms": 10841.9,
+     "prompt_tokens": 886,
+     "decode_tokens": 118
+    }
+   }
+  },
+  {
+   "n": 9,
+   "q": "What reverses the anticoagulant effect of unfractionated heparin?",
+   "truth": "Protamine sulfate",
+   "scope": "clinical",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "Protamine sulfate is used to reverse the effects of unfractionated heparin.\n\nNOACT|\n",
+     "ttft_ms": 755.5,
+     "total_ms": 1014.2,
+     "prompt_tokens": 857,
+     "decode_tokens": 21
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| The primary reversal agent for unfractionated heparin is **protamine sulfate**. It binds to heparin, forming a stable complex that inactivates its anticoagulant activity. Typically, 1 mg of protamine neutralizes approximately 100 units of heparin.\n\n<details><cited_sources>[\"EXT-VTE-001\"]</cited_sources></details>",
+     "ttft_ms": 3277.6,
+     "total_ms": 8371.2,
+     "prompt_tokens": 857,
+     "decode_tokens": 79
+    }
+   }
+  },
+  {
+   "n": 10,
+   "q": "What is the mechanism of action of furosemide?",
+   "truth": "Inhibits the Na-K-2Cl (NKCC2) cotransporter in the thick ascending limb of the loop of Henle",
+   "scope": "simple",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "Furosemide is a loop diuretic that inhibits sodium and chloride reabsorption in the thick ascending limb of Henle. This leads to increased excretion of sodium, chloride, potassium, magnesium, and calcium in the urine, resulting in diuresis.\n\n<details><cited_sources>[EXT][General] Acute Heart Failure Management (DOC: EXT-CARD-002)</cited_sources></details>\n",
+     "ttft_ms": 757.8,
+     "total_ms": 1979.0,
+     "prompt_tokens": 841,
+     "decode_tokens": 85
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| Furosemide is a loop diuretic that inhibits the Na+-K+-2Cl\u2212 cotransporter in the thick ascending limb of the Loop of Henle. This prevents sodium and chloride reabsorption, leading to increased excretion of water, sodium, potassium, calcium, and magnesium. It also reduces preload by increasing venous capacitance via an effect on venules.\n\n<details><cited_sources>[\"EXT-CARD-002\"]</cited_sources></details>",
+     "ttft_ms": 3234.8,
+     "total_ms": 9622.8,
+     "prompt_tokens": 841,
+     "decode_tokens": 100
+    }
+   }
+  },
+  {
+   "n": 11,
+   "q": "What serum potassium level must be corrected before starting an insulin infusion in DKA?",
+   "truth": "K+ below 3.3 mmol/L - replace potassium first, withhold insulin",
+   "scope": "clinical",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "The potassium correction protocol states that moderate hypokalemia is defined as a potassium level between 2.5-2.9 mEq/L. Therefore, the potassium level should be corrected to at least 3.0 mEq/L before initiating an insulin infusion.\n\n<details><cited_sources>[EXT-LYTES-001]</cited_sources></details>\n",
+     "ttft_ms": 847.7,
+     "total_ms": 1879.0,
+     "prompt_tokens": 900,
+     "decode_tokens": 80
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| The external guidance on Diabetic Ketoacidosis (DKA) protocol (DOC: EXT-METAB-001) does not explicitly state a specific serum potassium level that *must* be corrected before starting an insulin infusion. However, it is standard practice to correct severe hypokalemia (typically defined as K+ < 3.3 mEq/L) before initiating insulin therapy in DKA because insulin drives potassium into cells, which can worsen hypokalemia potentially leading to life-threatening arrhythmias.\n\nThe Potassium Correction Protocol (DOC: EXT-LYTES-001) defines severe hypokalemia as <2.5 mEq/L, requiring aggressive IV replacement and telemetry. Moderate hypokalemia (2.5-2.9 mEq/L) requires IV KCl at 10-20 mEq/hr via central line with continuous telemetry. Mild hypokalemia (3.0-3.4 mEq/L) may be managed orally.\n\nTherefore, while the DKA guideline doesn't give a hard cutoff for *starting* insulin, clinical practice dictates correcting significant hypokalemia first. Most sources recommend ensuring potassium is >3.3 mEq/L before starting insulin. If the patient has a potassium level below this threshold, intravenous potassium supplementation should be initiated concurrently with or even prior to insulin administration, aiming to raise the potassium level above 3.3 mEq/L before beginning insulin.\n",
+     "ttft_ms": 3645.6,
+     "total_ms": 22692.4,
+     "prompt_tokens": 900,
+     "decode_tokens": 300
+    }
+   }
+  },
+  {
+   "n": 12,
+   "q": "What is the target INR range for a patient with a mechanical mitral valve replacement?",
+   "truth": "2.5-3.5",
+   "scope": "clinical",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "The target INR range for a patient with a mechanical mitral valve replacement is **2.0 to 4.5**.\n",
+     "ttft_ms": 783.7,
+     "total_ms": 1108.6,
+     "prompt_tokens": 890,
+     "decode_tokens": 26
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| The target INR range depends on the specific type of mechanical heart valve used. For most **mechanical mitral valves**, the typical therapeutic goal is an INR of **2.5 to 3.5**.\n\n<details><cited_sources>[\"ACC/AHA Guidelines\"]</cited_sources></details>",
+     "ttft_ms": 3531.7,
+     "total_ms": 7628.3,
+     "prompt_tokens": 890,
+     "decode_tokens": 66
+    }
+   }
+  },
+  {
+   "n": 13,
+   "q": "What is the loading dose of IV phenytoin in status epilepticus and the maximum infusion rate?",
+   "truth": "20 mg/kg loading; max rate 50 mg/min (25 mg/min or less in elderly/cardiac disease)",
+   "scope": "simple",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "NOACT| The loading dose of intravenous phenytoin for status epilepticus is typically **15 mg/kg**, administered over 10 minutes. The maximum infusion rate should not exceed **25 mg/min**.\n",
+     "ttft_ms": 481.5,
+     "total_ms": 1050.6,
+     "prompt_tokens": 540,
+     "decode_tokens": 45
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| The standard loading dose for **status epilepticus** is typically **15 to 20 mg/kg** administered intravenously. The maximum recommended infusion rate is generally **50 mg/minute**. However, it's crucial to monitor the patient closely during administration due to potential adverse effects like hypotension and arrhythmias. Always consult local protocols or specialist advice if unsure, especially given this is a high-risk situation.\n",
+     "ttft_ms": 1483.0,
+     "total_ms": 6934.6,
+     "prompt_tokens": 540,
+     "decode_tokens": 88
+    }
+   }
+  },
+  {
+   "n": 14,
+   "q": "Define AKI stage 1 by the KDIGO criteria.",
+   "truth": "Creatinine rise >= 26.5 micromol/L (0.3 mg/dL) within 48 h, or 1.5-1.9x baseline within 7 days, or urine output <0.5 mL/kg/h for 6-12 h",
+   "scope": "clinical",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "AKI Stage 1 is defined as an increase of \u2265 0.3 mg/dL in serum creatinine concentration over \u22647 days, with a new serum creatinine level between 1.2 and 1.6 mg/dL.\n\n<details><cited_sources>[EXT-CARD-002]</cited_sources></details>\n",
+     "ttft_ms": 854.7,
+     "total_ms": 1768.3,
+     "prompt_tokens": 939,
+     "decode_tokens": 71
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| Stage 1 AKI is defined by the KDIGO criteria as either of the following:\n\n- An increase in serum creatinine to \u22651.5 times baseline, known or presumed to have occurred within the prior 7 days, OR\n- A urine output sustained over a period of 6 hours \u22650.5 mL/kg/h.",
+     "ttft_ms": 3935.7,
+     "total_ms": 8552.9,
+     "prompt_tokens": 939,
+     "decode_tokens": 74
+    }
+   }
+  },
+  {
+   "n": 15,
+   "q": "What is the mechanism of action of metformin?",
+   "truth": "Reduces hepatic gluconeogenesis (AMPK-mediated), increases peripheral insulin sensitivity; does not stimulate insulin secretion",
+   "scope": "simple",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "Metformin primarily works by reducing glucose production in the liver (-). It also improves insulin sensitivity in peripheral tissues, allowing cells to take up and use glucose more effectively (-). Additionally, it can slightly decrease glucose absorption from the intestines (-).\n\nNOACT|\n",
+     "ttft_ms": 458.5,
+     "total_ms": 1136.8,
+     "prompt_tokens": 465,
+     "decode_tokens": 53
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| Metformin primarily works by decreasing hepatic glucose production (gluconeogenesis). It also increases insulin sensitivity in peripheral tissues like muscle and fat, leading to improved glucose uptake and utilization. Additionally, it modestly decreases intestinal absorption of glucose and slows gastric emptying.\n",
+     "ttft_ms": 1006.7,
+     "total_ms": 4331.6,
+     "prompt_tokens": 465,
+     "decode_tokens": 54
+    }
+   }
+  },
+  {
+   "n": 16,
+   "q": "Which class of antibiotics should be avoided in myasthenia gravis?",
+   "truth": "Aminoglycosides (also fluoroquinolones and macrolides) - neuromuscular blockade",
+   "scope": "clinical",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "The clinical context does not mention myasthenia gravis and therefore I cannot provide an answer based on the provided information.\nNOACT|\n",
+     "ttft_ms": 756.1,
+     "total_ms": 1120.9,
+     "prompt_tokens": 892,
+     "decode_tokens": 29
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| Aminoglycosides and fluoroquinolones are generally associated with worsening neuromuscular transmission and should be used cautiously or avoided if possible in patients with myasthenia gravis.\n\n<details><cited_sources>[]</cited_sources></details>",
+     "ttft_ms": 3437.5,
+     "total_ms": 6592.8,
+     "prompt_tokens": 892,
+     "decode_tokens": 51
+    }
+   }
+  },
+  {
+   "n": 17,
+   "q": "What CURB-65 score threshold indicates the patient should be considered for hospital admission?",
+   "truth": "Score >= 2",
+   "scope": "broad",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "**CRITICAL**\n\n*   **Ananya Kapoor | GM-101 | Diabetic ketoacidosis | HR:146, BP:82/50, SpO2:83%, T:39.5, RR:36 | CRITICAL(0.35)** - Severe tachypnea (RR 28), Hypotension (SBP 100), Tachycardia (HR 118).\n*   **Rajesh Iyer | GM-102 | COPD exacerbation | HR:124, BP:83/35, SpO2:80%, T:37.4, RR:35 | CRITICAL(0.65)** - Severe tachypnea (RR 26), Severe hypoxia (SpO2 89%), On supplemental oxygen.\n*   **Priya Nair | GM-103 | Dengue fever with thrombocytopenia | HR:104, BP:111/54, SpO2:95%, T:38.1, RR:21 | ELEVATED(0.25)** - Hypotension (SBP 95), Mild tachycardia (HR 108), High fever (39.2\\u00b0C).\n\n**STABLE**\n\n*   **Suresh Reddy | GM-104 | CAP with early sepsis | HR:88, BP:118/0, SpO2:96%, T:37.0, RR:18 | STABLE(0.0)** - All vitals within normal range.\n*   **Lakshmi Devi | GM-105 | UTI with delirium | HR:74, BP:117/78, SpO2:98%, T:36.8, RR:17 | STABLE(0.15)** - Mild hypoxia (SpO2 94%), Mild tachycardia (HR 96), Fever (38.4\\u00b0C).\n\nThe CURB-65 score threshold indicates that a patient should be considered for hospital admission if the score is **\u22652**.",
+     "ttft_ms": 2863.5,
+     "total_ms": 8908.1,
+     "prompt_tokens": 988,
+     "decode_tokens": 466
+    },
+    "medgemma:27b": {
+     "answer": "**Critical Patients:**\n\n*   **Ananya Kapoor**, **GM-101**: A 34F with diabetic ketoacidosis has a heart rate of 146, blood pressure of 82/50, oxygen saturation of 83%, respiratory rate of 36, and temperature of 39.5, indicating critical risk.\n*   **Rajesh Iyer**, **GM-102**: A 67M with COPD exacerbation has a heart rate of 124, blood pressure of 83/35, oxygen saturation of 80%, respiratory rate of 35, and temperature of 37.4, indicating critical risk.\n\n**Elevated Risk Patient:**\n\n*   **Priya Nair**, **GM-103**: A 28F with dengue fever presents with a heart rate of 104, blood pressure of 111/54, oxygen saturation of 95%, respiratory rate of 21, and temperature of 38.1, indicating elevated risk.\n\n**Stable Patients:**\n\n*   **Suresh Reddy**, **GM-104**: A 55M with CAP and early sepsis is stable with HR 88, BP 118/0, SpO2 96%, T 37.0, RR 18.\n*   **Lakshmi Devi**, **GM-105**: An 80F with UTI and delirium is stable with HR 74, BP 117/78, SpO2 98%, T 36.8, RR 17.\n\nThe CURB-65 score threshold for hospital admission is typically \u2265 2 points.",
+     "ttft_ms": 9101.9,
+     "total_ms": 32950.3,
+     "prompt_tokens": 988,
+     "decode_tokens": 371
+    }
+   }
+  },
+  {
+   "n": 18,
+   "q": "What is the normal serum anion gap range?",
+   "truth": "8-12 mmol/L (roughly 3-11 depending on assay; up to 16 if potassium is included)",
+   "scope": "simple",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "The normal serum anion gap is typically between **8 and 12 mEq/L**. This value can vary slightly depending on the laboratory reference ranges.\n\nNOACT|\n",
+     "ttft_ms": 2418.5,
+     "total_ms": 2895.6,
+     "prompt_tokens": 465,
+     "decode_tokens": 37
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| The normal serum anion gap range is typically **8 to 16 mEq/L** (or mmol/L). It can vary slightly depending on the laboratory method used.\n",
+     "ttft_ms": 6005.0,
+     "total_ms": 8634.4,
+     "prompt_tokens": 465,
+     "decode_tokens": 41
+    }
+   }
+  },
+  {
+   "n": 19,
+   "q": "What is the reversal agent for warfarin in life-threatening bleeding?",
+   "truth": "IV vitamin K 5-10 mg PLUS four-factor prothrombin complex concentrate (FFP only if PCC unavailable)",
+   "scope": "clinical",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "NOACT|\nProtamine sulfate is the reversal agent for warfarin in life-threatening bleeding.\n\n<details><cited_sources>[EXT-WARFAR-001]</cited_sources></details>\n",
+     "ttft_ms": 2756.6,
+     "total_ms": 3350.5,
+     "prompt_tokens": 820,
+     "decode_tokens": 44
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| The reversal agent for warfarin in cases of life-threatening bleeding is **Prothrombin Complex Concentrate (PCC)**, specifically a four-factor PCC (containing factors II, VII, IX, X). Vitamin K should also be administered concurrently, but its onset of action is slower than PCC. Fresh frozen plasma (FFP) can be used as an alternative if PCC is unavailable, but it requires larger volumes and takes longer to administer.\n\n<details><cited_sources>[\"EXT\"]</cited_sources></details>",
+     "ttft_ms": 5693.6,
+     "total_ms": 12655.6,
+     "prompt_tokens": 820,
+     "decode_tokens": 109
+    }
+   }
+  },
+  {
+   "n": 20,
+   "q": "At what NEWS2 aggregate score should an emergency/critical care response be triggered?",
+   "truth": "7 or more (also any single parameter scoring 3 = medium/urgent review; 5-6 = urgent)",
+   "scope": "simple",
+   "runs": {
+    "medgemma:4b": {
+     "answer": "A NEWS2 aggregate score of **8** or greater should trigger an emergency/critical care response.\n\n<details><cited_sources>[NEWS2](https://www.nhsx.nhs.uk/news2)</cited_sources></details>\n",
+     "ttft_ms": 516.4,
+     "total_ms": 1186.7,
+     "prompt_tokens": 472,
+     "decode_tokens": 53
+    },
+    "medgemma:27b": {
+     "answer": "NOACT| An emergency/critical care response should be triggered at a **NEWS2** aggregate score of **5** or higher.\n",
+     "ttft_ms": 1890.0,
+     "total_ms": 3801.1,
+     "prompt_tokens": 472,
+     "decode_tokens": 29
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,752 @@
+/* BiomedicalPanel.css — Orb "Quiet Clinical" (flat).
+ *
+ * RULES THIS FILE FOLLOWS, and why each one earns its place here specifically:
+ *
+ *  · NO `opacity` FOR DE-EMPHASIS, ANYWHERE. A due date that is quiet because
+ *    it is faded is a due date somebody misreads. Quiet text is a quieter TOKEN
+ *    (--text-muted), never a faded one. A DISABLED control swaps to the
+ *    --btn-disabled-* pair too, never a fade.
+ *  · STATUS FILLS use --status-x with --status-on-fill for the text on top;
+ *    status TEXT on an ordinary surface uses --status-x-text. One token cannot
+ *    do both jobs and still clear 4.5:1 in all three themes.
+ *  · ONE DANGER SURFACE ON THE PAGE. Overdue is the only thing rendered in the
+ *    danger tone, and the headline is the only full-width danger block. A screen
+ *    where four things are red is a screen where nothing is.
+ *  · EVERY DATE AND NUMBER IN A COLUMN is tabular-lining, so a due date cannot
+ *    jitter under the one above it and a downtime column stays scannable.
+ *  · TAP TARGETS are ≥24px, and ≥44px under `@media (pointer: coarse)`. A
+ *    biomedical workshop is a tablet as often as it is a desk.
+ *  · WIDE CONTENT SCROLLS INSIDE ITSELF (.bio-table-wrap), never the page.
+ *  · The modal is portalled to document.body, so it is scoped by its own root
+ *    class rather than by nesting under .bio-panel.
+ */
+
+.bio-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 1240px;
+  margin: 0 auto;
+  width: 100%;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+}
+
+/* ─── Header ─── */
+
+.bio-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.bio-title {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.bio-sub {
+  margin: 4px 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.bio-head__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ─── The headline ───
+   The one sentence this panel exists to say. Full width, bordered, in ordinary
+   body colour with a status rule down the left — NOT a tinted card and NOT a
+   dismissible toast, because a person who dismisses this loses the only signal
+   that a device is measuring outside its certificate. */
+
+.bio-headline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-ok);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.bio-headline--danger {
+  border-left-color: var(--status-danger);
+  border-color: color-mix(in srgb, var(--status-danger) 26%, transparent);
+  background: color-mix(in srgb, var(--status-danger) 7%, var(--bg-surface));
+}
+
+.bio-headline__text {
+  font-size: var(--text-md, 0.95rem);
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.bio-headline--danger .bio-headline__text {
+  color: var(--status-danger-text);
+}
+
+/* ─── The purpose note ───
+   Bordered block in ordinary body colour. It states WHY the register matters —
+   a person who does not know that Orb ingests these numbers reads this panel as
+   paperwork and treats it as paperwork. */
+
+.bio-notice {
+  padding: 12px 16px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-info);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.bio-notice--off {
+  border-left-color: var(--status-warn);
+  color: var(--text-primary);
+}
+
+/* ─── Tabs ─── */
+
+.bio-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 2px;
+}
+
+.bio-tab {
+  min-height: 32px;
+  padding: 7px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.bio-tab:hover {
+  background: var(--bg-glass);
+  color: var(--text-primary);
+}
+
+.bio-tab--on {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent-deep);
+  font-weight: 600;
+}
+
+.bio-tab:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -2px;
+}
+
+/* ─── Layout ─── */
+
+.bio-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.bio-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bio-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.bio-section__title {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.bio-hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.bio-loading {
+  padding: 24px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+/* ─── Filters ─── */
+
+.bio-filters {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* ─── Tiles ─── */
+
+.bio-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+  gap: 12px;
+}
+
+.bio-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.bio-tile__value {
+  font-size: 1.5rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.bio-tile__value--warn { color: var(--status-warn-text); }
+.bio-tile__value--danger { color: var(--status-danger-text); }
+
+.bio-tile__caption {
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+/* ─── Alerts ─── */
+
+.bio-alert {
+  padding: 10px 14px;
+  border: 1px solid var(--border-subtle);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.bio-alert--danger { border-left-color: var(--status-danger); }
+.bio-alert--warn { border-left-color: var(--status-warn); }
+.bio-alert--ok { border-left-color: var(--status-ok); }
+
+/* ─── Badges ─── */
+
+.bio-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.bio-badge--ok { background: var(--status-ok); color: var(--status-on-fill); }
+.bio-badge--warn { background: var(--status-warn); color: var(--status-on-fill); }
+.bio-badge--danger { background: var(--status-danger); color: var(--status-on-fill); }
+.bio-badge--info { background: var(--status-info); color: var(--status-on-fill); }
+
+.bio-badge--neutral {
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+/* ─── Rows ─── */
+
+.bio-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bio-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+/* An overdue row is marked by a RULE, not by a tinted background. A tint that
+   covers a whole list is a tint the eye normalises within a week; a rule beside
+   the two rows that matter stays a signal. */
+.bio-row--overdue {
+  border-left-color: var(--status-danger);
+}
+
+.bio-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  flex: 1 1 320px;
+}
+
+.bio-row__title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.bio-row__tag {
+  font-size: var(--text-sm);
+  font-weight: 650;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: 0.01em;
+}
+
+.bio-row__name {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.bio-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.bio-row__date {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* "Never recorded in Orb" is the single most dangerous state on the screen, so
+   it is the one piece of inline text allowed a status colour of its own. */
+.bio-row__never {
+  color: var(--status-danger-text);
+  font-weight: 600;
+}
+
+.bio-row__risk {
+  margin: 4px 0 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--status-danger-text);
+  max-width: 62ch;
+}
+
+.bio-row__side {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bio-state {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.bio-state--danger { color: var(--status-danger-text); }
+.bio-state--warn { color: var(--status-warn-text); }
+.bio-state--ok { color: var(--status-ok-text); }
+.bio-state--neutral { color: var(--text-muted); }
+
+.bio-num {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.bio-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ─── Empty states ─── */
+
+.bio-empty {
+  padding: 20px 18px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+}
+
+.bio-empty__title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.bio-empty__detail {
+  margin-top: 5px;
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 66ch;
+}
+
+/* ─── Tables ─── */
+
+.bio-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.bio-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  min-width: 860px;
+}
+
+.bio-table th {
+  padding: 10px 14px;
+  text-align: left;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.bio-table td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  vertical-align: middle;
+}
+
+.bio-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.bio-cell-tag {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums lining-nums;
+  white-space: nowrap;
+}
+
+.bio-cell-quiet { color: var(--text-secondary); }
+
+.bio-cell-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums lining-nums;
+  white-space: nowrap;
+}
+
+/* An unset value reads as words in a quieter TOKEN — never as a faded number,
+   and never as ₹0.00. */
+.bio-cell-unset { color: var(--text-muted); font-style: normal; }
+
+/* Applied to a <td>, so it stays a table cell: display:flex on a cell drops
+   it out of the row box and breaks the row hairline. The buttons sit inline,
+   spaced by margin. */
+.bio-cell-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.bio-cell-actions > * + * { margin-left: 6px; }
+
+/* ─── Buttons ─── */
+
+.bio-btn {
+  min-height: 32px;
+  padding: 7px 14px;
+  border: 1px solid var(--accent-deep);
+  border-radius: var(--radius-sm);
+  background: var(--accent-deep);
+  /* --btn-primary-text, NOT --status-on-fill. The two are the same colour in the
+     dark theme by coincidence and diverge elsewhere; --status-on-fill is defined
+     to sit on a STATUS fill and only clears 3.42:1 on the accent. One token per
+     job is what keeps all three themes above 4.5:1. */
+  color: var(--btn-primary-text);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.bio-btn:hover:not(:disabled) {
+  background: var(--btn-gradient-hover, var(--accent-deep));
+  border-color: var(--btn-gradient-hover, var(--accent-deep));
+}
+
+.bio-btn:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+.bio-btn--quiet {
+  background: var(--bg-glass);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.bio-btn--quiet:hover:not(:disabled) {
+  background: var(--bg-glass-hover, var(--bg-glass));
+  border-color: var(--border-light);
+}
+
+/* The neutral disabled pair, never opacity. (0,2,0) beats the --quiet fill. */
+.bio-btn:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+/* ─── Fields ─── */
+
+.bio-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.bio-field__label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.bio-field__hint {
+  display: block;
+  margin-top: 3px;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-muted);
+  max-width: 52ch;
+}
+
+.bio-input {
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums lining-nums;
+  width: 100%;
+  max-width: 320px;
+}
+
+.bio-input--area {
+  min-height: 68px;
+  resize: vertical;
+  font-variant-numeric: normal;
+}
+
+.bio-input:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -1px;
+  border-color: var(--accent-deep);
+}
+
+.bio-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  grid-column: 1 / -1;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.bio-check input {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  flex: none;
+  accent-color: var(--accent-deep);
+  cursor: pointer;
+}
+
+/* ─── Modal (portalled to document.body) ─── */
+
+.bio-modal-root {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.bio-modal-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 8, 8, 0.55);
+}
+
+.bio-modal {
+  position: relative;
+  width: min(680px, 100%);
+  max-height: min(86vh, 900px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+}
+
+.bio-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.bio-modal__title {
+  margin: 0;
+  font-size: var(--text-lg, 1.1rem);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.bio-modal__close {
+  min-width: 32px;
+  min-height: 32px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.bio-modal__close:hover {
+  color: var(--text-primary);
+  background: var(--bg-glass-hover, var(--bg-glass));
+}
+
+.bio-modal__body {
+  padding: 18px 20px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.bio-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.bio-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ─── Touch ───
+   A biomedical workshop and a goods-in bay are tablets as often as desks, and a
+   24px target that is fine under a mouse is a mis-tap under a thumb. */
+
+@media (pointer: coarse) {
+  .bio-btn,
+  .bio-tab,
+  .bio-modal__close {
+    min-height: 44px;
+  }
+
+  .bio-input {
+    min-height: 44px;
+  }
+
+  .bio-check input {
+    width: 24px;
+    height: 24px;
+  }
+}
+
+@media (max-width: 720px) {
+  .bio-head,
+  .bio-headline {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .bio-input {
+    max-width: none;
+  }
+}

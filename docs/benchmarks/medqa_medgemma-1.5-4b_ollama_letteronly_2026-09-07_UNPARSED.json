@@ -1,0 +1,8926 @@
+{
+  "model": "medgemma:1.5-4b",
+  "backend": "ollama",
+  "dataset": "jsonl",
+  "n": 1273,
+  "correct": 13,
+  "accuracy": 0.01021209740769835,
+  "ci95": [
+    0.005977589118677541,
+    0.01739382985764654
+  ],
+  "unparsed": 1251,
+  "details": [
+    {
+      "i": 0,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 2,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 3,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 4,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 5,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 6,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 7,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 8,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 9,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 10,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 11,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 12,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 13,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 14,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 15,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 16,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 17,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 18,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 19,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 20,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 21,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 22,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 23,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 24,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 25,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 26,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 27,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 28,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 29,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 30,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 31,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 32,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 33,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 34,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 35,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 36,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 37,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 38,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 39,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 40,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 41,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 42,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 43,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 44,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 45,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 46,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 47,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 48,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 49,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 50,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 51,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 52,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 53,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 54,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 55,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 56,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 57,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 58,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 59,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 60,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 61,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 62,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 63,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 64,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 65,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 66,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 67,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 68,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 69,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 70,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 71,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 72,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 73,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 74,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "Based on the clinical"
+    },
+    {
+      "i": 75,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 76,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 77,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 78,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 79,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 80,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 81,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 82,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 83,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 84,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 85,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 86,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 87,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 88,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 89,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 90,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 91,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 92,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 93,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 94,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 95,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 96,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 97,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 98,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 99,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "Based on the information"
+    },
+    {
+      "i": 100,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 101,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 102,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "Based on the information"
+    },
+    {
+      "i": 103,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 104,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 105,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 106,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 107,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 108,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 109,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 110,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 111,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 112,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 113,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 114,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 115,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\n1"
+    },
+    {
+      "i": 116,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 117,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 118,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 119,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 120,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 121,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 122,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 123,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 124,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "Based on the information"
+    },
+    {
+      "i": 125,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 126,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 127,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 128,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 129,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 130,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 131,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 132,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 133,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 134,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 135,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 136,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 137,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 138,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 139,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 140,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 141,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 142,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 143,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 144,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 145,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 146,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 147,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 148,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 149,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 150,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 151,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 152,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 153,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 154,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 155,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 156,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 157,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 158,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 159,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 160,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 161,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 162,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 163,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 164,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 165,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 166,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 167,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 168,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:** The"
+    },
+    {
+      "i": 169,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 170,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 171,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 172,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 173,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 174,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 175,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 176,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 177,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 178,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 179,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 180,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 181,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 182,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 183,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 184,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 185,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 186,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 187,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 188,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 189,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 190,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 191,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 192,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\n1"
+    },
+    {
+      "i": 193,
+      "gold": 2,
+      "pred": 2,
+      "is_correct": true,
+      "raw": "C"
+    },
+    {
+      "i": 194,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 195,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 196,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 197,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 198,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 199,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 200,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 201,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 202,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 203,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 204,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 205,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 206,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\n1"
+    },
+    {
+      "i": 207,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 208,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 209,
+      "gold": 0,
+      "pred": 0,
+      "is_correct": true,
+      "raw": "A"
+    },
+    {
+      "i": 210,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 211,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 212,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 213,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 214,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 215,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 216,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 217,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 218,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 219,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 220,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 221,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 222,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 223,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 224,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 225,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 226,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 227,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 228,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 229,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 230,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 231,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 232,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 233,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 234,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 235,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 236,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 237,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 238,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 239,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 240,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 241,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 242,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 243,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 244,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 245,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 246,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 247,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 248,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 249,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 250,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 251,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 252,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 253,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 254,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 255,
+      "gold": 2,
+      "pred": 2,
+      "is_correct": true,
+      "raw": "C"
+    },
+    {
+      "i": 256,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 257,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 258,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 259,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 260,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 261,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 262,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 263,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 264,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 265,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 266,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 267,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 268,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 269,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 270,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 271,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 272,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 273,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:** The"
+    },
+    {
+      "i": 274,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 275,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 276,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 277,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 278,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 279,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 280,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 281,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 282,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 283,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 284,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "Based on the clinical"
+    },
+    {
+      "i": 285,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 286,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 287,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 288,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 289,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 290,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 291,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 292,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 293,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 294,
+      "gold": 0,
+      "pred": 0,
+      "is_correct": true,
+      "raw": "A"
+    },
+    {
+      "i": 295,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 296,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 297,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 298,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Thinking Process:**"
+    },
+    {
+      "i": 299,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "Based on the principles"
+    },
+    {
+      "i": 300,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 301,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 302,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 303,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 304,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 305,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 306,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 307,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 308,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 309,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 310,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\n1"
+    },
+    {
+      "i": 311,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 312,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 313,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "E"
+    },
+    {
+      "i": 314,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 315,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 316,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 317,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 318,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 319,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 320,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 321,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 322,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 323,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 324,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 325,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 326,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 327,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 328,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 329,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 330,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 331,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Thinking Process:**"
+    },
+    {
+      "i": 332,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 333,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 334,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 335,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 336,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 337,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 338,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 339,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 340,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 341,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 342,
+      "gold": 2,
+      "pred": 2,
+      "is_correct": true,
+      "raw": "C"
+    },
+    {
+      "i": 343,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 344,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 345,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 346,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 347,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 348,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 349,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 350,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 351,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 352,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 353,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 354,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 355,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 356,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 357,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 358,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 359,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 360,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 361,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 362,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 363,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 364,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 365,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 366,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 367,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 368,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 369,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 370,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 371,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 372,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 373,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 374,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 375,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 376,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 377,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 378,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 379,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 380,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 381,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 382,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 383,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 384,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 385,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 386,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 387,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 388,
+      "gold": 2,
+      "pred": 1,
+      "is_correct": false,
+      "raw": "B"
+    },
+    {
+      "i": 389,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 390,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 391,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 392,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 393,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 394,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Thinking Process:**"
+    },
+    {
+      "i": 395,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 396,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 397,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 398,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 399,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 400,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 401,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 402,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 403,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 404,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 405,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 406,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 407,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 408,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 409,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 410,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 411,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 412,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 413,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 414,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 415,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 416,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 417,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 418,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 419,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 420,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 421,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 422,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 423,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 424,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 425,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 426,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 427,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 428,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 429,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 430,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 431,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 432,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 433,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 434,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 435,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 436,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 437,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 438,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 439,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 440,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 441,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 442,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 443,
+      "gold": 1,
+      "pred": 1,
+      "is_correct": true,
+      "raw": "B"
+    },
+    {
+      "i": 444,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 445,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 446,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 447,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 448,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 449,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 450,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 451,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 452,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 453,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 454,
+      "gold": 3,
+      "pred": 3,
+      "is_correct": true,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 455,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 456,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 457,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 458,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 459,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 460,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 461,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 462,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 463,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 464,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 465,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 466,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 467,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 468,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 469,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 470,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 471,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 472,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "Based on the observed"
+    },
+    {
+      "i": 473,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 474,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**B**"
+    },
+    {
+      "i": 475,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 476,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 477,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 478,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 479,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 480,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 481,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\n1"
+    },
+    {
+      "i": 482,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 483,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 484,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 485,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 486,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 487,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 488,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 489,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 490,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 491,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 492,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 493,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 494,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 495,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 496,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 497,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 498,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 499,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 500,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 501,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 502,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 503,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 504,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 505,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 506,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 507,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 508,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 509,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 510,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 511,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 512,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 513,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 514,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 515,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 516,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 517,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 518,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 519,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 520,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 521,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 522,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 523,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 524,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 525,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 526,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 527,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 528,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 529,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 530,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 531,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:** The"
+    },
+    {
+      "i": 532,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 533,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 534,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 535,
+      "gold": 2,
+      "pred": 3,
+      "is_correct": false,
+      "raw": "D"
+    },
+    {
+      "i": 536,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 537,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 538,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 539,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 540,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 541,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 542,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 543,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 544,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 545,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 546,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 547,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 548,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 549,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 550,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 551,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 552,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 553,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 554,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 555,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 556,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 557,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 558,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 559,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\n1"
+    },
+    {
+      "i": 560,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 561,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 562,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 563,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 564,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 565,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 566,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 567,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 568,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 569,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 570,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 571,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 572,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 573,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 574,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 575,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 576,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 577,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 578,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 579,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 580,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 581,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 582,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 583,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Thinking Process:**"
+    },
+    {
+      "i": 584,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 585,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 586,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 587,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 588,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 589,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 590,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 591,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 592,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 593,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 594,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 595,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 596,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 597,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 598,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 599,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 600,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 601,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\n1"
+    },
+    {
+      "i": 602,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 603,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 604,
+      "gold": 0,
+      "pred": 0,
+      "is_correct": true,
+      "raw": "A"
+    },
+    {
+      "i": 605,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 606,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:** The"
+    },
+    {
+      "i": 607,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 608,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 609,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 610,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 611,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 612,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 613,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 614,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 615,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 616,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 617,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 618,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 619,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 620,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 621,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 622,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 623,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 624,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 625,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 626,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 627,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 628,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 629,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 630,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 631,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 632,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 633,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 634,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 635,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 636,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 637,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 638,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 639,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 640,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 641,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 642,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 643,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 644,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 645,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 646,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 647,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 648,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 649,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 650,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 651,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 652,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 653,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 654,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 655,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 656,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 657,
+      "gold": 3,
+      "pred": 2,
+      "is_correct": false,
+      "raw": "C"
+    },
+    {
+      "i": 658,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 659,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 660,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 661,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 662,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 663,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 664,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 665,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 666,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 667,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 668,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 669,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 670,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 671,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 672,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 673,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 674,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 675,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 676,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 677,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 678,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 679,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 680,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 681,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 682,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 683,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 684,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 685,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 686,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 687,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 688,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:** The"
+    },
+    {
+      "i": 689,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 690,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 691,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 692,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 693,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 694,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 695,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 696,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 697,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 698,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 699,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 700,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 701,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 702,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 703,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 704,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 705,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 706,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 707,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 708,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 709,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 710,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 711,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 712,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 713,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 714,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 715,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 716,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 717,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 718,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 719,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "Based on the function"
+    },
+    {
+      "i": 720,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 721,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 722,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 723,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 724,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 725,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 726,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 727,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 728,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 729,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 730,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 731,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 732,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 733,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 734,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 735,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 736,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 737,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 738,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 739,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 740,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 741,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 742,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 743,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 744,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 745,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 746,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 747,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 748,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 749,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 750,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 751,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 752,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 753,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 754,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 755,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 756,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 757,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 758,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 759,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 760,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 761,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 762,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 763,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 764,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 765,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 766,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 767,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 768,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 769,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 770,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 771,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 772,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 773,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 774,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 775,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 776,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 777,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 778,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 779,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 780,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 781,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 782,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 783,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 784,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 785,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 786,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 787,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 788,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 789,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 790,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 791,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 792,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 793,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 794,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 795,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 796,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 797,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 798,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 799,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 800,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 801,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 802,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 803,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 804,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 805,
+      "gold": 1,
+      "pred": 0,
+      "is_correct": false,
+      "raw": "A"
+    },
+    {
+      "i": 806,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 807,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 808,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 809,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 810,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 811,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 812,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 813,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 814,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 815,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 816,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 817,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\n1"
+    },
+    {
+      "i": 818,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 819,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 820,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 821,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 822,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 823,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 824,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 825,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 826,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 827,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 828,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 829,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 830,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 831,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 832,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 833,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 834,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 835,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 836,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 837,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 838,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 839,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 840,
+      "gold": 3,
+      "pred": 3,
+      "is_correct": true,
+      "raw": "D"
+    },
+    {
+      "i": 841,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 842,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 843,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 844,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 845,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 846,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 847,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 848,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 849,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 850,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 851,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 852,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 853,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 854,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 855,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 856,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 857,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 858,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 859,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 860,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 861,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 862,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 863,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 864,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:** The"
+    },
+    {
+      "i": 865,
+      "gold": 2,
+      "pred": 2,
+      "is_correct": true,
+      "raw": "C"
+    },
+    {
+      "i": 866,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 867,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 868,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 869,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 870,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 871,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 872,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 873,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 874,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 875,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 876,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 877,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 878,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 879,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 880,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 881,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 882,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 883,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 884,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 885,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 886,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 887,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 888,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 889,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 890,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 891,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 892,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 893,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 894,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 895,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 896,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 897,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 898,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 899,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 900,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 901,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 902,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 903,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 904,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 905,
+      "gold": 0,
+      "pred": 1,
+      "is_correct": false,
+      "raw": "B"
+    },
+    {
+      "i": 906,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 907,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 908,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 909,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 910,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 911,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 912,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 913,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 914,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 915,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 916,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 917,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 918,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 919,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 920,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 921,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 922,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 923,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 924,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 925,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 926,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:** The"
+    },
+    {
+      "i": 927,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "Based on the clinical"
+    },
+    {
+      "i": 928,
+      "gold": 1,
+      "pred": 3,
+      "is_correct": false,
+      "raw": "D"
+    },
+    {
+      "i": 929,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 930,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 931,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 932,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 933,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 934,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 935,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 936,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 937,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 938,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 939,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 940,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 941,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 942,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 943,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 944,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 945,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 946,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 947,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 948,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 949,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 950,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 951,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 952,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 953,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 954,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 955,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 956,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 957,
+      "gold": 1,
+      "pred": 1,
+      "is_correct": true,
+      "raw": "B"
+    },
+    {
+      "i": 958,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 959,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 960,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 961,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 962,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 963,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 964,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 965,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 966,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 967,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 968,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 969,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 970,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 971,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 972,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 973,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 974,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 975,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 976,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 977,
+      "gold": 1,
+      "pred": 0,
+      "is_correct": false,
+      "raw": "A"
+    },
+    {
+      "i": 978,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 979,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 980,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 981,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 982,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 983,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 984,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 985,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 986,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 987,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 988,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 989,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 990,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 991,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 992,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 993,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 994,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 995,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 996,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\n1"
+    },
+    {
+      "i": 997,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 998,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 999,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1000,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1001,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1002,
+      "gold": 0,
+      "pred": 0,
+      "is_correct": true,
+      "raw": "A"
+    },
+    {
+      "i": 1003,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1004,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "Based on the patient"
+    },
+    {
+      "i": 1005,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1006,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1007,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1008,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1009,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1010,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1011,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1012,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1013,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 1014,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1015,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1016,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1017,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1018,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1019,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1020,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1021,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1022,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 1023,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1024,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1025,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1026,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "Based on the patient"
+    },
+    {
+      "i": 1027,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1028,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1029,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1030,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1031,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1032,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1033,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1034,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1035,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1036,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1037,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1038,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1039,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1040,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1041,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1042,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1043,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 1044,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1045,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1046,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1047,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1048,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1049,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\n1"
+    },
+    {
+      "i": 1050,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 1051,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Thinking Process:**"
+    },
+    {
+      "i": 1052,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1053,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1054,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1055,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1056,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1057,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1058,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1059,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1060,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1061,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1062,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1063,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1064,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 1065,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1066,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1067,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1068,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1069,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1070,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D. Zen"
+    },
+    {
+      "i": 1071,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1072,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1073,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1074,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1075,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1076,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1077,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1078,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1079,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1080,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1081,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:** The"
+    },
+    {
+      "i": 1082,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1083,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1084,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1085,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1086,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1087,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1088,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1089,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1090,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1091,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1092,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1093,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1094,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1095,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1096,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 1097,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1098,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1099,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1100,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1101,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1102,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1103,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1104,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1105,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1106,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1107,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1108,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1109,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1110,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1111,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1112,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 1113,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1114,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1115,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 1116,
+      "gold": 2,
+      "pred": 2,
+      "is_correct": true,
+      "raw": "C"
+    },
+    {
+      "i": 1117,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1118,
+      "gold": 2,
+      "pred": 0,
+      "is_correct": false,
+      "raw": "A"
+    },
+    {
+      "i": 1119,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 1120,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1121,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1122,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1123,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1124,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1125,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 1126,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 1127,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1128,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1129,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 1130,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1131,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1132,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1133,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1134,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 1135,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1136,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1137,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1138,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1139,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "Based on the patient"
+    },
+    {
+      "i": 1140,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1141,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1142,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1143,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1144,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1145,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1146,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1147,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1148,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1149,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1150,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1151,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1152,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1153,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1154,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1155,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1156,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1157,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1158,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1159,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1160,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 1161,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1162,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1163,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1164,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1165,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1166,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 1167,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1168,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1169,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1170,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1171,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1172,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1173,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1174,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1175,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1176,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1177,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1178,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1179,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1180,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1181,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1182,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1183,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1184,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 1185,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1186,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1187,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1188,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\n1"
+    },
+    {
+      "i": 1189,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 1190,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 1191,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1192,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1193,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1194,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1195,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1196,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1197,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1198,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1199,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1200,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1201,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1202,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1203,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 1204,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1205,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1206,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1207,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1208,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1209,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1210,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1211,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1212,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1213,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1214,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1215,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1216,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1217,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1218,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1219,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**C**"
+    },
+    {
+      "i": 1220,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1221,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1222,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1223,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1224,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1225,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1226,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 1227,
+      "gold": 2,
+      "pred": 3,
+      "is_correct": false,
+      "raw": "D"
+    },
+    {
+      "i": 1228,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1229,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1230,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1231,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1232,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1233,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1234,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1235,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1236,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1237,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1238,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1239,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1240,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1241,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**D**"
+    },
+    {
+      "i": 1242,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1243,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1244,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1245,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1246,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1247,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1248,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1249,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1250,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1251,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1252,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1253,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1254,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1255,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1256,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1257,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1258,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1259,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1260,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1261,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1262,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1263,
+      "gold": 0,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1264,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1265,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1266,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1267,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**A**"
+    },
+    {
+      "i": 1268,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale:**\n\n"
+    },
+    {
+      "i": 1269,
+      "gold": 3,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1270,
+      "gold": 1,
+      "pred": null,
+      "is_correct": false,
+      "raw": "**Rationale Breakdown:**"
+    },
+    {
+      "i": 1271,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    },
+    {
+      "i": 1272,
+      "gold": 2,
+      "pred": null,
+      "is_correct": false,
+      "raw": "thought\nThe"
+    }
+  ]
+}

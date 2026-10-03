@@ -1,0 +1,132 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  Orb Hospital OS — site configuration
+# ═══════════════════════════════════════════════════════════════════════════
+#
+#  This is the ONE file a hospital edits. Copy it next to this one as
+#  `site.toml` and change the values to match your hospital:
+#
+#      cp site.example.toml site.toml
+#
+#  Orb reads it once, at startup. Editing it does NOT change a running Orb —
+#  restart the service afterwards. That is on purpose: the escalation ladder a
+#  nurse saw at the start of her shift is the one that applies at the end of it.
+#
+#  IF ANYTHING IN HERE IS WRONG, ORB DOES NOT START.
+#  It prints the file, the line, what is wrong with it, and what it expected.
+#  It never starts "mostly working" on a file it could not understand — a
+#  half-applied setting looks applied, and that is how a safety switch gets
+#  switched off without anyone knowing.
+#
+#  Two rules worth knowing before you edit:
+#    * Leaving a value BLANK is an error, not a way to turn something off.
+#      To go back to Orb's default, delete the whole line.
+#    * A misspelled setting name is an error. Orb will not quietly ignore it.
+#
+#  You do not need this file at all. With no site.toml, Orb runs on the
+#  defaults shown in the comments below.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+# ── Which hospital is this? ────────────────────────────────────────────────
+# `name` appears on the operations status page so an engineer looking at a
+# screen knows which appliance they are looking at.
+[site]
+name = "Example General Hospital"
+
+# The timezone this hospital's clocks run in, as an IANA name
+# (Asia/Kolkata, Asia/Dubai, Europe/London ...). Bedside monitors usually
+# send a time with no timezone attached; this is how Orb reads it. Getting
+# it wrong stamps every reading hours into the future or the past.
+# Default: whatever timezone the appliance's operating system is set to.
+timezone = "Asia/Kolkata"
+
+
+# ── Departments and wards ──────────────────────────────────────────────────
+# A DEPARTMENT is a clinical service: "General Medicine", "Cardiology".
+# A WARD is the bed-number prefix used on that department's beds: "GM-1".
+#
+# This distinction is not cosmetic. Orb decides who may open which patient's
+# record by DEPARTMENT. A nurse recorded under "General Medicine" sees the
+# General Medicine patients and nobody else's. If you put a bed prefix where
+# the department name belongs, staff stop seeing their own patients — so Orb
+# refuses a department name that looks like a bed prefix.
+#
+# Repeat this block once per department. A ward may belong to only one
+# department.
+[[departments]]
+name = "General Medicine"
+wards = ["GM-1", "GM-2"]
+
+[[departments]]
+name = "Cardiology"
+wards = ["CD-1"]
+
+[[departments]]
+name = "Surgery"
+wards = ["SU-1"]
+
+
+# ── Escalation: who gets called when a patient deteriorates ───────────────
+[escalation]
+# Orb scores every set of observations with NEWS2 (0-20). At or above this
+# score it starts an escalation. 5 is the Royal College of Physicians'
+# "urgently inform the medical team" level.
+# Raise it if your wards find 5 too noisy. Default: 5.
+news2_threshold = 5
+
+# NEWS2 also says: any SINGLE vital sign scoring 3 deserves urgent review even
+# when the total is low (for example, a respiratory rate of 6). Leave this
+# on unless you have a clinical reason not to. Default: true.
+escalate_on_single_parameter_3 = true
+
+# When Orb restarts, how far back it looks for observations that never got
+# escalated, in minutes. Stops a freshly installed appliance raising alerts
+# for last month's patients. Default: 120.
+scan_lookback_minutes = 120
+
+# ── The escalation ladder ──
+# Listed in order. An unanswered alert climbs to the next tier after
+# `timeout_minutes`. Set the timings to match your hospital: a 40-bed open
+# ward with one registrar on site is not a 12-bed high-dependency unit.
+#
+#   role             who is called. Orb knows: nurse, registrar, consultant.
+#                    Any other word is allowed — it addresses the role by name
+#                    without naming an individual.
+#   label            what staff see on screen.
+#   timeout_minutes  how long this tier has to acknowledge before the alert
+#                    moves up. REQUIRED on every tier except the last.
+#   entry_min_news2  an alert this severe STARTS here instead of at the
+#                    bottom, so a critically ill patient does not wait ten
+#                    minutes at the first rung. Leave it out and the tier is
+#                    never an entry point.
+#
+# The LAST tier has no timeout: there is nobody above them. The alert stays
+# open and visible until somebody answers it.
+
+[[escalation.tiers]]
+role = "nurse"
+label = "Ward nurse"
+timeout_minutes = 10
+entry_min_news2 = 5
+
+[[escalation.tiers]]
+role = "registrar"
+label = "Duty registrar"
+timeout_minutes = 15
+entry_min_news2 = 7
+
+[[escalation.tiers]]
+role = "consultant"
+label = "Consultant / attending"
+
+
+# ── Operational thresholds ────────────────────────────────────────────────
+# These change WHEN ORB WARNS YOU. They do not change what Orb does clinically.
+[operations]
+# How old the newest backup may be before the status page calls it stale.
+# With a nightly backup, 36 hours means "we have missed one night". Default: 36.
+backup_max_age_hours = 36
+
+# How little free disk space may remain before the status page warns, in
+# percent. Default: 10.
+disk_min_free_percent = 10

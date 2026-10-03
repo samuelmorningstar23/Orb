@@ -1,0 +1,819 @@
+/* PayerPanel.css — Orb "Quiet Clinical" (flat).
+ *
+ * RULES THIS FILE FOLLOWS, and the reasons:
+ *
+ *  · NO `opacity` FOR DE-EMPHASIS, anywhere. A de-emphasised amount that is
+ *    also a translucent amount is an amount somebody misreads at a counter.
+ *    Quiet text is a quieter TOKEN (--text-muted), never a faded one.
+ *  · STATUS FILLS use --status-x with --status-on-fill for the text on top;
+ *    status TEXT on a normal surface uses --status-x-text. One token cannot do
+ *    both jobs and still clear 4.5:1 in all three themes.
+ *  · EVERY MONEY FIGURE is tabular-lining, so a column of rupees lines up and a
+ *    ₹1,00,000 cannot be mistaken for a ₹10,000 at a glance.
+ *  · TAP TARGETS are ≥24px, and ≥44px under `@media (pointer: coarse)` — the
+ *    desk uses a tablet at the counter as often as a mouse.
+ *  · Everything is scoped under .payer-panel / .payer-drawer. The drawer is
+ *    portalled to document.body, so it is scoped by its own root class rather
+ *    than by nesting.
+ */
+
+.payer-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 1240px;
+  margin: 0 auto;
+  width: 100%;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+}
+
+/* ─── Header ─── */
+
+.payer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.payer-title {
+  margin: 0;
+  /* The display face, as the Billing, Payments and Front Desk titles are. */
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.payer-sub {
+  margin: 4px 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+/* ─── The notice ───
+   Deliberately NOT a dismissible toast and NOT a low-contrast aside. It is a
+   bordered block in ordinary body colour, because it is a statement of fact
+   about what this software does, not a hint. */
+
+.payer-notice {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-glass);
+  border-left: 3px solid var(--status-info);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.payer-notice--inline {
+  border-left-width: 3px;
+  font-size: var(--text-xs);
+  padding: 8px 12px;
+}
+
+.payer-callout {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.payer-callout--warn {
+  border-left: 3px solid var(--status-warn);
+  color: var(--text-primary);
+}
+
+.payer-hint {
+  margin: 6px 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.payer-error {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--status-danger);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+  color: var(--status-danger-text);
+  font-size: var(--text-sm);
+}
+
+.payer-empty {
+  padding: 20px 4px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.payer-h3 {
+  margin: 0 0 10px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* ─── Metric strip ─── */
+
+.payer-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.payer-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+}
+
+.payer-metric__value {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.payer-metric__value--warn { color: var(--status-warn-text); }
+.payer-metric__value--danger { color: var(--status-danger-text); }
+
+.payer-metric__label {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* ─── View tabs ─── */
+
+.payer-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 8px;
+}
+
+.payer-tab {
+  min-height: 32px;
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md, 8px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+/* Inactive tabs only, and only where hover is real. `.payer-tab:hover` (0,2,0)
+   outranked --active, so hovering the selected tab erased its tint and accent
+   text, and a touch screen paints :hover on tap and leaves it there. */
+@media (hover: hover) {
+  .payer-tab:not(.payer-tab--active):hover {
+    background: var(--bg-glass);
+    color: var(--text-primary);
+  }
+}
+
+/* Active tab = quiet accent tint + accent TEXT token (guaranteed ≥4.5:1 on the
+   canvas and on a glass-over-canvas composite). Never an accent fill with
+   default body text on it. */
+.payer-tab--active {
+  background: var(--accent-glow);
+  border-color: var(--border-focus);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+/* ─── Aging buckets ─── */
+
+.payer-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.payer-buckets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.payer-bucket {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 104px;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.payer-bucket--static { cursor: default; }
+
+.payer-bucket:hover { border-color: var(--border-glass); }
+.payer-bucket--static:hover { border-color: var(--border-subtle); }
+
+.payer-bucket--active {
+  border-color: var(--border-focus);
+  background: var(--accent-glow);
+}
+
+.payer-bucket__n {
+  font-size: var(--text-md);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.payer-bucket__label {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.payer-bucket__value {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.payer-split {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.payer-split strong {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* ─── Lists and rows ─── */
+
+.payer-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.payer-row {
+  display: grid;
+  grid-template-columns: minmax(140px, auto) 1fr auto;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 56px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.payer-row:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-glass);
+}
+
+.payer-row__lead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.payer-row__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.payer-row__primary {
+  font-size: var(--text-base);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.payer-row__secondary {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.payer-row__trailing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.payer-row__value {
+  font-size: var(--text-base);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* ─── Badges ───
+   A filled chip: --status-x behind, --status-on-fill in front. The pair exists
+   because --status-danger is chosen to be legible AS A FILL, and body text on
+   top of it is not the same problem as the same red AS TEXT on the canvas. */
+
+.payer-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.payer-badge--ok { background: var(--status-ok); color: var(--status-on-fill); }
+.payer-badge--warn { background: var(--status-warn); color: var(--status-on-fill); }
+.payer-badge--danger { background: var(--status-danger); color: var(--status-on-fill); }
+.payer-badge--info { background: var(--status-info); color: var(--status-on-fill); }
+
+/* Muted is a bordered chip rather than a faded fill — see the no-opacity rule. */
+.payer-badge--muted {
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+.payer-move {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-glass);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* "Ours to move" is the actionable one, so it takes the accent — as TEXT plus a
+   border, never as a fill competing with the status badge beside it. */
+.payer-move--us {
+  color: var(--accent-text);
+  border-color: var(--border-focus);
+}
+
+/* ─── Age ─── */
+
+.payer-age {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.payer-age__n {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.payer-age--stale .payer-age__n { color: var(--status-warn-text); }
+
+.payer-age--unknown { color: var(--text-muted); font-style: italic; }
+
+.payer-age__since { color: var(--text-muted); }
+
+/* ─── Money ─── */
+
+.payer-money {
+  font-variant-numeric: tabular-nums lining-nums;
+  color: var(--text-primary);
+}
+
+/* An amount nobody has entered. A quieter TOKEN and an italic face — not a
+   faded copy of a number, because a faded number still reads as a number. */
+.payer-money--unset {
+  color: var(--text-muted);
+  font-style: italic;
+  font-variant-numeric: normal;
+}
+
+.payer-money--ok { color: var(--status-ok-text); }
+.payer-money--warn { color: var(--status-warn-text); }
+.payer-money--danger { color: var(--status-danger-text); }
+
+/* ─── Forms ─── */
+
+.payer-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+}
+
+.payer-form__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  /* Bottom-aligned, so a label that wraps to two lines ("Sum insured (leave
+     blank if not known)") does not drop its input below its neighbours', and
+     the pre-authorisation checkbox sits on the inputs' line. */
+  align-items: end;
+}
+
+.payer-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.payer-field__label {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.payer-input {
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  width: 100%;
+}
+
+.payer-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.payer-input--area { resize: vertical; min-height: 56px; }
+
+.payer-input--money { font-variant-numeric: tabular-nums lining-nums; }
+
+.payer-check {
+  width: 24px;
+  height: 24px;
+  accent-color: var(--accent-deep);
+}
+
+.payer-rupee {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.payer-rupee__symbol {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+/* ─── Buttons ─── */
+
+.payer-btn {
+  min-height: 36px;
+  padding: 8px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md, 8px);
+  background: var(--accent-deep);
+  /* NOT a literal #fff. The night theme's clay fill is light enough that white
+     lands at 2.99:1 — check-contrast.mjs caught exactly that here. The token
+     already carries the per-theme ink (#fff on dark/light, near-black on
+     night), which is the only value that clears AA in all three. */
+  color: var(--btn-primary-text);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.payer-btn:hover:not(:disabled) { background: var(--accent-amber); }
+
+/* Flat neutral pair for disabled — never opacity (see index.css). */
+.payer-btn:disabled {
+  background: var(--bg-glass);
+  color: var(--text-muted);
+  border-color: var(--border-subtle);
+  cursor: not-allowed;
+}
+
+.payer-btn--quiet {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-color: var(--border-glass);
+}
+
+.payer-btn--quiet:hover:not(:disabled) {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+}
+
+.payer-btn--danger {
+  background: var(--bg-surface);
+  color: var(--status-danger-text);
+  border-color: var(--status-danger);
+}
+
+.payer-btn--danger:hover:not(:disabled) { background: var(--bg-glass-hover); }
+
+/* ─── Denials + policies + payers ─── */
+
+.payer-denial,
+.payer-policy,
+.payer-payer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+  font-size: var(--text-sm);
+}
+
+.payer-denial__code {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--status-danger);
+  color: var(--status-on-fill);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.payer-denial__reason,
+.payer-policy__meta,
+.payer-payer__meta {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.payer-denial__amount,
+.payer-policy__sum {
+  font-variant-numeric: tabular-nums lining-nums;
+  color: var(--text-primary);
+}
+
+.payer-policy__head,
+.payer-payer__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.payer-payer__name span { color: var(--text-muted); font-size: var(--text-xs); }
+
+/* ─── The drawer (portalled to document.body) ─── */
+
+.payer-drawer__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  justify-content: flex-end;
+  /* A scrim is one of the few legitimate uses of alpha: it is a VEIL, not
+     de-emphasised text. Nothing readable sits inside it. */
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.payer-drawer {
+  width: min(720px, 100%);
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  /* The floating Sage orb paints over this drawer at the bottom right. The
+     extra foot lets the claim text box and the last actions scroll clear of it. */
+  padding-bottom: calc(20px + var(--fab-clearance));
+  background: var(--bg-primary);
+  border-left: 1px solid var(--border-glass);
+  color: var(--text-primary);
+}
+
+.payer-drawer__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.payer-drawer__headright {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.payer-drawer__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.payer-drawer__sub {
+  margin: 4px 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+/* ─── The ledger ───
+   Laid out as a definition list so a screen reader reads "Claimed from payer —
+   ₹1,00,000" as a pair, and so a clerk can check the subtraction by hand. */
+
+.payer-breakdown {
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+}
+
+.payer-ledger {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.payer-ledger__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 0;
+}
+
+.payer-ledger__row dt {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.payer-ledger__row dd {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.payer-ledger__row--rule {
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 4px;
+  padding-top: 10px;
+}
+
+.payer-ledger__row--rule dt { color: var(--text-primary); font-weight: 600; }
+
+.payer-ledger__row--total dt { color: var(--text-primary); font-weight: 600; }
+.payer-ledger__row--total dd { font-weight: 600; }
+
+/* ─── Actions ─── */
+
+.payer-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.payer-action {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+}
+
+.payer-action__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* ─── History ─── */
+
+.payer-history {
+  display: flex;
+  flex-direction: column;
+}
+
+.payer-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.payer-timeline__item {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--text-sm);
+}
+
+.payer-timeline__item--empty {
+  grid-template-columns: 1fr;
+  color: var(--text-secondary);
+  border-bottom: none;
+}
+
+.payer-timeline__when {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.payer-timeline__what { color: var(--text-secondary); }
+
+.payer-timeline__what strong {
+  color: var(--text-primary);
+  text-transform: capitalize;
+  font-weight: 600;
+}
+
+.payer-timeline__amount {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.payer-timeline__reason { color: var(--status-danger-text); font-style: italic; }
+
+.payer-timeline__remark { color: var(--text-secondary); }
+
+/* ─── Coarse pointer: 44px targets ───
+   The insurance counter runs on a tablet as often as a mouse. */
+
+@media (pointer: coarse) {
+  .payer-tab,
+  .payer-btn,
+  .payer-input,
+  .payer-row,
+  .payer-bucket {
+    min-height: 44px;
+  }
+
+  .payer-badge,
+  .payer-move {
+    min-height: 28px;
+  }
+
+  .payer-check { width: 28px; height: 28px; }
+}
+
+/* ─── Narrow screens ─── */
+
+@media (max-width: 720px) {
+  .payer-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .payer-row__trailing { align-items: flex-start; }
+
+  .payer-timeline__item { grid-template-columns: 1fr; gap: 2px; }
+
+  .payer-drawer { width: 100%; border-left: none; }
+}

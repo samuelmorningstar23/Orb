@@ -1,0 +1,72 @@
+# Build context excludes for the Orb image. Keeps the frontend build fast and the
+# runtime image lean, and prevents PHI / secrets / large weights from entering layers.
+
+# ---- Node / frontend ----
+node_modules
+**/node_modules
+# The committed dist/ is rebuilt in stage 1 — don't ship the stale copy into context.
+dist
+dev-dist
+.vite
+*.local
+
+# ---- Python / backend ----
+__pycache__
+**/__pycache__
+*.py[cod]
+*.egg-info
+.venv
+.venv-dev
+server/.venv
+server/.venv-dev
+venv
+.pytest_cache
+**/.pytest_cache
+
+# ---- Secrets / env ----
+.env
+server/.env
+*.pem
+
+# ---- Databases & runtime data (may contain PHI) ----
+*.db
+*.db-wal
+*.db-shm
+orb.db
+server/orb.db
+uploads
+server/uploads
+backups
+server/backups
+training_data
+server/datasets
+
+# ---- Model weights (downloaded, never baked into the image) ----
+# Keep server/models/*.py source (neural-net + schema modules), drop weight subdirs.
+server/models/*/
+adapters
+server/adapters
+*.safetensors
+*.gguf
+*.pt
+*.onnx
+*.bin
+
+# ---- VCS / CI / editor ----
+.git
+.github
+.gitignore
+.idea
+.vscode
+*.swp
+.DS_Store
+
+# ---- Docs / large binaries (not needed at build/run time) ----
+*.pdf
+*.log
+*.webm
+
+# ---- The container tooling itself ----
+Dockerfile
+.dockerignore
+docker-compose.yml

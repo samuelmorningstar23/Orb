@@ -1,0 +1,764 @@
+/* ProcurementPanel.css — Orb "Quiet Clinical" (flat).
+ *
+ * RULES THIS FILE FOLLOWS, and why each one earns its place:
+ *
+ *  · NO `opacity` FOR DE-EMPHASIS, ANYWHERE. A quantity that is quiet because
+ *    it is faded is a quantity somebody misreads at a receiving bay. Quiet text
+ *    is a quieter TOKEN (--text-muted), never a faded one. That includes DISABLED
+ *    controls: they swap to the --btn-disabled-* pair, because opacity fades the
+ *    label with the fill and a faded primary label is unreadable in dark.
+ *  · STATUS FILLS use --status-x with --status-on-fill for the text on top;
+ *    status TEXT on an ordinary surface uses --status-x-text. One token cannot
+ *    do both jobs and still clear 4.5:1 in all three themes.
+ *  · EVERY NUMBER IN A COLUMN is tabular-lining — money and quantities both.
+ *    A ₹1,00,000 that lines up under a ₹10,000 cannot be misread for it, and a
+ *    stock column that jitters is a column people stop scanning.
+ *  · TAP TARGETS are ≥24px, and ≥44px under `@media (pointer: coarse)`. A
+ *    goods-in desk is a tablet as often as it is a mouse.
+ *  · WIDE CONTENT SCROLLS INSIDE ITSELF (.proc-table-wrap), never the page.
+ *  · The drawer is portalled to document.body, so it is scoped by its own root
+ *    class rather than by nesting under .proc-panel.
+ */
+
+.proc-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 1240px;
+  margin: 0 auto;
+  width: 100%;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+}
+
+/* ─── Header ─── */
+
+.proc-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.proc-title {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.proc-sub {
+  margin: 4px 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.proc-head__controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* ─── The boundary notice ───
+   NOT a dismissible toast and NOT a low-contrast aside. It is a bordered block
+   in ordinary body colour, because it states a fact about which system owns
+   what — and a person who misses it creates a duplicate drug ledger. */
+
+.proc-notice {
+  padding: 12px 16px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-info);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.proc-notice--off {
+  border-left-color: var(--status-warn);
+  color: var(--text-primary);
+}
+
+/* ─── Tabs ─── */
+
+.proc-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 2px;
+}
+
+.proc-tab {
+  min-height: 32px;
+  padding: 7px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.proc-tab:hover {
+  background: var(--bg-glass);
+  color: var(--text-primary);
+}
+
+.proc-tab--on {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent-deep);
+  font-weight: 600;
+}
+
+.proc-tab:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -2px;
+}
+
+/* ─── Layout ─── */
+
+.proc-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.proc-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.proc-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.proc-section__title {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.proc-subhead {
+  margin: 16px 0 8px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.proc-hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+/* The no-transmission line. Readable body text, not a muted footnote: it is the
+   sentence that stops a purchaser assuming Orb e-mailed the vendor. Marked by a
+   hairline rule rather than a tint so it reads the same in all three themes. */
+.proc-note {
+  margin: 12px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-glass);
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.proc-loading {
+  padding: 24px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+/* ─── Tiles ─── */
+
+.proc-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+.proc-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.proc-tile__value {
+  font-size: 1.5rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.proc-tile__value--warn { color: var(--status-warn-text); }
+.proc-tile__value--danger { color: var(--status-danger-text); }
+
+.proc-tile__caption {
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+/* ─── Alerts ─── */
+
+.proc-alert {
+  padding: 10px 14px;
+  border: 1px solid var(--border-subtle);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.proc-alert--danger { border-left-color: var(--status-danger); }
+.proc-alert--warn { border-left-color: var(--status-warn); }
+.proc-alert--ok { border-left-color: var(--status-ok); }
+
+/* ─── Badges ─── */
+
+.proc-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.proc-badge--ok { background: var(--status-ok); color: var(--status-on-fill); }
+.proc-badge--warn { background: var(--status-warn); color: var(--status-on-fill); }
+.proc-badge--danger { background: var(--status-danger); color: var(--status-on-fill); }
+.proc-badge--info { background: var(--status-info); color: var(--status-on-fill); }
+
+.proc-badge--neutral {
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+/* ─── Lists / rows ─── */
+
+.proc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.proc-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  min-height: 44px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  text-align: left;
+}
+
+.proc-row--link {
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.proc-row--link:hover { background: var(--bg-glass); }
+
+.proc-row--link:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -2px;
+}
+
+.proc-row--warn { border-left: 3px solid var(--status-warn); }
+.proc-row--danger { border-left: 3px solid var(--status-danger); }
+
+.proc-row__body { min-width: 0; }
+
+.proc-row__primary {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.proc-row__secondary {
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.proc-row__trailing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.proc-row__value {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.proc-row__value--warn { color: var(--status-warn-text); }
+.proc-row__value--danger { color: var(--status-danger-text); }
+
+.proc-row__note {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* ─── Empty states ─── */
+
+.proc-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 22px 20px;
+  border: 1px dashed var(--border-glass);
+  border-radius: var(--radius-md);
+  background: transparent;
+}
+
+.proc-empty__title {
+  font-size: var(--text-sm);
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.proc-empty__detail {
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  color: var(--text-secondary);
+  max-width: 62ch;
+}
+
+/* ─── Tables ───
+   The wrapper scrolls, not the page. A stock table is inherently wide and the
+   body must never scroll sideways underneath the navigation. */
+
+.proc-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.proc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.proc-table th,
+.proc-table td {
+  padding: 10px 14px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.proc-table thead th {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-glass);
+}
+
+.proc-table tbody tr:last-child td { border-bottom: none; }
+
+.proc-table tfoot th,
+.proc-table tfoot td {
+  border-top: 1px solid var(--border-glass);
+  border-bottom: none;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.proc-table__total th,
+.proc-table__total td {
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+/* Every numeric column: right-aligned and tabular, money and quantity alike.
+   Scoped to the table as well: `.proc-table th, .proc-table td` (0,1,1)
+   outranks a bare class, so every numeric column sat left-aligned. */
+.proc-num,
+.proc-table .proc-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.proc-num--warn { color: var(--status-warn-text); font-weight: 600; }
+.proc-num--out { color: var(--status-danger-text); }
+
+.proc-cell__primary {
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: normal;
+}
+
+.proc-cell__secondary {
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* A low row is marked by its left border AND by the "Reorder" flag — never by
+   colour alone, which a colour-blind storekeeper cannot read. */
+.proc-tr--low td:first-child { box-shadow: inset 3px 0 0 var(--status-warn); }
+
+.proc-flag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--status-warn);
+  color: var(--status-on-fill);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+/* The cell stays a table cell (display:flex on a <td> breaks the row's
+   hairline); the flex row lives on a div inside it. */
+.proc-actions-cell {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.proc-actions {
+  display: inline-flex;
+  gap: 6px;
+  vertical-align: middle;
+}
+
+.proc-nowrap { white-space: nowrap; }
+
+.proc-money { font-variant-numeric: tabular-nums lining-nums; }
+
+/* "Not configured" is a WORD, not a faded number. Muted token, full opacity. */
+.proc-money--unset {
+  color: var(--text-muted);
+  font-style: normal;
+}
+
+.proc-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ─── Buttons ─── */
+
+.proc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 7px 14px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 550;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* The glass hover is for the neutral button only. At (0,3,0) it outranked the
+   filled variants, so hovering "primary" put its white label on a glass fill
+   (unreadable in light). Filled buttons get their own hover below. */
+.proc-btn:not(.proc-btn--primary, .proc-btn--danger):hover:not(:disabled) {
+  background: var(--bg-glass-hover);
+}
+
+.proc-btn:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+/* The neutral disabled pair, never opacity. (0,2,0) beats the variant fills. */
+.proc-btn:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+.proc-btn--primary {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+  color: var(--btn-primary-text);
+}
+
+.proc-btn--primary:hover:not(:disabled) {
+  background: var(--btn-gradient-hover);
+  border-color: var(--btn-gradient-hover);
+}
+
+.proc-btn--danger {
+  background: var(--status-danger);
+  border-color: var(--status-danger);
+  color: var(--status-on-fill);
+}
+
+.proc-btn--tiny {
+  min-height: 26px;
+  padding: 4px 10px;
+  font-size: var(--text-xs);
+}
+
+/* ─── Fields ─── */
+
+.proc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.proc-field--inline { min-width: 150px; }
+.proc-field--narrow { max-width: 190px; }
+
+.proc-field--check {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.proc-field--check input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  accent-color: var(--accent-deep);
+}
+
+.proc-field__label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.proc-field__hint {
+  display: block;
+  margin-top: 3px;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.proc-input {
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+}
+
+.proc-input:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -1px;
+}
+
+.proc-input--num {
+  text-align: right;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.proc-input--tiny { max-width: 92px; }
+
+.proc-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.proc-line-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.proc-line-row .proc-field:first-child { flex: 1 1 220px; }
+
+/* ─── Receive form ─── */
+
+.proc-receive {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-glass);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.proc-receive__line {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.proc-receive__fields {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* ─── Drawer (portalled to document.body) ─── */
+
+.proc-drawer {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.proc-drawer__scrim {
+  position: absolute;
+  inset: 0;
+  border: none;
+  padding: 0;
+  /* A scrim is one of the few legitimate uses of alpha: it is a VEIL over the
+     page, not de-emphasised text. Nothing readable sits inside it. */
+  background: rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+}
+
+.proc-drawer__panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+  height: 100%;
+  background: var(--bg-elevated);
+  border-left: 1px solid var(--border-glass);
+  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.22);
+}
+
+.proc-drawer__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.proc-drawer__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.proc-drawer__sub {
+  margin: 3px 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.proc-drawer__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 22px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.proc-drawer__actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+/* ─── Touch ───
+   44px everywhere a finger lands. The goods-in desk is a tablet as often as it
+   is a mouse, and a 32px control on a tablet is a mis-tap waiting to enter the
+   wrong quantity against a delivery. */
+
+@media (pointer: coarse) {
+  .proc-btn,
+  .proc-tab,
+  .proc-input,
+  .proc-row--link { min-height: 44px; }
+
+  .proc-btn--tiny { min-height: 44px; padding: 8px 14px; }
+
+  .proc-field--check input[type="checkbox"] { width: 24px; height: 24px; }
+
+  .proc-table th,
+  .proc-table td { padding: 14px; }
+}
+
+@media (max-width: 720px) {
+  .proc-drawer__panel { width: 100%; }
+  .proc-head__controls { width: 100%; }
+}

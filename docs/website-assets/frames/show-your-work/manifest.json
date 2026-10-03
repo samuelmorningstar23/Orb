@@ -1,0 +1,38 @@
+{
+  "id": "show-your-work",
+  "title": "Show your work",
+  "subtitle": "Live compliance posture, a tamper-evident audit chain, and an honest model register",
+  "user": "ADM001",
+  "theme": "dark",
+  "viewport": {
+    "width": 1512,
+    "height": 1024
+  },
+  "steps": [
+    {
+      "n": 1,
+      "caption": "Trust Center: compliance posture aggregated from the running system, not a PDF. Amber is amber; an all-green screen should be trusted less.",
+      "file": "01.png",
+      "hold": 3200
+    },
+    {
+      "n": 2,
+      "caption": "Flight Recorder: a SHA-256 hash chain over every audit row. Alter or delete one and the chain breaks. Every question Sage was asked is in there, and every refusal.",
+      "file": "02.png",
+      "hold": 3200
+    },
+    {
+      "n": 3,
+      "caption": "Model Governance: each model, its version, and whether it has been validated. The forecast model says \"untrained\". The validated one is the deterministic score that drives escalation.",
+      "file": "03.png",
+      "hold": 5000
+    },
+    {
+      "n": 4,
+      "caption": "Pilot Scorecard: how the pilot will be measured. Shadow-mode episodes, adjudication, outcomes, denominators included.",
+      "file": "04.png",
+      "hold": 4500
+    }
+  ],
+  "video": "video/show-your-work.webm"
+}

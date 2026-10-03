@@ -1,0 +1,1337 @@
+/* ═══════════════════════════════════════════════════
+   PatientShell — patient-facing "bridge" portal.
+   Quiet Clinical: flat opaque surfaces, 1px hairline borders, one clay
+   accent used sparingly, semantic status colours. No glass, no glow,
+   no gradients, no hover lifts.
+   ═══════════════════════════════════════════════════ */
+
+.bridge {
+  position: relative;
+  min-height: 100vh;
+  background: var(--bg-primary);
+}
+
+/* Ambient aurora layer retired in the flat system — the container and blob
+   remain in the DOM (TSX untouched) but render nothing. */
+.bridge__ambient {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+  display: none;
+}
+
+.bridge__ambient-blob {
+  display: none;
+}
+
+/* ─── Header ─── */
+.bridge__header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 28px;
+  border-radius: 0;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-primary);
+}
+
+.bridge__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bridge__brand-name {
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.bridge__header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.bridge__greeting {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.bridge__logout {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  padding: 6px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  transition: all var(--transition-fast);
+}
+
+.bridge__logout:hover {
+  color: var(--text-primary);
+  border-color: var(--accent-gold);
+}
+
+/* ─── Content ─── */
+.bridge__content {
+  position: relative;
+  z-index: 2;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 48px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+}
+
+.bridge__welcome {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Page hero — the one place the display serif is allowed on this page. */
+.bridge__title {
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.bridge__subtitle {
+  font-size: 1rem;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+/* ─── Cards — flat paper: opaque surface + hairline ─── */
+/* `align-items: start` is the load-bearing line. Grid items stretch to the row
+   height by default, so inside this 800px column the three cards each became as
+   tall as the tallest — Vitals & Trends, which carries five sparklines. "Your
+   Status" holds four lines of text and was rendering in an 838px box: roughly
+   700px of empty surface in two of the three cards, and a patient who scrolled
+   met a blank screen.
+   The 220px minimum also fitted three columns into 752px, which squeezed the
+   vitals list to 240px and wrapped "In normal range · Today 06:57" onto three
+   lines on the one screen in Orb written for a patient rather than a clinician.
+   260px gives two readable columns here and still collapses to one on a phone. */
+.bridge__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  align-items: start;
+  gap: 16px;
+}
+
+.bridge__card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 28px 24px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+}
+
+.bridge__card-icon {
+  color: var(--text-secondary);
+}
+
+.bridge__card-title {
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.bridge__card-text {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.bridge__card-badge {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 4px 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: var(--radius-full);
+  /* Neutral on purpose (ruled 2026-10-03): the patient's level is stated in
+     words, never in status colour. See the note in PatientShell.tsx. */
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+}
+
+/* ─── Ask Input — flat composer ─── */
+.bridge__ask {
+  margin-top: 8px;
+}
+
+.bridge__ask-input {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 6px 6px 20px;
+  border-radius: var(--radius-xl);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-glass);
+}
+
+.bridge__input {
+  flex: 1;
+  padding: 14px 0;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  outline: none;
+}
+
+.bridge__input::placeholder {
+  color: var(--text-muted);
+}
+
+.bridge__ask-btn {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  border: none;
+  border-radius: var(--radius-full);
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.bridge__ask-btn:hover {
+  background: var(--btn-gradient-hover);
+}
+
+.bridge__ask-btn:active {
+  filter: brightness(0.96);
+}
+
+/* ─── Vitals Grid ─── */
+.bridge__vitals-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.bridge__vital {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bridge__vital-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.bridge__vital-value {
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Answer Panel — flat surface ─── */
+.bridge__answer {
+  padding: 20px 24px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+}
+
+.bridge__answer-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent-text);
+}
+
+.bridge__answer-text {
+  font-size: 0.9rem;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  font-family: inherit;
+  margin: 0;
+}
+
+
+/* ═══════════════════════════════════════════════════
+   Appointment Scheduler Card
+   ═══════════════════════════════════════════════════ */
+
+.bridge__card--appt {
+  padding-bottom: 24px;
+}
+
+.bridge__card-icon--appt {
+  color: var(--accent-gold);
+}
+
+/* ─── Week Calendar ─── */
+.appt__calendar {
+  margin-top: 4px;
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  padding: 10px;
+}
+
+.appt__cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.appt__cal-month {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+  /* A two-month week ("Dec 2026 to Jan 2027") may wrap in the 3-up layout. */
+  text-align: center;
+}
+
+.appt__cal-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-glass);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.appt__cal-nav:hover {
+  border-color: var(--accent-gold);
+  color: var(--accent-text);
+  background: var(--bg-glass);
+}
+
+/* ─── Week Strip ─── */
+/* In the 3-up card layout the strip only gets 168px of inner width, and seven
+   24px cells + 2px gaps need 180px. Scroll the 12px shortfall rather than let
+   a cell fall under the 24px WCAG 2.2 target floor. Narrower layouts (2-up,
+   single column) give the cells 36px+ and never scroll. */
+.appt__week-strip {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  overflow-x: auto;
+}
+
+.appt__week-strip::-webkit-scrollbar { height: 3px; }
+.appt__week-strip::-webkit-scrollbar-thumb {
+  background: var(--border-glass);
+  border-radius: var(--radius-full);
+}
+
+.appt__week-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 24px;
+  padding: 6px 0;
+  border-radius: var(--radius-md);
+  border: 1.5px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.appt__week-day {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.appt__week-num {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* --bg-glass, not --bg-glass-hover: the heavier hover fill lifts the backdrop
+   until the today/disabled day numerals (--accent-text, --text-muted) inside measures 3.97:1 in dark — below AA. The lighter fill still
+   marks the hover. Found by the hover-surface pass in
+   scripts/check-contrast.mjs (spec §10.2); it composites a state fill under
+   the DESCENDANT text it lands beneath, which is what the old gate could not see. */
+.appt__week-cell:hover:not(:disabled) {
+  background: var(--bg-glass);
+}
+
+.appt__week-cell:hover:not(:disabled) .appt__week-num {
+  color: var(--text-primary);
+}
+
+.appt__week-cell--today {
+  border-color: color-mix(in srgb, var(--accent-gold) 30%, transparent);
+}
+
+.appt__week-cell--today .appt__week-num {
+  color: var(--accent-text);
+}
+
+/* Selected day — solid accent fill; deep clay keeps the label ≥4.5:1. */
+.appt__week-cell--selected {
+  background: var(--accent-deep) !important;
+  border-color: transparent !important;
+}
+
+.appt__week-cell--selected .appt__week-day {
+  color: var(--btn-primary-text) !important;
+}
+
+.appt__week-cell--selected .appt__week-num {
+  color: var(--btn-primary-text) !important;
+  font-weight: 700;
+}
+
+/* Past days read as unavailable through colour, never opacity: opacity
+   multiplies down the tree and took the day letter and date to 1.28:1.
+   --text-muted holds ≥4.5:1 on every surface, so the date stays legible. */
+.appt__week-cell--disabled {
+  cursor: not-allowed;
+}
+
+.appt__week-cell--disabled .appt__week-day,
+.appt__week-cell--disabled .appt__week-num {
+  color: var(--text-muted);
+}
+
+/* The 24px floor above outranks the global coarse-pointer rule (index.css),
+   so on a touch screen the day cells measured 37px wide. The strip already
+   scrolls when seven cells do not fit. */
+@media (pointer: coarse) {
+  .appt__week-cell {
+    min-width: var(--tap-min);
+  }
+}
+
+/* What to do next, in sentence case: "Choose a day" before a day is picked,
+   and a note when every time today is already over. */
+.appt__hint {
+  margin-top: 10px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+/* ─── Sections (animated reveal) ─── */
+.appt__section {
+  margin-top: 12px;
+}
+
+.appt__section--animate {
+  animation: appt-reveal 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes appt-reveal {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.appt__label {
+  display: block;
+  font-size: 0.74rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.appt__optional {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+
+/* ─── Time Slots ─── */
+.appt__slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.appt__slot {
+  padding: 5px 10px;
+  font-size: 0.74rem;
+  font-weight: 500;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-glass);
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.18s;
+  font-variant-numeric: tabular-nums;
+}
+
+.appt__slot:hover {
+  border-color: var(--accent-gold);
+  color: var(--text-primary);
+  background: var(--bg-glass-hover);
+}
+
+.appt__slot--active {
+  background: var(--accent-glow) !important;
+  border-color: var(--accent-gold) !important;
+  color: var(--accent-text) !important;
+}
+
+/* A time already over today. After :hover on purpose (equal specificity), so
+   the hover fill never paints over the disabled neutral. */
+.appt__slot:disabled {
+  background: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-border);
+  color: var(--btn-disabled-text);
+  cursor: not-allowed;
+}
+
+/* ─── Department Pills ─── */
+.appt__depts {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+}
+
+.appt__dept {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  font-size: 0.75rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-glass);
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.appt__dept:hover {
+  border-color: color-mix(in srgb, var(--accent-gold) 30%, transparent);
+  background: var(--bg-glass-hover);
+  color: var(--text-primary);
+}
+
+.appt__dept--active {
+  border-color: var(--accent-gold) !important;
+  background: var(--accent-glow) !important;
+  color: var(--accent-text) !important;
+}
+
+.appt__dept-icon {
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+.appt__dept-name {
+  font-weight: 500;
+}
+
+/* ─── Note Textarea ─── */
+.appt__note {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 0.78rem;
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  outline: none;
+  resize: vertical;
+  min-height: 42px;
+  transition: border-color 0.2s;
+  line-height: 1.4;
+}
+
+.appt__note::placeholder {
+  color: var(--text-muted);
+}
+
+.appt__note:focus {
+  border-color: var(--border-focus);
+}
+
+/* ─── Book Button — flat primary ─── */
+.appt__book-btn {
+  margin-top: 16px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  cursor: pointer;
+  transition: background 0.25s;
+}
+
+.appt__book-btn:hover {
+  background: var(--btn-gradient-hover);
+}
+
+.appt__book-btn:active {
+  filter: brightness(0.96);
+}
+
+/* Busy, not disabled — pointer-events and the spinner carry that state. The
+   old fade only dimmed the spinner against the accent fill. */
+.appt__book-btn--loading {
+  pointer-events: none;
+}
+
+/* ─── Spinner ─── */
+.appt__spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid color-mix(in srgb, var(--btn-primary-text) 25%, transparent);
+  border-top-color: var(--btn-primary-text);
+  border-radius: 50%;
+  animation: appt-spin 0.7s linear infinite;
+}
+
+@keyframes appt-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ─── Confirmation ─── */
+.appt__confirmed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 20px 0 4px;
+  animation: appt-reveal 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.appt__confirmed-check {
+  margin-bottom: 14px;
+}
+
+.appt__check-circle {
+  stroke-dasharray: 107;
+  stroke-dashoffset: 107;
+  animation: appt-circle-draw 0.6s ease-out 0.15s forwards;
+}
+
+.appt__check-path {
+  stroke-dasharray: 28;
+  stroke-dashoffset: 28;
+  animation: appt-check-draw 0.35s ease-out 0.65s forwards;
+}
+
+@keyframes appt-circle-draw {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes appt-check-draw {
+  to { stroke-dashoffset: 0; }
+}
+
+.appt__confirmed-msg {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--status-ok-text);
+  margin: 0 0 6px;
+}
+
+.appt__confirmed-details {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0 0 16px;
+}
+
+.appt__new-btn {
+  font-size: 0.76rem;
+  font-weight: 500;
+  padding: 8px 20px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-glass);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.appt__new-btn:hover {
+  border-color: var(--accent-gold);
+  color: var(--accent-text);
+}
+
+/* ═══════════════════════════════════════════════════
+   Bridge Reports Panel
+   ═══════════════════════════════════════════════════ */
+
+.bridge__reports {
+  animation: appt-reveal 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.bridge__reports-title {
+  font-size: 0.95rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin-bottom: 16px;
+}
+
+/* Action Buttons Row — matches Vigil command-bar__actions */
+.bridge__report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.bridge__report-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 16px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-glass);
+  background: var(--bg-glass);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.bridge__report-btn:hover {
+  border-color: var(--border-focus);
+  color: var(--text-primary);
+  background: var(--bg-glass-hover);
+}
+
+.bridge__report-btn--active {
+  background: var(--accent-glow) !important;
+  border-color: var(--accent-gold) !important;
+  color: var(--accent-text) !important;
+}
+
+.bridge__report-btn svg {
+  flex-shrink: 0;
+}
+
+/* Report Panel Content Area */
+.bridge__report-panel {
+  animation: appt-reveal 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.bridge__report-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.bridge__report-panel-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.bridge__report-count {
+  font-size: 0.74rem;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--bg-glass);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Report Items */
+.bridge__report-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.bridge__report-list::-webkit-scrollbar { width: 3px; }
+.bridge__report-list::-webkit-scrollbar-thumb {
+  background: var(--border-glass);
+  border-radius: var(--radius-full);
+}
+
+.bridge__report-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.bridge__report-item:hover {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+}
+
+.bridge__report-item-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 0.7rem;
+}
+
+/* Icon chips — token tints only: meds carry the clay accent, documents info,
+   labs danger, discharge ok. */
+.bridge__report-item-icon--med {
+  background: var(--accent-glow);
+  color: var(--accent-text);
+}
+
+.bridge__report-item-icon--doc {
+  background: color-mix(in srgb, var(--status-info) 10%, transparent);
+  color: var(--status-info-text);
+}
+
+.bridge__report-item-icon--lab {
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  color: var(--status-danger-text);
+}
+
+.bridge__report-item-icon--discharge {
+  background: color-mix(in srgb, var(--status-ok) 10%, transparent);
+  color: var(--status-ok-text);
+}
+
+.bridge__report-item-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.bridge__report-item-name {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bridge__report-item-meta {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.bridge__report-item-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+  align-self: center;
+}
+
+/* Opaque elevated pill + colored border/text so the status color keeps ≥3:1
+   regardless of the surface behind it (a same-hue tint dropped below 3:1). */
+.bridge__report-item-badge--active {
+  background: var(--bg-elevated);
+  color: var(--status-ok-text);
+  border: 1px solid color-mix(in srgb, var(--status-ok) 45%, transparent);
+}
+
+.bridge__report-item-badge--discontinued {
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+}
+
+.bridge__report-item-badge--prn {
+  background: var(--bg-elevated);
+  color: var(--status-warn-text);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 45%, transparent);
+}
+
+/* Empty State */
+.bridge__report-empty {
+  text-align: center;
+  padding: 28px 16px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+/* Decorative glyph, but de-emphasised with a token so it cannot compound with
+   a faded ancestor the way the old 0.3 opacity would. */
+.bridge__report-empty svg {
+  display: block;
+  margin: 0 auto 10px;
+  color: var(--text-muted);
+}
+
+/* Detail Modal Overlay: plain scrim, no blur. It opens FROM a list dialog
+   (.modal-overlay, z-index 9999), so it must sit above that one: at 100 the
+   detail rendered behind the list and opening a row looked like it did nothing. */
+.bridge__report-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: bridge-modal-fade 0.2s ease-out;
+}
+
+@keyframes bridge-modal-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.bridge__report-modal {
+  width: 90%;
+  max-width: 520px;
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--elev-3);
+  padding: 24px;
+  animation: appt-reveal 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.bridge__report-modal::-webkit-scrollbar { width: 3px; }
+.bridge__report-modal::-webkit-scrollbar-thumb {
+  background: var(--border-glass);
+  border-radius: var(--radius-full);
+}
+
+.bridge__report-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.bridge__report-modal-title {
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.bridge__report-modal-close {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-glass);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.bridge__report-modal-close:hover {
+  border-color: var(--accent-gold);
+  color: var(--text-primary);
+}
+
+.bridge__report-modal-content {
+  font-size: 0.85rem;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+.bridge__report-modal-meta {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+/* Loading skeleton: pulses between two surface tokens, never by opacity. */
+.bridge__report-skeleton {
+  height: 48px;
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+  animation: bridge-skeleton 1.5s ease-in-out infinite;
+}
+
+@keyframes bridge-skeleton {
+  0%, 100% { background: var(--bg-glass); }
+  50% { background: var(--bg-glass-hover); }
+}
+
+
+
+/* ═══════════════════════════════════════════════════
+   Patient Portal Redesign (Vigil/ui-ux-pro-max Modals)
+   ═══════════════════════════════════════════════════ */
+.detail__actions {
+  display: flex;
+  gap: 12px;
+}
+
+.detail__action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-weight: 500;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.detail__action-btn:hover {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+  color: var(--text-primary);
+}
+
+.detail__action-btn svg {
+  color: var(--accent-text);
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: modal-fade-in 0.2s ease-out;
+}
+
+.modal {
+  /* was var(--surface-1, #1e1e1e) — undefined token → dark in BOTH themes,
+     making all modal text/badges fail in light. */
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-xl);
+  padding: 24px;
+  max-width: 600px;
+  width: 90%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--elev-3);
+  animation: modal-slide-up 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.modal__title {
+  margin: 0 0 16px 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 12px;
+}
+
+.modal__body {
+  flex-grow: 1;
+  overflow-y: auto;
+  /* Do not chain the scroll past the modal on a tablet — see Vigil.css .modal. */
+  overscroll-behavior: contain;
+  padding-right: 4px;
+}
+
+.modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.modal__btn {
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: var(--bg-glass);
+  color: var(--text-primary);
+  border: 1px solid var(--border-glass);
+}
+
+.modal__btn:hover {
+  background: var(--bg-glass-hover);
+}
+
+/* Close action reads as a quiet secondary control in both themes (base
+   .modal__btn white text is invisible on the light surface). */
+.modal__btn.bridge__modal-close-btn {
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+.modal__btn.bridge__modal-close-btn:hover {
+  background: var(--bg-glass-hover);
+  color: var(--text-primary);
+}
+
+.detail__reports-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* These rows are real <button>s (medication / document / lab / discharge).
+   width, text-align, font and color are the button reset that keeps them
+   looking like the cards they were as <div onClick> — which is what made them
+   unreachable by keyboard on the patient portal. */
+.detail__report {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.detail__report:hover {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+}
+
+.detail__report-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-grow: 1;
+}
+
+.detail__report-title {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.detail__note-date {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.detail__no-data {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-style: italic;
+  background: var(--bg-glass);
+  border-radius: var(--radius-md);
+}
+
+@keyframes modal-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modal-slide-up {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ─── Close Animations ─── */
+@keyframes modal-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes modal-slide-down {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(12px) scale(0.96); }
+}
+
+.modal-overlay--closing {
+  animation: modal-fade-out 0.25s ease-in forwards;
+}
+
+.modal--closing {
+  animation: modal-slide-down 0.25s ease-in forwards;
+}
+
+.bridge__report-modal-overlay--closing {
+  animation: modal-fade-out 0.25s ease-in forwards;
+}
+
+.bridge__report-modal--closing {
+  animation: modal-slide-down 0.25s ease-in forwards;
+}
+
+/* ═══════════════════════════════════════════════════
+   Upcoming appointments (real bookings) + booking error
+   ═══════════════════════════════════════════════════ */
+
+.appt__upcoming {
+  margin-bottom: 16px;
+}
+
+.appt__upcoming-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.appt__upcoming-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-left: 3px solid var(--accent-gold);
+  border-radius: var(--radius-md);
+}
+
+.appt__upcoming-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.appt__upcoming-when {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.appt__upcoming-type {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.appt__upcoming-cancel {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-glass);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.appt__upcoming-cancel:hover {
+  border-color: var(--status-danger);
+  color: var(--status-danger-text);
+}
+
+.appt__error {
+  margin-top: 10px;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--status-danger-text);
+}
+
+/* ─── Download my record (FHIR) — secondary full-width action ─── */
+.bridge__fhir-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-weight: 500;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.bridge__fhir-btn svg {
+  color: var(--accent-gold);
+}
+
+.bridge__fhir-btn:hover:not(:disabled) {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+}
+
+/* Ghost-style button (barely-tinted fill), so de-emphasise the label and the
+   hairline only. The icon drops its accent gold and follows the label,
+   otherwise a bright gold glyph keeps reading as enabled. */
+.bridge__fhir-btn:disabled {
+  color: var(--text-muted);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+.bridge__fhir-btn:disabled svg {
+  color: inherit;
+}

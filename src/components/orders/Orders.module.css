@@ -1,0 +1,475 @@
+/* No page padding here. The page gutter belongs to .shell__body
+   (--page-y/--page-x, and its own responsive steps); this panel adding 32px on
+   top of it started the content column 32px right of every panel that didn't,
+   so switching tabs slid the whole page sideways. See the note on .shell__body
+   in ClinicianShell.css. */
+.container {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  height: 100%;
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
+  font-family: var(--font-family);
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+.header {
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+
+.headerLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-variation-settings: 'SOFT' 0, 'WONK' 0, 'opsz' 28;
+  font-size: 1.75rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.newButton {
+  background: var(--accent-deep);
+  border: 1px solid transparent;
+  color: var(--btn-primary-text);
+  padding: 10px 18px;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.newButton:hover {
+  background: var(--btn-gradient-hover);
+}
+
+/* ── Loading / empty / failed ──
+   These were one class and one line of grey text floating in whatever space
+   was left, which made "no orders for this patient" and "we could not load the
+   orders" the same picture. On a CPOE screen those two must never be
+   confusable: one invites you to write a new order, the other means the list
+   you are looking at may be missing live orders.
+   Same geometry so nothing jumps between states; different frame and tone so
+   the difference is visible from across a room. */
+.loading,
+.emptyState,
+.errorState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  min-height: 220px;
+  padding: var(--space-6) var(--space-5);
+  text-align: center;
+  font-size: var(--text-sm);
+  border-radius: var(--radius-lg);
+}
+
+.loading,
+.emptyState {
+  color: var(--text-muted);
+  border: 1px dashed var(--border-subtle);
+}
+
+.errorState {
+  color: var(--status-danger-text);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent);
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+}
+
+.emptyIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-full);
+  color: var(--text-muted);
+  background: var(--bg-glass);
+}
+
+.emptyTitle {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.emptyDetail {
+  max-width: 46ch;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.retryBtn {
+  padding: 8px 16px;
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.retryBtn:hover { background: var(--bg-glass-hover); border-color: var(--border-focus); }
+
+/* ── Order list ── */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 16px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  transition: border-color 0.2s ease;
+}
+
+.card:hover {
+  border-color: var(--border-glass);
+}
+
+.cardMain {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cardTitle {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.cardMeta {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.code {
+  font-family: var(--font-mono);
+  color: var(--accent-text);
+}
+
+.cardRight {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.result {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 8px;
+}
+
+/* ── Status chips ── */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.chipDraft {
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  border-color: var(--border-glass);
+}
+.chipActive {
+  background: color-mix(in srgb, var(--status-info) 10%, transparent);
+  color: var(--status-info-text);
+  border-color: color-mix(in srgb, var(--status-info) 28%, transparent);
+}
+.chipInProgress {
+  background: color-mix(in srgb, var(--status-warn) 10%, transparent);
+  color: var(--status-warn-text);
+  border-color: color-mix(in srgb, var(--status-warn) 28%, transparent);
+}
+.chipCompleted {
+  background: color-mix(in srgb, var(--status-ok) 10%, transparent);
+  color: var(--status-ok-text);
+  border-color: color-mix(in srgb, var(--status-ok) 28%, transparent);
+}
+.chipResulted {
+  background: color-mix(in srgb, var(--accent-gold) 10%, transparent);
+  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--accent-gold) 28%, transparent);
+}
+.chipCancelled {
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  color: var(--status-danger-text);
+  border-color: color-mix(in srgb, var(--status-danger) 28%, transparent);
+}
+
+.priorityStat    { color: var(--status-danger-text); font-weight: 600; }
+.priorityUrgent  { color: var(--status-warn-text); font-weight: 600; }
+
+/* ── Advance / action buttons ── */
+.actionBtn {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.actionBtn:hover {
+  background: var(--bg-glass);
+}
+
+/* ── Create form ── */
+.formCard {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.formRow {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 160px;
+}
+
+.label {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.input,
+.select {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: 9px 12px;
+  font-size: 0.875rem;
+  font-family: inherit;
+}
+
+/* Native OS chevron replaced with the flat line-icon used by every other
+   styled select (AdmitPatientModal.css) — the raw control was the one default
+   widget left on this surface (DEMO_READINESS §6.4). The stroke is a fixed
+   mid-gray that clears both themes; data URIs cannot read CSS variables. */
+.select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a09e94' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 34px;
+  cursor: pointer;
+}
+
+.input:focus,
+.select:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.validateRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.validateHint {
+  font-size: 0.78rem;
+  padding-bottom: 9px;
+}
+
+.valid { color: var(--status-ok-text); }
+.invalid { color: var(--status-danger-text); }
+
+.formActions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.submitBtn {
+  background: var(--accent-deep);
+  border: 1px solid transparent;
+  color: var(--btn-primary-text);
+  padding: 10px 20px;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.submitBtn:hover:not(:disabled) {
+  background: var(--btn-gradient-hover);
+}
+
+/* De-emphasis is a colour swap, never opacity: opacity fades label and fill by
+   the same factor, so it can only ever lower contrast (audit measured 1.11:1). */
+.submitBtn:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+.cancelBtn {
+  background: transparent;
+  border: 1px solid var(--border-glass);
+  color: var(--text-secondary);
+  padding: 10px 20px;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.cancelBtn:hover {
+  background: var(--bg-glass);
+}
+
+.errorText {
+  color: var(--status-danger-text);
+  font-size: 0.82rem;
+}
+
+/* Responsive — ward tablet (≤768px) → ~600px. Tighten padding and let the
+   form fields stack instead of forcing horizontal overflow. */
+@media (max-width: 768px) {
+  .header { flex-wrap: wrap; gap: 12px; }
+}
+
+@media (max-width: 600px) {
+  .header { flex-direction: column; align-items: flex-start; }
+  .field { min-width: 100%; }
+  .formActions { flex-wrap: wrap; }
+}
+
+/* Theme notes: this module is fully tokenised — text, chip, and button colors
+   come from the theme-adaptive token layer (src/index.css), so the former
+   [data-theme="light"] contrast-override blocks are no longer needed. */
+
+/* ── Orders ⇄ Order Sets switch ───────────────────────────────────────────
+   Two surfaces live under the Orders tab: individual order entry, and the
+   protocol (order set) library. The library's backend was complete and
+   safety-enforced with no UI at all; this strip is how it is reached. */
+.viewTabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  align-self: flex-start;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.viewTab,
+.viewTabOn {
+  padding: 7px 16px;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.viewTab {
+  color: var(--text-secondary);
+  background: none;
+}
+
+.viewTab:hover { color: var(--text-primary); }
+
+.viewTabOn {
+  color: var(--btn-primary-text);
+  background: var(--accent-deep);
+}
+
+/* ── Who the form is writing for ──
+   The form used to carry no name at all and kept a half-written order across a
+   patient switch, so the first sign of the wrong chart was the order list. */
+.orderingFor {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.orderingFor strong { color: var(--text-primary); font-weight: 600; }
+
+/* ── Medication orders go nowhere a nurse or pharmacist works ──
+   Same callout recipe as the order-set warnings (10% wash, 28% border, the
+   -text token on top). */
+.medNotice {
+  padding: 10px 12px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--status-warn-text);
+  background: color-mix(in srgb, var(--status-warn) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 28%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+.medNotSent {
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--status-warn-text);
+}

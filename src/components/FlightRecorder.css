@@ -1,0 +1,196 @@
+/* A8 — Flight Recorder v1. Flat replay/forensics UI on the Quiet Clinical
+   tokens. Reuses the global .glass-card surface (index.css — now an opaque
+   bordered card) and CSS variables so it sits natively inside the admin panel
+   in both dark and light themes. */
+
+.flight-recorder {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  /* Was var(--text, …): that token doesn't exist, so text stayed near-white in
+     both themes and vanished on the light surface. Use the real text token. */
+  color: var(--text-primary);
+  /* Timeline lane accents. The event lane's violet has no global token; the order
+     lane's amber clears 3:1 on the light surface only barely, so both get a
+     darker light-theme override. Dark keeps the vivid values. */
+  --fr-lane-event: #bf5af2;
+  --fr-lane-order: var(--status-warn);
+}
+[data-theme="light"] .flight-recorder {
+  --fr-lane-event: #7c3aed;
+  --fr-lane-order: color-mix(in srgb, var(--status-warn) 82%, #000);
+}
+
+.flight-recorder .glass-card {
+  border-radius: var(--radius-lg);
+}
+
+/* ── Header ── */
+.fr-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  flex-wrap: wrap;
+}
+.fr-title { margin: 0; font-size: 16px; font-weight: 650; }
+.fr-subtitle { margin: 4px 0 0; font-size: 12px; color: var(--text-secondary); }
+.fr-header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+.fr-input {
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  color: inherit;
+  font-size: 13px;
+  min-width: 200px;
+}
+.fr-input:focus { outline: none; border-color: var(--border-focus); }
+
+/* Secondary button — bordered surface, no tint */
+.fr-btn {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.fr-btn:hover { background: var(--bg-glass-hover); border-color: var(--border-focus); }
+
+/* ── Integrity badge ── */
+.fr-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-xl);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.fr-badge--ok {
+  background: color-mix(in srgb, var(--status-ok) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-ok) 28%, transparent);
+  color: var(--status-ok-text);
+}
+.fr-badge--bad {
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent);
+  color: var(--status-danger-text);
+}
+.fr-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+/* Tampered dot keeps its alarm pulse — it signals state, not decoration. */
+.fr-badge--bad .fr-dot { animation: fr-pulse 1.2s infinite; }
+@keyframes fr-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* ── Transport / scrubber ── */
+.fr-transport {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+}
+.fr-controls { display: flex; gap: 6px; }
+.fr-ctrl {
+  width: 34px; height: 34px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-glass);
+  background: var(--bg-glass);
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+}
+.fr-ctrl:hover:not(:disabled) { background: var(--bg-glass-hover); }
+/* Keeps cursor: default — at either end of the timeline stepping is inert, not forbidden. */
+.fr-ctrl:disabled { color: var(--text-muted); border-color: var(--btn-disabled-border); cursor: default; }
+/* Play carries the replay-position semantics — info tint, like the scrubber. */
+.fr-ctrl--play {
+  background: color-mix(in srgb, var(--status-info) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-info) 28%, transparent);
+  color: var(--status-info-text);
+}
+.fr-scrub { flex: 1; accent-color: var(--status-info); cursor: pointer; }
+.fr-position { font-size: 12px; display: flex; flex-direction: column; align-items: flex-end; min-width: 150px; }
+.fr-position-ts { color: var(--text-muted); font-size: 11px; }
+
+/* ── Body: timeline + detail ── */
+.fr-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 900px) { .fr-body { grid-template-columns: 1fr; } }
+
+.fr-timeline {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.fr-tl-item {
+  display: grid;
+  /* marker, source, action, target, status, time: six cells on every row */
+  grid-template-columns: 12px 54px minmax(0,1fr) auto 14px auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.fr-tl-item:hover { background: var(--bg-glass); }
+.fr-tl-item--active {
+  background: color-mix(in srgb, var(--status-info) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-info) 28%, transparent);
+}
+.fr-tl-item--tampered { background: color-mix(in srgb, var(--status-danger) 10%, transparent); }
+.fr-tl-marker { width: 8px; height: 8px; border-radius: 50%; }
+.fr-tl-source { font-weight: 600; font-size: 11px; }
+.fr-tl-action { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fr-tl-target { color: var(--text-secondary); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+.fr-tl-status { text-align: center; }
+.fr-tl-flag { color: var(--status-danger-text); }
+.fr-tl-ok { color: var(--status-ok-text); }
+/* On the active row's pale info fill the light green lands right at 3:1; darken it. */
+[data-theme="light"] .fr-tl-ok { color: color-mix(in srgb, var(--status-ok) 78%, #000); }
+.fr-tl-ts { color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
+
+/* ── Detail pane ── */
+.fr-detail { padding: 16px; max-height: 60vh; overflow-y: auto; }
+.fr-detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+/* Chip sits on a solid lane-colour fill; --bg-primary is the theme's own base
+   (near-black in dark, near-white in light), so the label always contrasts. */
+.fr-chip { color: var(--bg-primary); padding: 3px 10px; border-radius: var(--radius-sm); font-size: 11px; font-weight: 600; }
+.fr-detail-action { font-weight: 600; font-size: 14px; }
+.fr-kv { display: grid; grid-template-columns: 90px 1fr; gap: 6px 12px; margin: 0 0 16px; font-size: 12.5px; }
+.fr-kv dt { color: var(--text-secondary); }
+.fr-kv dd { margin: 0; word-break: break-word; }
+.fr-mono { font-family: var(--font-mono); font-size: 11.5px; }
+.fr-raw-head { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 6px; }
+.fr-raw {
+  margin: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.fr-empty { padding: 32px; text-align: center; color: var(--text-muted); font-size: 13px; }

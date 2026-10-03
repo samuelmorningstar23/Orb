@@ -1,0 +1,1402 @@
+/* ==========================================================================
+   NURSE MODE — "Quiet Clinical", tablet-first
+
+   Everything here is namespaced (.nurse-*, .obs-*, .task-*, .med-*, .patient-card,
+   .handover) and lives in this lazy-route file on purpose: no shared primitive
+   belongs in a lazily-loaded chunk.
+
+   WHAT IS *NOT* HERE, AND WHY (DUAL_EXPERIENCE_VISUAL_SPEC.md §5):
+   The home's chassis — .orb-home__*, .orb-section-header__label, .orb-count-chip,
+   .orb-row*, .orb-list*, .orb-tag*, .orb-state*, .orb-skeleton*, .news2* — is
+   styled in src/pages/ClinicianShell.css, which is EAGER. A class used by both
+   homes but styled in this file renders unstyled on the doctor home until a
+   doctor visits My Shift, which never happens: doctors have no `shift` tab.
+   This repo has shipped that bug. Do not pull any of those rules back in here.
+
+   Rules this file follows:
+     * NO opacity for de-emphasis — muted tokens only. Stacked opacity is what
+       previously produced sub-3:1 text.
+     * Tinted status surfaces are built with color-mix over the status tokens so
+       every theme re-tints automatically; text on them uses --status-*-text,
+       and text on a FILLED status colour uses --status-on-fill.
+     * Every interactive target is at least --tap-min (44px). This is used on a
+       tablet, one-handed, sometimes with gloves.
+     * A section LABEL never carries a status colour — only its count chip does.
+       The rule lives on .orb-section-header__label in the shell stylesheet; the
+       old .nurse-section__title--danger that broke it is deleted (§1.7).
+   ========================================================================== */
+
+.nurse-panel {
+  display: flex;
+  flex-direction: column;
+  /* The header assembly — title block, totals strip, view tabs — reads as one
+     unit at --space-4. The step down to the work below it is taken on
+     .nurse-section, which adds another --space-4 of margin: 16 + 16 = --space-6,
+     the spec's "header block → first section" relationship (§1.4). It is split
+     across two declarations rather than one gap because the strip and the
+     tablist sit between the header and the first section. */
+  gap: var(--space-4);
+}
+
+/* ─── Shift totals strip (spec §5.12) ───
+   "How is my ward?" — read once at handover, and deliberately the QUIETER of
+   the two things on this screen despite sitting on top. The list below answers
+   "what do I do next?", which is read every ten minutes, and it wins on size
+   and object weight: 76px bordered rows against 32px hairline pills. */
+.nurse-totals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: var(--home-col-max);
+}
+
+/* Plain lead-in text, not a pill: the patient count is orientation, not an
+   adverse count, and giving it a chip would put it in the same visual class as
+   "2 obs overdue". */
+.nurse-totals__lead {
+  font-size: var(--text-sm);
+  font-weight: 450;
+  line-height: 1.4;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* The chip itself is .orb-count-chip (shell stylesheet), including the rule
+   that a ZERO adverse count stays neutral and never turns green. These are the
+   two-part contents: a magnitude and the unit it counts. */
+.nurse-totals .orb-count-chip {
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: var(--space-1) var(--space-3);
+}
+
+.nurse-total__value {
+  font-size: var(--text-md);
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* Inherits the chip's colour rather than declaring --text-muted of its own:
+   inside a 12% status tint the gated pair is --status-x-text, and a second,
+   dimmer ink on that wash is a contrast pair nobody has measured. */
+.nurse-total__label {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* ─── View switcher ─── */
+.nurse-views {
+  display: flex;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* min-width: auto restores the flex default the global coarse-pointer rule
+   (index.css, min-width: var(--tap-min)) replaces. With 44px as its floor a tab
+   could shrink below its own label, and on a phone "My patients" and
+   "Deliveries" printed over each other. */
+.nurse-view-tab {
+  min-height: var(--tap-min);
+  min-width: auto;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.nurse-view-tab:hover { color: var(--text-secondary); }
+
+.nurse-view-tab--active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent-gold);
+}
+
+/* ─── Sections ───
+   .nurse-section is the tabpanel: one view's worth of work. Section → section
+   is --space-6 desktop / --space-5 at ≤768 (§1.4). */
+.nurse-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  margin-top: var(--space-4);
+}
+
+/* Section header → its list, at every width.
+
+   Clamped to the same measure as the list it heads. .orb-list carries
+   --home-col-max of its own, so without this the header would run the full
+   width of a 2560px monitor and park its count chip a metre to the right of
+   the rows it counts. */
+.nurse-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: var(--home-col-max);
+}
+
+/* Kept for the SHEETS only (HandoverSheet's "Shift handover" heading and its
+   hint). The home's own section headers are .orb-section-header__label, which
+   is micro-caps, --text-muted and — the point of the change — can never take a
+   status colour. .nurse-section__title--danger is deleted: a header that is red
+   on a quiet shift and red on a bad one has stopped carrying information. */
+.nurse-section__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-md);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.nurse-section__hint,
+.nurse-footnote {
+  font-size: var(--text-xs);
+  font-weight: 450;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.nurse-footnote { max-width: var(--home-col-max); }
+
+/* Also SHEETS only — MedRoundSheet, HandoverSheet and OutcomeCaptureSheet still
+   use it and are out of scope tonight. The home no longer does: "nothing due",
+   "no patients in scope" and "loading" were all this same grey dashed box, and
+   collapsing three different clinical claims into one shape is exactly what
+   §6 exists to stop. See .orb-state--loading/--empty/--calm/--error. */
+.nurse-empty {
+  padding: var(--space-5);
+  font-size: var(--text-sm);
+  text-align: center;
+  color: var(--text-muted);
+  background: var(--bg-glass);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+/* The board-level read failure (§6.4). The block itself is .orb-state--error;
+   this only spaces its Retry away from the sentence above it. */
+.nurse-error .orb-home__refresh { margin-top: var(--space-1); }
+
+/* The >10-minute rung of the staleness ladder puts a Retry inline in the
+   context line, so it shrinks — but never below the 24px floor, and never
+   below --tap-min on a touch device (§0.3).
+
+   Written as a COMPOUND with .orb-home__refresh rather than relying on source
+   order. Both classes are on the same element and both rules are (0,1,0); which
+   one wins would otherwise depend on this lazy chunk's stylesheet landing after
+   the shell's, which is true today and is not a thing to bet a tap target on. */
+.nurse-inline-retry.orb-home__refresh {
+  min-height: 24px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+  vertical-align: middle;
+}
+
+@media (pointer: coarse) {
+  .nurse-inline-retry.orb-home__refresh { min-height: var(--tap-min); padding: 0 var(--space-3); }
+}
+
+/* ─── Notices ─── */
+.nurse-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+}
+
+.nurse-note--danger {
+  color: var(--status-danger-text);
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--status-danger) 40%, transparent);
+}
+
+.nurse-note--warn {
+  color: var(--status-warn-text);
+  background: color-mix(in srgb, var(--status-warn) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-warn) 35%, transparent);
+}
+
+.nurse-note--ok {
+  color: var(--status-ok-text);
+  background: color-mix(in srgb, var(--status-ok) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-ok) 35%, transparent);
+}
+
+.nurse-note--info {
+  color: var(--status-info-text);
+  background: color-mix(in srgb, var(--status-info) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-info) 35%, transparent);
+}
+
+.nurse-note--muted { color: var(--text-muted); }
+
+/* ─── Confirmation toast ───
+   Fixed above the floating Sage orb (--fab-clearance), because in the page
+   flow it rendered at the top of the panel, off-screen on a phone by the time
+   a sheet closed. Content scrolls underneath it, so the tint is mixed into the
+   surface rather than into transparent: a see-through toast is unreadable. */
+.nurse-toast {
+  position: fixed;
+  left: var(--space-4);
+  right: var(--space-4);
+  bottom: calc(var(--fab-clearance) + env(safe-area-inset-bottom, 0px));
+  /* Level with the orb, under every modal and sheet backdrop. */
+  z-index: 9990;
+  max-width: 480px;
+  margin-left: auto;
+  flex-wrap: nowrap;
+  box-shadow: var(--elev-3);
+}
+
+.nurse-toast.nurse-note--ok { background: color-mix(in srgb, var(--status-ok) 10%, var(--bg-surface)); }
+.nurse-toast.nurse-note--warn { background: color-mix(in srgb, var(--status-warn) 10%, var(--bg-surface)); }
+
+.nurse-toast__message { flex: 1; min-width: 0; }
+.nurse-toast__dismiss { flex-shrink: 0; }
+
+/* ─── Buttons ─── */
+.nurse-btn {
+  min-height: var(--tap-min);
+  padding: var(--space-2) var(--space-4);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+              color var(--transition-fast);
+}
+
+/* The one control on this surface allowed below the default height — a Retry
+   beside a failed draft, an "undo" on a charted dose. It still comes back to
+   --tap-min on a touch device: 36px is a mouse target, and every one of its
+   three call sites is a button a nurse presses one-handed, on a tablet,
+   sometimes with gloves. */
+.nurse-btn--compact { min-height: 36px; padding: var(--space-1) var(--space-3); }
+
+@media (pointer: coarse) {
+  .nurse-btn--compact { min-height: var(--tap-min); }
+}
+
+.nurse-btn--primary {
+  color: var(--btn-primary-text);
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+}
+.nurse-btn--primary:hover:not(:disabled) { background: var(--btn-gradient-hover); }
+
+.nurse-btn--secondary {
+  color: var(--text-primary);
+  background: var(--bg-glass);
+  border-color: var(--border-glass);
+}
+.nurse-btn--secondary:hover:not(:disabled) { background: var(--bg-glass-hover); }
+
+.nurse-btn--ghost {
+  color: var(--text-secondary);
+  background: transparent;
+  border-color: var(--border-subtle);
+}
+.nurse-btn--ghost:hover:not(:disabled) { color: var(--text-primary); background: var(--bg-glass); }
+
+.nurse-btn--danger {
+  color: var(--status-danger-text);
+  background: color-mix(in srgb, var(--status-danger) 14%, transparent);
+  border-color: color-mix(in srgb, var(--status-danger) 45%, transparent);
+}
+.nurse-btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-danger) 22%, transparent);
+}
+
+.nurse-btn:disabled {
+  color: var(--btn-disabled-text);
+  background: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+.nurse-btn:focus-visible,
+.nurse-view-tab:focus-visible,
+.task-row:focus-visible,
+.obs-chip:focus-visible,
+.handover__toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ─── NEWS2 badge ───
+   MOVED OUT. `.news2*` now lives in src/pages/ClinicianShell.css and the
+   component in src/components/News2Badge.tsx, because the doctor home renders
+   the same badge and this file is a lazy chunk a doctor never loads — the badge
+   would have painted as a bare number with no band, and the band IS the
+   clinical signal. Do not re-add the rules here.
+   (DUAL_EXPERIENCE_VISUAL_SPEC.md §5.1) */
+
+/* ─── Task list (the default "Due now" view) ───
+   The chassis, the type ramp, the status left-rules and the responsive
+   behaviour are all .orb-row / .orb-list--cards in ClinicianShell.css: a row
+   looks the same on both homes, and what it does when you press it is what
+   differs. .task-row is what differs — it marks a row that opens a WRITE sheet
+   rather than navigating, which is the nurse home's whole verb.
+
+   --bg-glass, NOT --bg-glass-hover. Under the heavier hover fill --text-muted
+   inside a row measures 4.17:1 in dark — below AA, on every task row a nurse
+   hovers. The palette gate could not see it: hover rules declare no colour, so
+   no pair was formed, and the checker never composited --bg-glass-hover at all.
+   The lighter fill still marks the hover and holds 4.78:1.
+   (DUAL_EXPERIENCE_VISUAL_SPEC.md §10.2; scripts/check-contrast.mjs now
+   composites hover fills under descendant text so this cannot recur.) */
+.task-row:hover { background: var(--bg-glass); border-color: var(--border-glass); }
+
+/* The Obs/Med tag sits on the SECOND line here, inside .orb-row__secondary,
+   immediately before the words that say the same thing — so it never carries
+   meaning alone (§9.6). The nowrap/ellipsis on that line is what keeps a long
+   drug string from wrapping to a third row and changing every row's height. */
+.task-row .orb-tag { margin-right: var(--space-2); }
+
+.med-row__missed {
+  font-size: var(--text-xs);
+  color: var(--status-warn-text);
+}
+
+/* ─── Loading skeleton (§6.1) ───
+   Geometry EQUALS the loaded row's geometry — same .orb-row chassis, same 56px
+   lead box, bars at 42% / 64% / 56px — so nothing shifts when data lands. The
+   bars themselves are .orb-skeleton__bar (shell stylesheet), which animates
+   BACKGROUND rather than opacity and parks on the quiet fill under
+   prefers-reduced-motion. */
+.nurse-skel { cursor: default; }
+
+.nurse-skel .orb-row__body { gap: var(--space-2); }
+
+/* 52 × 33 is the unlabelled NEWS2 badge's real box: min-width 52,
+   --space-1/--space-2 padding around a --text-lg numeral at line-height 1.1. */
+.nurse-skel__lead {
+  width: 52px;
+  height: 33px;
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+}
+
+.nurse-skel__bar--a { width: 42%; }
+.nurse-skel__bar--b { width: 64%; }
+.nurse-skel__bar--c { width: 56px; }
+
+/* ─── Patient cards ───
+   Deliberately NOT clamped to --home-col-max, unlike the task and handover
+   lists: a queue is a reading measure, a roster is a grid and should use the
+   width it is given. */
+.patient-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--space-3);
+  list-style: none;
+}
+
+.patient-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-top: 3px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.patient-card--critical { border-top-color: var(--status-danger); }
+.patient-card--elevated { border-top-color: var(--status-warn); }
+.patient-card--stable { border-top-color: var(--status-ok); }
+
+.patient-card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.patient-card__identity {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.patient-card__name {
+  font-size: var(--text-md);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.patient-card__meta {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.patient-card__dx {
+  font-size: var(--text-sm);
+  font-weight: 450;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.patient-card__allergies {
+  padding: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--status-warn-text);
+  background: color-mix(in srgb, var(--status-warn) 10%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+/* An empty allergy list is not an all-clear, so it is said, quietly. */
+.patient-card__allergies--none {
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-glass);
+}
+
+.patient-card__response {
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--status-danger-text);
+}
+
+.patient-card__facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: 450;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums lining-nums;
+  color: var(--text-secondary);
+  list-style: none;
+}
+
+.patient-card__facts .is-late {
+  font-weight: 600;
+  color: var(--status-danger-text);
+}
+
+.patient-card__actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: auto;
+}
+
+.patient-card__actions .nurse-btn { flex: 1; }
+
+/* ==========================================================================
+   Sheets (obs entry + med round). Portalled to document.body.
+   ========================================================================== */
+.nurse-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: rgba(0, 0, 0, 0.55);
+}
+
+[data-theme='light'] .nurse-sheet-backdrop { background: rgba(40, 48, 62, 0.35); }
+
+.nurse-sheet {
+  position: relative;
+  width: 100%;
+  max-width: 640px;
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+}
+
+.nurse-sheet--wide { max-width: 760px; }
+
+.nurse-sheet__header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.nurse-sheet__title {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.nurse-sheet__subject {
+  margin-top: 2px;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.nurse-sheet__close {
+  flex-shrink: 0;
+  width: var(--tap-min);
+  height: var(--tap-min);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+
+.nurse-sheet__close:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-glass-hover);
+}
+
+.nurse-sheet__body {
+  flex: 1;
+  overflow-y: auto;
+  /* Bedside tablet: reaching the end of the med round must not scroll the board
+     behind the sheet. See Vigil.css .modal. */
+  overscroll-behavior: contain;
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.nurse-sheet__actions {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5) var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* ─── Observation entry ─── */
+/* minmax(0, …) on every track: a text input carries an intrinsic min-content
+   width from its `size` attribute (20 chars by default), and at this font size
+   that alone is ~400px — enough to blow the tracks past the sheet. The explicit
+   0 floor lets the fields shrink to the column instead. */
+.obs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-3);
+}
+
+.obs-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.obs-field__label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.obs-field__unit { color: var(--text-muted); font-weight: 500; }
+
+.obs-field__row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Big, tall, tabular. A number typed at arm's length on a tablet has to be
+   readable and correctable without zooming. */
+.obs-field__input {
+  flex: 1;
+  min-width: 0;
+  min-height: 64px;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 1.9rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--text-primary);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+}
+
+.obs-field__input::placeholder { color: var(--text-muted); }
+
+.obs-field__input:focus {
+  outline: none;
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-gold) 22%, transparent);
+}
+
+.obs-field--error .obs-field__input {
+  border-color: var(--status-danger);
+  background: color-mix(in srgb, var(--status-danger) 8%, transparent);
+}
+
+.obs-field__error {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--status-danger-text);
+}
+
+/* Per-parameter NEWS2 contribution, next to the value that caused it. */
+.obs-field__points {
+  flex-shrink: 0;
+  min-width: 34px;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  border-radius: var(--radius-sm);
+}
+
+.obs-field__points--ok {
+  color: var(--status-ok-text);
+  background: color-mix(in srgb, var(--status-ok) 14%, transparent);
+}
+.obs-field__points--warn {
+  color: var(--status-on-fill);
+  background: var(--status-warn);
+}
+.obs-field__points--danger {
+  color: var(--status-on-fill);
+  background: var(--status-danger);
+}
+
+/* ─── Segmented controls (no <select> — a dropdown needs a mouse) ─── */
+.obs-segment { border: none; }
+
+.obs-segment__legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.obs-segment__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.obs-chip {
+  min-height: var(--tap-min);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+              color var(--transition-fast);
+}
+
+/* --bg-glass, not --bg-glass-hover: the heavier hover fill lifts the backdrop
+   until .obs-chip__key (--text-muted) inside measures 3.98:1 in dark — below AA. The lighter fill still
+   marks the hover. Found by the hover-surface pass in
+   scripts/check-contrast.mjs (spec §10.2); it composites a state fill under
+   the DESCENDANT text it lands beneath, which is what the old gate could not see. */
+.obs-chip:hover:not(:disabled) { color: var(--text-primary); background: var(--bg-glass); }
+
+.obs-chip--active {
+  color: var(--text-primary);
+  background: var(--accent-glow-strong);
+  border-color: var(--accent-gold);
+}
+
+.obs-chip__key {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+}
+
+.obs-chip--active .obs-chip__key { color: var(--accent-text); border-color: var(--accent-gold); }
+
+/* ─── Live score panel ─── */
+.obs-score {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.obs-score__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.obs-score__meta { display: flex; flex-direction: column; gap: var(--space-1); }
+
+.obs-score__band {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.obs-score__response {
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.obs-score__drivers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  list-style: none;
+}
+
+.obs-score__drivers li {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--status-warn-text);
+  background: color-mix(in srgb, var(--status-warn) 10%, transparent);
+  border-radius: var(--radius-full);
+}
+
+.obs-score__caveat,
+.obs-score__placeholder {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* ─── Confirm-before-discard overlay (inside the sheet) ─── */
+.nurse-confirm {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: var(--radius-lg);
+}
+
+[data-theme='light'] .nurse-confirm { background: rgba(40, 48, 62, 0.45); }
+
+.nurse-confirm__box {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-3);
+}
+
+.nurse-confirm__title {
+  font-size: var(--text-md);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.nurse-confirm__text {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.nurse-confirm__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* ─── Medication round ─── */
+.med-group { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.med-group__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.med-group__count {
+  min-width: 22px;
+  padding: 1px var(--space-2);
+  font-size: var(--text-xs);
+  text-align: center;
+  color: var(--text-secondary);
+  background: var(--bg-glass);
+  border-radius: var(--radius-full);
+}
+
+.med-group__hint { font-size: var(--text-xs); color: var(--text-muted); }
+
+.med-list { display: flex; flex-direction: column; gap: var(--space-2); list-style: none; }
+
+.med-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.med-row--overdue { border-left-color: var(--status-danger); }
+.med-row--done { border-left-color: var(--status-ok); }
+/* Charted as not given: a recorded decision, not a completed dose. After
+   --done and --overdue so it wins on a late dose that was held. */
+.med-row--held { border-left-color: var(--status-warn); }
+
+.med-row__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+
+.med-row__name { font-size: var(--text-base); font-weight: 600; color: var(--text-primary); }
+.med-row__detail { font-size: var(--text-xs); color: var(--text-secondary); }
+.med-row__timing { font-size: var(--text-xs); color: var(--text-muted); }
+
+.med-row__blocked {
+  margin-top: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--status-warn-text);
+  background: color-mix(in srgb, var(--status-warn) 10%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+/* A dose the bedside allergy screen will refuse: danger, because Orb will stop
+   it, where the unverified-order line above is a caution. */
+.med-row__blocked--danger {
+  color: var(--status-danger-text);
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+}
+
+.med-row__action { flex-shrink: 0; }
+
+.med-row__result {
+  display: inline-block;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  border-radius: var(--radius-md);
+}
+
+.med-row__result--given {
+  color: var(--status-ok-text);
+  background: color-mix(in srgb, var(--status-ok) 14%, transparent);
+}
+
+.med-row__result--not_given {
+  color: var(--status-warn-text);
+  background: color-mix(in srgb, var(--status-warn) 14%, transparent);
+}
+
+/* A dose given ACROSS a charted allergy, marked on the round sheet the moment
+   it is charted. Sits under the "Given" pill rather than replacing it: the dose
+   WAS given, and that is the first fact; that it crossed an allergy is the
+   second, and it must never be only in the audit log. Danger-toned text on a
+   flat tint — never opacity — so it stays readable in all three themes. */
+.med-row__override {
+  display: block;
+  margin-top: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-align: right;
+  color: var(--status-danger-text);
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+/* ─── Handover ───
+   The whole sheet takes the queue's measure, not only its list, so the
+   "handed over" progress pill stays over the rows it counts on a wide monitor. */
+.handover {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: var(--home-col-max);
+}
+
+.handover__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.handover__progress {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+}
+
+/* Same reading measure as the task queue: a handover walked patient by patient
+   is a list, and a 2560px monitor must not stretch one row until the bed and
+   the "handed over" state are a metre apart. */
+.handover__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+  max-width: var(--home-col-max);
+}
+
+.handover__item {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.handover__item--done { border-left-color: var(--status-ok); }
+
+.handover__toggle {
+  width: 100%;
+  min-height: var(--tap-min);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+/* Same defect, same fix: .handover__meta inside is --text-muted. */
+.handover__toggle:hover { background: var(--bg-glass); }
+
+.handover__identity { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.handover__name { font-size: var(--text-base); font-weight: 600; color: var(--text-primary); }
+.handover__meta {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.handover__state { flex-shrink: 0; font-size: var(--text-xs); color: var(--text-muted); }
+.handover__item--done .handover__state { color: var(--status-ok-text); font-weight: 600; }
+
+.handover__chevron {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-md);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.handover__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.ipass { display: flex; flex-direction: column; gap: var(--space-3); }
+
+.ipass__row { display: flex; flex-direction: column; gap: var(--space-1); }
+
+.ipass__row dt {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+
+.ipass__row dd {
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.ipass__actions { display: flex; flex-direction: column; gap: var(--space-1); list-style: disc; padding-left: var(--space-5); }
+
+.handover__note-label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.handover__note {
+  width: 100%;
+  padding: var(--space-3);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  resize: vertical;
+  color: var(--text-primary);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+}
+
+.handover__note::placeholder { color: var(--text-muted); }
+
+.handover__note:focus {
+  outline: none;
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-gold) 22%, transparent);
+}
+
+.handover__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.handover__actions .nurse-footnote { flex: 1; min-width: 200px; }
+
+/* ==========================================================================
+   Responsive — tablet is the primary target, phone is the Relay-in-pocket case
+
+   The queue is SINGLE-COLUMN AT EVERY WIDTH, clamped by --home-col-max. A
+   two-column task grid at ≥1400px would reduce scrolling and destroy the
+   reading order that is the entire product: the list is sorted (deterioration,
+   then lateness) and "what do I do next" must be answerable by looking at the
+   top. That is why there is no 1399px or 1199px rule here — the nurse home
+   genuinely does not change shape at those steps (spec §1.5), and an empty
+   media query would only make the next reader wonder what was forgotten.
+   ========================================================================== */
+
+/* Tablet landscape and down: two obs fields per row, sheets go full-bleed. */
+@media (max-width: 900px) {
+  .obs-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .nurse-sheet { max-width: none; }
+}
+
+/* Tablet portrait (768×1024) — the primary bedside device. */
+@media (max-width: 768px) {
+  /* Section → section drops --space-6 → --space-5, and the header block → first
+     section step with it (12 gap + 12 margin = --space-5). */
+  .nurse-panel { gap: var(--space-3); }
+  .nurse-section { gap: var(--space-5); margin-top: var(--space-3); }
+
+  .patient-grid { grid-template-columns: 1fr; }
+
+  /* The strip wraps rather than scrolling: its order is fixed and every chip
+     must stay readable. The TAB strip scrolls horizontally instead — with no
+     fade mask, because a fade over a tab label is a hover-only affordance for
+     the label it hides. */
+  .nurse-views { overflow-x: auto; }
+  .nurse-view-tab { white-space: nowrap; flex-shrink: 0; }
+}
+
+/* Phone: sheets become full-height, everything stacks, targets stay ≥44px. */
+@media (max-width: 560px) {
+  .nurse-sheet-backdrop { padding: 0; align-items: stretch; }
+  .nurse-sheet {
+    max-height: 100vh;
+    height: 100%;
+    border-radius: 0;
+    border: none;
+  }
+  .nurse-sheet__body { padding: var(--space-3) var(--space-4); }
+  .nurse-sheet__header { padding: var(--space-3) var(--space-4); }
+  .nurse-sheet__actions { padding: var(--space-3) var(--space-4); }
+  .nurse-sheet__actions .nurse-btn { flex: 1; }
+
+  .obs-grid { grid-template-columns: repeat(2, 1fr); gap: var(--space-2); }
+  .obs-field__input { min-height: 56px; font-size: 1.5rem; }
+
+  .patient-card__actions { flex-direction: column; }
+
+  /* This used to be `display: none`. Hiding it left the green left rule as the
+     ONLY carrier of "handed over / not handed over" on a phone — colour alone,
+     which §9.6 forbids and which a red-green-deficient nurse cannot read at
+     all. It wraps onto its own line instead. No `order:` is used, so the DOM
+     order and the reading order still agree. */
+  .handover__toggle { flex-wrap: wrap; }
+  .handover__state { flex-basis: 100%; }
+
+  .handover__actions { flex-direction: column; align-items: stretch; }
+  .handover__actions .nurse-btn { width: 100%; }
+}
+
+/* ==========================================================================
+   End of shift — outcome capture (OutcomeCaptureSheet). The charge nurse's
+   half of the pilot instrument: confirm a quiet shift, record a real event.
+   Shows NO rates or metrics by design — see the component docstring.
+   ========================================================================== */
+.shift-capture {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 760px;
+}
+
+.shift-capture__why { max-width: 62ch; }
+
+.shift-capture__ward {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-width: 320px;
+}
+
+.shift-capture__label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* One input look for the capture surface: text, select, datetime, textarea. */
+.shift-input {
+  min-height: var(--tap-min);
+  padding: var(--space-2) var(--space-3);
+  font-family: inherit;
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.shift-input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.shift-input:disabled {
+  color: var(--btn-disabled-text);
+  background: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-border);
+}
+
+textarea.shift-input { min-height: 88px; resize: vertical; }
+
+.shift-window {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.shift-window--current { border-color: var(--border-glass); }
+
+.shift-window__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.shift-window__title {
+  font-size: var(--text-md);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.shift-window__meta {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+/* The explicit confirm step — restate exactly what is being asserted. */
+.shift-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: color-mix(in srgb, var(--status-info) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-info) 35%, transparent);
+  border-radius: var(--radius-md);
+}
+
+.shift-confirm__text {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.shift-confirm__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* ─── Deterioration event form ─── */
+.outcome-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.outcome-form__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-3);
+}
+
+.outcome-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.outcome-field__hint {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.outcome-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* ─── Deliveries: the ward end of a pharmacy dispense ───
+   One row per drug that has left the pharmacy and not yet been signed for.
+   Flat surface, no status tint on the row itself: a delivery waiting is the
+   normal state of this screen, and a colour that is present on a good day
+   cannot mean anything on a bad one (the rule the section labels follow). */
+/* The container had no rule, so its notices, state block, list and footnote
+   sat flush against each other at full width. Same measure as the queue. */
+.nurse-deliveries {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: var(--home-col-max);
+}
+
+.nurse-deliveries__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nurse-delivery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+}
+
+.nurse-delivery__main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nurse-delivery__drug {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.nurse-delivery__regimen,
+.nurse-delivery__patient {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.nurse-delivery__side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-end;
+}
+
+.nurse-delivery__from {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-align: right;
+}
+
+@media (max-width: 640px) {
+  .nurse-delivery { align-items: stretch; }
+  .nurse-delivery__side { align-items: stretch; }
+  .nurse-delivery__from { text-align: left; }
+}

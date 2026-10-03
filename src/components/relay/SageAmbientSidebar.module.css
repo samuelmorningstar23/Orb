@@ -1,0 +1,364 @@
+/* ─── Sage Copilot — flat "Quiet Clinical" panel (matches the app shell) ─── */
+.sidebar {
+  width: 320px;
+  min-width: 280px;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  padding: 20px 16px;
+  overflow-y: auto;
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.emptyState {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 24px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--accent-text);
+  letter-spacing: 0.06em;
+  margin-bottom: 20px;
+}
+
+.icon {
+  width: 18px;
+  height: 18px;
+}
+
+.summaryBlock {
+  margin-bottom: 24px;
+  background: var(--bg-glass);
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+}
+
+.concern {
+  font-weight: 600;
+  margin-bottom: 8px;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+
+.summaryText {
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.sectionTitle {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  margin-top: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.card {
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  margin-bottom: 12px;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+/* Interactive cards shift fill/border on hover — no lift, no glow. */
+.card:hover {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-glass);
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 6px;
+}
+
+.cardTitle {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+
+.badge {
+  font-size: 0.74rem;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  color: var(--text-secondary);
+}
+
+.cardBody {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.riskCard {
+  border-left: 3px solid var(--status-warn);
+}
+
+.riskBadge {
+  background: color-mix(in srgb, var(--status-warn) 16%, transparent);
+  color: var(--status-warn-text);
+}
+
+/* --accent-glow, not --accent-glow-strong: the 22–26% wash lifts the backdrop
+   far enough that --accent-text lands at 3.91:1 in dark. */
+.suggestionBadge {
+  background: var(--accent-glow);
+  color: var(--accent-text);
+}
+
+.stale {
+  /* De-emphasis via the neutral "Stale" badge + muted color — not a blanket
+     opacity, which dragged the card body text under the 3:1 contrast floor. */
+  filter: saturate(0.85);
+}
+
+.staleBadge {
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+  color: var(--text-secondary);
+}
+
+/* Actions Stage 3 */
+.actionRow {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  align-items: center;
+}
+
+.btn {
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+  font-family: inherit;
+  flex: 1;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+/* Base .btn is the ghost pair (Ack/Dismiss): quiet the label, keep the
+   hairline. Opacity here compounded with the card's own stale/handled
+   de-emphasis and took the label under the readable floor. */
+.btn:disabled {
+  color: var(--text-muted);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+.btnAck {
+  color: var(--text-secondary);
+}
+.btnAck:hover:not(:disabled) {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-glass);
+}
+
+.btnDismiss {
+  color: var(--text-secondary);
+  border-color: var(--border-glass);
+}
+.btnDismiss:hover:not(:disabled) {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-glass);
+}
+
+/* Confirm = primary action: flat clay fill, token label, token hover. */
+.btnConfirm {
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  border-color: transparent;
+  font-weight: 700;
+}
+.btnConfirm:hover:not(:disabled) {
+  background: var(--btn-gradient-hover);
+}
+/* Filled variant overrides the ghost disabled rule above — a muted label left
+   sitting on the clay fill is the exact pairing the audit flagged. */
+.btnConfirm:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+.handledCard {
+  background: transparent;
+  border-color: var(--border-subtle);
+}
+.handledCard .cardTitle {
+  color: var(--text-secondary);
+}
+.handledCard .cardBody {
+  color: var(--text-secondary);
+}
+.handledBadge {
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  color: var(--text-secondary);
+}
+
+.handoffAccepted {
+  background: color-mix(in srgb, var(--status-ok) 16%, transparent);
+  color: var(--status-ok-text);
+}
+
+.handoffPending {
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  color: var(--text-secondary);
+}
+
+.handoffFailed {
+  background: color-mix(in srgb, var(--status-danger) 16%, transparent);
+  color: var(--status-danger-text);
+}
+
+.handoffUnsupported {
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-secondary);
+}
+
+.handoffBlocked {
+  background: color-mix(in srgb, var(--status-danger) 16%, transparent);
+  color: var(--status-danger-text);
+}
+
+/* On the chart for review, but no pharmacy order exists (not in the catalog). */
+.handoffChartedOnly {
+  background: color-mix(in srgb, var(--status-warn) 16%, transparent);
+  color: var(--status-warn-text);
+}
+
+.handoffChartedNote {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--status-warn-text);
+}
+
+/* Why a stopped order was stopped, and the alerts behind one that went through. */
+.handoffReason {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--status-danger-text);
+}
+
+.handoffAlerts {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--status-warn-text);
+}
+
+.handoffAlerts ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
+
+.handoffAlertsTitle {
+  font-weight: 600;
+}
+
+.handoffCoverage {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.loading {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .5; }
+}
+
+/* Below 900px the sidebar becomes a slide-over drawer — the one floating
+   layer here, so it gets the elevated surface and the ephemeral shadow. */
+@media (max-width: 900px) {
+  .sidebar {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 10;
+    background: var(--bg-elevated);
+    border-left: 1px solid var(--border-glass);
+    box-shadow: var(--elev-3);
+    transform: translateX(100%);
+    transition: transform 0.3s ease;
+  }
+  .sidebar.open {
+    transform: translateX(0);
+  }
+}
+
+/* Load-failure state. Deliberately occupies the same slot the risk flags would,
+   so an absent Sage panel is never mistaken for "Sage found nothing". */
+.failState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100%;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  text-align: center;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.retryBtn {
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  padding: 6px 14px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.retryBtn:hover {
+  background: var(--bg-glass-hover);
+}

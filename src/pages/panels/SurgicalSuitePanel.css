@@ -1,0 +1,1307 @@
+/* ══════════════════════════════════════════════════
+   SURGICAL SUITE — 3-Tier Drill-Down Panel
+   Quiet Clinical: flat opaque surfaces, hairline borders,
+   clay accent used sparingly, semantic status colours.
+   ══════════════════════════════════════════════════ */
+
+.suite {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  /* The parent's width, never a sum of guesses. This was the viewport minus a
+     220px sidebar and 64px of padding: on a phone, where neither exists, the
+     whole suite was about 106px wide. min-width: 0 plus the strip's own
+     overflow-x is what keeps the week from widening the page. */
+  width: 100%;
+  max-width: 100%;
+  position: relative;
+  overflow-y: auto;
+  overflow-x: hidden; /* .suite itself hides X overflow; .suite__week handles its own scroll */
+}
+
+/* ── Loading Skeleton (subtle opacity pulse, no gradient sweep) ── */
+.suite__loading {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+  padding: 4px;
+}
+
+.suite__shimmer-card {
+  height: 240px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-glass);
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.suite__error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px;
+  color: var(--status-danger-text);
+}
+
+.suite__retry {
+  padding: 8px 20px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  border: none;
+  transition: background var(--transition-fast);
+}
+
+.suite__retry:hover {
+  background: var(--btn-gradient-hover);
+}
+
+.suite__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 60px 40px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+/* ═══ TIER 1 — Week View ═══ */
+.suite__week {
+  display: flex;
+  flex-wrap: nowrap;
+  width: 100%; /* Force width to match parent to trigger scroll */
+  max-width: 100%;
+  overflow-x: auto;
+  gap: 24px;
+  padding: 32px 24px 60px 24px;
+  -webkit-overflow-scrolling: touch;
+  /* DEMO_READINESS §10.3: the strip scrolls horizontally, so the scrollbar IS
+     the affordance. It was display:none'd here with no replacement cue, so a
+     day column cut off at the viewport edge just looked truncated. The styled
+     ::-webkit-scrollbar below is what paints it persistently.
+
+     The strip must opt OUT of the global `* { scrollbar-width: thin }` in
+     index.css. Whenever that standard property applies, Chrome ignores the
+     ::-webkit-scrollbar rules and paints the macOS OVERLAY scrollbar, which is
+     invisible at rest — exactly the truncated-looking strip §10.3 set out to
+     fix, which is why declaring `thin` HERE did not fix it either. Measured on
+     the running app: with `thin`, offsetHeight - clientHeight is 0 (nothing
+     painted); with `auto`, 6px of persistent scrollbar. */
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+  animation: suite-week-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Firefox: no ::-webkit-scrollbar support, so the standard properties are the
+   only way to style it there — and harmless, because this block is skipped by
+   every engine that does support the pseudo-element. */
+@supports not selector(::-webkit-scrollbar) {
+  .suite__week {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-glass) transparent;
+  }
+}
+
+.suite__week::-webkit-scrollbar {
+  height: 6px;
+}
+
+.suite__week::-webkit-scrollbar-thumb {
+  background: var(--border-glass);
+  border-radius: var(--radius-full);
+}
+
+.suite__week::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.suite__week--entering {
+  animation: suite-week-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes suite-week-enter {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.suite__day-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+  cursor: pointer;
+  text-align: left;
+  flex: 0 0 auto;
+  width: 360px; /* Even wider */
+  min-height: 480px; /* Much longer vertically */
+  animation: suite-card-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  transition: background var(--transition-base),
+              border-color var(--transition-base);
+  position: relative;
+  overflow: hidden;
+
+  /* Flat card surface */
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+}
+
+@keyframes suite-card-enter {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.suite__day-card:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-glass);
+}
+
+/* DEMO_READINESS §10.4: a day with no surgeries is a header and a zero —
+   it must not hold the full 480px card height as blank space. */
+.suite__day-card--empty {
+  min-height: 0;
+  /* min-height alone did NOT do it. The strip is a flex row, so every card is
+     stretched to the tallest one's height — an empty day still rendered 475px
+     of blank glass next to a populated 480px card, which is the exact thing
+     §10.4 asked to remove. Top-aligning the empty card is what lets it shrink
+     to its own content. Verified on screen, not in a unit test: the stretch is
+     a property of the row, so a card rendered alone measures correctly and the
+     bug survives. */
+  align-self: flex-start;
+}
+
+.suite__day-card--today {
+  border-color: var(--accent-glow-strong);
+  background: var(--accent-glow);
+}
+
+.suite__day-card--today::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent-gold);
+}
+
+/* Dismiss animation — cards slide away when a day is clicked */
+.suite__day-card--dismissed {
+  animation: suite-day-dismiss 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes suite-day-dismiss {
+  to {
+    opacity: 0;
+    transform: translateX(calc(var(--dismiss-dir, 1) * 120px)) scale(0.9);
+  }
+}
+
+.suite__day-card--expanding {
+  animation: suite-day-expand 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes suite-day-expand {
+  to {
+    opacity: 0;
+    transform: scale(1.05);
+  }
+}
+
+.suite__day-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.suite__day-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.suite__day-date {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.suite__today-badge {
+  font-size: 0.74rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  background: var(--accent-glow);
+  color: var(--accent-text);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--accent-glow-strong);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-left: auto;
+}
+
+.suite__day-count {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.suite__day-count-num {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.suite__day-count-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.suite__day-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.suite__day-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.78rem;
+}
+
+.suite__day-item-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+  min-width: 58px;
+  font-size: 0.72rem;
+  padding-top: 2px;
+}
+
+.suite__day-item-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 5px;
+}
+
+.suite__day-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.suite__day-item-proc {
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.suite__day-item-patient {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+/* Day Footer (Analytics). Three equal columns with a gap: as a space-between
+   flex row the three uppercase labels ran into each other on a narrow card. */
+.suite__day-footer {
+  margin-top: auto;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.suite__day-footer-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.suite__day-footer-val {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.suite__day-footer-lbl {
+  font-size: 0.74rem;
+  line-height: 1.3;
+  color: var(--text-muted);
+}
+
+/* Emergency banner — flat surface; the red semantic tint
+   (bg + border) is kept via inline styles in the TSX. */
+.suite__emergency-banner {
+  border-radius: var(--radius-lg);
+}
+
+/* ═══ TIER 2 — Day View ═══ */
+.suite__day-view {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  animation: suite-day-view-enter 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes suite-day-view-enter {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.suite__day-view--fading {
+  animation: suite-day-view-fade 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes suite-day-view-fade {
+  to { opacity: 0; transform: scale(0.98); }
+}
+
+.suite__day-view--entering {
+  animation: suite-day-view-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.suite__back {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 500;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+  width: fit-content;
+
+  /* Secondary chip */
+  background: var(--bg-surface);
+  border: 1px solid var(--border-glass);
+}
+
+.suite__back:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-glass);
+}
+
+.suite__day-view-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.suite__day-view-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.suite__day-view-date {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.suite__day-view-count {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+/* Timeline */
+.suite__timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.suite__surgery-card {
+  display: flex;
+  gap: 16px;
+  padding: 20px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  border-radius: var(--radius-lg);
+  animation: suite-card-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+
+  /* Flat card surface */
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+}
+
+.suite__surgery-card:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-glass);
+}
+
+.suite__surgery-time-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 70px;
+  gap: 2px;
+  padding-top: 2px;
+}
+
+.suite__surgery-time {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.suite__surgery-duration {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+.suite__surgery-line {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding-top: 6px;
+}
+
+.suite__surgery-line-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.suite__surgery-line-stem {
+  width: 2px;
+  flex: 1;
+  min-height: 40px;
+  background: var(--border-subtle);
+  margin-top: -2px;
+}
+
+.suite__surgery-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.suite__surgery-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.suite__surgery-proc {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+
+.suite__surgery-ot {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+  flex-shrink: 0;
+  border: 1px solid var(--border-subtle);
+}
+
+.suite__surgery-diagnosis {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.suite__surgery-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.suite__surgery-patient {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.suite__surgery-risk {
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.suite__surgery-success {
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ═══ TIER 3 — Surgery Detail (Dense Compact) ═══ */
+.suite__detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: suite-detail-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  padding-bottom: 20px;
+}
+
+@keyframes suite-detail-enter {
+  from { opacity: 0; transform: scale(0.98) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.suite__detail--exiting {
+  animation: suite-detail-exit 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes suite-detail-exit {
+  to { opacity: 0; transform: scale(0.98); }
+}
+
+/* Detail Top Nav */
+.suite__detail-top-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 4px;
+}
+
+.suite__btn-prep {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: var(--status-danger);
+  color: var(--status-on-fill);
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  transition: background var(--transition-fast);
+  cursor: pointer;
+  min-width: 140px;
+  justify-content: center;
+}
+
+.suite__btn-prep:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-danger) 85%, #000);
+}
+
+.suite__btn-prep--success {
+  background: var(--status-ok);
+}
+
+.suite__btn-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: var(--btn-primary-text);
+  border-radius: 50%;
+  animation: orb-spin 0.8s linear infinite;
+}
+
+/* Patient Bar Dense */
+.suite__detail-patient-bar-dense {
+  display: flex;
+  flex-direction: column;
+  padding: 12px 16px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  gap: 12px;
+}
+
+.suite__patient-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.suite__detail-patient-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-full);
+  background: var(--accent-glow);
+  border: 1px solid var(--accent-glow-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: var(--accent-text);
+  flex-shrink: 0;
+}
+
+.suite__detail-patient-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.suite__patient-name-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.suite__detail-patient-name {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.suite__detail-patient-sub {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.suite__header-stats {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.suite__detail-meta-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 4px 10px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.suite__detail-meta-pill--ot {
+  background: var(--accent-glow);
+  border-color: var(--accent-glow-strong);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+/* Pills (co-morbidities) */
+.suite__pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.suite__pills--dense {
+  gap: 4px;
+}
+
+.suite__pill {
+  font-size: 0.78rem;
+  padding: 6px 14px;
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent);
+  border-radius: var(--radius-full);
+  color: var(--status-danger-text);
+  font-weight: 500;
+}
+
+.suite__pill--dense {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+}
+
+/* Drug allergy — strong danger tint so it can't be missed pre-op */
+.suite__pill--allergy {
+  background: color-mix(in srgb, var(--status-danger) 16%, transparent);
+  border-color: color-mix(in srgb, var(--status-danger) 42%, transparent);
+  color: var(--status-danger-text);
+  font-weight: 700;
+}
+
+/* Allergy history ABSENT — amber, an open pre-op item, never green.
+   Orb cannot tell "NKDA, confirmed by a clinician" apart from "nobody ever
+   asked": patient_allergies has no allergy-status column and nothing in the
+   admission path requires an allergy history (AdmitPatientModal's allergy field
+   is optional; ScribePanel's Quick Admit never collects one). An empty list is
+   therefore an ABSENCE OF DATA, and painting an absence green on the surface an
+   anaesthetist reads before induction is the one colour it must never be. */
+.suite__pill--allergy-unknown {
+  background: color-mix(in srgb, var(--status-warn) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-warn) 32%, transparent);
+  color: var(--status-warn-text);
+  letter-spacing: 0.02em;
+}
+
+/* Team Row (Inline) */
+.suite__team-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.suite__team-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.suite__team-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.suite__team-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 4px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.suite__team-chip-av {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--bg-glass-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Dense Grid Layout */
+.suite__grid-dense {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.suite__grid-col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.suite__detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  animation: suite-section-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes suite-section-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.suite__detail-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.suite__detail-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0;
+}
+
+.suite__section-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+/* Risk Assessment */
+.suite__ai-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  /* --accent-deep, not --accent-gold: gold is the *surface* accent (rules,
+     dots, carets). As a fill under a white label it measures 3.12:1 in dark.
+     --accent-deep + --btn-primary-text is the pair the contrast gate asserts. */
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-left: 6px;
+}
+
+/* Enrichment Status Badge */
+.suite__enrichment-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: var(--radius-full);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-left: 4px;
+}
+
+.suite__enrichment-badge--fallback {
+  background: color-mix(in srgb, var(--status-warn) 10%, transparent);
+  color: var(--status-warn-text);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 28%, transparent);
+}
+
+/* Neutral provenance: the prep package is a deterministic template, so its
+   badge carries no status colour — it is a fact, not a success. */
+.suite__enrichment-badge--neutral {
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+/* Fallback Notification Label */
+.suite__fallback-label {
+  padding: 8px 12px;
+  margin-top: 6px;
+  background: color-mix(in srgb, var(--status-warn) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 28%, transparent);
+  border-radius: var(--radius-sm);
+  font-size: 0.72rem;
+  color: var(--status-warn-text);
+  line-height: 1.4;
+  animation: suite-section-enter 0.3s ease;
+}
+
+.suite__risk-section {
+  position: relative;
+  transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+
+.suite__risk-section--limited {
+  max-height: 160px;
+}
+
+.suite__risk-section--expanded {
+  max-height: 1200px;
+}
+
+.suite__risk-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The keyboard path into the collapsed AI risk assessment. Sized to the 44px
+   target-size floor the design system sets, drawn as the bare chevron it
+   replaced. */
+.suite__risk-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  margin: -12px -8px -12px 0;
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.suite__risk-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--accent-glow-strong);
+  border-top-color: var(--accent-gold);
+  border-radius: 50%;
+  animation: orb-spin 0.8s linear infinite;
+}
+
+.suite__exp-icon {
+  color: var(--text-muted);
+  transition: transform 0.3s ease;
+}
+
+.suite__exp-icon--up {
+  transform: rotate(180deg);
+}
+
+/* Fade mask over the collapsed risk section — functional truncation cue */
+.suite__risk-mask {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  background: linear-gradient(to bottom, transparent, var(--bg-surface));
+  pointer-events: none;
+}
+
+.suite__risk-content-wrap {
+  position: relative;
+}
+
+.suite__risk-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.suite__risk-shimmer {
+  height: 12px;
+  width: 100%;
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+.suite__risk-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.suite__risk-heading {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-top: 6px;
+  margin-bottom: 0;
+}
+
+.suite__risk-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.suite__risk-num {
+  font-weight: 600;
+  color: var(--accent-text);
+  min-width: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.suite__risk-item-content {
+  flex: 1;
+}
+
+.suite__risk-item-content strong {
+  color: var(--accent-text);
+  font-weight: 600;
+  margin-right: 6px;
+  display: inline-block;
+  letter-spacing: -0.01em;
+}
+
+.suite__risk-item-content span {
+  color: var(--text-secondary);
+}
+
+.suite__risk-bullet-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
+  margin-left: 14px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.suite__risk-bullet-icon {
+  color: var(--accent-text);
+  font-size: 0.7rem;
+  margin-top: 3px;
+}
+
+.suite__risk-text {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+
+/* Streaming caret — 2px radius kept: it's a text caret, not a surface */
+.suite__risk-cursor {
+  display: inline-block;
+  width: 6px;
+  height: 14px;
+  background: var(--accent-gold);
+  border-radius: 2px;
+  animation: blink 0.8s infinite;
+  vertical-align: middle;
+  margin-left: 2px;
+}
+
+/* Success Gauge Micro */
+.suite__detail-success-gauge--micro {
+  width: 32px;
+  height: 32px;
+  position: relative;
+}
+
+.suite__gauge-value-micro {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* Checklist Dense */
+.suite__checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.suite__checklist--dense .suite__checklist-item {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.suite__checklist-item {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.suite__checklist-num {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--accent-text);
+  font-variant-numeric: tabular-nums;
+  min-width: 18px;
+  padding-top: 2px;
+}
+
+.suite__checklist-text {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+/* Instruments Grid Dense */
+.suite__instrument-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.suite__instrument {
+  font-size: 0.7rem;
+  padding: 4px 10px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+}
+
+/* Complications */
+.suite__complications {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.suite__complication-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.3;
+  padding: 2px 0;
+}
+
+.suite__complication-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--status-danger);
+  opacity: 0.6;
+  flex-shrink: 0;
+  margin-top: 6px;
+}
+
+/* Overlay — functional dimming scrim, no blur */
+.suite__overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.3);
+  z-index: 100;
+  border-radius: var(--radius-lg);
+}
+
+.suite__overlay-spinner {
+  width: 40px;
+  height: 40px;
+  border: 2px solid var(--accent-glow-strong);
+  border-top-color: var(--accent-gold);
+  border-radius: 50%;
+  animation: orb-spin 0.8s linear infinite;
+}
+
+/* Staff List Detailed */
+.suite__staff-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.suite__staff-list--dense {
+  gap: 6px;
+}
+
+.suite__staff-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-glass);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+}
+
+.suite__staff-card--dense {
+  padding: 6px 8px;
+  gap: 8px;
+}
+
+.suite__staff-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-full);
+  background: var(--bg-glass-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.suite__staff-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.suite__staff-name {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.suite__staff-role {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+/* Theme notes: all light-mode overrides removed — surfaces, pills,
+   and status tints now come from tokens that theme automatically. */
+
+/* Responsive. The week strip is a flex row that scrolls sideways, so the
+   grid-template-columns these blocks used to set on it did nothing. */
+@media (max-width: 900px) {
+  .suite__grid-dense {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Clinical Handoff Context ── */
+.suite__handoff-block {
+  padding: 6px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.suite__handoff-block + .suite__handoff-block {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 10px;
+}
+
+/* Phone: a day card is most of the screen wide, so the next day peeks in at
+   the edge as the cue to swipe, and it is only as tall as its surgeries. A
+   360x480 card with one line in it was a screen of empty surface. */
+@media (max-width: 600px) {
+  .suite__week {
+    gap: 12px;
+    padding: 16px 4px 24px;
+  }
+
+  .suite__day-card {
+    width: min(300px, calc(100vw - 72px));
+    min-height: 0;
+    padding: 16px;
+    gap: 12px;
+  }
+}

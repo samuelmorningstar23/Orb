@@ -1,0 +1,773 @@
+/* Orb — Billing panel.
+ *
+ * "Quiet Clinical", flat: no glass, no glow, no opacity for de-emphasis. Every
+ * de-emphasis is a COLOUR TOKEN (--text-muted, --status-*-text), because an
+ * opacity fade is unreadable on the ward tablet and invisible to the contrast
+ * gate.
+ *
+ * MONEY IS TABULAR. Every amount carries `font-variant-numeric: tabular-nums
+ * lining-nums` so a column of rupees lines up digit for digit — a bill whose
+ * figures wander is a bill somebody adds up wrongly.
+ *
+ * STATUS COLOUR, THE HOUSE RULE: a solid --status-x fill carries
+ * --status-on-fill text; small status TEXT uses --status-x-text. The two are
+ * different tokens because a colour legible as small text on a dark canvas is
+ * too light to carry dark text as a fill.
+ *
+ * These classes are namespaced `bill-` and live here rather than in
+ * ClinicianShell.css because they are this panel's own; the shared primitives
+ * (.orb-panel, .orb-section-title) come from the shell, which ships with the
+ * app rather than with this lazy chunk.
+ */
+
+.bill-panel {
+  gap: var(--space-5);
+  padding-bottom: var(--space-6);
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+.bill-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.bill-title {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.bill-subhead {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.bill-muted {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+.bill-tiny {
+  font-size: var(--text-xs);
+}
+
+/* The enforcement state is never hidden: a site that has turned financial
+   clearance ON must see it said out loud on the billing screen. */
+.bill-enforce {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  border: 1px solid var(--border-subtle);
+}
+
+.bill-enforce--off {
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+}
+
+.bill-enforce--on {
+  background: var(--bg-surface);
+  color: var(--status-warn-text);
+  border-color: var(--status-warn);
+}
+
+/* ── Tabs ───────────────────────────────────────────────────────────────── */
+
+.bill-tabs {
+  display: flex;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.bill-tab {
+  min-height: 24px;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.bill-tab:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.bill-tab--on {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--accent-gold);
+}
+
+.bill-tab:focus-visible,
+.bill-btn:focus-visible,
+.bill-filter:focus-visible,
+.bill-row:focus-visible,
+.bill-input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ── Sections, tables ───────────────────────────────────────────────────── */
+
+.bill-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.bill-section__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+/* Wide content scrolls INSIDE its own box; the page never scrolls sideways. */
+.bill-tablewrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.bill-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  min-width: 640px;
+}
+
+.bill-table th {
+  text-align: left;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+.bill-table td {
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: top;
+  color: var(--text-primary);
+}
+
+.bill-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.bill-num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.bill-row {
+  cursor: pointer;
+}
+
+.bill-row:hover td {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+/* ── Money ──────────────────────────────────────────────────────────────── */
+
+.bill-money {
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  white-space: nowrap;
+}
+
+/* ── Chips and tags ─────────────────────────────────────────────────────── */
+
+.bill-chip,
+.bill-tag {
+  display: inline-block;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Solid status fills — text on them is --status-on-fill, per the house rule. */
+.bill-chip--ok {
+  background: var(--status-ok);
+  color: var(--status-on-fill);
+}
+
+.bill-chip--warn {
+  background: var(--status-warn);
+  color: var(--status-on-fill);
+}
+
+.bill-chip--info {
+  background: var(--status-info);
+  color: var(--status-on-fill);
+}
+
+.bill-chip--danger {
+  background: var(--status-danger);
+  color: var(--status-on-fill);
+}
+
+/* Neutral/muted are NOT faded versions of a status colour — they are their own
+   surface + text pair, so "draft" and "cancelled" stay fully legible. */
+.bill-chip--neutral {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+.bill-chip--muted {
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+}
+
+.bill-tag {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+.bill-reason {
+  color: var(--status-warn-text);
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+
+.bill-btn {
+  min-height: 24px;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.bill-btn:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.bill-btn--primary {
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  border-color: var(--accent-deep);
+}
+
+.bill-btn--primary:hover:not(:disabled) {
+  background: var(--btn-gradient-hover);
+  color: var(--btn-primary-text);
+}
+
+.bill-btn--danger {
+  background: var(--status-danger);
+  color: var(--status-on-fill);
+  border-color: var(--status-danger);
+}
+
+.bill-btn--quiet {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.bill-btn--quiet:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+/* Disabled uses the app's disabled TOKENS, not opacity: a greyed-out control
+   must still be readable enough that a clerk can see WHAT is unavailable. */
+.bill-btn:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+.bill-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.bill-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.bill-filter {
+  min-height: 24px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.bill-filter--on {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--accent-gold);
+}
+
+/* ── Fields ─────────────────────────────────────────────────────────────── */
+
+.bill-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
+}
+
+.bill-field--inline {
+  margin-bottom: 0;
+  min-width: 240px;
+}
+
+.bill-field__label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+.bill-field__hint {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.bill-field__error {
+  font-size: var(--text-xs);
+  color: var(--status-danger-text);
+}
+
+.bill-input {
+  min-height: 24px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-glass);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-family: inherit;
+  width: 100%;
+}
+
+.bill-input--search {
+  /* A fixed basis, not the base rule's width:100%: in the price-list toolbar
+     that took the whole row and pushed "New item" onto a line of its own. */
+  width: 260px;
+  max-width: 100%;
+  flex: 0 1 260px;
+}
+
+.bill-fieldset {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  margin: 0 0 var(--space-3);
+}
+
+.bill-radio {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  padding: var(--space-1) 0;
+  min-height: 24px;
+}
+
+/* ── Metrics ────────────────────────────────────────────────────────────── */
+
+.bill-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-3);
+}
+
+.bill-metric {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.bill-metric__label {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.bill-metric__value {
+  font-size: var(--text-lg);
+  font-weight: 650;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.bill-metric__note {
+  font-size: var(--text-xs);
+  color: var(--status-warn-text);
+}
+
+/* ── Notices ────────────────────────────────────────────────────────────── */
+
+.bill-notice {
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.bill-notice--warn {
+  color: var(--status-warn-text);
+  border-color: var(--status-warn);
+}
+
+.bill-notice--muted {
+  color: var(--text-muted);
+}
+
+.bill-error {
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  border: 1px solid var(--status-danger);
+  color: var(--status-danger-text);
+  font-size: var(--text-sm);
+}
+
+/* ── The discharge advisory ─────────────────────────────────────────────── */
+
+.bill-advisory {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  /* The left rule carries the tone. The CARD never takes a status fill: this is
+     a warning a clinician reads on the way to discharging a patient, and a
+     shouting red panel is how a warning gets clicked past. */
+  border-left: 4px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.bill-advisory--ok { border-left-color: var(--status-ok); }
+.bill-advisory--warn { border-left-color: var(--status-warn); }
+.bill-advisory--unknown { border-left-color: var(--status-info); }
+
+.bill-advisory__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.bill-advisory__label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.bill-advisory__headline {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.bill-advisory__reasons {
+  margin: 0;
+  padding-left: var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.bill-advisory__note {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+/* ── Invoice document ───────────────────────────────────────────────────── */
+
+.bill-doc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.bill-doc__head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.bill-doc__number {
+  font-size: var(--text-md);
+  font-weight: 650;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.bill-doc__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.bill-doc__words {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.bill-totals {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.bill-totals > div {
+  display: contents;
+}
+
+.bill-totals dt {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.bill-totals dd {
+  margin: 0;
+  text-align: right;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.bill-totals__grand dt,
+.bill-totals__grand dd {
+  font-size: var(--text-md);
+  font-weight: 650;
+  color: var(--text-primary);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* Supplier block: heads the printed bill once the print view is loaded. */
+.bill-supplier {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.bill-supplier > div {
+  display: contents;
+}
+
+.bill-supplier dt {
+  color: var(--text-secondary);
+}
+
+.bill-supplier dd {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.bill-print {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.bill-capture {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.bill-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.bill-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.bill-list li:last-child {
+  border-bottom: none;
+}
+
+.bill-reasonbox {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* ── Modal ──────────────────────────────────────────────────────────────── */
+
+.bill-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  z-index: 9999;
+}
+
+.bill-modal {
+  width: min(560px, 100%);
+  max-height: 86vh;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-3);
+  padding: var(--space-5);
+}
+
+.bill-modal--wide {
+  width: min(880px, 100%);
+}
+
+.bill-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.bill-modal__title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.bill-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ── Touch + print ──────────────────────────────────────────────────────── */
+
+@media (pointer: coarse) {
+  .bill-btn,
+  .bill-tab,
+  .bill-filter,
+  .bill-input,
+  .bill-radio {
+    min-height: var(--tap-min);
+  }
+}
+
+@media print {
+  /* The printed bill is the document, not the application around it. */
+  .bill-tabs,
+  .bill-actions,
+  .bill-filters,
+  .bill-reasonbox,
+  .bill-modal__head,
+  .bill-print__subhead {
+    display: none;
+  }
+
+  .bill-modal-overlay {
+    position: static;
+    background: none;
+    padding: 0;
+  }
+
+  .bill-modal {
+    width: 100%;
+    max-height: none;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+  }
+}

@@ -1,0 +1,137 @@
+{
+  "base_url": "http://127.0.0.1:5173",
+  "captured_at_views": 15,
+  "orb_present_on_all": true,
+  "captures": [
+    {
+      "view": "vigil-ward",
+      "theme": "dark",
+      "tab": "vigil",
+      "orbPresent": true,
+      "file": "/tmp/orb-captures/vigil-ward-dark.png"
+    },
+    {
+      "view": "relay",
+      "theme": "dark",
+      "tab": "relay",
+      "orbPresent": true,
+      "file": "/tmp/orb-captures/relay-dark.png"
+    },
+    {
+      "view": "orders",
+      "theme": "dark",
+      "tab": "orders",
+      "orbPresent": true,
+      "file": "/tmp/orb-captures/orders-dark.png"
+    },
+    {
+      "view": "sage-panel",
+      "theme": "dark",
+      "tab": "sage",
+      "orbPresent": true,
+      "file": "/tmp/orb-captures/sage-panel-dark.png"
+    },
+    {
+      "view": "scribe",
+      "theme": "dark",
+      "tab": "scribe",
+      "orbPresent": true,
+      "file": "/tmp/orb-captures/scribe-dark.png"
+    },
+    {
+      "view": "lens",
+      "theme": "dark",
+      "tab": "lens",
+      "orbPresent": true,
+      "file": "/tmp/orb-captures/lens-dark.png"
+    },
+    {
+      "view": "forecast",
+      "theme": "dark",
+      "tab": "forecast",
+      "orbPresent": true,
+      "file": "/tmp/orb-captures/forecast-dark.png"
+    },
+    {
+      "view": "vigil-ward",
+      "theme": "light",
+      "tab": "vigil",
+      "orbPresent": true,
+      "file": "/tmp/orb-captures/vigil-ward-light.png"
+    },
+    {
+      "view": "relay",
+      "theme": "light",
+      "tab": "relay",
+      "orbPresent": true,
+      "file": "/tmp/orb-captures/relay-light.png"
+    },
+    {
+      "view": "orders",
+      "theme": "light",
+      "tab": "orders",
+      "orbPresent": true,
+      "file": "/tmp/orb-captures/orders-light.png"
+    },
+    {
+      "view": "sage-panel",
+      "theme": "light",
+      "tab": "sage",
+      "orbPresent": true,
+      "file": "/tmp/orb-captures/sage-panel-light.png"
+    },
+    {
+      "view": "scribe",
+      "theme": "light",
+      "tab": "scribe",
+      "orbPresent": true,
+      "file": "/tmp/orb-captures/scribe-light.png"
+    },
+    {
+      "view": "lens",
+      "theme": "light",
+      "tab": "lens",
+      "orbPresent": true,
+      "file": "/tmp/orb-captures/lens-light.png"
+    },
+    {
+      "view": "forecast",
+      "theme": "light",
+      "tab": "forecast",
+      "orbPresent": true,
+      "file": "/tmp/orb-captures/forecast-light.png"
+    },
+    {
+      "view": "sage-voice-governance-gate",
+      "theme": "dark",
+      "tab": "orders",
+      "orbPresent": true,
+      "file": "/tmp/orb-captures/sage-voice-governance-gate-dark.png"
+    }
+  ],
+  "console_errors_total": 4,
+  "console_errors_app": 0,
+  "app_errors": [],
+  "allowed_errors": [
+    {
+      "view": "login",
+      "text": "Failed to load resource: net::ERR_CONNECTION_RESET",
+      "allowed": true
+    },
+    {
+      "view": "vigil-ward:dark",
+      "text": "Failed to load resource: net::ERR_CONNECTION_RESET",
+      "allowed": true
+    },
+    {
+      "view": "vigil-ward:dark",
+      "text": "Error: Unable to preload CSS for http://127.0.0.1:5173/assets/RelayPanel-BZXvSmc7.css\n    at HTMLLinkElement.<anonymous> (http://127.0.0.1:5173/assets/index-DqjaGX-P.js:10:89189)",
+      "allowed": true
+    },
+    {
+      "view": "vigil-ward:dark",
+      "text": "[Orb] Panel error: relay Error: Unable to preload CSS for http://127.0.0.1:5173/assets/RelayPanel-BZXvSmc7.css\n    at HTMLLinkElement.<anonymous> (http://127.0.0.1:5173/assets/index-DqjaGX-P.js:10:89189)",
+      "allowed": true
+    }
+  ]
+}

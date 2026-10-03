@@ -1,0 +1,44 @@
+{
+  "id": "ward-is-alive",
+  "title": "The ward watches itself",
+  "subtitle": "Live vitals, NEWS2 ordering, and a chart that explains its own score",
+  "user": "DOC001",
+  "theme": "dark",
+  "viewport": {
+    "width": 1512,
+    "height": 1024
+  },
+  "steps": [
+    {
+      "n": 1,
+      "caption": "Sign in as a doctor. Orb Today lists what needs you first: deteriorating patients, new results, pending signatures.",
+      "file": "01.png",
+      "hold": 3200
+    },
+    {
+      "n": 2,
+      "caption": "Patients: the ward ordered by risk. Vitals move because a monitor feed is running; the order is NEWS2-derived, not hand-placed.",
+      "file": "02.png",
+      "hold": 3200
+    },
+    {
+      "n": 3,
+      "caption": "Open a chart. The NEWS2 band is computed by Orb's deterministic engine, never by a model.",
+      "file": "03.png",
+      "hold": 3200
+    },
+    {
+      "n": 4,
+      "caption": "Why this score? Every parameter's contribution is shown. Orb will not give you a number without showing where it came from.",
+      "file": "04.png",
+      "hold": 3200
+    },
+    {
+      "n": 5,
+      "caption": "Patient Story: alerts, notes, doses given, handovers and bundles in one scrollable narrative, with a bookmark for what is new since you last looked.",
+      "file": "05.png",
+      "hold": 4200
+    }
+  ],
+  "video": "video/ward-is-alive.webm"
+}

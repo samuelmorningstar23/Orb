@@ -1,0 +1,630 @@
+/* FrontDeskPanel.css — Orb "Quiet Clinical" (flat).
+ *
+ * RULES THIS FILE OBEYS, and why they are not stylistic preferences:
+ *
+ *  * NO `opacity` FOR DE-EMPHASIS. Opacity multiplies down the tree (a 0.4
+ *    control inside a 0.4 group paints its label at alpha 0.16 — measured at
+ *    1.11:1, unreadable) and it fades label and fill by the same factor, so
+ *    contrast can only get worse. Quiet things get a quieter TOKEN; disabled
+ *    controls swap to the flat --btn-disabled-* trio.
+ *  * STATUS FILLS use --status-x; small status TEXT uses --status-x-text; text
+ *    sitting ON a status fill uses --status-on-fill. One value cannot do both
+ *    jobs — see the comment block in src/index.css.
+ *  * Tap targets are 24px minimum, 44px under `@media (pointer: coarse)` (a
+ *    bedside/counter tablet), per WCAG 2.2 §2.5.5.
+ *  * Money and token numbers use tabular-lining figures so a column of amounts
+ *    lines up and a token cannot be misread by a digit's width.
+ *  * Wide content (the queue tables) scrolls inside its own container; the panel
+ *    body never scrolls horizontally.
+ *
+ * Everything is namespaced `.fd-` and scoped under `.fd-panel` where it could
+ * otherwise collide with a shared primitive.
+ */
+
+.fd-panel {
+  gap: var(--space-5);
+  font-family: var(--font-family);
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+.fd-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.fd-title {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.fd-subtitle {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.fd-viewswitch {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+}
+
+.fd-tab {
+  min-height: 32px;
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  /* Quiet, not faded: a distinct token, never an alpha. */
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 550;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+/* Inactive tabs only, and only where hover is real. `.fd-tab:hover` (0,2,0)
+   outranked --active, so hovering the selected tab erased its fill, and a
+   touch screen paints :hover on tap and leaves it there. */
+@media (hover: hover) {
+  .fd-tab:not(.fd-tab--active):hover {
+    background: var(--bg-glass-hover);
+    color: var(--text-primary);
+  }
+}
+
+.fd-tab--active {
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+}
+
+.fd-tab:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ── Cards ──────────────────────────────────────────────────────────────── */
+
+.fd-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  min-width: 0;
+}
+
+.fd-card__title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.fd-opd,
+.fd-transfers,
+.fd-queues {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.fd-register {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  align-items: end;
+  gap: var(--space-4);
+}
+
+.fd-register .fd-card__title {
+  grid-column: 1 / -1;
+}
+
+/* ── Fields ─────────────────────────────────────────────────────────────── */
+
+.fd-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.fd-field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-4);
+}
+
+.fd-field label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.fd-field input,
+.fd-field select,
+.fd-field textarea {
+  min-height: 36px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  width: 100%;
+  max-width: 100%;
+}
+
+.fd-field textarea {
+  resize: vertical;
+}
+
+.fd-field input:focus-visible,
+.fd-field select:focus-visible,
+.fd-field textarea:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* Disabled: a flat neutral PAIR, never a dimmed live control. */
+.fd-field input:disabled,
+.fd-field select:disabled,
+.fd-field textarea:disabled {
+  background: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-border);
+  color: var(--btn-disabled-text);
+  cursor: not-allowed;
+}
+
+.fd-hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+
+.fd-btn {
+  min-height: 32px;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 550;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.fd-btn:hover:not(:disabled) {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+}
+
+.fd-btn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.fd-btn--primary {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+  color: var(--btn-primary-text);
+}
+
+.fd-btn--primary:hover:not(:disabled) {
+  background: var(--btn-gradient-hover);
+  border-color: var(--btn-gradient-hover);
+}
+
+.fd-btn--quiet {
+  background: transparent;
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.fd-btn--quiet:hover:not(:disabled) {
+  background: var(--bg-glass);
+  color: var(--text-primary);
+}
+
+.fd-btn:disabled {
+  background: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-border);
+  color: var(--btn-disabled-text);
+  cursor: not-allowed;
+}
+
+/* ── Queue ──────────────────────────────────────────────────────────────── */
+
+.fd-queue__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.fd-queue__sub {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.fd-queue__stats {
+  display: flex;
+  gap: var(--space-5);
+}
+
+.fd-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.fd-stat__value {
+  font-size: var(--text-md);
+  font-weight: 650;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.fd-stat__label {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* The table is the one thing here that can exceed the panel width; it scrolls
+   inside its own box so the page body never scrolls sideways. */
+.fd-table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.fd-table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.fd-table th {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.fd-table td {
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  vertical-align: middle;
+}
+
+.fd-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.fd-token {
+  font-size: var(--text-md);
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.fd-patient-name {
+  display: block;
+  color: var(--text-primary);
+  font-weight: 550;
+}
+
+.fd-patient-mrn {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* Used on <td>, so no display rule: a cell given display:block leaves the
+   table's column grid, and the Transfers row shifted Bed and Action into one
+   column. */
+.fd-mono {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums lining-nums;
+  white-space: nowrap;
+}
+
+.fd-nowrap { white-space: nowrap; }
+
+.fd-complaint {
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The cell stays a table cell; the flex row lives on a div inside it. */
+.fd-actions-cell {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.fd-actions {
+  display: inline-flex;
+  gap: var(--space-2);
+  vertical-align: middle;
+}
+
+/* ── Waiting-time pill ───────────────────────────────────────────────────
+   ADVISORY ONLY. An OPD wait is a service-quality signal, never a clinical
+   one, so it never borrows the deterioration palette's meaning — it uses the
+   *-text status tokens on a quiet fill rather than a loud solid block. */
+
+.fd-wait {
+  display: inline-block;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--bg-glass);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums lining-nums;
+  white-space: nowrap;
+}
+
+.fd-wait--ok { color: var(--status-ok-text); }
+.fd-wait--warn { color: var(--status-warn-text); }
+.fd-wait--long { color: var(--status-danger-text); }
+/* Unknown is not "fine" and not "bad" — it is unmeasured, and reads as ordinary
+   secondary text so nobody mistakes it for a green light. */
+.fd-wait--unknown { color: var(--text-secondary); }
+
+/* ── Status chip ────────────────────────────────────────────────────────── */
+
+.fd-chip {
+  display: inline-block;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+}
+
+.fd-chip--waiting {
+  color: var(--status-warn-text);
+}
+
+/* A solid status fill: the label switches to the on-fill ink token. */
+.fd-chip--in_consultation {
+  background: var(--status-info);
+  color: var(--status-on-fill);
+}
+
+.fd-chip--completed {
+  color: var(--status-ok-text);
+}
+
+.fd-chip--cancelled {
+  color: var(--text-muted);
+}
+
+/* ── Money / charge note ────────────────────────────────────────────────── */
+
+.fd-charge-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  border-left: 4px solid var(--status-info);
+}
+
+.fd-charge-note__label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.fd-charge-note__hint {
+  flex-basis: 100%;
+  font-size: var(--text-xs);
+  color: var(--status-warn-text);
+  line-height: 1.45;
+}
+
+/* Money is always tabular-lining: a column of rupee amounts that does not line
+   up is a column somebody misreads. */
+.fd-money {
+  font-size: var(--text-md);
+  font-weight: 650;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* ── Timeline ───────────────────────────────────────────────────────────── */
+
+.fd-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.fd-timeline__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+  border-left: 3px solid var(--accent-gold);
+}
+
+.fd-timeline__when {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.fd-timeline__move {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.fd-timeline__reason,
+.fd-timeline__who {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+/* ── Notes, empties, errors ─────────────────────────────────────────────── */
+
+.fd-empty {
+  margin: 0;
+  padding: var(--space-6) var(--space-5);
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+/* A failure must never read as an empty list. */
+.fd-error {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 34%, transparent);
+  border-left: 4px solid var(--status-danger);
+  color: var(--status-danger-text);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+/* The handover warning. Deliberately loud: this is the sentence that stops a
+   clerk being surprised that the sending ward lost the chart. */
+.fd-handover {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--status-warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 36%, transparent);
+  border-left: 4px solid var(--status-warn);
+  color: var(--status-warn-text);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.fd-handover strong {
+  color: var(--text-primary);
+}
+
+/* ── Modal (portalled to document.body) ─────────────────────────────────── */
+
+.fd-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  /* A scrim, not a de-emphasis: it darkens what is BEHIND the dialog, and no
+     text of ours is painted on it. */
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.fd-modal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: min(560px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: var(--space-5);
+  border-radius: var(--radius-xl);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-glass);
+  box-shadow: var(--shadow-lg);
+}
+
+.fd-modal__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.fd-modal__lede {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.fd-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+/* ── Coarse pointer (counter / bedside tablet) ──────────────────────────── */
+
+@media (pointer: coarse) {
+  .fd-btn,
+  .fd-tab,
+  .fd-field input,
+  .fd-field select,
+  .fd-field textarea {
+    min-height: var(--tap-min);
+  }
+}
+
+/* ── Reduced motion ─────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .fd-btn,
+  .fd-tab {
+    transition: none;
+  }
+}

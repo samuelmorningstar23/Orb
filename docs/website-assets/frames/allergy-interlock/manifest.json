@@ -1,0 +1,44 @@
+{
+  "id": "allergy-interlock",
+  "title": "The allergy interlock",
+  "subtitle": "A sepsis bundle is applied whole or not at all",
+  "user": "DOC001",
+  "theme": "dark",
+  "viewport": {
+    "width": 1512,
+    "height": 1024
+  },
+  "steps": [
+    {
+      "n": 1,
+      "caption": "Orders, then Order sets: cited protocols. Every item still goes through the allergy interlock, the dose guard and terminology validation.",
+      "file": "01.png",
+      "hold": 3200
+    },
+    {
+      "n": 2,
+      "caption": "Pick Sepsis Six. The gates are patient-specific, so there is nothing honest to show until Orb knows whose chart this is.",
+      "file": "02.png",
+      "hold": 3200
+    },
+    {
+      "n": 3,
+      "caption": "Apply to Suresh Reddy, 55, community-acquired pneumonia with early sepsis.",
+      "file": "03.png",
+      "hold": 3200
+    },
+    {
+      "n": 4,
+      "caption": "Eight items clear. Ceftriaxone is STOPPED: a documented anaphylaxis to IV ceftriaxone in 2023. The Apply button is disabled, because a half-applied sepsis bundle is its own emergency.",
+      "file": "04.png",
+      "hold": 5000
+    },
+    {
+      "n": 5,
+      "caption": "Same set, different patient: Ananya Kapoor has a moderate penicillin rash. Orb raises a cross-reactivity alert but does not block. Four patients, four different answers.",
+      "file": "05.png",
+      "hold": 4500
+    }
+  ],
+  "video": "video/allergy-interlock.webm"
+}

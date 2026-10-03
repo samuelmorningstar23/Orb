@@ -1,0 +1,26 @@
+{
+  "id": "patient-portal",
+  "title": "Bridge, the patient portal",
+  "subtitle": "The patient sees their own care in plain language",
+  "user": "P001",
+  "theme": "dark",
+  "viewport": {
+    "width": 1512,
+    "height": 1024
+  },
+  "steps": [
+    {
+      "n": 1,
+      "caption": "Bridge: care team, medications, results and documents for the patient, with a one-time login issued at admission.",
+      "file": "01.png",
+      "hold": 3200
+    },
+    {
+      "n": 2,
+      "caption": "Ask a question in plain language. The answer is scoped to this patient and never gives medical advice; it points back to the nurse or doctor.",
+      "file": "02.png",
+      "hold": 5000
+    }
+  ],
+  "video": "video/patient-portal.webm"
+}

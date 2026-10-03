@@ -1,0 +1,153 @@
+{
+ "n": 5,
+ "run_at": "2026-08-04T16:30:59",
+ "probes": [
+  {
+   "expect": "ACT",
+   "q": "Add paracetamol 500mg for this patient.",
+   "scope": "patient",
+   "res": {
+    "medgemma:4b": [
+     "NOACT",
+     "NOACT",
+     "NOACT",
+     "NOACT",
+     "NOACT"
+    ],
+    "medgemma:27b": [
+     "ACT",
+     "NOACT",
+     "ACT",
+     "ACT",
+     "ACT"
+    ]
+   }
+  },
+  {
+   "expect": "ACT",
+   "q": "Stop the heparin for this patient.",
+   "scope": "patient",
+   "res": {
+    "medgemma:4b": [
+     "NOACT",
+     "NOACT",
+     "NOACT",
+     "NOACT",
+     "NOACT"
+    ],
+    "medgemma:27b": [
+     "ACT",
+     "ACT",
+     "ACT",
+     "ACT",
+     "ACT"
+    ]
+   }
+  },
+  {
+   "expect": "ACT",
+   "q": "Order a chest X-ray for this patient.",
+   "scope": "patient",
+   "res": {
+    "medgemma:4b": [
+     "NOACT",
+     "NOACT",
+     "NOACT",
+     "NOACT",
+     "NOACT"
+    ],
+    "medgemma:27b": [
+     "NOACT",
+     "NOACT",
+     "NOACT",
+     "NOACT",
+     "NOACT"
+    ]
+   }
+  },
+  {
+   "expect": "NOACT",
+   "q": "What is this patient's NEWS2 score?",
+   "scope": "patient",
+   "res": {
+    "medgemma:4b": [
+     "NONE",
+     "NONE",
+     "NONE",
+     "NONE",
+     "NONE"
+    ],
+    "medgemma:27b": [
+     "NOACT",
+     "NOACT",
+     "NOACT",
+     "NOACT",
+     "NOACT"
+    ]
+   }
+  },
+  {
+   "expect": "NOACT",
+   "q": "What would you check next for this patient?",
+   "scope": "patient",
+   "res": {
+    "medgemma:4b": [
+     "NONE",
+     "NONE",
+     "NONE",
+     "NONE",
+     "NONE"
+    ],
+    "medgemma:27b": [
+     "NOACT",
+     "NOACT",
+     "NOACT",
+     "NOACT",
+     "NOACT"
+    ]
+   }
+  },
+  {
+   "expect": "NOACT",
+   "q": "How do you dose IV alteplase in acute ischaemic stroke?",
+   "scope": "clinical",
+   "res": {
+    "medgemma:4b": [
+     "NONE",
+     "NONE",
+     "NONE",
+     "NONE",
+     "NONE"
+    ],
+    "medgemma:27b": [
+     "NOACT",
+     "NOACT",
+     "NOACT",
+     "NOACT",
+     "NOACT"
+    ]
+   }
+  },
+  {
+   "expect": "NOACT",
+   "q": "How is potassium replaced in severe hypokalaemia?",
+   "scope": "clinical",
+   "res": {
+    "medgemma:4b": [
+     "NONE",
+     "NONE",
+     "NONE",
+     "NONE",
+     "NONE"
+    ],
+    "medgemma:27b": [
+     "NOACT",
+     "NOACT",
+     "NOACT",
+     "NOACT",
+     "NOACT"
+    ]
+   }
+  }
+ ]
+}

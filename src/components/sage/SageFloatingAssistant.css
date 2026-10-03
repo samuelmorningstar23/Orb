@@ -1,0 +1,422 @@
+/* ═══ Sage Floating Assistant — flat clay disc (Quiet Clinical) ═══ */
+
+.sage-fab {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  /* Below .modal-overlay (9999) so open modals paint over the orb. */
+  z-index: 9990;
+  font-family: var(--font-family);
+}
+
+/* On Sage, Scribe, Relay and the Ward Round the panel's own composer or action
+   bar owns the bottom edge, so keep the FAB clear of its buttons. See the note
+   beside `bottomComposerTabs`. */
+.sage-fab--raised {
+  bottom: 96px;
+}
+
+/* On a phone the raised orb lands mid-screen over content, and Sage and Scribe
+   already put a microphone in their own composer, so the orb steps aside
+   there. Relay and the round keep theirs: it is their only voice entry. */
+@media (max-width: 768px) {
+  .sage-fab--own-mic {
+    display: none;
+  }
+}
+
+/* ─── Dormant Orb ─── */
+.sage-fab__orb {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  /* The button owns the base clay fill so the icon has a REAL backdrop in its
+     ancestor chain. The painted disc lives in a sibling (.sage-fab__orb-visual),
+     so anything walking ancestors to resolve the icon's background found the
+     page behind the FAB and measured the white mic at 1.05:1. The visual layer
+     still paints on top and owns the hover shift, shadow and state animations. */
+  background: var(--accent-deep);
+  border: none;
+  padding: 0;
+  transition: width var(--transition-base), height var(--transition-base);
+}
+
+.sage-fab__orb:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Flat clay disc — the one accent element on the page. FAB is a floating
+   layer, so it carries the single overlay shadow and nothing else. */
+.sage-fab__orb-visual {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%; /* circle stays a circle */
+  pointer-events: none;
+  background: var(--accent-deep);
+  box-shadow: var(--elev-3);
+  transition: background var(--transition-fast);
+  z-index: 1;
+}
+
+/* Hover = background shift only, no lift, no glow. */
+.sage-fab__orb:hover .sage-fab__orb-visual {
+  background: var(--btn-gradient-hover);
+}
+
+.sage-fab__orb svg {
+  color: var(--btn-primary-text);
+  transition: transform 0.25s ease;
+  transform: scale(0.9);
+  pointer-events: none;
+  position: relative;
+  z-index: 2;
+}
+
+/* ─── Listening State (Activated Cue: 78px) ─── */
+.sage-fab--listening .sage-fab__orb {
+  width: 78px;
+  height: 78px;
+}
+
+/* Audio level drives a functional scale response (live mic meter). */
+.sage-fab--listening .sage-fab__orb-visual {
+  transform: scale(calc(1 + var(--audio-level, 0) * 0.35));
+  transition: transform 0.05s linear, background var(--transition-fast);
+}
+
+.sage-fab--listening .sage-fab__orb svg,
+.sage-fab--processing .sage-fab__orb svg,
+.sage-fab--speaking .sage-fab__orb svg {
+  transform: scale(1.05);
+  color: var(--btn-primary-text);
+}
+
+/* ─── Processing & Speaking States (68px) ─── */
+.sage-fab--processing .sage-fab__orb,
+.sage-fab--speaking .sage-fab__orb {
+  width: 68px;
+  height: 68px;
+}
+
+.sage-fab--processing .sage-fab__orb-visual {
+  animation: sage-processing-pulse 1s ease-in-out infinite;
+}
+
+.sage-fab--speaking .sage-fab__orb-visual {
+  animation: sage-speaking-pulse 1.4s ease-in-out infinite;
+}
+
+/* Expanding rings signal active listening (live state). */
+.sage-fab__rings {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.sage-fab__ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--accent-gold) 40%, transparent);
+  animation: sage-ring 2s ease-out infinite;
+}
+
+.sage-fab__ring:nth-child(1) { width: 72px; height: 72px; animation-delay: 0s; }
+.sage-fab__ring:nth-child(2) { width: 88px; height: 88px; animation-delay: 0.4s; }
+.sage-fab__ring:nth-child(3) { width: 104px; height: 104px; animation-delay: 0.8s; }
+
+/* Floating status chip — opaque elevated surface. */
+.sage-fab__status-label {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  right: 0;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent-text);
+  background: var(--bg-elevated);
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-glass);
+  animation: sage-slide-up 0.3s ease-out;
+  box-shadow: var(--elev-3);
+}
+
+/* ─── Card (Processing + Speaking) — opaque popover ─── */
+.sage-fab__card {
+  position: absolute;
+  bottom: calc(100% + 16px);
+  right: 0;
+  width: 340px;
+  max-height: 320px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-3);
+  overflow: hidden;
+  animation: sage-slide-up 0.3s ease-out;
+}
+
+.sage-fab__card-header {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sage-fab__card-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-gold);
+  flex-shrink: 0;
+}
+
+.sage-fab--processing .sage-fab__card-dot {
+  animation: sage-dot-glow 1s ease-in-out infinite;
+}
+
+.sage-fab__card-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.sage-fab__card-patient {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: auto;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sage-fab__card-body {
+  padding: 16px;
+  max-height: 220px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-glass) transparent;
+}
+
+.sage-fab__query {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-style: italic;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sage-fab__query::before {
+  content: '"';
+  color: var(--accent-text);
+}
+.sage-fab__query::after {
+  content: '"';
+  color: var(--accent-text);
+}
+
+.sage-fab__response {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+/* Speed footer under a finished voice answer — a hairline separates it from
+   the answer so it reads as chrome, not as part of what Sage said. Base look
+   lives in components/SageAnswerMeta.css. */
+.sage-fab__meta {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* Loading skeleton — flat fill with a subtle opacity pulse. */
+.sage-fab__shimmer {
+  height: 48px;
+  background: var(--bg-glass);
+  animation: sage-shimmer 1.5s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+
+/* ─── Enable/Disable Toggle ─── */
+/* Always visible. This was hover-only, which means it does not exist at all on
+   the bedside tablets Orb ships to — the control that turns voice capture on
+   and off was unreachable there, and it was a focusable button at opacity 0.
+   De-emphasis is carried by quiet colour instead of by hiding. */
+.sage-fab__toggle {
+  position: absolute;
+  top: -6px;
+  left: -6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--border-glass);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* The global coarse-pointer floor (index.css, 44px min-width/min-height)
+     would grow the dot into a second orb. The 44px target is the ::after halo
+     below, so the visible dot stays 24px. */
+  min-width: 0;
+  min-height: 0;
+  /* Must clear .sage-fab__orb-visual (z-index 1) and the orb icon (2). The disc
+     is a sibling painted after this button, so without this the toggle's inner
+     edge is buried under the clay once it is permanently on screen. */
+  z-index: 3;
+  transition: opacity var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+/* A 44px dot beside a 48px orb would read as a second orb, so the thumb target
+   grows past the artwork instead of with it (WCAG 2.2: 24px seen, 44px felt).
+   Circular, not a square inset, so the halo stops short of the orb's centre. */
+@media (pointer: coarse) {
+  .sage-fab__toggle::after {
+    content: '';
+    position: absolute;
+    inset: -10px;
+    border-radius: 50%;
+  }
+}
+
+.sage-fab__toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Hide the toggle while the cursor is on the orb itself so the two controls
+   don't overlap — and they do: a 24px dot at -6/-6 sits ~10px inside the 48px
+   orb's circle. Gated on a real hover pointer, because on touch there is no
+   "cursor on the orb" and this rule would hide the only way to reach voice. */
+@media (hover: hover) {
+  .sage-fab:has(.sage-fab__orb:hover) .sage-fab__toggle,
+  .sage-fab__orb:hover ~ .sage-fab__toggle {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    visibility: hidden !important;
+  }
+}
+
+.sage-fab__toggle--active {
+  border-color: var(--accent-gold);
+  color: var(--accent-gold);
+}
+
+.sage-fab__toggle svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ─── Custom Scrollbar for Card ─── */
+.sage-fab__card-body::-webkit-scrollbar {
+  width: 4px;
+}
+.sage-fab__card-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sage-fab__card-body::-webkit-scrollbar-thumb {
+  background: var(--border-glass);
+  border-radius: var(--radius-sm);
+}
+.sage-fab__card-body::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-muted) 50%, transparent);
+}
+
+/* ─── Animations (state signals only — no glow) ─── */
+/* Pulses the FILL, not the opacity. This animation runs on .sage-fab__orb-visual,
+   which sits directly on top of .sage-fab__orb — and the orb now paints the same
+   --accent-deep underneath (so the mic icon has a real backdrop for contrast).
+   Fading the visual therefore revealed an identical colour and the "Sage is
+   thinking" signal disappeared entirely. Animating the colour is independent of
+   whatever is beneath it, and it is the convention everywhere else in the app now:
+   never express state with opacity. */
+@keyframes sage-processing-pulse {
+  0%, 100% { background-color: var(--accent-deep); }
+  50% { background-color: var(--accent-warm); }
+}
+
+@keyframes sage-speaking-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+@keyframes sage-dot-glow {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+@keyframes sage-ring {
+  0% {
+    transform: translate(-50%, -50%) scale(0.85);
+    opacity: 0.75;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1.5);
+    opacity: 0;
+  }
+}
+
+@keyframes sage-shimmer {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@keyframes sage-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes sage-slide-down {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+/* ─── Dismiss animation ─── */
+.sage-fab__card--dismissing {
+  animation: sage-slide-down 0.3s ease-in forwards;
+}
+
+/* ─── Reduced motion ─── */
+@media (prefers-reduced-motion: reduce) {
+  .sage-fab__orb-visual,
+  .sage-fab__ring,
+  .sage-fab__card-dot,
+  .sage-fab__shimmer {
+    animation: none;
+  }
+  .sage-fab__card,
+  .sage-fab__status-label {
+    animation: none;
+  }
+}

@@ -1,0 +1,186 @@
+/* ─── Ward Brief — flat surface card (pairs with shared .glass-card) ───
+   No margin: the board's .orb-panel gap spaces it. A margin on top of that gap
+   opened 40px between the brief and the patient list. */
+.ward-brief {
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+}
+
+.ward-brief__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  gap: 1rem;
+}
+
+.ward-brief__title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--text-primary);
+}
+
+/* Live indicator — the expanding-ring pulse communicates "brief is live". */
+.ward-brief__pulse {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent-gold);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-gold) 50%, transparent);
+  animation: ward-brief-pulse 2.4s ease-out infinite;
+}
+
+@keyframes ward-brief-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-gold) 45%, transparent); }
+  70% { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+.ward-brief__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.ward-brief__alerts {
+  padding: 0.1rem 0.5rem;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent);
+  color: var(--status-danger-text);
+  font-weight: 600;
+}
+
+.ward-brief__toggle {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0 0.2rem;
+}
+
+.ward-brief__body {
+  margin-top: 0.75rem;
+}
+
+.ward-brief__narrative {
+  margin: 0 0 0.75rem;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.ward-brief__narrative--pending {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.ward-brief__watchlist {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.ward-brief__watch-item {
+  display: block;
+}
+
+/* A real <button> so the watchlist is keyboard-reachable; these resets keep it
+   rendering exactly like the <li> it replaced. */
+.ward-brief__watch {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  border: none;
+  background: none;
+  text-align: left;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  transition: background var(--transition-fast);
+}
+
+/* --bg-glass, not --bg-glass-hover: the heavier hover fill lifts the backdrop
+   until .ward-brief__level on a critical watch (--status-danger-text) inside measures 4.44:1 in night — below AA. The lighter fill still
+   marks the hover. Found by the hover-surface pass in
+   scripts/check-contrast.mjs (spec §10.2); it composites a state fill under
+   the DESCENDANT text it lands beneath, which is what the old gate could not see. */
+.ward-brief__watch:hover {
+  background: var(--bg-glass);
+}
+
+.ward-brief__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.ward-brief__dot--critical { background: var(--status-danger); }
+.ward-brief__dot--elevated { background: var(--status-warn); }
+.ward-brief__dot--warning { background: var(--status-warn); }
+
+.ward-brief__name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ward-brief__bed {
+  color: var(--text-secondary);
+}
+
+.ward-brief__level {
+  margin-left: auto;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* Severity text uses the theme status tokens, which carry AA-contrast values
+   per theme — no per-theme overrides needed (replaces the 2026-07-29
+   visual-audit literal fixes that patched the old gold glass tint). */
+.ward-brief__watch--critical .ward-brief__level { color: var(--status-danger-text); }
+.ward-brief__watch--elevated .ward-brief__level { color: var(--status-warn-text); }
+
+.ward-brief__footer {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+/* Failure state. Deliberately NOT dressed as an alert: it is a display fault,
+   not a clinical one, and it must not compete with real deterioration signals.
+   It just has to be present, so an absent brief is never read as an all-clear. */
+.ward-brief--failed {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.ward-brief__retry {
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.ward-brief__retry:hover { background: var(--bg-glass-hover); border-color: var(--border-focus); }

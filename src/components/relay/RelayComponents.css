@@ -1,0 +1,132 @@
+/* Alerts Section Styles. No margins on these sections: the list's flex gap
+   spaces them, and a margin on top of it made a 48px dead band. */
+.relay-alerts-section {
+  margin-bottom: 0;
+}
+
+/* Urgent channel rows: flat semantic danger tint (overrides the base
+   .relay-channel-item quiet-fill hover, hence the !important). */
+.relay-alert-item {
+  border: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent) !important;
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent) !important;
+}
+.relay-alert-item:hover {
+  border-color: color-mix(in srgb, var(--status-danger) 45%, transparent) !important;
+  background: color-mix(in srgb, var(--status-danger) 16%, transparent) !important;
+}
+
+/* Pulse (inherited from the base alert dot) signals live urgency — no glow. */
+.relay-alert-dot--urgent {
+  background: var(--status-danger) !important;
+  width: 8px !important;
+  height: 8px !important;
+}
+
+.relay-alert-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.relay-alert-title {
+  font-weight: 700;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+}
+
+.relay-alert-desc {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.relay-alert-arrow {
+  color: var(--status-danger-text);
+  font-weight: bold;
+  font-size: 1.2rem;
+}
+
+/* Search Styles */
+.relay-search-container {
+  margin-bottom: 0;
+}
+
+.relay-search-input-wrapper {
+  display: flex;
+  align-items: center;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 0 12px;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+/* The wrapper owns the focus indicator for the composite field. */
+.relay-search-input-wrapper:focus-within {
+  border-color: var(--border-focus);
+  background: var(--bg-glass-hover);
+}
+
+.relay-search-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.relay-search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  padding: 12px;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  outline: none;
+}
+.relay-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.relay-search-clear {
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.relay-search-clear:hover {
+  background: var(--bg-glass-hover);
+  color: var(--text-primary);
+}
+
+/* Expand Button */
+.relay-expand-btn {
+  width: 100%;
+  padding: 10px;
+  margin-top: 8px;
+  background: var(--bg-glass);
+  border: 1px dashed var(--border-glass);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+  cursor: pointer;
+}
+.relay-expand-btn:hover {
+  background: var(--bg-glass-hover);
+  color: var(--text-primary);
+  border-color: var(--border-focus);
+}
+
+/* Empty State */
+.relay-empty-state {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  border: 1px dashed var(--border-glass);
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+}

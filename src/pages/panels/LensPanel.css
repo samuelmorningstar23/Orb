@@ -1,0 +1,279 @@
+/* LensPanel.css — Orb "Quiet Clinical" flat design.
+   Opaque surfaces, hairline borders, a clay accent spine on the analysis card,
+   status-warn tints for the non-diagnostic framing. No glass, no glow. */
+.lens-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  height: 100%;
+  /* Page gutter is .shell__body's job — see ClinicianShell.css. */
+  padding: 0;
+  /* width: 100% because a column flex item with auto side margins shrinks to
+     its content: the dropzone came out 452px wide in a 916px panel. */
+  width: 100%;
+  max-width: 1000px;
+  margin: 0 auto;
+  font-family: var(--font-family);
+}
+
+/* Dropzone styling — quiet flat fill with a dashed hairline */
+.lens-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  border: 2px dashed var(--border-glass);
+  border-radius: var(--radius-xl);
+  background: var(--bg-glass);
+  cursor: pointer;
+  transition: background var(--transition-base), border-color var(--transition-base);
+  min-height: 400px;
+  animation: fade-in-up 0.6s ease-out forwards;
+}
+
+.lens-dropzone:hover, .lens-dropzone--over {
+  border-color: var(--border-focus);
+  background: var(--bg-glass-hover);
+}
+
+/* Quiet by colour, not by opacity. --text-secondary, not --text-muted: the
+   hover fill below is --bg-glass-hover, which --text-muted does not hold AA on. */
+.lens-dropzone__icon {
+  color: var(--text-secondary);
+}
+
+.lens-dropzone__title {
+  font-size: 1.5rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-top: 24px;
+  margin-bottom: 8px;
+}
+
+.lens-dropzone__hint {
+  font-size: 1rem;
+  color: var(--text-secondary);
+  text-align: center;
+  max-width: 400px;
+}
+
+/* The keyboard entry point to the whole Lens feature. Drag-and-drop and the
+   dropzone's own click stay as mouse conveniences; this is what Tab finds. */
+.lens-dropzone__browse {
+  margin-top: 16px;
+  padding: 9px 20px;
+  border-radius: var(--radius-md);
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  font-size: 0.88rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.lens-dropzone__browse:hover {
+  background: var(--btn-gradient-hover);
+}
+
+/* Workspace styling */
+.lens-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  animation: fade-in-up 0.5s ease-out forwards;
+}
+
+.lens-image-area {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-xl);
+  padding: 24px;
+  border: 1px solid var(--border-subtle);
+}
+
+.lens-preview {
+  max-height: 400px;
+  max-width: 100%;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+}
+
+.lens-clear {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  padding: 8px 16px;
+  border-radius: var(--radius-xl);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+/* Destructive intent on hover: the surface stays opaque (the button floats
+   over the image), border and label shift to danger. */
+.lens-clear:hover {
+  border-color: var(--status-danger);
+  color: var(--status-danger-text);
+}
+
+/* Controls — flat surface card */
+.lens-controls {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  background: var(--bg-surface);
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+}
+
+.lens-type-select {
+  padding: 12px 16px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  outline: none;
+  cursor: pointer;
+}
+
+.lens-type-select:focus {
+  border-color: var(--border-focus);
+}
+
+.lens-context-input {
+  flex: 1;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  padding: 12px 16px;
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.lens-context-input:focus {
+  border-color: var(--border-focus);
+}
+
+/* Primary action — flat clay fill, no glow, no lift */
+.lens-analyze-btn {
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+  border: none;
+  padding: 12px 24px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.lens-analyze-btn:hover:not(:disabled) {
+  background: var(--btn-gradient-hover);
+}
+
+.lens-analyze-btn:active:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+/* Flat neutral fill, not opacity: opacity fades label and fill together and
+   compounds with any dimmed ancestor, so the label can never stay legible. */
+.lens-analyze-btn:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+/* Analysis Result — flat card with a clay accent spine */
+.lens-analysis {
+  padding: 24px;
+  border: 1px solid var(--border-subtle);
+  border-left: 4px solid var(--accent-gold);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  animation: fade-in-up 0.5s ease;
+}
+
+.lens-analysis__title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--accent-text);
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.lens-analysis__text {
+  font-size: 1.05rem;
+  line-height: 1.7;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  font-family: inherit;
+  margin: 0;
+}
+
+/* ── Reference-tool framing (non-diagnostic, human-in-the-loop) ── */
+.lens-ref-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--status-warn-text);
+  background: color-mix(in srgb, var(--status-warn) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 28%, transparent);
+  border-radius: var(--radius-full);
+  padding: 3px 10px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.lens-disclaimer {
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--status-warn) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 28%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin: 0 0 14px;
+}
+.lens-disclaimer strong { color: var(--status-warn-text); }
+
+.lens-analysis__edit {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 180px;
+  resize: vertical;
+  font-size: 1rem;
+  line-height: 1.7;
+  color: var(--text-primary);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  font-family: inherit;
+  white-space: pre-wrap;
+  transition: border-color var(--transition-fast);
+}
+.lens-analysis__edit:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}

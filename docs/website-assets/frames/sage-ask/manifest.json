@@ -1,0 +1,38 @@
+{
+  "id": "sage-ask",
+  "title": "Ask Sage",
+  "subtitle": "A local 27B model that cites what it read, on a box with no internet",
+  "user": "DOC001",
+  "theme": "dark",
+  "viewport": {
+    "width": 1512,
+    "height": 1024
+  },
+  "steps": [
+    {
+      "n": 1,
+      "caption": "Sage runs entirely on the appliance. No PHI leaves the box.",
+      "file": "01.png",
+      "hold": 3200
+    },
+    {
+      "n": 2,
+      "caption": "Fast mode answers general questions with the small model. Patient, medication and dose questions still go to the careful model. That floor is not a toggle in the UI.",
+      "file": "02.png",
+      "hold": 3200
+    },
+    {
+      "n": 3,
+      "caption": "Ask: what are the classic ECG findings in hyperkalaemia?",
+      "file": "03.png",
+      "hold": 3200
+    },
+    {
+      "n": 4,
+      "caption": "The answer, with a safety line inline and the guidelines it retrieved listed under \"Show details\".",
+      "file": "04.png",
+      "hold": 6000
+    }
+  ],
+  "video": "video/sage-ask.webm"
+}

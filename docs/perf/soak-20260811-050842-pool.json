@@ -1,0 +1,142 @@
+{
+  "series": {
+    "health": {
+      "name": "health",
+      "requests": 1795,
+      "errors": 0,
+      "error_rate": 0.0,
+      "p50_ms": 3.1,
+      "p95_ms": 4.2,
+      "p99_ms": 5.3,
+      "max_ms": 29.1
+    },
+    "board": {
+      "name": "board",
+      "requests": 900,
+      "errors": 0,
+      "error_rate": 0.0,
+      "p50_ms": 7.2,
+      "p95_ms": 12.2,
+      "p99_ms": 35.9,
+      "max_ms": 78.3
+    },
+    "chart": {
+      "name": "chart",
+      "requests": 300,
+      "errors": 0,
+      "error_rate": 0.0,
+      "p50_ms": 19.8,
+      "p95_ms": 42.1,
+      "p99_ms": 75.4,
+      "max_ms": 128.4
+    },
+    "channels": {
+      "name": "channels",
+      "requests": 180,
+      "errors": 0,
+      "error_rate": 0.0,
+      "p50_ms": 28.9,
+      "p95_ms": 55.2,
+      "p99_ms": 132.2,
+      "max_ms": 155.3
+    },
+    "messages_read": {
+      "name": "messages_read",
+      "requests": 225,
+      "errors": 0,
+      "error_rate": 0.0,
+      "p50_ms": 27.8,
+      "p95_ms": 46.9,
+      "p99_ms": 103.3,
+      "max_ms": 117.5
+    },
+    "message_post": {
+      "name": "message_post",
+      "requests": 129,
+      "errors": 0,
+      "error_rate": 0.0,
+      "p50_ms": 32.4,
+      "p95_ms": 92.0,
+      "p99_ms": 119.8,
+      "max_ms": 122.0
+    },
+    "forecast": {
+      "name": "forecast",
+      "requests": 60,
+      "errors": 0,
+      "error_rate": 0.0,
+      "p50_ms": 4.0,
+      "p95_ms": 5.8,
+      "p99_ms": 110.4,
+      "max_ms": 81.8
+    },
+    "ward_brief": {
+      "name": "ward_brief",
+      "requests": 45,
+      "errors": 0,
+      "error_rate": 0.0,
+      "p50_ms": 5.7,
+      "p95_ms": 7.9,
+      "p99_ms": 196.0,
+      "max_ms": 130.1
+    }
+  },
+  "census_start": 5,
+  "census_admitted": 55,
+  "rss_mb": {
+    "min": 284.7,
+    "max": 372.8
+  },
+  "slow_samples": [],
+  "stall_dumps_fired": 0,
+  "mode": "pool",
+  "minutes": 15.0,
+  "boot_to_healthy_s": 2.1,
+  "server_exit_mid_run": false,
+  "verdicts": [
+    {
+      "slo": "health zero failures",
+      "pass": true
+    },
+    {
+      "slo": "health p99 < 250.0 ms",
+      "pass": true
+    },
+    {
+      "slo": "board p99 < 2000.0 ms",
+      "pass": true
+    },
+    {
+      "slo": "board err rate < 0.5%",
+      "pass": true
+    },
+    {
+      "slo": "chart p99 < 2000.0 ms",
+      "pass": true
+    },
+    {
+      "slo": "chart err rate < 0.5%",
+      "pass": true
+    },
+    {
+      "slo": "channels p99 < 2000.0 ms",
+      "pass": true
+    },
+    {
+      "slo": "channels err rate < 0.5%",
+      "pass": true
+    },
+    {
+      "slo": "messages_read p99 < 2000.0 ms",
+      "pass": true
+    },
+    {
+      "slo": "messages_read err rate < 0.5%",
+      "pass": true
+    },
+    {
+      "slo": "server survived window",
+      "pass": true
+    }
+  ]
+}

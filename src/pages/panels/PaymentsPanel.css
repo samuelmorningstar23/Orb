@@ -1,0 +1,628 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   PAYMENTS — Quiet Clinical, counter edition.
+
+   THREE RULES THIS SHEET FOLLOWS, ALL OF THEM HOUSE RULES:
+
+   1. NO OPACITY FOR DE-EMPHASIS. Quieter text is a quieter TOKEN
+      (--text-secondary, --text-muted), never `opacity: .6` on a real colour.
+      Opacity multiplies the contrast ratio by an amount nobody can read off the
+      stylesheet, and the contrast gate cannot see through it.
+
+   2. MONEY IS TABULAR. Every amount carries `.pay-num`
+      (font-variant-numeric: tabular-nums lining-nums). A cashier reconciles by
+      running an eye down a column; proportional digits make that column ragged
+      and the check unreliable.
+
+   3. STATUS COLOUR IS TEXT COLOUR HERE. Chips use --status-x-text on a tinted
+      surface, not --status-x as a fill. A fill would need --status-on-fill for
+      its label, and these chips sit inside table rows where a solid block of
+      colour reads as an alarm.
+
+   Tap targets are 24px minimum and 44px under a coarse pointer, which is the
+   registration desk's tablet.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.pay {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+}
+
+.pay__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.pay__title {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.pay__subtitle {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  max-width: 62ch;
+}
+
+/* ── Tabs ─────────────────────────────────────────────────────────────── */
+
+.pay__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: var(--space-2);
+}
+
+.pay__tab {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  padding: var(--space-2) var(--space-4);
+  min-height: 24px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+/* Inactive tabs only, and only where hover is real. `.pay__tab:hover` (0,2,0)
+   outranked --active, so hovering the selected tab erased its raised fill, and
+   a touch screen paints :hover on tap and leaves it there. */
+@media (hover: hover) {
+  .pay__tab:not(.pay__tab--active):hover {
+    background: var(--bg-glass-hover);
+    color: var(--text-primary);
+  }
+}
+
+.pay__tab--active {
+  background: var(--bg-elevated);
+  border-color: var(--border-glass);
+  color: var(--text-primary);
+}
+
+.pay__tab:focus-visible,
+.pay-btn:focus-visible,
+.pay-field__input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.pay__body {
+  min-width: 0;
+}
+
+/* ── Layout ───────────────────────────────────────────────────────────── */
+
+.pay-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.pay-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.pay-card__title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.pay-subsection {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.pay-subsection__title {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+}
+
+/* ── Forms ────────────────────────────────────────────────────────────── */
+
+.pay-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-3);
+}
+
+.pay-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.pay-field__label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.pay-field__input {
+  font-family: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  min-height: 24px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.pay-field__input::placeholder {
+  /* A placeholder is a hint, not a value — a quieter TOKEN, never opacity. */
+  color: var(--text-muted);
+}
+
+.pay-field__input--area {
+  resize: vertical;
+  min-height: 72px;
+  line-height: 1.5;
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────── */
+
+.pay-btn {
+  appearance: none;
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-4);
+  min-height: 24px;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.pay-btn:hover:not(:disabled) {
+  background: var(--bg-glass-hover);
+}
+
+.pay-btn:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+.pay-btn--primary {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+  color: var(--btn-primary-text);
+}
+
+.pay-btn--primary:hover:not(:disabled) {
+  background: var(--accent-amber);
+  border-color: var(--accent-amber);
+}
+
+.pay-btn--danger {
+  background: var(--status-danger);
+  border-color: var(--status-danger);
+  /* Text ON a status fill uses the dedicated token — this is exactly the case
+     --status-on-fill exists for. */
+  color: var(--status-on-fill);
+}
+
+.pay-btn--small {
+  font-size: var(--text-xs);
+  padding: var(--space-1) var(--space-3);
+}
+
+/* ── Facts ────────────────────────────────────────────────────────────── */
+
+.pay-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.pay-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  min-width: 0;
+}
+
+.pay-fact dt {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.pay-fact dd {
+  margin: 0;
+  font-size: var(--text-md);
+  color: var(--text-primary);
+}
+
+.pay-fact--strong {
+  border-color: var(--border-glass);
+}
+
+.pay-fact--strong dd {
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.pay-fact--variance dd {
+  color: var(--status-danger-text);
+}
+
+/* ── Tables ───────────────────────────────────────────────────────────── */
+
+.pay-tablewrap {
+  /* Wide content scrolls INSIDE its own box; the page body never scrolls
+     sideways. */
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.pay-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  min-width: 560px;
+}
+
+.pay-table__caption {
+  caption-side: top;
+  text-align: left;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.pay-table th,
+.pay-table td {
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.pay-table thead th {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+}
+
+.pay-table tfoot th,
+.pay-table tfoot td {
+  font-weight: 700;
+  border-top: 2px solid var(--border-glass);
+  border-bottom: none;
+  background: var(--bg-elevated);
+}
+
+/* Scoped to the table: `.pay-table th, .pay-table td` (0,1,1) outranks a bare
+   class, so every amount column sat left-aligned. */
+.pay-table .pay-th--num,
+.pay-table .pay-td--num {
+  text-align: right;
+}
+
+.pay-row--reversed td {
+  /* A reversed receipt is quieter, but it is NOT hidden and it is NOT faded:
+     de-emphasis is a colour token, and the row stays fully legible because the
+     reversal is part of the record an auditor reads. */
+  color: var(--text-secondary);
+  text-decoration: line-through;
+  text-decoration-color: var(--status-danger-text);
+}
+
+/* ── Lists ────────────────────────────────────────────────────────────── */
+
+.pay-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.pay-list__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  min-width: 0;
+}
+
+.pay-list__row--stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.pay-list__head,
+.pay-list__foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.pay-list__foot {
+  justify-content: flex-start;
+}
+
+.pay-list__main {
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pay-list__sub {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.pay-list__amount {
+  margin-left: auto;
+  font-weight: 600;
+}
+
+.pay-list__row--stacked .pay-list__amount {
+  margin-left: 0;
+}
+
+/* ── Chips ────────────────────────────────────────────────────────────── */
+
+.pay-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.pay-chip--ok {
+  color: var(--status-ok-text);
+  background: color-mix(in srgb, var(--status-ok) 9%, transparent);
+  border-color: color-mix(in srgb, var(--status-ok) 26%, transparent);
+}
+
+.pay-chip--warn {
+  color: var(--status-warn-text);
+  background: color-mix(in srgb, var(--status-warn) 9%, transparent);
+  border-color: color-mix(in srgb, var(--status-warn) 26%, transparent);
+}
+
+.pay-chip--danger {
+  color: var(--status-danger-text);
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-danger) 30%, transparent);
+}
+
+.pay-chip--info {
+  color: var(--status-info-text);
+  background: color-mix(in srgb, var(--status-info) 9%, transparent);
+  border-color: color-mix(in srgb, var(--status-info) 26%, transparent);
+}
+
+/* ── Alerts and notes ─────────────────────────────────────────────────── */
+
+.pay-alert {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  border: 1px solid var(--border-subtle);
+}
+
+.pay-alert--ok {
+  color: var(--status-ok-text);
+  background: color-mix(in srgb, var(--status-ok) 9%, transparent);
+  border-color: color-mix(in srgb, var(--status-ok) 26%, transparent);
+}
+
+.pay-alert--warn {
+  color: var(--status-warn-text);
+  background: color-mix(in srgb, var(--status-warn) 9%, transparent);
+  border-color: color-mix(in srgb, var(--status-warn) 26%, transparent);
+}
+
+.pay-alert--danger {
+  color: var(--status-danger-text);
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-danger) 30%, transparent);
+}
+
+.pay-alert--info {
+  color: var(--status-info-text);
+  background: color-mix(in srgb, var(--status-info) 9%, transparent);
+  border-color: color-mix(in srgb, var(--status-info) 26%, transparent);
+}
+
+.pay-note {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  max-width: 62ch;
+}
+
+.pay-muted {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+/* ── The receipt slip ─────────────────────────────────────────────────── */
+
+.pay-receipt-slip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px dashed var(--border-glass);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.pay-receipt-slip__no {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+}
+
+.pay-receipt-slip__amount {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* ── Money figures ────────────────────────────────────────────────────── */
+
+.pay-num {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.pay-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Modal (portalled to document.body) ───────────────────────────────── */
+
+.pay-modal__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  z-index: 1000;
+}
+
+.pay-modal {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-5);
+  width: min(520px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.pay-modal__title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.pay-modal__body {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.pay-modal__actions {
+  display: flex;
+  gap: var(--space-3);
+  justify-content: flex-end;
+}
+
+.pay-modal__actions .pay-btn {
+  align-self: auto;
+}
+
+/* ── Coarse pointer: the registration desk's tablet ───────────────────── */
+
+@media (pointer: coarse) {
+  .pay__tab,
+  .pay-btn,
+  .pay-field__input {
+    min-height: 44px;
+  }
+
+  .pay-btn--small {
+    min-height: 44px;
+    padding: var(--space-2) var(--space-4);
+  }
+}
+
+@media (max-width: 700px) {
+  .pay-grid,
+  .pay-form,
+  .pay-facts {
+    grid-template-columns: 1fr;
+  }
+}

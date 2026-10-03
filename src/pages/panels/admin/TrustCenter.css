@@ -1,0 +1,179 @@
+/* Compliance & Trust Center — Quiet Clinical flat, theme-aware compliance-posture
+   dashboard. Reuses the global .glass-card surface + design tokens (index.css) so
+   it sits natively inside the admin panel in both dark and light themes. */
+
+.trust-center {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  color: var(--text-primary);
+}
+
+.trust-center .glass-card { border-radius: var(--radius-lg); }
+
+/* ── Intro line ── */
+.tc-intro {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0 0 4px;
+  max-width: 70ch;
+  line-height: 1.55;
+}
+
+/* ── Hero: score ring + summary ── */
+.tc-hero {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 28px;
+  align-items: center;
+  padding: 24px;
+}
+@media (max-width: 620px) {
+  .tc-hero { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+}
+
+.tc-ring { position: relative; width: 156px; height: 156px; flex-shrink: 0; }
+.tc-ring svg { transform: rotate(-90deg); display: block; }
+.tc-ring__center {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.tc-ring__score { font-size: 40px; font-weight: 750; line-height: 1; letter-spacing: -0.02em; }
+.tc-ring__label { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin-top: 4px; }
+
+.tc-hero__meta { display: flex; flex-direction: column; gap: 12px; }
+.tc-hero__title { font-size: 18px; font-weight: 680; margin: 0; }
+.tc-hero__sub { font-size: 12.5px; color: var(--text-secondary); margin: 0; }
+
+.tc-stat-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+.tc-stat {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 8px 16px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  min-width: 92px;
+}
+.tc-stat__num { font-size: 17px; font-weight: 700; }
+.tc-stat__lbl { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+
+/* ── Section scaffolding ── */
+.tc-section { padding: 16px 20px; }
+.tc-section__head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-bottom: 16px;
+}
+.tc-section__title { font-size: 14px; font-weight: 650; margin: 0; }
+.tc-section__hint { font-size: 11.5px; color: var(--text-secondary); margin: 2px 0 0; }
+
+/* ── Status chip ── */
+.tc-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: var(--radius-full);
+  font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.tc-chip__dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.tc-chip--pass    { color: var(--status-ok-text);     background: color-mix(in srgb, var(--status-ok) 15%, transparent); }
+.tc-chip--warn    { color: var(--status-warn-text);   background: color-mix(in srgb, var(--status-warn) 16%, transparent); }
+.tc-chip--fail    { color: var(--status-danger-text); background: color-mix(in srgb, var(--status-danger) 16%, transparent); }
+.tc-chip--unknown { color: var(--text-muted);    background: var(--bg-glass); }
+
+/* ── Control checklist ── */
+.tc-controls { display: flex; flex-direction: column; gap: 10px; }
+.tc-control {
+  display: grid;
+  grid-template-columns: 4px 1fr auto;
+  gap: 16px;
+  align-items: start;
+  padding: 16px 16px 16px 0;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.tc-control__rail { width: 4px; align-self: stretch; border-radius: 4px 0 0 4px; }
+.tc-control__rail--pass    { background: var(--status-ok); }
+.tc-control__rail--warn    { background: var(--status-warn); }
+.tc-control__rail--fail    { background: var(--status-danger); }
+.tc-control__rail--unknown { background: var(--text-muted); }
+.tc-control__body { min-width: 0; padding: 2px 0; }
+.tc-control__name { font-size: 13.5px; font-weight: 640; margin: 0 0 5px; }
+.tc-control__evidence { font-size: 12px; color: var(--text-secondary); margin: 0 0 6px; line-height: 1.5; }
+.tc-control__remediation { font-size: 11.5px; color: var(--text-secondary); margin: 0; line-height: 1.5; }
+.tc-control__remediation b { color: var(--text-secondary); font-weight: 620; }
+.tc-control__chip { padding-top: 2px; }
+
+/* ── MFA adoption bars ── */
+.tc-mfa { display: flex; flex-direction: column; gap: 12px; }
+.tc-mfa__row { display: grid; grid-template-columns: 110px 1fr 74px; gap: 12px; align-items: center; }
+.tc-mfa__role { font-size: 12.5px; font-weight: 600; text-transform: capitalize; }
+.tc-mfa__role .tc-req { font-size: 9.5px; color: var(--status-warn-text); text-transform: uppercase; letter-spacing: 0.05em; margin-left: 6px; }
+.tc-mfa__track {
+  position: relative; height: 10px; border-radius: var(--radius-full);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+/* Data-encoding fill (bar length = adoption %); token-coloured ramp allowed. */
+.tc-mfa__fill { position: absolute; inset: 0 auto 0 0; border-radius: var(--radius-full); background: linear-gradient(90deg, var(--accent-deep), var(--accent-gold)); transition: width 500ms cubic-bezier(0.4,0,0.2,1); }
+.tc-mfa__val { font-size: 11.5px; text-align: right; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+@media (max-width: 560px) { .tc-mfa__row { grid-template-columns: 84px 1fr 56px; } }
+
+/* ── Audit chain badge ── */
+.tc-audit { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.tc-audit__badge {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 12px 16px; border-radius: var(--radius-lg); font-weight: 680; font-size: 14px;
+}
+.tc-audit__badge--verified { color: var(--status-ok-text); background: color-mix(in srgb, var(--status-ok) 12%, transparent); border: 1px solid color-mix(in srgb, var(--status-ok) 40%, transparent); }
+.tc-audit__badge--broken   { color: var(--status-danger-text); background: color-mix(in srgb, var(--status-danger) 12%, transparent); border: 1px solid color-mix(in srgb, var(--status-danger) 40%, transparent); }
+.tc-audit__badge--unknown  { color: var(--text-muted); background: var(--bg-glass); border: 1px solid var(--border-glass); }
+.tc-audit__meta { font-size: 12px; color: var(--text-secondary); }
+.tc-audit__meta b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+/* ── Coverage pills ── */
+.tc-coverage { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.tc-cov-pill {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  padding: 4px 12px; border-radius: var(--radius-full); font-size: 11.5px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+}
+.tc-cov-pill b { font-variant-numeric: tabular-nums; }
+.tc-cov-pill span { color: var(--text-secondary); }
+
+/* ── RBAC collapsible matrix ── */
+.tc-rbac__toggle {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12.5px; font-weight: 600; color: var(--text-secondary);
+  padding: 6px 10px; border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+}
+.tc-rbac__toggle:hover { background: var(--bg-glass-hover); }
+.tc-rbac__caret { transition: transform 200ms ease; }
+.tc-rbac__caret--open { transform: rotate(90deg); }
+
+.tc-rbac__scroll { overflow-x: auto; margin-top: 16px; border-radius: var(--radius-md); border: 1px solid var(--border-glass); }
+.tc-matrix { border-collapse: collapse; width: 100%; font-size: 12px; }
+.tc-matrix th, .tc-matrix td { padding: 8px 10px; text-align: center; white-space: nowrap; }
+.tc-matrix thead th { position: sticky; top: 0; background: var(--bg-surface); font-weight: 640; }
+.tc-matrix th.tc-matrix__perm { text-align: left; position: sticky; left: 0; z-index: 2; background: var(--bg-surface); font-family: var(--font-mono); font-size: 11px; font-weight: 500; }
+.tc-matrix thead th.tc-matrix__corner { left: 0; z-index: 3; text-align: left; }
+.tc-matrix tbody tr { border-top: 1px solid var(--border-subtle); }
+.tc-matrix tbody tr:hover { background: var(--bg-glass); }
+.tc-matrix__yes { color: var(--status-ok-text); font-weight: 700; }
+.tc-matrix__no { color: var(--text-muted); }
+.tc-matrix__role { text-transform: capitalize; }
+
+/* ── Posture mini-cards ── */
+.tc-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.tc-mini {
+  padding: 16px; border-radius: var(--radius-md);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+}
+.tc-mini__lbl { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-muted); margin: 0 0 8px; }
+.tc-mini__val { font-size: 14px; font-weight: 620; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+.tc-mini__note { font-size: 11.5px; color: var(--text-secondary); margin: 0; line-height: 1.5; }

@@ -1,0 +1,445 @@
+/* ==========================================================================
+   Print Stylesheet — Clinical Document Output
+   ==========================================================================
+   The Handoff and Discharge print views (src/components/HandoffPrintView.tsx,
+   src/components/DischargePrintView.tsx) are React portals rendered into
+   document.body, so at print time they sit as siblings of #root:
+
+       <body>
+         <div id="root"> …dark app shell (.shell)… </div>
+         <div class="discharge-print-layout"> …printable record… </div>
+       </body>
+
+   Without any @media print rules the browser prints the entire dark app chrome
+   on top of / around the record. These rules strip the app frame, force a
+   light page, and reveal ONLY the active print portal.
+
+   Strategy (robust for both the main-app portal case AND the DischargeAccess
+   patient-portal page, where the layout is nested inside #root):
+     1. Remove the dark shell + any open modals from layout entirely.
+     2. visibility:hidden everything, then re-show only the print-layout subtree.
+     3. Absolutely position the print layout at the page origin.
+   ========================================================================== */
+
+/* On screen, the body-level print PORTAL (VigilPanel createPortal → document.body)
+   must stay hidden — otherwise the raw, unstyled print record flashes on screen
+   once the browser print dialog closes (printType state persists). The nested
+   DischargeAccess copy (#root > … > .discharge-print-layout) is NOT a body child,
+   so it stays visible for on-screen patient viewing.
+
+   The MAR (.medlist-print-layout, VigilPanel) and the orders list
+   (.orders-print-layout, OrdersPanel) portal to <body> the same way and were
+   missing from this list: on screen they rendered full-width and unstyled
+   underneath the app for as long as the print state was held open — and stayed
+   there for good on any path where `afterprint` never fires. They are hidden on
+   screen and revealed for print exactly like the other two. */
+body > .discharge-print-layout,
+body > .handoff-print-layout,
+body > .orders-print-layout,
+body > .medlist-print-layout {
+  display: none;
+}
+
+@media print {
+  body > .discharge-print-layout,
+  body > .handoff-print-layout,
+  body > .orders-print-layout,
+  body > .medlist-print-layout {
+    display: block;
+  }
+
+  /* Sensible page margins for A4/Letter clinical documents */
+  @page {
+    margin: 14mm;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
+  /* 1. Drop the dark clinical app shell and any floating widgets / modals out
+        of the print layout. The active print record is portaled to <body>,
+        OUTSIDE .shell, so hiding .shell never hides the record. Hiding the
+        modal also removes the on-screen discharge preview, which embeds a
+        DUPLICATE .discharge-print-layout — leaving exactly one to print. */
+  .shell,
+  .modal-overlay,
+  .modal,
+  .sage-floating-assistant,
+  .pulse-widget,
+  .clock-widget {
+    display: none !important;
+  }
+
+  /* 2. Belt-and-suspenders: hide everything, then reveal only the print
+        subtree. This also covers the DischargeAccess page where the layout
+        lives inside #root rather than as a body-level portal. */
+  body * {
+    visibility: hidden !important;
+  }
+
+  .discharge-print-layout,
+  .discharge-print-layout *,
+  .handoff-print-layout,
+  .handoff-print-layout * {
+    visibility: visible !important;
+  }
+
+  /* 3. Anchor the print record at the page origin and give it a clean,
+        light, shadow-free base. */
+  .discharge-print-layout,
+  .handoff-print-layout {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 11pt;
+    line-height: 1.5;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Normalize every descendant: black text, no dark fills, no shadows,
+     no animations/transitions carried over from the on-screen theme. */
+  .discharge-print-layout *,
+  .handoff-print-layout * {
+    color: #000000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    animation: none !important;
+    transition: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* ─── Discharge Summary layout ─── */
+  .discharge-print-layout .discharge-title {
+    text-align: center;
+    text-decoration: underline;
+    font-size: 16pt;
+    margin: 0 0 10px;
+  }
+
+  .discharge-print-layout .discharge-patient-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 12px;
+  }
+
+  .discharge-print-layout .discharge-patient-table td {
+    border: 1px solid #000 !important;
+    padding: 5px 8px;
+    vertical-align: top;
+    font-size: 10.5pt;
+  }
+
+  .discharge-print-layout .discharge-section {
+    margin: 8px 0;
+    page-break-inside: avoid;
+  }
+
+  .discharge-print-layout p {
+    margin: 2px 0;
+  }
+
+  .discharge-print-layout .discharge-meds-list {
+    padding-left: 22px;
+    margin: 8px 0;
+  }
+
+  .discharge-print-layout table td,
+  .discharge-print-layout table th {
+    border: 1px solid #000 !important;
+  }
+
+  .discharge-print-layout .discharge-footer {
+    margin-top: 36px;
+    page-break-inside: avoid;
+  }
+
+  /* ─── Handoff Report layout ─── */
+  .handoff-print-layout .handoff-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 24px;
+  }
+
+  .handoff-print-layout .handoff-divider {
+    border: none;
+    border-top: 2px solid #000;
+    margin: 8px 0 16px;
+  }
+
+  .handoff-print-layout .handoff-section {
+    margin-bottom: 14px;
+    page-break-inside: avoid;
+  }
+
+  .handoff-print-layout .handoff-section-title {
+    font-size: 11pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid #000;
+    padding-bottom: 2px;
+    margin-bottom: 6px;
+  }
+
+  .handoff-print-layout .handoff-grid-2 {
+    display: flex;
+    justify-content: space-between;
+    gap: 24px;
+  }
+
+  .handoff-print-layout .handoff-risk-box {
+    border: 1px solid #000 !important;
+    padding: 8px 14px;
+    text-align: center;
+  }
+
+  .handoff-print-layout .handoff-vitals-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+  }
+
+  .handoff-print-layout .handoff-vital {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .handoff-print-layout .handoff-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .handoff-print-layout .handoff-table th,
+  .handoff-print-layout .handoff-table td {
+    border: 1px solid #000 !important;
+    padding: 6px 10px;
+    text-align: left;
+    font-size: 10pt;
+  }
+
+  .handoff-print-layout .handoff-note {
+    border: 1px solid #000 !important;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    page-break-inside: avoid;
+  }
+
+  .handoff-print-layout .handoff-footer {
+    margin-top: 36px;
+    display: flex;
+    justify-content: space-between;
+    gap: 24px;
+    page-break-inside: avoid;
+  }
+
+  .handoff-print-layout .handoff-signature-line {
+    border-bottom: 1px solid #000;
+    width: 220px;
+    height: 28px;
+    margin: 4px 0 16px;
+  }
+
+  /* ── Reveal the bill and the I-PASS sheet. Both printed BLANK until
+        2026-10-02: neither root was on the allow-list in step 2, so "Print
+        this bill" (the invoice dialog, portalled to <body>) and the I-PASS
+        Print button (the /handoff/:id page) each produced an empty page.
+        Their on-screen chrome (buttons, the plain-text toggle) is left off
+        the paper. ── */
+  .bill-print-layout,
+  .bill-print-layout *,
+  .ipass-print-layout,
+  .ipass-print-layout * {
+    visibility: visible !important;
+  }
+
+  .bill-print-layout,
+  .ipass-print-layout {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 11pt;
+    line-height: 1.5;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .bill-print-layout *,
+  .ipass-print-layout * {
+    color: #000000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    animation: none !important;
+    transition: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .ipass-print-layout .ipass-actions,
+  .ipass-print-layout .ipass-save-msg,
+  .ipass-print-layout .ipass-plain-text,
+  .bill-print-layout .bill-actions,
+  .bill-print-layout .bill-modal__head {
+    display: none !important;
+  }
+
+  .ipass-print-layout section,
+  .bill-print-layout tr {
+    page-break-inside: avoid;
+  }
+
+  /* ── Reveal the two nurse-facing print portals (MAR + Orders list). These
+        are portaled to <body> as siblings of #root, so they must be added to
+        the visibility allow-list and anchored at the page origin, exactly like
+        the handoff/discharge layouts above. ── */
+  .medlist-print-layout,
+  .medlist-print-layout *,
+  .orders-print-layout,
+  .orders-print-layout * {
+    visibility: visible !important;
+  }
+
+  .medlist-print-layout,
+  .orders-print-layout {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 11pt;
+    line-height: 1.5;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .medlist-print-layout *,
+  .orders-print-layout * {
+    color: #000000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    animation: none !important;
+    transition: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* ─── MAR (medication administration record) + Orders list shared chrome ─── */
+  .medlist-print-layout .medlist-header,
+  .orders-print-layout .orders-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 24px;
+  }
+
+  .medlist-print-layout .medlist-divider,
+  .orders-print-layout .orders-divider {
+    border: none;
+    border-top: 2px solid #000;
+    margin: 8px 0 16px;
+  }
+
+  .medlist-print-layout .medlist-section,
+  .orders-print-layout .orders-section {
+    margin-bottom: 14px;
+    page-break-inside: avoid;
+  }
+
+  .medlist-print-layout .medlist-section-title,
+  .orders-print-layout .orders-section-title {
+    font-size: 11pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid #000;
+    padding-bottom: 2px;
+    margin-bottom: 6px;
+  }
+
+  .medlist-print-layout .medlist-table,
+  .orders-print-layout .orders-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .medlist-print-layout .medlist-table th,
+  .medlist-print-layout .medlist-table td,
+  .orders-print-layout .orders-table th,
+  .orders-print-layout .orders-table td {
+    border: 1px solid #000 !important;
+    padding: 6px 10px;
+    text-align: left;
+    font-size: 10pt;
+    vertical-align: top;
+  }
+
+  /* Repeat the column headers when a long list breaks across pages. */
+  .medlist-print-layout .medlist-table thead,
+  .orders-print-layout .orders-table thead {
+    display: table-header-group;
+  }
+
+  .medlist-print-layout .medlist-table tr,
+  .orders-print-layout .orders-table tr {
+    page-break-inside: avoid;
+  }
+
+  .medlist-print-layout .medlist-footer,
+  .orders-print-layout .orders-footer {
+    margin-top: 36px;
+    page-break-inside: avoid;
+  }
+
+  .medlist-print-layout .medlist-signature-line,
+  .orders-print-layout .orders-signature-line {
+    border-bottom: 1px solid #000;
+    width: 260px;
+    height: 28px;
+    margin: 4px 0 16px;
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "id": "wrong-room-warning",
+  "title": "The wrong-room warning",
+  "subtitle": "Wrong patient, right ward: the most common serious error, caught without a modal",
+  "user": "DOC001",
+  "theme": "dark",
+  "viewport": {
+    "width": 1512,
+    "height": 1024
+  },
+  "steps": [
+    {
+      "n": 1,
+      "caption": "Messages: every patient has a case room. Open Suresh Reddy's.",
+      "file": "01.png",
+      "hold": 3200
+    },
+    {
+      "n": 2,
+      "caption": "Type an order about a different patient into this room: \"Give Rajesh Iyer 40mg prednisolone now.\"",
+      "file": "02.png",
+      "hold": 3200
+    },
+    {
+      "n": 3,
+      "caption": "Sent, not blocked. A nurse mid-emergency does not need a modal. Orb delivers it and says: this looks like it belongs to Rajesh Iyer, want me to move it?",
+      "file": "03.png",
+      "hold": 5000
+    }
+  ],
+  "video": "video/wrong-room-warning.webm"
+}

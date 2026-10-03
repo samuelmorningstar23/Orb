@@ -1,0 +1,1346 @@
+[
+  {
+    "name": "login-staff",
+    "title": "Staff sign-in",
+    "theme": "dark",
+    "user": null,
+    "file": "screenshots/dark/login-staff.png",
+    "fullPage": false
+  },
+  {
+    "name": "login-patient",
+    "title": "Patient portal sign-in",
+    "theme": "dark",
+    "user": null,
+    "file": "screenshots/dark/login-patient.png",
+    "fullPage": false
+  },
+  {
+    "name": "today-doctor-home",
+    "title": "Orb Today: the doctor's home screen",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/today-doctor-home.png",
+    "fullPage": false
+  },
+  {
+    "name": "vigil-patient-board",
+    "title": "Vigil: live patient board with NEWS2 risk ordering",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/vigil-patient-board.png",
+    "fullPage": false
+  },
+  {
+    "name": "vigil-patient-chart",
+    "title": "Vigil: patient chart with live vitals and NEWS2 band",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/vigil-patient-chart.png",
+    "fullPage": false
+  },
+  {
+    "name": "vigil-news2-explained",
+    "title": "Vigil: NEWS2 explained per parameter",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/vigil-news2-explained.png",
+    "fullPage": false
+  },
+  {
+    "name": "vigil-patient-story",
+    "title": "Patient Story: one scrollable clinical narrative",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/vigil-patient-story.png",
+    "fullPage": false
+  },
+  {
+    "name": "vigil-medications-emar",
+    "title": "Medications and eMAR from the chart",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/vigil-medications-emar.png",
+    "fullPage": false
+  },
+  {
+    "name": "pulse-environmental",
+    "title": "Orb Pulse: environmental intelligence",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/pulse-environmental.png",
+    "fullPage": false
+  },
+  {
+    "name": "ward-round",
+    "title": "Ward Round: the round as a queue",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/ward-round.png",
+    "fullPage": false
+  },
+  {
+    "name": "orders-cpoe",
+    "title": "Orders (CPOE) with terminology validation",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/orders-cpoe.png",
+    "fullPage": false
+  },
+  {
+    "name": "orders-order-sets",
+    "title": "Order sets: cited protocols behind the safety gates",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/orders-order-sets.png",
+    "fullPage": false
+  },
+  {
+    "name": "orders-sepsis-six",
+    "title": "Order sets: Sepsis Six, patient-specific gates",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/orders-sepsis-six.png",
+    "fullPage": false
+  },
+  {
+    "name": "relay-case-rooms",
+    "title": "Relay: case rooms",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/relay-case-rooms.png",
+    "fullPage": false
+  },
+  {
+    "name": "relay-case-room",
+    "title": "Relay: a patient case room",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/relay-case-room.png",
+    "fullPage": false
+  },
+  {
+    "name": "sage-panel",
+    "title": "Sage: clinical assistant",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/sage-panel.png",
+    "fullPage": false
+  },
+  {
+    "name": "scribe",
+    "title": "Scribe: dictation to structured note",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/scribe.png",
+    "fullPage": false
+  },
+  {
+    "name": "lens",
+    "title": "Lens: imaging reference (investigational)",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/lens.png",
+    "fullPage": false
+  },
+  {
+    "name": "forecast-census",
+    "title": "Forecast: census projection",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/forecast-census.png",
+    "fullPage": false
+  },
+  {
+    "name": "forecast-capacity",
+    "title": "Forecast: ward capacity",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/forecast-capacity.png",
+    "fullPage": false
+  },
+  {
+    "name": "forecast-discharge-board",
+    "title": "Forecast: discharge readiness",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/forecast-discharge-board.png",
+    "fullPage": false
+  },
+  {
+    "name": "forecast-admissions",
+    "title": "Forecast: admission patterns",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/forecast-admissions.png",
+    "fullPage": false
+  },
+  {
+    "name": "command-center",
+    "title": "Command Center: hospital-wide view",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/command-center.png",
+    "fullPage": false
+  },
+  {
+    "name": "capacity-simulator",
+    "title": "What-if capacity simulator",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/capacity-simulator.png",
+    "fullPage": false
+  },
+  {
+    "name": "revenue-integrity",
+    "title": "Revenue integrity and coding",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/revenue-integrity.png",
+    "fullPage": false
+  },
+  {
+    "name": "appointments",
+    "title": "Appointments",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/appointments.png",
+    "fullPage": false
+  },
+  {
+    "name": "dietary",
+    "title": "Diet and kitchen",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/dietary.png",
+    "fullPage": false
+  },
+  {
+    "name": "keyboard-shortcuts",
+    "title": "Keyboard-first: shortcuts card",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/keyboard-shortcuts.png",
+    "fullPage": false
+  },
+  {
+    "name": "command-palette",
+    "title": "Command palette: find a patient",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/command-palette.png",
+    "fullPage": false
+  },
+  {
+    "name": "admit-patient",
+    "title": "Admit a patient",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/admit-patient.png",
+    "fullPage": false
+  },
+  {
+    "name": "mfa-enrolment",
+    "title": "Multi-factor authentication enrolment",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/mfa-enrolment.png",
+    "fullPage": false
+  },
+  {
+    "name": "downtime-mode",
+    "title": "Downtime mode: the ward keeps a safe view when everything else is down",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/downtime-mode.png",
+    "fullPage": true
+  },
+  {
+    "name": "handoff-ipass",
+    "title": "I-PASS handoff document",
+    "theme": "dark",
+    "user": "doctor",
+    "file": "screenshots/dark/handoff-ipass.png",
+    "fullPage": true
+  },
+  {
+    "name": "surgical-suite-schedule",
+    "title": "Surgical Suite: theatre schedule",
+    "theme": "dark",
+    "user": "surgeon",
+    "file": "screenshots/dark/surgical-suite-schedule.png",
+    "fullPage": false
+  },
+  {
+    "name": "surgical-suite-day",
+    "title": "Surgical Suite: day view",
+    "theme": "dark",
+    "user": "surgeon",
+    "file": "screenshots/dark/surgical-suite-day.png",
+    "fullPage": false
+  },
+  {
+    "name": "surgical-suite-active-cases",
+    "title": "Surgical Suite: active cases and WHO checklist",
+    "theme": "dark",
+    "user": "surgeon",
+    "file": "screenshots/dark/surgical-suite-active-cases.png",
+    "fullPage": false
+  },
+  {
+    "name": "nurse-my-shift",
+    "title": "Nurse mode: My Shift, what is due now",
+    "theme": "dark",
+    "user": "nurse",
+    "file": "screenshots/dark/nurse-my-shift.png",
+    "fullPage": false
+  },
+  {
+    "name": "nurse-my-patients",
+    "title": "Nurse mode: my patients",
+    "theme": "dark",
+    "user": "nurse",
+    "file": "screenshots/dark/nurse-my-patients.png",
+    "fullPage": false
+  },
+  {
+    "name": "nurse-observations-news2-live",
+    "title": "Nurse mode: observations with NEWS2 computed live",
+    "theme": "dark",
+    "user": "nurse",
+    "file": "screenshots/dark/nurse-observations-news2-live.png",
+    "fullPage": false
+  },
+  {
+    "name": "nurse-administer-medication",
+    "title": "Nurse mode: administer with the five rights and type-to-confirm",
+    "theme": "dark",
+    "user": "nurse",
+    "file": "screenshots/dark/nurse-administer-medication.png",
+    "fullPage": false
+  },
+  {
+    "name": "nurse-handover-ipass",
+    "title": "Nurse mode: I-PASS handover draft",
+    "theme": "dark",
+    "user": "nurse",
+    "file": "screenshots/dark/nurse-handover-ipass.png",
+    "fullPage": false
+  },
+  {
+    "name": "nurse-end-of-shift",
+    "title": "Nurse mode: end-of-shift outcome capture",
+    "theme": "dark",
+    "user": "nurse",
+    "file": "screenshots/dark/nurse-end-of-shift.png",
+    "fullPage": false
+  },
+  {
+    "name": "pharmacy-helix-overview",
+    "title": "Helix: pharmacy overview",
+    "theme": "dark",
+    "user": "pharmacist",
+    "file": "screenshots/dark/pharmacy-helix-overview.png",
+    "fullPage": false
+  },
+  {
+    "name": "pharmacy-patient-board",
+    "title": "Helix: patient board",
+    "theme": "dark",
+    "user": "pharmacist",
+    "file": "screenshots/dark/pharmacy-patient-board.png",
+    "fullPage": false
+  },
+  {
+    "name": "pharmacy-formulary",
+    "title": "Helix: formulary",
+    "theme": "dark",
+    "user": "pharmacist",
+    "file": "screenshots/dark/pharmacy-formulary.png",
+    "fullPage": false
+  },
+  {
+    "name": "pharmacy-verify-queue",
+    "title": "Pharmacist verify queue with drug-safety screening",
+    "theme": "dark",
+    "user": "pharmacist",
+    "file": "screenshots/dark/pharmacy-verify-queue.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-overview",
+    "title": "Admin: Overview",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/admin-overview.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-scorecard",
+    "title": "Admin: Pilot Scorecard",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/admin-scorecard.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-audit",
+    "title": "Admin: Audit Logs",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/admin-audit.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-trace",
+    "title": "Admin: Trace",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/admin-trace.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-provenance",
+    "title": "Admin: Sage Provenance",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/admin-provenance.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-ingestion",
+    "title": "Admin: Ingestion",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/admin-ingestion.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-security",
+    "title": "Admin: Security",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/admin-security.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-alerts",
+    "title": "Admin: Alerts",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/admin-alerts.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-models",
+    "title": "Admin: Model Governance",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/admin-models.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-impact",
+    "title": "Admin: Impact",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/admin-impact.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-trust",
+    "title": "Admin: Trust Center",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/admin-trust.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-flight",
+    "title": "Admin: Flight Recorder",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/admin-flight.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-users",
+    "title": "Admin: Users",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/admin-users.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-roster",
+    "title": "Admin: Roster Import",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/admin-roster.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-data",
+    "title": "Admin: Data & Backups",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/admin-data.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-frontdesk",
+    "title": "Front Desk: registration and OPD queue",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-frontdesk.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-frontdesk-transfers",
+    "title": "Front Desk: registration and OPD queue: Transfers",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-frontdesk-transfers.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-billing",
+    "title": "Billing: charges, invoices, GST",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-billing.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-payments",
+    "title": "Payments: receipts, refunds, counter sessions",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-payments.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-payments-receipts",
+    "title": "Payments: receipts, refunds, counter sessions: Receipts",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-payments-receipts.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-payments-approvals",
+    "title": "Payments: receipts, refunds, counter sessions: Approvals",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-payments-approvals.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-payer",
+    "title": "Insurance and TPA claims",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-payer.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-payer-all-claims",
+    "title": "Insurance and TPA claims: All claims",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-payer-all-claims.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-payer-denials",
+    "title": "Insurance and TPA claims: Denials",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-payer-denials.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-procurement",
+    "title": "Procurement and stores",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-procurement.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-housekeeping",
+    "title": "Housekeeping and bed turnaround",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-housekeeping.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-nabh",
+    "title": "NABH evidence and quality indicators",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-nabh.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-nabh-incident-register",
+    "title": "NABH evidence and quality indicators: Incident register",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-nabh-incident-register.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-nabh-report-an-incident",
+    "title": "NABH evidence and quality indicators: Report an incident",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-nabh-report-an-incident.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-abdm",
+    "title": "ABDM and ABHA identity",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-abdm.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-workforce",
+    "title": "Workforce: duty roster and attendance",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-workforce.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-workforce-attendance",
+    "title": "Workforce: duty roster and attendance: Attendance",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-workforce-attendance.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-workforce-monthly-muster",
+    "title": "Workforce: duty roster and attendance: Monthly muster",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-workforce-monthly-muster.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-biomedical",
+    "title": "Biomedical equipment register",
+    "theme": "dark",
+    "user": "admin",
+    "file": "screenshots/dark/module-biomedical.png",
+    "fullPage": false
+  },
+  {
+    "name": "bridge-patient-portal",
+    "title": "Bridge: the patient portal",
+    "theme": "dark",
+    "user": "patient",
+    "file": "screenshots/dark/bridge-patient-portal.png",
+    "fullPage": true
+  },
+  {
+    "name": "bridge-medications",
+    "title": "Bridge: my medications",
+    "theme": "dark",
+    "user": "patient",
+    "file": "screenshots/dark/bridge-medications.png",
+    "fullPage": false
+  },
+  {
+    "name": "bridge-labs",
+    "title": "Bridge: my results",
+    "theme": "dark",
+    "user": "patient",
+    "file": "screenshots/dark/bridge-labs.png",
+    "fullPage": false
+  },
+  {
+    "name": "bridge-documents",
+    "title": "Bridge: my documents",
+    "theme": "dark",
+    "user": "patient",
+    "file": "screenshots/dark/bridge-documents.png",
+    "fullPage": false
+  },
+  {
+    "name": "login-staff",
+    "title": "Staff sign-in",
+    "theme": "light",
+    "user": null,
+    "file": "screenshots/light/login-staff.png",
+    "fullPage": false
+  },
+  {
+    "name": "login-patient",
+    "title": "Patient portal sign-in",
+    "theme": "light",
+    "user": null,
+    "file": "screenshots/light/login-patient.png",
+    "fullPage": false
+  },
+  {
+    "name": "today-doctor-home",
+    "title": "Orb Today: the doctor's home screen",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/today-doctor-home.png",
+    "fullPage": false
+  },
+  {
+    "name": "vigil-patient-board",
+    "title": "Vigil: live patient board with NEWS2 risk ordering",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/vigil-patient-board.png",
+    "fullPage": false
+  },
+  {
+    "name": "vigil-patient-chart",
+    "title": "Vigil: patient chart with live vitals and NEWS2 band",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/vigil-patient-chart.png",
+    "fullPage": false
+  },
+  {
+    "name": "vigil-news2-explained",
+    "title": "Vigil: NEWS2 explained per parameter",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/vigil-news2-explained.png",
+    "fullPage": false
+  },
+  {
+    "name": "vigil-patient-story",
+    "title": "Patient Story: one scrollable clinical narrative",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/vigil-patient-story.png",
+    "fullPage": false
+  },
+  {
+    "name": "vigil-medications-emar",
+    "title": "Medications and eMAR from the chart",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/vigil-medications-emar.png",
+    "fullPage": false
+  },
+  {
+    "name": "pulse-environmental",
+    "title": "Orb Pulse: environmental intelligence",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/pulse-environmental.png",
+    "fullPage": false
+  },
+  {
+    "name": "ward-round",
+    "title": "Ward Round: the round as a queue",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/ward-round.png",
+    "fullPage": false
+  },
+  {
+    "name": "orders-cpoe",
+    "title": "Orders (CPOE) with terminology validation",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/orders-cpoe.png",
+    "fullPage": false
+  },
+  {
+    "name": "orders-order-sets",
+    "title": "Order sets: cited protocols behind the safety gates",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/orders-order-sets.png",
+    "fullPage": false
+  },
+  {
+    "name": "orders-sepsis-six",
+    "title": "Order sets: Sepsis Six, patient-specific gates",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/orders-sepsis-six.png",
+    "fullPage": false
+  },
+  {
+    "name": "relay-case-rooms",
+    "title": "Relay: case rooms",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/relay-case-rooms.png",
+    "fullPage": false
+  },
+  {
+    "name": "relay-case-room",
+    "title": "Relay: a patient case room",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/relay-case-room.png",
+    "fullPage": false
+  },
+  {
+    "name": "sage-panel",
+    "title": "Sage: clinical assistant",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/sage-panel.png",
+    "fullPage": false
+  },
+  {
+    "name": "scribe",
+    "title": "Scribe: dictation to structured note",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/scribe.png",
+    "fullPage": false
+  },
+  {
+    "name": "lens",
+    "title": "Lens: imaging reference (investigational)",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/lens.png",
+    "fullPage": false
+  },
+  {
+    "name": "forecast-census",
+    "title": "Forecast: census projection",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/forecast-census.png",
+    "fullPage": false
+  },
+  {
+    "name": "forecast-capacity",
+    "title": "Forecast: ward capacity",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/forecast-capacity.png",
+    "fullPage": false
+  },
+  {
+    "name": "forecast-discharge-board",
+    "title": "Forecast: discharge readiness",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/forecast-discharge-board.png",
+    "fullPage": false
+  },
+  {
+    "name": "forecast-admissions",
+    "title": "Forecast: admission patterns",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/forecast-admissions.png",
+    "fullPage": false
+  },
+  {
+    "name": "command-center",
+    "title": "Command Center: hospital-wide view",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/command-center.png",
+    "fullPage": false
+  },
+  {
+    "name": "capacity-simulator",
+    "title": "What-if capacity simulator",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/capacity-simulator.png",
+    "fullPage": false
+  },
+  {
+    "name": "revenue-integrity",
+    "title": "Revenue integrity and coding",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/revenue-integrity.png",
+    "fullPage": false
+  },
+  {
+    "name": "appointments",
+    "title": "Appointments",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/appointments.png",
+    "fullPage": false
+  },
+  {
+    "name": "dietary",
+    "title": "Diet and kitchen",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/dietary.png",
+    "fullPage": false
+  },
+  {
+    "name": "keyboard-shortcuts",
+    "title": "Keyboard-first: shortcuts card",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/keyboard-shortcuts.png",
+    "fullPage": false
+  },
+  {
+    "name": "command-palette",
+    "title": "Command palette: find a patient",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/command-palette.png",
+    "fullPage": false
+  },
+  {
+    "name": "admit-patient",
+    "title": "Admit a patient",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/admit-patient.png",
+    "fullPage": false
+  },
+  {
+    "name": "mfa-enrolment",
+    "title": "Multi-factor authentication enrolment",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/mfa-enrolment.png",
+    "fullPage": false
+  },
+  {
+    "name": "downtime-mode",
+    "title": "Downtime mode: the ward keeps a safe view when everything else is down",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/downtime-mode.png",
+    "fullPage": true
+  },
+  {
+    "name": "handoff-ipass",
+    "title": "I-PASS handoff document",
+    "theme": "light",
+    "user": "doctor",
+    "file": "screenshots/light/handoff-ipass.png",
+    "fullPage": true
+  },
+  {
+    "name": "surgical-suite-schedule",
+    "title": "Surgical Suite: theatre schedule",
+    "theme": "light",
+    "user": "surgeon",
+    "file": "screenshots/light/surgical-suite-schedule.png",
+    "fullPage": false
+  },
+  {
+    "name": "surgical-suite-day",
+    "title": "Surgical Suite: day view",
+    "theme": "light",
+    "user": "surgeon",
+    "file": "screenshots/light/surgical-suite-day.png",
+    "fullPage": false
+  },
+  {
+    "name": "surgical-suite-active-cases",
+    "title": "Surgical Suite: active cases and WHO checklist",
+    "theme": "light",
+    "user": "surgeon",
+    "file": "screenshots/light/surgical-suite-active-cases.png",
+    "fullPage": false
+  },
+  {
+    "name": "nurse-my-shift",
+    "title": "Nurse mode: My Shift, what is due now",
+    "theme": "light",
+    "user": "nurse",
+    "file": "screenshots/light/nurse-my-shift.png",
+    "fullPage": false
+  },
+  {
+    "name": "nurse-my-patients",
+    "title": "Nurse mode: my patients",
+    "theme": "light",
+    "user": "nurse",
+    "file": "screenshots/light/nurse-my-patients.png",
+    "fullPage": false
+  },
+  {
+    "name": "nurse-observations-news2-live",
+    "title": "Nurse mode: observations with NEWS2 computed live",
+    "theme": "light",
+    "user": "nurse",
+    "file": "screenshots/light/nurse-observations-news2-live.png",
+    "fullPage": false
+  },
+  {
+    "name": "nurse-administer-medication",
+    "title": "Nurse mode: administer with the five rights and type-to-confirm",
+    "theme": "light",
+    "user": "nurse",
+    "file": "screenshots/light/nurse-administer-medication.png",
+    "fullPage": false
+  },
+  {
+    "name": "nurse-handover-ipass",
+    "title": "Nurse mode: I-PASS handover draft",
+    "theme": "light",
+    "user": "nurse",
+    "file": "screenshots/light/nurse-handover-ipass.png",
+    "fullPage": false
+  },
+  {
+    "name": "nurse-end-of-shift",
+    "title": "Nurse mode: end-of-shift outcome capture",
+    "theme": "light",
+    "user": "nurse",
+    "file": "screenshots/light/nurse-end-of-shift.png",
+    "fullPage": false
+  },
+  {
+    "name": "pharmacy-helix-overview",
+    "title": "Helix: pharmacy overview",
+    "theme": "light",
+    "user": "pharmacist",
+    "file": "screenshots/light/pharmacy-helix-overview.png",
+    "fullPage": false
+  },
+  {
+    "name": "pharmacy-patient-board",
+    "title": "Helix: patient board",
+    "theme": "light",
+    "user": "pharmacist",
+    "file": "screenshots/light/pharmacy-patient-board.png",
+    "fullPage": false
+  },
+  {
+    "name": "pharmacy-formulary",
+    "title": "Helix: formulary",
+    "theme": "light",
+    "user": "pharmacist",
+    "file": "screenshots/light/pharmacy-formulary.png",
+    "fullPage": false
+  },
+  {
+    "name": "pharmacy-verify-queue",
+    "title": "Pharmacist verify queue with drug-safety screening",
+    "theme": "light",
+    "user": "pharmacist",
+    "file": "screenshots/light/pharmacy-verify-queue.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-overview",
+    "title": "Admin: Overview",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/admin-overview.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-scorecard",
+    "title": "Admin: Pilot Scorecard",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/admin-scorecard.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-audit",
+    "title": "Admin: Audit Logs",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/admin-audit.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-trace",
+    "title": "Admin: Trace",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/admin-trace.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-provenance",
+    "title": "Admin: Sage Provenance",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/admin-provenance.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-ingestion",
+    "title": "Admin: Ingestion",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/admin-ingestion.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-security",
+    "title": "Admin: Security",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/admin-security.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-alerts",
+    "title": "Admin: Alerts",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/admin-alerts.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-models",
+    "title": "Admin: Model Governance",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/admin-models.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-impact",
+    "title": "Admin: Impact",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/admin-impact.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-trust",
+    "title": "Admin: Trust Center",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/admin-trust.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-flight",
+    "title": "Admin: Flight Recorder",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/admin-flight.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-users",
+    "title": "Admin: Users",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/admin-users.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-roster",
+    "title": "Admin: Roster Import",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/admin-roster.png",
+    "fullPage": false
+  },
+  {
+    "name": "admin-data",
+    "title": "Admin: Data & Backups",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/admin-data.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-frontdesk",
+    "title": "Front Desk: registration and OPD queue",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-frontdesk.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-frontdesk-transfers",
+    "title": "Front Desk: registration and OPD queue: Transfers",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-frontdesk-transfers.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-billing",
+    "title": "Billing: charges, invoices, GST",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-billing.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-payments",
+    "title": "Payments: receipts, refunds, counter sessions",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-payments.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-payments-receipts",
+    "title": "Payments: receipts, refunds, counter sessions: Receipts",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-payments-receipts.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-payments-approvals",
+    "title": "Payments: receipts, refunds, counter sessions: Approvals",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-payments-approvals.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-payer",
+    "title": "Insurance and TPA claims",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-payer.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-payer-all-claims",
+    "title": "Insurance and TPA claims: All claims",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-payer-all-claims.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-payer-denials",
+    "title": "Insurance and TPA claims: Denials",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-payer-denials.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-procurement",
+    "title": "Procurement and stores",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-procurement.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-housekeeping",
+    "title": "Housekeeping and bed turnaround",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-housekeeping.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-nabh",
+    "title": "NABH evidence and quality indicators",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-nabh.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-nabh-incident-register",
+    "title": "NABH evidence and quality indicators: Incident register",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-nabh-incident-register.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-nabh-report-an-incident",
+    "title": "NABH evidence and quality indicators: Report an incident",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-nabh-report-an-incident.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-abdm",
+    "title": "ABDM and ABHA identity",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-abdm.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-workforce",
+    "title": "Workforce: duty roster and attendance",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-workforce.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-workforce-attendance",
+    "title": "Workforce: duty roster and attendance: Attendance",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-workforce-attendance.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-workforce-monthly-muster",
+    "title": "Workforce: duty roster and attendance: Monthly muster",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-workforce-monthly-muster.png",
+    "fullPage": false
+  },
+  {
+    "name": "module-biomedical",
+    "title": "Biomedical equipment register",
+    "theme": "light",
+    "user": "admin",
+    "file": "screenshots/light/module-biomedical.png",
+    "fullPage": false
+  },
+  {
+    "name": "bridge-patient-portal",
+    "title": "Bridge: the patient portal",
+    "theme": "light",
+    "user": "patient",
+    "file": "screenshots/light/bridge-patient-portal.png",
+    "fullPage": true
+  },
+  {
+    "name": "bridge-medications",
+    "title": "Bridge: my medications",
+    "theme": "light",
+    "user": "patient",
+    "file": "screenshots/light/bridge-medications.png",
+    "fullPage": false
+  },
+  {
+    "name": "bridge-labs",
+    "title": "Bridge: my results",
+    "theme": "light",
+    "user": "patient",
+    "file": "screenshots/light/bridge-labs.png",
+    "fullPage": false
+  },
+  {
+    "name": "bridge-documents",
+    "title": "Bridge: my documents",
+    "theme": "light",
+    "user": "patient",
+    "file": "screenshots/light/bridge-documents.png",
+    "fullPage": false
+  }
+]

@@ -1,0 +1,43 @@
+/* Audit Logs and Security tabs: the summary cell that opens to its full text.
+   Admin.css truncates summary cells at 320px with no way to read the rest; on
+   an audit trail the clipped part is often the part that matters. */
+
+.audit-summary-cell {
+  max-width: 320px;
+}
+
+.audit-summary-cell--open {
+  max-width: 520px;
+}
+
+.audit-summary-toggle {
+  display: block;
+  width: 100%;
+  min-height: 24px;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-summary-toggle[aria-expanded='true'] {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.audit-summary-toggle:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+@media (pointer: coarse) {
+  .audit-summary-toggle {
+    min-height: 44px;
+  }
+}

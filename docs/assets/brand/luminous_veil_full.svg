@@ -1,0 +1,81 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="asv-halo" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#3ED3E0" stop-opacity="0"/>
+      <stop offset="0.76" stop-color="#3ED3E0" stop-opacity="0"/>
+      <stop offset="0.8" stop-color="#3ED3E0" stop-opacity="0.14"/>
+      <stop offset="0.86" stop-color="#3ED3E0" stop-opacity="0.5"/>
+      <stop offset="0.93" stop-color="#3ED3E0" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#3ED3E0" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="asv-sphere" cx="0.5" cy="0.5" r="0.62" fx="0.33" fy="0.28">
+      <stop offset="0" stop-color="#F4FBF8"/>
+      <stop offset="0.08" stop-color="#EAF7F2"/>
+      <stop offset="0.18" stop-color="#A9EFE8"/>
+      <stop offset="0.3" stop-color="#3ED3E0"/>
+      <stop offset="0.44" stop-color="#1FA9B4"/>
+      <stop offset="0.56" stop-color="#17798F"/>
+      <stop offset="0.68" stop-color="#14536F"/>
+      <stop offset="0.8" stop-color="#101A3C"/>
+      <stop offset="1" stop-color="#0E1B2C"/>
+    </radialGradient>
+    <radialGradient id="asv-spec" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#EAF7F2" stop-opacity="0.9"/>
+      <stop offset="0.4" stop-color="#EAF7F2" stop-opacity="0.35"/>
+      <stop offset="0.7" stop-color="#EAF7F2" stop-opacity="0.1"/>
+      <stop offset="1" stop-color="#EAF7F2" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="asv-refl" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#4FB39A" stop-opacity="0.55"/>
+      <stop offset="0.5" stop-color="#0E7C66" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#0E7C66" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="asv-ribA" gradientUnits="userSpaceOnUse" x1="489" y1="272" x2="44" y2="166">
+      <stop offset="0" stop-color="#3ED3E0" stop-opacity="1"/>
+      <stop offset="0.3" stop-color="#4FB39A" stop-opacity="1"/>
+      <stop offset="0.6" stop-color="#3ED3E0" stop-opacity="1"/>
+      <stop offset="0.82" stop-color="#188B7E" stop-opacity="0.97"/>
+      <stop offset="1" stop-color="#0E7C66" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="asv-filA" gradientUnits="userSpaceOnUse" x1="430" y1="372" x2="82" y2="362">
+      <stop offset="0" stop-color="#3ED3E0" stop-opacity="0"/>
+      <stop offset="0.16" stop-color="#EAF7F2" stop-opacity="0.9"/>
+      <stop offset="0.34" stop-color="#3ED3E0" stop-opacity="0.95"/>
+      <stop offset="0.5" stop-color="#EAF7F2" stop-opacity="1"/>
+      <stop offset="0.68" stop-color="#3ED3E0" stop-opacity="0.95"/>
+      <stop offset="0.85" stop-color="#EAF7F2" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#3ED3E0" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="asv-ribB" gradientUnits="userSpaceOnUse" x1="40" y1="218" x2="435" y2="100">
+      <stop offset="0" stop-color="#0E7C66" stop-opacity="0.95"/>
+      <stop offset="0.22" stop-color="#3ED3E0" stop-opacity="1"/>
+      <stop offset="0.45" stop-color="#8FE5E1" stop-opacity="1"/>
+      <stop offset="0.68" stop-color="#4FB39A" stop-opacity="1"/>
+      <stop offset="0.88" stop-color="#3ED3E0" stop-opacity="1"/>
+      <stop offset="1" stop-color="#A9EFE8" stop-opacity="1"/>
+    </linearGradient>
+    <linearGradient id="asv-filB" gradientUnits="userSpaceOnUse" x1="118" y1="148" x2="250" y2="80">
+      <stop offset="0" stop-color="#EAF7F2" stop-opacity="0"/>
+      <stop offset="0.3" stop-color="#EAF7F2" stop-opacity="0.75"/>
+      <stop offset="0.6" stop-color="#EAF7F2" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#EAF7F2" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="asv-mote" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#EAF7F2" stop-opacity="1"/>
+      <stop offset="0.25" stop-color="#A9EFE8" stop-opacity="1"/>
+      <stop offset="0.5" stop-color="#3ED3E0" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#3ED3E0" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <circle cx="256" cy="256" r="170" fill="url(#asv-halo)"/>
+  <circle cx="256" cy="256" r="146" fill="url(#asv-sphere)"/>
+  <ellipse cx="212" cy="198" rx="68" ry="52" fill="url(#asv-spec)"/>
+  <ellipse cx="256" cy="344" rx="98" ry="34" fill="url(#asv-refl)"/>
+  <path d="M 489.4 272.3 A 234 234 0 1 1 40.6 164.6 C 50 141 95 158 101.2 211.6 A 161 161 0 0 0 405.3 316.3 C 447 312 481 296 489.4 272.3 Z" fill="url(#asv-ribA)"/>
+  <path d="M 431.5 365.7 A 207 207 0 0 1 80.5 365.7 C 85 369 90.5 367 96 363.9 A 193 193 0 0 0 416 363.9 C 421.5 367 427 369 431.5 365.7 Z" fill="url(#asv-filA)"/>
+  <path d="M 40 220 C 24 190 36 146 58.7 122.9 A 238 238 0 0 1 432.9 96.8 C 455 111 432 141 362.1 129.6 A 165 165 0 0 0 154.4 126 C 123 150 74 164 40 220 Z" fill="url(#asv-ribB)"/>
+  <path d="M 117.3 147.6 A 176 176 0 0 1 249.9 80.1 C 246 84 244.5 85.5 241.2 86.6 A 170 170 0 0 0 127.7 144.5 C 123 146 120.5 146.5 117.3 147.6 Z" fill="url(#asv-filB)"/>
+  <circle cx="436.1" cy="160.2" r="13" fill="url(#asv-mote)"/>
+  <circle cx="451.1" cy="200" r="9.5" fill="url(#asv-mote)"/>
+  <circle cx="457.2" cy="238.4" r="6.5" fill="url(#asv-mote)"/>
+</svg>

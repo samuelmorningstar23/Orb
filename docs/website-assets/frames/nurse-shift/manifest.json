@@ -1,0 +1,44 @@
+{
+  "id": "nurse-shift",
+  "title": "The nurse's shift",
+  "subtitle": "Same database, a different product: a list of what is due, and a score you see before you save",
+  "user": "NUR001",
+  "theme": "dark",
+  "viewport": {
+    "width": 1512,
+    "height": 1024
+  },
+  "steps": [
+    {
+      "n": 1,
+      "caption": "A nurse lands on My Shift, not on a chart: medications and observations due now, each with how late it is.",
+      "file": "01.png",
+      "hold": 3200
+    },
+    {
+      "n": 2,
+      "caption": "My patients: the ward as this nurse owns it.",
+      "file": "02.png",
+      "hold": 3200
+    },
+    {
+      "n": 3,
+      "caption": "Record observations: big numeric targets built for a tablet on a trolley.",
+      "file": "03.png",
+      "hold": 3200
+    },
+    {
+      "n": 4,
+      "caption": "NEWS2 computes live as the values go in, with the RCP escalation sentence underneath. She sees what she is about to trigger before she saves it.",
+      "file": "04.png",
+      "hold": 5000
+    },
+    {
+      "n": 5,
+      "caption": "Handover: an I-PASS draft written from recorded data, to be read against the patient before handing over.",
+      "file": "05.png",
+      "hold": 4500
+    }
+  ],
+  "video": "video/nurse-shift.webm"
+}
