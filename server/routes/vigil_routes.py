@@ -118,33 +118,15 @@ def _load_patient_bundle(patient_id: str):
         # analyte keeps a longer trend. Ranked by julianday() because
         # interfaced rows store observed_at as received ('T' or space).
         # Returned oldest first: the card takes the range from the newest row.
-        lab_observations = db.execute(
-            """SELECT id, observation_name, value_numeric, unit, reference_range,
-                      abnormal_flag, status, source, observed_at
-               FROM (
-                   SELECT * FROM (
-                       SELECT id, observation_name, value_numeric, unit,
-                              reference_range, abnormal_flag, status, source,
-                              COALESCE(observed_at, recorded_at) AS observed_at,
-                              ROW_NUMBER() OVER (
-                                  PARTITION BY LOWER(TRIM(observation_name)),
-                                               TRIM(COALESCE(unit, ''))
-                                  ORDER BY julianday(COALESCE(observed_at, recorded_at)) DESC,
-                                           id DESC
-                              ) AS recency
-                       FROM observations
-                       WHERE patient_id = ? AND value_numeric IS NOT NULL
-                         AND LOWER(COALESCE(status, 'final')) NOT IN
-                             ('x', 'd', 'w', 'cancelled', 'deleted', 'entered-in-error',
-                              'entered_in_error', 'wrong')
-                   )
-                   WHERE recency <= ?
-                   ORDER BY recency ASC, julianday(observed_at) DESC, id DESC
-                   LIMIT ?
-               )
-               ORDER BY julianday(observed_at) ASC, id ASC""",
-            (patient_id, _CHART_LAB_RESULTS_PER_ANALYTE, _CHART_LAB_RESULTS_MAX),
-        ).fetchall()
+        # The SQL, the void and superseded filters and the ordering live in
+        # services/lab_observations.py, the one reader every lab lane shares.
+        # Simulated rows stay in, with their source, so the card labels them.
+        from services import lab_observations as _lab_obs
+        lab_observations = _lab_obs.chart_lab_rows(
+            db, patient_id,
+            per_analyte=_CHART_LAB_RESULTS_PER_ANALYTE,
+            max_rows=_CHART_LAB_RESULTS_MAX,
+        )
 
         # Recorded problems and comorbidities, for the chart header and the
         # printed record. `patients` has no comorbidities column, so the chart
@@ -971,81 +953,27 @@ async def get_qr_code(
     return FileResponse(summary["qr_code_path"], media_type="image/png")
 
 
-@router.post("/patients")
-# Plain def on purpose (no awaits): FastAPI threadpools sync routes, so the
-# multi-insert transaction below stays off the asyncio event loop.
+# The ghost door, retired (opd-1 part g, also adt-5's legacy-route item).
+# This route used to write a status-'admitted' patient with NO admissions row:
+# no department, so the patient sat on nobody's board, while status-only
+# readers (the vitals simulator, the sepsis sweep) treated them as an
+# inpatient. Its only callers were a dead client wrapper, the soak test and a
+# name-rule test, all now moved to POST /api/admissions/admit. It answers 410
+# Gone, writes nothing and reads no body; the permission check stays, so who
+# is refused, and how, is unchanged.
+GHOST_PATIENT_ROUTE_RETIRED = (
+    "Adding a patient here has been retired. Admit the patient through the "
+    "admission form (POST /api/admissions/admit), which records the "
+    "admission, the department and the bed."
+)
+
+
+@router.post("/patients", status_code=410)
 def create_patient(
-    data: dict,
     user: dict = Depends(require_permission("patient.write")),
 ):
-    """Add a new patient and create a Relay Case Room."""
-    import uuid
-    import secrets
-    # Validate the one required field up front so a missing 'name' is a clean 400,
-    # not a KeyError → 500.
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail="Request body must be a JSON object")
-    # THE registration name rule (services/patient_name_rule.py): blank is
-    # still "name is required"; fewer than two letters is refused with the
-    # rule's message. Same predicate as /api/admissions/admit and both
-    # importers, so a name cannot enter through one door another refuses.
-    from services.patient_name_rule import PatientNameError, validate_patient_name
-    try:
-        name = validate_patient_name(data.get("name"))
-    except PatientNameError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    with db_session() as db:
-        pid = f"PAT{uuid.uuid4().hex[:6].upper()}"
-        uid = f"P{uuid.uuid4().hex[:6].upper()}"
-        from auth import hash_password
-
-        # 1. Create patient user account.
-        # SECURITY: never seed a shared default password (the old "patient123"
-        # let any staffer log into any newly admitted patient's Bridge portal).
-        # Generate a unique one-time credential per patient and return it ONCE to
-        # the admitting clinician to hand over; it is never stored in plaintext.
-        temp_password = secrets.token_urlsafe(9)
-        db.execute(
-            "INSERT INTO users (id, name, role, department, password_hash) VALUES (?, ?, 'patient', ?, ?)",
-            (uid, name, data.get("ward", "General"), hash_password(temp_password)),
-        )
-
-        # 2. Create patient record
-        attending_id = data.get("attending_doctor_id") or user["id"]
-        db.execute(
-            """INSERT INTO patients (id, user_id, name, mrn, bed, ward, diagnosis, age, sex, attending_doctor_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (pid, uid, name, data.get("mrn", f"MRN-{uuid.uuid4().hex[:5]}"),
-             data.get("bed", "TBD"), data.get("ward", "General"),
-             data.get("diagnosis", "Under evaluation"),
-             data.get("age", 0), data.get("sex", "U"), attending_id),
-        )
-
-        # 3. Create Relay Case Room (Channel)
-        cid = f"CH-{uuid.uuid4().hex[:6].upper()}"
-        db.execute(
-            "INSERT INTO channels (id, name, type, patient_id) VALUES (?, ?, 'case_room', ?)",
-            (cid, f"Case: {name}", pid),
-        )
-
-        # 4. Insert initial admission message
-        db.execute(
-            """INSERT INTO messages (channel_id, sender_id, sender_name, sender_role, content, message_type)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (cid, user["id"], user["name"], user["role"], 
-             f"Initial Admission: {name} has been admitted to {data.get('ward', 'General')} (Bed {data.get('bed', 'TBD')}). Diagnosis: {data.get('diagnosis', 'Under evaluation')}.", 
-             'text')
-        )
-
-        # temp_password is returned exactly once here — the caller must surface it
-        # to the patient and it cannot be retrieved again (only its hash is stored).
-        return {
-            "id": pid,
-            "user_id": uid,
-            "channel_id": cid,
-            "temporary_password": temp_password,
-            "message": "Patient created and Case Room opened. Share the one-time password with the patient; it will not be shown again.",
-        }
+    """Retired. Answers 410 and names the admission door."""
+    raise HTTPException(status_code=410, detail=GHOST_PATIENT_ROUTE_RETIRED)
 
 
 @router.get("/patients/{patient_id}/timeline-projection")

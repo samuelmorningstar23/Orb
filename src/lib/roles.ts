@@ -59,6 +59,67 @@ export const HELIX_RECEIVE = 'helix.receive' as const
 export const DISCHARGE_GENERATE = 'discharge.generate' as const
 export const DISCHARGE_PUBLISH = 'discharge.publish' as const
 
+/* ── The HIS permissions (build plan of 3 October 2026, wave 1) ─────────────
+ *
+ * Unlike the set above, these are mirrored IN FULL rather than only where the
+ * UI already gates on them: the registration desk, the bed board, the pharmacy
+ * store and the laboratory are each built over later waves by different
+ * builders, and every one of them needs the same answer to "does this account
+ * hold X?" without reopening this file. The strings are the server's exactly
+ * (server/permissions.py). Every grant below is inert until its feature is on,
+ * because every route that checks one answers 404 while its flag is off. */
+
+/** Registration desk and the OPD (rulings OPD-N3). */
+export const REGISTRATION_READ = 'registration.read' as const
+export const REGISTRATION_WRITE = 'registration.write' as const
+export const OPD_CONSULT = 'opd.consult' as const
+export const SCHEDULE_MANAGE = 'schedule.manage' as const
+
+/** Beds and admissions. ADT_BED never changes the treating department;
+ *  ADT_TRANSFER does (a scope change). ADT_PRESENCE records leave and
+ *  absconded. BED_MASTER is bed setup. */
+export const ADT_READ = 'adt.read' as const
+export const ADT_BED = 'adt.bed' as const
+export const ADT_TRANSFER = 'adt.transfer' as const
+export const ADT_PRESENCE = 'adt.presence' as const
+export const BED_MASTER = 'bed.master' as const
+
+/** Pharmacy store (rulings GRN-R7 and GRN-R8). */
+export const PHARMACY_STORE_READ = 'pharmacy_store.read' as const
+export const PHARMACY_STORE_WRITE = 'pharmacy_store.write' as const
+export const PHARMACY_STORE_APPROVE = 'pharmacy_store.approve' as const
+export const PHARMACY_STORE_NDPS = 'pharmacy_store.ndps' as const
+export const WARD_STOCK_READ = 'ward_stock.read' as const
+export const WARD_STOCK_RECEIVE = 'ward_stock.receive' as const
+export const WARD_RETURN_RECORD = 'ward_return.record' as const
+export const WARD_INDENT_RAISE = 'ward_indent.raise' as const
+
+/** Laboratory (ruling LIS-R12). INGEST_RECONCILE attaches or discards an
+ *  unmatched result, a wrong-patient decision, so it is never held by a
+ *  department-scoped role. */
+export const LAB_READ = 'lab.read' as const
+export const LAB_COLLECT = 'lab.collect' as const
+export const LAB_RECEIVE = 'lab.receive' as const
+export const LAB_RESULT = 'lab.result' as const
+export const LAB_AUTHORISE = 'lab.authorise' as const
+export const LAB_MASTER = 'lab.master' as const
+export const LAB_CRITICAL_LOG = 'lab.critical_log' as const
+export const LAB_CRITICAL_ACK = 'lab.critical_ack' as const
+export const LAB_INTERFACE = 'lab.interface' as const
+export const INGEST_RECONCILE = 'ingest.reconcile' as const
+
+/** Every HIS permission above, in one list, for tests and for later waves. */
+export const HIS_PERMISSIONS = [
+  REGISTRATION_READ, REGISTRATION_WRITE, OPD_CONSULT, SCHEDULE_MANAGE,
+  ADT_READ, ADT_BED, ADT_TRANSFER, ADT_PRESENCE, BED_MASTER,
+  PHARMACY_STORE_READ, PHARMACY_STORE_WRITE, PHARMACY_STORE_APPROVE, PHARMACY_STORE_NDPS,
+  WARD_STOCK_READ, WARD_STOCK_RECEIVE, WARD_RETURN_RECORD, WARD_INDENT_RAISE,
+  LAB_READ, LAB_COLLECT, LAB_RECEIVE, LAB_RESULT, LAB_AUTHORISE, LAB_MASTER,
+  LAB_CRITICAL_LOG, LAB_CRITICAL_ACK, LAB_INTERFACE, INGEST_RECONCILE,
+] as const
+
+export type HisPermission = (typeof HIS_PERMISSIONS)[number]
+
 export type Permission =
   | typeof PATIENT_READ_ALL
   | typeof PATIENT_WRITE
@@ -68,6 +129,26 @@ export type Permission =
   | typeof HELIX_RECEIVE
   | typeof DISCHARGE_GENERATE
   | typeof DISCHARGE_PUBLISH
+  | HisPermission
+
+/**
+ * Which feature each HIS role needs (mirror of server/roles.py ROLE_FEATURE).
+ *
+ * A role listed here can be created in User Management only while its feature
+ * is on, and while the feature is off its rail is empty and the shell says so.
+ * 'adt' and 'lab' are opt-in modules (published under 'modules' on
+ * /api/health); 'registration' is a feature flag (under 'features'). The shell
+ * resolves which is which (shellConfig.isRoleFeatureOn).
+ */
+export type RoleFeatureId = 'registration' | 'adt' | 'lab'
+
+export const ROLE_FEATURE: Readonly<Partial<Record<string, RoleFeatureId>>> = {
+  receptionist: 'registration',
+  ward_clerk: 'adt',
+  lab_technician: 'lab',
+  pathologist: 'lab',
+  phlebotomist: 'lab',
+}
 
 /** Mirror of the server's role→permission map, restricted to the permissions
  *  above. A role absent from this table holds none of them — which is the right
@@ -84,18 +165,53 @@ const ROLE_PERMISSIONS: Record<string, readonly Permission[]> = {
   // decision, so she never sees the allergy-override control.
   // A nurse holds HELIX_RECEIVE and no other pharmacy permission: she signs for
   // what arrives on her ward and sees nothing of the pharmacy's order book.
-  nurse: [PATIENT_READ_ALL, OUTCOME_RECORD, HELIX_RECEIVE],
+  //
+  // HIS (3 October 2026): the nurse collects specimens and acknowledges a lab
+  // critical (LIS-R12), and raises ward indents, receives ward stock and
+  // records returns for her own ward (GRN-R8). No bed-board grant: the nurse's
+  // read-only board waits on ruling ADT-S7, and until then she gets nothing new.
+  nurse: [PATIENT_READ_ALL, OUTCOME_RECORD, HELIX_RECEIVE,
+          LAB_COLLECT, LAB_CRITICAL_ACK,
+          WARD_STOCK_READ, WARD_STOCK_RECEIVE, WARD_INDENT_RAISE, WARD_RETURN_RECORD],
+  // HIS: the doctor registers and consults outpatients (OPD-N3), reads the bed
+  // board (moves and transfers go through the patient.write arm on the
+  // server), and collects specimens and acknowledges lab criticals (LIS-R12).
   doctor: [PATIENT_READ_ALL, PATIENT_WRITE, OUTCOME_RECORD, RELAY_EXECUTE_ACTION,
-           MEDICATION_PRESCRIBE, DISCHARGE_GENERATE, DISCHARGE_PUBLISH],
+           MEDICATION_PRESCRIBE, DISCHARGE_GENERATE, DISCHARGE_PUBLISH,
+           REGISTRATION_READ, REGISTRATION_WRITE, OPD_CONSULT,
+           ADT_READ, LAB_COLLECT, LAB_CRITICAL_ACK],
   // Governance + read-only clinical. Holds OUTCOME_RECORD for backfill, but
   // never PATIENT_WRITE and never RELAY_EXECUTE_ACTION — an administrator may
   // read a case room, not resolve clinical reasoning inside it. And never
   // MEDICATION_PRESCRIBE: an administrator holds no clinical write at all.
-  admin: [PATIENT_READ_ALL, OUTCOME_RECORD],
+  //
+  // HIS: reads registrations but never registers (OPD-N3) and sets clinic
+  // timings; is the bed manager (every ADT grant and bed setup); reads and
+  // approves in the pharmacy store but no longer writes (GRN-R7); reads the lab
+  // and manages its interfaces, never reconciles a result (LIS-R17).
+  admin: [PATIENT_READ_ALL, OUTCOME_RECORD,
+          REGISTRATION_READ, SCHEDULE_MANAGE,
+          ADT_READ, ADT_BED, ADT_TRANSFER, ADT_PRESENCE, BED_MASTER,
+          PHARMACY_STORE_READ, PHARMACY_STORE_APPROVE,
+          LAB_READ, LAB_INTERFACE],
   // Pharmacy workflow + Sage only: no clinical read, no clinical write.
-  pharmacist: [],
+  // HIS: the pharmacy store, including the NDPS register (GRN-R7).
+  pharmacist: [PHARMACY_STORE_READ, PHARMACY_STORE_WRITE, PHARMACY_STORE_NDPS],
   // Self-only access through Bridge.
   patient: [],
+  // The cash counter: payments only, none of the mirrored set.
+  cashier: [],
+  // The HIS roles. Each exists only while its feature is on (ROLE_FEATURE).
+  // The receptionist registers and books; no chart, no money (OPD-N3).
+  receptionist: [REGISTRATION_READ, REGISTRATION_WRITE],
+  // The ward clerk reads the board and moves a patient between beds of the
+  // same department: no transfer (ADT-S8), no leave or absconded (ADT-S7).
+  ward_clerk: [ADT_READ, ADT_BED],
+  // The lab roles (LIS-R12): hospital-wide, none of the clinical set.
+  phlebotomist: [LAB_READ, LAB_COLLECT],
+  lab_technician: [LAB_READ, LAB_COLLECT, LAB_RECEIVE, LAB_RESULT, LAB_CRITICAL_LOG, INGEST_RECONCILE],
+  pathologist: [LAB_READ, LAB_COLLECT, LAB_RECEIVE, LAB_RESULT, LAB_CRITICAL_LOG, INGEST_RECONCILE,
+                LAB_AUTHORISE, LAB_MASTER],
 }
 
 // Same alias the server declares.

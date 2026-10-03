@@ -87,7 +87,14 @@ CREATE INDEX IF NOT EXISTS idx_helix_transitions_idem ON helix_transitions(idemp
 """
 
 def init_helix_db():
-    """Initialize Helix schema and migrations additively."""
+    """Initialize Helix schema and migrations additively.
+
+    Since migration 49 (migrations_his/m0049_helix_tables_in_runner.py) the
+    migration runner creates these tables inside init_db(), so on any database
+    that has run migration 49 this is an idempotent fallback. HELIX_SCHEMA must
+    stay in step with the migrations that ALTER Helix tables: a column a later
+    migration adds goes into HELIX_SCHEMA as well (tests/
+    test_fresh_database_init.py compares the two shapes)."""
     with db_session() as conn:
         # The users table is NOT touched here. Its role CHECK belongs to
         # migration 33 (roles.py is the one list), which init_db() runs before
@@ -151,6 +158,17 @@ def _migrate_helix_orders(conn):
 def _migrate_stock_movements(conn):
     """Safely add missing columns to helix_stock_movements."""
     try:
+        # Nothing to migrate before the table exists (W027). PRAGMA table_info
+        # returns [] for an absent table, so without this every first boot that
+        # reached here before the table existed logged "Migrating
+        # helix_stock_movements" and sent two ALTERs at nothing. Same guard as
+        # _migrate_helix_orders above and migration 35. Since migration 49 the
+        # runner creates the table before this runs, so this is the fallback.
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='helix_stock_movements'"
+        ).fetchone() is None:
+            return
         cols = [row[1] for row in conn.execute("PRAGMA table_info(helix_stock_movements)").fetchall()]
         if 'medication_id' not in cols:
             logger.info("Migrating helix_stock_movements")

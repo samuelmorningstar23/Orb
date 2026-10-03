@@ -198,9 +198,9 @@ silently reopens the hole cookies were given the check for. Knock-on: the Socket
 **How it works:** 1. `jwt.decode(token, JWT_SECRET, algorithms=["HS256"])`, pinning `algorithms` prevents the classic `alg=none` downgrade attack. 2. `ExpiredSignatureError` → 401 "Token expired"; any other `InvalidTokenError` → 401 "Invalid token".
 **Why it exists:** single point where cryptographic failure becomes an HTTP response, reused by both HTTP and WebSocket auth.
 **Data in/out:** JWT string → `{sub, role, tv, jti, exp, iat}`.
-**Talks to:** called by `get_current_user` (`server/auth.py:457`), the Socket.IO handshake `_authenticate` (`server/ws/realtime.py:61`, guide 06-realtime), and the audit middleware's actor identification (`server/services/audit_middleware.py:39`).
+**Talks to:** called by `get_current_user` (`server/auth.py:457`), the Socket.IO handshake `_authenticate` (`server/ws/realtime.py:157`, guide 06-realtime), and the audit middleware's actor identification (`server/services/audit_middleware.py:39`).
 **Change guide:** to rotate the signing key without a mass logout, accept a list of secrets (try new, fall back to old) here and mint with the new one in `create_token`; knock-on: `services/discharge_access_service.py:189` signs its own grants with the same `JWT_SECRET` and must rotate in lockstep.
-**Gotchas:** it raises `HTTPException`, an HTTP concept, even when called from non-HTTP contexts; the WebSocket caller must (and does) catch it (`server/ws/realtime.py:47-49`).
+**Gotchas:** it raises `HTTPException`, an HTTP concept, even when called from non-HTTP contexts; the WebSocket caller must (and does) catch it (`server/ws/realtime.py:143-145`).
 
 ### `get_current_user`: `server/auth.py:457`
 **Signature:** `async (credentials: HTTPAuthorizationCredentials = Depends(security)) → dict`
@@ -209,7 +209,7 @@ silently reopens the hole cookies were given the check for. Knock-on: the Socket
 **Why it exists:** it is the single place identity is established; everything else (permissions, ownership checks, audit actor fields) builds on the dict it returns.
 **Data in/out:** bearer credentials in → full `users` row as dict out.
 **Talks to:** wrapped by `require_permission`/`require_patient_self`/`require_role`; used directly by the MFA/logout routes (`server/routes/auth_routes.py:245,273,306,341`), `/api/auth/me` (`server/main.py:444`) and the authenticated uploads route (`server/main.py:376`).
-**Change guide:** to add account disabling, add an `is_active` column and a check between steps 4 and 5 raising 403; knock-on: the Socket.IO `_authenticate` duplicates the row lookup (`server/ws/realtime.py:57-65`) and must add the same check.
+**Change guide:** to add account disabling, add an `is_active` column and a check between steps 4 and 5 raising 403; knock-on: the Socket.IO `_authenticate` duplicates the row lookup (`server/ws/realtime.py:153-161`) and must add the same check.
 **Gotchas:** one DB read per authenticated request, deliberate (fresh role + revocation), but it means auth is only as available as SQLite. Note the WebSocket path does **not** check `tv` (see Discrepancies).
 
 ### `require_role`: `server/auth.py:534` *(deprecated)*
@@ -235,7 +235,7 @@ silently reopens the hole cookies were given the check for. Knock-on: the Socket
 **Change guide:** *worked example, add an export permission:* add `REPORT_EXPORT = "report.export"` beside `:212`, grant it in `ROLE_PERMISSIONS["admin"]`, then guard the new route with `user=Depends(require_permission("report.export"))`. Knock-on: the Trust Center RBAC matrix picks it up automatically; add a `test_rbac.py` case pinning that doctors get 403.
 **Gotchas:** routes pass string literals, not the constants, so a typo in a route (`"patient.readall"`) fails *closed* (nobody has it), safe but confusing to debug.
 
-### `ROLE_PERMISSIONS`: `server/permissions.py:221`
+### `ROLE_PERMISSIONS`: `server/permissions.py:271`
 **Signature:** `dict[str, set[str]]`.
 **Does:** the entire authorization policy of Orb, as data.
 **How it works:** six role keys (`doctor` `:222`, `nurse` `:241`, `pharmacist` `:271`, `admin` `:288`, `patient` `:326`, `cashier` `:336`) map to permission sets; `"clinician"` is aliased to the doctor set at `:342` (same object, so a change to one is a change to both).
@@ -300,21 +300,21 @@ The full matrix (source: `server/permissions.py:221-342`, regenerated from `ROLE
 The policy's shape: doctors are the only role that can *sign* (notes, discharges), prescribe, record consent or execute Relay action cards; nurses share the day-to-day clinical write set but not sign-off, and are the only role that takes delivery of a dispensed drug (`helix.receive`, deliberately not given to the pharmacist who dispenses it); pharmacists see Helix, procurement and Sage; admins are governance + broad *read* plus the payer, billing, payments, front-desk and procurement desks (and `surgery.write` and Helix write, despite the `# Governance + read-only clinical` comment at `server/permissions.py:289`); a cashier holds the payment counter and nothing else; patients touch nothing but their own Bridge portal.
 
 **Data in/out:** role string → set of permission strings.
-**Talks to:** read by all helpers below, by the WebSocket relay-send check (`server/ws/realtime.py:537`), and by the compliance report (`server/services/compliance_service.py:185-198`).
+**Talks to:** read by all helpers below, by the WebSocket relay-send check (`server/ws/realtime.py:633`), and by the compliance report (`server/services/compliance_service.py:185-198`).
 **Change guide:** *worked example, add a `lab_tech` role:* add `"lab_tech": {VITALS_READ, ORDER_READ}` beside `cashier` (`:336`); also add the string to `STORABLE_ROLES` in `server/roles.py`, the single authority the `users.role` CHECK constraint is rendered from (`server/database.py:38`, `:870`), and add a users-rebuild migration, since SQLite cannot alter CHECK constraints, and add `'lab_tech'` to the frontend `UserRole` union (`src/App.tsx:12`). Footgun: forgetting the CHECK change makes user creation fail at INSERT, not at login.
 **Gotchas:** an unknown role gets `set()` from every lookup, unknown roles fail closed. The `clinician` alias shares the *same set object* as `doctor`; mutate one and you mutate both.
 
-### `has_permission` / `has_all_permissions` / `get_permissions_for_role`: `server/permissions.py:349,354,360`
+### `has_permission` / `has_all_permissions` / `get_permissions_for_role`: `server/permissions.py:463,354,360`
 **Signature:** `(role, permission) → bool` / `(role, *permissions) → bool` / `(role) → set[str]` (a defensive `.copy()`).
 **Does:** pure lookup helpers over `ROLE_PERMISSIONS` for non-HTTP contexts.
 **How it works:** set membership with `.get(role, set())` so unknown roles are empty.
 **Why it exists:** WebSocket events and services cannot use FastAPI `Depends`, so they need a plain-function form of the same policy.
 **Data in/out:** strings in → bool/set out.
-**Talks to:** `has_permission` is called by the Socket.IO relay message guard (`server/ws/realtime.py:537`), the vitals-room and presence joins (`:187`, `:413`) and pinned by Scribe permission tests (`server/tests/test_scribe_pipeline.py:833-864`); `get_permissions_for_role` has no in-repo callers (dead but harmless convenience API).
+**Talks to:** `has_permission` is called by the Socket.IO relay message guard (`server/ws/realtime.py:633`), the vitals-room and presence joins (`:283`, `:509`) and pinned by Scribe permission tests (`server/tests/test_scribe_pipeline.py:833-864`); `get_permissions_for_role` has no in-repo callers (dead but harmless convenience API).
 **Change guide:** none usually, change the map, not the helpers.
 **Gotchas:** none noteworthy.
 
-### `require_permission`: `server/permissions.py:594`
+### `require_permission`: `server/permissions.py:713`
 **Signature:** `(*permissions: str) → async dependency (request, user) → dict`
 **Does:** the canonical route guard: requires the user to hold **all** listed permissions, audit-logging any denial.
 **How it works:** 1. The factory captures `permissions` in a closure and returns `_checker` (`:176`). 2. `_checker` declares two dependencies of its own, the raw `Request` (for path/method/IP/user-agent in the audit record) and `get_current_user`, demonstrating that FastAPI dependencies chain (`:176-179`). 3. Compute `missing = [p for p in permissions if p not in ROLE_PERMISSIONS.get(role, set())]` (`:180-182`). 4. If anything is missing, write a `permission_denied` audit event with category `authorization`, outcome `denied`, a fresh correlation UUID, and metadata listing required/missing permissions (`:186-203`), then raise 403 with the structured body `{"error":"permission_denied","message":...,"required":[...],"missing":[...]}` (`:205-213`). 5. Otherwise return the user dict, which becomes the handler's `user` argument.
@@ -324,7 +324,7 @@ The policy's shape: doctors are the only role that can *sign* (notes, discharges
 **Change guide:** *worked example, protect a new endpoint:* `@router.get("/reports") async def reports(user=Depends(require_permission("audit.read", "forecast.read"))): ...`, note ALL listed permissions are required (AND, not OR); to express OR you would add a new combined permission to the map instead. Watch out: calling `require_permission("x")` *evaluates the factory at import time*; the checker runs per-request.
 **Gotchas:** the interpolated f-string at `:209` has no placeholders (harmless lint noise). Denials cost an audit INSERT per hit, a scanning attacker writes a lot of audit rows, which is arguably the point.
 
-### `require_patient_self`: `server/permissions.py:739`
+### `require_patient_self`: `server/permissions.py:858`
 **Signature:** `() → async dependency (request, user) → dict`
 **Does:** restricts an endpoint to users whose role is `patient`, for the Bridge portal's self-scoped routes.
 **How it works:** 1. Returns `_checker` depending on `Request` + `get_current_user` (`:233-236`). 2. If `role != "patient"`, audit-log a denial with reason `patient_role_required` and raise 403 (`:239-259`). 3. Otherwise return the user dict; the *route* then scopes its queries by `user["id"]`, ownership is enforced by the caller using the returned identity, not by this dependency.
@@ -406,7 +406,7 @@ The policy's shape: doctors are the only role that can *sign* (notes, discharges
 **Change guide:** *worked example, mandate MFA for all doctors:* deploy with `ORB_MFA_REQUIRED_ROLES=doctor` (`server/config.py:50-52`). Knock-on: every non-enrolled doctor's login now returns 403 `mfa_enrollment_required`, but the shipped frontend has no enrollment screen or TOTP prompt (see Discrepancies), so ship the client flow first; the Trust Center adoption panel (`src/pages/panels/admin/TrustCenter.tsx:216-226`) will show the mandate.
 **Gotchas:** it is a `def` (sync) handler, FastAPI runs it in a threadpool, which is what makes the module-level dict mutation tolerable under one process. The `from services import mfa_service` at `:148` is unused in this function body (only `consume_totp` is used); harmless dead import.
 
-### `get_me`: `server/main.py:1184`: `GET /api/auth/me`
+### `get_me`: `server/main.py:1206`: `GET /api/auth/me`
 
 > **Moved, and the old bug is gone.** Earlier editions documented a `pass`-bodied stub at
 > `server/routes/auth_routes.py:228` that shadowed the real handler and would have 500'd on
@@ -600,16 +600,16 @@ Exported functions other subsystems import:
 
 - `auth.get_current_user`, the identity dependency, used by `main.py`'s `/api/auth/me` and `/uploads/{filename}` (`server/main.py:376,444`) and wrapped by every guard.
 - `permissions.require_permission` / `require_patient_self`, the guards on ~28 route files.
-- `permissions.has_permission`, the non-HTTP policy check, used by the Socket.IO relay-send guard (`server/ws/realtime.py:537`).
-- `auth.decode_token`, reused by the Socket.IO handshake (`server/ws/realtime.py:46`, guide 06-realtime) and audit middleware (`server/services/audit_middleware.py:38`).
+- `permissions.has_permission`, the non-HTTP policy check, used by the Socket.IO relay-send guard (`server/ws/realtime.py:633`).
+- `auth.decode_token`, reused by the Socket.IO handshake (`server/ws/realtime.py:142`, guide 06-realtime) and audit middleware (`server/services/audit_middleware.py:38`).
 - `auth.hash_password` / `verify_password`, patient provisioning (`server/routes/vigil_routes.py:506-516`, `server/services/admission_service.py:23-38`) and test fixtures.
 - `permissions.ROLE_PERMISSIONS`, exported verbatim into the Trust Center compliance report (`server/services/compliance_service.py:149-162`).
 
-Shared-key contract: `services/discharge_access_service.py` signs *its own* JWTs with the same `JWT_SECRET` but `sub="discharge_access"` (`server/services/discharge_access_service.py:183-189`); both the WebSocket handshake (`server/ws/realtime.py:53-56`) and `get_current_user` (whose `users` lookup fails for that sub) keep those grants from ever acting as staff sessions.
+Shared-key contract: `services/discharge_access_service.py` signs *its own* JWTs with the same `JWT_SECRET` but `sub="discharge_access"` (`server/services/discharge_access_service.py:183-189`); both the WebSocket handshake (`server/ws/realtime.py:149-152`) and `get_current_user` (whose `users` lookup fails for that sub) keep those grants from ever acting as staff sessions.
 
 DB tables read/written: `users` (all columns; auth additionally owns the migrated columns `totp_secret`, `totp_enabled`, `token_version`, `totp_last_step`, `server/database.py:1186-1200`) and `audit_logs` (written via `log_audit_event`, owned by the audit guide).
 
-Socket events: none owned. The handshake contract this subsystem underwrites: the client passes `{token}` (or `Authorization`/`Bearer` forms) in the Socket.IO `auth` payload; `decode_token` + a fresh `users` read decide acceptance (`server/ws/realtime.py:28-79`), see guide 06-realtime.
+Socket events: none owned. The handshake contract this subsystem underwrites: the client passes `{token}` (or `Authorization`/`Bearer` forms) in the Socket.IO `auth` payload; `decode_token` + a fresh `users` read decide acceptance (`server/ws/realtime.py:29-175`), see guide 06-realtime.
 
 Client-side contract (owned by guides 01/02, summarized): `Login.tsx` calls `login()` (`src/api/client.ts:581`), which **deliberately does not persist the JWT**, the session lives in the HttpOnly `orb_session` cookie the server set on that response, unreadable to JS (comment at `src/api/client.ts:586-589`). Only the non-sensitive user object is cached, via `setUser` (`:590`), and the realtime socket is re-handshaked so it authenticates from the same cookie (`:592`). `buildHeaders()` (`src/api/client.ts:167`) attaches `Authorization: Bearer ...` only when a stored token actually exists, machine clients, or a legacy value, and otherwise relies on the cookie plus `credentials: 'include'` (`src/api/client.ts:15-22`). `App.tsx`'s `AuthContext` holds the user in React state and restores it from the cached user on mount (`src/App.tsx:70-73`). The old localStorage-JWT XSS exposure this section used to flag is therefore closed.
 
@@ -633,7 +633,7 @@ Client-side contract (owned by guides 01/02, summarized): `Login.tsx` calls `log
 1. *(resolved, was: "`GET /api/auth/me` is registered twice, and the dead stub appears to win".)* The `pass`-bodied stub is gone from `auth_routes.py`; there is now exactly one handler, `get_me` at `server/main.py:854` (decorated `:853`), and the string `/me` no longer appears in the auth router at all.
 2. **The frontend never calls `POST /api/auth/logout`.** `App.tsx`'s `logout` (`src/App.tsx:135`) clears React state, the cached user, and the socket, and wipes nurse drafts and the offline cache so a shared ward tablet cannot leak the previous nurse's bay, but it does not hit the endpoint, and no `src/` code references it. So the server-side `token_version` bump that `POST /api/auth/logout` exists to perform never happens from the UI. Combined with the 24-hour expiry (`server/config.py:58`), a token "logged out" in the UI remains server-valid for up to a day.
 3. *(resolved, was: "No frontend MFA flow exists".)* `Login.tsx` now drives the full second factor: `handleLogin` attaches an optional `totp_code` to the `/auth/login` body (`src/pages/Login.tsx:162`), a `mfa_required` error reveals the 6-digit field and stashes the verified credentials in `mfaCreds` rather than re-reading the form (`:170`, comment at `:54-56`), and the next submit replays the *same* credentials plus the code (`:232-238`). There is also an enrolment modal (`MfaEnrollmentModal`) alongside the read-only Trust Center adoption panel.
-4. *(resolved, was: "The WebSocket handshake skips the revocation check".)* `_authenticate` now compares the token's `tv` claim to `users.token_version` and refuses the handshake on a mismatch (`server/ws/realtime.py:122-126`). The comment at `:113-120` records the subtlety that made the first attempt unsound: an earlier `token_tv is not None and row_tv is not None` guard *skipped* the check for a validly-signed token carrying no `tv` claim. Absent is now read as 0, which rejects nothing legitimate because `auth.create_token` always stamps `tv` (`server/auth.py:355`), and a malformed `tv` fails closed.
+4. *(resolved, was: "The WebSocket handshake skips the revocation check".)* `_authenticate` now compares the token's `tv` claim to `users.token_version` and refuses the handshake on a mismatch (`server/ws/realtime.py:218-222`). The comment at `:209-216` records the subtlety that made the first attempt unsound: an earlier `token_tv is not None and row_tv is not None` guard *skipped* the check for a validly-signed token carrying no `tv` claim. Absent is now read as 0, which rejects nothing legitimate because `auth.create_token` always stamps `tv` (`server/auth.py:355`), and a malformed `tv` fails closed.
 5. **`require_patient_self`'s docstring overstates what it does.** It claims to combine a `bridge.read_own` permission check with ownership validation (`server/permissions.py:524-531`), but the code checks only `role == "patient"` (`:538`), no permission lookup, and ownership scoping is delegated to the calling route. Equivalent today only because the patient role happens to hold that permission.
 6. **`consume_totp` has a race window.** The SELECT of `totp_last_step` and the UPDATE are separate statements on one connection with no locking transaction (`server/routes/auth_routes.py:292-296`); two concurrent logins presenting the same code could both pass the replay check. Low practical risk single-process, but `BEGIN IMMEDIATE` or a guarded `UPDATE ... WHERE totp_last_step < ?` would close it.
 7. **Comment/code mismatch on revocation triggers.** `server/auth.py:333-334` says bumping `users.token_version` revokes all outstanding sessions, but neither `mfa_enroll_confirm`, `mfa_disable`, nor the legacy-hash upgrade does, only `logout` bumps it (`server/routes/auth_routes.py:856`).

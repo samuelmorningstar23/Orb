@@ -531,14 +531,27 @@ def _latest_creatinine(db, patient_id: str) -> Optional[dict]:
 
 
 def _creatinine_from_observations(db, patient_id: str) -> Optional[dict]:
-    """The structured lane: OBX results the ingestion adapters wrote."""
+    """The structured lane: OBX results the ingestion adapters wrote.
+
+    Read through services/lab_observations.py, the one reader the chart's lab
+    card and the ward pack share, so this lane follows their rules:
+
+      * A voided or superseded creatinine is never read. Before, a result the
+        lab withdrew stayed "the latest" here and could raise a renal flag the
+        chart no longer showed.
+      * Newest by julianday(COALESCE(observed_at, recorded_at)), not by the
+        stored string ('T' or space, offset or none), and equal instants go
+        to the later write (id DESC).
+      * A simulated creatinine is left out only while the opt-in lab module
+        (ORB_LAB) is on. With it off, as at every site today, the lane reads
+        it as it always has: a demo ward's results are simulated, and its
+        renal flags must not vanish silently.
+    """
+    from services import lab_observations
     try:
-        rows = db.execute(
-            "SELECT observation_name, value_numeric, value_text, unit, abnormal_flag, "
-            "       observed_at, recorded_at "
-            "FROM observations WHERE patient_id = ? "
-            "ORDER BY COALESCE(observed_at, recorded_at) DESC LIMIT 60",
-            (patient_id,)).fetchall()
+        rows = lab_observations.recent_observations(
+            db, patient_id, limit=60,
+            exclude_simulated=lab_observations.tier1_excludes_simulated())
     except Exception:
         logger.debug("[PatientScreen] observations unavailable for %s", patient_id,
                      exc_info=True)

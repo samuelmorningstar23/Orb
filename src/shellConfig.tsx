@@ -1,5 +1,5 @@
 import { lazy, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react'
-import { hasPermission, PATIENT_WRITE, type Permission } from './lib/roles'
+import { hasPermission, PATIENT_WRITE, ROLE_FEATURE, type Permission, type RoleFeatureId } from './lib/roles'
 
 /**
  * THE SHELL'S ONE ROLE INPUT.
@@ -84,6 +84,22 @@ export type Tab =
    * ward-visible (`vitals.read`) while the register itself is administrative.
    * See server/services/biomedical_service.py. */
   | 'biomedical'
+  /* ── The opt-in hospital modules (HIS build plan, decision X1, 3 October 2026)
+   * Beds and admissions, the pharmacy store and the laboratory are modules by
+   * the same machinery as the eleven above (server flag, lazily-loaded panel),
+   * with one difference Samuel ruled on 3 October 2026: they default OFF. A
+   * site switches each one on (ORB_ADT, ORB_PHARMACY_STORE, ORB_LAB). See
+   * OPT_IN_MODULE_IDS below. */
+  | 'adt'
+  | 'pharmacy-store'
+  | 'lab'
+  /* ── Feature tabs ──────────────────────────────────────────────────────────
+   * A feature tab is gated by a server FEATURE flag (published as 'features' on
+   * /api/health, all default off) rather than by a module flag, and like a
+   * module tab it exists only when its panel file is in the build. OPD is the
+   * first: the doctor's outpatient queue and consultation screen. See
+   * FEATURE_TAB_IDS below. */
+  | 'opd'
 
 /**
  * Rail grouping. Phase 1 renders every group as one flat list — the grouped
@@ -123,6 +139,12 @@ export interface ShellRoleConfig {
   readonly tabs: readonly RoleTab[]
   /** The action this experience would offer. Permission still decides. */
   readonly primaryAction: PrimaryActionId | null
+  /** False when this experience carries no floating Sage assistant. Absent
+   *  means it does, which is every role that existed before the HIS roles. The
+   *  HIS roles hold no sage.query (rulings OPD-N3, LIS-R12; the ward clerk's
+   *  grant is the bed board only), so an orb on their screen would refuse every
+   *  question it was asked. */
+  readonly floatingSage?: boolean
 }
 
 /* ── The doctor home, wired before it exists ─────────────────────────────────
@@ -177,11 +199,37 @@ export const DoctorHomePanel: LazyExoticComponent<ComponentType> | null = doctor
 export type HospitalModuleId =
   | 'billing' | 'payments' | 'payer' | 'procurement' | 'frontdesk' | 'housekeeping'
   | 'workforce' | 'dietary' | 'biomedical' | 'nabh' | 'abdm'
+  | 'adt' | 'pharmacy-store' | 'lab'
 
 export const HOSPITAL_MODULE_IDS: readonly HospitalModuleId[] = [
   'billing', 'payments', 'payer', 'procurement', 'frontdesk', 'housekeeping',
   'workforce', 'dietary', 'biomedical', 'nabh', 'abdm',
+  'adt', 'pharmacy-store', 'lab',
 ]
+
+/**
+ * THE OPT-IN MODULES, which default OFF.
+ *
+ * Every other module follows the 2026-08-11 ruling, "build it all and ship it
+ * visible": its flag defaults ON. On 3 October 2026 Samuel departed from that
+ * ruling for these three only (HIS build plan, decision X1). Beds and
+ * admissions, the pharmacy store and the laboratory each change how a hospital
+ * runs a whole department, so a site turns them on deliberately, and the Ward
+ * Record profile and the demos never see them unless it does.
+ *
+ * The ids match server/config.py OPT_IN_MODULES exactly; the server publishes
+ * them inside 'modules' on /api/health beside the others.
+ *
+ * The client default for these FAILS TOWARD HIDDEN, the opposite of the other
+ * modules: before /api/health answers, when it cannot be reached and when it
+ * answers non-OK, every opt-in module stays off. A tab for a module the server
+ * has not confirmed would open onto routes that 404.
+ */
+export const OPT_IN_MODULE_IDS: readonly HospitalModuleId[] = ['adt', 'pharmacy-store', 'lab']
+
+export function isOptInModule(id: HospitalModuleId): boolean {
+  return (OPT_IN_MODULE_IDS as readonly string[]).includes(id)
+}
 
 /** Module id → the panel file its agent must create. Paths are literal because
  *  `import.meta.glob` is compile-time: it cannot take a computed pattern. */
@@ -197,6 +245,11 @@ export const HOSPITAL_MODULE_PANEL_PATH: Record<HospitalModuleId, string> = {
   biomedical: './pages/panels/BiomedicalPanel.tsx',
   nabh: './pages/panels/NabhPanel.tsx',
   abdm: './pages/panels/AbdmPanel.tsx',
+  // The opt-in panels are built in later waves of the HIS plan. Until a file
+  // exists its tab is not installed, whatever the flag says.
+  adt: './pages/panels/BedBoardPanel.tsx',
+  'pharmacy-store': './pages/panels/PharmacyStorePanel.tsx',
+  lab: './pages/panels/LabPanel.tsx',
 }
 
 const HOSPITAL_MODULE_MODULES = import.meta.glob([
@@ -211,6 +264,9 @@ const HOSPITAL_MODULE_MODULES = import.meta.glob([
   './pages/panels/BiomedicalPanel.tsx',
   './pages/panels/NabhPanel.tsx',
   './pages/panels/AbdmPanel.tsx',
+  './pages/panels/BedBoardPanel.tsx',
+  './pages/panels/PharmacyStorePanel.tsx',
+  './pages/panels/LabPanel.tsx',
 ])
 
 /** True for each module whose panel file is present in THIS build. */
@@ -234,6 +290,56 @@ export function modulePanel(id: Tab): LazyExoticComponent<ComponentType> | null 
   return (HOSPITAL_MODULE_PANELS as Record<string, LazyExoticComponent<ComponentType> | null>)[id] ?? null
 }
 
+/* ── Feature tabs ─────────────────────────────────────────────────────────────
+ *
+ * A feature tab is the same "a tab with no panel is not a tab" machinery as a
+ * module tab, gated on a server FEATURE flag instead of a module flag. The
+ * difference matters: a module is a back-office screen a site may or may not
+ * run, while a feature may gate a clinical path, so features default OFF with
+ * no client override and only the server can switch one on.
+ *
+ * OPD is the only feature tab. It goes on the doctor's rail (and the clinician
+ * alias) and nobody else's; see DOCTOR_TABS. Its panel is built in a later wave
+ * of the HIS plan, so until OpdPanel.tsx exists the tab is not installed.
+ */
+export type FeatureTabId = 'opd'
+
+export const FEATURE_TAB_IDS: readonly FeatureTabId[] = ['opd']
+
+/** Feature tab id → the panel file its builder must create (literal, because
+ *  `import.meta.glob` is compile-time). */
+export const FEATURE_TAB_PANEL_PATH: Record<FeatureTabId, string> = {
+  opd: './pages/panels/OpdPanel.tsx',
+}
+
+const FEATURE_TAB_MODULES = import.meta.glob([
+  './pages/panels/OpdPanel.tsx',
+])
+
+/** True for each feature tab whose panel file is present in THIS build. */
+export const featureTabInstalled: Record<FeatureTabId, boolean> =
+  Object.fromEntries(
+    FEATURE_TAB_IDS.map(id => [id, FEATURE_TAB_PANEL_PATH[id] in FEATURE_TAB_MODULES]),
+  ) as Record<FeatureTabId, boolean>
+
+const FEATURE_TAB_PANELS: Record<FeatureTabId, LazyExoticComponent<ComponentType> | null> =
+  Object.fromEntries(
+    FEATURE_TAB_IDS.map(id => {
+      const loader = FEATURE_TAB_MODULES[FEATURE_TAB_PANEL_PATH[id]]
+      return [id, loader ? lazy(loader as () => Promise<{ default: ComponentType }>) : null]
+    }),
+  ) as Record<FeatureTabId, LazyExoticComponent<ComponentType> | null>
+
+/** The panel to mount for a feature tab, or null if it is not a feature tab or
+ *  its panel is not installed. The shell's one lookup for these. */
+export function featurePanel(id: Tab): LazyExoticComponent<ComponentType> | null {
+  return (FEATURE_TAB_PANELS as Record<string, LazyExoticComponent<ComponentType> | null>)[id] ?? null
+}
+
+function isFeatureTabId(id: Tab): id is FeatureTabId {
+  return (FEATURE_TAB_IDS as readonly string[]).includes(id)
+}
+
 /* ── Module flags ─────────────────────────────────────────────────────────────
  *
  * The server owns the truth (config.enabled_modules, published on /api/health).
@@ -245,12 +351,16 @@ export function modulePanel(id: Tab): LazyExoticComponent<ComponentType> | null 
  * a tab appears whose routes are disabled, and the panel says so. The opposite
  * default would silently hide a module a hospital paid for, which is the worse
  * failure and the harder one to notice.
+ *
+ * EXCEPT THE OPT-IN MODULES (OPT_IN_MODULE_IDS), which default OFF here as they
+ * do on the server, and stay off until /api/health says otherwise. The table is
+ * DERIVED from the two lists so that a new module cannot be added to one and
+ * forgotten in the other.
  */
-const DEFAULT_MODULE_FLAGS: Record<HospitalModuleId, boolean> = {
-  billing: true, payments: true, payer: true, procurement: true, frontdesk: true,
-  housekeeping: true, workforce: true,
-  dietary: true, biomedical: true, nabh: true, abdm: true,
-}
+export const DEFAULT_MODULE_FLAGS: Readonly<Record<HospitalModuleId, boolean>> =
+  Object.fromEntries(
+    HOSPITAL_MODULE_IDS.map(id => [id, !isOptInModule(id)]),
+  ) as Record<HospitalModuleId, boolean>
 
 /**
  * Build-time / runtime overrides, read the same way the landing-tab override is:
@@ -260,6 +370,11 @@ const DEFAULT_MODULE_FLAGS: Record<HospitalModuleId, boolean> = {
  *
  * The env form is an ALLOW-LIST (anything not named is off) because that is what
  * "this build ships these modules" means; the runtime object is a patch.
+ *
+ * An override may switch an OPT-IN module off but never on. Only the server
+ * can confirm that an opt-in module's routes answer, so a build list or an
+ * index.html patch naming 'adt' must not be able to put a Beds tab on the rail
+ * that opens onto 404s.
  */
 export function readModuleOverrides(): Partial<Record<HospitalModuleId, boolean>> {
   const out: Partial<Record<HospitalModuleId, boolean>> = {}
@@ -273,6 +388,9 @@ export function readModuleOverrides(): Partial<Record<HospitalModuleId, boolean>
     for (const id of HOSPITAL_MODULE_IDS) {
       if (typeof runtime[id] === 'boolean') out[id] = runtime[id]
     }
+  }
+  for (const id of OPT_IN_MODULE_IDS) {
+    if (out[id] === true) delete out[id]
   }
   return out
 }
@@ -310,10 +428,101 @@ export function resetModuleFlags(): void {
   for (const listener of moduleFlagListeners) listener()
 }
 
-/** Subscribe to flag changes — `useSyncExternalStore`-shaped on purpose. */
+/** Subscribe to flag changes, `useSyncExternalStore`-shaped on purpose.
+ *  One listener set serves the module flags, the feature flags and the health
+ *  probe state, so a subscriber hears about any of the three. */
 export function subscribeModuleFlags(listener: () => void): () => void {
   moduleFlagListeners.add(listener)
   return () => { moduleFlagListeners.delete(listener) }
+}
+
+/* ── Feature flags ────────────────────────────────────────────────────────────
+ *
+ * The HIS features the server publishes as 'features' on /api/health
+ * (server/config.py FEATURE_FLAGS). Every one defaults OFF on the server and
+ * here, and unlike module flags there is NO client override: a feature may gate
+ * a clinical path, so only the server can switch one on. A key the server does
+ * not publish stays off, and a key the server publishes that is not listed here
+ * is ignored until a later wave names it.
+ */
+export type FeatureFlagId =
+  | 'registration'
+  | 'opd'
+  | 'adt_strict_locations'
+  | 'pharmacy_ward_stock'
+  | 'ndps_register'
+  | 'lab_analyser_listener'
+  | 'result_quarantine'
+  | 'result_corrections'
+  | 'oru_order_link'
+  | 'lab_critical_interfaced'
+  | 'lab_portal_reports'
+
+export const FEATURE_FLAG_IDS: readonly FeatureFlagId[] = [
+  'registration', 'opd', 'adt_strict_locations', 'pharmacy_ward_stock', 'ndps_register',
+  'lab_analyser_listener', 'result_quarantine', 'result_corrections', 'oru_order_link',
+  'lab_critical_interfaced', 'lab_portal_reports',
+]
+
+export const DEFAULT_FEATURE_FLAGS: Readonly<Record<FeatureFlagId, boolean>> =
+  Object.fromEntries(FEATURE_FLAG_IDS.map(id => [id, false])) as Record<FeatureFlagId, boolean>
+
+/** Which feature flag each feature tab waits on. */
+export const FEATURE_TAB_FLAG: Record<FeatureTabId, FeatureFlagId> = {
+  opd: 'opd',
+}
+
+let featureFlags: Record<FeatureFlagId, boolean> = { ...DEFAULT_FEATURE_FLAGS }
+
+/** The feature flags the client should act on right now. */
+export function currentFeatureFlags(): Readonly<Record<FeatureFlagId, boolean>> {
+  return featureFlags
+}
+
+/** Apply a partial update (from /api/health, or from a test) and notify. Only
+ *  a strict boolean counts; anything else leaves the flag as it was. */
+export function setFeatureFlags(next: Partial<Record<FeatureFlagId, boolean>>): void {
+  const merged = { ...featureFlags }
+  let changed = false
+  for (const id of FEATURE_FLAG_IDS) {
+    if (typeof next[id] === 'boolean' && merged[id] !== next[id]) {
+      merged[id] = next[id] as boolean
+      changed = true
+    }
+  }
+  if (!changed) return
+  featureFlags = merged
+  for (const listener of moduleFlagListeners) listener()
+}
+
+/* ── The health probe's own state ─────────────────────────────────────────────
+ *
+ * 'pending' until the first answer, then 'answered' (a 200 with a JSON body) or
+ * 'failed' (unreachable, non-OK, or not JSON). An account whose whole rail
+ * waits on an opt-in module (a ward clerk, a lab technician) reads this to say
+ * "checking" rather than "switched off" in the second before the server
+ * answers, and "could not check" rather than "switched off" when it never does.
+ */
+export type HealthProbeState = 'pending' | 'answered' | 'failed'
+
+let healthProbe: HealthProbeState = 'pending'
+
+export function currentHealthProbe(): HealthProbeState {
+  return healthProbe
+}
+
+function setHealthProbe(next: HealthProbeState): void {
+  if (healthProbe === next) return
+  healthProbe = next
+  for (const listener of moduleFlagListeners) listener()
+}
+
+/** Reset the feature flags to all off and the probe to 'pending'. For tests
+ *  and sign-out, beside resetModuleFlags. */
+export function resetFeatureFlags(): void {
+  featureFlags = { ...DEFAULT_FEATURE_FLAGS }
+  healthProbe = 'pending'
+  for (const listener of moduleFlagListeners) listener()
 }
 
 /**
@@ -324,21 +533,79 @@ export function subscribeModuleFlags(listener: () => void): () => void {
  * away a second after the user sees it. NEVER THROWS: a health endpoint that is
  * unreachable leaves the defaults in place, because a network blip must not be
  * able to remove a hospital's billing screen.
+ *
+ * The same answer carries the HIS feature flags ('features'), adopted here too,
+ * so one probe settles the whole rail. A failed or non-OK probe leaves every
+ * opt-in module and every feature OFF, which is their default.
+ *
+ * The module overrides (readModuleOverrides) are re-applied on top of the
+ * server's answer, so an override that switches a module off still holds
+ * after the probe answers.
  */
 export async function refreshModuleFlags(
   fetchImpl: typeof fetch | undefined = typeof fetch === 'function' ? fetch : undefined,
   base = '/api',
 ): Promise<Readonly<Record<HospitalModuleId, boolean>>> {
-  if (!fetchImpl) return currentModuleFlags()
+  if (!fetchImpl) {
+    setHealthProbe('failed')
+    return currentModuleFlags()
+  }
   try {
     const resp = await fetchImpl(`${base}/health`, { headers: { Accept: 'application/json' } })
-    if (!resp.ok) return currentModuleFlags()
-    const body = await resp.json() as { modules?: Partial<Record<HospitalModuleId, boolean>> }
-    if (body?.modules) setModuleFlags(body.modules)
+    if (!resp.ok) {
+      setHealthProbe('failed')
+      return currentModuleFlags()
+    }
+    const body = await resp.json() as {
+      modules?: Partial<Record<HospitalModuleId, boolean>>
+      features?: Partial<Record<FeatureFlagId, boolean>>
+    }
+    if (body?.modules && typeof body.modules === 'object') {
+      /* The overrides are patched OVER the server's answer, not under it: a
+         site that hides a module by build list or by window.__ORB_MODULES__
+         must not get it back when the probe answers. readModuleOverrides has
+         already dropped any attempt to switch an opt-in module on, so the
+         server alone can still do that. */
+      setModuleFlags({ ...body.modules, ...readModuleOverrides() })
+      if (body.features && typeof body.features === 'object') setFeatureFlags(body.features)
+      setHealthProbe('answered')
+    } else {
+      setHealthProbe('failed')
+    }
   } catch {
     /* Offline, server down, or a proxy returning HTML. Keep the defaults. */
+    setHealthProbe('failed')
   }
   return currentModuleFlags()
+}
+
+/* ── Role features ────────────────────────────────────────────────────────────
+ *
+ * Each HIS role exists only while its feature is on (server/roles.py
+ * ROLE_FEATURE, mirrored in src/lib/roles.ts). The feature is either an opt-in
+ * module ('adt', 'lab') or a feature flag ('registration'). Both User
+ * Management (which roles it offers) and the shell (whether the role's rail is
+ * live or shows the switched-off notice) ask this one question.
+ */
+function roleFeatureOn(
+  feature: RoleFeatureId,
+  modules: Readonly<Record<HospitalModuleId, boolean>>,
+  features: Readonly<Record<FeatureFlagId, boolean>>,
+): boolean {
+  if ((HOSPITAL_MODULE_IDS as readonly string[]).includes(feature)) {
+    return modules[feature as HospitalModuleId] === true
+  }
+  return features[feature as FeatureFlagId] === true
+}
+
+/** True when `role` needs no feature, or its feature is switched on. */
+export function isRoleFeatureOn(
+  role: string | null | undefined,
+  modules: Readonly<Record<HospitalModuleId, boolean>> = currentModuleFlags(),
+  features: Readonly<Record<FeatureFlagId, boolean>> = currentFeatureFlags(),
+): boolean {
+  const feature = ROLE_FEATURE[normalizeRole(role)]
+  return feature === undefined || roleFeatureOn(feature, modules, features)
 }
 
 /* ── Tab metadata ─────────────────────────────────────────────────────────── */
@@ -647,6 +914,50 @@ export const TABS: readonly TabDef[] = [
       </svg>
     ),
   },
+  {
+    id: 'adt', label: 'Beds', pillar: 'Beds and admissions',
+    icon: (
+      // A made bed seen from the side: the bed itself is the unit this module
+      // counts, assigns and moves patients between. Housekeeping's stripped bed
+      // is the turnaround; this one is occupied or free.
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M2 4v16"/><path d="M2 8h18a2 2 0 0 1 2 2v10"/><path d="M2 17h20"/><path d="M6 8v9"/>
+      </svg>
+    ),
+  },
+  {
+    id: 'pharmacy-store', label: 'Pharmacy store', pillar: 'Pharmacy store',
+    icon: (
+      // A store room with racked shelves: medicines held in stock, received and
+      // counted. Deliberately not the flask Helix uses for dispensing.
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M22 8.35V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8.35A2 2 0 0 1 3.26 6.5l8-3.2a2 2 0 0 1 1.48 0l8 3.2A2 2 0 0 1 22 8.35z"/>
+        <path d="M6 18h12"/><path d="M6 14h12"/><path d="M6 10h12v12H6z"/>
+      </svg>
+    ),
+  },
+  {
+    id: 'lab', label: 'Laboratory', pillar: 'Laboratory',
+    icon: (
+      // A specimen tube with a fill line: the sample is what the lab tracks
+      // from collection to report.
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M14.5 2v17.5a2.5 2.5 0 0 1-5 0V2"/><path d="M8.5 2h7"/><path d="M14.5 16h-5"/>
+      </svg>
+    ),
+  },
+  {
+    id: 'opd', label: 'OPD', pillar: 'Outpatients',
+    icon: (
+      // A stethoscope: the consultation itself, which is what the outpatient
+      // clinic is for.
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M11 2v2"/><path d="M5 2v2"/>
+        <path d="M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1"/>
+        <path d="M8 15a6 6 0 0 0 12 0v-3"/><circle cx="20" cy="10" r="2"/>
+      </svg>
+    ),
+  },
 ]
 
 const TAB_BY_ID = new Map(TABS.map(tab => [tab.id, tab]))
@@ -668,9 +979,15 @@ const t = (id: Tab, group: TabGroupId = 'primary'): RoleTab => ({ id, group })
  * third rather than first for the reason recorded when this was a switch
  * statement: a doctor is not always rounding, it is roughly an hour of a long
  * day, so the round is one tap away and never the thing the app opens on.
+ *
+ * 'opd' (a feature tab, off by default) sits after the round: a doctor's
+ * outpatient clinic is the other half of the day, and the tab appears only at a
+ * site that has switched OPD on and in a build that carries its panel. It is in
+ * DOCTOR_TABS rather than the doctor row so that a doctor in a surgery
+ * department, who runs a clinic too, keeps it.
  */
 const DOCTOR_TABS: readonly RoleTab[] = [
-  t('today'), t('vigil'), t('round'), t('orders'), t('relay'), t('sage'), t('scribe'),
+  t('today'), t('vigil'), t('round'), t('opd'), t('orders'), t('relay'), t('sage'), t('scribe'),
   t('lens', 'clinical'), t('forecast', 'clinical'),
   t('command', 'hospital'), t('capacity', 'hospital'), t('coding', 'hospital'),
 ]
@@ -773,6 +1090,17 @@ const HOSPITAL_MODULE_TABS: readonly RoleTab[] = [
    * biomedical engineer, which is how hospitals work today and is slower than it
    * should be. Same note in server/routes/biomedical_routes.py. */
   t('biomedical', 'hospital'),
+  /* The three opt-in modules (default OFF, see OPT_IN_MODULE_IDS). Admin is
+   * the bed manager and the stores office, so admin gets all three once a site
+   * switches them on and their panels are built. Beyond admin: the ward clerk
+   * gets Beds, the pharmacist gets the Pharmacy store (the one pinned exception
+   * to the money-adjacency rule, PHARMACY_DESK_MODULE_IDS) and the three lab
+   * roles get the Laboratory. Doctors and nurses get none of them: they reach
+   * lab work through Orders and the chart, and a nurse's read-only bed board
+   * waits on ruling ADT-S7. */
+  t('adt', 'hospital'),
+  t('pharmacy-store', 'hospital'),
+  t('lab', 'hospital'),
 ]
 
 /**
@@ -824,9 +1152,38 @@ const DIETARY_TAB: RoleTab = t('dietary', 'clinical')
  */
 export const CLINICAL_MODULE_IDS: readonly HospitalModuleId[] = ['dietary']
 
+/**
+ * The DIAGNOSTIC modules: the laboratory. Neither a money screen nor a
+ * clinician's tab. Its rail belongs to the lab's own staff (technician,
+ * pathologist, phlebotomist) and to admin; doctors and nurses order tests and
+ * read results through Orders and the chart, never through this tab. It is
+ * excluded from MONEY_MODULE_IDS because a lab technician holding it is not a
+ * money screen reaching a non-admin role, and it is pinned by its own test so
+ * that it cannot quietly reach a clinical rail either.
+ */
+export const DIAGNOSTIC_MODULE_IDS: readonly HospitalModuleId[] = ['lab']
+
 /** The admin-only remainder: the money and back-office screens. */
 export const MONEY_MODULE_IDS: readonly HospitalModuleId[] =
-  HOSPITAL_MODULE_IDS.filter(id => !CLINICAL_MODULE_IDS.includes(id))
+  HOSPITAL_MODULE_IDS.filter(id => !CLINICAL_MODULE_IDS.includes(id) && !DIAGNOSTIC_MODULE_IDS.includes(id))
+
+/**
+ * THE PHARMACY-DESK EXCEPTION (ruling GRN-R9, applied 3 October 2026).
+ *
+ * The Pharmacy store shows purchase values, so by this file's own rule it is a
+ * money screen, and money screens never sit on a non-admin rail beside a
+ * clinical action. Samuel's GRN-R9 ruling makes one exception: the pharmacist
+ * gets the Pharmacy store tab. The pharmacist already holds procurement.write
+ * through the API, receiving and counting drugs is the pharmacy's own job, and
+ * the pharmacist's rail carries no dose administration.
+ *
+ * Pinned to exactly this one id and exactly the pharmacist by
+ * shellConfig.test.ts, next to the dietary exception, so widening it is never a
+ * quiet edit. It is NOT subtracted from MONEY_MODULE_IDS: the Pharmacy store
+ * stays a money screen for every other role, and the money-adjacency test still
+ * proves no doctor, nurse or surgeon ever sees it.
+ */
+export const PHARMACY_DESK_MODULE_IDS: readonly HospitalModuleId[] = ['pharmacy-store']
 
 const ROLE_CONFIG: Record<string, ShellRoleConfig> = {
   doctor: {
@@ -879,9 +1236,13 @@ const ROLE_CONFIG: Record<string, ShellRoleConfig> = {
     ],
     primaryAction: 'admit',
   },
+  /* 'pharmacy-store' after the verify queue, through the pinned
+     PHARMACY_DESK_MODULE_IDS exception (GRN-R9). Off by default like every
+     opt-in module, so a site that has not switched the store on sees exactly
+     the rail it had. */
   pharmacist: {
     home: 'helix',
-    tabs: [t('helix'), t('pharmacy-verify'), t('sage')],
+    tabs: [t('helix'), t('pharmacy-verify'), t('pharmacy-store', 'hospital'), t('sage')],
     primaryAction: null,
   },
   /* The cash counter as its own account (server/permissions.py "cashier":
@@ -894,6 +1255,52 @@ const ROLE_CONFIG: Record<string, ShellRoleConfig> = {
     home: 'payments',
     tabs: [t('payments', 'hospital')],
     primaryAction: null,
+  },
+  /* ── The HIS roles (migration 48, users_role_batch) ─────────────────────────
+     Each exists only while its feature is on (ROLE_FEATURE in src/lib/roles.ts,
+     mirroring server/roles.py). While the feature is off the rail is empty and
+     the shell shows the switched-off notice (getModuleOffNotice), never the
+     unknown-role fallback of Patients and Messages, both of which would 403.
+     None holds patient.write, so none is offered the admit action. */
+
+  /* The registration desk (ruling OPD-N3): registration.read and .write, no
+     money (that stays with the cashier) and no chart. Front Desk is the whole
+     job. Needs the 'registration' feature. */
+  receptionist: {
+    home: 'frontdesk',
+    tabs: [t('frontdesk', 'hospital')],
+    primaryAction: null,
+    floatingSage: false,
+  },
+  /* The ward clerk (adt-17): reads the bed board and moves patients between
+     beds of the same department. No chart, no transfer between departments
+     (ADT-S8), no leave or absconded (ADT-S7). Needs the 'adt' module. */
+  ward_clerk: {
+    home: 'adt',
+    tabs: [t('adt', 'hospital')],
+    primaryAction: null,
+    floatingSage: false,
+  },
+  /* The three lab roles (ruling LIS-R12): hospital-wide, no Relay, no Sage and
+     no patient.read_all, so the Laboratory is the only screen. Needs the 'lab'
+     module. */
+  lab_technician: {
+    home: 'lab',
+    tabs: [t('lab', 'clinical')],
+    primaryAction: null,
+    floatingSage: false,
+  },
+  pathologist: {
+    home: 'lab',
+    tabs: [t('lab', 'clinical')],
+    primaryAction: null,
+    floatingSage: false,
+  },
+  phlebotomist: {
+    home: 'lab',
+    tabs: [t('lab', 'clinical')],
+    primaryAction: null,
+    floatingSage: false,
   },
 }
 
@@ -966,17 +1373,26 @@ function normalizeRole(role: string | null | undefined): string {
  * "a switched-off module has no tab" and "no clinical role gets a money screen"
  * be tested for real today, and keeps meaning the same thing tomorrow. The shell
  * never passes them; only tests do.
+ *
+ * `features` and `featureInstalled` are the same pair for feature tabs (OPD),
+ * injectable for the same reason.
  */
 export function getRoleConfig(
   role: string | null | undefined,
   department?: string,
   modules: Readonly<Record<HospitalModuleId, boolean>> = currentModuleFlags(),
   installed: Readonly<Record<HospitalModuleId, boolean>> = hospitalModuleInstalled,
+  features: Readonly<Record<FeatureFlagId, boolean>> = currentFeatureFlags(),
+  featureInstalled: Readonly<Record<FeatureTabId, boolean>> = featureTabInstalled,
 ): ShellRoleConfig {
   const key = normalizeRole(role)
   const base = ROLE_CONFIG[key] ?? FALLBACK_CONFIG
   const isSurgeon = department === 'Surgery' || department === 'General Surgery'
-  const tabs = (isSurgeon && (key === 'doctor' || key === 'clinician')
+  /* A role that exists only while its feature is on (the HIS roles) has an
+     EMPTY rail while that feature is off. The shell then shows the switched-off
+     notice; the role never falls through to tabs it cannot open. */
+  const roleLive = isRoleFeatureOn(key, modules, features)
+  const tabs = (!roleLive ? [] : isSurgeon && (key === 'doctor' || key === 'clinician')
     ? [...DOCTOR_TABS, t('surgical-suite')]
     : base.tabs
   )
@@ -984,9 +1400,16 @@ export function getRoleConfig(
     /* A hospital-module tab survives only if its flag is on AND its panel is in
        the build. Either half missing means the tab is not there at all — never a
        tab that opens onto nothing, and never a tab for a module this deployment
-       switched off. */
+       switched off. An OPT-IN module's flag must be explicitly true: a flag
+       table that does not mention it (an older server, a partial fixture)
+       leaves it off. */
     .filter(entry => !isHospitalModuleId(entry.id)
-      || (modules[entry.id] !== false && installed[entry.id]))
+      || ((isOptInModule(entry.id) ? modules[entry.id] === true : modules[entry.id] !== false)
+        && installed[entry.id]))
+    /* A feature tab survives only if its feature flag is explicitly true AND its
+       panel is in the build. */
+    .filter(entry => !isFeatureTabId(entry.id)
+      || (features[FEATURE_TAB_FLAG[entry.id]] === true && featureInstalled[entry.id] === true))
   const home = tabs.some(entry => entry.id === base.home) ? base.home : tabs[0]?.id ?? 'vigil'
   return { ...base, tabs, home }
 }
@@ -1002,8 +1425,64 @@ export function getAccessibleTabs(
   department?: string,
   modules: Readonly<Record<HospitalModuleId, boolean>> = currentModuleFlags(),
   installed: Readonly<Record<HospitalModuleId, boolean>> = hospitalModuleInstalled,
+  features: Readonly<Record<FeatureFlagId, boolean>> = currentFeatureFlags(),
+  featureInstalled: Readonly<Record<FeatureTabId, boolean>> = featureTabInstalled,
 ): Tab[] {
-  return getRoleConfig(role, department, modules, installed).tabs.map(entry => entry.id)
+  return getRoleConfig(role, department, modules, installed, features, featureInstalled)
+    .tabs.map(entry => entry.id)
+}
+
+/**
+ * What a role whose whole rail waits on a switched-off feature should see.
+ *
+ * The HIS roles (receptionist, ward clerk, the three lab roles) exist only while
+ * their feature is on. When the rail derived above is EMPTY for one of them, the
+ * shell shows a plain notice instead of a blank screen or the unknown-role
+ * fallback, and this says which one:
+ *
+ *   'checking'    the health probe has not answered yet;
+ *   'unreachable' the probe failed, so Orb cannot say whether it is on;
+ *   'off'         the server answered and the feature is off;
+ *   'unavailable' the feature is on but the screen still cannot open (its panel
+ *                 is not in this build, or a module it sits in is off).
+ *
+ * Null for every other role, and for a HIS role with at least one tab. Roles
+ * that existed before (the cashier with Payments switched off) are untouched.
+ */
+export type ModuleOffState = 'checking' | 'unreachable' | 'off' | 'unavailable'
+
+export interface ModuleOffNoticeInfo {
+  readonly subject: RoleFeatureId
+  readonly state: ModuleOffState
+  /** The role's configured home, whose name and subtitle the page header shows
+   *  while the notice stands, so the header never names a screen the account
+   *  cannot open. */
+  readonly home: Tab
+}
+
+export function getModuleOffNotice(
+  role: string | null | undefined,
+  department?: string,
+  modules: Readonly<Record<HospitalModuleId, boolean>> = currentModuleFlags(),
+  installed: Readonly<Record<HospitalModuleId, boolean>> = hospitalModuleInstalled,
+  features: Readonly<Record<FeatureFlagId, boolean>> = currentFeatureFlags(),
+  probe: HealthProbeState = currentHealthProbe(),
+): ModuleOffNoticeInfo | null {
+  const key = normalizeRole(role)
+  const subject = ROLE_FEATURE[key]
+  if (subject === undefined) return null
+  if (getRoleConfig(key, department, modules, installed, features).tabs.length > 0) return null
+  const home = (ROLE_CONFIG[key] ?? FALLBACK_CONFIG).home
+  if (roleFeatureOn(subject, modules, features)) return { subject, state: 'unavailable', home }
+  const state: ModuleOffState = probe === 'pending' ? 'checking' : probe === 'failed' ? 'unreachable' : 'off'
+  return { subject, state, home }
+}
+
+/** False when the role's experience carries no floating Sage assistant (the
+ *  HIS roles, which hold no sage.query). Every other role keeps it exactly as
+ *  before. */
+export function offersFloatingSage(role: string | null | undefined): boolean {
+  return (ROLE_CONFIG[normalizeRole(role)] ?? FALLBACK_CONFIG).floatingSage !== false
 }
 
 /**

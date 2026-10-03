@@ -31,7 +31,7 @@ There is no load balancer, no message broker, no cache tier, no second node, and
 dependency of any kind on the clinical path. `socket_app` is a Socket.IO ASGI wrapper around
 the FastAPI app (`server/main.py:1078`), so WebSocket traffic and HTTP traffic terminate in
 the same process, on the same event loop, sharing the same authentication code
-(`server/ws/realtime.py:47-99` re-implements the REST revocation checks deliberately, see
+(`server/ws/realtime.py:143-195` re-implements the REST revocation checks deliberately, see
 §1.9.3).
 
 ```mermaid
@@ -233,7 +233,7 @@ uvicorn.run(
 
 * **One worker.** `uvicorn.run` is called without `workers=`, so there is exactly one
   process. This is not an oversight: SQLite allows one writer, the Socket.IO presence roster
-  is an in-process dict (`server/ws/realtime.py:206-210`, "A single process backs the
+  is an in-process dict (`server/ws/realtime.py:302-306`, "A single process backs the
   demo/pilot; a multi-process deployment would move this to Redis"), and the LLM admission
   queue is an in-process asyncio primitive (`server/services/llm_queue_service.py:65`).
   Adding a second worker would silently break all three.
@@ -457,7 +457,7 @@ Import-time work in `main.py` is small but not zero, and the order matters:
    most of the process's memory footprint and most import-time side effects land here.
 5. **`from ws.realtime import sio`** (`:75`), which constructs the Socket.IO server and, at the
    bottom of that module, imports `ws.scribe_stream` for its event registrations
-   (`server/ws/realtime.py:395`).
+   (`server/ws/realtime.py:491`).
 
 ### 1.4.2 The lifespan, in execution order
 
@@ -1111,9 +1111,9 @@ reached from the event loop.
    be `def`.
 4. **The Socket.IO layer is outside the convention entirely.** `ws/realtime.py` handlers are all
    `async def` and run on the loop, and several do synchronous DB work: `_authenticate` on every
-   handshake (`server/ws/realtime.py:81-83`), `_self_patient_id` (`:109-113`),
+   handshake (`server/ws/realtime.py:177-179`), `_self_patient_id` (`:205-209`),
    `_patient_department` on every vitals emit, mitigated by a 60-second TTL cache
-   (`server/ws/realtime.py:173-193`), `_user_can_access_channel` → `get_channels_for_user`
+   (`server/ws/realtime.py:269-289`), `_user_can_access_channel` → `get_channels_for_user`
    (`:295`, a plain sync function at `server/services/relay_service.py:11`), and `new_message` →
    `send_message` (`:382`, sync at `server/services/relay_service.py:344`). At pilot volume, 
    two wards, a handful of sockets, one vitals tick every 5 seconds
@@ -1273,7 +1273,7 @@ reload would destroy unsaved clinical input (draft notes, in-progress med orders
 
 `socketio.ASGIApp(sio, app)` (`server/main.py:1078`) puts Socket.IO in front of FastAPI for
 `/socket.io` and delegates everything else. The handshake authenticates from the `auth` payload
-*or* the HttpOnly cookie parsed out of `HTTP_COOKIE` (`server/ws/realtime.py:30-44`), and
+*or* the HttpOnly cookie parsed out of `HTTP_COOKIE` (`server/ws/realtime.py:31-140`), and
 rejects by returning `False` from `connect` (`:127-129`).
 
 The authorisation model is rooms, and the scoping rules mirror REST exactly:
@@ -1292,7 +1292,7 @@ The authorisation model is rooms, and the scoping rules mirror REST exactly:
 And identity is re-derived from the session on every event, never trusted from the payload
 (`:340-345`, `:384-389`). The socket also mirrors REST revocation, `is_active` and
 `token_version`, because without it "a revoked or deactivated session kept streaming PHI
-(vitals, relay, scribe audio) until the 24h JWT expiry" (`server/ws/realtime.py:89-98`).
+(vitals, relay, scribe audio) until the 24h JWT expiry" (`server/ws/realtime.py:185-194`).
 
 The presence roster is an in-process dict with an explicit note that a multi-process deployment
 would need the Redis adapter (`:206-210`). That is the honest form of a single-process

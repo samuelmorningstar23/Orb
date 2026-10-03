@@ -42,10 +42,11 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+import config
 from auth import get_current_user, hash_password, verify_password
 from database import SERVICE_ACCOUNT_IDS, db_session
 from permissions import DEPARTMENT_REQUIRED_ROLES, has_permission, require_permission
-from roles import STORABLE_ROLES
+from roles import ROLE_FEATURE, STORABLE_ROLES
 from services.audit_service import log_audit_event
 
 router = APIRouter(prefix="/api/admin/users", tags=["admin-users"])
@@ -126,6 +127,40 @@ def _validate_role(role: str) -> None:
         )
 
 
+# Plain words for the refusal below: what is switched off, and the account
+# that therefore cannot be made. Keyed by role; every ROLE_FEATURE role has one
+# (tests/test_role_batch.py checks it).
+_ROLE_SWITCH_OFF_WORDS: dict[str, str] = {
+    "receptionist": ("The registration desk is switched off on this site, so a "
+                     "receptionist account cannot be created."),
+    "ward_clerk": ("Beds and admissions is switched off on this site, so a ward "
+                   "clerk account cannot be created."),
+    "lab_technician": ("The laboratory module is switched off on this site, so a "
+                       "lab technician account cannot be created."),
+    "pathologist": ("The laboratory module is switched off on this site, so a "
+                    "pathologist account cannot be created."),
+    "phlebotomist": ("The laboratory module is switched off on this site, so a "
+                     "phlebotomist account cannot be created."),
+}
+
+
+def _require_role_switch(role: str) -> None:
+    """Refuse a role whose part of Orb is switched off (roles.ROLE_FEATURE).
+
+    Read at request time, so turning a module on takes effect without a
+    restart of this check. An account that already holds the role is not
+    touched: this guards creating one, and moving an account into one."""
+    switch = ROLE_FEATURE.get(role)
+    if switch is None or config.switch_enabled(switch):
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=_ROLE_SWITCH_OFF_WORDS.get(
+            role, "That part of Orb is switched off on this site, so this account "
+                  "cannot be created."),
+    )
+
+
 def _is_reserved_id(user_id: str) -> bool:
     """A service identity, or an id a future bot would be seeded under: bots are
     seeded with INSERT OR IGNORE, so a person created first as 'bot_x' would
@@ -153,10 +188,14 @@ def _refuse_service_account(request: Request, actor: dict, user_id: str,
 
 def _require_department(role: str, department: str | None) -> None:
     """A blank department on a doctor or nurse reads every ward
-    (permissions.department_scope), so it is refused rather than stored."""
+    (permissions.department_scope), so it is refused rather than stored. The
+    same holds for a ward clerk, whose bed board would otherwise be every
+    ward's; the clerk is not a clinical role, so the words say so."""
     if role in DEPARTMENT_REQUIRED_ROLES and not (department or "").strip():
         raise HTTPException(status_code=400,
-                            detail="Department is required for clinical roles")
+                            detail=("Department is required for a ward clerk"
+                                    if role == "ward_clerk"
+                                    else "Department is required for clinical roles"))
 
 
 def _known_departments(db: sqlite3.Connection) -> list[str]:
@@ -293,6 +332,7 @@ def create_user(
             status_code=400,
             detail="Patient portal accounts are created when the patient is admitted, not here",
         )
+    _require_role_switch(body.role)
     department = (body.department.strip() or None) if body.department else None
     _require_department(body.role, department)
 
@@ -531,6 +571,8 @@ def patch_user(
                 status_code=400,
                 detail="A patient portal account and a staff account cannot be converted into each other",
             )
+        if new_role != current["role"]:
+            _require_role_switch(new_role)
         new_dept = changed["department"] if "department" in changed else current["department"]
         _require_department(new_role, new_dept)
         db.execute(f"UPDATE users SET {', '.join(sets)} WHERE id = ?", params)

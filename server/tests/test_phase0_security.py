@@ -2,7 +2,9 @@
 
 Covers three fixes:
   1. Patient accounts are created with a unique one-time password, never the old
-     shared "patient123" (routes/vigil_routes.py create_patient).
+     shared "patient123". First fixed in routes/vigil_routes.py create_patient;
+     that route is retired (410), so this pins the admission door that replaced
+     it (POST /api/admissions/admit, services/admission_service.admit_patient).
   2. The ingestion API key is compared in constant time (routes/ingestion_routes.py).
   3. The Scribe sign endpoint refuses to sign a note that failed hallucination
      verification unless the signer explicitly acknowledges (routes/scribe_routes.py).
@@ -42,22 +44,32 @@ def _doctor_token() -> str:
 def test_created_patient_gets_unique_onetime_password():
     token = _doctor_token()
     resp = client.post(
-        "/api/vigil/patients",
+        "/api/admissions/admit",
         headers={"Authorization": f"Bearer {token}"},
-        json={"name": "Phase0 Patient", "ward": "General"},
+        json={"name": "Phase0 Patient", "age": 40, "sex": "F", "admission_source": "ED",
+              "admission_type": "emergency", "department": "General Medicine",
+              "ward": "General", "bed": "P0-1", "attending_doctor_id": "D001",
+              "chief_complaint": "fever"},
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    temp = body.get("temporary_password")
-    assert temp and temp != "patient123", "must return a unique one-time password, not the shared default"
+    try:
+        temp = body.get("temporary_password")
+        assert temp and temp != "patient123", "must return a unique one-time password, not the shared default"
 
-    uid = body["user_id"]
-    # The old shared password must NOT work.
-    bad = client.post("/api/auth/login", json={"employee_id": uid, "password": "patient123"})
-    assert bad.status_code != 200
-    # The returned one-time password must work.
-    good = client.post("/api/auth/login", json={"employee_id": uid, "password": temp})
-    assert good.status_code == 200, good.text
+        uid = body["patient_login_id"]
+        # The old shared password must NOT work.
+        bad = client.post("/api/auth/login", json={"employee_id": uid, "password": "patient123"})
+        assert bad.status_code != 200
+        # The returned one-time password must work.
+        good = client.post("/api/auth/login", json={"employee_id": uid, "password": temp})
+        assert good.status_code == 200, good.text
+    finally:
+        # Discharged again on both tables, so the admission leaves no one on a board.
+        with db_session() as db:
+            db.execute("UPDATE patients SET status = 'discharged' WHERE id = ?", (body["patient_id"],))
+            db.execute("UPDATE admissions SET status = 'discharged' WHERE patient_id = ?",
+                       (body["patient_id"],))
 
 
 # ── Fix 2: ingestion key verification rejects wrong keys ─────────────────────

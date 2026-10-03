@@ -116,6 +116,10 @@ RECEIPT_SCHEMA = "orb.backup.verification/1"
 # re-derives the list from migrations.py's AST and fails if a new migration adds
 # a table that never got added here.
 #
+# From migration 48 on, migrations are one file each in server/migrations_his/
+# (m<NNNN>_<name>.py). The same test walks every one of those files too, so a
+# table created there must be added here exactly like one in migrations.py.
+#
 # Baseline tables from database.init_db (patients, vitals, users, audit_logs,
 # medications, ...) are NOT listed here; the clinical floor below covers the
 # ones whose absence matters, and the baseline predates every backup that could
@@ -194,6 +198,18 @@ MODULE_TABLES: dict[str, tuple[str, ...]] = {
     # which is the question an incident review starts from.
     "sage assessments": (
         "sage_assessments", "sage_assessment_events", "sage_assessment_actions",
+    ),
+    # ── migration 49 (server/migrations_his/m0049_helix_tables_in_runner.py) ──
+    # The Helix pharmacy chain: the drug master, stock lots, every pharmacy
+    # order with its verification, dispense movement and state transition.
+    # These used to be created only by helix_db.init_helix_db at boot, outside
+    # the migration runner, so they were treated as baseline and never checked
+    # here. From migration 49 a migration creates them, and a restore that came
+    # back without them would lose who verified, dispensed and received each
+    # dose.
+    "helix pharmacy": (
+        "helix_medication_master", "helix_inventory_lots", "helix_patient_med_orders",
+        "helix_pharmacy_verifications", "helix_stock_movements", "helix_transitions",
     ),
 }
 

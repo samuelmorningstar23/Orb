@@ -767,23 +767,31 @@ class TestBillingMasters:
 # ══ 10. Module flags ═════════════════════════════════════════════════════════
 
 class TestModuleFlags:
-    def test_every_module_defaults_on(self):
+    def test_every_non_opt_in_module_defaults_on_and_every_opt_in_module_off(self):
         """Founder ruling 2026-08-11: build it all NOW and ship it VISIBLE.
+        Amended by Samuel's ruling of 3 October 2026: the three hospital-system
+        modules (adt, pharmacy-store, lab) are OPT-IN and default OFF, for
+        those three only (config.OPT_IN_MODULES).
 
         The assertion is a SUPERSET, not an exact set. It used to name the five
         money modules literally, which meant every later module — biomedical,
         housekeeping, dietary, NABH, workforce — broke this test by existing,
         and the person adding one had to edit an assertion in the money lane to
         say nothing new. What this test is actually for is the RULING: whatever
-        modules exist, they are all ON unless a site switched one off. The five
-        money modules stay pinned by name because THIS file owns them; the exact
-        membership of the whole board belongs to config, and is asserted against
-        the frontend's vocabulary by test_module_ids_match_the_frontend_vocabulary
-        below."""
+        default-on modules exist, they are all ON unless a site switched one
+        off, and every opt-in module is OFF unless a site switched it on. The
+        five money modules stay pinned by name because THIS file owns them; the
+        exact membership of the whole board belongs to config, and is asserted
+        against the frontend's vocabulary by
+        test_module_ids_match_the_frontend_vocabulary below."""
         modules = config.enabled_modules()
         assert {"billing", "payments", "payer", "procurement",
                 "frontdesk"} <= set(modules)
-        assert all(modules.values()), modules
+        opt_in = set(config.OPT_IN_MODULES)
+        assert opt_in == {"adt", "pharmacy-store", "lab"}
+        assert opt_in <= set(modules)
+        assert all(on for m, on in modules.items() if m not in opt_in), modules
+        assert not any(modules[m] for m in opt_in), modules
 
     @pytest.mark.parametrize("raw,expected", [
         (None, True), ("", True), ("   ", True), ("1", True), ("true", True),

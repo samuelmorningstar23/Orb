@@ -104,6 +104,15 @@ from routes.biomedical_routes import router as biomedical_router
 from routes.housekeeping_routes import router as housekeeping_router
 from routes.payments_routes import router as payments_router
 from routes.abdm_routes import router as abdm_router
+# The hospital-system build's route packages and files (wave 1, 3 October 2026).
+# Registered once here, each behind its opt-in switch (routes/opt_in_gates.py),
+# so later increments add endpoints inside them and never edit this list.
+from routes.adt import router as adt_router
+from routes.lab import router as lab_router
+from routes.pharmacy_store import router as pharmacy_store_router
+from routes.opd_routes import router as opd_router
+from routes.registration_routes import router as registration_router
+from routes.schedule_routes import router as schedule_router
 
 
 # Import WebSocket and Bots
@@ -1045,6 +1054,14 @@ app.include_router(nabh_router)
 
 app.include_router(admission_router)
 
+# Hospital-system build: every route below answers 404 while its switch is off.
+app.include_router(adt_router)
+app.include_router(lab_router)
+app.include_router(pharmacy_store_router)
+app.include_router(opd_router)
+app.include_router(registration_router)
+app.include_router(schedule_router)
+
 # ── Serve uploaded media (PHI) behind authentication ──
 # SECURITY: uploads contain medical images (Lens) and consultation audio
 # (Scribe) — both PHI. The previous public StaticFiles mount served the entire
@@ -1207,13 +1224,22 @@ async def health():
     endpoint the shell can read before a session exists, and the shell has to know
     which tabs to build at first paint. It carries no PHI and no secret: it is a
     list of which screens this appliance offers.
+
+    `modules` also carries the opt-in modules (adt, pharmacy-store, lab; default
+    OFF), true while 'on' or 'draining'. `module_states` gives each opt-in
+    module's state word, and `features` every feature flag of the
+    hospital-system build (default OFF, prerequisites applied). Built from
+    config and cached drain checks only: this endpoint never opens a database
+    connection.
     """
-    from config import enabled_modules
+    from config import enabled_modules, feature_flags, module_states
     return {
         "status": "ok",
         "service": "orb-hospital-os",
         "version": "0.1.0",
         "modules": enabled_modules(),
+        "module_states": module_states(),
+        "features": feature_flags(),
     }
 
 

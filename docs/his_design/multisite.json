@@ -1,0 +1,1778 @@
+{
+ "design": {
+  "epic": "Multi-site support (facility dimension): coverage 2.10 Platform row \"Multi-site\", register W148 (with the W162 HFR half and the W029 deferral). Revised 2026-10-03 after independent review: all 20 review points were re-checked against the code and accepted, two of them with a narrower scope.",
+  "current_state": "Orb is single-facility by construction. Verified in code on 2026-10-03.\n\n1. There is no facility or tenant concept. None of the 153 tables has a facility column. Hospital identity is site.toml [site].name and timezone (server/services/site_config_service.py:146-160, 233-234), copied once into process env vars (:320-352). The hospital clock is one process-wide zone (server/services/hospital_time.py:33-39). There is no HFR, ABDM HIP or NABH identifier anywhere (W162). CIO_SECURITY_QUESTIONNAIRE.md 1.5 says there is no multi-tenancy.\n\n2. Invoices. invoice_print_view builds the supplier block at print time from the site name, and address and GSTIN print \"Not configured\" (server/services/billing_service.py:2075-2113). The invoices DDL stores only place_of_supply and is_interstate (server/migrations.py:2040-2041), so there is no supplier snapshot. Once identity becomes editable, a reprint would change an issued GST invoice.\n\n3. The access boundary is department only.\n- users carries role and department (server/database.py:35-44).\n- A patient's department is that of the latest admission (PATIENT_DEPARTMENT_SQL, server/permissions.py:428-433). department_scope (:369-397) returns None for a blank department, which means hospital-wide.\n- DEPARTMENT_REQUIRED_ROLES = doctor and nurse (:406). Pharmacist, admin and cashier are department-less by design (:398-405; migration 36; F109 recommends keeping pharmacy hospital-wide).\n- enforce_patient_scope (:479-503) returns 404 and writes no audit row. require_patient_access (:663-708) writes an authorization patient_scope_denied row.\n- Call counts: department_scope 79, enforce_patient_scope 55, require_patient_access 61, scope_patient_ids_sql 15, patient_in_scope 15. There are 237 FROM/JOIN patients|admissions sites across about 60 files.\n- Some lanes never call a scope helper. pharmacy_routes.py (/api/pharmacy/pending :38, verify :54, reject :117) has zero scope calls, and so do flight_recorder_routes.py and audit_routes.py. vigil_service.scored_admitted_patients(department) (:823) takes the department as an argument; board_order (:808) is only a sort key.\n- Sage keeps a parity-tested duplicate (_scope_sql, _patient_in_scope). Its _out_of_scope_locators (server/services/sage_service.py:1964-1987, used at :2650) deliberately reads every admitted or discharged patient's id, name and bed as the complement set.\n\n4. User loaders. Six places build the user dict straight from SELECT * FROM users: auth.py:441 (_load_session_context), auth_routes.py:424, 646, 1362, admin_users_routes.py:180, and ws/realtime.py:196 (the socket _authenticate). Rooms are dept:{dept} or dept:__all__ (realtime.py:281-286, 368-375). There are 17 INSERT INTO users sites. Staff are created at admin_users_routes.py:311, scripts/create_admin.py:242, scripts/seed_clinical_data.py:303 (INSERT OR REPLACE, after init_db at :12) and scripts/seed_relay_chats.py:50. The rest are service, bot, bench or patient-portal accounts.\n\n5. Patient identity.\n- mrn is TEXT UNIQUE per appliance (database.py:51).\n- admit_patient mints a new patient and MRN on every admission (admission_service.py:244-249; coverage :194 says there is no MPI).\n- Roster import does re-admit an existing MRN when no admission is open, and it can change an open admission's department (server/services/roster_import.py:1555-1593).\n- Clinical tables (vitals, risk_scores, medications, orders, clinical_documents) have no admission_id. Facility attribution through the patient is therefore exact only while all of a patient's admissions are at one facility.\n\n6. Ingestion. _resolve_patient_id matches patients.id, then mrn, then LOWER(mrn) across the whole appliance (server/services/ingestion_service.py:101-125). PV1 supplies only the encounter id (ingestion_adapters.py:320-326). Unknown patients: vitals raise (:167-169), and observations are kept with a NULL patient_id (:1192-1200). The monitor feed is one process-global listener (config.py:482-517).\n\n7. Masters.\n- There is no departments table. The legal list comes from users.department (frontdesk_service.py:342-385), and admission canonicalises through it (admission_service.py:94-107).\n- Wards and beds are free text, and ward capacity is a guess (forecast_service.py:72-131).\n- OPD tokens are allocated per (date, department, doctor) (frontdesk_service.py:226-227, 558-573).\n- document_number_series has series_code UNIQUE (migrations.py:2100-2113) with 10 seeded series (:1827-1838 seven, :4021 KIND, :4100-4106 INC and NABHPACK). It is looked up by code alone at billing_masters.py:673, billing_service.py:2096, payments_service.py:289 and payments_routes.py:261, and re-seeded by ensure_default_masters (billing_masters.py:735-750). There are about 13 next_document_number call sites in 7 files.\n- The default tariff plan is chosen by inline SQL in 4 places (billing_masters.py:298, 384, 453, 576).\n\n8. Lazy schema owners run after migrations on a fresh DB: ensure_frontdesk_schema (frontdesk_service.py:240) and helix_db.init_helix_db (helix_db.py:89).\n\n9. Migrations. The runner keeps a ledger and runs each migration in its own transaction. The head is 47 (vitals_carried_from, migrations.py:5446-5495). Rebuilding an FK parent needs database._atomic_table_rebuild (database.py:1388). _rebuild_users_role_check aborts on unknown users columns (migrations.py:4773). Migrations 20 and 23 forbid FKs from administrative tables.\n\n10. Audit.\n- One SHA-256 chain over a fixed _HASH_FIELDS tuple (audit_service.py:142-147).\n- Fail-closed categories: security, clinical_access, phi_access, authentication, ai_inference (:43-45).\n- bound_audit_fields replaces oversized metadata with a {_truncated, original_bytes} stub before hashing (:111-137).\n- audit_logs is read in 10 server files: audit_routes, flight_recorder_service (:139-381, behind audit.read), admin_routes (:366-440), admin_users_routes (:224-240), compliance_service:120, impact_service:357, consent_service:572 (patient access history), metrics_service:209, pulse_service:696, plus the chain verify in database.py.\n- The category \"facilities\" is already used by housekeeping (housekeeping_routes.py:261).\n\n11. Flags.\n- Admin modules use _module_enabled, which defaults ON (config.py:642), published on /api/health.\n- The explicit opt-in precedent is DISCHARGE_FINANCIAL_ENFORCE (config.py:866-867).\n- The client caches /api/health in src/shellConfig.tsx (moduleFlags :236-320, refreshModuleFlags :328).\n\n12. Other.\n- Command Center counts are house-wide and its named list is filtered by department (command_center_service.py:76-97, 330).\n- Backup copies the whole DB (scripts/backup_db.py, backup_routes.py:121-227).\n- The FHIR export has no Organization resource (fhir_export_service.py:209-498).\n- Ward packs are keyed by ward string (downtime_service.py:836-920).\n- R025 (a) is built: the socket accepts the page's own origin (RULINGS_NEEDED:46).\n\nPatterns to extend: the single-derivation scope helpers, site_config_service's fail-loud validation, require_module gating, billing_masters, the frontdesk covering-department resolver, and the scope-attack and ratchet test style (test_caller_named_patient_scope.py, test_patient_scope_routes.py).",
+  "design": "TENANCY (MS-R1, recommended (a))\n- One appliance per legal entity, which is one DPDP data fiduciary, holding one or more facilities.\n- facility_id lives at row level in the single SQLCipher DB. There is no tenant_id.\n- Validation enforces this: every facility GSTIN must carry the same PAN (GSTIN characters 3 to 12), and facilities.pan must match when set.\n\nWHICH LEVEL EACH TABLE SITS AT\n- Group level, no column: users, patients, masters (service_items, inventory_items, vendors, payers, helix_medication_master, terminology, interactions), consent and DPDP tables, retention, model registry, audit_logs (facility goes in the hashed metadata), event_log.\n- Facility level, with a column: admissions, encounters, money documents, physical resources.\n- Derived, no column: vitals, risk_scores, medications, administrations, orders, documents, scribe_notes, discharge_summaries, lens, sage_*, care_bundles, escalations, allergies, problems, diet_orders, observations, messages, shadow_events. Each takes the facility of its patient's admission. The vitals and risk INSERT paths (clinical_time, carried_from) are not touched.\n\nATTRIBUTION INVARIANT (new after review)\nDeriving the facility through the patient is exact only while all of a patients row's admissions sit at one facility. admit_patient always mints a new patient, but roster import re-admits existing MRNs and edits open admissions' departments (roster_import.py:1555-1593). Therefore:\n1. While multi-facility data exists, every path that creates an admission or changes its department refuses a destination in another facility. The refusal is a 409 or a reported roster row, and it is audited.\n2. ops_health counts patients with admissions at more than one facility. The count must be 0.\n3. Before the OPD/MPI epic lifts rule 1, it must add encounter attribution (admission_id or encounter_id) to clinical writes. Otherwise per-facility reports, extracts, ward packs and the audit resolver would attribute F1 history to F2.\n\nLOAD-BEARING SIMPLIFICATION (MS-R4, recommended (a))\n- Department keys and ward and bed codes are unique across the appliance (case-insensitive), and each belongs to exactly one facility.\n- Every ward scope compares admissions.department with users.department, so ward-scoped staff become facility-isolated without editing those call sites.\n- The real work is the department-less accounts (admin, pharmacist and cashier, department-less by design per F109) and the house-wide aggregates.\n\nISOLATION IS KEYED ON DATA, NOT ON THE FLAG (changed after review)\n- facility_service.multi_facility_data() is true when the facilities table holds more than one row, active or not. Rows are never deleted, so a closed satellite's records stay isolated.\n- While it is false (every install today, Ward Record, demos, reseeds), facility_scope returns None before any lookup. Every path then runs exactly as it does today: no extra query, no audit metadata key, no change to socket rooms.\n- While it is true, facility scope is enforced whatever the flag says. A flag-off restore of a two-facility backup, a restore drill under the test env, and an operator turning the flag off all keep isolation.\n- The value is cached in process and refreshed every 30 s, and immediately on any facility write by this process. There is one process today (W029).\n- No boot refusal depends on the flag or on blind surfaces. The only boot refusal is for a facilities table that is missing facility 1 or has it inactive, which only tampering can produce.\n\nFLAG: ORB_MULTI_SITE (server/config.py)\n- Default OFF, parsed as an explicit opt-in like DISCHARGE_FINANCIAL_ENFORCE, not through _module_enabled. Read at request time.\n- It gates only growth: creating and deactivating facilities, assigning users to a facility other than 1, enterprise grants, and the facility selectors and labels in the UI.\n- /api/health gains platform:{multi_site, multi_facility_data} beside modules.\n- Facility 1's identity (GET and PATCH /api/facilities/1, the identity card) works with the flag OFF. W162 says the HFR half needs no ruling, and invoices print \"Not configured\" today. This replaces the former ruling MS-R10.\n\nCREATE GATE\nfacility_service.can_create_facility() returns a list of reasons, which the Facilities panel shows. POST /api/facilities refuses unless all of these hold:\n- the flag is ON;\n- the actor holds a live enterprise grant;\n- FACILITY_BLIND_SURFACES is empty;\n- the audit facility index exists;\n- facility 1 has a GSTIN;\n- the PAN rule holds.\nFACILITY_BLIND_SURFACES ships in multisite-1 as the sentinel \"*\", so no second facility can be created through the product until the sweep is finished. There is no live \"stage A\".\n\nRUNTIME FENCE (backs up the create gate)\n- New server/facility_fence.py maps route prefixes to the increment that owns them.\n- A middleware in main.py: when multi_facility_data() is true, a fenced prefix returns 503 with the text \"This screen is not available yet when more than one facility is on record\", and an authorization audit row (facility_fence_blocked) is written.\n- While the socket lane is fenced, department-less sockets join no house-wide room.\n- The sentinel fences every PHI route except auth, health and facility identity. A facility inserted by SQL before the scope core exists therefore turns screens into 503s, not leaks.\n- ops_health shows the fenced list.\n- The list only shrinks: the SQL-site registry ratchet (multisite-5b) fails CI on any unclassified site, so an upgrade cannot add a blind surface to a live two-facility site.\n\nDATA MODEL (migration numbers claimed at merge; head is 47)\n\nA) facilities_spine (multisite-1)\n- facilities: id INTEGER PK, uuid TEXT NOT NULL UNIQUE, code TEXT NOT NULL UNIQUE COLLATE NOCASE (2 to 12 characters, A-Z0-9), name (CHECK id=1 OR name IS NOT NULL), short_name, legal_name, address_line1, address_line2, city, district, state, state_code, pincode, phone, email, gstin, pan, hfr_id, abdm_hip_id, nabh_accreditation_no, nabh_valid_until, clinical_establishment_reg_no, timezone, audit_epoch_id INTEGER (MAX(audit_logs.id) at creation; NULL for id 1), is_active INTEGER NOT NULL DEFAULT 1, created_at NOT NULL, created_by, updated_at, updated_by.\n- Seed id 1 with code MAIN and name NULL. The display name falls back to site.toml [site].name, then \"This hospital\".\n- departments. Multisite owns this table; adt owns wards and beds. Columns: id PK, facility_id INTEGER NOT NULL DEFAULT 1, name TEXT NOT NULL UNIQUE COLLATE NOCASE (trimmed scope key), display_name, is_active, created_at, created_by.\n- departments seeding order, so the canonical spelling wins: active users.department first, then site.toml [[departments]], then admissions.department and department channels, then opd_visits if that lazy table exists. Variants in admissions are reported by ops_health and never rewritten.\n- departments.facility_id is immutable once any user or admission references the department.\n- user_facilities: id, user_id NOT NULL, facility_id NOT NULL, kind CHECK IN ('home','visiting'), department (NULL for home, NOT NULL for visiting), granted_by, granted_at NOT NULL, reason, revoked_at, revoked_by, revoke_reason.\n- user_facilities indexes: partial UNIQUE(user_id) WHERE kind='home' AND revoked_at IS NULL; partial UNIQUE(user_id, facility_id) WHERE revoked_at IS NULL. Rows are never deleted. There is no backfill.\n- enterprise_access_grants: id, user_id, granted_by, granted_at NOT NULL, reason NOT NULL, revoked_at, revoked_by, revoke_reason; partial UNIQUE(user_id) while live.\n- ALTER patients ADD registered_facility_id INTEGER NOT NULL DEFAULT 1. ALTER admissions ADD facility_id INTEGER NOT NULL DEFAULT 1.\n- New indexes idx_admissions_patient_status(patient_id, status, created_at) and idx_admissions_facility_status(facility_id, status).\n- Rules for this migration:\n  - No REFERENCES: SQLite refuses ADD COLUMN ... REFERENCES with a non-NULL default, and migrations 20 and 23 forbid FKs from admin tables.\n  - No users column, because migrations.py:4773 would abort the next role rebuild.\n  - No triggers on clinical tables.\n  - Every ALTER is O(1).\n\nB) invoice_supplier_snapshot (multisite-2)\n- invoices and payments gain supplier_facility_id, supplier_legal_name, supplier_address, supplier_gstin, supplier_state_code and supplier_snapshot_at. They are written once, when the number is assigned.\n- Numbered documents always print from the snapshot. A NULL snapshot (issued before this change) prints the legacy block exactly as issued. Only drafts show the live identity.\n\nC) facility_columns_encounters (multisite-4)\n- facility_id NOT NULL DEFAULT 1 on opd_visits, appointments, surgeries, roster_import_runs and history_import_runs.\n- ALTER only if the table exists. ensure_frontdesk_schema's DDL also gains the column.\n- idx_opd_token_unique is not rebuilt: under MS-R4 the department implies the facility. It needs facility_id only if MS-R4 is ruled (b).\n\nD) Admin tables\n- 7a: rebuild document_number_series (it has no FK children) with facility_id INTEGER NOT NULL DEFAULT 1 and UNIQUE(facility_id, series_code). All 10 seeded series land at facility 1, so ensure_default_masters' re-insert stays correct.\n- 7b: facility_id NOT NULL DEFAULT 1 on invoices, payments, refunds, claims, patient_deposits, cash_counter_sessions, encounter_charges, stores, indents, purchase_orders, goods_receipts, housekeeping_units, biomedical_assets, kitchen_indents, nabh_incidents, nabh_evidence_exports, abdm_care_contexts, enrolled_devices, helix_inventory_lots and helix_stock_movements. The helix tables use ALTER-if-exists plus a change to helix_db's DDL.\n- 7b: a nullable facility_id (NULL means the whole group) on tariff_plans, hospital_forecasts and hospital_holidays.\n\nE) The audit facility index is not a migration\n- A json_extract expression index built inside the boot transaction would be an O(N) stall on the largest encrypted table.\n- New server/scripts/build_audit_facility_index.py creates idx_audit_facility ON audit_logs(json_extract(metadata_json,'$.facility_id'), timestamp) in a maintenance window, timed first on a backup_db.py copy. The create gate requires the index.\n\nFACILITY RESOLUTION\nfacility_service.facility_scope_for(user) returns frozenset[int] or None. It reads only id, role and department plus in-process caches (department map, live home rows, live grants), so all six user loaders get the same answer with no edits to them.\n1. No multi-facility data: None.\n2. A service account or the patient role: None.\n3. A live enterprise grant: None.\n4. Department set: {that department's facility}. An unknown department gives frozenset(), and ops_health lists the account. A home row for a department-scoped account is refused on write, so the department is the only source.\n5. Department blank: the facility of the live home row. With no row, facility 1. That makes reseeds, seed_clinical_data, create_admin and seed_relay_chats correct without edits, because each of them creates facility-1 staff. The only path that creates department-less staff at another facility is admin_users_routes, which writes the row in the same transaction. A ratchet lists the 17 INSERT INTO users sites.\n\nSCOPE\n- permissions.facility_scope(user) delegates to the resolver.\n- FACILITY_PATIENT_SQL is the facility of the latest encounter: the latest admission (same ordering as PATIENT_DEPARTMENT_SQL), otherwise registered_facility_id. multisite-4 adds OPD visits and appointments.\n- scope_patient_ids_sql and patient_in_scope take a keyword facilities=.\n  - Department-scoped: the latest admission's department equals the department AND its facility_id is in the set.\n  - Department None: FACILITY_PATIENT_SQL in the set. This is MS-R5 (a), symmetric with ward staff, and never \"any encounter ever\".\n- Document-keyed scope for money and queues: invoices, payments, deposits, counters, OPD visits, verify-queue items and lots filter on their own facility_id.\n- enforce_patient_scope and require_patient_access compute facility scope themselves, so their 116 sites need no edit. A facility-caused denial writes a patient_scope_denied row with metadata.facility_scope in both helpers. A department-caused denial keeps today's behaviour, and facility denials cannot happen on a single facility.\n- log_phi_read adds metadata.facility_scope only when multi-facility data exists.\n- UserOut and /api/auth/me carry facility {id, code, name}.\n- Sage changes _scope_sql and _patient_in_scope in lockstep, parity-tested on two-facility fixtures. _out_of_scope_locators limits the complement set to the caller's facilities. A name that matches only at another facility gets \"no matching patient at <facility>\" (MS-R13). The bed matcher is untouched (R026 is held).\n- Sockets: dept:{key} is unchanged. While there is no multi-facility data, dept:__all__ is also unchanged. Once there is, department-less sockets join fac:{id}:all, enterprise sockets join grp:all, and emit_patient_vitals targets the department room, the patient's facility room and grp:all. realtime._authenticate uses the same resolver.\n- admissions.facility_id is immutable. Moves across facilities are refused until MS-R3.\n\nINGESTION (new after review)\n- Once multi-facility data exists, every source is bound to a facility:\n  - the MLLP feed by ORB_MONITOR_SOURCE_ID through site.toml [[facilities]].ingestion_sources;\n  - REST ingestion by per-facility keys ORB_INGESTION_API_KEY_<CODE> in the operator env. The existing key stays bound to facility 1.\n- _resolve_patient_id(db, raw, facility_id) matches only patients whose FACILITY_PATIENT_SQL is the source's facility. Facility MRNs from patient_identifiers are added when the OPD epic builds that table.\n- An unbound source or a cross-facility match takes today's unknown-patient path, plus an ingestion_source_unbound audit row (MS-R14).\n- The vitals INSERT path is untouched.\n\nPATIENT IDENTITY (new after review)\n- There is no returning-patient path today, so a satellite desk scoped to its facility would create duplicates and split the allergy list.\n- multisite-17 adds a group-wide identity match for registration. It matches on name plus age or DOB, sex and phone. It returns only the id, name, age, sex, group MRN and registered facility code. Each search is audited as phi_access with a reason and is rate-limited.\n- Registering a visit then brings the patient into the facility's scope.\n- Merge, match quality and encounter attribution belong to the OPD/MPI epic, which is an explicit dependency.\n\nSERVICES\n- New server/services/facility_service.py: get, list, display_name, identity_block, multi_facility_data, facility_scope_for, facility_of_admission, current_facility_of_patient, department_facility, home_facility, can_create_facility, create, update and deactivate.\n- facility_service validation: GSTIN format; state_code equals GSTIN[0:2]; one PAN across all facilities; code charset; timezone equals the appliance zone in v1 (MS-R8); facility 1 can never be deactivated; deactivation is refused while active admissions, open OPD visits or open counters exist.\n- billing_masters:\n  - default_tariff_plan(facility_id) replaces the 4 inline queries.\n  - next_document_number(series_code, facility_id=1) and the four lookups by code take the facility.\n  - Prefix rule, on create and on update: no prefix may equal, or be a string prefix of, another facility's prefix for the same document type, and none may match an already issued number (LIKE prefix||'%'). The existing unique indexes therefore never return a 500.\n- frontdesk list_covering_departments(facility_id) and _resolve_covering_department become facility-aware.\n- admission_service.resolve_admission_department checks the facility and stamps admissions.facility_id and registered_facility_id.\n- command_center_service.house_snapshot(facility_ids).\n- NABH indicators and the evidence export run per facility. downtime_service runs per facility.\n- The FHIR export gains an Organization (with the HFR identifier) and Encounter.serviceProvider.\n- audit_service gains a resolver: an explicit kwarg, then the patient (cached), then the actor, then null with facility_unresolved. It runs only when multi-facility data exists. bound_audit_fields carries facility_id into the truncation stub before hashing.\n- site_config_service accepts an optional [[facilities]] array (code, downtime_mirror_dir, ingestion_sources). Unknown keys fail with the file and line. Paths stay in the operator file, never in a UI-editable column.\n\nROUTES: server/routes/facility_routes.py at /api/facilities\n- GET \"\" and GET \"/{id}\" (facility.read) and PATCH \"/{id}\" (facility.manage, own facility). These work with the flag OFF for facility 1.\n- POST \"\" and POST \"/{id}/deactivate\": 404 with the flag OFF, then the create gate.\n- GET and POST \"/{id}/departments\"; GET and PUT \"/{id}/document-series\".\n- POST /api/admin/users/{id}/facility; GET and POST /api/admin/enterprise-grants, plus POST /{id}/revoke.\n- Command Center, NABH and audit routes accept ?facility= only to narrow within the caller's scope. Outside it they return 404.\n- The first grant is made through scripts/grant_enterprise_access.py (needs physical access, audited).\n\nPERMISSIONS: facility.read and facility.manage, granted to admin. roles.py is unchanged. Group reach comes from an audited per-user grant, admin-only in v1 (MS-R6). A central pharmacy (MS-R9 (b)) would need MS-R6 (b).\n\nUI\n- The AdminPanel \"facilities\" tab mounts a new FacilitiesPanel.tsx. The identity card is always shown; create, departments, series and price list need the flag.\n- UsersPanel: a facility column, a home facility select for department-less staff, the department list filtered by facility, and a grant control.\n- ClinicianShell roleLine shows the facility when there is multi-facility data.\n- CommandCenter gets a facility label and a selector for enterprise users. Audit views get a facility column and filter. BillingPanel shows \"Applies to\" on tariffs. HelixPanel gets a facility label.\n- Platform flags come from the existing /api/health refresh in shellConfig.tsx (refreshModuleFlags). There is no second fetch.\n- New src/api/facilities.ts, because client.ts has other edits in progress.\n\nAUDIT\n- The facility goes into metadata_json only when there is multi-facility data. _HASH_FIELDS does not change, so the chain is not bumped and the int-versus-TEXT trap is avoided.\n- Reading rule:\n  - A row with metadata.facility_id belongs to that facility.\n  - A row without it, whose id is at or below the smallest facilities.audit_epoch_id, is facility 1, so F1's admin keeps the whole history from before the expansion.\n  - A later row without it is enterprise-only.\n- Readers, all handled in multisite-11:\n  - Filtered row-level: audit_routes and flight_recorder_service.\n  - Filtered aggregates: admin_routes /overview, compliance_service, impact_service, and admin_users_routes last-login.\n  - Appliance-level by design, no filter: metrics_service, pulse_service egress, and the chain verify, whose counts every reader sees.\n  - Group-wide by design: consent_service access history (the DPDP right of the data principal).\n- Events:\n  - site_admin (fail-soft): facility_created, facility_updated (with a diff), facility_deactivated, document_series_updated, tariff_plan_scope_changed.\n  - security (fail-closed): user_facility_assigned, user_facility_revoked, enterprise_access_granted, enterprise_access_revoked.\n  - authorization: patient_scope_denied, facility_fence_blocked, cross_facility_move_refused, ingestion_source_unbound.\n\nACROSS FACILITIES\n- Backups stay whole-appliance, so a restore rolls back every facility (MS-R12). This is stated on Data and Backups and in CIO questionnaire 1.5.\n- Exports, ward packs and mirrors are per facility. A facility extract CLI supports exit.\n- Command Center shows the facility view by default and the group view for enterprise users.\n\nOTHER EPICS\n- adt: multisite-1 lands first and owns departments. adt-1 creates wards and beds with facility_id and codes unique across the group. Per-facility capacity replaces WARD_CAPACITY.\n- opd/MPI: required for multisite-17 and before the attribution invariant can be lifted. patient_identifiers(facility_id, id_type, value) holds legacy facility MRNs.\n- medorder: the facility comes from the admission.\n- grn: lots and stores per facility; vendors stay group-wide.\n- lis: stamp performing_facility_id, because a central lab serving satellites is the common pattern.\n- abdm: HIP and HFR per facility.\n\nSIZE\n- Full plan: 87.5 engineer-days across 23 increments.\n- Go-live core, everything the create gate and the fence need plus ingestion binding and the drill (multisite-1 to 12, 15, 16, 18): 69.5 days.\n- Add 3 days (multisite-17) if a satellite runs OPD.\n- The coverage map's \"2 to 3 weeks\" covers only the schema.\n\nREVIEW DISPOSITION\n- All 20 critique points were re-checked against the code and accepted.\n- Two were narrowed: consent access history stays group-wide, and the audit index becomes a maintenance step.\n- The review understated one point: roster import is a live readmit and department-change path, so the attribution invariant is enforced now.",
+  "functions": [
+   {
+    "function": "Facility master and identity (legal name, address, GSTIN, PAN, state code)",
+    "status_now": "Absent. One site name from site.toml (site_config_service.py:146-160); the invoice supplier address and GSTIN print 'Not configured' (billing_service.py:2075-2113)",
+    "in_scope": true,
+    "notes": "facilities table, multisite-1 and -2. Facility 1 identity works with the flag OFF (per W162)"
+   },
+   {
+    "function": "Supplier identity snapshot on issued invoices and receipts",
+    "status_now": "Absent. The supplier block is built at print time (billing_service.py:2075-2113)",
+    "in_scope": true,
+    "notes": "multisite-2. A GST invoice never changes after issue"
+   },
+   {
+    "function": "Facility dimension on encounter, money and resource tables",
+    "status_now": "Absent. No facility column in any of the 153 tables",
+    "in_scope": true,
+    "notes": "Additive migrations: no FK, NOT NULL DEFAULT 1; lazy creators' DDL changed too"
+   },
+   {
+    "function": "Department master owned by a facility",
+    "status_now": "Absent. The list is derived from users.department (frontdesk_service.py:342-385)",
+    "in_scope": true,
+    "notes": "multisite-1 owns departments; adt owns wards and beds"
+   },
+   {
+    "function": "User-to-facility assignment",
+    "status_now": "Absent. users has department only (database.py:35-44)",
+    "in_scope": true,
+    "notes": "Department-scoped staff follow their department's facility. Department-less staff use a home row; no row means facility 1"
+   },
+   {
+    "function": "Facility scoping layered on department scoping",
+    "status_now": "Absent. Department scoping is centralised (permissions.py:369-736); a blank department reads hospital-wide",
+    "in_scope": true,
+    "notes": "Isolation is keyed on data, not on the flag. 116 user-taking helper sites inherit it"
+   },
+   {
+    "function": "Safety nets: SQL-site registry ratchet, runtime fence, leak sweep",
+    "status_now": "Absent. Scope ratchets key on path patterns only",
+    "in_scope": true,
+    "notes": "multisite-5b; the fence turns unfinished surfaces into 503s, not leaks"
+   },
+   {
+    "function": "Group-wide (enterprise) access and reporting",
+    "status_now": "Absent. The only cross-ward reach is a blank department",
+    "in_scope": true,
+    "notes": "enterprise_access_grants, admin-only (MS-R6)"
+   },
+   {
+    "function": "Per-facility site name and timezone",
+    "status_now": "Partial, single site: site.toml copied to process env (site_config_service.py:320-352); one zone (hospital_time.py:33-39)",
+    "in_scope": true,
+    "notes": "Name per facility; timezone must equal the appliance zone in v1 (MS-R8)"
+   },
+   {
+    "function": "Per-facility departments and wards",
+    "status_now": "Partial: departments and wards in site.toml; no master; capacity guessed (forecast_service.py:72-131)",
+    "in_scope": true,
+    "notes": "Codes unique across the group (MS-R4); wards and beds come from adt-1"
+   },
+   {
+    "function": "Per-facility price lists",
+    "status_now": "Partial: tariff plans are group-global; default chosen inline 4 times (billing_masters.py:298,384,453,576)",
+    "in_scope": true,
+    "notes": "multisite-13"
+   },
+   {
+    "function": "Per-facility document numbering",
+    "status_now": "Partial: 10 series with series_code UNIQUE (migrations.py:2100-2113), looked up by code alone in 4 places",
+    "in_scope": true,
+    "notes": "multisite-7a: prefix rule checked against other facilities and against numbers already issued"
+   },
+   {
+    "function": "HFR, ABDM HIP and NABH identifiers per facility",
+    "status_now": "Absent (W162)",
+    "in_scope": true,
+    "notes": "Columns on facilities; HPR on users belongs to the ABDM epic"
+   },
+   {
+    "function": "Migration of single-site data to facility 1",
+    "status_now": "Not started",
+    "in_scope": true,
+    "notes": "O(1) ADD COLUMN DEFAULT 1; no user backfill needed"
+   },
+   {
+    "function": "Audit trail across facilities",
+    "status_now": "Full for one site; no facility attribution; 10 reader files, unscoped",
+    "in_scope": true,
+    "notes": "Facility in hashed metadata; epoch rule for history; all readers classified (multisite-11)"
+   },
+   {
+    "function": "Ingestion source bound to a facility",
+    "status_now": "Absent. MRN matched across the whole appliance (ingestion_service.py:101-125)",
+    "in_scope": true,
+    "notes": "multisite-16, MS-R14"
+   },
+   {
+    "function": "Group identity match at registration",
+    "status_now": "Absent. Every admission mints a patient (admission_service.py:244-249)",
+    "in_scope": true,
+    "notes": "multisite-17; depends on opd-1; merge and matching quality belong to the MPI epic"
+   },
+   {
+    "function": "Backups across facilities",
+    "status_now": "Full, whole DB (scripts/backup_db.py)",
+    "in_scope": true,
+    "notes": "Stays whole-appliance; restore granularity stated (MS-R12)"
+   },
+   {
+    "function": "Exports across facilities (FHIR, NABH evidence, downtime packs, nightly self-export)",
+    "status_now": "Partial: no FHIR Organization; ward packs keyed by ward string",
+    "in_scope": true,
+    "notes": "multisite-15"
+   },
+   {
+    "function": "Command Center across facilities",
+    "status_now": "Partial: house-wide, single site (command_center_service.py:76-97, 330)",
+    "in_scope": true,
+    "notes": "multisite-12"
+   },
+   {
+    "function": "Live updates per facility (socket rooms)",
+    "status_now": "Partial: dept:{dept} and dept:__all__ (realtime.py:281-286, 368-375); separate user loader at :196",
+    "in_scope": true,
+    "notes": "multisite-10, after the CORS session"
+   },
+   {
+    "function": "Pharmacy queue, stock and verification per facility",
+    "status_now": "Absent: pharmacy_routes has zero scope calls; lots have no location",
+    "in_scope": true,
+    "notes": "Queue in multisite-9a; stock in multisite-14 (MS-R9, F109)"
+   },
+   {
+    "function": "Inter-facility transfer",
+    "status_now": "Absent; roster import can move departments with no facility check",
+    "in_scope": true,
+    "notes": "Refused until R009 (held) and MS-R3; multisite-20"
+   },
+   {
+    "function": "Visiting consultants across facilities",
+    "status_now": "Absent",
+    "in_scope": true,
+    "notes": "multisite-19, MS-R7"
+   },
+   {
+    "function": "Multi-tenancy (different legal entities on one appliance)",
+    "status_now": "Absent by design (CIO questionnaire 1.5)",
+    "in_scope": false,
+    "notes": "Recommend never (MS-R1); the PAN rule enforces it"
+   },
+   {
+    "function": "Encounter attribution on clinical rows (admission_id), needed for MS-R2 (b) or (c)",
+    "status_now": "Absent: vitals, meds, orders and documents carry patient_id only",
+    "in_scope": false,
+    "notes": "OPD/MPI epic, about 10 to 15 days; required before the attribution invariant can be lifted"
+   },
+   {
+    "function": "Cross-appliance federation, Postgres, multi-process transport (W029)",
+    "status_now": "Deferred",
+    "in_scope": false,
+    "notes": "facilities.uuid keeps the door open"
+   },
+   {
+    "function": "Per-facility escalation ladder, monitor listeners and timezones",
+    "status_now": "Process-global env",
+    "in_scope": false,
+    "notes": "MS-R8; one MLLP listener with per-gateway source ids in v1"
+   }
+  ],
+  "increments": [
+   {
+    "id": "multisite-1",
+    "title": "Facility spine, departments master, flag and runtime fence (no behaviour change)",
+    "description": "Adds ORB_MULTI_SITE (default OFF, explicit opt-in) and the facilities_spine migration. The migration creates facilities (with audit_epoch_id; seed id 1 MAIN), departments (seeded with the canonical users.department spelling first), user_facilities (kinds home and visiting, no backfill) and enterprise_access_grants, adds patients.registered_facility_id and admissions.facility_id, and adds two admissions indexes. New facility_service read helpers: multi_facility_data with a 30 s cache, plus display_name. New server/facility_fence.py with FACILITY_BLIND_SURFACES set to the sentinel '*' and a fence middleware that is active only with multi-facility data. /api/health gains platform. The only boot refusal is for a missing or inactive facility 1. ops_health checks: unknown facility ids, department spelling variants, patients with admissions at more than one facility. Land this before adt-1.",
+    "files_touched": [
+     "server/config.py",
+     "server/migrations.py",
+     "server/main.py",
+     "server/services/ops_health_service.py"
+    ],
+    "files_new": [
+     "server/services/facility_service.py",
+     "server/facility_fence.py",
+     "server/tests/test_multisite_spine.py",
+     "server/tests/test_facility_fence.py"
+    ],
+    "migrations": 1,
+    "size_days": 4,
+    "depends_on": [],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "tests": "A fresh DB, a backup_db.py copy of the dev DB and a freshly reseeded DB (seed_clinical_data) all migrate. Facility 1 exists and every admission and patient reads 1. An admissions case variant is reported, and the users spelling wins. PRAGMA table_info(users) is unchanged. run_pending is idempotent. With one facility, /api/health modules are identical and the existing scope suites are green with no added queries. After a second facility row is inserted by SQL, PHI routes return 503 within 30 s while auth and health stay 200. There is no boot refusal with the flag OFF and two rows. Boot refuses only when facility 1 is missing. Run with the test env, never the shipping .env."
+   },
+   {
+    "id": "multisite-2",
+    "title": "Facility identity, supplier snapshot and the Facilities screen",
+    "description": "facility_routes: GET and PATCH work for facility 1 with the flag OFF; POST create and deactivate return 404 with the flag OFF and then go through can_create_facility, which always refuses while the fence holds '*'. Adds the facility.read and facility.manage permissions. Validation covers GSTIN, state code, one PAN across facilities, code charset, timezone, and facility 1 never deactivated. A migration adds supplier snapshot columns to invoices and payments, written once when the number is assigned. invoice_print_view and the receipt print read the snapshot, a NULL snapshot prints the legacy block, and drafts use the live identity_block. The discharge print and the portal site name come from identity_block. The Admin tab 'facilities' always shows the identity card. Platform flags are read through shellConfig's existing health refresh. Audit category site_admin with a field diff.",
+    "files_touched": [
+     "server/permissions.py",
+     "server/main.py",
+     "server/migrations.py",
+     "server/services/billing_service.py",
+     "server/services/payments_service.py",
+     "server/routes/payments_routes.py",
+     "server/routes/vigil_routes.py",
+     "server/services/discharge_access_service.py",
+     "src/pages/panels/AdminPanel.tsx",
+     "src/shellConfig.tsx"
+    ],
+    "files_new": [
+     "server/routes/facility_routes.py",
+     "server/tests/test_facility_routes.py",
+     "server/tests/test_invoice_supplier_snapshot.py",
+     "src/api/facilities.ts",
+     "src/pages/panels/admin/FacilitiesPanel.tsx",
+     "src/pages/panels/admin/FacilitiesPanel.test.tsx"
+    ],
+    "migrations": 1,
+    "size_days": 4.5,
+    "depends_on": [
+     "multisite-1"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "tests": "With the flag OFF, facility 1 GET and PATCH work and POST create returns 404. With the flag ON, create is refused with its reason list and never succeeds in this increment. A bad GSTIN, a state mismatch and a PAN mismatch are refused. An issued invoice reprints byte-identically after an identity PATCH. A pre-change invoice prints the legacy 'Not configured' block. A draft shows the new identity. A site_admin row carries the diff. check-contrast passes. No em dashes in screen text."
+   },
+   {
+    "id": "multisite-3",
+    "title": "Departments and admissions carry the facility",
+    "description": "list_covering_departments(facility_id), _resolve_covering_department and resolve_admission_department become facility-aware. Admission stamps admissions.facility_id and patients.registered_facility_id from the departments master. Department codes are unique case-insensitively, and departments.facility_id is immutable once referenced. A user's department must belong to the actor's scope. site_config_service accepts [[facilities]] (code, downtime_mirror_dir, ingestion_sources) and fails loudly on unknown keys. While multi-facility data exists, a transfer to another facility's department is refused (409, audited). adt-1 wards and beds follow the same contract, but this increment does not wait for them.",
+    "files_touched": [
+     "server/services/frontdesk_service.py",
+     "server/services/admission_service.py",
+     "server/routes/admin_users_routes.py",
+     "server/services/site_config_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_facility_departments.py"
+    ],
+    "migrations": 0,
+    "size_days": 3,
+    "depends_on": [
+     "multisite-1"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "MS-R4 (new, not held: department, ward and bed codes unique across the group)",
+    "tests": "A duplicate department code in another facility is refused in any case and with padding. Reassigning a referenced department's facility is refused. Admitting to an F2 department stamps facility 2 on the admission and the patient. A cross-facility transfer returns 409 with a cross_facility_move_refused row. With one facility, test_admission_form_choices and the frontdesk suites stay green. An unknown key under [[facilities]] fails with the file and line."
+   },
+   {
+    "id": "multisite-4",
+    "title": "Encounters carry the facility; roster import guards",
+    "description": "Migration facility_columns_encounters on opd_visits, appointments, surgeries, roster_import_runs and history_import_runs (ALTER-if-exists, plus ensure_frontdesk_schema DDL). There is no OPD token index rebuild. Writers stamp the facility: OPD visits, appointments, surgery create, roster runs and history import runs. FACILITY_PATIENT_SQL gains OPD visits and appointments (latest by julianday). Roster import enforces the attribution invariant while multi-facility data exists: a row re-admitting an MRN whose admissions are at another facility, or moving an open admission into another facility's department, is reported and not written, with an audit row. Coordinate with opd-1 if it reshapes opd_visits.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/frontdesk_service.py",
+     "server/routes/appointments_routes.py",
+     "server/services/surgery_service.py",
+     "server/services/roster_import.py",
+     "server/services/history_import_service.py",
+     "server/permissions.py"
+    ],
+    "files_new": [
+     "server/tests/test_facility_encounter_stamping.py"
+    ],
+    "migrations": 1,
+    "size_days": 3.5,
+    "depends_on": [
+     "multisite-3",
+     "multisite-5a"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "After a full boot, the columns exist on fresh and legacy DBs. A roster import at F2 creates F2 admissions. A roster row re-admitting an F1 MRN at F2 is reported, not created, and an audit row is written. The ops_health count of patients at more than one facility stays 0. An F2 OPD visit for a discharged F1 patient moves FACILITY_PATIENT_SQL to F2. A duplicate token for the same doctor within one facility is still refused. With one facility, roster import output is unchanged."
+   },
+   {
+    "id": "multisite-5a",
+    "title": "Facility scope core, independent of the user loader",
+    "description": "facility_service.facility_scope_for. Department-scoped users get their department's facility, department-less users get their home row or facility 1, grant holders and service accounts get None, and an unknown department sees nothing. The function reads only id, role and department plus caches, so all six SELECT * FROM users loaders agree. Adds permissions.facility_scope, FACILITY_PATIENT_SQL (admissions plus registered facility) and the facilities= keyword on scope_patient_ids_sql and patient_in_scope (department-less callers use the latest encounter, MS-R5 (a)). enforce_patient_scope and require_patient_access apply facility scope and audit facility-caused denials; department-caused denials are unchanged. log_phi_read adds metadata. UserOut and /me carry the facility. Depends only on multisite-1, because the scope rests on admissions.facility_id.",
+    "files_touched": [
+     "server/permissions.py",
+     "server/models/user.py",
+     "server/routes/auth_routes.py",
+     "server/services/facility_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_facility_scope.py",
+     "server/tests/test_facility_resolver_loaders.py"
+    ],
+    "migrations": 0,
+    "size_days": 5,
+    "depends_on": [
+     "multisite-1"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "Two-facility world built by SQL: F1 GM nurse, F2 Cardiology nurse, F2 pharmacist with a home row, F1 cashier with no row, F2 admin, enterprise admin. A cross-facility chart read returns 404 and writes a facility patient_scope_denied row from both helpers. A department-caused denial in enforce_patient_scope still writes no row. A user dict from each of the six loaders gives the same scope. An unknown department sees nothing. With one facility, test_patient_scope_routes and test_caller_named_patient_scope are green and the statement count is unchanged."
+   },
+   {
+    "id": "multisite-5b",
+    "title": "Safety nets: SQL-site registry ratchet, real fence list, leak sweep",
+    "description": "A checked-in registry classifies every SQL site that touches patients, admissions, opd_visits, appointments, surgeries, orders, medications, invoices, payments or audit_logs (the 237 patient and admission sites plus the money and audit ones). Each site is classed facility-scoped, scope-checked patient-keyed, document-keyed, appliance-level (with a reason) or blind (with an owning increment). An AST scan fails CI on any unregistered site, which covers helpers that receive dept as an argument and house-wide routes that never call department_scope. FACILITY_BLIND_SURFACES is generated from the blind rows' route prefixes, replacing '*'. The leak sweep plants unique F1 identifiers and calls every GET route plus an enumerated list of POST read lanes (search, Sage query with the model stubbed, FHIR export, ward pack build, report exports) as F2 users. It is strict for facility-aware rows and xfail for blind ones. The INSERT INTO users ratchet lists the 17 sites.",
+    "files_touched": [
+     "server/facility_fence.py"
+    ],
+    "files_new": [
+     "server/tests/facility_sql_sites.py",
+     "server/tests/test_facility_sql_registry.py",
+     "server/tests/test_cross_facility_leak_sweep.py",
+     "server/tests/test_user_creation_sites.py"
+    ],
+    "migrations": 0,
+    "size_days": 4,
+    "depends_on": [
+     "multisite-5a"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "Adding an unregistered SQL string on patients in a scratch test module fails the ratchet. The fence list equals the registry's blind prefixes. pharmacy_routes, flight_recorder_routes and audit_routes appear as blind. Leak sweep: strict rows pass and blind rows are xfail. A new INSERT INTO users site fails."
+   },
+   {
+    "id": "multisite-6",
+    "title": "Users, enterprise grants and the shell chip",
+    "description": "UsersPanel gets a facility column, a home-facility select for department-less staff only, and a department list filtered by facility. admin_users_routes writes the home row in the same transaction when a department-less user is created or moved, refuses a home row for department-scoped staff, and refuses to create or move users outside the actor's scope. create_admin.py gains --facility (default MAIN). Enterprise grant management is open only to grant holders and audited as security (fail-closed). New bootstrap CLI grant_enterprise_access.py. The ClinicianShell roleLine shows the facility when multi-facility data exists. The App.tsx User type gains facility.",
+    "files_touched": [
+     "server/routes/admin_users_routes.py",
+     "server/scripts/create_admin.py",
+     "src/pages/panels/admin/UsersPanel.tsx",
+     "src/pages/ClinicianShell.tsx",
+     "src/App.tsx"
+    ],
+    "files_new": [
+     "server/scripts/grant_enterprise_access.py",
+     "server/tests/test_enterprise_grants.py",
+     "src/pages/panels/admin/UsersPanel.facility.test.tsx"
+    ],
+    "migrations": 0,
+    "size_days": 3.5,
+    "depends_on": [
+     "multisite-5a"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "Only an admin can hold a grant, and a non-holder cannot grant. Grant and revoke write fail-closed security rows. A revoke narrows scope on the next request (cache invalidated). A home row for a nurse is refused. An F2 admin cannot create a user at F1. A move is a revoke plus an insert. Service accounts are refused. The chip is unchanged with one facility."
+   },
+   {
+    "id": "multisite-7a",
+    "title": "Document numbering per facility",
+    "description": "Rebuilds document_number_series with facility_id INTEGER NOT NULL DEFAULT 1 and UNIQUE(facility_id, series_code); all 10 seeded series land at facility 1. next_document_number(series_code, facility_id=1) and the four lookups by code (billing_masters.py:673, billing_service.py:2096, payments_service.py:289, payments_routes.py:261) take the facility, and the roughly 13 allocator call sites in 7 files pass it. Prefix validation runs on create and update, against other facilities' prefixes (equal or string-prefix) and against numbers already issued. The series editor goes in FacilitiesPanel.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/billing_masters.py",
+     "server/services/billing_service.py",
+     "server/services/payments_service.py",
+     "server/routes/payments_routes.py",
+     "server/services/payer_service.py",
+     "server/services/procurement_service.py",
+     "server/services/dietary_service.py",
+     "server/services/nabh_service.py",
+     "src/pages/panels/admin/FacilitiesPanel.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_facility_document_series.py"
+    ],
+    "migrations": 1,
+    "size_days": 3,
+    "depends_on": [
+     "multisite-1",
+     "multisite-2"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "tests": "The rebuild keeps all 10 series at facility 1 and is idempotent. The ensure_default_masters re-insert lands at facility 1. An F2 invoice number comes from the F2 series. An F2 prefix equal to, or a string prefix of, F1's is refused, and so is a prefix matching an already issued number, on update as well as create. The invoice and receipt unique indexes still hold. Single-facility numbering is byte-identical."
+   },
+   {
+    "id": "multisite-7b",
+    "title": "Money, stores and assets carry the facility",
+    "description": "Migration facility_columns_admin (list in the design), with the helix_db DDL gaining facility_id. Writers stamp the facility: invoices from the admission or the counter, payments and deposits from the counter, claims, procurement from the store, housekeeping units, biomedical assets, NABH incidents from the reporter or the patient, ABDM care contexts from the admission, and kitchen indents.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/helix_db.py",
+     "server/services/billing_service.py",
+     "server/services/payments_service.py",
+     "server/services/payer_service.py",
+     "server/services/procurement_service.py",
+     "server/services/housekeeping_service.py",
+     "server/services/biomedical_service.py",
+     "server/services/nabh_service.py",
+     "server/services/abdm_service.py",
+     "server/services/dietary_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_facility_admin_stamping.py"
+    ],
+    "migrations": 1,
+    "size_days": 3.5,
+    "depends_on": [
+     "multisite-7a"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "tests": "After a full boot, the columns exist on fresh and legacy DBs, including the lazy helix tables. An F2 admission's invoice is stamped F2. A payment takes the counter's facility. A GRN takes the store's facility. test_payments and test_billing stay green."
+   },
+   {
+    "id": "multisite-8",
+    "title": "Scope sweep: clinical lanes",
+    "description": "Passes facilities at every registry row marked blind in the clinical lanes, and removes each from the fence. Covers the board via vigil_service.scored_admitted_patients (:823; board_order is only a sort key), the discharged list, discharge board, search, timeline, orders, eMAR, bundles, Lens, FHIR export, forecast, appointments, escalation, sepsis, surgery scope, consent, the ward brief, shadow routes, the media route in main.py, and Scribe and Relay case lists. Start scribe_routes and relay_routes only after the running sessions land.",
+    "files_touched": [
+     "server/routes/vigil_routes.py",
+     "server/routes/nurse_routes.py",
+     "server/routes/orders_routes.py",
+     "server/routes/emar_routes.py",
+     "server/routes/bundle_routes.py",
+     "server/routes/lens_routes.py",
+     "server/routes/search_routes.py",
+     "server/routes/patient_timeline_routes.py",
+     "server/routes/appointments_routes.py",
+     "server/routes/fhir_export_routes.py",
+     "server/routes/forecast_routes.py",
+     "server/services/forecast_service.py",
+     "server/services/escalation_service.py",
+     "server/services/sepsis_bundle_service.py",
+     "server/services/surgery_scope.py",
+     "server/services/consent_service.py",
+     "server/services/vigil_service.py",
+     "server/services/sage_narrator_service.py",
+     "server/routes/shadow_routes.py",
+     "server/routes/scribe_routes.py",
+     "server/routes/relay_routes.py",
+     "server/main.py",
+     "server/tests/facility_sql_sites.py"
+    ],
+    "files_new": [],
+    "migrations": 0,
+    "size_days": 5,
+    "depends_on": [
+     "multisite-5b"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "Each lane's xfail rows in the leak sweep become strict passes. An F2 department-less account sees no F1 patient on any clinical board. Escalation targets stay inside the patient's department. test_nurse_write_scope, test_caller_named_patient_scope and the test_ward_brief_* suites stay green."
+   },
+   {
+    "id": "multisite-9a",
+    "title": "Scope sweep: pharmacy queue, money and front desk",
+    "description": "The pharmacist queue (/api/pharmacy/pending, verify, reject), which has zero scope calls today, plus helix routes, payments, billing, payer and front desk become facility-scoped. Money and queue surfaces use document-keyed scope (the row's own facility_id); chart reads use patient scope. Removes these prefixes from the fence.",
+    "files_touched": [
+     "server/routes/pharmacy_routes.py",
+     "server/services/pharmacy_verification_service.py",
+     "server/routes/helix_routes.py",
+     "server/routes/payments_routes.py",
+     "server/services/payments_service.py",
+     "server/routes/billing_routes.py",
+     "server/routes/payer_routes.py",
+     "server/routes/frontdesk_routes.py",
+     "server/services/frontdesk_service.py",
+     "server/tests/facility_sql_sites.py"
+    ],
+    "files_new": [
+     "server/tests/test_facility_pharmacy_queue.py"
+    ],
+    "migrations": 0,
+    "size_days": 4.5,
+    "depends_on": [
+     "multisite-5b",
+     "multisite-7b"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "An F2 pharmacist never sees an F1 order in /api/pharmacy/pending. Verify or reject of an F1 med id returns 404 with an audit row. An F2 cashier cannot take payment against an F1 invoice, but can bill the F2 OPD visit of a patient last admitted at F1. The F2 front desk lists only F2 visits. The fence list shrinks."
+   },
+   {
+    "id": "multisite-9b",
+    "title": "Scope sweep: remaining administrative lanes",
+    "description": "Dietary, compliance, NABH, ABDM, procurement, workforce, housekeeping, biomedical, the admin routes and the Command Center named list become facility-scoped and leave the fence.",
+    "files_touched": [
+     "server/routes/dietary_routes.py",
+     "server/services/dietary_service.py",
+     "server/routes/compliance_routes.py",
+     "server/routes/nabh_routes.py",
+     "server/routes/abdm_routes.py",
+     "server/services/abdm_service.py",
+     "server/routes/procurement_routes.py",
+     "server/routes/workforce_routes.py",
+     "server/routes/housekeeping_routes.py",
+     "server/routes/biomedical_routes.py",
+     "server/routes/admin_routes.py",
+     "server/routes/command_center_routes.py",
+     "server/tests/facility_sql_sites.py"
+    ],
+    "files_new": [],
+    "migrations": 0,
+    "size_days": 4,
+    "depends_on": [
+     "multisite-5b",
+     "multisite-7b"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "Each of these lanes as an F2 user shows no planted F1 identifier. The leak sweep rows turn strict. The existing module suites stay green with one facility."
+   },
+   {
+    "id": "multisite-10",
+    "title": "Scope sweep: Sage lane, out-of-scope locator and socket rooms",
+    "description": "Changes sage_service _scope_sql and _patient_in_scope in lockstep with permissions, and extends the parity test to two-facility fixtures. Restricts _out_of_scope_locators' complement roster to the caller's facilities. A name found only at another facility gets the 'no matching patient at <facility>' answer (default pending MS-R13). Also covers sage_routes, sage_relay_context, provenance, the voice agent, the proactive world model and nervous_system_triggers. realtime.py: _authenticate uses the shared resolver; with multi-facility data, the fac:{id}:all and grp:all rooms are used and emits go to the patient's facility room. Leaves the bed matcher alone (R026 is held). Schedule after the Sage bed-lookup and CORS socket sessions land.",
+    "files_touched": [
+     "server/services/sage_service.py",
+     "server/routes/sage_routes.py",
+     "server/services/sage_relay_context.py",
+     "server/services/sage_provenance_service.py",
+     "server/services/voice_agent_service.py",
+     "server/services/sage_proactive_service.py",
+     "server/services/nervous_system_triggers.py",
+     "server/ws/realtime.py",
+     "server/tests/facility_sql_sites.py"
+    ],
+    "files_new": [
+     "server/tests/test_facility_socket_rooms.py",
+     "server/tests/test_sage_facility_locator.py"
+    ],
+    "migrations": 0,
+    "size_days": 4.5,
+    "depends_on": [
+     "multisite-5b"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "Sage named retrieval of an F1 patient by an F2 user attaches no chart. A name present only at F1 returns the facility no-match wording and builds no locator row from F1. The parity test agrees on two-facility fixtures. An F2 department-less socket never receives an F1 vitals:update, and an enterprise socket receives both. Single-facility rooms are unchanged. test_sage_department_scope stays green. The bed matcher code is unchanged."
+   },
+   {
+    "id": "multisite-11",
+    "title": "Audit attribution and every audit reader",
+    "description": "log_audit_event gains a facility_id kwarg and a resolver (explicit, then patient cached, then actor, then null with facility_unresolved), used only with multi-facility data. bound_audit_fields keeps facility keys in the truncation stub before hashing. Every audit_logs reader is classified and filtered under the epoch rule: audit_routes, flight_recorder routes and service, admin_routes overview, admin_users last-login, compliance_service and impact_service. metrics, pulse egress and chain verify stay appliance-level; consent access history stays group-wide. New maintenance CLI build_audit_facility_index.py. Frontend gains a facility column and filter.",
+    "files_touched": [
+     "server/services/audit_service.py",
+     "server/routes/audit_routes.py",
+     "server/routes/flight_recorder_routes.py",
+     "server/services/flight_recorder_service.py",
+     "server/routes/admin_routes.py",
+     "server/routes/admin_users_routes.py",
+     "server/services/compliance_service.py",
+     "server/services/impact_service.py",
+     "src/pages/panels/admin/AuditLogTable.tsx",
+     "src/pages/panels/admin/SecurityActivity.tsx",
+     "server/tests/facility_sql_sites.py"
+    ],
+    "files_new": [
+     "server/scripts/build_audit_facility_index.py",
+     "server/tests/test_audit_facility.py"
+    ],
+    "migrations": 0,
+    "size_days": 4.5,
+    "depends_on": [
+     "multisite-5b"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "The chain verifies across pre- and post-epoch rows. Pre-epoch rows are visible to the F1 admin and not to the F2 admin. A post-epoch row without a facility is visible only to enterprise users. An oversized metadata stub keeps facility_id and the chain verifies. A resolver exception still writes the fail-closed row, marked facility_unresolved. The flight recorder timeline and event views are filtered. Overview counts are per facility. Consent access history still lists every facility. With one facility, metadata is byte-identical. The index CLI is timed on a backup copy. test_audit_trail_attack and test_audit_fail_closed_categories stay green."
+   },
+   {
+    "id": "multisite-12",
+    "title": "Command Center, capacity and NABH indicators per facility",
+    "description": "house_snapshot(facility_ids) filters by admission facility. Capacity per facility comes from the adt-1 bed master. The route defaults to the caller's facility; enterprise users get group tiles and can narrow with ?facility=. NABH indicators and the evidence export take a facility and are stamped. CommandCenter.tsx gets a selector and NabhPanel a filter. House-wide counts are fenced until this lands.",
+    "files_touched": [
+     "server/services/command_center_service.py",
+     "server/routes/command_center_routes.py",
+     "server/services/forecast_service.py",
+     "server/services/nabh_service.py",
+     "server/routes/nabh_routes.py",
+     "src/components/command/CommandCenter.tsx",
+     "src/pages/panels/NabhPanel.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_command_center_facility.py"
+    ],
+    "migrations": 0,
+    "size_days": 4,
+    "depends_on": [
+     "multisite-5b",
+     "multisite-7b",
+     "adt-1"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "tests": "F2 census and capacity exclude F1. The enterprise group view sums correctly. A ?facility= outside the caller's scope returns 404. NABH F2 indicators count only F2 encounters. CommandCenter.test.tsx and test_command_center_scope_label stay green."
+   },
+   {
+    "id": "multisite-13",
+    "title": "Price lists per facility",
+    "description": "billing_masters.default_tariff_plan(facility_id) replaces the 4 inline queries, choosing a facility plan first, then a group plan (NULL), then is_default. is_default is unique per facility. The interstate flag is derived from the facility state code against the place of supply. A default price list editor goes in FacilitiesPanel, and BillingPanel shows 'Applies to'.",
+    "files_touched": [
+     "server/services/billing_masters.py",
+     "server/services/billing_service.py",
+     "server/routes/billing_routes.py",
+     "src/pages/panels/BillingPanel.tsx",
+     "src/pages/panels/admin/FacilitiesPanel.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_facility_tariffs.py"
+    ],
+    "migrations": 0,
+    "size_days": 3,
+    "depends_on": [
+     "multisite-7b",
+     "multisite-2"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "tests": "An F2 patient is priced on the F2 plan when one exists and on the group plan otherwise. Setting the F2 default leaves the F1 default in place. Facility state 29 with a place of supply in 27 gives IGST. The single-site pricing tests are unchanged."
+   },
+   {
+    "id": "multisite-14",
+    "title": "Pharmacy stock and dispensing per facility",
+    "description": "Dispensing draws lots only from the admission facility's stock, keeping the in-date, earliest-expiry rule. GRN goes into a facility store. Stock reports and the formulary on-hand figure are per facility. HelixPanel gets a facility label. Under MS-R9 (a), F109's 'hospital-wide' pharmacy means facility-wide. Schedule after the Relay confirm session (R024) lands, and do not move create_order's transaction boundary.",
+    "files_touched": [
+     "server/services/helix_service.py",
+     "server/routes/helix_routes.py",
+     "server/services/pharmacy_verification_service.py",
+     "server/routes/pharmacy_routes.py",
+     "src/pages/panels/HelixPanel.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_facility_pharmacy_stock.py"
+    ],
+    "migrations": 0,
+    "size_days": 4,
+    "depends_on": [
+     "multisite-9a",
+     "grn-1",
+     "medorder-1"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "An F2 dispense never draws an F1 lot. With no F2 stock the result is a refusal, not a cross-facility draw. The test_helix_stock_rules expiry tests stay green. A single-site dispense is unchanged."
+   },
+   {
+    "id": "multisite-15",
+    "title": "Downtime packs, exports and backup statements per facility",
+    "description": "Ward packs and the nightly FHIR self-export are written per facility folder, with site.toml mirrors so a satellite holds its own copy. FHIR gains an Organization (HFR) and Encounter.serviceProvider. New facility extract CLI. The Data and Backups screen states that a restore rolls back every facility. CIO questionnaire 1.5 is updated.",
+    "files_touched": [
+     "server/services/downtime_service.py",
+     "server/services/fhir_export_service.py",
+     "server/services/site_config_service.py",
+     "server/routes/backup_routes.py",
+     "src/pages/panels/admin/DataPanel.tsx",
+     "docs/CIO_SECURITY_QUESTIONNAIRE.md",
+     "server/tests/facility_sql_sites.py"
+    ],
+    "files_new": [
+     "server/scripts/facility_extract.py",
+     "server/tests/test_facility_exports.py"
+    ],
+    "migrations": 0,
+    "size_days": 3.5,
+    "depends_on": [
+     "multisite-4",
+     "multisite-5b"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "An F2 ward pack contains only F2 patients and lands in the F2 mirror, and the F1 mirror is unchanged. Files are scanned for planted F1 identifiers. The FHIR bundle carries the Organization with HFR. The extract includes F2 encounters and the group-level allergies of those patients. The downtime suite is green with one facility."
+   },
+   {
+    "id": "multisite-16",
+    "title": "Ingestion sources bound to a facility",
+    "description": "With multi-facility data, the MLLP feed is bound through ORB_MONITOR_SOURCE_ID mapped in site.toml [[facilities]].ingestion_sources, and REST ingestion through per-facility keys ORB_INGESTION_API_KEY_<CODE> (the existing key stays facility 1). _resolve_patient_id(db, raw, facility_id) matches only patients whose current facility is the source's facility. An unbound source or a cross-facility match takes today's unknown-patient path plus an ingestion_source_unbound audit row (MS-R14 default). ops_health lists unbound sources. The vitals INSERT path (clinical_time, carried_from) is not touched.",
+    "files_touched": [
+     "server/services/ingestion_service.py",
+     "server/routes/ingestion_routes.py",
+     "server/config.py",
+     "server/services/site_config_service.py",
+     "server/services/ops_health_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_facility_ingestion_binding.py"
+    ],
+    "migrations": 0,
+    "size_days": 3,
+    "depends_on": [
+     "multisite-3",
+     "multisite-5a"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "An F2 source sending an identifier equal to an F1 MRN files nothing and writes an audit row. The same identifier from an F1 source files to the F1 patient. An unbound source with multi-facility data takes the unknown-patient path. With one facility, the ingestion suites are unchanged and the existing key works. New vitals rows still carry clinical_time timestamps and carried_from."
+   },
+   {
+    "id": "multisite-17",
+    "title": "Group identity match at registration",
+    "description": "A group-wide minimal-demographics match for the front desk (name plus age or DOB, sex and phone). It returns only id, name, age, sex, group MRN and registered facility code, is audited as phi_access with a reason, and is rate-limited. Selecting a match and registering a visit brings the patient into the facility's scope. This prevents satellite duplicates that would split the allergy list. Match quality, merge and encounter attribution stay with the OPD/MPI epic.",
+    "files_touched": [
+     "server/routes/frontdesk_routes.py",
+     "server/services/frontdesk_service.py",
+     "src/pages/panels/FrontDeskPanel.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_group_identity_match.py"
+    ],
+    "migrations": 0,
+    "size_days": 3,
+    "depends_on": [
+     "multisite-5a",
+     "opd-1"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "An F2 desk finds an F1 patient by demographics and sees no clinical field. Each search writes a phi_access row with the reason. After F2 registration, F2 department-less staff can open the chart under MS-R5 (a). Rate limiting holds. Without a match result, the desk can still register a new patient."
+   },
+   {
+    "id": "multisite-18",
+    "title": "Two-facility go-live drill and runbook",
+    "description": "A seed script for a second facility on the isolated verify stack, with honest wording and no demo labels in the app. Builds the audit index on a realistic-size copy, passes the create gate through the product, then runs a browser pass as F1 nurse, F2 nurse, F2 admin, F2 pharmacist, F2 cashier and enterprise admin, and a 2-facility soak. New runbook docs/MULTI_SITE.md covering the flag, the grant bootstrap, the audit index window, ingestion keys, satellite mirrors and the reverse-proxy Host caveat for sockets.",
+    "files_touched": [],
+    "files_new": [
+     "server/scripts/seed_second_facility.py",
+     "server/tests/test_two_facility_e2e.py",
+     "docs/MULTI_SITE.md"
+    ],
+    "migrations": 0,
+    "size_days": 3,
+    "depends_on": [
+     "multisite-3",
+     "multisite-4",
+     "multisite-6",
+     "multisite-7b",
+     "multisite-8",
+     "multisite-9a",
+     "multisite-9b",
+     "multisite-10",
+     "multisite-11",
+     "multisite-12",
+     "multisite-15",
+     "multisite-16"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "tests": "FACILITY_BLIND_SURFACES is empty and the create gate passes. The leak sweep is strict everywhere. Booting with the flag OFF and 2 facilities keeps isolation. A screenshot pass per role finds no cross-facility name."
+   },
+   {
+    "id": "multisite-19",
+    "title": "Visiting consultants: one account, session facility switch",
+    "description": "Activates 'visiting' user_facilities rows, each with its own department. A JWT claim 'fac' carries the active facility and is validated on every request. POST /api/auth/facility switches it (security audit). The effective department is overlaid from the access row, so department_scope is unchanged. Escalation pages home staff plus the named attending. Gated on MS-R7.",
+    "files_touched": [
+     "server/auth.py",
+     "server/routes/auth_routes.py",
+     "server/permissions.py",
+     "server/services/facility_service.py",
+     "src/pages/ClinicianShell.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_facility_switch.py"
+    ],
+    "migrations": 0,
+    "size_days": 4,
+    "depends_on": [
+     "multisite-6",
+     "multisite-10"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "A switch is refused without a live access row. A revoked row severs the session on the next request. Socket rooms follow the active facility. Every PHI read audit names the facility. Escalation reaches the correct facility's staff."
+   },
+   {
+    "id": "multisite-20",
+    "title": "Inter-facility transfer workflow",
+    "description": "Discharge at F1 and admit at F2 as one audited move. Medication reconciliation at the receiving facility is mandatory, and active orders are never carried over silently. Open escalation chains and Sepsis bundles are listed for close-with-reason. Roster import gains the same path. Depends on the held discharge ruling R009 and the new MS-R3.",
+    "files_touched": [
+     "server/services/admission_service.py",
+     "server/services/frontdesk_service.py",
+     "server/services/discharge_service.py",
+     "server/services/escalation_service.py",
+     "server/services/sepsis_bundle_service.py",
+     "server/services/roster_import.py"
+    ],
+    "files_new": [
+     "server/tests/test_inter_facility_transfer.py"
+    ],
+    "migrations": 0,
+    "size_days": 4,
+    "depends_on": [
+     "multisite-8",
+     "medorder-1",
+     "adt-1"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "R009 (held); MS-R3 (new)",
+    "tests": "No active F1 order shows as active at F2 without reconciliation. Open chains are listed and never closed silently. Allergies are visible at F2 immediately. Both admissions are linked in patient_movements. The attribution invariant holds because the move creates a new admission under encounter attribution (requires the MPI epic's admission_id) or a new patient record, per the ruling."
+   }
+  ],
+  "product_rulings": [
+   {
+    "question": "MS-R1. Tenancy model: one appliance per legal entity with a row-level facility_id, or one appliance per facility with a federated patient index? May different legal entities ever share an appliance?",
+    "options": "(a) Row-level facility_id, one legal entity per appliance, no tenant_id, with the PAN rule enforcing it. (b) One appliance per facility plus a federated MPI. (c) Row-level with a tenant_id for franchises.",
+    "recommendation": "(a). It is one DPDP data fiduciary, it keeps CIO questionnaire 1.5 true, and consultants get one login. facilities.uuid keeps federation possible later.",
+    "safety": false
+   },
+   {
+    "question": "MS-R2. Once a patient is in your scope, do you see their records from encounters at other facilities in the group?",
+    "options": "(a) The whole chart. (b) Only this facility's encounters, with allergies, active medications and problems always group-wide. (c) Only this facility's encounters. Note on cost: (b) and (c) need encounter attribution (admission_id) on about 20 clinical tables and every writer, about 10 to 15 extra days owned by the MPI epic and not in this plan. Today (c) behaves like (a) for inpatients, because each patient row has admissions at one facility.",
+    "recommendation": "(a). Never filter allergies, active medications or problems by facility; hiding them is how a known anaphylaxis is missed at the second site.",
+    "safety": true
+   },
+   {
+    "question": "MS-R3. When a patient moves between facilities (transfer, or roster import re-admission or department change), what happens to active medication orders, escalation chains, Sepsis bundles and diet orders?",
+    "options": "(a) Discharge plus a new admission at the receiving facility, mandatory reconciliation, nothing carried silently, open chains listed for close-with-reason. (b) Carry everything across. (c) Refuse in v1.",
+    "recommendation": "(c) until ruled, then (a), in line with the R009 recommendation. Until then every move into another facility is refused or reported and audited.",
+    "safety": true
+   },
+   {
+    "question": "MS-R4. Must department names and ward and bed codes be unique across the group, or may two facilities both have 'ICU'?",
+    "options": "(a) Unique across the group, each owned by one facility. (b) Duplicates allowed, with every comparison facility-qualified (this also adds facility_id to the OPD token index).",
+    "recommendation": "(a). It isolates ward-scoped staff without touching the scope call sites, and it removes wrong-patient risk in bed-based lookups. (b) roughly doubles the estimate.",
+    "safety": true
+   },
+   {
+    "question": "MS-R5. Which patients may a facility-bound department-less account (admin, pharmacist, cashier) open?",
+    "options": "(a) Patients whose latest encounter is at the facility, the same rule as ward staff, plus their facility's own invoices, visits and queue items by the document's facility. (b) Anyone with any encounter, ever, at the facility. (c) An active encounter, or one within N days.",
+    "recommendation": "(a). (b) gives permanent chart access, including to a patient now admitted elsewhere. State the rule in the CIO questionnaire.",
+    "safety": false
+   },
+   {
+    "question": "MS-R6. Who may hold group-wide (enterprise) access?",
+    "options": "(a) Admin role only, by named audited grant. (b) Also a named group desk (a pharmacist for a central pharmacy, a cashier for a central billing office). (c) Any role.",
+    "recommendation": "(a), matching the F109 recommendation of no hospital-wide clinical accounts. (b) only if MS-R9 is ruled (b).",
+    "safety": false
+   },
+   {
+    "question": "MS-R7. Visiting consultants at two facilities: one account with a per-session facility switch, or separate accounts?",
+    "options": "(a) One account, one active facility per session, switch audited. (b) Separate accounts. (c) One account seeing both at once.",
+    "recommendation": "(a), built in multisite-19; (b) for the first go-live.",
+    "safety": false
+   },
+   {
+    "question": "MS-R8. In v1, must all facilities on one appliance share one timezone and one escalation ladder?",
+    "options": "(a) One zone and one ladder, signed by each facility's clinical lead. (b) Per-facility ladders (about 3 extra days). (c) Per-facility zones too.",
+    "recommendation": "One zone (all Indian sites are IST). Per-facility ladders unless every clinical lead signs the shared one; a ladder that pages a role a satellite does not staff at night stalls.",
+    "safety": true
+   },
+   {
+    "question": "MS-R9. Is pharmacy stock and the verify queue per facility, or one central pharmacy for the group? (F109 recommended keeping pharmacy hospital-wide; under (a) that means facility-wide.)",
+    "options": "(a) Per facility. (b) Central pharmacy dispensing to all facilities. (c) Configurable.",
+    "recommendation": "(a). Drug licences are per premises and stock must be where the patient is. (b) would need MS-R6 (b).",
+    "safety": false
+   },
+   {
+    "question": "MS-R11. Patient identity across facilities: one group MRN per person, or per-facility MRNs linked to one person?",
+    "options": "(a) One group MRN, with legacy facility MRNs kept as identifiers. (b) Per-facility MRNs with an MPI link.",
+    "recommendation": "(a). Duplicates across sites split the allergy list. Matching and merge belong to the OPD/MPI epic; multisite-17 supplies the group-wide identity match.",
+    "safety": true
+   },
+   {
+    "question": "MS-R12. Do we accept that restoring a backup rolls back every facility on the appliance?",
+    "options": "(a) Accept and state it. (b) Build per-facility restore (not feasible in one DB).",
+    "recommendation": "(a). State it in the CIO questionnaire and on Data and Backups.",
+    "safety": false
+   },
+   {
+    "question": "MS-R13. When a clinician names a patient in Sage who exists only at another facility, what does Sage say?",
+    "options": "(a) 'No patient matching that at <this facility>', which is true and discloses nothing. (b) 'A patient matching that is on record at another facility of the group', mirroring the department notice. (c) Name the facility.",
+    "recommendation": "(a). Today's department notice exists so a clinician never concludes a record is missing; naming the facility in (a) keeps that distinction without turning Sage into a group-wide existence lookup.",
+    "safety": true
+   },
+   {
+    "question": "MS-R14. In a multi-facility install, what happens to monitor or lab data from a source not bound to a facility, or whose identifier matches only a patient at another facility?",
+    "options": "(a) File nothing and take today's unknown-patient path, with an audit row and an ops_health alert. (b) Match across the whole appliance as today. (c) File to facility 1.",
+    "recommendation": "(a). A vital filed on the wrong patient is worse than a vital held for review.",
+    "safety": true
+   }
+  ],
+  "risks": [
+   "Blast radius. There are 237 patient and admission SQL sites in about 60 files. A missed site is a cross-facility PHI disclosure. The SQL-site registry ratchet, the runtime fence and the leak sweep reduce this, but the sweep only finds identifiers it planted.",
+   "Data-keyed isolation means one INSERT into facilities (a script or a restore) switches the whole appliance into multi-facility mode. Until the sweep is complete, the fence turns every unfinished PHI screen into a 503. That is an outage on purpose, not a leak, and ops_health must say why.",
+   "The 'no home row means facility 1' default fails toward facility 1, not toward nothing. A future code path that creates a department-less account at another facility without the row would put it in F1 scope. The INSERT INTO users ratchet and an ops_health check guard this.",
+   "Facility attribution through the patient is exact only while every admission of a patient row is at one facility. Roster import can break that today and is guarded. The OPD/MPI epic must add encounter attribution before it allows cross-facility re-admission.",
+   "The facility and grant caches refresh every 30 s for writes made outside the process. A revoke made by a script, not the product, takes up to 30 s to apply.",
+   "Lazy schema owners (ensure_frontdesk_schema, init_helix_db) run after migrations on a fresh DB. An ALTER-only migration misses them, so their DDL changes too, with a post-boot column test.",
+   "users must never gain a column in this epic. _rebuild_users_role_check (migrations.py:4773) would abort the next role migration.",
+   "SQLite refuses ADD COLUMN ... REFERENCES with a non-NULL default. Facility integrity rests on services plus ops_health, not on foreign keys.",
+   "The audit facility index scans the largest encrypted table. It runs as a maintenance CLI, timed first on a backup copy. Facility-filtered audit reads are slow until it exists.",
+   "One appliance means one interactive LLM stream. Facilities add Sage users without adding capacity; AI ceilings are absolute.",
+   "Satellites reached over a WAN have nothing during a link outage unless their ward-pack mirror is local. R025 (a) is built, so the socket accepts the page's own origin; the remaining case is a reverse proxy that rewrites the Host header (the nginx default), which the runbook must cover.",
+   "Every audit row now resolves a facility. Uncached, that puts encrypted-SQLite reads on every PHI read, the 2026-07-30 loop-stall class. The resolver uses cached maps and runs only with multi-facility data.",
+   "admissions has no index today. Facility predicates in correlated scope subqueries would slow the board at 200 beds without the multisite-1 indexes.",
+   "Other work in progress edits the tree, git exists only since today, and the migration head is 47. Migration numbers must be claimed at merge. The suite cannot run with the shipping .env.",
+   "Size. The full plan is 87.5 engineer-days and the go-live core is 69.5, against an approved sales plan that sells a one-ward Ward Record and defers this work. The flag keeps the work inert, but it competes for the same engineer time.",
+   "DPDP. Sharing one patient record across facilities is defensible only within one data fiduciary (MS-R1). The PAN rule enforces this mechanically.",
+   "Docs drift. CIO questionnaire 1.5, the manual (assembly drift is a known trap) and the install runbook must change when facility 2 becomes possible."
+  ],
+  "session_conflicts": [
+   "Scribe quick-admit department validation session (admission_service.py, scribe_routes.py). multisite-3 and multisite-4 edit resolve_admission_department and the admission paths, multisite-8 edits scribe_routes and multisite-20 edits admission_service. Start each after that session lands, and re-read the files first.",
+   "Relay agentic-confirm orphan-order session (server/routes/relay_routes.py, helix_service.create_order; R024). multisite-8 touches relay_routes scope sites and multisite-14 touches helix_service dispensing. Schedule both after it lands, and never move create_order's transaction boundary.",
+   "CORS same-origin socket session (server/ws/realtime.py, src/api/client.ts). multisite-10 rewrites _authenticate's scope use and the room scheme, so it goes after. New frontend calls go in src/api/facilities.ts, and platform flags extend src/shellConfig.tsx, so client.ts is not touched.",
+   "Sage bed-lookup session (server/services/sage_service.py; R026 held). multisite-10 edits only _scope_sql, _patient_in_scope and _out_of_scope_locators' SQL filter, after that session lands. It does not change the bed matcher.",
+   "Bridge emergency-flag work (server/services/bridge_service.py). This epic does not edit that file. If that work's open 'ward-wide reach' ruling is built, it should use the facility rooms from multisite-10.",
+   "Admit-form ACVPU/O2 defaults session (src/components/AdmitPatientModal.tsx). No edit needed: the server filters the department list by facility. Do not add a facility picker to the admit form.",
+   "server/migrations.py: every epic adds migrations from head 47, so numbers are claimed at merge. This epic leaves LATEST_USERS_ROLE_CHECK and the users table untouched.",
+   "server/permissions.py, roles.py, admin_users_routes.py and UsersPanel.tsx: desk-role epics may be adding roles in these files. This epic adds permission strings only, never role strings.",
+   "adt epic: multisite-1 must land before adt-1 and owns the departments table. adt-1 creates wards and beds with facility_id and codes unique across the group, and reads departments.id. This contract needs confirming with the adt architect before either lands.",
+   "opd/MPI epic: multisite-17 depends on opd-1. The OPD/MPI epic owns patient_identifiers and encounter attribution, and must not lift the one-facility-per-patient invariant without adding admission_id to clinical writes."
+  ]
+ },
+ "critique": {
+  "verdict": "needs_changes",
+  "issues": [
+   {
+    "severity": "major",
+    "issue": "The home-row backfill runs only once, inside the migration. Every staff account created after that has no user_facilities row, and facility_scope returns frozenset() for it, so with the flag ON those staff see nothing. On a fresh install or a reseeded DB, that is every staff account.",
+    "evidence": "seed_clinical_data.py runs init_db() at import (:12), so migrations run first, then it inserts users (:303 INSERT OR REPLACE INTO users). Other creation paths: admin_users_routes.py:311, scripts/create_admin.py:242 (the first admin on a real install), seed_relay_chats.py:50. None of these files is in multisite-1 or multisite-6. The multisite-1 test checks a backup copy, which passes, and misses a reseeded dev DB. The multisite-16 drill on a reseeded DB would show every F1 clinician an empty board.",
+    "fix": "Write the home row in every user-creation path regardless of the flag (facility 1, or the creator's facility). Add a ratchet test that greps for INSERT INTO users. Add an ops_health/flag-ON check for active staff with no home row. Alternatively, define 'no row while only facility 1 is active' as {1}."
+   },
+   {
+    "severity": "major",
+    "issue": "Stage A cannot be reached as specified and contradicts itself. The backfill gives the pharmacist, cashier and every admin a home row at F1, so they become facility-bound department-less accounts. Boot refusal (b) then fires as soon as F2 exists. The only way out is an enterprise grant, and MS-R6 restricts grants to admins. MS-R5 option (a) ('group-wide by explicit grant') conflicts with MS-R6. The invariant is also checked only at boot: POST /api/facilities can create F2 at runtime, and the next restart then refuses to boot.",
+    "evidence": "permissions.py:398-406 (the pharmacist is deliberately department-less; migration 36 cleared PHA001). Design: facility_scope returns None only for flag-off, service accounts and grant holders. Grants are admin-only (MS-R6). Refusal (b) counts any facility-bound department-less account.",
+    "fix": "Pick one stage-A semantics. Either stage A is dry-run only (MS-R5 (b)), with facility creation refused while FACILITY_BLIND_SURFACES is non-empty, or there is a separate, audited 'group desk' mechanism for the pharmacist and cashier. Enforce the invariant at write time (facility create, user create or move, grant revoke), not only at boot."
+   },
+   {
+    "severity": "major",
+    "issue": "Refusing to boot is the wrong failure mode for a clinical system. With the flag OFF and more than one facility, the appliance will not start. Because FACILITY_BLIND_SURFACES is a code constant, an upgrade that adds a new blind surface stops a live two-facility site from booting. Restore drills and backup verification run with the test env (flag OFF), so they also refuse on a multi-facility backup.",
+    "evidence": "Design: main.py boot refusals (a) and (b), and the risk text's 'stops a flag-off restore'. The memory note says the suite cannot run with the shipping .env, so drills use a different env.",
+    "fix": "Make isolation data-driven: when more than one facility is active, enforce facility scope whatever the flag says. Use the flag only to gate creating facilities and the UI. Move the blind-surface check to the CI ratchet plus a refusal at facility-create time. Keep boot refusal for corrupt states only (for example, an unknown facility id)."
+   },
+   {
+    "severity": "major",
+    "issue": "Audit scoping is incomplete and takes history away from existing readers. Only audit_routes /logs and /facets get a facility filter, but other surfaces under audit.read or admin also read audit_logs. Under the rule that rows with no facility are enterprise-only, every row written before the flag (the site's whole history) disappears for F1's own facility-bound admin when the flag is turned on. Separately, oversized metadata is replaced by a {_truncated} stub, which drops facility_id.",
+    "evidence": "routes/flight_recorder_routes.py:21-47 (audit.read; flight_recorder_service.py:165, 248, 381 SELECT FROM audit_logs). admin_routes.py:366-440. admin_users_routes.py:224-240. compliance_service.py:120. consent_service.py:572. audit_service.py bound_audit_fields replaces metadata_json with {_truncated, original_bytes}.",
+    "fix": "Treat rows with no facility from before the flag-on epoch (record the epoch's audit id) as facility 1. Add every audit_logs reader to multisite-11's files and tests. Carry facility_id into the truncation stub, merged after bounding."
+   },
+   {
+    "severity": "major",
+    "issue": "Sage's out-of-scope locator deliberately queries every admitted or discharged patient (id, name, bed) as the complement set, so it can answer 'that patient is outside your department'. Across facilities this becomes an existence oracle: an F2 clinician can confirm by name whether someone is a patient at F1. multisite-10 changes only _scope_sql and _patient_in_scope. The AST ratchet keys on department_scope callers and the leak sweep runs GET routes only, so neither would catch this.",
+    "evidence": "sage_service.py:1964-1987 (_out_of_scope_locators, an unfiltered SELECT p.id, p.name, p.bed), used at :2650. OUT_OF_SCOPE_NOTICE at :1993.",
+    "fix": "Restrict the complement set to the caller's facility set (for a cross-facility match, answer 'no matching patient', or a facility-level notice if a ruling allows it). Add the function to multisite-10's scope and write an explicit two-facility test for it."
+   },
+   {
+    "severity": "major",
+    "issue": "The safety nets miss the hard part, the department-less lanes. The AST ratchet only sees functions that call department_scope. Routes that were house-wide by design never call it, and helpers that receive dept as an argument are also invisible. The leak sweep calls GET routes only, so it misses POST and streaming reads (Sage), socket emits, file exports (ward packs, FHIR) and Relay. The pharmacist verify queue, which multisite-9's test targets, is not in multisite-9's files.",
+    "evidence": "Scope-helper call counts: pharmacy_routes.py 0 (GET /api/pharmacy/pending at :37, verify at :53), flight_recorder_routes.py 0, audit_routes.py 0. multisite-9 files omit pharmacy_routes.py and pharmacy_verification_service.py. vigil_service.board_order (:808) is a pure sort key; the scoping is in scored_admitted_patients (:823).",
+    "fix": "Build the ratchet from a registry of SQL sites touching patients, admissions, opd_visits, invoices and orders (the 237 sites), not from department_scope callers. Extend the sweep to POST, streaming, socket and export lanes. Add pharmacy_routes.py and pharmacy_verification_service.py to multisite-9."
+   },
+   {
+    "severity": "major",
+    "issue": "The 'one patient record, one allergy list' rationale (MS-R1, R2, R11) does not exist in the code. Every admission mints a new patient and MRN, there is no readmit or MPI path, and no increment depends on that epic. When readmission lands: (a) an F2 front desk scoped to its facility cannot find an F1 patient, so it creates duplicates, which splits the allergy list (the exact harm cited); (b) clinical tables have no admission_id, so 'derive facility via the patient's admission' attributes historical F1 vitals, meds and orders to F2 in NABH indicators, the facility extract, ward packs and the audit resolver. MS-R2 options (b) and (c) cannot be built without admission_id on clinical rows, but they are presented as costing the same.",
+    "evidence": "admission_service.py:244-249 (a new PAT- id every time; MRN = data mrn or random). HOSPITAL_FUNCTION_COVERAGE_2026-10.md:194 and :637 ('every readmission mints a new MRN'; MPI absent). vitals, risk_scores, medications, orders, allergies and clinical_documents have no admission_id column (database.py schema; admission_id appears only on administrative tables).",
+    "fix": "Make the MPI/readmit epic an explicit dependency. Specify a minimal-demographics, group-wide match lane for registration (audited, returns identity only). Define time-windowed attribution (admission start to discharge) or add admission_id to clinical writes before per-facility reporting ships. Cost MS-R2 (b) and (c) honestly."
+   },
+   {
+    "severity": "major",
+    "issue": "Ingestion has a wrong-patient path that no increment covers. HL7 PID-3 is resolved against patients.id or patients.mrn across the whole appliance, case-insensitively. MS-R4 cites 'monitor PV1 bed mapping' as a risk it removes, but PV1 is used only for the encounter id. Once a satellite's monitors or LIS send their own MRN scheme (the planned patient_identifiers for legacy facility MRNs), an F2 identifier that equals an F1 group MRN files F2 vitals or labs onto an F1 patient.",
+    "evidence": "ingestion_service.py:101-125 (_resolve_patient_id: id, then mrn, then LOWER(mrn)). ingestion_adapters.py:320-326 (PV1 field 19 is the encounter_id only).",
+    "fix": "Bind each ingestion listener or source to a facility (site.toml [[facilities]]). Resolve identifiers within that facility (facility MRNs via patient_identifiers; group MRN only when the facility matches). Refuse ambiguous matches and audit them. Add a two-facility collision test."
+   },
+   {
+    "severity": "major",
+    "issue": "The invoice supplier identity is not snapshotted. Once multisite-2 makes the GSTIN, legal name and address editable, reprinting an invoice issued earlier shows the new identity. A GST invoice must not change after issue.",
+    "evidence": "billing_service.py:2079-2113 (invoice_print_view builds the supplier block at print time). The invoices DDL stores only place_of_supply and is_interstate (migrations.py:2040-2041).",
+    "fix": "In multisite-7's migration, add supplier snapshot columns (facility_id, legal_name, address, GSTIN, state_code), written at finalisation. identity_block applies only to new documents, and reprints read the snapshot."
+   },
+   {
+    "severity": "minor",
+    "issue": "MS-R10 recommends the identity card on single-site installs with the flag OFF, and W162 says the HFR half needs no ruling. But multisite-2 returns 404 for all of /api/facilities when the flag is OFF and tests for exactly that, so invoices keep printing 'Not configured'.",
+    "evidence": "Design MS-R10 and the multisite-2 tests. HISTORY_GAP_REGISTER W162 (:232).",
+    "fix": "Split the routes: let GET and PATCH on facility 1's identity work with the flag OFF, and gate only create, deactivate, grants and user moves on the flag."
+   },
+   {
+    "severity": "minor",
+    "issue": "Ordering hole: multisite-2 ships facility creation before the scope core (multisite-5) and before boot refusal (b) exist. Between those two increments, flag ON plus F2 is possible with no isolation at all.",
+    "evidence": "multisite-2 adds POST \"\". facility_scope and FACILITY_BLIND_SURFACES arrive in multisite-5. multisite-1 adds only refusal (a).",
+    "fix": "Refuse POST create until multisite-5's scope core is present, or move create to multisite-5 or multisite-6."
+   },
+   {
+    "severity": "minor",
+    "issue": "The document-series facts and lookups are incomplete. There are 10 seeded series, not 8. Several reads look up a series by series_code alone, and payments_routes.py is not in multisite-7's files. ensure_default_masters re-inserts series without a facility, which is only safe if facility_id is NOT NULL DEFAULT 1, and the design does not state nullability. The distinct-prefix rule must also hold on update and against prefixes used in the past, or the invoice_number unique index returns a 500 at finalisation.",
+    "evidence": "Seeds: migrations.py:1827-1838 (7), :4021 (KIND), :4100-4106 (INC, NABHPACK). Lookups: billing_masters.py:673, billing_service.py:2096, payments_service.py:289, payments_routes.py:261. Re-insert: billing_masters.py:735-750.",
+    "fix": "Declare facility_id INTEGER NOT NULL DEFAULT 1 in the rebuilt table. Thread facility_id through all four lookups. Validate prefixes on update against every facility and against issued numbers. Correct the test to 10 series."
+   },
+   {
+    "severity": "minor",
+    "issue": "Recreating idx_opd_token_unique is redundant. Tokens are allocated per (visit_date, department, doctor), and the index already includes department. Under MS-R4 the department implies the facility, so 'two facilities issue the same token' already holds. The rebuild only adds risk on a table created lazily.",
+    "evidence": "frontdesk_service.py:226-227 (index), :558-573 (_next_token keyed on date, department, doctor).",
+    "fix": "Drop the index rebuild from multisite-4. Add facility_id to queue indexes only if a per-facility queue query needs it."
+   },
+   {
+    "severity": "minor",
+    "issue": "Department-less scope is lifetime and asymmetric. Any F2 admission, OPD visit, appointment or registration ever gives F2 admin, pharmacist and cashier accounts permanent chart access, including to a patient who is currently an F1 inpatient (under MS-R2 (a)). Department-scoped staff, by contrast, follow the latest admission. This is wider than 'facility isolation' and is not put up for a ruling.",
+    "evidence": "Design SCOPE: 'Department None: any admission, OPD visit or appointment at the facility, or registration there'. Compare permissions.py:428-433, which uses the latest admission.",
+    "fix": "Put this to a ruling (active or recent encounter, or a recency window) and state it in the CIO questionnaire."
+   },
+   {
+    "severity": "minor",
+    "issue": "facility_scope relies on fields that _load_session_context joins in, but other code builds user dicts straight from SELECT * FROM users. With the flag ON those dicts look like 'no home row', and the socket handshake joins no rooms.",
+    "evidence": "realtime.py:158-196 (_authenticate does its own SELECT * FROM users at :196). auth_routes.py:424, 646, 1362. admin_users_routes.py:180.",
+    "fix": "Have facility_scope resolve from the DB with a per-request or short-TTL cache, or route every loader through one shared function. Add a socket test."
+   },
+   {
+    "severity": "minor",
+    "issue": "The departments master leaves ownership open ('only if adt-1 has not created it'), so code has to handle two possible shapes. Seeding uses UNIQUE COLLATE NOCASE with first-insert-wins, while PATIENT_DEPARTMENT_SQL matches exactly, and Scribe quick-admits before 3 October could store non-canonical department strings. Nothing stops a department being reassigned to another facility, which would orphan existing admissions under the belt-and-braces check.",
+    "evidence": "frontdesk_service.py:342-385 (the canonical spelling comes from users.department). admission_service.py:94-107. Memory note on admission department lanes (fixed 2026-10-03).",
+    "fix": "Settle ownership with adt now. Seed users.department spellings first and report variants through ops_health. Make departments.facility_id immutable once any admission references the department."
+   },
+   {
+    "severity": "minor",
+    "issue": "The critical path is coupled to external epics, and the core increment is undersized. multisite-5 (the scope core) depends on multisite-3 (adt-1 plus MS-R4) and multisite-4 (opd-1), so the '21-day Stage A' cannot start its core until two other epics land. Five days for scope core, session context, UserOut, the ratchet and a leak sweep over every route is tight.",
+    "evidence": "depends_on for multisite-3, multisite-4 and multisite-5.",
+    "fix": "Base multisite-5 on admissions.facility_id from multisite-1 only (department-scoped staff, plus department-less access through admissions), and add the OPD and appointment predicates when multisite-4 lands. Size multisite-5 at 7 to 8 days."
+   },
+   {
+    "severity": "minor",
+    "issue": "Safety flags and ruling cross-references are off. multisite-17 changes the effective department (PHI scope and paging) and multisite-6 widens PHI reach through grants, yet both are marked not safety-sensitive. MS-R9 (a), pharmacy per facility, conflicts with open F109's recommendation to keep pharmacy hospital-wide, and the design does not mention it. R025 (a) is already built, so the CORS risk text is stale.",
+    "evidence": "RULINGS_NEEDED_2026-10.md:43 (F109) and :46 (R025, 'approved (a) ... built').",
+    "fix": "Mark multisite-6 and multisite-17 as safety- or security-sensitive. Cite F109 next to MS-R9. Update the CORS risk."
+   },
+   {
+    "severity": "minor",
+    "issue": "Behaviour drift in the scope helpers. enforce_patient_scope writes no denial audit row (only require_patient_access does), so the multisite-5 test 'cross-facility reads return 404 with a scope_denied audit row' fails for the 55 enforce sites. Adding the audit changes the flag-OFF path, which contradicts 'flag OFF matches today exactly'.",
+    "evidence": "permissions.py:479-503 (enforce_patient_scope raises 404 without auditing). Compare :685-708.",
+    "fix": "Either scope the test to require_patient_access sites, or add the denial audit as an explicit, separately tested change for both flag states."
+   },
+   {
+    "severity": "minor",
+    "issue": "Smaller migration and code-reuse points. The json_extract expression index on audit_logs is an O(N) build over the largest table, inside the boot-time migration transaction on the encrypted DB. src/lib/platformFlags.ts would duplicate the existing /api/health fetch and cache. The GSTIN check misses the one mechanical enforcement of MS-R1: all facility GSTINs must share the PAN (characters 3 to 12).",
+    "evidence": "shellConfig.tsx:237-260 (moduleFlags cache of /api/health). The memory note on 200-bed capacity says audit drives storage.",
+    "fix": "Measure the index build on a backup copy at a realistic audit size, or build it in a maintenance step. Share one health fetch. Add PAN consistency to facility validation."
+   }
+  ],
+  "missed_existing_code": [
+   "server/routes/flight_recorder_routes.py and server/services/flight_recorder_service.py:139-381 (audit_logs reader under audit.read, not in multisite-11)",
+   "server/routes/admin_routes.py:366-440, server/routes/admin_users_routes.py:224-240, server/services/compliance_service.py:120, server/services/consent_service.py:572 (other audit_logs readers)",
+   "server/services/sage_service.py:1964-1987 _out_of_scope_locators (unfiltered complement roster of id, name, bed)",
+   "server/ws/realtime.py:158-196 _authenticate (separate user loader, not _load_session_context)",
+   "server/services/ingestion_service.py:101-125 _resolve_patient_id (appliance-wide MRN match; PV1 used only for encounter id at ingestion_adapters.py:325-326)",
+   "server/routes/pharmacy_routes.py:37-118 and server/services/pharmacy_verification_service.py (pharmacist verify queue, zero scope calls, missing from multisite-9)",
+   "User creation paths without a home row: server/routes/admin_users_routes.py:311, server/scripts/create_admin.py:242, server/scripts/seed_clinical_data.py:303 (after init_db at :12), server/scripts/seed_relay_chats.py:50",
+   "server/services/admission_service.py:244-249 (every admission mints a new patient and MRN; no readmit path)",
+   "server/services/billing_service.py:1916-1921 _site_name and :2079-2113 invoice_print_view (no supplier snapshot on invoices)",
+   "Document series lookups by code: server/services/billing_masters.py:673, :735-750 ensure_default_masters; server/services/billing_service.py:2096; server/services/payments_service.py:289; server/routes/payments_routes.py:261; seeds at server/migrations.py:1827-1838, 4021, 4100-4106 (10 series)",
+   "server/services/frontdesk_service.py:558-573 _next_token (tokens per date, department, doctor)",
+   "server/services/audit_service.py bound_audit_fields (oversized metadata replaced by a {_truncated} stub)",
+   "server/permissions.py:479-503 enforce_patient_scope (no denial audit row)",
+   "src/shellConfig.tsx:237-260 (existing /api/health moduleFlags cache)",
+   "docs/RULINGS_NEEDED_2026-10.md:43 F109 (pharmacy hospital-wide) and :46 R025 (a) built"
+  ]
+ },
+ "first_draft": {
+  "epic": "Multi-site support (facility dimension): coverage 2.10 Platform row \"Multi-site\", register W148 (with W162 HFR half, W029 deferral)",
+  "current_state": "Orb is single-facility by construction, verified in code on 2026-10-03.\n\n1. No facility or tenant concept. None of the 153 tables created in server code (CREATE TABLE IF NOT EXISTS across server/*.py, services, migrations) has a facility column. Hospital identity is site.toml [site].name and timezone (server/services/site_config_service.py:146-160, 233-234), translated once into process env vars (site_config_service.py:320-352). The hospital clock is one process-wide zone (server/services/hospital_time.py:33-39). Invoices print the supplier GSTIN and address as \"Not configured\" (server/services/billing_service.py:1916-1921, 2079-2113). There is no HFR, ABDM HIP or NABH identifier column anywhere (register W162). CIO_SECURITY_QUESTIONNAIRE.md 1.5 states there is no multi-tenancy.\n\n2. Access boundary is department only. users carries role and department (server/database.py:35-44). A patient's department is that of the latest admission (permissions.py:428-433, PATIENT_DEPARTMENT_SQL). department_scope (permissions.py:369-397) returns None for a blank department, which reads hospital-wide. DEPARTMENT_REQUIRED_ROLES (permissions.py:406) forces doctors and nurses to have one. Helpers: scope_patient_ids_sql :435, patient_in_scope :447, enforce_patient_scope :479, log_phi_read :506, require_patient_access :663. Call counts: department_scope( 79, enforce_patient_scope 55, require_patient_access 61, scope_patient_ids_sql 15, patient_in_scope 15, PATIENT_DEPARTMENT_SQL 23. Sage keeps a deliberate duplicate (sage_service _scope_sql 9 uses, _patient_in_scope 7), parity-tested in tests/test_patient_scope_routes.py. There are 237 FROM/JOIN patients|admissions query sites across about 60 files. The session loader is auth._load_session_context (server/auth.py:421-441, SELECT * FROM users), so the user dict is the users row. Live sockets join dept:{dept} or dept:__all__ (server/ws/realtime.py:281-286, 368-375).\n\n3. Masters. There is no departments table. The legal department list comes from active users.department (server/services/frontdesk_service.py:342-385), and admission canonicalises through it (server/services/admission_service.py:94-107). site.toml declares departments and wards. Wards and beds are free text, and ward capacity is a guess (server/services/forecast_service.py:72-131). Patients: one record per appliance, mrn TEXT UNIQUE (database.py:51), a random MRN when blank (admission_service.py:249). admissions has no index at all. Masters with global uniqueness: tariff_plans.code (migrations.py:1874-1888), document_number_series.series_code UNIQUE inline (migrations.py:2100-2113), stores.code (:2318), housekeeping_units unit_code (:3137), and the OPD token unique index (frontdesk_service.py:226). The default tariff plan is chosen by inline SQL in 4 places (server/services/billing_masters.py:298, 384, 453, 576).\n\n4. Schema owners outside migrations, which run after init_db on a fresh DB: frontdesk_service.ensure_frontdesk_schema (:240, opd_visits, patient_movements) and helix_db.init_helix_db (server/services/helix_db.py:89, helix_inventory_lots, helix_stock_movements).\n\n5. Migration framework. Ledger plus its own transaction (server/migrations.py:1-50, run_pending_migrations). Head is 47 (vitals_carried_from). An FK-parent rebuild must go through database._atomic_table_rebuild (database.py:1388), which commits early. _rebuild_users_role_check aborts on any users column it does not know (migrations.py:4773). Migrations 20 and 23 forbid FKs from administrative tables.\n\n6. Audit. One SHA-256 chain with a fixed _HASH_FIELDS tuple (server/services/audit_service.py:142-166) and fail-closed categories (audit_service.py:43-45). Append-only triggers (database.py:452-466). Audit reads are unscoped for any audit.read holder (server/routes/audit_routes.py:11-80). Chain verify is at database.py:2002. The category name \"facilities\" is already used by housekeeping (housekeeping_routes.py:261).\n\n7. Command Center. Counts are house-wide and the named list is department-filtered (server/services/command_center_service.py:76-97, 330; server/routes/command_center_routes.py:24-86).\n\n8. Flags. Admin modules use _module_enabled (server/config.py:642), default ON, published as /api/health modules (config.py:800-835, main.py:1199-1216). The explicit opt-in precedent is DISCHARGE_FINANCIAL_ENFORCE (config.py:867). Routes gate with require_module (abdm_routes.py:109-117).\n\n9. Backups, exports, UI. Backup is a whole-DB online backup (server/scripts/backup_db.py, server/routes/backup_routes.py:121-227). The FHIR export has no Organization resource (server/services/fhir_export_service.py:209-498). Downtime ward packs are keyed by ward string (server/services/downtime_service.py:836-920). Admin sections are in src/pages/panels/AdminPanel.tsx:22-90, the user chip roleLine is at src/pages/ClinicianShell.tsx:258, and the Command Center scope label is at src/components/command/CommandCenter.tsx:130-133, 252.\n\nWhat to extend rather than replace: the single-derivation scope pattern (department_scope, plus enforce_patient_scope and require_patient_access, which take the user and so can add facility centrally), site_config_service's fail-loud validation, require_module gating, billing_masters, the frontdesk covering-department resolver, and the scope attack and ratchet test style (test_caller_named_patient_scope.py, the test_patient_scope_routes.py two-department world).",
+  "design": "TENANCY (recommended, pending MS-R1): one appliance per legal entity (one DPDP data fiduciary), with one or more facilities. A row-level facility_id lives in the single SQLCipher DB. There is no tenant_id, so CIO questionnaire 1.5 stays true.\n- Group level: patients (one record, one MRN, one allergy list).\n- Facility level: encounters, money documents and physical resources.\n- Clinical child rows inherit facility through the patient's admission and get no column.\n\nLOAD-BEARING SIMPLIFICATION (pending MS-R4): department keys and ward/bed codes are unique across the whole appliance (case-insensitive), and each belongs to exactly one facility. Every PHI scope today compares admissions.department to users.department (permissions.py:428). Under that rule, every ward-scoped account is facility-isolated with no edit to the ~300 scope call sites. The real work is department-less accounts (admin, pharmacist, cashier) and house-wide aggregates.\n\nDATA MODEL. Migration numbers are claimed at merge (head is 47). There are 5 migrations.\n\nA) facilities_spine\n- facilities: id INTEGER PK, uuid TEXT NOT NULL UNIQUE, code TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(length 2-12), name TEXT CHECK(id=1 OR name IS NOT NULL), short_name, legal_name, address_line1, address_line2, city, district, state, state_code, pincode, phone, email, gstin, pan, hfr_id, abdm_hip_id, nabh_accreditation_no, nabh_valid_until, clinical_establishment_reg_no, timezone, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, created_by, updated_at, updated_by.\n- Seed id 1, code MAIN, name NULL. The display name falls back to site.toml [site].name, then \"This hospital\". Facility 1 can never be deactivated.\n- user_facilities: id, user_id NOT NULL, facility_id NOT NULL, is_home INTEGER NOT NULL DEFAULT 1, department TEXT CHECK(is_home=0 OR department IS NULL) (the home department stays on users.department, one source), granted_by, granted_at NOT NULL, reason, revoked_at, revoked_by, revoke_reason.\n- user_facilities indexes: partial UNIQUE(user_id) WHERE is_home=1 AND revoked_at IS NULL, and partial UNIQUE(user_id, facility_id) WHERE revoked_at IS NULL. Rows are never deleted: a move is a revoke plus an insert.\n- user_facilities backfill: one home row at facility 1 for every users row except SERVICE_ACCOUNT_IDS (frozen literal) and role patient.\n- enterprise_access_grants: user_id, granted_by, granted_at, reason NOT NULL, revoked_*, with partial UNIQUE(user_id) live. Empty at migration.\n- ALTER patients ADD registered_facility_id INTEGER NOT NULL DEFAULT 1.\n- ALTER admissions ADD facility_id INTEGER NOT NULL DEFAULT 1.\n- New indexes idx_admissions_patient_status(patient_id, status, created_at) and idx_admissions_facility_status(facility_id, status).\n- Rules: no REFERENCES (SQLite refuses ADD COLUMN ... REFERENCES with a non-NULL default under foreign_keys=ON, and migration 20 forbids FKs from admin tables). No users column (migrations.py:4773 would abort the next desk-role rebuild). No triggers on clinical tables. Validity is enforced in facility_service, plus an ops_health integrity check.\n- Every ALTER is O(1) in SQLite, so single-site data becomes facility 1 atomically inside the runner's transaction.\n\nB) departments_master, only if adt-1 has not created it: departments(id, facility_id NOT NULL DEFAULT 1, name TEXT NOT NULL UNIQUE COLLATE NOCASE as the scope key, display_name, is_active, created_at). Seeded from site.toml [[departments]] plus the distinct department values in users, admissions, opd_visits and department channels. adt-1's wards and beds carry facility_id from creation, and ward codes are UNIQUE COLLATE NOCASE appliance-wide.\n\nC) facility_columns_encounters\n- facility_id NOT NULL DEFAULT 1 on opd_visits, appointments, surgeries, roster_import_runs, history_import_runs.\n- Recreate idx_opd_token_unique with facility_id first.\n- The lazy creators run after migrations, so the migration ALTERs only if the table exists, and frontdesk DDL gains the column.\n\nD) facility_columns_admin\n- facility_id NOT NULL DEFAULT 1 on invoices, payments, refunds, claims, patient_deposits, cash_counter_sessions, encounter_charges, stores, indents, purchase_orders, goods_receipts, housekeeping_units, biomedical_assets, kitchen_indents, nabh_incidents, nabh_evidence_exports, abdm_care_contexts, enrolled_devices, helix_inventory_lots, helix_stock_movements. The helix tables follow the same ALTER-if-exists plus helix_db DDL rule.\n- Nullable facility_id (NULL means the whole group) on tariff_plans, hospital_forecasts, hospital_holidays.\n- Rebuild document_number_series (no FK children, so a plain in-transaction rebuild is safe) to UNIQUE(facility_id, series_code).\n- A facility 2+ series must use a prefix that no other facility uses. invoice, receipt, PO and GRN numbers then stay globally unique, and the existing unique indexes (migrations.py:2628-2691) are unchanged.\n\nE) audit_facility_index: CREATE INDEX ON audit_logs(json_extract(metadata_json,'$.facility_id'), timestamp).\n\nNO COLUMN, derived via the admission: vitals, risk_scores, medications, administrations, orders, documents, scribe_notes, discharge_summaries, lens, sage_*, care_bundles, escalations, allergies, problems, profiles, diet_orders, observations, messages, shadow_events. The vitals and risk INSERT paths (clinical_time, carried_from) are untouched.\n\nGROUP LEVEL: users, patients, service_items, inventory_items, vendors, payers, policies, helix_medication_master, terminology, interactions, consent and DPDP tables, retention_policies, model_registry, audit_logs (facility in metadata), event_log.\n\nFLAG: ORB_MULTI_SITE in server/config.py\n- Default OFF, parsed as an explicit opt-in like DISCHARGE_FINANCIAL_ENFORCE. It does not use _module_enabled, which defaults ON.\n- Read at request time through getattr(config, \"MULTI_SITE_ENABLED\").\n- /api/health gains platform:{multi_site} beside modules, because module ids are shell tab ids.\n- OFF means: facility_scope returns None, /api/facilities/* returns 404 (require_module), no facility key is added to audit metadata, no extra session join, no UI change, and no second facility can be created.\n- Migrations still run with inert columns defaulting to 1, so Ward Record, demos and reseed behave exactly as today.\n- main.py boot refusals:\n  (a) flag OFF with more than one active facility, because turning the flag off would silently drop isolation;\n  (b) flag ON with two or more active facilities, while any facility-bound department-less account exists and permissions.FACILITY_BLIND_SURFACES is non-empty.\n\nSCOPE\n- permissions.facility_scope(user) returns frozenset[int] or None:\n  - None when the flag is off, for service accounts, and for holders of a live enterprise grant.\n  - Otherwise {home facility}.\n  - frozenset() for staff with no home row: they see nothing, which fails closed (unlike the blank-department convention).\n- patient_in_scope, scope_patient_ids_sql and a new FACILITY_PATIENT_SQL take a keyword facilities=:\n  - Department-scoped: the latest admission's department equals the department AND its facility_id is in the set (belt and braces).\n  - Department None: any admission, OPD visit or appointment at the facility, or registration there.\n- enforce_patient_scope and require_patient_access compute facility_scope(user) themselves, so their 116 call sites need no change. log_phi_read adds metadata.facility_scope.\n- auth._load_session_context LEFT JOINs the home row and the live grant (flag ON only). UserOut gains facility {id, code, name}.\n- Sage's duplicate derivation changes in lockstep (parity test).\n- Socket rooms: dept:{key} is unchanged. dept:__all__ splits into fac:{id}:all and grp:all, and emit_patient_vitals targets the department room, the patient's facility room and grp:all.\n- admissions.facility_id is immutable. Transfers and admissions to another facility's department are refused (409, audited) until MS-R3.\n\nSERVICES\n- New server/services/facility_service.py:\n  - get, list, display_name, identity_block (invoices and prints), current_facility_of_patient, facility_of_admission, department_facility, home_facility, active_count.\n  - create, update and deactivate, with validation: GSTIN format and state_code equal to GSTIN[0:2], code charset, unique codes, timezone must equal the appliance zone in v1. Deactivate is refused for id 1 and while there are active admissions, open OPD visits or open counters.\n- Extended services:\n  - billing_masters.default_tariff_plan(facility_id) replaces the 4 inline queries, and series numbering takes facility_id.\n  - frontdesk list_covering_departments(facility_id) and _resolve_covering_department.\n  - admission_service.resolve_admission_department checks the facility.\n  - command_center_service.house_snapshot(facility_ids).\n  - nabh_service indicators and export take a facility.\n  - downtime_service mirrors per facility.\n  - FHIR export adds an Organization (HFR identifier) and Encounter.serviceProvider.\n  - audit_service resolves the facility into metadata.\n- site.toml gains an optional [[facilities]] array (code, downtime_mirror_dir). File paths stay in the operator file, never in a column the UI can edit.\n\nROUTES: server/routes/facility_routes.py, /api/facilities, behind require_module\n- GET \"\" and GET \"/{id}\" (facility.read; facility-bound users see their own).\n- PATCH \"/{id}\" (facility.manage, own facility).\n- POST \"\" and POST \"/{id}/deactivate\" (facility.manage plus an enterprise grant).\n- GET/POST \"/{id}/departments\" (unless ADT owns the master).\n- GET/PUT \"/{id}/document-series\".\n- Users: POST /api/admin/users/{id}/facility; GET/POST /api/admin/enterprise-grants and POST /{id}/revoke.\n- The Command Center, NABH and audit routes accept ?facility= only to narrow within the caller's scope, never to widen it.\n- The first grant is made through a new server/scripts/grant_enterprise_access.py (needs physical access, audited).\n\nPERMISSIONS: facility.read and facility.manage in permissions.py, granted to admin. roles.py is unchanged: no role string, so no users rebuild and no parity churn. Group reach is a per-user audited grant, and admin-only in v1 (MS-R6).\n\nUI\n- AdminPanel ADMIN_TABS gains \"facilities\" (shown only with the flag), mounting a new src/pages/panels/admin/FacilitiesPanel.tsx: list, identity, departments and wards (linking to the ADT masters), document series, default price list.\n- UsersPanel: a facility column, a home facility select, and a grant control.\n- The ClinicianShell roleLine appends the facility when the flag is on.\n- CommandCenter.tsx: a facility label for facility-bound users; per-facility tiles and a selector for enterprise users.\n- Audit views: facility column and filter.\n- BillingPanel: tariff \"Applies to\".\n- New src/api/facilities.ts (client.ts has other edits in progress) and src/lib/platformFlags.ts.\n- No new shell tab, and shellConfig.tsx is unchanged.\n\nAUDIT\n- The facility goes into metadata_json, which is already hashed. _HASH_FIELDS does not change, there is no chain contract bump, and the int-versus-TEXT hashing trap is avoided.\n- Resolver order: an explicit kwarg, then the patient's facility (cached), then the actor's home facility, then null with a reason. A resolver error never blocks a fail-closed write.\n- There is one chain per appliance.\n- Facility-bound readers see only their facility's rows. Rows with no facility are enterprise-only. Every reader still gets the verify counts.\n- Events:\n  - site_admin (fail-soft; not \"facilities\", which housekeeping already uses): facility_created, facility_updated (with a field diff), facility_deactivated, document_series_updated, tariff_plan_scope_changed.\n  - security (fail-closed): user_facility_assigned, user_facility_revoked, enterprise_access_granted, enterprise_access_revoked.\n  - authorization: facility_scope_denied, cross_facility_transfer_refused.\n\nACROSS FACILITIES\n- Backups: one DB, one key, one verified backup. A restore rolls back every facility (stated on Data and Backups and in the CIO questionnaire).\n- Exports: NABH evidence per facility; FHIR Organization per facility; nightly self-export and ward packs per facility folder and mirror; a facility extract CLI for exit.\n- Command Center: the facility view by default, the group view for enterprise users.\n\nOTHER EPICS\n- adt: wards, beds and departments get facility_id at creation, so land multisite-1 first. Codes are unique across the group. Per-facility capacity replaces the WARD_CAPACITY guess.\n- opd: facility on visits, per-facility tokens, registered_facility_id, and patient_identifiers(facility_id, id_type, value) for legacy facility MRNs under one group MRN.\n- medorder: facility derived from the admission. The dispensing facility is the admission facility.\n- grn: GRN into a facility store; lots carry facility; vendors stay group-wide.\n- lis: keep the ordering facility (derived) and stamp performing_facility_id, because a central lab serving satellites is the common pattern. The lab worklist scopes on the performing facility.\n- abdm: HIP and HFR per facility; care contexts stamped.\n\nSIZE, stated honestly\n- Full plan: 67.5 engineer-days.\n- Core multi-site without the pharmacy and ruling-gated items: about 55.5 days.\n- Stage A (multisite-1 to 6, ward-scoped staff isolated, department-less accounts group-wide only): about 21 days.\n- The coverage map's \"2 to 3 weeks\" matches only the schema half.",
+  "functions": [
+   {
+    "function": "Facility master and identity (name, legal name, address, GSTIN, state code)",
+    "status_now": "Absent. Single site name from site.toml (site_config_service.py:146-160); invoice supplier GSTIN/address print 'Not configured' (billing_service.py:2079-2113)",
+    "in_scope": true,
+    "notes": "facilities table, multisite-1/2"
+   },
+   {
+    "function": "Facility dimension on encounter, money and resource tables",
+    "status_now": "Absent. No facility column in any of 153 tables",
+    "in_scope": true,
+    "notes": "5 additive migrations, no FK, DEFAULT 1"
+   },
+   {
+    "function": "User-to-facility assignment",
+    "status_now": "Absent. users has department only (database.py:35-44)",
+    "in_scope": true,
+    "notes": "user_facilities table; no users column (rebuild helper aborts on unknown columns, migrations.py:4773)"
+   },
+   {
+    "function": "Facility scoping layered on department scoping",
+    "status_now": "Absent. Department scoping is real and centralised (permissions.py:369-736); blank department reads hospital-wide",
+    "in_scope": true,
+    "notes": "facility_scope(); 116 user-taking call sites inherit it; 79 department_scope sites swept"
+   },
+   {
+    "function": "Group-wide (enterprise) access and reporting",
+    "status_now": "Absent. Only cross-ward reach is a blank department",
+    "in_scope": true,
+    "notes": "enterprise_access_grants, admin only (MS-R6)"
+   },
+   {
+    "function": "Per-facility site name and timezone",
+    "status_now": "Partial, single site: site.toml translated to process env (site_config_service.py:320-352); one process zone (hospital_time.py:33-39)",
+    "in_scope": true,
+    "notes": "Name per facility; timezone must equal appliance zone in v1 (MS-R8)"
+   },
+   {
+    "function": "Per-facility departments and wards",
+    "status_now": "Partial, single site: departments/wards in site.toml; legal list derived from users.department (frontdesk_service.py:342-385); no master; ward capacity guessed (forecast_service.py:72-131)",
+    "in_scope": true,
+    "notes": "With adt-1; codes unique across group (MS-R4)"
+   },
+   {
+    "function": "Per-facility price lists",
+    "status_now": "Partial: tariff plans exist group-global (migrations.py:1874); default chosen inline 4 times (billing_masters.py:298,384,453,576)",
+    "in_scope": true,
+    "notes": "tariff_plans.facility_id nullable; one resolver"
+   },
+   {
+    "function": "Per-facility document numbering",
+    "status_now": "Partial: one series per code, series_code UNIQUE (migrations.py:2100-2113)",
+    "in_scope": true,
+    "notes": "rebuild to UNIQUE(facility_id, series_code), distinct prefixes"
+   },
+   {
+    "function": "HFR, ABDM HIP and NABH identifiers per facility",
+    "status_now": "Absent (register W162)",
+    "in_scope": true,
+    "notes": "columns on facilities; HPR on users is the ABDM epic's"
+   },
+   {
+    "function": "Migration of single-site data to facility 1",
+    "status_now": "Not started",
+    "in_scope": true,
+    "notes": "O(1) ADD COLUMN DEFAULT 1 plus home-row backfill"
+   },
+   {
+    "function": "Audit trail across facilities",
+    "status_now": "Full for one site (hash chain audit_service.py:142-166); no facility attribution; audit reads unscoped (audit_routes.py:11-80)",
+    "in_scope": true,
+    "notes": "facility in hashed metadata_json, filtered reads"
+   },
+   {
+    "function": "Backups across facilities",
+    "status_now": "Full, whole DB (scripts/backup_db.py, backup_routes.py:121-227)",
+    "in_scope": true,
+    "notes": "Stays whole-appliance; restore granularity stated (MS-R12)"
+   },
+   {
+    "function": "Exports across facilities (FHIR, NABH evidence, downtime packs, nightly self-export)",
+    "status_now": "Partial: no Organization in FHIR (fhir_export_service.py:209-498); ward packs by ward string (downtime_service.py:836-920)",
+    "in_scope": true,
+    "notes": "multisite-15"
+   },
+   {
+    "function": "Command Center across facilities",
+    "status_now": "Partial: house-wide single site (command_center_service.py:76-97,330)",
+    "in_scope": true,
+    "notes": "facility view and group view, multisite-12"
+   },
+   {
+    "function": "Live updates per facility (socket rooms)",
+    "status_now": "Partial: dept:{dept} and dept:__all__ rooms (ws/realtime.py:281-286,368-375)",
+    "in_scope": true,
+    "notes": "multisite-10, after CORS session"
+   },
+   {
+    "function": "Shared patient index across facilities",
+    "status_now": "Partial by accident: mrn UNIQUE per appliance (database.py:51), random MRN when blank (admission_service.py:249); no matching",
+    "in_scope": true,
+    "notes": "Group MRN plus facility identifiers; matching/merge belongs to the OPD/MPI epic (MS-R11)"
+   },
+   {
+    "function": "Pharmacy stock and verification per facility",
+    "status_now": "Absent: helix lots have no location (helix_db.py:18-26); pharmacist reads hospital-wide",
+    "in_scope": true,
+    "notes": "multisite-14 with grn and medorder epics (MS-R9)"
+   },
+   {
+    "function": "Inter-facility transfer",
+    "status_now": "Absent",
+    "in_scope": true,
+    "notes": "Ruling-gated: R009 (held) and MS-R3; refused until then"
+   },
+   {
+    "function": "Visiting consultants across facilities (session facility switch)",
+    "status_now": "Absent; no multi-department access either",
+    "in_scope": true,
+    "notes": "multisite-17, gated on MS-R7"
+   },
+   {
+    "function": "Multi-tenancy (different legal entities on one appliance)",
+    "status_now": "Absent by design (CIO_SECURITY_QUESTIONNAIRE.md 1.5)",
+    "in_scope": false,
+    "notes": "Recommend never (MS-R1)"
+   },
+   {
+    "function": "Cross-appliance federation, Postgres, multi-process event transport (W029)",
+    "status_now": "Deferred",
+    "in_scope": false,
+    "notes": "facilities.uuid keeps the door open"
+   },
+   {
+    "function": "Per-facility escalation ladder and monitor gateways",
+    "status_now": "Process-global env (site_config_service.py:320-352; ORB_MONITOR_*)",
+    "in_scope": false,
+    "notes": "One ladder for v1 only if clinical leads sign (MS-R8)"
+   }
+  ],
+  "increments": [
+   {
+    "id": "multisite-1",
+    "title": "Facility spine, flag and boot guards (no behaviour change)",
+    "description": "Add ORB_MULTI_SITE (default OFF, explicit opt-in parse) and MULTI_SITE_ENABLED to config. Migration facilities_spine: facilities (seed id 1 MAIN), user_facilities with home-row backfill, enterprise_access_grants, patients.registered_facility_id, admissions.facility_id, and the two admissions indexes. New facility_service read helpers, including display_name with the site.toml fallback for facility 1. /api/health gains platform.multi_site. main.py refuses to boot with the flag OFF and more than one active facility. Adds an ops_health integrity check for unknown facility ids. Land this before adt-1 so new ADT tables carry facility_id from creation.",
+    "files_touched": [
+     "server/config.py",
+     "server/migrations.py",
+     "server/main.py",
+     "server/services/ops_health_service.py"
+    ],
+    "files_new": [
+     "server/services/facility_service.py",
+     "server/tests/test_multisite_spine.py"
+    ],
+    "migrations": 1,
+    "size_days": 3,
+    "depends_on": [],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "tests": "A fresh DB and a backup_db.py copy of the dev DB both migrate. Facility 1 exists. Every admission and patient reads facility 1. Each staff user has one home row; service accounts and patients have none. PRAGMA table_info(users) is unchanged. run_pending is idempotent. Flag OFF: /api/health modules are identical. Boot refuses with the flag OFF and two active facilities. Run the full suite with the test env, never the shipping .env."
+   },
+   {
+    "id": "multisite-2",
+    "title": "Facility identity and the Facilities admin screen",
+    "description": "facility_routes (list, get, patch identity, create and deactivate, behind require_module). Adds facility.read and facility.manage permissions. Validation: GSTIN format, state code equal to GSTIN[0:2], code charset, timezone equal to the appliance zone, and facility 1 can never be deactivated. Invoice supplier block, discharge print and med-list site name all come from facility_service.identity_block. Admin tab 'facilities', shown only with the flag. Audit category site_admin with a field diff.",
+    "files_touched": [
+     "server/permissions.py",
+     "server/main.py",
+     "server/services/billing_service.py",
+     "server/routes/vigil_routes.py",
+     "server/services/discharge_access_service.py",
+     "src/pages/panels/AdminPanel.tsx"
+    ],
+    "files_new": [
+     "server/routes/facility_routes.py",
+     "server/tests/test_facility_routes.py",
+     "src/api/facilities.ts",
+     "src/lib/platformFlags.ts",
+     "src/pages/panels/admin/FacilitiesPanel.tsx",
+     "src/pages/panels/admin/FacilitiesPanel.test.tsx"
+    ],
+    "migrations": 0,
+    "size_days": 4,
+    "depends_on": [
+     "multisite-1"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "tests": "404 when the flag is OFF. A non-enterprise admin cannot create a facility. Bad GSTIN and state code mismatch are refused. Facility 1 deactivate is refused. A site_admin audit row carries the diff. An invoice prints the configured GSTIN, or 'Not configured' when blank. The Admin tab is hidden when the flag is OFF. check-contrast passes. No em dashes in screen text."
+   },
+   {
+    "id": "multisite-3",
+    "title": "Department and ward masters carry the facility (with adt-1)",
+    "description": "Departments master, which multisite creates only if adt-1 has not; adt-1 wards and beds carry facility_id. Department keys and ward codes are unique case-insensitively across the appliance. list_covering_departments, _resolve_covering_department and resolve_admission_department become facility-aware. User department must belong to the user's home facility. site_config_service seeds facility-1 departments and accepts the optional [[facilities]] array (code, downtime_mirror_dir). Transfers or admissions into another facility's department are refused with 409 and audited.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/frontdesk_service.py",
+     "server/services/admission_service.py",
+     "server/routes/admin_users_routes.py",
+     "server/services/site_config_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_facility_departments.py"
+    ],
+    "migrations": 1,
+    "size_days": 3,
+    "depends_on": [
+     "multisite-1",
+     "adt-1"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "MS-R4 (new: department/ward/bed codes unique across the group)",
+    "tests": "A duplicate department or ward code in another facility is refused in any case and with padding. Admitting to an F2 department stamps facility 2. A cross-facility transfer returns 409 with an authorization audit row. Existing test_admission_form_choices and test_frontdesk suites stay green. A site.toml with an unknown key under [[facilities]] fails with the file and line."
+   },
+   {
+    "id": "multisite-4",
+    "title": "Stamp facility on encounters (OPD, appointments, OT, imports)",
+    "description": "Migration facility_columns_encounters: facility_id on opd_visits, appointments, surgeries, roster_import_runs and history_import_runs; idx_opd_token_unique recreated with facility_id; frontdesk DDL gains the column for fresh installs. Writers stamp the facility: admit_patient (from the department master), register_opd_visit and registration (registered_facility_id), appointments, surgery create, roster import and history import (the run's facility). Coordinate with opd-1 if it reshapes opd_visits.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/admission_service.py",
+     "server/services/frontdesk_service.py",
+     "server/routes/appointments_routes.py",
+     "server/services/surgery_service.py",
+     "server/services/roster_import.py",
+     "server/services/history_import_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_facility_encounter_stamping.py"
+    ],
+    "migrations": 1,
+    "size_days": 3,
+    "depends_on": [
+     "multisite-3",
+     "opd-1"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "After a full boot, the columns exist on both a fresh DB and a legacy DB (this catches the lazy-creator trap). Two facilities can issue the same token number on the same day. The same doctor's duplicate token within one facility is still refused. A roster import at F2 creates F2 admissions. admit_patient behaviour is unchanged with the flag OFF."
+   },
+   {
+    "id": "multisite-5",
+    "title": "Facility scope core, session context and the cross-facility leak sweep",
+    "description": "Adds permissions.facility_scope, FACILITY_PATIENT_SQL and the facilities= keyword on scope_patient_ids_sql and patient_in_scope. enforce_patient_scope and require_patient_access apply facility scope themselves. log_phi_read adds metadata. _load_session_context joins the home row and the grant only when the flag is ON. UserOut carries the facility. Stage A rule: creating a facility-bound department-less account is refused while FACILITY_BLIND_SURFACES is non-empty, with a boot refusal to match. Adds an AST ratchet (every function calling department_scope must call facility_scope or be listed) and a sweep test that calls every GET route as F2 users and asserts no planted F1 identifier appears.",
+    "files_touched": [
+     "server/permissions.py",
+     "server/auth.py",
+     "server/models/user.py",
+     "server/routes/auth_routes.py",
+     "server/routes/admin_users_routes.py",
+     "server/main.py"
+    ],
+    "files_new": [
+     "server/tests/test_facility_scope.py",
+     "server/tests/test_cross_facility_leak_sweep.py",
+     "server/tests/test_facility_scope_ratchet.py"
+    ],
+    "migrations": 0,
+    "size_days": 5,
+    "depends_on": [
+     "multisite-3",
+     "multisite-4"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "Two-facility world: F1 GM nurse, F2 GM nurse, F2 admin, enterprise admin. Cross-facility chart reads return 404 with a scope_denied audit row. A staff account with no home row sees nothing. The flag OFF path matches today exactly (the existing test_patient_scope_routes suite is green). The ratchet lists the current blind surfaces. The leak sweep is xfail per listed surface and strict for the rest."
+   },
+   {
+    "id": "multisite-6",
+    "title": "Users, shell chip and enterprise grants",
+    "description": "UsersPanel gets a facility column and a home-facility select; the department list is filtered by facility. Enterprise grant management is available only to grant holders and audited as security (fail-closed). Bootstrap CLI grant_enterprise_access.py. The ClinicianShell roleLine shows the facility when the flag is ON. App.tsx User type gains facility.",
+    "files_touched": [
+     "server/routes/admin_users_routes.py",
+     "src/pages/panels/admin/UsersPanel.tsx",
+     "src/pages/ClinicianShell.tsx",
+     "src/App.tsx"
+    ],
+    "files_new": [
+     "server/scripts/grant_enterprise_access.py",
+     "server/tests/test_enterprise_grants.py",
+     "src/pages/panels/admin/UsersPanel.facility.test.tsx"
+    ],
+    "migrations": 0,
+    "size_days": 3,
+    "depends_on": [
+     "multisite-5"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "tests": "Only an admin can hold a grant. A non-holder cannot grant. Grant and revoke write fail-closed security rows. A move is a revoke plus an insert, so history is kept. The chip is unchanged with the flag OFF. Service accounts are refused."
+   },
+   {
+    "id": "multisite-7",
+    "title": "Money, stores and assets carry the facility",
+    "description": "Migration facility_columns_admin (list in the design) plus the document_number_series rebuild to UNIQUE(facility_id, series_code), with distinct prefixes enforced. Writers stamp the facility: invoice from the admission or the counter, payments and deposits from the counter, claims, procurement from the store, housekeeping units, biomedical assets, NABH incidents from the reporter or the patient, ABDM care contexts from the admission, and kitchen indents. helix_db DDL gains facility_id.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/helix_db.py",
+     "server/services/billing_service.py",
+     "server/services/billing_masters.py",
+     "server/services/payments_service.py",
+     "server/services/payer_service.py",
+     "server/services/procurement_service.py",
+     "server/services/housekeeping_service.py",
+     "server/services/biomedical_service.py",
+     "server/services/nabh_service.py",
+     "server/services/abdm_service.py",
+     "server/services/dietary_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_facility_admin_stamping.py"
+    ],
+    "migrations": 1,
+    "size_days": 4,
+    "depends_on": [
+     "multisite-1"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "tests": "The series rebuild keeps all 8 seeded series at facility 1 and is idempotent. An F2 invoice number comes from the F2 series and an F2 prefix that clashes with F1 is refused. The existing invoice and receipt unique indexes still hold. Columns are present after a full boot on fresh and legacy DBs. The test_payments and test_billing suites stay green."
+   },
+   {
+    "id": "multisite-8",
+    "title": "Scope sweep: clinical lanes",
+    "description": "Pass facility_scope at every department_scope site in the clinical lanes and remove each from FACILITY_BLIND_SURFACES. Covers: the board, the discharged list, discharge board, search, timeline, orders, eMAR, bundles, Lens, FHIR export, forecast and appointments, escalation, sepsis, surgery scope, consent, the ward brief and vigil_service board_order, the shadow routes, the media route in main.py, Scribe and Relay case lists. Start scribe_routes and relay_routes only after the running sessions land.",
+    "files_touched": [
+     "server/routes/vigil_routes.py",
+     "server/routes/nurse_routes.py",
+     "server/routes/orders_routes.py",
+     "server/routes/emar_routes.py",
+     "server/routes/bundle_routes.py",
+     "server/routes/lens_routes.py",
+     "server/routes/search_routes.py",
+     "server/routes/patient_timeline_routes.py",
+     "server/routes/appointments_routes.py",
+     "server/routes/fhir_export_routes.py",
+     "server/routes/forecast_routes.py",
+     "server/services/forecast_service.py",
+     "server/services/escalation_service.py",
+     "server/services/sepsis_bundle_service.py",
+     "server/services/surgery_scope.py",
+     "server/services/consent_service.py",
+     "server/services/vigil_service.py",
+     "server/services/sage_narrator_service.py",
+     "server/routes/shadow_routes.py",
+     "server/routes/scribe_routes.py",
+     "server/routes/relay_routes.py",
+     "server/main.py"
+    ],
+    "files_new": [],
+    "migrations": 0,
+    "size_days": 5,
+    "depends_on": [
+     "multisite-5"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "For each lane, the leak-sweep xfail becomes strict pass. An F2 department-less clinician-adjacent account sees no F1 patients. Escalation targets stay inside the patient's department. The existing scope suites (test_nurse_write_scope, test_caller_named_patient_scope, test_ward_brief_*) stay green."
+   },
+   {
+    "id": "multisite-9",
+    "title": "Scope sweep: administrative lanes and the pharmacist queue",
+    "description": "The pharmacist verify and dispense queues, payments, billing, payer, front desk, dietary, compliance, NABH, ABDM, procurement, workforce, housekeeping, biomedical, admin routes, and the Command Center named list all become facility-scoped.",
+    "files_touched": [
+     "server/routes/helix_routes.py",
+     "server/routes/payments_routes.py",
+     "server/services/payments_service.py",
+     "server/routes/billing_routes.py",
+     "server/routes/payer_routes.py",
+     "server/routes/frontdesk_routes.py",
+     "server/services/frontdesk_service.py",
+     "server/routes/dietary_routes.py",
+     "server/services/dietary_service.py",
+     "server/routes/compliance_routes.py",
+     "server/routes/nabh_routes.py",
+     "server/routes/abdm_routes.py",
+     "server/services/abdm_service.py",
+     "server/routes/procurement_routes.py",
+     "server/routes/workforce_routes.py",
+     "server/routes/housekeeping_routes.py",
+     "server/routes/biomedical_routes.py",
+     "server/routes/admin_routes.py",
+     "server/routes/command_center_routes.py"
+    ],
+    "files_new": [],
+    "migrations": 0,
+    "size_days": 5,
+    "depends_on": [
+     "multisite-5",
+     "multisite-7"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "An F2 pharmacist never sees an F1 order in the verify queue and is refused (404, audited) when verifying one by id. An F2 cashier cannot take payment against an F1 invoice. The F2 front desk lists only F2 visits. The ratchet list shrinks accordingly."
+   },
+   {
+    "id": "multisite-10",
+    "title": "Scope sweep: Sage lane and live socket rooms",
+    "description": "Change sage_service _scope_sql and _patient_in_scope in lockstep with permissions (extend the parity test). Covers sage_routes, sage_relay_context, provenance, the voice agent and the proactive world model. Leave the bed matcher untouched (R026 is held). realtime.py: rooms fac:{id}:all and grp:all, emit to the patient's facility room, and the department cache becomes a (facility, department) cache. Schedule after the Sage bed-lookup and CORS socket sessions land.",
+    "files_touched": [
+     "server/services/sage_service.py",
+     "server/routes/sage_routes.py",
+     "server/services/sage_relay_context.py",
+     "server/services/sage_provenance_service.py",
+     "server/services/voice_agent_service.py",
+     "server/services/sage_proactive_service.py",
+     "server/services/nervous_system_triggers.py",
+     "server/ws/realtime.py"
+    ],
+    "files_new": [
+     "server/tests/test_facility_socket_rooms.py"
+    ],
+    "migrations": 0,
+    "size_days": 4,
+    "depends_on": [
+     "multisite-5"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "Sage named retrieval for an F1 patient by an F2 user attaches no chart. The parity test agrees on the two-facility fixtures. An F2 department-less socket never receives an F1 vitals:update. An enterprise socket receives both. test_sage_department_scope stays green."
+   },
+   {
+    "id": "multisite-11",
+    "title": "Audit facility attribution and facility-filtered audit views",
+    "description": "log_audit_event gains a facility_id kwarg and a resolver (explicit, then patient cached, then actor home, then null with a reason) that merges facility_id into metadata before hashing, only when the flag is ON. Migration audit_facility_index. audit_routes /logs and /facets filter by scope: facility-bound readers see their facility only, and rows with no facility are enterprise-only. Chain verify counts are visible to all readers. Frontend gains a facility column and filter.",
+    "files_touched": [
+     "server/services/audit_service.py",
+     "server/routes/audit_routes.py",
+     "server/migrations.py",
+     "src/pages/panels/admin/AuditLogTable.tsx",
+     "src/pages/panels/admin/SecurityActivity.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_audit_facility.py"
+    ],
+    "migrations": 1,
+    "size_days": 3,
+    "depends_on": [
+     "multisite-5"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "tests": "The chain verifies across mixed pre- and post-flag rows. A resolver exception still writes the fail-closed row with facility_unresolved. An F2 admin cannot read F1 audit rows. With the flag OFF, metadata is byte-identical. test_audit_trail_attack and test_audit_fail_closed_categories stay green."
+   },
+   {
+    "id": "multisite-12",
+    "title": "Command Center, capacity and NABH indicators per facility",
+    "description": "house_snapshot(facility_ids) filters admitted patients by admission facility. Capacity per facility comes from the adt-1 bed master. The route defaults to the caller's facility; enterprise users get group tiles and ?facility= narrowing. NABH indicators and the evidence export take a facility and are stamped. CommandCenter.tsx gets a selector and NabhPanel a filter.",
+    "files_touched": [
+     "server/services/command_center_service.py",
+     "server/routes/command_center_routes.py",
+     "server/services/forecast_service.py",
+     "server/services/nabh_service.py",
+     "server/routes/nabh_routes.py",
+     "src/components/command/CommandCenter.tsx",
+     "src/pages/panels/NabhPanel.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_command_center_facility.py"
+    ],
+    "migrations": 0,
+    "size_days": 4,
+    "depends_on": [
+     "multisite-5",
+     "multisite-7",
+     "adt-1"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "tests": "F2 census and capacity exclude F1. The enterprise group view sums correctly. ?facility= outside scope gets a 404, never a widened answer. NABH indicators for F2 count only F2 encounters. The existing CommandCenter.test.tsx and test_command_center_scope_label tests stay green."
+   },
+   {
+    "id": "multisite-13",
+    "title": "Price lists and document numbering per facility",
+    "description": "billing_masters.default_tariff_plan(facility_id) replaces the 4 inline queries: a facility-specific plan first, then group-wide (NULL), then is_default. is_default becomes unique per facility. The interstate flag is derived from the facility state code against the place of supply. Series and default price list editors go in FacilitiesPanel, and BillingPanel shows 'Applies to'.",
+    "files_touched": [
+     "server/services/billing_masters.py",
+     "server/services/billing_service.py",
+     "server/routes/billing_routes.py",
+     "src/pages/panels/BillingPanel.tsx",
+     "src/pages/panels/admin/FacilitiesPanel.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_facility_tariffs.py"
+    ],
+    "migrations": 0,
+    "size_days": 3.5,
+    "depends_on": [
+     "multisite-7",
+     "multisite-2"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "tests": "An F2 patient is priced on the F2 plan when one exists and the group plan otherwise. Setting the F2 default does not clear the F1 default. Facility state 29 with a place of supply in 27 gives IGST. The single-site pricing tests are unchanged."
+   },
+   {
+    "id": "multisite-14",
+    "title": "Pharmacy stock and dispensing per facility",
+    "description": "Dispensing picks lots only from the admission facility's stock (the in-date, earliest-expiry rule is kept). GRN goes into a facility store. Stock reports and the formulary on-hand figure are per facility. HelixPanel gets a facility label. Coordinate with the grn and medorder epics. Schedule after the Relay confirm session (R024) lands, and do not move the create_order transaction boundary. Pharmacy per facility depends on MS-R9.",
+    "files_touched": [
+     "server/services/helix_service.py",
+     "server/routes/helix_routes.py",
+     "server/services/pharmacy_verification_service.py",
+     "server/routes/pharmacy_routes.py",
+     "src/pages/panels/HelixPanel.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_facility_pharmacy_stock.py"
+    ],
+    "migrations": 0,
+    "size_days": 4,
+    "depends_on": [
+     "multisite-9",
+     "grn-1",
+     "medorder-1"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "An F2 dispense never draws an F1 lot. With no F2 stock the result is a refusal, not a silent cross-facility draw. The test_helix_stock_rules expiry tests stay green. The F1 single-site dispense is unchanged."
+   },
+   {
+    "id": "multisite-15",
+    "title": "Downtime packs, exports and backup statements per facility",
+    "description": "Ward packs and the nightly FHIR self-export are written per facility folder, with mirrors from site.toml [[facilities]].downtime_mirror_dir so a satellite holds its own copy. The FHIR bundle gains an Organization (HFR identifier) and Encounter.serviceProvider. A facility extract CLI supports exit and migration. The Data and Backups screen states that a restore rolls back every facility. Update CIO questionnaire 1.5.",
+    "files_touched": [
+     "server/services/downtime_service.py",
+     "server/services/fhir_export_service.py",
+     "server/services/site_config_service.py",
+     "server/routes/backup_routes.py",
+     "src/pages/panels/admin/DataPanel.tsx",
+     "docs/CIO_SECURITY_QUESTIONNAIRE.md"
+    ],
+    "files_new": [
+     "server/scripts/facility_extract.py",
+     "server/tests/test_facility_exports.py"
+    ],
+    "migrations": 0,
+    "size_days": 3.5,
+    "depends_on": [
+     "multisite-4",
+     "multisite-5"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "tests": "An F2 ward pack contains only F2 patients and lands in the F2 mirror. The F1 mirror is unchanged. The FHIR bundle carries the Organization with HFR when set. The extract includes F2 encounters plus the group-level allergies of those patients. The downtime suite is green with the flag OFF."
+   },
+   {
+    "id": "multisite-16",
+    "title": "Two-facility go-live drill and runbook",
+    "description": "A seed script for a second facility, with honest wording and no demo labels in the app. Browser verification on the isolated verify stack as F1 nurse, F2 nurse, F2 admin, F2 pharmacist and enterprise admin. A 2-facility soak. A docs/MULTI_SITE.md runbook covering the flag, the grant bootstrap, CORS origins for every facility address, and satellite downtime mirrors.",
+    "files_touched": [],
+    "files_new": [
+     "server/scripts/seed_second_facility.py",
+     "server/tests/test_two_facility_e2e.py",
+     "docs/MULTI_SITE.md"
+    ],
+    "migrations": 0,
+    "size_days": 2.5,
+    "depends_on": [
+     "multisite-6",
+     "multisite-8",
+     "multisite-9",
+     "multisite-10",
+     "multisite-11",
+     "multisite-12",
+     "multisite-13",
+     "multisite-15"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "tests": "The FACILITY_BLIND_SURFACES ratchet is empty. The leak sweep is strict everywhere. The boot accepts the flag ON with 2 facilities. A screenshot pass per role finds no cross-facility names."
+   },
+   {
+    "id": "multisite-17",
+    "title": "Visiting consultants: one account, session facility switch",
+    "description": "Activates non-home user_facilities rows with their own department. A JWT claim 'fac' holds the active facility, validated on every request in _load_session_context. POST /api/auth/facility switches it (security audit). The effective department is overlaid from the access row so department_scope is unchanged. Escalation pages home staff plus the named attending. Gated on MS-R7.",
+    "files_touched": [
+     "server/auth.py",
+     "server/routes/auth_routes.py",
+     "server/permissions.py",
+     "src/pages/ClinicianShell.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_facility_switch.py"
+    ],
+    "migrations": 0,
+    "size_days": 4,
+    "depends_on": [
+     "multisite-6",
+     "multisite-10"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "tests": "A switch is refused without a live access row. A revoked row severs the session on the next request. The socket rooms follow the active facility. The audit trail names the facility on every PHI read."
+   },
+   {
+    "id": "multisite-18",
+    "title": "Inter-facility transfer workflow",
+    "description": "Discharge at F1 and admit at F2 as one audited move, with mandatory medication reconciliation at the receiving facility and no silent carry-over of active orders. Open escalation chains and Sepsis bundles are listed for close-with-reason. Depends on the held discharge ruling R009 and on new ruling MS-R3. Shares ADT and medorder code.",
+    "files_touched": [
+     "server/services/admission_service.py",
+     "server/services/frontdesk_service.py",
+     "server/services/discharge_service.py",
+     "server/services/escalation_service.py",
+     "server/services/sepsis_bundle_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_inter_facility_transfer.py"
+    ],
+    "migrations": 0,
+    "size_days": 4,
+    "depends_on": [
+     "multisite-8",
+     "medorder-1",
+     "adt-1"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "R009 (held); MS-R3 (new)",
+    "tests": "No active F1 order appears active at F2 without reconciliation. Open chains are listed, never closed silently. Allergies are visible at F2 immediately. Both admissions are linked in patient_movements."
+   }
+  ],
+  "product_rulings": [
+   {
+    "question": "MS-R1. Tenancy model: one appliance per legal entity with row-level facility_id, or one appliance (or process) per facility with a federated patient index? May facilities of different legal entities ever share an appliance?",
+    "options": "(a) Row-level facility_id in one DB, one legal entity per appliance, no tenant_id. (b) One appliance or process per facility plus a federated MPI and consolidated reporting. (c) Row-level with a tenant_id for franchise chains.",
+    "recommendation": "(a). One patient record means one allergy list across the group (federation turns that into a sync problem), and consultants get one login. It keeps CIO questionnaire 1.5 true and stays within one DPDP data fiduciary. facilities.uuid keeps federation possible later.",
+    "safety": false
+   },
+   {
+    "question": "MS-R2. Once a patient is in your scope, do you see their records from encounters at other facilities in the group?",
+    "options": "(a) Whole chart, including other facilities' encounters. (b) Only this facility's encounters, with allergies, active medications and problems always group-wide. (c) Only this facility's encounters.",
+    "recommendation": "(a). Never filter allergies, active medications or the problem list by facility. Hiding them is how a known anaphylaxis is missed at the second site.",
+    "safety": true
+   },
+   {
+    "question": "MS-R3. When a patient moves between facilities, what happens to active medication orders, escalation chains, Sepsis bundles and diet orders?",
+    "options": "(a) Discharge plus new admission at the receiving facility, mandatory medication reconciliation, nothing carried silently, open chains listed for close-with-reason. (b) Carry the admission and all orders across. (c) Refuse inter-facility moves in v1.",
+    "recommendation": "(c) until ruled, then (a), consistent with the R009 recommendation on open chains. Until then the transfer route refuses a destination department in another facility.",
+    "safety": true
+   },
+   {
+    "question": "MS-R4. Must department names and ward and bed codes be unique across the whole group (for example prefixed per site), or may two facilities both have 'ICU' and 'General Medicine'?",
+    "options": "(a) Unique across the group, each owned by one facility. (b) Duplicate names allowed, every comparison facility-qualified.",
+    "recommendation": "(a). It isolates every ward-scoped account with no change to the ~300 scope call sites. It also removes wrong-patient risk in bed-based lookups (Sage bed locator, monitor PV1 bed mapping, Relay bed mentions). (b) roughly doubles the estimate.",
+    "safety": true
+   },
+   {
+    "question": "MS-R5. May two facilities go live before the department-less scope sweep finishes (stage A), with every department-less account (admin, pharmacist, cashier) group-wide by explicit grant?",
+    "options": "(a) Allow stage A for live use. (b) Stage A only for a dry run, and go live after the sweep (multisite-8 to 10). (c) No stage A.",
+    "recommendation": "(b). A group-wide pharmacist or cashier at a satellite is a least-privilege breach a CIO will find.",
+    "safety": false
+   },
+   {
+    "question": "MS-R6. Who may hold group-wide (enterprise) access?",
+    "options": "(a) Admin role only, by named audited grant. (b) Also a clinical role (for example a group CMO). (c) Any role.",
+    "recommendation": "(a). This matches the F109 recommendation of no hospital-wide clinical accounts.",
+    "safety": false
+   },
+   {
+    "question": "MS-R7. Visiting consultants who work at two facilities: one account with a per-session facility switch, or a separate account per facility?",
+    "options": "(a) One account, one active facility per session, switch audited. (b) Separate accounts. (c) One account that sees both facilities at once.",
+    "recommendation": "(a), built after stage B (multisite-17). (b) for the first go-live.",
+    "safety": false
+   },
+   {
+    "question": "MS-R8. In v1, must all facilities on one appliance share one timezone and one escalation ladder?",
+    "options": "(a) One zone and one ladder, signed by each facility's clinical lead. (b) Per-facility ladders (escalation_service reads per-facility tiers, about 3 extra days). (c) Per-facility zones too.",
+    "recommendation": "One zone (all Indian sites are IST). Per-facility ladders unless each facility's clinical lead signs the shared one. A ladder that pages a role a satellite does not staff at night stalls.",
+    "safety": true
+   },
+   {
+    "question": "MS-R9. Is pharmacy stock and the verify queue per facility, or one central pharmacy for the group?",
+    "options": "(a) Per facility. (b) Central pharmacy dispensing to all facilities. (c) Both, configurable.",
+    "recommendation": "(a). Drug licences are per premises, and stock must be where the patient is.",
+    "safety": false
+   },
+   {
+    "question": "MS-R10. Should the hospital identity card (legal name, address, GSTIN, HFR ID) be available on single-site installs with ORB_MULTI_SITE off?",
+    "options": "(a) Yes, on for everyone. (b) Only with the flag.",
+    "recommendation": "(a). Invoices print 'Not configured' today, and W162 says the HFR half needs no ruling.",
+    "safety": false
+   },
+   {
+    "question": "MS-R11. Patient identity across facilities: one group MRN per person, or per-facility MRNs linked to one person?",
+    "options": "(a) One group MRN, with legacy facility MRNs kept as identifiers. (b) Per-facility MRNs with an MPI link.",
+    "recommendation": "(a). Duplicate records across sites split the allergy list. Matching and merge belong to the OPD/MPI epic.",
+    "safety": true
+   },
+   {
+    "question": "MS-R12. Do we accept that restoring a backup rolls back every facility on the appliance?",
+    "options": "(a) Accept and state it. (b) Build per-facility restore (not feasible in one DB).",
+    "recommendation": "(a). State it in the CIO questionnaire and on Data and Backups.",
+    "safety": false
+   }
+  ],
+  "risks": [
+   "Blast radius: 237 patient/admission query sites in about 60 files and 79 department_scope callers. A missed site in the sweep is a cross-facility PHI disclosure. The leak-sweep test, the AST ratchet and the boot refusal reduce this, but the sweep only catches identifiers it plants.",
+   "The coverage map's '2 to 3 weeks' covers only the schema half. Honest totals: 67.5 engineer-days for the full plan, about 55.5 for the core, about 21 for stage A.",
+   "MS-R4 is load-bearing. If duplicate department or ward names across facilities are allowed, every department comparison and every ward-keyed table (housekeeping, diet plans, ward packs, forecast capacity, NABH ward filters) needs a facility predicate, and the estimate roughly doubles.",
+   "Lazy schema owners (frontdesk_service.ensure_frontdesk_schema :240, helix_db.init_helix_db :89) run after migrations on a fresh DB. An ALTER-only migration silently misses them, so their DDL must change too, with a post-boot column test.",
+   "users must never gain a column in this epic. _rebuild_users_role_check aborts on unknown live columns (migrations.py:4773), which would break another epic's next role migration.",
+   "SQLite refuses ADD COLUMN ... REFERENCES with a non-NULL default under foreign_keys=ON. Facility integrity therefore rests on services plus an ops check, not FKs.",
+   "Turning the flag off after a second facility exists would silently remove isolation. The boot refusal covers this, and also (correctly) stops a flag-off restore of a multi-facility backup.",
+   "One appliance means one interactive LLM stream (llm_queue_service.py:43). Facilities add Sage users without adding capacity; AI ceilings are absolute, not per bed.",
+   "Satellites over a WAN link have nothing during a link outage unless their ward-pack mirror is local. Every facility's address must be in ORB_CORS_ORIGINS (R025 is open), or screens hang 15 to 25 seconds.",
+   "Facility resolution adds a lookup per audit row. Uncached, it puts encrypted-SQLite reads on every PHI read, the 2026-07-30 loop-stall class.",
+   "admissions has no index today. Facility predicates in correlated scope subqueries will slow the board at 200 beds unless the new indexes land in multisite-1.",
+   "Other work in progress edits the tree, git only since today, migration head 47: numbers must be claimed at merge. The suite cannot run with the shipping .env.",
+   "Commercial: the approved sales plan sells a one-ward Ward Record and defers this. The flag keeps it inert, but it competes for the same engineer time.",
+   "DPDP: sharing one patient record across facilities is defensible only within one data fiduciary (MS-R1). A franchise of separate legal entities on one appliance would be an unconsented disclosure.",
+   "Docs drift: CIO questionnaire 1.5, the manual (assembly drift is a known trap) and the install runbook must change when the flag ships."
+  ],
+  "session_conflicts": [
+   "server/services/admission_service.py and server/routes/scribe_routes.py: the Scribe quick-admit department validation session is editing resolve_admission_department and the quick-admit path. multisite-3, -4, -8 and -18 edit the same functions; start them only after that session lands, and re-read the file first.",
+   "server/routes/relay_routes.py and helix_service.create_order: the Relay agentic-confirm orphan-order session (R024). multisite-8 touches relay_routes scope sites and multisite-14 touches helix_service dispensing. Schedule both after it lands, and never move create_order's transaction boundary.",
+   "server/ws/realtime.py and src/api/client.ts: the CORS same-origin socket session. multisite-10 rewrites the room scheme in connect and emit_patient_vitals, so it goes after. All new frontend facility calls go in a new src/api/facilities.ts so client.ts is not touched.",
+   "server/services/sage_service.py: the Sage bed-lookup session (R026 held). multisite-10 edits only _scope_sql and _patient_in_scope after it lands. This epic must not change the bed matcher.",
+   "server/services/bridge_service.py: the Bridge emergency-flag session. Multi-site needs no edit there (the portal site name comes through discharge_access_service). If its open 'ward-wide reach' ruling is built, it should use the facility rooms from multisite-10.",
+   "src/components/AdmitPatientModal.tsx: the ACVPU/O2 defaults session. No edit is needed if the server filters the department list by facility; do not add a facility picker to the admit form.",
+   "server/migrations.py: every epic adds migrations from head 47. Claim numbers at merge. This epic leaves LATEST_USERS_ROLE_CHECK and the users table untouched.",
+   "server/permissions.py, roles.py, admin_users_routes.py and UsersPanel.tsx: desk-role epics may be adding roles in the same files. This epic adds permission strings only, no role strings.",
+   "adt epic: land multisite-1 before adt-1 so the wards, beds and departments tables are created with facility_id; agree which epic owns the departments table."
+  ]
+ }
+}

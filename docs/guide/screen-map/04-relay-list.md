@@ -616,9 +616,9 @@ of Relay message content authorises by asking whether the channel appears in thi
   `server/services/relay_service.py:244-254` is defined *in terms of* the list, it is the
   named single-channel form, deliberately not a second SELECT. Used at
   `relay_routes.py:96-97` (messages), `:107-108` (mark read), `:1125-1126` (alert resolve).
-- **Websocket:** `_user_can_access_channel` at `server/ws/realtime.py:363-377` calls the same
+- **Websocket:** `_user_can_access_channel` at `server/ws/realtime.py:459-473` calls the same
   function through `run_db`, so socket room membership matches HTTP visibility
-  (`realtime.py:389-394` denies `join_channel`).
+  (`realtime.py:485-490` denies `join_channel`).
 - **The second door:** `get_user_alerts` at `server/services/relay_service.py:510-581` is a
   message-read path that does **not** go through the list, it scans every alert row in the
   hospital. It re-applies the DM membership rule itself (`relay_service.py:538-540`) so a

@@ -1,0 +1,1933 @@
+{
+ "design": {
+  "epic": "Patient registration and OPD (key: opd)",
+  "current_state": "Verified against the code on 3 Oct 2026, then re-checked line by line against the critique. The coverage doc is stale in two places: DOB is now captured on the admit form, and the made-up appointment rows are gone.\n\nREGISTRATION / IDENTITY\n- No registration path exists. Every patients row comes from an inpatient admission: admission_service.admit_patient (server/services/admission_service.py:223-480).\n  - It always mints PAT-xxxx and a random MRN-XXXXXX when the MRN is blank (:248-249), always creates a Bridge portal login (:263), always inserts an 'active' admission, a patient_profiles row (:335), a new case_room channel (:432-436) and a sage_room_memory row (:470-480).\n  - The route is doctor-only (patient.write, server/routes/admission_routes.py:79-113).\n  - Typing an MRN that already exists hits patients.mrn UNIQUE (server/database.py:50) and comes back as a 500 \"Admission failed\". A returning patient can never be readmitted onto their own record.\n- Legacy POST /api/vigil/patients (vigil_routes.py:974-1048) still creates a status-'admitted' ghost with no admissions row. Callers: the dead wrapper createPatient (src/api/client.ts:2119), server/scripts/soak_test.py:249, server/tests/test_patient_name_rule.py:108-122.\n- patients.status CHECK allows only admitted/discharged/transferred (database.py:55). About 35 schema definitions reference patients(id), so a new status is an FK-parent rebuild (the users-rebuild trap, migrations.py:4697-4815). sage_relay_context.py:217 reads COALESCE(p.status,'admitted').\n- DOB is captured on the admit form (src/components/AdmitPatientModal.tsx:102,179) and stored only when usable (admission_service.py:16-41; discharge_access_service.usable_dob:100). DOB is the discharge-link second factor.\n- No demographic edit path. The only UPDATE patients writers are discharge (discharge_service.py:648), transfer (frontdesk_service.py:1202) and the two importers.\n- Lookup: /api/search/patients returns ADMITTED patients only, dept-scoped and audited (search_routes.py:26-127). No phone, DOB or ABHA search.\n- Duplicates: only the history importer reports them (history_import_service.py:83,159).\n- ABHA: abha_identities/abha_verifications exist (migrations.py:3294-3370); abdm_service.record_abha (:744) always records 'unverified', opens its own session, reachable only from the ABDM desk.\n- Numbering: document_number_series/next_document_number (migrations.py:2100-2113, billing_masters.py:651-708) reset yearly and embed the year; an unconfigured series issues placeholders.\n\nALLERGIES\n- patient_allergies is what the interlocks screen. admit_patient charts allergy chips through clinical_records_service.record_allergies_on(db, ...) (admission_service.py:352-361; migration 40 backfilled the gap).\n- There is NO way to record 'asked, no known allergies'. clinical_records_service.allergy_entries drops 'nkda'/'none' (:34-44), and allergy_interlock.py:360-366 states Orb cannot tell NKDA from never asked; it reports allergies_on_file only.\n\nSCOPE\n- permissions.patient_in_scope (permissions.py:447-468) fail-closes any patient with no admission. PATIENT_DEPARTMENT_SQL (:428-432) resolves a discharged patient to their LAST admission's department.\n- require_patient_access (permissions.py:663-720) is ONE guard for reads AND writes. Writes behind it with no admitted-status check include add_patient_medication (vigil_routes.py:907-950, medication.write, which nurses hold) and nurse obs (nurse_routes.py:177, vitals.write; record_observation scores NEWS2 and posts to Relay). Widening patient_in_scope would open them.\n- Sage keeps a deliberate duplicate (sage_service._patient_in_scope, sage_service.py:1933-1960), pinned equal by test_the_route_scope_and_the_sage_scope_agree (test_patient_scope_routes.py:520-540). sage_routes.py:3412-3422 uses permissions.enforce_patient_scope and scope_patient_ids_sql for provenance. An out-of-scope view_context patient is silently not anchored and Sage may fall back to the thread's patient (sage_service.py:3727-3740).\n- The GET drift guard (test_patient_scope_routes.py:580-630) has an empty exempt set; test_nurse_write_scope.py covers the nurse POSTs.\n\nOPD (front desk)\n- opd_visits and patient_movements are created lazily by frontdesk_service.ensure_frontdesk_schema (:152-286), not by a numbered migration. opd_visits.status allows waiting/in_consultation/completed/cancelled only.\n- Token engine per (date, department, doctor) under an immediate transaction plus a partial unique index. Consulting doctor must be an active clinician of that clinic (F151).\n- opd_registration_allowed (:531-556): a pure outpatient (no admission ever) is registrable by ANY department; a patient with any past admission falls through to patient_in_scope, so a patient discharged from Cardiology cannot be registered into Ortho OPD by a departmented desk. A doctor holds patient.write and passes require_frontdesk_write, so a doctor can register a visit in their own clinic for any pure outpatient.\n- create_opd_visit refuses a department other than the caller's (frontdesk_routes.py:296-370). Register/start/complete/cancel audits are written after commit in fail-soft 'clinical_record'.\n- require_frontdesk_write and require_frontdesk_read both depend on require_permission(PATIENT_READ_ALL) (frontdesk_routes.py:164-207), so no account without chart access can use the desk. FRONTDESK_WRITE is held by admin only; roles.py has no front-office role. admin holds no patient.write (permissions.py:288-334).\n- The queue route writes a phi_access row on every non-empty read (frontdesk_routes.py:262-275).\n- Completion raises one OPD-CONSULT line as 'op', unpriced rather than Rs 0 (frontdesk_service.py:576-688). billing_service.cancel_charge exists (:752).\n- UI: FrontDeskPanel picks patients from /vigil/patients?limit=200 (admitted only); the tab is admin-only (shellConfig.tsx:711-712). Missing: doctor queue, call/skip/priority, token board, consultation note, OPD prescription.\n- Socket: connect() joins dept rooms only for vitals.read holders (ws/realtime.py:270-287). realtime.schedule_on_loop (:419) is the importable sync-to-loop emit helper.\n\nAPPOINTMENTS\n- No doctor and no slot (database.py:343-354); migration 28 added origin NOT NULL DEFAULT 'staff' and department (migrations.py:4319-4410).\n- forecast_service.get_appointments (:996-1069) scopes a pure outpatient's booked row by the APPOINTMENT's department, no time window.\n- Defects: cancel/complete not ward-scoped (appointments_routes.py:476-598); /mine (:423), _validate_slot (:133-160), _validate_date_only and default_slot_for use the server's date.today()/datetime.now(). Booking needs patient.write (:323-345). Portal slots hard-coded (PatientShell.tsx:86-94). opd_visits.appointment_id stored, never read.\n\nREADMISSION HAZARDS (no patient in the dev DB has more than one admission, so none is exercised)\n- Discharge flips patients/admissions status but leaves medications.status 'active' (emar_service.py:585-613); the eMAR's only guard is patients.status 'admitted'. Readmitting onto the same row would make the previous stay's drugs administrable again.\n- No uniqueness on one active admission per patient. patient_profiles has patient_id as PRIMARY KEY (database.py:93). discharge_summaries has no admission_id (database.py:190-198); /vigil/discharged LEFT JOINs it (vigil_routes.py:489-506), so a twice-discharged patient lists twice.\n- 15 readers fetch a patient's case room by patient_id with no ORDER BY (bot_service, bridge_service:166, helix_service:423, ingestion_service:362, sage_handoff_service:541,596, surgery_service:455 and others).\n- NABH inpatient-days (nabh_service.py:1321-1330) and the shadow scorecard (shadow_scorecard_service.py:1642-1700) derive stays from patients.admission_date plus MAX(discharged_at) and read every patients row.\n\nTERMINOLOGY\n- terminology_service seeds a small curated ICD-10 list (:121); validate_code is an exact lookup. The docstring names scripts/load_terminology.py, but that file does not exist anywhere in the repo.\n\nBILLING\n- The Charges picker reads /vigil/patients plus /vigil/discharged only (BillingPanel.tsx:711-737). POST /api/billing/patients/{id}/opd-invoice exists (billing_routes.py:528-560) and src/api/billing.ts:433 already wraps it as createOpdInvoice, but no screen calls it.\n\nFLAGS\n- Hospital modules default ON via config._module_enabled (config.py:620-648), documented as never gating a clinical path; published on /api/health. The client cache defaults every module to true (shellConfig.tsx:249-253). CLINICAL_MODULE_IDS is pinned to ['dietary'] (shellConfig.tsx:825, shellConfig.test.ts:328). There is no default-off flag mechanism.\n\nRETENTION\n- consent_service._RETENTION_SOURCES (:646-680) is review-only: Orb destroys nothing on a timer (:882-889) and there is no clinical_record erasure executor (_ERASURE_EXECUTORS, :1061).\n\nMIGRATIONS: highest is 47 (vitals_carried_from, migrations.py:5446-5495).",
+  "design": "0. RESPONSE TO THE CRITIQUE (each issue re-checked against the code)\n1. Blocker, the OPD arm opens write routes: ACCEPTED. require_patient_access is one guard for reads and writes, and medication add and nurse obs have no status check. Fix: patient_in_scope, scope_patient_ids_sql and PATIENT_DEPARTMENT_SQL are NOT changed. The OPD arm is a separate opt-in predicate, permissions.patient_in_opd_scope, reached only through require_patient_access(..., opd_arm=True) or enforce_patient_scope(..., opd_arm=True) on a short whitelist. Every existing chart route, read or write, stays admission-only, and a drift test pins the whitelist.\n2. No allergy capture in OPD: ACCEPTED. New increment opd-10a (allergy review plus an assessment status) and new ruling OPD-S7.\n3. Registration record routes hospital-wide: ACCEPTED. Only the minimal-field search is hospital-wide. Record, changes, card and PATCH use require_patient_access(..., opd_arm=True); only an account with no department reads hospital-wide. The drift-guard exempt set stays empty.\n4. Admin widening: ACCEPTED. opd.consult goes to doctor and clinician only. Admin gets registration.read (admin already reads hospital-wide through patient.read_all) and schedule.manage (configuration, no PHI). registration.write for admin is folded into OPD-N3 and not granted by default.\n5. Self-granted access: ACCEPTED in substance. With fix 1 a self-registered visit can no longer reach the inpatient chart, FHIR export or any chart write. What remains (the OPD record view) is controlled: the visit that opens scope writes an in-transaction clinical_access row 'opd_scope_opened', flagged self_registered when the registrant holds opd.consult. OPD-N2 now asks whether such visits open scope at all and how far the record view reaches.\n6. Discharged patient into another clinic: ACCEPTED. When OPD_ENABLED, opd_registration_allowed allows any patient with no ACTIVE admission; flag off is unchanged.\n7. Matcher blind outside registration: ACCEPTED. Keys move to a self-healing side table, patient_match_keys, re-synced for any row whose source fields changed before every match, so no writer (admission, Scribe, importers, seeds) can leave a patient invisible. The admission doors run the hard match and honour ORB_UHID_SOURCE in new increment opd-5b, after the Scribe session lands.\n8. opd-17 undersized: ACCEPTED, and the risk is larger than stated. Discharge leaves medications 'active', so readmission onto the same row reopens the last stay's drugs on the eMAR. Split into opd-17a (registered to inpatient), opd-17b (stay keying) and opd-17c (readmit a discharged patient), with new ruling OPD-S8.\n9. Sage parity: ACCEPTED as a defect of the old design, and resolved by fix 1. The parity test and the sage_routes provenance lane stay exactly as they are. The OPD tab hides the Sage assistant and never publishes a patient into ActiveViewContext.\n10. Forecast regression: ACCEPTED. forecast_service is not touched by opd-7; the appointment's own department keeps scoping the appointment row.\n11. ICD-10: ACCEPTED. Diagnoses are free text with an optional code and a code_status, and an unknown code is stored as unvalidated, not refused. Correction to the critique: scripts/load_terminology.py does not exist. A loader is opd-20, behind licence ruling OPD-N11.\n12. Kiosk and socket: ACCEPTED. The board uses a per-board device key (no user account, no PHI). Doctors hold vitals.read, so the nudge to dept rooms reaches them through ws.realtime.schedule_on_loop with no realtime.py edit. Desk accounts get an opd room in opd-9b after the CORS session merges. Until then the desk polls every 30 s at a stated audit cost, and dedupe is ruling OPD-N12.\n13. Permission wiring: ACCEPTED. A new require_registration_desk(mode) dependency does not hang off patient.read_all. /start and /complete move to opd.consult when OPD_ENABLED. Receptionist booking is settled in opd-16.\n14. Frontend role files: ACCEPTED, added to opd-3. admin_users_routes.ALLOWED_ROLES already derives from roles.STORABLE_ROLES (admin_users_routes.py:58), so it needs no edit.\n15. Unfiltered readers: ACCEPTED. The shadow scorecard and NABH inpatient-days exclude never-admitted rows in opd-2. orb_patients_total counting registered rows matches its label (\"patient records\"), so it stays, with a test that pins orb_active_admissions.\n16. Placeholder UHID series: ACCEPTED. Orb-mode registration refuses until the series is configured.\n17. LWBS and charging: ACCEPTED. LWBS is a cancel with reason code left_without_being_seen and no charge. A cancel voids a registration-time charge through billing_service.cancel_charge.\n18. AST guard over-claim: ACCEPTED. A dedicated guard, test_opd_no_scoring.py.\n19. Migration details: ACCEPTED for the appointments rebuild (orphan pre-check, migration 28 columns, both indexes) and for registering the new tables in _RETENTION_SOURCES. PARTLY REJECTED on retention triggers. Retention is review-only and there is no clinical_record erasure executor, so there is no conflict today. A future signed-destruction executor must use a documented trigger bypass, as audit_logs would.\n20. Rulings under-gated: ACCEPTED. IDs are prefixed OPD-. opd-5, opd-5b, opd-7, opd-10a and opd-19 are gated. OPD-S6, S7 and S8 and OPD-N11 and N12 are added.\n21. Config conventions and dates: ACCEPTED. A separate FEATURE_FLAGS map, and every appointment date check moves to hospital_time in opd-16.\n\n1. PRINCIPLES\n- Extend what exists: frontdesk_service and opd_visits, the billing spine, the ABDM rails, orders, admission_service, clinical_records_service.record_allergies_on.\n- No parallel patient table and no fourth medication store. patients.mrn is the UHID.\n- The OPD arm is opt-in and narrow. Existing chart routes never see it.\n- OPD never computes or shows NEWS2, a band or AI advice (R023 and the Ward Record no-score rule), enforced by a dedicated AST guard.\n- No AI model anywhere in the identity lane.\n- Every handler is a plain def. Every patient_id arrives in a typed body or the path. target_id is always a string.\n\n2. FEATURE FLAGS (server/config.py)\n- A new FEATURE_FLAGS block, separate from HOSPITAL_MODULE_ENV and documented as the opposite convention: default OFF, and allowed to gate clinical paths. _feature_enabled(env) is on only for 1/true/yes/on.\n- REGISTRATION_ENABLED = ORB_REGISTRATION.\n- OPD_ENABLED = ORB_OPD and REGISTRATION_ENABLED and FRONTDESK_ENABLED. If a prerequisite is missing, the boot log names it.\n- Settings:\n  - ORB_UHID_SOURCE: hospital|orb, default hospital.\n  - ORB_UHID_PATTERN: optional regex.\n  - ORB_OPD_SCOPE_DAYS: default 7.\n  - ORB_OPD_CHARGE_AT: completion|registration, default completion.\n  - ORB_DUPLICATE_MODE: warn|block. Read only after OPD-S2 is ruled; until then registration refuses to start if it is unset with REGISTRATION_ENABLED.\n  - ORB_OPD_QUEUE_POLL_SECONDS: 30.\n- feature_flags() is published on /api/health as a separate 'features' object. enabled_modules() is unchanged.\n- Client (src/shellConfig.tsx): FeatureFlagId = 'registration'|'opd', and DEFAULT_FEATURE_FLAGS are all false, so an unrefreshed cache fails toward hidden. The OPD tab is a feature tab with its own panel lookup, NOT a HospitalModuleId. HOSPITAL_MODULE_IDS, DEFAULT_MODULE_FLAGS and the CLINICAL_MODULE_IDS pin are untouched.\n- Every new route 404s when its flag is off (require_registration_feature, require_opd_feature).\n- With flags off, the only differences are: the additive migrations, the patients CHECK rebuild, the users role rebuild, the stay-keying migration, the retired ghost route (410), and the duplicate-MRN 500 becoming 409.\n- Other epics need the same mechanism. Whichever lands first builds FEATURE_FLAGS; the others only add ids.\n\n3. DATA MODEL\nVersion numbers are provisional (next free after 47 at merge). No foreign keys; money in _paise (migration 20 rules).\n\n- M48 registration_opd_foundation (additive)\n  a. Frozen opd_visits and patient_movements DDL and indexes, so later ALTERs never precede the lazy CREATE.\n  b. opd_visits ADD:\n     - queue: priority DEFAULT 'normal', priority_reason, room, arrival_source DEFAULT 'walk_in', checked_in_at, call_count DEFAULT 0, skipped_at\n     - outcome: disposition (home|follow_up|referred_internal|referred_external|admitted), disposition_at, admission_id, follow_up_of_visit_id, cancel_reason_code (incl. left_without_being_seen)\n     - links: session_id, payer_id, tariff_plan_id, registration_charge_id\n     - control: identity_check_json, scope_self_registered DEFAULT 0\n  c. admissions ADD opd_visit_id. orders ADD opd_visit_id (indexed).\n  d. document_number_series ADD resets_yearly DEFAULT 1 and check_digit. Seed a UHID row: resets_yearly 0, verhoeff, is_configured 0.\n  e. patient_demographics, one row per patient:\n     - provenance: registered_at, registered_by, registration_source (desk|admission|scribe|import|er), uhid_source\n     - age_recorded_on (a stated age is never turned into a DOB)\n     - guardian_relation, guardian_name, marital_status, preferred_language\n     - address_line, city, district, state_code, pin_code, alt_phone, email\n     - id_document_type, id_document_last4, occupation\n     - row_version, updated_at, updated_by\n     patients itself gets NO new columns, so the M49 rebuild column list is only what exists today.\n  f. patient_identity_changes, append-only (UPDATE and DELETE blocked by triggers): field, old_value, new_value, reason NOT NULL, changed_by, changed_at, correlation_id.\n  g. patient_duplicate_candidates: the pair (unique), score, reasons_json, status (open|not_duplicate|confirmed_duplicate|merged), source (registration|admission|sweep|import), resolver and timestamps.\n  h. patient_match_keys: patient_id PK, name_key, phone_key, dob, sex, src_name, src_phone, src_dob, src_sex, normalizer_version, computed_at. name_key and phone_key are indexed.\n  i. opd_display_boards: id, department, label, key_hash, created_by/at, revoked_by/at.\n  j. consent_service._RETENTION_SOURCES clinical_record gains opd_visits, patient_demographics, patient_identity_changes and patient_match_keys.\n\n- M49 patients_status_registered\n  - FK-parent rebuild through database._atomic_table_rebuild (the m33 users shape), widening the CHECK to add 'registered'.\n  - Frozen canonical column list; post_sql recreates the patients indexes; aborts on unknown columns or objects.\n  - database.SCHEMA is updated, with a parity test.\n  - 'registered' means on the index and never admitted. A discharged patient seen in OPD stays 'discharged'.\n  - Batch the adt and death-record statuses into this one rebuild.\n\n- M50 users_role_receptionist: _rebuild_users_role_check plus LATEST_USERS_ROLE_CHECK, batched with every other epic's new roles.\n\n- M51 opd_consultations, one per visit:\n  - fields: author; status draft|signed; chief_complaint, history, examination\n  - vitals_json: values, measured_at, measured_by\n  - diagnoses_json: items {text, code_system, code, code_status validated|unvalidated|none}\n  - plan, advice, follow_up_date, follow_up_note, referral_department, admission_advised\n  - control: row_version, signed_by/at\n  Plus opd_consultation_addenda (append-only). Both are registered in retention.\n\n- M52 patient_allergy_assessments, append-only: patient_id; status none_known|allergies_recorded|unable_to_obtain; opd_visit_id; admission_id; assessed_by/at; note. Registered in retention.\n\n- M53 opd_charge_rules: department, doctor_id, visit_type, service_code, follow_up_window_days, is_active.\n\n- M54 clinic_sessions and clinic_session_exceptions.\n\n- M55 appointments_slots: in-transaction rebuild of appointments (not an FK parent).\n  - Pre-check orphan patient_id and booked_by_user_id values and abort with a list.\n  - Carry origin NOT NULL DEFAULT 'staff' and department; recreate idx_appointments_patient and idx_appointments_idem.\n  - Add the statuses checked_in and no_show; add doctor_id, session_id, checked_in_at, opd_visit_id, no_show_at, cancel_reason, cancelled_by, rescheduled_from_id.\n  - Partial unique index on live (doctor_id, scheduled_date, scheduled_time), pre-checked for clashes.\n\n- M56 stay_keying (additive):\n  - discharge_summaries ADD admission_id, backfilled where the patient has exactly one admission.\n  - CREATE UNIQUE INDEX idx_admissions_one_active ON admissions(patient_id) WHERE status='active', after a pre-check that aborts listing violators.\n\n4. SERVICES\n- registration_service.py (new): register_patient, search_index, get_registration, correct_demographics, change_history, check_identity, find_candidates, resolve_duplicate.\n  - UHID, hospital mode: the site pattern plus uniqueness (exact and normalised).\n  - UHID, orb mode: billing_masters.allocate_series_number(db,'UHID'), using the caller's handle, no yearly reset, Verhoeff check digit. Refused with 409 'uhid_series_not_configured' until the series is configured.\n  - One immediate transaction writes:\n    - patients: status 'registered', admission_date NULL, no portal login, no allergy field;\n    - patient_demographics;\n    - patient_match_keys;\n    - the ABHA placeholder via abdm_service.record_abha_on(db, ...), always unverified;\n    - the audit row.\n  - check_identity compares the identifiers the patient states (DOB or stated age, phone last 4, UHID) and answers only match or no match. It never returns stored values. Five failures per user per patient per hour returns 429, and failures are audited.\n- patient_matching.py (new, deterministic):\n  - normalizers: honorific strip, Indian transliteration folds, phone to 10 digits\n  - keys_for(row)\n  - sync_keys(db): an indexed LEFT JOIN finds rows with no key row, changed source fields or an old normalizer_version, and recomputes them. It runs before every match, so any writer is covered.\n  - score: hard matches on exact UHID or active ABHA; points for phone (+40), name (+40 exact key, +25 token overlap), DOB (+30 exact, +10 age within 2 years), sex (-20 on mismatch); bands probable 70 or more, possible 50 to 69.\n- frontdesk_service (extend):\n  - queue actions call, skip, recall, assign and priority/room; doctor queue; board snapshot\n  - disposition on completion; LWBS as a cancel with no charge\n  - charge codes from opd_charge_rules\n  - in OPD mode: register, start, complete and cancel audits written in-transaction, and the visit that opens scope writes 'opd_scope_opened'\n  - opd_registration_allowed: in OPD mode, any patient with no ACTIVE admission\n  - ensure_frontdesk_schema kept in step with M48\n- opd_service.py (new):\n  - OPD record composer\n  - consultation draft/save/sign/addendum/history\n  - allergy review: record_allergies_on plus an assessment row in one transaction\n  - visit-scoped orders through orders_service.create_order(opd_visit_id=...)\n  - never writes vitals, risk_scores or medications, and never scores\n- clinic_schedule_service.py (new): sessions, exceptions, availability in hospital-local time.\n- admission_service (extend, after the Scribe session lands): door checks (opd-5b) and admit_existing_patient (opd-17a, opd-17c).\n- discharge_service (opd-17b): writes admission_id on the summary.\n- permissions (extend): patient_in_opd_scope, the opd_arm keyword, require_registration_desk.\n\n5. ROUTES\n- /api/registration (ORB_REGISTRATION; require_registration_desk):\n  - GET config: UHID mode, series configured, ABDM on.\n  - GET search: hospital-wide minimal fields (UHID, name, sex, age, phone last 4, last visit date, inpatient now yes/no). Minimum 3 characters, 20 results, phi_access with the matched ids.\n  - POST match, POST patients.\n  - GET and PATCH patients/{patient_id}, GET patients/{patient_id}/changes, GET patients/{patient_id}/card: require_patient_access(REGISTRATION_READ or REGISTRATION_WRITE, opd_arm=True, audit_action=...).\n  - GET duplicates; POST duplicates/{id}/resolve (registration.write; the resolver must not be the person who overrode).\n- /api/frontdesk/opd:\n  - POST visits gains identity_check, required when the patient was picked from search (per OPD-S1).\n  - New in OPD mode: POST visits/{id}/call, skip, recall and assign; PATCH visits/{id}; cancel with a reason code.\n  - /start and /complete need opd.consult when OPD_ENABLED.\n  - POST and DELETE boards (schedule.manage). GET board takes the X-Orb-Board-Key header and no user token.\n  - GET appointments/day, GET mis/daily.\n- /api/opd (ORB_OPD; opd.consult):\n  - GET my-queue\n  - GET patients/{patient_id}/record and GET patients/{patient_id}/consultations (opd_arm=True, audited)\n  - GET/PUT visits/{visit_id}/consultation, POST .../sign, POST .../addenda\n  - POST visits/{visit_id}/allergy-review, POST visits/{visit_id}/complete\n  - POST visits/{visit_id}/orders\n  - POST visits/{visit_id}/prescriptions (after medorder-1)\n  - GET terminology/search\n- /api/schedule: sessions, exceptions, availability.\n- /api/appointments: doctor and slot booking, reschedule, check-in, no-show, plus the scope and date fixes.\n- POST /api/admissions/admit-existing. GET /api/billing/op-patients.\n\n6. PERMISSIONS, ROLES AND SCOPE\n- roles.py adds 'receptionist'. The department is optional: blank means a central desk that sees every clinic. It is not in DEPARTMENT_REQUIRED_ROLES.\n- New permissions: registration.read, registration.write, opd.consult, schedule.manage.\n- Grants:\n  - doctor and clinician: registration.read, registration.write, opd.consult.\n  - admin: registration.read and schedule.manage. registration.write only if OPD-N3 says so.\n  - receptionist: registration.read and registration.write; consent.record only per OPD-N3.\n  - nurse, pharmacist and cashier: unchanged.\n- require_registration_desk(mode), with an audited denial and the feature switch:\n  - read: patient.read_all OR registration.read.\n  - write: frontdesk.write OR patient.write OR registration.write.\n  - Used by desk reads, the doctors list, visit register and cancel, and the registration routes.\n  - Transfers keep require_frontdesk_write (patient.read_all base), so a receptionist cannot transfer.\n- Call, skip, recall, assign, start, complete and consultation need opd.consult. OPD Rx needs opd.consult AND medication.prescribe (today's prescriber-only permission; decides nothing on R010).\n- OPD arm: patient_in_opd_scope(db, pid, dept) is true when any of these holds:\n  - dept is None;\n  - patient_in_scope is true;\n  - OPD_ENABLED, AND the patient has no ACTIVE admission, AND a non-cancelled opd_visits row in dept (case-folded) has visit_date on or after hospital_today minus ORB_OPD_SCOPE_DAYS.\n  It is reachable ONLY through opd_arm=True. Whitelist, each with its reason in test_opd_scope_drift.py:\n  - GET /api/opd/patients/{patient_id}/record and /consultations;\n  - GET and PATCH /api/registration/patients/{patient_id}, /changes and /card;\n  - the staff branch of POST /api/appointments (from opd-16).\n- Visit-scoped /api/opd/visits/{visit_id}/... routes use _visit_or_404. Writes there refuse when the patient now has an active admission.\n- Sage is untouched: parity holds, and provenance stays admission-only.\n\n7. UI\n- Front Desk tab (admin and receptionist):\n  - Register view, search first.\n  - Identity dialog: the desk types what the patient states and the server answers match or no match. The stored DOB is never shown.\n  - Duplicate warnings need a reason (in the OPD-S2 mode).\n  - Demographics drawer with reasoned correction and change history.\n  - ABHA placeholder labelled unverified.\n  - DOB or stated age, with the R018 hint.\n  - Prints: UHID card (Code128 as SVG) and token slip.\n  - Queue shows priority, room and skipped, and has an LWBS action.\n  - Further views: Appointments day, Clinic timings, Day summary, Display boards.\n- OPD tab (OpdPanel, feature tab, doctor and clinician rails only):\n  - Panels: my queue, add walk-in (the same register component), and the record view.\n  - The record view shows identity, allergies with their status ('not yet asked' or 'no known allergies, asked by X on date'), problems, OPD-linked results and consultations.\n  - Consultation editor and allergy review. Vitals are typed with their time and shown with no colour, no band and no score.\n  - Diagnoses are free text plus an optional code; investigations; Rx after medorder; disposition; sign and print.\n  - It never links an outpatient to the Vigil chart. It hides SageFloatingAssistant and never calls setViewSelection with a patientId.\n- Kiosk /display/opd#key=... reads the key from the URL fragment and sends it as a header.\n- Receptionist rail: Front Desk only. AdmitPatientModal gets an existing-patient mode. The Billing picker includes outpatients, and the OPD counter form uses createOpdInvoice.\n- House design rules apply: no opacity, status tokens, modals portal to body, contrast gate, no em dashes, no demo wording.\n\n8. AUDIT\n- New fail-closed category 'patient_identity', written in-transaction: patient_registered, patient_demographics_corrected, patient_uhid_corrected (admin only), registration_duplicate_override, duplicate_resolved, identity_check_failed.\n- clinical_access, in-transaction: opd_scope_opened (with self_registered), opd_converted_to_admission, patient_readmitted, previous_stay_medications_closed.\n- phi_access: patient_index_searched (matched ids), registration_record_viewed, registration_changes_viewed, uhid_card_printed, opd_record_viewed, opd_consultation_viewed, op_patients_listed, and opd_queue_viewed (every non-empty read until OPD-N12).\n- clinical_record: queue actions; consultation saved, signed (in-transaction) and addendum; allergy review (in-transaction); visit completed with disposition; appointment rescheduled, checked_in and no_show.\n- configuration: sessions, charge rules, board keys.\n- The socket and the board carry no PHI.\n- Cost: a desk polling at 30 s writes up to 1,200 phi_access rows per open desk screen per 10-hour day until opd-9b.\n\n9. LINKS TO OTHER EPICS\n- adt: the bed picker for conversion; one patients-status rebuild; admission_service ownership agreed (admit_existing_patient and bed allocation are one design).\n- medorder: OPD Rx is an outpatient-setting order in the single store, screened by enforce_medication_safety(entry_point='opd_prescription'). It never writes medications or helix rows.\n- lis: OPD investigations are orders tagged opd_visit_id; results come through lis-1.\n- site: the UHID series is group-wide; site_id arrives with site-1.\n- ABDM: the placeholder only.\n- workforce: leave becomes a session exception, later.\n- Ward Record: shares the identity core (role batch, hospital-number mode, opd-5b, opd-17b and opd-17c are its 'returning patient reopens the same record').",
+  "functions": [
+   {
+    "function": "UHID/MRN registration for walk-ins (Orb-issued or hospital-issued number)",
+    "status_now": "Partial. Only admission_service.admit_patient creates patients (doctor-only, random MRN when blank, always inpatient); duplicate MRN returns 500; ghost POST /api/vigil/patients still live.",
+    "in_scope": true,
+    "notes": "opd-1, opd-2, opd-4; admission doors join the index in opd-5b. Orb-mode refuses until the UHID series is configured."
+   },
+   {
+    "function": "Demographic capture incl. date of birth",
+    "status_now": "Partial. Name, age, sex, phone, emergency contact, free-text address; DOB on the admit form. No guardian, structured address or language.",
+    "in_scope": true,
+    "notes": "opd-4, opd-6a. DOB optional pending R018; stated age stored with age_recorded_on, never as an estimated DOB."
+   },
+   {
+    "function": "Demographic correction with history",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "opd-4 (API, reason and row_version, append-only log, in-transaction fail-closed audit), opd-6b (drawer). Scoped by admission or OPD arm, never hospital-wide for departmented users."
+   },
+   {
+    "function": "Returning-patient lookup and identity confirmation",
+    "status_now": "Partial. Admitted-only search; desk picker is /vigil/patients?limit=200.",
+    "in_scope": true,
+    "notes": "opd-4 (minimal-field hospital-wide search), opd-6a (stated-identifier check that never displays the stored DOB). Gated by OPD-S1."
+   },
+   {
+    "function": "Duplicate detection at registration and at the admission doors",
+    "status_now": "Absent outside the history importer.",
+    "in_scope": true,
+    "notes": "opd-5 (self-healing match keys, matcher, worklist), opd-5b (admit form and Scribe quick-admit). Gated by OPD-S2."
+   },
+   {
+    "function": "Patient merge and unmerge",
+    "status_now": "Absent.",
+    "in_scope": false,
+    "notes": "Only the worklist is built. Merge is a separate 1.5 to 2 week item that must keep the audit chain intact."
+   },
+   {
+    "function": "ABHA field at registration (placeholder)",
+    "status_now": "Partial. abha_identities and record_abha exist, ABDM desk only.",
+    "in_scope": true,
+    "notes": "opd-4 via a new record_abha_on(db); no M1 creation."
+   },
+   {
+    "function": "Front office (receptionist) role",
+    "status_now": "Partial. frontdesk.write held by admin only; desk dependencies require patient.read_all.",
+    "in_scope": true,
+    "notes": "opd-3, with require_registration_desk and the full frontend role wiring."
+   },
+   {
+    "function": "Payer category at registration",
+    "status_now": "Partial. Admin Payer tab only.",
+    "in_scope": true,
+    "notes": "opd-13."
+   },
+   {
+    "function": "UHID card and OPD token slip print",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "opd-6b."
+   },
+   {
+    "function": "DPDP notice and consent at registration",
+    "status_now": "Partial. Consent API exists; consent.record doctor-only (F123).",
+    "in_scope": true,
+    "notes": "opd-19, blocked by OPD-N3."
+   },
+   {
+    "function": "Walk-in OPD visit and token per doctor",
+    "status_now": "Partial. Token engine solid; pure outpatients allowed but none can be created; patients discharged from another department cannot be registered by a departmented desk.",
+    "in_scope": true,
+    "notes": "opd-4, opd-6a, opd-7 (no-active-admission rule in OPD mode)."
+   },
+   {
+    "function": "OPD queue: call, skip, recall, priority, room, LWBS, doctor-side view",
+    "status_now": "Partial. Admin Front Desk queue only.",
+    "in_scope": true,
+    "notes": "opd-8; desk live nudges in opd-9b."
+   },
+   {
+    "function": "Token display board (name-free)",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "opd-9 with a per-board device key, no user account."
+   },
+   {
+    "function": "Visit-based access for outpatients",
+    "status_now": "Absent. patient_in_scope fail-closes every patient without an admission.",
+    "in_scope": true,
+    "notes": "opd-7: a separate opt-in predicate on a whitelisted set of OPD and registration routes; every existing chart route and every chart write stays admission-only. Blocked by OPD-N2."
+   },
+   {
+    "function": "OPD allergy review and 'asked, none known' status",
+    "status_now": "Absent. Orb cannot tell NKDA from never asked.",
+    "in_scope": true,
+    "notes": "opd-10a, blocked by OPD-S7."
+   },
+   {
+    "function": "OPD consultation note (complaint, history, exam, vitals, diagnosis, plan, follow-up, referral)",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "opd-10 (server), opd-11 (screen and print). Diagnoses free text plus optional code. OPD vitals never scored."
+   },
+   {
+    "function": "Diagnosis code list (ICD-10) at scale",
+    "status_now": "Curated seed only; the loader named in the docstring does not exist.",
+    "in_scope": true,
+    "notes": "opd-20, blocked by OPD-N11 (licence)."
+   },
+   {
+    "function": "OPD investigations ordering",
+    "status_now": "Partial. orders_service works for any patient but outpatients fail scope; no visit link; order sets refuse non-admitted patients.",
+    "in_scope": true,
+    "notes": "opd-11 via a visit-scoped route. Order sets stay inpatient-only."
+   },
+   {
+    "function": "OPD prescription",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "opd-12, blocked on medorder-1 and OPD-S7."
+   },
+   {
+    "function": "OPD charge to billing (consultation, registration fee, follow-up rule, clinic codes)",
+    "status_now": "Partial. One unpriced OPD-CONSULT line at completion.",
+    "in_scope": true,
+    "notes": "opd-13, including cancel voiding a registration-time charge and LWBS raising none."
+   },
+   {
+    "function": "OP billing at the counter",
+    "status_now": "Partial. Picker cannot select a walk-in; createOpdInvoice wrapper exists unused.",
+    "in_scope": true,
+    "notes": "opd-14."
+   },
+   {
+    "function": "Clinic session and slot master",
+    "status_now": "Absent. Portal slots hard-coded.",
+    "in_scope": true,
+    "notes": "opd-15."
+   },
+   {
+    "function": "Staff booking with a named doctor, reschedule, double-booking check, receptionist booking",
+    "status_now": "Partial. No doctor or slot; cancel and complete not ward-scoped; server-clock dates.",
+    "in_scope": true,
+    "notes": "opd-16."
+   },
+   {
+    "function": "Arrival check-in and no-shows",
+    "status_now": "Name only.",
+    "in_scope": true,
+    "notes": "opd-16."
+   },
+   {
+    "function": "Clinic appointment day list",
+    "status_now": "Partial, honest since F013; no doctor column.",
+    "in_scope": true,
+    "notes": "opd-16. The appointment-department scoping branch in forecast_service is kept."
+   },
+   {
+    "function": "OPD to inpatient conversion (never-admitted patient)",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "opd-17a, after the Scribe and AdmitPatientModal sessions. Blocked by OPD-S1, S3, S4."
+   },
+   {
+    "function": "Readmission of a discharged patient onto the same record (also the Ward Record returning patient)",
+    "status_now": "Absent. Re-entered MRN returns 500; discharge leaves medications active; stays are not keyed.",
+    "in_scope": true,
+    "notes": "opd-17b (stay keying) and opd-17c (readmit). Blocked by OPD-S1 and OPD-S8."
+   },
+   {
+    "function": "Front office MIS",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "opd-18."
+   },
+   {
+    "function": "Emergency quick registration, unknown patient, MLC flag",
+    "status_now": "Partial. ER admission source only.",
+    "in_scope": false,
+    "notes": "ED/MLC epic; registration_source and the name rule leave room."
+   },
+   {
+    "function": "Referrals in and out",
+    "status_now": "Name only / Absent.",
+    "in_scope": false,
+    "notes": "Only internal referral as a disposition."
+   },
+   {
+    "function": "Outpatient portal, SMS reminders, teleconsultation, health check packages, call centre",
+    "status_now": "Absent or inpatient-only.",
+    "in_scope": false,
+    "notes": "Integrate or Licence items, or LIS-dependent."
+   },
+   {
+    "function": "Scribe-drafted OPD notes and Sage over outpatients",
+    "status_now": "Absent.",
+    "in_scope": false,
+    "notes": "Scribe and Sage files are owned by running sessions; R023 governs Sage. The OPD tab hides Sage."
+   },
+   {
+    "function": "Pre-consultation vitals by an OPD triage nurse",
+    "status_now": "Absent.",
+    "in_scope": false,
+    "notes": "Needs an opd.triage permission and an answer to OPD-S6; later item."
+   }
+  ],
+  "increments": [
+   {
+    "id": "opd-1",
+    "title": "Feature flags and additive schema foundation",
+    "description": "config.py: a separate FEATURE_FLAGS block (default off, documented as allowed to gate clinical paths), _feature_enabled, REGISTRATION_ENABLED, OPD_ENABLED with its prerequisites, the UHID, scope-days, charge-timing, duplicate-mode and poll settings, and feature_flags() published on /api/health as 'features' (main.py). enabled_modules and HOSPITAL_MODULE_ENV are unchanged. Migration M48 (additive): frozen opd_visits and patient_movements DDL; opd_visits columns incl. cancel_reason_code, identity_check_json and scope_self_registered; admissions.opd_visit_id; orders.opd_visit_id; document_number_series columns; UHID series row seeded unconfigured; patient_demographics (with provenance and age_recorded_on; patients gets no new columns); patient_identity_changes (append-only triggers); patient_duplicate_candidates; patient_match_keys; opd_display_boards. ensure_frontdesk_schema is kept in step. consent_service._RETENTION_SOURCES registers the new PHI tables. shellConfig.tsx: FeatureFlagId, DEFAULT_FEATURE_FLAGS all false, a feature-tab panel lookup; CLINICAL_MODULE_IDS untouched. Retires the ghost POST /api/vigil/patients (410 naming the admission and registration doors) and moves soak_test.py and test_patient_name_rule.py to /api/admissions/admit.",
+    "files_touched": [
+     "server/config.py",
+     "server/main.py",
+     "server/migrations.py",
+     "server/services/frontdesk_service.py",
+     "server/services/consent_service.py",
+     "server/routes/vigil_routes.py",
+     "server/scripts/soak_test.py",
+     "server/tests/test_patient_name_rule.py",
+     "src/shellConfig.tsx",
+     "src/shellConfig.test.ts"
+    ],
+    "files_new": [
+     "server/tests/test_registration_flags.py"
+    ],
+    "size_days": 3,
+    "depends_on": [],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "M48 idempotent on fresh and upgraded DBs; opd_visits exists before ensure_frontdesk_schema runs; identity-change triggers refuse UPDATE and DELETE. /api/health carries features.registration and features.opd false and the modules object unchanged. POST /api/vigil/patients returns 410 and writes no row. shellConfig.test.ts: opd hidden by default, CLINICAL_MODULE_IDS still ['dietary']. Retention review lists the new tables."
+   },
+   {
+    "id": "opd-2",
+    "title": "patients.status admits 'registered' (FK-parent rebuild)",
+    "description": "Migration M49 rebuilds patients through database._atomic_table_rebuild (the m33 users shape) to add 'registered' to the CHECK. Frozen canonical column list (base SCHEMA, init_db additive columns, m15 import columns; M48 adds none); post_sql recreates the patients indexes; aborts on unknown columns, indexes or triggers. database.SCHEMA updated with a parity test. Never-admitted rows are excluded from the shadow scorecard ward-scope reader and from NABH inpatient-days. Runs as its own migration after a verified backup; batch any adt or death-record statuses into it.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/database.py",
+     "server/services/shadow_scorecard_service.py",
+     "server/services/nabh_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_patients_registered_status_migration.py"
+    ],
+    "size_days": 2.5,
+    "depends_on": [
+     "opd-1"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "On a copy of the dev DB: row count equal, PRAGMA foreign_key_check empty, indexes present, re-entry before the ledger write is a no-op. A 'registered' fixture appears on no board and in no status='admitted' reader (simulator, sepsis sweep, downtime pack, forecast, Sage census). Shadow scorecard diagnostics (patients_scanned, undated_admissions) and NABH inpatient-days are identical with and without the registered fixture. metrics orb_active_admissions is unchanged; orb_patients_total counts the row."
+   },
+   {
+    "id": "opd-3",
+    "title": "Receptionist role, registration permissions and the desk dependency",
+    "description": "roles.py adds 'receptionist' (department optional). permissions.py adds registration.read, registration.write, opd.consult and schedule.manage: doctor and clinician get registration.read, registration.write and opd.consult; admin gets registration.read and schedule.manage only; receptionist gets registration.read and registration.write. Migration M50 via _rebuild_users_role_check and LATEST_USERS_ROLE_CHECK, batched with other epics' roles. New permissions.require_registration_desk(mode): read is patient.read_all OR registration.read, write is frontdesk.write OR patient.write OR registration.write, with an audited denial; frontdesk_routes moves the OPD read, doctors list, register and cancel routes onto it, and transfers keep require_frontdesk_write. Frontend role wiring: src/lib/roles.ts, App.tsx UserRole, UsersPanel STAFF_ROLES and ROLE_LABELS, ClinicianShell roleKey, en and hi role labels, shellConfig ROLE_CONFIG receptionist (home frontdesk, tabs [frontdesk], no primary action).",
+    "files_touched": [
+     "server/roles.py",
+     "server/permissions.py",
+     "server/migrations.py",
+     "server/routes/frontdesk_routes.py",
+     "src/lib/roles.ts",
+     "src/lib/roles.test.ts",
+     "src/App.tsx",
+     "src/pages/panels/admin/UsersPanel.tsx",
+     "src/pages/ClinicianShell.tsx",
+     "src/i18n/locales/en.json",
+     "src/i18n/locales/hi.json",
+     "src/shellConfig.tsx",
+     "src/shellConfig.test.ts"
+    ],
+    "files_new": [
+     "server/tests/test_receptionist_role.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "opd-1"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "Role parity in test_migrations. Receptionist: chart routes 404 or 403, OPD queue and doctors list readable, register and cancel allowed, transfers 403, payments 403, creatable in User Management, labelled Receptionist in the user chip. Admin: 403 on any opd.consult route and on registration.write routes. Rail: Front Desk only, no money screen."
+   },
+   {
+    "id": "opd-7",
+    "title": "Opt-in OPD scope arm and the OPD record view",
+    "description": "permissions.patient_in_opd_scope(db, pid, dept): patient_in_scope, OR (OPD_ENABLED and no ACTIVE admission and a non-cancelled opd_visits row in the caller's department, case-folded, within ORB_OPD_SCOPE_DAYS of hospital_today). require_patient_access and enforce_patient_scope gain opd_arm=False; patient_in_scope, scope_patient_ids_sql and PATIENT_DEPARTMENT_SQL are unchanged, so Sage parity and Sage provenance are untouched. frontdesk_service.opd_registration_allowed in OPD mode allows any patient with no active admission. In OPD mode create_opd_visit writes its audit in-transaction plus 'opd_scope_opened' (clinical_access) with self_registered set when the registrant holds opd.consult. New server/routes/opd_routes.py with GET /api/opd/patients/{patient_id}/record (opd.consult, opd_arm=True, audited) composed by a new opd_service.get_opd_record. Flag stays off at a site until OPD-N2 is ruled.",
+    "files_touched": [
+     "server/permissions.py",
+     "server/services/frontdesk_service.py",
+     "server/routes/frontdesk_routes.py",
+     "server/main.py"
+    ],
+    "files_new": [
+     "server/routes/opd_routes.py",
+     "server/services/opd_service.py",
+     "server/tests/test_opd_scope.py",
+     "server/tests/test_opd_scope_drift.py",
+     "server/tests/test_opd_chart_writes_closed.py"
+    ],
+    "size_days": 4.5,
+    "depends_on": [
+     "opd-1",
+     "opd-3"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "OPD-N2",
+    "migrations": 0,
+    "tests": "Flag off: identical answers on every existing scope fixture; test_the_route_scope_and_the_sage_scope_agree unchanged and green. Flag on: a walk-in is visible on the record view to the visit department only, not after the window, not for a cancelled visit, not once actively admitted elsewhere; a visit cannot launder an inpatient. test_opd_chart_writes_closed: with OPD on, a scoped doctor and nurse get 404 for an outpatient-only patient on medication add, nurse obs, news2-preview, clinical_records allergy and problem writes, bundle writes, discharge, the Vigil chart GET and FHIR export. test_opd_scope_drift: any route passing opd_arm=True must be on the whitelist with its reason, and no non-GET route outside opd_routes, registration_routes and the appointment staff branch may pass it. Self-registered visits write the flagged audit row in the same transaction; an audit failure rolls the visit back. A Cardiology-discharged patient can be registered into Ortho OPD with the flag on and not with it off."
+   },
+   {
+    "id": "opd-4",
+    "title": "Registration service and API",
+    "description": "New registration_service.py, patient_matching.py (normalizers, keys_for, sync_keys) and registration_routes.py, registered in main.py. Register in one immediate transaction: status 'registered', admission_date NULL, no portal login, no allergy field; UHID in hospital mode (pattern plus uniqueness) or orb mode (billing_masters.allocate_series_number with the caller's handle, no yearly reset, Verhoeff), refused until the series is configured; DOB or stated age with age_recorded_on; patient_demographics; patient_match_keys; ABHA placeholder via new abdm_service.record_abha_on(db); audit in the same transaction under new fail-closed category 'patient_identity'. Search: hospital-wide minimal fields, min 3 chars, 20 results, phi_access with matched ids. check_identity: stated identifiers compared server-side, match or no match only, rate-limited, failures audited. Record, changes and card GET and demographic PATCH behind require_patient_access(..., opd_arm=True); PATCH needs a reason and row_version, and UHID correction is admin-only.",
+    "files_touched": [
+     "server/main.py",
+     "server/services/audit_service.py",
+     "server/services/billing_masters.py",
+     "server/services/abdm_service.py",
+     "server/tests/test_audit_fail_closed_categories.py"
+    ],
+    "files_new": [
+     "server/services/registration_service.py",
+     "server/services/patient_matching.py",
+     "server/routes/registration_routes.py",
+     "server/tests/test_registration_service.py",
+     "server/tests/test_registration_routes.py"
+    ],
+    "size_days": 4.5,
+    "depends_on": [
+     "opd-2",
+     "opd-3",
+     "opd-7"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Concurrent orb-mode allocation gives no duplicate UHID; Verhoeff catches a transposition; unconfigured series gives 409. Hospital-mode duplicate 409. Idempotent replay. An audit write failure rolls the patient back. A Cardiology doctor gets 404 on GET and PATCH of an Oncology inpatient's record and on a pure outpatient with no Cardiology visit; a no-department receptionist reads it. Search returns no DOB, address or full phone. check_identity never echoes the stored DOB; the sixth failure in an hour is 429. Correction without reason 422, stale row_version 409. Drift guard exempt set still empty. Flag off 404."
+   },
+   {
+    "id": "opd-5",
+    "title": "Duplicate and returning-patient detection",
+    "description": "Matcher in patient_matching.py: honorific strip, transliteration folds, phone_key, DOB/age/sex points, hard matches on exact UHID and active ABHA, bands probable 70+ and possible 50 to 69. sync_keys runs before every match so rows written by admission, Scribe, importers and seeds are always keyed. POST /api/registration/match. register() enforces on the server in the ORB_DUPLICATE_MODE ruled by OPD-S2: warn requires duplicate_review (decision, candidate ids, reason), audited, opening a worklist row; block refuses above the threshold. Worklist GET /duplicates and POST resolve. Bounded admin sweep. Both modes are built; the shipped default waits for OPD-S2.",
+    "files_touched": [
+     "server/services/registration_service.py",
+     "server/services/patient_matching.py",
+     "server/routes/registration_routes.py"
+    ],
+    "files_new": [
+     "server/tests/test_patient_matching.py",
+     "server/tests/test_registration_duplicates.py"
+    ],
+    "size_days": 3.5,
+    "depends_on": [
+     "opd-4"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "OPD-S2",
+    "migrations": 0,
+    "tests": "Name variants (Mohd/Mohammed, Laxmi/Lakshmi, Pooja/Puja, honorifics, Baby of); phone formats; DOB and age bands; sex mismatch. A patient inserted by admit_patient after M48, and one whose phone was changed by an importer, are both found. Override without reason refused. Exact UHID or ABHA is a hard refusal. Resolution audited and refused for the overriding user. sync_keys plus match on 100k synthetic patients in SQLCipher under a stated budget."
+   },
+   {
+    "id": "opd-5b",
+    "title": "Admission doors join the patient index",
+    "description": "When REGISTRATION_ENABLED: admit_patient and Scribe quick-admit honour ORB_UHID_SOURCE (hospital mode requires the typed hospital number and never mints a random MRN; orb mode allocates from the UHID series), compute match keys, and run the hard match (exact UHID, active ABHA, probable phone plus name). A hit returns 409 'possible_existing_patient' with masked candidates, pointing to admit-existing (opd-17a or 17c) or requiring a reasoned override audited under patient_identity. Regardless of flags, a duplicate MRN on /admit returns 409 naming no patient instead of 500. Starts only after the Scribe quick-admit session lands.",
+    "files_touched": [
+     "server/services/admission_service.py",
+     "server/routes/admission_routes.py",
+     "server/routes/scribe_routes.py"
+    ],
+    "files_new": [
+     "server/tests/test_admission_index_match.py"
+    ],
+    "size_days": 2.5,
+    "depends_on": [
+     "opd-5"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "OPD-S2",
+    "migrations": 0,
+    "tests": "Blank MRN in hospital mode is 422; a registered outpatient re-entered through the Admit door gets 409, not a second chart; Scribe quick-admit behaves the same; flags off keeps today's behaviour except 500 to 409; test_scribe_quick_admit and test_admission_form_choices stay green."
+   },
+   {
+    "id": "opd-6a",
+    "title": "Register view and returning-patient identity check",
+    "description": "Server: create_opd_visit takes identity_check when the patient came from search; registration_service.check_identity verifies the identifiers OPD-S1 names; the result is stored on opd_visits.identity_check_json and in the audit row. UI: FrontDeskPanel Register view when the registration flag is on: search first (PatientIndexSearch), IdentityConfirmDialog asks the desk to type what the patient states and shows only match or no match, new-registration form with duplicate warnings needing a reason in the OPD-S2 mode, DOB or stated age with the 'no date of birth, no discharge link' hint, ABHA placeholder labelled unverified when ORB_ABDM. The visit form picks the patient from index search instead of /vigil/patients?limit=200. New src/api/registration.ts; client.ts untouched.",
+    "files_touched": [
+     "server/routes/frontdesk_routes.py",
+     "server/services/frontdesk_service.py",
+     "src/pages/panels/FrontDeskPanel.tsx",
+     "src/pages/panels/FrontDeskPanel.css",
+     "src/pages/panels/FrontDeskPanel.test.tsx"
+    ],
+    "files_new": [
+     "src/api/registration.ts",
+     "src/pages/panels/frontdesk/RegisterPatientView.tsx",
+     "src/pages/panels/frontdesk/PatientIndexSearch.tsx",
+     "src/pages/panels/frontdesk/IdentityConfirmDialog.tsx",
+     "src/pages/panels/frontdesk/RegisterPatientView.test.tsx",
+     "server/tests/test_opd_visit_identity_check.py"
+    ],
+    "size_days": 4,
+    "depends_on": [
+     "opd-4",
+     "opd-5"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "OPD-S1",
+    "migrations": 0,
+    "tests": "A visit for a searched patient without a passing identity check is refused; a wrong DOB is refused and audited; the dialog never renders the stored DOB. Vitest: flag off renders the old form unchanged; search-first flow; duplicate warning needs a reason; ABHA field hidden when abdm is off. Contrast checker; no em dashes or demo wording. Browser check on an isolated verify stack."
+   },
+   {
+    "id": "opd-6b",
+    "title": "Demographics drawer and prints",
+    "description": "DemographicsDrawer: scoped record read, reasoned correction with row_version, change history; UHID correction shown to admin only. Prints on the existing print layer: UHID card (Code128 drawn as SVG, no new dependency, card print audited) and the OPD token slip.",
+    "files_touched": [
+     "src/pages/panels/FrontDeskPanel.tsx",
+     "src/api/registration.ts"
+    ],
+    "files_new": [
+     "src/pages/panels/frontdesk/DemographicsDrawer.tsx",
+     "src/components/print/UhidCardPrint.tsx",
+     "src/components/print/OpdTokenSlipPrint.tsx",
+     "src/pages/panels/frontdesk/DemographicsDrawer.test.tsx"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "opd-6a"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Correction needs a reason; stale row_version shows the conflict; out-of-scope record shows not found; print snapshots; no full Aadhaar field exists; browser check."
+   },
+   {
+    "id": "opd-8",
+    "title": "Doctor OPD queue tab and queue actions",
+    "description": "frontdesk_service and routes: call (alias of start), skip, recall, assign-to-me, PATCH priority and room, ordering by priority then token; in OPD mode /start and /complete need opd.consult; cancel takes a reason code, and left_without_being_seen raises no charge. GET /api/opd/my-queue. New OpdPanel.tsx feature tab for doctor and clinician rails: my queue, call next, skip, recall, take unassigned, add walk-in (reusing RegisterPatientView), and the record view from opd-7. ClinicianShell hides SageFloatingAssistant on the opd tab, and OpdPanel never publishes a patientId into ActiveViewContext. A content-free 'opd:queue_changed' {department} is emitted to the dept rooms through ws.realtime.schedule_on_loop (realtime.py not edited); doctors refetch over scoped REST, and the desk polls every ORB_OPD_QUEUE_POLL_SECONDS. Front desk queue shows priority, room, skipped and an LWBS action.",
+    "files_touched": [
+     "server/services/frontdesk_service.py",
+     "server/routes/frontdesk_routes.py",
+     "server/routes/opd_routes.py",
+     "src/shellConfig.tsx",
+     "src/shellConfig.test.ts",
+     "src/pages/ClinicianShell.tsx",
+     "src/pages/panels/FrontDeskPanel.tsx"
+    ],
+    "files_new": [
+     "src/api/opd.ts",
+     "src/pages/panels/OpdPanel.tsx",
+     "src/pages/panels/OpdPanel.css",
+     "src/pages/panels/OpdPanel.test.tsx",
+     "server/tests/test_opd_queue_actions.py"
+    ],
+    "size_days": 4,
+    "depends_on": [
+     "opd-3",
+     "opd-6a",
+     "opd-7"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Queue state machine; LWBS is cancelled with its code and no charge; cross-department visit 404; admin and receptionist 403 on call, start and complete in OPD mode; nudge payload whitelist has only department; Sage assistant not rendered on the opd tab and no view_context patient sent; rail shows OPD for doctors only, never admin, nurse or receptionist."
+   },
+   {
+    "id": "opd-9",
+    "title": "Name-free token display board with device keys",
+    "description": "Admin (schedule.manage) creates and revokes a board for one department; the key is shown once and stored hashed in opd_display_boards. GET /api/frontdesk/opd/board authenticates by the X-Orb-Board-Key header only and returns per doctor: display name, room, the token being called and the next three. No patient name, UHID or complaint, so no read audit; key creation and revocation are audited as configuration. Kiosk route /display/opd (OpdTokenBoard.tsx in App.tsx) reads the key from the URL fragment, never the query string, and polls every 10 s.",
+    "files_touched": [
+     "server/routes/frontdesk_routes.py",
+     "server/services/frontdesk_service.py",
+     "src/App.tsx",
+     "src/pages/panels/FrontDeskPanel.tsx"
+    ],
+    "files_new": [
+     "src/pages/OpdTokenBoard.tsx",
+     "src/pages/OpdTokenBoard.css",
+     "src/pages/OpdTokenBoard.test.tsx",
+     "src/pages/panels/frontdesk/DisplayBoardsView.tsx",
+     "server/tests/test_opd_board_no_phi.py"
+    ],
+    "size_days": 2.5,
+    "depends_on": [
+     "opd-8"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Response key whitelist; a revoked or wrong key is 401; a key for one department never returns another's tokens; no phi_access row; staff tokens are not accepted as board keys; flag off 404."
+   },
+   {
+    "id": "opd-9b",
+    "title": "Live queue nudges for desk accounts",
+    "description": "After the CORS same-origin socket session merges: realtime.connect joins registration.read holders to 'opd:{dept}' (or 'opd:__all__' with no department); frontdesk emits the content-free nudge there too; the desk stops polling and refetches on change. If OPD-N12 is ruled (b), the queue read audit dedupes per user and visible visit set within 10 minutes.",
+    "files_touched": [
+     "server/ws/realtime.py",
+     "server/services/frontdesk_service.py",
+     "server/routes/frontdesk_routes.py",
+     "src/pages/panels/FrontDeskPanel.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_opd_socket_rooms.py"
+    ],
+    "size_days": 1,
+    "depends_on": [
+     "opd-8"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Receptionist joins only its opd room and no vitals room; nudge carries no PHI; test_ws_origin stays green; queue audit rows proportional to changes when dedupe is ruled."
+   },
+   {
+    "id": "opd-10",
+    "title": "OPD consultation record (server)",
+    "description": "Migration M51 opd_consultations and append-only opd_consultation_addenda. opd_service: draft and save with row_version; sign (immutable afterwards, audit in-transaction); addenda and history; diagnoses as free text with an optional code checked by terminology_service.validate_code and stored with code_status (an unknown code is kept as unvalidated, never refused); optional problem_list add for validated codes; OPD vitals kept in vitals_json with measured_at, never written to vitals or risk_scores and never scored. Routes: consultation GET/PUT, sign, addenda, complete-with-disposition (signed note required, or a reason per OPD-N8; keeps the existing charge logic), GET /api/opd/patients/{patient_id}/consultations (opd_arm=True). patient_timeline_service shows OPD visits and signed consultations. Dedicated AST guard.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/routes/opd_routes.py",
+     "server/services/opd_service.py",
+     "server/services/frontdesk_service.py",
+     "server/services/patient_timeline_service.py",
+     "server/services/consent_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_opd_consultation.py",
+     "server/tests/test_opd_no_scoring.py"
+    ],
+    "size_days": 4,
+    "depends_on": [
+     "opd-7",
+     "opd-8"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "Draft, sign, then edit refused; addenda append-only; stale row_version 409; a free-text diagnosis with no code saves; an unknown code saves as unvalidated; cross-department 404; admin 403. No vitals, risk_scores or medications row written. test_opd_no_scoring: opd_service, opd_routes, registration_service, registration_routes, patient_matching and clinic_schedule_service neither import nor call compute_news2, score_vitals_row or any vigil scoring function, nor INSERT into vitals or risk_scores. Completion with a disposition raises exactly one charge."
+   },
+   {
+    "id": "opd-10a",
+    "title": "OPD allergy review and allergy assessment status",
+    "description": "Migration M52 patient_allergy_assessments (append-only). POST /api/opd/visits/{visit_id}/allergy-review (opd.consult): charts substances through clinical_records_service.record_allergies_on(db, ..., source='opd') and writes an assessment row (none_known, allergies_recorded, or unable_to_obtain with a reason) in the same transaction, audited in-transaction. The OPD record view and the consultation show 'Allergies not yet asked' versus 'No known allergies, asked by X on date'. Signing requires an allergy review on this visit or a valid earlier assessment, per OPD-S7. allergy_interlock and drug_safety_service are not changed, so R011 is untouched.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/routes/opd_routes.py",
+     "server/services/opd_service.py",
+     "server/services/consent_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_opd_allergy_review.py"
+    ],
+    "size_days": 2.5,
+    "depends_on": [
+     "opd-10"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "OPD-S7",
+    "migrations": 1,
+    "tests": "A charted penicillin allergy is then seen by enforce_medication_safety for the patient; 'none_known' writes no patient_allergies row and is recorded with the clinician; nkda typed as a substance is not charted (allergy_entries rule kept); a receptionist and an admin get 403; assessment rows refuse UPDATE and DELETE; sign without a review follows the OPD-S7 rule."
+   },
+   {
+    "id": "opd-11",
+    "title": "OPD consultation screen, investigations and prints",
+    "description": "ConsultationEditor in OpdPanel: complaint, history, exam, timed vitals shown as plain values (no colour, band or score), DiagnosisPicker (terminology search plus free text) on a new GET /api/opd/terminology/search, allergy review panel, plan, advice, follow-up, referral. Investigations via POST /api/opd/visits/{visit_id}/orders, which calls orders_service.create_order with opd_visit_id after checking the visit is in the caller's department and the patient has no active admission; order sets are not offered for outpatients. Disposition dialog: home, follow-up (appointment request), internal referral, advise admission (enabled once opd-17a ships). Print: consultation and investigation slip with the doctor's name and users.registration_number.",
+    "files_touched": [
+     "src/pages/panels/OpdPanel.tsx",
+     "src/api/opd.ts",
+     "server/routes/opd_routes.py",
+     "server/services/orders_service.py",
+     "server/services/terminology_service.py"
+    ],
+    "files_new": [
+     "src/pages/panels/opd/ConsultationEditor.tsx",
+     "src/pages/panels/opd/DiagnosisPicker.tsx",
+     "src/pages/panels/opd/AllergyReviewPanel.tsx",
+     "src/components/print/OpdConsultationPrint.tsx",
+     "src/pages/panels/opd/ConsultationEditor.test.tsx",
+     "server/tests/test_opd_orders.py"
+    ],
+    "size_days": 4,
+    "depends_on": [
+     "opd-10a"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Editor save, sign and lock; an order carries the visit and is refused cross-department and for an actively admitted patient; orders_routes untouched; print shows the registration number and no invented text; vitals render with no colour or band; browser check."
+   },
+   {
+    "id": "opd-12",
+    "title": "OPD prescription on the shared medication-order store",
+    "description": "Prescription lines go to the medorder store with setting 'outpatient', opd_visit_id, duration_days, quantity and instructions, each screened by enforce_medication_safety(entry_point='opd_prescription', actor_role). Requires opd.consult and medication.prescribe (prescriber-only today; decides nothing on R010). When the patient has no allergy rows and no allergy assessment, behaves as OPD-S7 rules. Never creates medications rows or helix orders; OP dispensing is the pharmacy epic's lane. Printed prescription.",
+    "files_touched": [
+     "server/routes/opd_routes.py",
+     "server/services/opd_service.py",
+     "src/pages/panels/opd/ConsultationEditor.tsx"
+    ],
+    "files_new": [
+     "src/components/print/OpdPrescriptionPrint.tsx",
+     "server/tests/test_opd_prescription.py"
+    ],
+    "size_days": 3.5,
+    "depends_on": [
+     "opd-11",
+     "medorder-1"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "OPD-S7",
+    "migrations": 0,
+    "tests": "Allergy interlock 428 for a penicillin-allergic outpatient; unassessed allergy status follows OPD-S7; dose guard blocks; nurse 403; no medications, eMAR or helix row; after conversion the OPD prescription is not on the inpatient MAR; order-gate behaviour follows whatever R011 rules."
+   },
+   {
+    "id": "opd-13",
+    "title": "OPD charges: registration fee, clinic codes, follow-up rule, payer at registration",
+    "description": "Migration M53 opd_charge_rules. Consultation code resolves doctor, then department, then OPD-CONSULT; OPD-FOLLOWUP inside a rule's window; REG-FEE on first registration; new items registered unpriced. Payer category captured at registration as a patient_payer_policies row with no admission, plus a per-visit payer snapshot. ORB_OPD_CHARGE_AT=registration raises the consultation line at registration, idempotent on the visit; a later cancel (including LWBS) voids a still-pending line through billing_service.cancel_charge with an audit row, and an invoiced line is left for a refund through the existing payments flow.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/frontdesk_service.py",
+     "server/services/billing_masters.py",
+     "server/services/registration_service.py",
+     "server/routes/registration_routes.py"
+    ],
+    "files_new": [
+     "server/tests/test_opd_charges.py"
+    ],
+    "size_days": 3.5,
+    "depends_on": [
+     "opd-4",
+     "opd-8"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "Unpriced stays unpriced; doctor and department codes resolve; follow-up window uses OPD-FOLLOWUP; registration fee once; insured patient priced on the payer tariff; hospital day correct at 02:00 IST; replay does not double-charge; cancel voids a pending registration-time charge; LWBS raises nothing at completion timing."
+   },
+   {
+    "id": "opd-14",
+    "title": "Outpatient billing at the counter",
+    "description": "GET /api/billing/op-patients?date= (billing.read; outpatients with pending op charges; phi_access audited). BillingPanel Charges picker merges them with ward and discharged patients. 'Bill this visit' calls create_invoice with encounter_type 'op' and no admission. OPD counter invoice form uses the existing createOpdInvoice wrapper (src/api/billing.ts:433) on the existing route.",
+    "files_touched": [
+     "server/routes/billing_routes.py",
+     "server/services/billing_service.py",
+     "src/pages/panels/BillingPanel.tsx",
+     "src/api/billing.ts"
+    ],
+    "files_new": [
+     "server/tests/test_billing_op_patients.py",
+     "src/pages/panels/BillingPanel.opd.test.tsx"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "opd-13"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "A walk-in with a pending charge is selectable; an invoice takes only that patient's op lines; an inpatient line is never swept onto an OPD bill; cashier still cannot reach billing screens."
+   },
+   {
+    "id": "opd-15",
+    "title": "Clinic session master and availability",
+    "description": "Migration M54 clinic_sessions and clinic_session_exceptions. New clinic_schedule_service.py and schedule_routes.py (schedule.manage writes; registration.read or patient.read_all reads availability). Slots computed in hospital-local time, never stored; overlapping sessions for one doctor refused. Front Desk 'Clinic timings' view.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/main.py",
+     "src/pages/panels/FrontDeskPanel.tsx"
+    ],
+    "files_new": [
+     "server/services/clinic_schedule_service.py",
+     "server/routes/schedule_routes.py",
+     "src/api/schedule.ts",
+     "src/pages/panels/frontdesk/ClinicSessionsView.tsx",
+     "server/tests/test_clinic_schedule.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "opd-3"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "Weekly sessions generate slots; an exception removes them; overlap refused; hospital-local day boundaries; flag off 404; only schedule.manage writes; config changes audited."
+   },
+   {
+    "id": "opd-16",
+    "title": "Appointments with a doctor and a slot, check-in, no-shows, receptionist booking",
+    "description": "Migration M55 rebuilds appointments in-transaction: orphan pre-check, origin and department carried, both indexes recreated, new statuses and columns, partial unique index on live doctor slots after a clash pre-check. appointments_routes: doctor and slot booking (double-book 409); reschedule as a linked new row; check-in creates the OPD visit with appointment_id and a token; no-show manual or computed at session end on read; the staff branch accepts patient.write OR registration.write and uses enforce_patient_scope(..., opd_arm=True) plus, for a departmented desk, the appointment's department must be its own; cancel and complete become ward-scoped; every date check (_validate_slot, _validate_date_only, default_slot_for, /mine) moves to hospital_time. forecast_service returns the doctor and keeps its appointment-department branch. Front Desk Appointments day view; AppointmentsPanel shows the doctor. Portal requests unchanged.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/routes/appointments_routes.py",
+     "server/services/forecast_service.py",
+     "server/services/frontdesk_service.py",
+     "src/pages/panels/AppointmentsPanel.tsx",
+     "src/pages/panels/FrontDeskPanel.tsx"
+    ],
+    "files_new": [
+     "src/pages/panels/frontdesk/AppointmentsDayView.tsx",
+     "server/tests/test_appointments_slots.py"
+    ],
+    "size_days": 4.5,
+    "depends_on": [
+     "opd-15",
+     "opd-8"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "Migration aborts with a list on orphans and keeps origin, department and both indexes; double booking refused; reschedule keeps history; check-in idempotent; no-show after the session; cross-ward cancel and complete 404; a booking at 00:30 IST uses the hospital day; receptionist books inside its clinic and is refused for an inpatient of another ward; test_bridge_appointments and test_forecast_appointments_booked_only stay green."
+   },
+   {
+    "id": "opd-17a",
+    "title": "Convert a registered outpatient to inpatient",
+    "description": "admission_service.admit_existing_patient for status 'registered' only, sharing admit_patient's insert helpers in one immediate transaction: active-admission check, status to 'admitted' with no new patient or MRN, patient_profiles insert (none exists), Bridge login only if none exists, a case room (none exists), admissions.opd_visit_id and visit disposition 'admitted', provisional diagnosis and complaint carried, charted allergies kept, clinical_access audit in-transaction. Requires a passing identity check per OPD-S1. POST /api/admissions/admit-existing. AdmitPatientModal existing-patient mode: identity fixed, demographics read-only, OPD vitals and OPD medicines listed for reference only with their times (OPD-S3, OPD-S4). OpdPanel 'Advise admission'. Uses the adt-1 bed picker if it has landed. Starts after the Scribe and AdmitPatientModal sessions merge.",
+    "files_touched": [
+     "server/services/admission_service.py",
+     "server/routes/admission_routes.py",
+     "src/components/AdmitPatientModal.tsx",
+     "src/pages/panels/OpdPanel.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_opd_to_ip_conversion.py",
+     "src/components/AdmitPatientModal.existing.test.tsx"
+    ],
+    "size_days": 3.5,
+    "depends_on": [
+     "opd-4",
+     "opd-6a",
+     "opd-10",
+     "opd-5b"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "OPD-S1, OPD-S3, OPD-S4",
+    "migrations": 0,
+    "tests": "Same patient id and MRN; OPD access ends and ward access begins; OPD charge stays op and appears in the stay advisory; no OPD vitals copied into vitals; no OPD Rx copied into medications; allergies preserved; a 'discharged' patient is refused here (opd-17c); a second concurrent conversion is refused; replay idempotent; Scribe quick-admit and admission form tests stay green."
+   },
+   {
+    "id": "opd-17b",
+    "title": "Stay keying for repeat admissions",
+    "description": "Migration M56: discharge_summaries.admission_id with backfill for single-admission patients, and a partial unique index allowing one active admission per patient (pre-checked). discharge_service writes admission_id. /vigil/discharged lists one row per patient (latest summary). NABH inpatient-days and the shadow scorecard derive stays per admission so a second stay is not merged into the first. Case rooms: one room per patient is the rule (15 readers fetch by patient_id with no ORDER BY), pinned by a test. A written audit of every stay-keyed reader (escalation chains, sepsis bundles, orders, I-PASS) is part of the increment, with each one either fixed here or listed for opd-17c.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/discharge_service.py",
+     "server/routes/vigil_routes.py",
+     "server/services/nabh_service.py",
+     "server/services/shadow_scorecard_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_stay_keying.py"
+    ],
+    "size_days": 4,
+    "depends_on": [
+     "opd-2"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "Backfill correct for single-stay patients and NULL for none; a second active admission insert fails; a twice-discharged fixture lists once; NABH inpatient-days and scorecard diagnostics count two stays separately and are unchanged on the current single-stay data; discharge tests stay green."
+   },
+   {
+    "id": "opd-17c",
+    "title": "Readmit a discharged patient onto the same record",
+    "description": "admit_existing_patient extended to 'discharged' patients (also the Ward Record 'returning patient with the same hospital number reopens the same record'): identity check per OPD-S1; previous-stay medication rows still 'active' or 'prn' handled exactly as OPD-S8 rules (recommended: discontinued in the same transaction, audited as previous_stay_medications_closed, and listed on the admission form for item-by-item re-prescribing); patient_profiles updated, never blanked; the existing case room reused with a READMISSION system message; sage_room_memory upserted for the new stay; Bridge login reused; allergies preserved; patient_readmitted audit in-transaction. A duplicate MRN on /admit offers this path.",
+    "files_touched": [
+     "server/services/admission_service.py",
+     "server/routes/admission_routes.py",
+     "src/components/AdmitPatientModal.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_readmission_same_record.py"
+    ],
+    "size_days": 4.5,
+    "depends_on": [
+     "opd-17a",
+     "opd-17b"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "OPD-S1, OPD-S8",
+    "migrations": 0,
+    "tests": "After readmission no medication from the earlier stay can be administered on the eMAR; one case room per patient; profile not blanked; history and earlier discharge summary retained and keyed to the old admission; a concurrent readmission is refused by the unique index; replay idempotent."
+   },
+   {
+    "id": "opd-18",
+    "title": "Front office MIS",
+    "description": "GET /api/frontdesk/mis/daily, aggregates only for one hospital-local day: new versus returning registrations, visits by clinic and doctor, median and longest wait, LWBS (cancel code), no-shows when opd-16 is in, OPD-to-IP conversions. Front Desk 'Day summary' view with CSV export.",
+    "files_touched": [
+     "server/routes/frontdesk_routes.py",
+     "server/services/frontdesk_service.py",
+     "src/pages/panels/FrontDeskPanel.tsx"
+    ],
+    "files_new": [
+     "src/pages/panels/frontdesk/DaySummaryView.tsx",
+     "server/tests/test_front_office_mis.py"
+    ],
+    "size_days": 2.5,
+    "depends_on": [
+     "opd-8"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Counts against fixtures; hospital-local day; no PHI fields; a departmented account sees its clinic only."
+   },
+   {
+    "id": "opd-19",
+    "title": "DPDP notice and consent at the registration desk",
+    "description": "Per OPD-N3: consent.record granted to receptionist if ruled, and a registration step records notice acknowledgement and treatment consent through consent_service in the patient's preferred language. Retention text confirms demographics are part of the clinical record.",
+    "files_touched": [
+     "server/permissions.py",
+     "src/lib/roles.ts",
+     "server/services/registration_service.py",
+     "src/pages/panels/frontdesk/RegisterPatientView.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_registration_consent.py"
+    ],
+    "size_days": 2,
+    "depends_on": [
+     "opd-6a"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "OPD-N3",
+    "migrations": 0,
+    "tests": "Consent row written with the registration; withdrawal path exists; receptionist without the grant gets 403 if the ruling says no."
+   },
+   {
+    "id": "opd-20",
+    "title": "Diagnosis code list load",
+    "description": "Write the terminology loader the terminology_service docstring names but which does not exist: loads a licensed ICD-10 release into the existing terminology table (code_system ICD10), idempotent, with a version row, run as an ops script. Re-validates stored 'unvalidated' diagnoses only on request, never rewriting signed notes.",
+    "files_touched": [
+     "server/services/terminology_service.py"
+    ],
+    "files_new": [
+     "server/scripts/load_terminology.py",
+     "server/tests/test_load_terminology.py"
+    ],
+    "size_days": 2,
+    "depends_on": [
+     "opd-10"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "OPD-N11",
+    "migrations": 0,
+    "tests": "Load twice gives the same row count; an inactive code no longer validates; signed consultations are untouched."
+   }
+  ],
+  "product_rulings": [
+   {
+    "question": "OPD-S1 (new, patient safety): before the desk attaches a visit, or a clinician attaches an admission, to an EXISTING record found by search, which identifiers must be confirmed, and how?",
+    "options": "(a) two identifiers the patient states (name plus DOB or stated age, plus phone last 4 or UHID), checked by the server, which answers match or no match and never shows the stored DOB, recorded in the audit; (b) UHID alone; (c) a name match alone",
+    "recommendation": "(a). Wrong-patient selection attaches someone else's allergies and history, and showing the stored DOB to a hospital-wide searcher would leak the discharge-link second factor. This also governs the Ward Record clerk's returning-patient screen.",
+    "safety": true
+   },
+   {
+    "question": "OPD-S2 (new, patient safety): when registration or an admission door finds a probable duplicate, should the server warn or block?",
+    "options": "(a) warn, require a reason, audit it and open a worklist item; hard refusal only on exact UHID or active ABHA; (b) block above the threshold until a supervisor reviews; (c) warn only, no reason",
+    "recommendation": "(a). Duplicate charts split the allergy history, but blocking a sick walk-in at the counter is worse.",
+    "safety": true
+   },
+   {
+    "question": "OPD-S3 (new, patient safety, the analogue of held W111; does not decide W111): do vitals taken in OPD enter the observation chart and count as the latest vitals after conversion?",
+    "options": "(a) no: they stay inside the OPD record, are shown on the admission form with their time, and the ward charts a fresh set; (b) copy them into vitals at conversion",
+    "recommendation": "(a). Otherwise hours-old OPD values become the board's latest reading and its NEWS2.",
+    "safety": true
+   },
+   {
+    "question": "OPD-S4 (new, patient safety, related to held R010): do active OPD prescriptions carry onto the inpatient medication chart at conversion?",
+    "options": "(a) never automatically: listed as OPD or home medicines for item-by-item reconciliation by the admitting prescriber; (b) carry them as active inpatient orders",
+    "recommendation": "(a). The eMAR would otherwise offer a nurse a take-home prescription as an inpatient dose.",
+    "safety": true
+   },
+   {
+    "question": "OPD-S5 (new, patient safety): may the front desk record allergies or 'no known allergies' at registration?",
+    "options": "(a) no allergy field at the desk; a clinician records allergies at consultation or admission; (b) the desk may record allergies but never NKDA; (c) the desk records both",
+    "recommendation": "(a), which is how opd-4 is built. A clerk-typed NKDA would silence the interlock.",
+    "safety": true
+   },
+   {
+    "question": "OPD-S6 (new, patient safety, related to held R023): does an abnormal vital typed into an OPD consultation prompt anyone?",
+    "options": "(a) no automatic prompt: the value is shown with its time to the consulting doctor who typed it; (b) a fixed plain-text red-flag line for values outside fixed limits (for example SpO2 below 90), no score and no band; (c) (b) plus an automatic Relay post to an emergency responder",
+    "recommendation": "(a) for now, because in this design only the consulting doctor enters OPD vitals and is the person who acts on them, and any automatic rule is decision-support wording that R023 governs. Revisit before any triage-nurse vitals entry is built.",
+    "safety": true
+   },
+   {
+    "question": "OPD-S7 (new, patient safety): how is 'asked, no known allergies' recorded, and may an OPD prescription be written when the patient's allergy status was never assessed?",
+    "options": "(a) a prescriber records an allergy review (allergies charted, 'none known', or 'unable to obtain' with a reason); signing a consultation and writing an OPD prescription are refused until one exists; (b) allowed with a visible 'allergies not yet asked' warning acknowledged in the order; (c) allowed as today",
+    "recommendation": "(a). The interlock cannot tell NKDA from never asked (allergy_interlock.py:360-366), and an OPD prescription leaves the building with nobody else checking it. The assessment never changes how the interlock screens.",
+    "safety": true
+   },
+   {
+    "question": "OPD-S8 (new, patient safety): when a discharged patient is readmitted onto the same record, what happens to medication rows from the earlier stay that are still 'active' or 'prn'?",
+    "options": "(a) the readmission transaction discontinues them, audited, and lists them on the admission form for item-by-item re-prescribing; (b) discontinue them at discharge instead (changes discharge for every patient); (c) leave them active",
+    "recommendation": "(a) now, and consider (b) later as its own discharge change. Discharge leaves medications 'active' and the eMAR's only guard is patients.status 'admitted' (emar_service.py:604-613), so without this every old drug becomes administrable again on readmission.",
+    "safety": true
+   },
+   {
+    "question": "OPD-N1: where does the UHID come from at each site, and in what format?",
+    "options": "hospital mode (type the existing HIS number, site regex); orb mode (Orb series with a Verhoeff check digit, site prefix)",
+    "recommendation": "Hospital mode by default (beside-HIS, Ward Record); orb mode with a check digit for a site Orb replaces; never reset per year; orb mode refused until the series is configured.",
+    "safety": false
+   },
+   {
+    "question": "OPD-N2: how far does an OPD visit open the patient's record to that clinic, for how long, and does a visit the reader registered themselves count?",
+    "options": "Window: same day, 7 days, 30 days. Extent: (i) identity, allergies, problems, OPD-linked results and this clinic's consultations; (ii) plus other clinics' signed consultations; (iii) plus earlier inpatient discharge summaries. Self-registered visits: (x) count, flagged and audited; (y) count only after someone else checks the patient in",
+    "recommendation": "7 days, extent (ii), self-registered (x). The inpatient chart, chart writes and FHIR export stay admission-only whatever is chosen. (iii) only through the existing inpatient scope until a clinician asks for it.",
+    "safety": false
+   },
+   {
+    "question": "OPD-N3: create a receptionist role; should it also take consent (F123) and money; and should admin hold registration.write?",
+    "options": "receptionist with registration only; plus consent.record; plus payments.record. Admin: registration.read only, or also registration.write",
+    "recommendation": "Receptionist with registration.read and registration.write, plus consent.record once counsel agrees. Money stays with the cashier role. Admin keeps registration.read only; registering patients is the desk's and the doctor's job.",
+    "safety": false
+   },
+   {
+    "question": "OPD-N4: may a ward-scoped account search the whole patient index (minimal fields) to avoid duplicate registrations?",
+    "options": "yes, minimal fields, audited; no, own department only",
+    "recommendation": "Yes: UHID, name, sex, age, phone last 4, last visit date and 'inpatient now' only; minimum 3 characters, 20 results, every search audited with the matched ids. The full record stays scoped.",
+    "safety": false
+   },
+   {
+    "question": "OPD-N5 (existing R018): must the desk capture date of birth?",
+    "options": "required; optional with stated age",
+    "recommendation": "Optional, with stated age stored with its date and the 'no date of birth, no discharge link' hint. Never store an estimated DOB.",
+    "safety": false
+   },
+   {
+    "question": "OPD-N6: when is the consultation fee charged, and is there a registration fee or free follow-up window?",
+    "options": "at registration (prepaid) or at completion (today); REG-FEE yes or no; follow-up window in days",
+    "recommendation": "Site setting, default completion. A follow-up window maps to its own OPD-FOLLOWUP code the site prices, never an implicit zero. Cancel and LWBS void a pending prepaid line.",
+    "safety": false
+   },
+   {
+    "question": "OPD-N7: what does the waiting-room token board show?",
+    "options": "token only; token and initials; token and name",
+    "recommendation": "Token, doctor and room only (DPDP), on a per-board device key.",
+    "safety": false
+   },
+   {
+    "question": "OPD-N8: may a visit be completed without a signed consultation note?",
+    "options": "signed note required; allowed with a reason ('note on paper')",
+    "recommendation": "Allowed with a reason, because many clinics will keep paper notes at first.",
+    "safety": false
+   },
+   {
+    "question": "OPD-N9: which queue priority categories apply?",
+    "options": "none; senior citizen, pregnant, differently abled, emergency; site list",
+    "recommendation": "A site-configured list with a reason captured, shown on the doctor's queue.",
+    "safety": false
+   },
+   {
+    "question": "OPD-N10: what identity document data may registration store?",
+    "options": "none; type plus last 4; full number",
+    "recommendation": "Type plus last 4, never a full Aadhaar number; counsel to confirm.",
+    "safety": false
+   },
+   {
+    "question": "OPD-N11 (new): which diagnosis code list does OPD load, and under what licence?",
+    "options": "WHO ICD-10 under a WHO licence; another release; free text with the curated seed only",
+    "recommendation": "Free text plus optional code now (opd-10 works without a load). Counsel to confirm the licence terms of the chosen ICD-10 release before opd-20 loads it.",
+    "safety": false
+   },
+   {
+    "question": "OPD-N12 (new): may an unchanged OPD queue re-read skip writing a new phi_access row?",
+    "options": "(a) audit every non-empty read (today); (b) one row per user per distinct set of visible visits per 10 minutes, with the visit ids in metadata",
+    "recommendation": "(b). The disclosure is identical, and polling desks would otherwise write about 1,200 rows per screen per day, while audit already drives appliance storage.",
+    "safety": false
+   }
+  ],
+  "risks": [
+   "The patients rebuild (opd-2) is an FK-parent rebuild under about 35 child tables, done in an autocommit window that commits the runner's earlier work. It runs on every install, Ward Record included, even with the flags off. A defect here loses or orphans patient rows. Mitigations: the proven _atomic_table_rebuild path, a frozen column list (M48 deliberately adds no patients columns), row-count and foreign_key_check assertions, a verified backup first, and a dry run on a dev DB copy on an isolated verify stack.",
+   "Readmission onto the same record (opd-17c, and the Ward Record returning patient) reopens the previous stay's still-active medications on the eMAR unless OPD-S8 is ruled and built. That is the sharpest hazard in this epic. Stay-keyed readers beyond the ones listed may surface later, which is why opd-17b includes a written reader audit.",
+   "Every new role is a users rebuild (FK parent of about 20 tables), and its canonical column list is hard-coded. Batch receptionist, the Ward Record clerk and other epics' roles into one migration, and any epic adding a users column must update the list in the same change.",
+   "Migration version collisions: about ten sessions and several epic architects will claim numbers after 47, and a duplicate schema_migrations key stops the server from booting. Reserve a block per epic (this epic needs 9: M48 to M56).",
+   "The OPD arm still widens reads. A wrong window, a forgotten no-active-admission rule, or an opd_arm=True added to a chart route would reopen the 2026-08-05 class. Mitigations: an opt-in kwarg, a whitelist drift test, explicit 404 tests on the high-risk writes, and the flag held off until OPD-N2 is ruled.",
+   "Opt-in scope means an OPD doctor cannot see a returning patient's inpatient history from another ward (for example a recent discharge summary) unless OPD-N2 widens the extent. That is a continuity gap traded for privacy, and it should be stated to the clinical champion.",
+   "Wrong-patient selection at returning-patient search and split duplicate charts both lose allergy history (OPD-S1, OPD-S2, OPD-S5, OPD-S7). The stated-identifier check is an oracle, so it is rate-limited and audited.",
+   "patient_match_keys is a second encrypted copy of name, phone, DOB and sex. That widens the DPDP footprint. It is classified clinical_record and must be included in any future erasure or merge executor.",
+   "Self-healing key sync scans patients with a LEFT JOIN before each match. At 100k+ rows in SQLCipher this may be slow; opd-5 measures it and can fall back to a bounded incremental sync. FTS5 availability in sqlcipher3-wheels is unverified.",
+   "Audit volume: until opd-9b, each open desk screen polling at 30 s writes up to 1,200 phi_access rows a day (OPD-N12 would cut this). Doctors refetch on nudge only.",
+   "OPD prescription depends on medorder-1. The shortcut of writing OPD prescriptions into medications would put take-home drugs on the eMAR; a test forbids it.",
+   "ICD-10 coverage: the seed is small and the loader does not exist. Free-text diagnoses keep the note usable, but coded reporting (MIS, NABH, ABDM) waits for opd-20 and the licence answer.",
+   "Default-off FEATURE_FLAGS is new cross-epic infrastructure. If two epics each build their own mechanism, the client will end up with two caches and two conventions. Agree that the first epic to land owns it.",
+   "Lane competition: about 84 engineer-days, about 95 with browser re-verification and merge friction, which is about 24 weeks at the sales plan's 4 engineer-days a week. It competes with the Ward Record build (28 to 44.5 days), the only paid product. The minimum useful slice (walk-in to billed consultation: opd-1, 2, 3, 7, 4, 5, 6a, 8, 10, 10a, 11, 13, 14) is about 45 days and needs OPD-S1, OPD-S2, OPD-S7 and OPD-N2 ruled before it can be switched on.",
+   "Defects found while mapping, outside any running session: appointment cancel and complete are not ward-scoped; appointment dates use the server clock; the ghost POST /api/vigil/patients is live; front-desk OPD audits are written after commit in a fail-soft category. The first three are worth a quick fix before opd-16 and opd-1 land.",
+   "Device class: OPD screens must never show NEWS2, a band or AI advice (R023, the Ward Record rule). OPD vitals stay in the OPD record, the dedicated AST guard covers the new modules, and the OPD tab hides Sage.",
+   "Prescription and consultation prints need the doctor's qualification, which Orb does not store. Until credentialing adds it, prints carry only the name and users.registration_number."
+  ],
+  "session_conflicts": [
+   "Scribe quick-admit department validation (admission_service.py, scribe_routes.py): opd-5b, opd-17a and opd-17c edit both files and start only after that session lands. Scribe-drafted OPD notes are deferred.",
+   "Admit-form ACVPU/O2 defaults (src/components/AdmitPatientModal.tsx): opd-17a and opd-17c start from that work's merged version.",
+   "Sage bed lookup (server/services/sage_service.py): no edit. With the opt-in OPD arm, patient_in_scope and scope_patient_ids_sql are unchanged, so Sage's duplicate scope, the parity test and sage_routes provenance are untouched. The Sage UI is hidden on the OPD tab through ClinicianShell.tsx and OpdPanel, not through sage_service. A server-side refusal for an out-of-scope view_context patient belongs to the Sage owner as a follow-up.",
+   "CORS same-origin socket (server/ws/realtime.py, src/api/client.ts): opd-8 only imports sio and schedule_on_loop and adds new api files; opd-9b edits realtime.py and waits for that session to merge; client.ts is never edited (the dead createPatient wrapper is left for later).",
+   "Relay agentic confirm orphan orders (relay_routes.py, helix_service.create_order): opd-12 writes through the medorder store, never helix_service directly, and follows whatever R024 decides on order and state atomicity.",
+   "Bridge emergency flags (bridge_service): no overlap. Outpatients get no portal account; opd-17c reuses an existing Bridge login without editing bridge_service.",
+   "Cross-epic shared files that need an agreed merge order: server/migrations.py (version block), roles.py, permissions.py, src/lib/roles.ts and the role frontend files (one role batch, one users rebuild), server/config.py and src/shellConfig.tsx (the new FEATURE_FLAGS mechanism), server/database.py SCHEMA (one patients rebuild carrying the adt and death-record statuses), consent_service._RETENTION_SOURCES, ClinicianShell.tsx.",
+   "Pilot evidence instrument: opd-2 and opd-17b change shadow_scorecard_service.py readers. Whoever owns shadow instrumentation should review both, because it is the pilot's only evidence instrument.",
+   "ADT / bed master epic: owns bed allocation and may refactor admission_service. admit_existing_patient (opd-17a, opd-17c) and adt's bed allocation must be one design, so admission_service does not get two competing rewrites.",
+   "Ward Record track (clerk role, hospital patient number, returning patient reopens the same record): opd-2, opd-3, opd-5b, opd-17b and opd-17c are the same identity core. If the Ward Record ships first, build them once in that lane."
+  ]
+ },
+ "critique": {
+  "verdict": "needs_changes",
+  "issues": [
+   {
+    "severity": "blocker",
+    "issue": "The opd-7 scope arm widens permissions.patient_in_scope, which is the one guard behind require_patient_access for writes as well as reads. Turning ORB_OPD on therefore lets clinic staff write inpatient-lane records for outpatients through existing routes. POST /api/vigil/patients/{id}/medications (medication.write, which nurses also hold) has no admitted-status check, so a take-home drug lands in the medications table the eMAR reads and becomes an active inpatient order at conversion: the OPD-S4 hazard through a side door. POST nurse obs (vitals.write) has no status check either, so OPD obs reach vitals, NEWS2, risk_scores and Relay: the OPD-S3 and R023 hazard. The rule 'OPD never writes vitals or medications' is enforced only inside the new opd_service.",
+    "evidence": "permissions.py:447-468 (patient_in_scope) feeds require_patient_access (permissions.py:663+, run_db(patient_in_scope_blocking) at ~696). vigil_routes.py:907-950 add_patient_medication uses require_patient_access('medication.write') with no status check. nurse_routes.py:177 uses require_patient_access('vitals.write'), and nurse_shift_service.record_observation has no status or admission check. permissions.py nurse set includes MEDICATION_WRITE and VITALS_WRITE.",
+    "fix": "Make the OPD arm a READ-ONLY predicate. Options: a separate patient_in_opd_scope used only by GET guards and the new /api/opd routes, or require_patient_access takes a mode so write dependencies keep admission-only scope. Alternatively add an 'active admission required' check to medication add, nurse obs, scribe sign, sepsis/bundle writes and the other chart write routes. Add a drift test that enumerates every non-GET /{patient_id} route and proves an outpatient-only scope gets 404 unless the route is explicitly whitelisted as OPD."
+   },
+   {
+    "severity": "major",
+    "issue": "OPD consultations and prescriptions have no allergy capture. The interlock screens patient_allergies, which is empty for every new walk-in, and Orb cannot tell 'no known allergies' from 'never asked'. OPD-S5 rests on 'a clinician captures allergies at consultation', but opd-10's opd_consultations columns have no allergy field and no call to the existing allergy writer. Every OPD prescription (opd-12) would screen clean against zero allergies, which is the failure class migration 40 just fixed for admissions.",
+    "evidence": "allergy_interlock.py:360-366 ('A patient with no allergy row may be NKDA or may never have been asked, and Orb cannot currently tell those apart'). admission_service.py:352-361 uses clinical_records_service.record_allergies_on(db, ...). migrations.py:5233-5254 (m40 rationale).",
+    "fix": "Add allergy review to opd-10: charted through record_allergies_on in the consultation transaction, plus an explicit 'asked, none known' attestation stored separately from free text. Make opd-12 refuse or require acknowledgement when the patient's allergy status is unassessed. Raise this as a patient-safety ruling alongside OPD-S5 rather than burying it in the Rx increment."
+   },
+   {
+    "severity": "major",
+    "issue": "The registration record routes widen PHI scope hospital-wide. GET and PATCH /api/registration/patients/{patient_id}, /changes and /card sit behind require_registration_access (hospital-wide) and are entered in the drift-guard exempt set, and doctors are granted registration.read and registration.write. A ward-scoped Cardiology doctor could then read the address, phone, guardian, email and ID last-4 of any Oncology inpatient, read the history of old values, and PATCH their name or DOB. That is the 2026-08-05 cross-ward class again, plus an identity-tampering and wrong-patient path. N4 only covers minimal-field SEARCH.",
+    "evidence": "test_patient_scope_routes.py:591 ('exempt: set[str] = set()' with 'Add here only with the reason written down'). permissions.py:403-468 (per-patient scoping rationale). DOB is the discharge-link second factor (discharge_access_service.usable_dob:100).",
+    "fix": "Keep only the minimal-field search hospital-wide. Put GET record, /changes, /card and PATCH behind require_patient_access-style scope (admission scope, the OPD arm, or the caller's own clinic visit) for departmented users. Only an account with no department (central desk) reads hospital-wide. Do not add these paths to the exempt set."
+   },
+   {
+    "severity": "major",
+    "issue": "The design grants new clinical and demographic write powers to admin, which is a permission widening. It gives admin all four new permissions, including opd.consult (author, sign and complete consultations, call patients) and registration.write (correct any patient's demographics). Admin holds no patient.write today. The 2 October fixer refused exactly this widening for consent.record as a product decision. It also contradicts the design's own 'OPD tab never for admin', and the CLINICAL_MODULE_IDS bar that a clinical module's write is gated on a clinical permission.",
+    "evidence": "GAP_FIXES_2026-10-02.md:268 (F123: giving CONSENT_RECORD to admin 'widens who can change patient data... product decision'). permissions.py:267-305 (admin = governance + read-only clinical). shellConfig.tsx:812-825 (CLINICAL_MODULE_IDS membership bar).",
+    "fix": "opd.consult goes to doctor and clinician only. registration.write for admin becomes an explicit ruling (fold into N3), not a default grant. Add a test that admin gets 403 on consultation save, sign and call."
+   },
+   {
+    "severity": "major",
+    "issue": "Creating a visit grants chart access, so a doctor can give themselves access. opd_registration_allowed returns True for any pure outpatient in ANY department. Doctors hold patient.write, so they pass require_frontdesk_write. Combined with the hospital-wide index search (N4), any doctor can find any outpatient, register a visit in their own clinic, and then hold 7 days of full-chart access through the OPD arm, including FHIR export and other clinics' consultations. The design's anti-laundering rule covers only inpatients.",
+    "evidence": "frontdesk_service.py:531-556 (no admission -> True). frontdesk_routes.py:164-197 (PATIENT_WRITE arm). fhir_export_routes.py:32-46 (patient_in_scope gates whole-chart export).",
+    "fix": "Make the access grant a ruling (extend N2): for example, scope starts only at check-in or call by someone other than the reader, or the arm covers only the visit's own data plus minimal identity with older history behind a break-glass reason. At minimum, audit visit-created scope grants under clinical_access in the same transaction and surface them on a review list."
+   },
+   {
+    "severity": "major",
+    "issue": "A returning patient previously admitted in another department cannot be registered into a different clinic by a departmented desk or doctor. opd_registration_allowed falls through to patient_in_scope, and PATIENT_DEPARTMENT_SQL resolves a discharged patient to their LAST admission's department. The OPD arm needs a visit that cannot yet exist, so this is circular. The design leaves opd_registration_allowed unchanged.",
+    "evidence": "frontdesk_service.py:549-556. permissions.py:428-432 (ORDER BY active DESC, created_at DESC: discharged patients stay in their old ward's scope).",
+    "fix": "Align opd_registration_allowed with the arm: allowed when the patient has no ACTIVE admission. Pair this with the controls from the self-grant finding, and add a fixture for 'discharged from Cardiology, walks into Ortho OPD'."
+   },
+   {
+    "severity": "major",
+    "issue": "Duplicate detection is blind outside the registration path. name_key and phone_key are backfilled once in M48 and maintained only by registration_service. admit_patient, Scribe quick-admit, roster_import, history_import and the seed scripts insert patients without keys, and none of them runs the matcher. Every inpatient created after M48 is invisible to the matcher. A registered outpatient who is admitted through the ordinary Admit door (blank MRN) silently gets a second chart with a random MRN-XXXXXX, splitting allergy history. In hospital mode, admit_patient also ignores ORB_UHID_SOURCE.",
+    "evidence": "admission_service.py:248-249 (random MRN when blank) and :269 (INSERT patients). roster_import.py and history_import_service.py:2056-2081 write patients. coverage doc line 637 ('blank MRN duplicates the patient').",
+    "fix": "Put key computation in one helper (patient_matching.keys_for) and call it from every patients INSERT and name/phone UPDATE. List the writers and add an AST or grep guard. Alternatively, compute keys at match time over an indexed prefix. When REGISTRATION_ENABLED, have admit_patient and quick-admit run the hard match (UHID, ABHA, phone plus name) and honour ORB_UHID_SOURCE. Sequence this after the Scribe quick-admit session lands."
+   },
+   {
+    "severity": "major",
+    "issue": "opd-17 is undersized and unsafe as one increment. Readmitting onto the same patient row breaks single-stay assumptions across the codebase:\n- admissions has no uniqueness or index on (patient_id, status='active'), so a double active admission is possible;\n- patient_profiles has patient_id as PRIMARY KEY, and admit_patient INSERTs it;\n- each admission creates a new case_room channel and sage_room_memory row;\n- discharge_summaries carries no admission_id;\n- the /vigil/discharged list LEFT JOINs discharge_summaries, so a twice-discharged patient appears twice;\n- NABH inpatient-days and the shadow scorecard derive stays from patients.admission_date plus MAX(discharged_at).\nThe dev DB has zero patients with more than one admission, so none of this is exercised anywhere.",
+    "evidence": "database.py:93-95 (patient_profiles PK). admission_service.py:335, 434, 475 (profile, channel and sage_room_memory INSERTs). Live discharge_summaries DDL has no admission_id. vigil_routes.py:489-506. nabh_service.py:1321-1330. shadow_scorecard_service.py:1642-1700. Read-only query: no patient_id with more than one admission.",
+    "fix": "Split opd-17. (a) Convert a never-admitted 'registered' patient to inpatient: low risk, keep it as is. (b) Readmit a 'discharged' patient: a separate increment with an audit of stay-keyed readers. It needs an active-admission uniqueness check under the immediate transaction, upserts for profile, room and memory, and admission_id on discharge_summaries. Size about 1.5 to 2 weeks, as the coverage doc's 'about 1 week plus merge' implies."
+   },
+   {
+    "severity": "major",
+    "issue": "The claim that 'Sage stays admission-only' is not true, and it trips a mandated parity invariant. permissions.py documents that its scope and sage_service._patient_in_scope must agree, and test_the_route_scope_and_the_sage_scope_agree enforces it. With the flag on they diverge, which produces the '404 on one surface, 200 on another' failure the test exists to stop. sage_routes.py:3412-3422 also uses permissions.enforce_patient_scope and scope_patient_ids_sql, so Sage provenance WOULD include outpatients. When a doctor views an outpatient and asks a general question, Sage answers with no chart, which is the known Sage context-drop class.",
+    "evidence": "permissions.py:421-426. test_patient_scope_routes.py:520-540. sage_routes.py:3412-3422. sage_service.py:3727-3736 (an out-of-scope request patient_id is simply not anchored).",
+    "fix": "Rewrite the parity test as 'agree when OPD is off; with OPD on, differ only on the outpatient-only fixtures'. Decide the sage_routes provenance lane explicitly. Hide or disable the Sage entry points on OPD screens and outpatient charts (UI plus a server 404 test), so Sage never answers chartless about the patient on screen."
+   },
+   {
+    "severity": "major",
+    "issue": "Reconciling forecast_service.get_appointments onto the 7-day visit arm is a regression. Today a pure outpatient's booked row is scoped by the APPOINTMENT's own department, with no time window. Moving it to the visit arm hides phone bookings and follow-ups more than 7 days after the last visit from the clinic's own day list, undoing part of the F013 fix.",
+    "evidence": "forecast_service.py:1008-1036 (NOT EXISTS admissions AND ap.department = dept).",
+    "fix": "Keep the appointment's department as the scope for the appointment row. Use the OPD arm only for chart access."
+   },
+   {
+    "severity": "major",
+    "issue": "'Unknown ICD-10 refused' makes the consultation note unusable. The terminology table holds 22 ICD-10 codes, and validate_code is an exact lookup against that table.",
+    "evidence": "Read-only query of the dev DB terminology table: ICD10 22, LOINC 33, SNOMED 21, LOCAL 23. terminology_service.py:7-20 says this is a curated seed, with bulk load via scripts/load_terminology.py.",
+    "fix": "Allow a free-text diagnosis with an optional validated code (store code_status). Alternatively, make a WHO ICD-10 load (licence checked) a prerequisite task of opd-10/11 with its own size."
+   },
+   {
+    "severity": "major",
+    "issue": "The kiosk board and the socket nudge do not work as designed.\n- /display/opd calls a route that needs registration.read or patient.read_all, so a waiting-room TV must hold a staff token that also opens index search and demographics.\n- connect() joins department rooms only for vitals.read holders, so receptionists and the kiosk never receive 'opd:queue_changed' unless realtime.py is edited, and the CORS session owns that file.\n- Without the nudge, desk screens poll, and the queue route writes a phi_access row on every non-empty poll. That is the audit-volume risk the design says it avoids.",
+    "evidence": "ws/realtime.py:270-287 (room join gated on VITALS_READ). frontdesk_routes.py:262-275 (log_phi_read whenever result['total']).",
+    "fix": "Add a display-device credential or role holding only a board permission, with no PHI and a short-lived token. Add an 'opd:{dept}' room for registration.read holders in realtime.py after the CORS session merges, and list that as a dependency. Until then, state the polling interval and its audit cost, or audit queue reads on change only."
+   },
+   {
+    "severity": "minor",
+    "issue": "Permission wiring gaps.\n- require_frontdesk_write and require_frontdesk_read both hang off require_permission(PATIENT_READ_ALL), so adding registration.write as a 'third OR arm' does not admit a receptionist. The base dependency must be restructured without opening transfers.\n- The existing /start and /complete routes stay on frontdesk.write OR patient.write, while the new call and complete-with-disposition need opd.consult, giving two gates on one state transition.\n- Receptionists cannot book appointments, because book_appointment requires patient.write.",
+    "evidence": "frontdesk_routes.py:164-207 and 394-430. appointments_routes.py:323-345.",
+    "fix": "Write a new require_registration_desk dependency. When OPD is on, retire or alias /start and /complete onto the opd.consult gate. Decide receptionist booking (registration.write plus a scope rule) in opd-16."
+   },
+   {
+    "severity": "minor",
+    "issue": "The receptionist role misses frontend files. Without them, User Management cannot create one and the shell labels it 'staff'.",
+    "evidence": "src/pages/panels/admin/UsersPanel.tsx:29 (STAFF_ROLES). src/App.tsx:20 (UserRole union). src/pages/ClinicianShell.tsx:252 (roleKey list). The i18n role.* labels are also missing.",
+    "fix": "Add these files to opd-3, and add a rail test for the receptionist."
+   },
+   {
+    "severity": "minor",
+    "issue": "Unfiltered patients readers will count 'registered' rows.\n- The shadow scorecard reads every patient and counts outpatients in patients_scanned and undated_admissions. It is the pilot's only evidence instrument.\n- metrics orb_patients_total and nabh_service census reads do the same.\nThe opd-2 test list covers only status='admitted' queries.",
+    "evidence": "shadow_scorecard_service.py:1642-1700. metrics_service.py:207. nabh_service.py:1322.",
+    "fix": "Add these readers to the opd-2 test list. Filter out never-admitted patients, or assert the diagnostics are unchanged with a registered fixture."
+   },
+   {
+    "severity": "minor",
+    "issue": "UHID numbers can be issued from a placeholder series. The UHID row is seeded with is_configured 0, and migration 20 says numbers from an unconfigured series are placeholders the UI must label. A UHID is permanent and printed on a card.",
+    "evidence": "migrations.py:2100-2113. billing_masters.py:651-708.",
+    "fix": "Refuse orb-mode registration until the UHID series is configured. Add a startup or Trust Center warning."
+   },
+   {
+    "severity": "minor",
+    "issue": "LWBS, cancel and charging are not defined against the existing CHECK and charge logic. opd_visits.status allows only waiting, in_consultation, completed and cancelled.\n- If an 'lwbs' disposition rides on a completed visit, it raises OPD-CONSULT for a patient never seen.\n- ORB_OPD_CHARGE_AT=registration has no charge reversal when the visit is cancelled.",
+    "evidence": "frontdesk_service.py:166-172. frontdesk_service.py:576-688 (charge at completion, idempotent per visit).",
+    "fix": "LWBS becomes cancelled with a reason and no charge. A cancel voids a pending registration-time charge with an audit row."
+   },
+   {
+    "severity": "minor",
+    "issue": "Over-claim: 'the existing AST guard enforces' that OPD never scores. test_news2_scale2_lanes only requires every compute_news2 or score_vitals_row call to pass on_scale_2; it forbids nothing per module. opd-7 also opens the Vigil chart route, which scores the newest vitals row, to OPD doctors.",
+    "evidence": "test_news2_scale2_lanes.py:1-30. gap register X003. vigil_routes.py:45-70.",
+    "fix": "Add a dedicated AST guard for opd_service, opd_routes and registration_service. Route OPD doctors to the OPD record view, not the Vigil chart."
+   },
+   {
+    "severity": "minor",
+    "issue": "Migration details. M54 rebuilds appointments in-transaction with foreign_keys ON, so INSERT...SELECT enforces the patients and users FKs: orphans abort it, and they need a pre-check. It must also carry migration 28's origin NOT NULL DEFAULT 'staff' and department columns, and both indexes (idx_appointments_patient, idx_appointments_idem). The append-only triggers on patient_identity_changes conflict with retention-expiry destruction.",
+    "evidence": "Live appointments DDL and indexes (read-only query). consent_service.py:646-680 (_RETENTION_SOURCES).",
+    "fix": "Pre-check orphans in M54. Register opd_visits, opd_consultations, patient_demographics and patient_identity_changes in _RETENTION_SOURCES. Decide how retention purge interacts with the DELETE-blocking triggers."
+   },
+   {
+    "severity": "minor",
+    "issue": "Rulings are under-gated.\n- opd-5 ships the OPD-S2 behaviour (warn) and opd-7 ships N2 (a PHI access widening), yet both have blocked_by_ruling empty.\n- opd-19 says 'after ruling N3' but is not blocked.\n- N1 to N10 will collide with other epics' N-series.\n- OPD vitals never alerting (an SpO2 of 82% at the desk raises nothing) is a safety question with no ruling.",
+    "evidence": "Design increments opd-5, opd-7 and opd-19. R023 in RULINGS_NEEDED_2026-10.md:17.",
+    "fix": "Set blocked_by_ruling to OPD-S2, N2 and N3. Prefix the IDs (OPD-N1...). Add OPD-S6: does an abnormal OPD vital prompt anyone?"
+   },
+   {
+    "severity": "minor",
+    "issue": "Config conventions and date handling.\n- config.py documents hospital modules as default-ON and as never gating a clinical path; 'opd' would be default-off and clinical inside HOSPITAL_MODULE_ENV.\n- appointments _validate_slot also uses the server's date.today() and datetime.now(), not only /mine.",
+    "evidence": "config.py:630-648. appointments_routes.py:133-191.",
+    "fix": "Keep registration and opd in a separate FEATURE_FLAGS map (or update the docstring and the shellConfig defaults deliberately). Move all appointment date checks to hospital_time in opd-16."
+   }
+  ],
+  "missed_existing_code": [
+   "server/services/clinical_records_service.py record_allergies_on(db, ...) and allergy_entries: the handle-taking allergy writer admission uses (admission_service.py:357-361); OPD consultation should reuse it.",
+   "server/services/allergy_interlock.py:360-366 allergies_on_file coverage flag (Orb cannot tell NKDA from never asked).",
+   "server/services/order_sets_service.py:615-640 require_orderable_patient refuses non-admitted patients, so OPD order sets fail unless handled.",
+   "server/routes/vigil_routes.py:907-950 add_patient_medication and server/routes/nurse_routes.py:177 nurse obs: write routes the OPD arm would open.",
+   "server/routes/sage_routes.py:3412-3422 uses permissions.scope_patient_ids_sql and enforce_patient_scope (Sage provenance), so Sage is not admission-only.",
+   "server/tests/test_patient_scope_routes.py:520-540 parity tripwire between permissions and Sage scope.",
+   "server/services/forecast_service.py:1008-1036: the outpatient appointment branch is scoped by the appointment's department, with no time window.",
+   "server/ws/realtime.py:270-287 room join gated on vitals.read; realtime.py:451 and escalation_service.py:851-861 anyio from_thread pattern for emitting from sync handlers.",
+   "src/api/billing.ts:433 already wraps POST /billing/patients/{id}/opd-invoice.",
+   "scripts/load_terminology.py bulk terminology loader (only 22 ICD-10 codes are seeded).",
+   "server/services/consent_service.py:646-680 _RETENTION_SOURCES registry for new PHI tables.",
+   "src/pages/panels/admin/UsersPanel.tsx:29 STAFF_ROLES, src/App.tsx:20 UserRole, src/pages/ClinicianShell.tsx:252 roleKey: role wiring for receptionist.",
+   "server/routes/vigil_routes.py:470-510 /vigil/discharged list (LEFT JOIN discharge_summaries) and discharge_summaries having no admission_id, both relevant to readmission.",
+   "server/services/shadow_scorecard_service.py:1642-1700 and nabh_service.py:1322: unfiltered patients readers affected by the 'registered' status.",
+   "server/routes/appointments_routes.py:133-191 _validate_slot also uses date.today() and datetime.now()."
+  ]
+ },
+ "first_draft": {
+  "epic": "Patient registration and OPD (key: opd)",
+  "current_state": "Verified against the code on 3 Oct 2026. The coverage doc is stale in two places: DOB is now captured on the admit form, and the made-up appointment rows are gone.\n\nREGISTRATION / IDENTITY\n- No registration path exists. Every patients row comes from an inpatient admission: admission_service.admit_patient (server/services/admission_service.py:223-480).\n  - It always mints PAT-xxxx and a random MRN-XXXXXX (:248-249), always creates a Bridge portal login (:263) and always inserts an 'active' admission.\n  - The route is doctor-only (patient.write, server/routes/admission_routes.py:79-113).\n  - Typing an MRN that already exists hits patients.mrn UNIQUE (server/database.py:51) and comes back as a 500 \"Admission failed\" (admission_routes.py:108-113). So a returning patient can never be readmitted onto their own record.\n- Legacy POST /api/vigil/patients (server/routes/vigil_routes.py:974-1048) still creates a status-'admitted' patient with no admissions row. That is a ghost that status-only queries and the vitals simulator treat as an inpatient (bot_service.py:290, sepsis_bundle_service.py:170). Its only callers are the dead wrapper createPatient (src/api/client.ts:2119), server/scripts/soak_test.py:249 and server/tests/test_patient_name_rule.py:108-122.\n- patients.status CHECK allows only admitted/discharged/transferred (database.py:56).\n  - 35 schema definitions REFERENCE patients(id), so a new status means an FK-parent rebuild (the users-rebuild trap, migrations.py:4697-4815).\n  - sage_relay_context.py:217 reads COALESCE(p.status,'admitted'), so a NULL status would read as admitted.\n- DOB is now captured on the admit form (src/components/AdmitPatientModal.tsx:102,179) and stored only when usable (admission_service.py:16-41, discharge_access_service.usable_dob:100).\n- There is no demographic edit path. The only UPDATE patients writers are discharge (discharge_service.py:648), transfer (frontdesk_service.py:1202) and the two importers.\n- Lookup: /api/search/patients returns ADMITTED patients only, dept-scoped and audited (server/routes/search_routes.py:26-127). There is no phone, DOB or ABHA search.\n- Duplicates: only the history importer reports them (history_import_service.py:83,159). A cross-system xref exists in history_import_patient_xref (migrations.py:1458-1475).\n- ABHA:\n  - The local register abha_identities/abha_verifications (migrations.py:3294-3370) exists.\n  - abdm_service.record_abha (abdm_service.py:744) always records 'unverified', validates format and refuses duplicates.\n  - It is reachable only from the ABDM desk, and it opens its own session (no db= variant).\n- Numbering: document_number_series plus next_document_number (migrations.py:2100-2113, billing_masters.py:651-708) reset every financial year and embed the year in the number, so they cannot issue a lifelong UHID as they stand.\n\nOPD (front desk)\n- opd_visits and patient_movements are created lazily by frontdesk_service.ensure_frontdesk_schema (server/services/frontdesk_service.py:152-286), not by a numbered migration (its own docstring records this as a followup).\n- Token engine: per (date, department, doctor), allocated under an immediate transaction and backed by a partial unique index (:210-235, :558-575).\n- The consulting doctor must be an active clinician of that clinic (F151, :409-430).\n- Pure outpatients are allowed by opd_registration_allowed (:531-556), but nothing can create one.\n- The queue is scoped by the visit's department and PHI-read audited (server/routes/frontdesk_routes.py:237-276).\n- start/complete/cancel (:394-516) write their audit after commit, in the fail-soft 'clinical_record' category.\n- Completion raises one OPD-CONSULT line in encounter_charges as 'op', unpriced rather than Rs 0 (frontdesk_service.py:576-688, 963-1027). The payer comes from billing_masters.resolve_patient_payer (:539).\n- Permissions:\n  - Writes need frontdesk.write OR patient.write (frontdesk_routes.py:164-197).\n  - Reads need patient.read_all (:200-207), so a front-office account without chart access is impossible today.\n  - FRONTDESK_WRITE is held by admin only (permissions.py:176, 288-334), and roles.py:36-43 has no front-office role.\n- UI: FrontDeskPanel (src/pages/panels/FrontDeskPanel.tsx:116-281, 704-831) picks patients from /vigil/patients?limit=200 (:724), which means admitted patients only. The tab is admin-only (src/shellConfig.tsx:711-712).\n- Missing entirely: a doctor-side queue, call/skip/priority, a token board, a consultation note and an OPD prescription.\n- Scope: permissions.patient_in_scope (permissions.py:447-468) fail-closes any patient with no admission. A scoped doctor therefore cannot:\n  - open a walk-in's chart,\n  - book their follow-up (appointments_routes.py:338),\n  - order for them.\n  Sage duplicates this derivation (sage_service.py:1933-1960).\n\nAPPOINTMENTS\n- The table has no doctor and no slot (database.py:343-354). Migration 28 added origin/department (migrations.py:4319-4410).\n- The staff list now shows booked rows only, scoped and audited (forecast_service.py:996-1069, forecast_routes.py:142-165).\n- DEFECTS found while mapping:\n  - The cancel and complete routes are not ward-scoped: any patient.write holder can act on any appointment and gets the row back (appointments_routes.py:476-545, 548-598).\n  - /mine uses the server's date.today() instead of the hospital day (:423).\n- Portal slots and clinics are hard-coded (src/pages/PatientShell.tsx:86-94).\n- opd_visits.appointment_id is stored and never read.\n\nBILLING\n- The Charges picker reads /vigil/patients plus /vigil/discharged only (src/pages/panels/BillingPanel.tsx:711-737), so a walk-in cannot be billed.\n- POST /api/billing/patients/{id}/opd-invoice exists (billing_routes.py:528-560) but no screen calls it.\n- The stay advisory already counts the patient's charges with no admission (billing_service.py:2198-2210), so an OPD charge that leads to a stay is handled.\n\nFLAGS\n- Hospital modules default ON through config._module_enabled (config.py:642-648, 800-835) and reach the client through /api/health (main.py:1204-1216).\n- The shell's cache defaults every module to true (shellConfig.tsx:249-253), so a default-OFF module needs a false client default.\n\nTESTS IN THE AREA\n- Server: test_frontdesk.py (36), test_frontdesk_consulting_doctor.py, test_bridge_appointments.py, test_forecast_appointments_booked_only.py, test_abdm.py (54), test_patient_scope_routes.py, test_caller_named_patient_scope.py, test_scribe_quick_admit.py, test_admission_form_choices.py, test_audit_fail_closed_categories.py (pins the fail-closed set), test_migrations.py (users role parity).\n- Guards that new code must satisfy: the drift guard at test_patient_scope_routes.py:580-630 (exempt set is empty today), and shellConfig.test.ts:328, which pins CLINICAL_MODULE_IDS to ['dietary'].\n- Frontend: FrontDeskPanel.test.tsx, AppointmentsPanel.test.tsx.\n- Highest migration is 47 (migrations.py:5446-5495).",
+  "design": "PRINCIPLES\n- Extend what exists: frontdesk_service and opd_visits, the billing spine, the ABDM rails, orders, admission_service.\n- No parallel patient table and no fourth medication store.\n- patients.mrn is the UHID.\n- OPD never computes or shows NEWS2 or any score. This follows R023 and the Ward Record rule, and the existing AST guard enforces it.\n- No AI model anywhere in the identity lane.\n- Every handler is a plain def, and every patient_id arrives in a typed body or the path.\n\n1. FEATURE FLAGS (server/config.py, following the ORB_* module pattern)\n- New helper _flag_default_off(env): on only for 1/true/yes/on.\n- REGISTRATION_ENABLED = ORB_REGISTRATION (default off).\n- OPD_ENABLED = ORB_OPD AND REGISTRATION_ENABLED AND FRONTDESK_ENABLED. Default off; the boot log says which prerequisite is missing.\n- Settings:\n  - ORB_UHID_SOURCE = hospital|orb (default hospital, the beside-HIS case).\n  - ORB_UHID_PATTERN: optional regex for hospital numbers.\n  - ORB_OPD_SCOPE_DAYS: default 7.\n  - ORB_OPD_CHARGE_AT = completion|registration (default completion, which is today's behaviour).\n  - ORB_DUPLICATE_MODE = warn|block (default warn).\n- enabled_modules() adds \"registration\" and \"opd\", published on /api/health.\n- Client (src/shellConfig.tsx):\n  - 'opd' becomes a HospitalModuleId with panel ./pages/panels/OpdPanel.tsx.\n  - 'registration' becomes a separate non-tab FeatureFlagId.\n  - Both default false in the client cache.\n- Every new route 404s when its flag is off (the require_frontdesk_module pattern).\n- With both flags off, the Ward Record profile and the demos see no new route, tab or behaviour. The only differences are the additive and rebuild migrations and the retired ghost route.\n\n2. DATA MODEL\nNumbers are provisional (next free after 47 at merge time). No foreign keys and money in _paise, per the migration 20 rules.\n\n- M48 registration_opd_foundation (additive)\n  a. Fold the front-desk tables into the ledger: a frozen copy of the opd_visits and patient_movements DDL and indexes (CREATE IF NOT EXISTS). Without this, on a fresh DB the ALTERs below would run before the lazy CREATE and be skipped forever.\n  b. opd_visits ADD:\n     - queue: priority DEFAULT 'normal', priority_reason, room, arrival_source DEFAULT 'walk_in', checked_in_at, call_count INTEGER DEFAULT 0, skipped_at\n     - outcome: disposition (home|follow_up|referred_internal|referred_external|admitted|lwbs), disposition_at, admission_id, follow_up_of_visit_id\n     - links: session_id, payer_id, tariff_plan_id, registration_charge_id\n     Enums are validated in the service.\n  c. patients ADD:\n     - provenance: registered_at, registered_by, registration_source, uhid_source\n     - age_recorded_on: DOB is never estimated, because it is the discharge-link second factor.\n     - match keys: name_key and phone_key, each indexed, backfilled with a frozen v1 normalizer.\n  d. admissions ADD opd_visit_id; orders ADD opd_visit_id (indexed).\n  e. document_number_series ADD resets_yearly (DEFAULT 1) and check_digit. Seed a UHID row (resets_yearly 0, verhoeff, is_configured 0).\n  f. patient_demographics, one row per patient:\n     - guardian_relation, guardian_name, marital_status, preferred_language\n     - address_line, city, district, state_code, pin_code, alt_phone, email\n     - id_document_type, id_document_last4 (never a full Aadhaar number), occupation\n     - row_version, updated_at, updated_by\n  g. patient_identity_changes, append-only (triggers block UPDATE and DELETE): field, old_value, new_value, reason NOT NULL, changed_by, changed_at, correlation_id.\n  h. patient_duplicate_candidates:\n     - the pair (unique), score and reasons_json\n     - status open|not_duplicate|confirmed_duplicate|merged; source registration|sweep|import\n     - resolver and timestamps\n\n- M49 patients_status_registered\n  - Widens the CHECK to admitted|discharged|transferred|registered through database._atomic_table_rebuild (the m33 users shape), with a frozen canonical column list.\n  - post_sql recreates idx_patients_import_external, idx_patients_import_run, name_key and phone_key.\n  - It aborts on unknown columns or objects.\n  - database.SCHEMA is updated for fresh DBs, with a parity test.\n  - 'registered' means on the index and never admitted. A discharged patient seen in OPD stays 'discharged'.\n  - Neither NULL nor 'admitted' is safe for an outpatient: about 20 queries filter on status='admitted' alone, and the Relay Sage context uses COALESCE(status,'admitted').\n\n- M50 users_role_receptionist: _rebuild_users_role_check plus LATEST_USERS_ROLE_CHECK. Batch this with every other epic's new roles (for example the Ward Record clerk) into one rebuild.\n\n- M51 opd_consultations: one per visit, author, status draft|signed. Columns:\n  - content: chief_complaint, history, examination, vitals_json (values, measured_at, measured_by), diagnoses_json (text plus ICD-10), plan, advice\n  - follow-up and referral: follow_up_date, follow_up_note, referral_department, admission_advised\n  - control: row_version, signed_by/at\n  Plus opd_consultation_addenda, append-only.\n\n- M52 opd_charge_rules: department, doctor_id, visit_type, service_code, follow_up_window_days, is_active.\n\n- M53 clinic_sessions and clinic_session_exceptions.\n  - Sessions: doctor, department, weekday, start/end, slot_minutes, walk_in_cap, room, validity window.\n  - Exceptions: doctor, date, reason.\n\n- M54 appointments_slots: appointments is not an FK parent, so an in-transaction create-copy-drop-rename can:\n  - add the statuses checked_in and no_show;\n  - add doctor_id, session_id, checked_in_at, opd_visit_id, no_show_at, cancel_reason, cancelled_by, rescheduled_from_id;\n  - add a partial unique index on live (doctor_id, scheduled_date, scheduled_time).\n\n3. SERVICES\n- registration_service.py (new): register_patient, search_index, get_registration, correct_demographics, change_history, find_candidates, resolve_duplicate.\n  - UHID, hospital mode: the typed number is checked against the site pattern and for uniqueness, both exact and by normalised key.\n  - UHID, orb mode: billing_masters.allocate_series_number(db,'UHID') (new; uses the caller's handle, no yearly reset, Verhoeff check digit).\n  - One immediate transaction per registration writes:\n    - the patients row: status 'registered', no portal login, no allergy field;\n    - patient_demographics;\n    - the ABHA placeholder through abdm_service.record_abha_on(db, ...) (new handle-taking variant, always unverified);\n    - the audit row.\n  - Name through patient_name_rule.validate_patient_name. Sex normalised to the dialect src/lib/demographics.ts reads. Phone normalised to 10 digits.\n- patient_matching.py (new, deterministic):\n  - Name folding: honorific strip (Mr/Mrs/Smt/Shri/Kumari/Dr/Baby of), Mohd to mohammed, aa/ee/oo/w/ph/sh/z folds, doubled letters.\n  - Hard matches: exact UHID, or an active ABHA.\n  - Points:\n    - phone: +40\n    - name: +40 for an exact key, +25 for token overlap\n    - DOB: +30 for an exact match, +10 for age within 2 years\n    - sex: -20 on mismatch\n  - Bands: 70 or more is probable, 50 to 69 is possible.\n- frontdesk_service (extend):\n  - queue actions: call, skip, recall, assign-to-me, priority/room\n  - views: the doctor's queue, a name-free board snapshot\n  - completion that records a disposition\n  - charge code from opd_charge_rules, with REG-FEE and OPD-FOLLOWUP items registered unpriced (never an implicit Rs 0)\n  - ensure_frontdesk_schema kept in step with M48\n- opd_service.py (new):\n  - consultation draft with row_version, sign, addendum, history\n  - ICD-10 through terminology_service.validate_code; optional problem_list add\n  - never writes vitals or risk_scores, never calls scoring\n- clinic_schedule_service.py (new): sessions, exceptions and availability in the hospital's local time.\n- admission_service (extend, after the Scribe session lands): admit_existing_patient shares admit_patient's inserts, and a duplicate MRN on /admit becomes a 409.\n- permissions (extend): an OPD arm (section 5).\n\n4. ROUTES\n- /api/registration (ORB_REGISTRATION):\n  - GET config, GET search, POST match\n  - POST patients, GET/PATCH patients/{patient_id}, GET patients/{patient_id}/changes, GET patients/{patient_id}/card\n  - GET duplicates, POST duplicates/{id}/resolve\n  - Guard: new require_registration_access (registration.read, hospital-wide, minimal fields, always audited). It goes in the drift-guard exempt set with the reason written down.\n- /api/frontdesk/opd (existing routes plus ORB_OPD):\n  - POST visits/{id}/call|skip|recall|assign, PATCH visits/{id}\n  - GET board (no PHI)\n  - /api/frontdesk/appointments/day, /api/frontdesk/mis/daily\n- /api/opd (ORB_OPD):\n  - GET my-queue\n  - GET/PUT visits/{visit_id}/consultation, POST .../sign, POST .../addenda\n  - POST visits/{visit_id}/complete, POST visits/{visit_id}/orders\n  - POST visits/{visit_id}/prescriptions (after medorder-1)\n  - GET patients/{patient_id}/consultations (require_patient_access)\n  - GET terminology/search\n- /api/schedule: sessions, exceptions, availability.\n- /api/appointments: doctor/slot booking, reschedule, check-in (creates the OPD visit), no-show; plus the cancel/complete scope fix.\n- POST /api/admissions/admit-existing.\n- GET /api/billing/op-patients.\n\n5. PERMISSIONS AND ROLES\n- roles.py: add 'receptionist'. The department is optional: blank means a central desk that sees every clinic's queue; a value means that clinic only.\n- New permissions in permissions.py: registration.read, registration.write, opd.consult, schedule.manage.\n- Grants:\n  - doctor and clinician: + registration.read, registration.write, opd.consult.\n  - admin: all four.\n  - receptionist: registration.read, registration.write; consent.record only if N3 says so.\n  - nurse: unchanged.\n- Route rules:\n  - require_frontdesk_read accepts patient.read_all OR registration.read.\n  - Register, cancel and check-in accept frontdesk.write OR patient.write OR registration.write.\n  - Call, skip, consultation and complete-with-disposition need opd.consult.\n  - Transfers are unchanged; a receptionist cannot transfer.\n  - OPD Rx needs opd.consult AND medication.prescribe. That is today's prescriber-only permission, not a decision on R010.\n- OPD scope arm (only when OPD_ENABLED). A patient with NO active admission is in a scoped caller's department when a non-cancelled opd_visits row in that department has visit_date on or after hospital_today minus ORB_OPD_SCOPE_DAYS.\n  - It lives in patient_in_scope and scope_patient_ids_sql; PATIENT_DEPARTMENT_SQL is unchanged.\n  - The no-active-admission rule stops a front-desk visit from laundering access to another ward's inpatient.\n  - Sage's duplicate scope (sage_service.py:1933) is left alone, so Sage stays admission-only, and a test says so.\n\n6. UI (mounts in src/shellConfig.tsx)\n- Front Desk tab (admin and receptionist):\n  - Register view, search first: by UHID, phone, name plus DOB, or ABHA.\n  - Picking an existing patient opens an identity-confirm dialog.\n  - A new registration shows duplicate warnings that need a reason to override.\n  - Demographics drawer with reasoned correction and change history.\n  - ABHA placeholder field when ORB_ABDM is on.\n  - DOB or stated age, with the R018 hint.\n  - UHID card (Code128 drawn as SVG, no new dependency) and token slip.\n  - Queue shows priority, room and skipped.\n  - Further views: Appointments day list, Clinic timings, Day summary.\n  - The visit form picks the patient from index search instead of /vigil/patients?limit=200.\n- New OPD tab (OpdPanel.tsx, 'clinical' group, doctor and clinician rails only). CLINICAL_MODULE_IDS becomes ['dietary','opd'] and shellConfig.test.ts is updated with the reason.\n  - My queue\n  - Consultation editor: complaint, history, exam, timed OPD vitals, ICD-10 diagnoses, plan, investigations, prescription once medorder lands, advice, follow-up, referral, advise admission\n  - Sign and print\n- Kiosk route /display/opd (OpdTokenBoard.tsx in App.tsx): token, doctor and room only.\n- Receptionist rail: home 'frontdesk', tabs [frontdesk].\n- AdmitPatientModal: an existing-patient mode.\n- Billing: the picker includes today's outpatients, plus an OPD counter invoice form.\n- House design rules apply: no opacity, status tokens, modals portal to body, contrast gate, no em dashes, no demo wording.\n\n7. AUDIT\n- New fail-closed category 'patient_identity', added to _FAIL_CLOSED_CATEGORIES and pinned by its test. It is written in the SAME transaction via log_audit_event(db=...), so there is no mutation without audit. Events:\n  - patient_registered\n  - patient_demographics_corrected\n  - patient_uhid_corrected (admin only)\n  - registration_duplicate_override\n  - duplicate_resolved\n- phi_access (log_phi_read):\n  - patient_index_searched, with the matched ids\n  - registration_record_viewed, registration_match_viewed\n  - opd_consultation_viewed, op_patients_listed\n- clinical_record:\n  - opd_visit_called/skipped/recalled/assigned\n  - opd_consultation_saved/signed/addendum (signed is written in-transaction)\n  - opd_visit_completed with disposition\n  - appointment_rescheduled/checked_in/no_show\n- clinical_access, in-transaction: opd_converted_to_admission, patient_readmitted.\n- configuration: clinic session and charge rule changes.\n- target_id is always a string, which avoids the known int-hash chain break.\n- The socket carries no PHI: 'opd:queue_changed' sends the department only, and clients refetch through scoped, audited REST. The board carries no PHI and is not audited.\n\n8. LINKS TO OTHER EPICS\n- adt:\n  - Conversion uses the adt-1 bed picker when it lands (free-text ward and bed plus admission_choices until then).\n  - One patients-status rebuild should carry adt's and death-record statuses too.\n  - admission_service ownership must be agreed.\n- medorder: an OPD Rx is an outpatient-setting order in the single store, screened by medication_safety_gate.enforce_medication_safety(entry_point='opd_prescription'). It never writes medications rows (the eMAR reads those) or helix orders directly.\n- grn / pharmacy: OP dispensing consumes the medorder store; no dependency from here.\n- lis: OPD investigations are orders tagged with opd_visit_id; results come through lis-1; health check packages come later.\n- site (multi-site): the UHID series is group-wide; site_id on opd_visits, clinic_sessions and appointments arrives with site-1.\n- ABDM: the placeholder only; M1 creation comes later.\n- workforce: leave becomes a session exception (later).\n- Ward Record: shares the identity core (role batch, hospital-number mode, admit-existing).",
+  "functions": [
+   {
+    "function": "UHID/MRN registration for walk-ins (Orb-issued or hospital-issued number)",
+    "status_now": "Partial. The only creation path is admission_service.admit_patient (doctor-only, random MRN-XXXXXX, always inpatient). A duplicate MRN returns 500. The legacy POST /api/vigil/patients still creates ghost 'admitted' rows. No outpatient path and no UHID series.",
+    "in_scope": true,
+    "notes": "opd-1, opd-2, opd-4. Hospital-number mode is shared with the Ward Record clerk work."
+   },
+   {
+    "function": "Demographic capture incl. date of birth",
+    "status_now": "Partial. Name, age, sex, phone, emergency contact and free-text address are stored. DOB is now on the admit form (AdmitPatientModal.tsx:179); the coverage doc is stale on this. No guardian, structured address or language fields.",
+    "in_scope": true,
+    "notes": "opd-4 and opd-6. DOB stays optional pending R018; a stated age is stored with age_recorded_on and never as an estimated DOB."
+   },
+   {
+    "function": "Demographic correction with history",
+    "status_now": "Absent. No edit endpoint; the only UPDATE patients writers are discharge, transfer and the importers.",
+    "in_scope": true,
+    "notes": "opd-4: reason required, append-only change log, fail-closed in-transaction audit."
+   },
+   {
+    "function": "Returning-patient lookup (UHID, phone, name+DOB, ABHA)",
+    "status_now": "Partial. /api/search/patients covers admitted patients only; the desk picker is /vigil/patients?limit=200; no phone, DOB or ABHA search.",
+    "in_scope": true,
+    "notes": "opd-4 (API) and opd-6 (UI with identity confirmation)."
+   },
+   {
+    "function": "Duplicate detection at registration",
+    "status_now": "Absent. Only the history importer reports duplicates.",
+    "in_scope": true,
+    "notes": "opd-5: deterministic matcher, warn with reason, worklist."
+   },
+   {
+    "function": "Patient merge and unmerge",
+    "status_now": "Absent.",
+    "in_scope": false,
+    "notes": "Only the duplicate worklist is built here. Merge is a separate 1.5 to 2 week item that must keep the audit chain intact."
+   },
+   {
+    "function": "ABHA field at registration (placeholder)",
+    "status_now": "Partial. abha_identities and record_abha exist (always unverified), but only on the ABDM desk.",
+    "in_scope": true,
+    "notes": "opd-4 and opd-6 via a new record_abha_on(db). No M1 creation and no gateway."
+   },
+   {
+    "function": "Front office (receptionist) role",
+    "status_now": "Partial. frontdesk.write exists but only admin holds it; desk reads need patient.read_all; roles.py has no front-office role.",
+    "in_scope": true,
+    "notes": "opd-3: new role holding registration.read and registration.write only (no chart access)."
+   },
+   {
+    "function": "Payer category at registration",
+    "status_now": "Partial. Only on the admin Payer tab; resolve_patient_payer falls back to self-pay.",
+    "in_scope": true,
+    "notes": "opd-13."
+   },
+   {
+    "function": "UHID card and OPD token slip print",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "opd-6, on the existing print layer, Code128 drawn as SVG."
+   },
+   {
+    "function": "DPDP notice and consent at registration",
+    "status_now": "Partial. Consent API and tests exist; consent.record is doctor-only (F123 left open); no screen.",
+    "in_scope": true,
+    "notes": "opd-19, after ruling N3."
+   },
+   {
+    "function": "Walk-in OPD visit and token per doctor",
+    "status_now": "Partial. The token engine is solid and the doctor is validated as a clinician of that clinic (F151). Pure outpatients are allowed in the service, but none can be created and the UI lists only admitted patients.",
+    "in_scope": true,
+    "notes": "Unblocked by opd-4 and opd-6."
+   },
+   {
+    "function": "OPD queue: call, skip, recall, priority, room, doctor-side view",
+    "status_now": "Partial. A scoped, audited queue exists on the admin Front Desk tab only; no doctor queue and no skip, priority or room.",
+    "in_scope": true,
+    "notes": "opd-8."
+   },
+   {
+    "function": "Token display board (name-free)",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "opd-9."
+   },
+   {
+    "function": "Visit-based access scope for outpatients",
+    "status_now": "Absent. patient_in_scope fail-closes every patient without an admission, so OPD doctors cannot open the chart, book a follow-up or order.",
+    "in_scope": true,
+    "notes": "opd-7, flag-gated. Sage stays admission-only."
+   },
+   {
+    "function": "OPD consultation note (complaint, history, exam, vitals, ICD-10 diagnosis, plan, follow-up, referral)",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "opd-10 (server) and opd-11 (screen and print). OPD vitals stay inside the record and are never scored."
+   },
+   {
+    "function": "OPD investigations ordering",
+    "status_now": "Partial. orders_service.create_order works for any patient, but outpatients fail scope; no visit link.",
+    "in_scope": true,
+    "notes": "opd-11 (orders.opd_visit_id). Results depend on lis-1."
+   },
+   {
+    "function": "OPD prescription",
+    "status_now": "Absent. The existing medication stores are inpatient-shaped, and the medications table feeds the eMAR.",
+    "in_scope": true,
+    "notes": "opd-12, blocked on medorder-1 (single medication-order store). Never written to medications or helix directly."
+   },
+   {
+    "function": "OPD charge to billing (consultation, registration fee, follow-up rule, clinic codes)",
+    "status_now": "Partial. One unpriced-not-zero OPD-CONSULT line at completion; no registration fee, follow-up rule or per-clinic code.",
+    "in_scope": true,
+    "notes": "opd-13."
+   },
+   {
+    "function": "OP billing at the counter",
+    "status_now": "Partial. The billing picker cannot select a walk-in; the opd-invoice route has no UI.",
+    "in_scope": true,
+    "notes": "opd-14."
+   },
+   {
+    "function": "Clinic session and slot master",
+    "status_now": "Absent. Portal slots are hard-coded (PatientShell.tsx:86).",
+    "in_scope": true,
+    "notes": "opd-15."
+   },
+   {
+    "function": "Staff booking with a named doctor, reschedule, double-booking check",
+    "status_now": "Partial. No doctor or slot columns. Cancel and complete are not ward-scoped (defect).",
+    "in_scope": true,
+    "notes": "opd-16, including the scope fix."
+   },
+   {
+    "function": "Arrival check-in and no-shows",
+    "status_now": "Name only. appointment_id is stored on the visit and never read.",
+    "in_scope": true,
+    "notes": "opd-16."
+   },
+   {
+    "function": "Clinic appointment day list",
+    "status_now": "Partial, now honest: booked rows only, scoped and audited (F013 fixed). No doctor column.",
+    "in_scope": true,
+    "notes": "opd-16 adds the doctor and a front-desk day view."
+   },
+   {
+    "function": "OPD to IP conversion and returning-patient readmission onto the same record",
+    "status_now": "Absent. admit_patient always mints a new patient and MRN, and a re-entered MRN returns 500.",
+    "in_scope": true,
+    "notes": "opd-17. Waits for the Scribe quick-admit and AdmitPatientModal sessions; held by OPD-S3 and OPD-S4."
+   },
+   {
+    "function": "Front office MIS (registrations, OPD volumes, waits, no-shows)",
+    "status_now": "Absent. Live counts only.",
+    "in_scope": true,
+    "notes": "opd-18."
+   },
+   {
+    "function": "Emergency quick registration, unknown patient, MLC flag",
+    "status_now": "Partial. An ER admission source exists; nothing else.",
+    "in_scope": false,
+    "notes": "ED/MLC epic. The registry leaves room for it (name rule accepts 'Unknown Male 1'; registration_source values)."
+   },
+   {
+    "function": "Referrals in and out",
+    "status_now": "Name only / Absent.",
+    "in_scope": false,
+    "notes": "Only internal referral is in scope, as a consultation disposition that opens a visit or appointment request."
+   },
+   {
+    "function": "Outpatient patient portal, SMS reminders, teleconsultation, health check packages, call centre",
+    "status_now": "Absent or inpatient-only.",
+    "in_scope": false,
+    "notes": "Integrate or Licence items, or they depend on LIS. Out of this epic."
+   },
+   {
+    "function": "Scribe-drafted OPD notes and Sage over outpatients",
+    "status_now": "Absent.",
+    "in_scope": false,
+    "notes": "Deferred: Scribe routes and sage_service are owned by running sessions, and R023 governs Sage."
+   }
+  ],
+  "increments": [
+   {
+    "id": "opd-1",
+    "title": "Feature flags and additive schema foundation",
+    "description": "config.py: _flag_default_off helper; REGISTRATION_ENABLED and OPD_ENABLED (default off, OPD requires registration and frontdesk); UHID, scope-days, charge-timing and duplicate-mode settings; enabled_modules adds registration and opd. Migration M48 (additive): folds the frozen opd_visits and patient_movements DDL into the ledger so later ALTERs never precede the lazy CREATE; adds the opd_visits, patients (match keys plus backfill), admissions and orders opd_visit_id, and document_number_series columns; seeds the UHID series row unconfigured; creates patient_demographics, patient_identity_changes (append-only triggers) and patient_duplicate_candidates. frontdesk_service.ensure_frontdesk_schema kept in step. shellConfig.tsx: 'opd' module id and a 'registration' feature flag, both false in the client default cache. Retires the ghost POST /api/vigil/patients (410 naming the admission and registration doors) and moves soak_test.py and test_patient_name_rule.py to /api/admissions/admit.",
+    "files_touched": [
+     "server/config.py",
+     "server/migrations.py",
+     "server/services/frontdesk_service.py",
+     "server/routes/vigil_routes.py",
+     "server/scripts/soak_test.py",
+     "server/tests/test_patient_name_rule.py",
+     "src/shellConfig.tsx",
+     "src/shellConfig.test.ts"
+    ],
+    "files_new": [
+     "server/tests/test_registration_flags.py"
+    ],
+    "size_days": 2.5,
+    "depends_on": [],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "test_migrations: M48 idempotent on fresh and upgraded DBs; opd_visits exists before ensure_frontdesk_schema runs; backfilled keys. test_registration_flags: /api/health carries registration and opd false by default; with flags off nothing changes. POST /api/vigil/patients returns 410 and writes no row. shellConfig.test.ts: opd hidden by default."
+   },
+   {
+    "id": "opd-2",
+    "title": "patients.status admits 'registered' (FK-parent rebuild)",
+    "description": "Migration M49 rebuilds patients through database._atomic_table_rebuild (the m33 users shape: autocommit window, foreign_keys and legacy_alter_table set outside the transaction) to widen the CHECK to include 'registered'. Frozen canonical column list (base SCHEMA, init_db additive columns, m15 import columns, M48 columns); post_sql recreates the four patients indexes; aborts on unknown columns, indexes or triggers. database.SCHEMA updated for fresh DBs, plus a parity test. Run as its own migration, after a verified backup on upgrade. Batch any status values the adt or death-record epics need into this same rebuild.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/database.py"
+    ],
+    "files_new": [
+     "server/tests/test_patients_registered_status_migration.py"
+    ],
+    "size_days": 2,
+    "depends_on": [
+     "opd-1"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "On a seeded copy of the dev DB: row count equal; PRAGMA foreign_key_check empty for all 35 child tables; indexes present; re-entry after commit but before the ledger write is a no-op. A 'registered' patient appears on no board and in no status='admitted' query: bot_service simulator, sepsis sweep, downtime pack, forecast, metrics, sage census."
+   },
+   {
+    "id": "opd-3",
+    "title": "Receptionist role and registration permissions",
+    "description": "roles.py adds 'receptionist'. permissions.py adds registration.read, registration.write, opd.consult and schedule.manage, with grants to doctor/clinician, admin and receptionist. The receptionist has no patient.read_all, no transfer and no money. Migration M50 uses _rebuild_users_role_check with the frozen list and updates LATEST_USERS_ROLE_CHECK; batch with other epics' roles. require_frontdesk_read accepts patient.read_all OR registration.read; OPD registration and cancel accept registration.write as a third arm. src/lib/roles.ts mirror; shellConfig ROLE_CONFIG receptionist: home frontdesk, tabs [frontdesk], no primary action.",
+    "files_touched": [
+     "server/roles.py",
+     "server/permissions.py",
+     "server/migrations.py",
+     "server/routes/frontdesk_routes.py",
+     "src/lib/roles.ts",
+     "src/shellConfig.tsx",
+     "src/shellConfig.test.ts",
+     "src/lib/roles.test.ts"
+    ],
+    "files_new": [
+     "server/tests/test_receptionist_role.py"
+    ],
+    "size_days": 1.5,
+    "depends_on": [
+     "opd-1"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "test_migrations role parity. Receptionist: chart routes 403, OPD queue readable, transfers 403, payments 403, can be created by User Management. Rail shows Front Desk only and no money screen."
+   },
+   {
+    "id": "opd-4",
+    "title": "Registration service and API",
+    "description": "New registration_service.py, patient_matching.py (normalizers) and registration_routes.py, registered in main.py.\n- Register in one immediate transaction:\n  - status 'registered', no portal login, no allergy field;\n  - UHID in hospital mode (site pattern plus uniqueness) or orb mode (billing_masters.allocate_series_number with the caller's handle, no yearly reset, Verhoeff digit);\n  - DOB or stated age with age_recorded_on;\n  - patient_demographics row;\n  - ABHA placeholder through a new abdm_service.record_abha_on(db);\n  - audit in the same transaction under a new fail-closed 'patient_identity' category.\n- Search returns masked minimal fields (UHID, name, sex, age, phone last 4, last visit, status), minimum 3 characters, limit 20, phi_access audited.\n- Read registration record.\n- Correct demographics: reason and row_version required; UHID correction admin-only; appends patient_identity_changes.\n- New require_registration_access guard, entered in the drift-guard exempt set with its reason.\n- Classify demographics and changes under the clinical_record retention policy.",
+    "files_touched": [
+     "server/main.py",
+     "server/services/audit_service.py",
+     "server/services/billing_masters.py",
+     "server/services/abdm_service.py",
+     "server/tests/test_audit_fail_closed_categories.py",
+     "server/tests/test_patient_scope_routes.py"
+    ],
+    "files_new": [
+     "server/services/registration_service.py",
+     "server/services/patient_matching.py",
+     "server/routes/registration_routes.py",
+     "server/tests/test_registration_service.py",
+     "server/tests/test_registration_routes.py"
+    ],
+    "size_days": 4.5,
+    "depends_on": [
+     "opd-2",
+     "opd-3"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Concurrent orb-mode allocation gives no duplicate UHID; Verhoeff catches a transposition. Hospital-mode duplicate gives 409. Idempotency replay. An audit write failure rolls the patient back. A registered patient is not on any board and not in the simulator. Correction without a reason gives 422; stale row_version gives 409. Search audit lists matched ids. Flag off gives 404. Event-loop discipline and caller-named-scope guards pass."
+   },
+   {
+    "id": "opd-5",
+    "title": "Duplicate and returning-patient detection",
+    "description": "Deterministic matcher in patient_matching.py:\n- honorific strip, Indian transliteration folds, phone_key, DOB/age/sex;\n- hard matches on UHID and active ABHA (reusing abdm duplicate refusal);\n- bands: probable 70 or more, possible 50 to 69.\nAPI and enforcement:\n- POST /api/registration/match.\n- register() enforces on the server: when probable candidates exist the request must carry duplicate_review (decision, candidate ids, reason). The override is audited and opens a patient_duplicate_candidates row.\n- Worklist GET /duplicates and POST resolve.\n- Bounded on-demand sweep for admin over existing patients.\n- The enforcement default is the ORB_DUPLICATE_MODE setting (warn) until OPD-S2 is ruled.",
+    "files_touched": [
+     "server/services/registration_service.py",
+     "server/services/patient_matching.py",
+     "server/routes/registration_routes.py"
+    ],
+    "files_new": [
+     "server/tests/test_patient_matching.py",
+     "server/tests/test_registration_duplicates.py"
+    ],
+    "size_days": 3.5,
+    "depends_on": [
+     "opd-4"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Name variants: Mohd/Mohammed, Laxmi/Lakshmi, Pooja/Puja, honorifics, Baby of. Phone formats (+91, spaces). DOB and age bands. Sex mismatch. An override without a reason is refused. Exact UHID or ABHA is a hard refusal. Worklist resolution is audited. Performance on 100k synthetic patients in SQLCipher under a stated budget."
+   },
+   {
+    "id": "opd-6",
+    "title": "Registration desk screen, returning-patient flow and prints",
+    "description": "FrontDeskPanel gets a Register view when the registration flag is on:\n- Search first.\n- Picking an existing patient opens an identity-confirm dialog that requires the identifiers OPD-S1 names.\n- A new registration shows duplicate warnings that need a reason.\n- Demographics drawer with reasoned correction and change history.\n- ABHA placeholder input labelled unverified (when ORB_ABDM).\n- DOB or stated age with the 'no date of birth, no discharge link' hint.\nThe visit form's patient comes from index search instead of /vigil/patients?limit=200. Prints: UHID card (Code128 as SVG) and token slip. New src/api/registration.ts; client.ts is not touched.",
+    "files_touched": [
+     "src/pages/panels/FrontDeskPanel.tsx",
+     "src/pages/panels/FrontDeskPanel.css",
+     "src/pages/panels/FrontDeskPanel.test.tsx"
+    ],
+    "files_new": [
+     "src/api/registration.ts",
+     "src/pages/panels/frontdesk/RegisterPatientView.tsx",
+     "src/pages/panels/frontdesk/PatientIndexSearch.tsx",
+     "src/pages/panels/frontdesk/IdentityConfirmDialog.tsx",
+     "src/pages/panels/frontdesk/DemographicsDrawer.tsx",
+     "src/components/print/UhidCardPrint.tsx",
+     "src/components/print/OpdTokenSlipPrint.tsx",
+     "src/pages/panels/frontdesk/RegisterPatientView.test.tsx"
+    ],
+    "size_days": 4.5,
+    "depends_on": [
+     "opd-4",
+     "opd-5"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "OPD-S1",
+    "migrations": 0,
+    "tests": "Vitest: flag off renders the old form unchanged; search-first flow; confirm dialog blocks until identifiers are confirmed; duplicate warning needs a reason; ABHA field hidden when abdm is off; print snapshots. Contrast checker; no em dashes or demo wording in strings. Browser check on an isolated verify stack."
+   },
+   {
+    "id": "opd-7",
+    "title": "Visit-based access scope for outpatients",
+    "description": "permissions.patient_in_scope and scope_patient_ids_sql gain the OPD arm when OPD_ENABLED: a patient with no active admission is in scope for a department that has a non-cancelled opd_visits row within ORB_OPD_SCOPE_DAYS (hospital-local). PATIENT_DEPARTMENT_SQL, opd_registration_allowed and Sage's duplicate scope are unchanged; Sage stays admission-only for outpatients. forecast_service.get_appointments' private outpatient branch is reconciled onto the shared arm. Docstrings updated.",
+    "files_touched": [
+     "server/permissions.py",
+     "server/services/forecast_service.py",
+     "server/tests/test_patient_scope_routes.py",
+     "server/tests/test_caller_named_patient_scope.py"
+    ],
+    "files_new": [
+     "server/tests/test_opd_scope.py"
+    ],
+    "size_days": 2.5,
+    "depends_on": [
+     "opd-1"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Flag off: identical answers on every existing fixture. A walk-in is visible to the visit department, invisible to others and invisible after the window. A cancelled visit grants nothing. Once actively admitted elsewhere, OPD access ends. A front-desk visit cannot launder an inpatient. Every guarded /{patient_id} route is run with an OPD fixture. Sage refuses an outpatient. Booking a follow-up for an outpatient now passes enforce_patient_scope."
+   },
+   {
+    "id": "opd-8",
+    "title": "Doctor OPD queue tab and queue actions",
+    "description": "frontdesk_service and routes:\n- call (alias of start), skip, recall, assign-to-me;\n- PATCH priority/room;\n- ordering by priority then token.\nNew /api/opd/my-queue. New OpdPanel.tsx tab ('clinical' group, doctor and clinician only): call next, skip, recall, take unassigned. shellConfig: CLINICAL_MODULE_IDS becomes ['dietary','opd'], with the pinning test updated and its reason. A content-free 'opd:queue_changed' {department} nudge is emitted by importing sio (realtime.py itself is not edited); clients refetch over scoped REST. The front desk queue shows priority, room and skipped.",
+    "files_touched": [
+     "server/services/frontdesk_service.py",
+     "server/routes/frontdesk_routes.py",
+     "server/main.py",
+     "src/shellConfig.tsx",
+     "src/shellConfig.test.ts",
+     "src/api/frontdesk.ts",
+     "src/pages/panels/FrontDeskPanel.tsx"
+    ],
+    "files_new": [
+     "server/routes/opd_routes.py",
+     "src/api/opd.ts",
+     "src/pages/panels/OpdPanel.tsx",
+     "src/pages/panels/OpdPanel.css",
+     "src/pages/panels/OpdPanel.test.tsx",
+     "server/tests/test_opd_queue_actions.py"
+    ],
+    "size_days": 3.5,
+    "depends_on": [
+     "opd-3",
+     "opd-7"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Queue state machine (skip, recall, priority order). Cross-department visit returns 404. opd.consult required to call. Nudge payload whitelist has no PHI. Queue reads audited only when non-empty. Rail: OPD tab for doctors only, never for admin, nurse or receptionist."
+   },
+   {
+    "id": "opd-9",
+    "title": "Name-free token display board",
+    "description": "GET /api/frontdesk/opd/board (registration.read or patient.read_all) returns, per doctor: display name, room, the token now being called and the next three. No patient name, UHID or complaint. Kiosk route /display/opd (OpdTokenBoard.tsx) in App.tsx refreshes on the nudge with a 30 s fallback. No PHI, so no read audit.",
+    "files_touched": [
+     "server/routes/frontdesk_routes.py",
+     "server/services/frontdesk_service.py",
+     "src/App.tsx"
+    ],
+    "files_new": [
+     "src/pages/OpdTokenBoard.tsx",
+     "src/pages/OpdTokenBoard.css",
+     "src/pages/OpdTokenBoard.test.tsx",
+     "server/tests/test_opd_board_no_phi.py"
+    ],
+    "size_days": 2,
+    "depends_on": [
+     "opd-8"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Response key whitelist (no name, MRN or complaint); writes no audit row; kiosk renders with tokens only; respects the flag."
+   },
+   {
+    "id": "opd-10",
+    "title": "OPD consultation record (server)",
+    "description": "Migration M51: opd_consultations plus append-only opd_consultation_addenda. New opd_service.py:\n- draft and save with row_version;\n- sign: immutable afterwards, written in-transaction with its audit;\n- addenda and history;\n- ICD-10 validated through terminology_service, with an optional problem_list add;\n- OPD vitals kept in vitals_json with measured_at; never written to vitals or risk_scores and never scored.\nRoutes under /api/opd: consultation GET/PUT, sign, addenda, complete-with-disposition (keeps the existing charge logic), patients/{patient_id}/consultations behind require_patient_access. patient_timeline_service shows OPD visits and signed consultations.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/routes/opd_routes.py",
+     "server/services/frontdesk_service.py",
+     "server/services/patient_timeline_service.py"
+    ],
+    "files_new": [
+     "server/services/opd_service.py",
+     "server/tests/test_opd_consultation.py"
+    ],
+    "size_days": 4,
+    "depends_on": [
+     "opd-7",
+     "opd-8"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "Draft, sign, then edit refused; addendum append-only (triggers); stale row_version gives 409; unknown ICD-10 refused; cross-department 404; opd.consult required. No vitals or risk_scores row written. AST guard: no compute_news2 or score_vitals_row in opd_service. Timeline shows the OPD events. Completion with a disposition still raises exactly one charge."
+   },
+   {
+    "id": "opd-11",
+    "title": "OPD consultation screen, investigations and prints",
+    "description": "Consultation editor in OpdPanel with a diagnosis picker backed by a new GET /api/opd/terminology/search. Investigations go through orders_service.create_order carrying opd_visit_id (orders_routes validates that the visit is the patient's and in the caller's department). Disposition dialog: home, follow-up date (staff appointment request), internal referral (new visit or appointment request), advise admission (opens conversion once opd-17 ships). Print: consultation and investigation slip with the doctor's name and users.registration_number.",
+    "files_touched": [
+     "src/pages/panels/OpdPanel.tsx",
+     "src/api/opd.ts",
+     "server/routes/opd_routes.py",
+     "server/routes/orders_routes.py",
+     "server/services/orders_service.py",
+     "server/services/terminology_service.py"
+    ],
+    "files_new": [
+     "src/pages/panels/opd/ConsultationEditor.tsx",
+     "src/pages/panels/opd/DiagnosisPicker.tsx",
+     "src/components/print/OpdConsultationPrint.tsx",
+     "src/pages/panels/opd/ConsultationEditor.test.tsx",
+     "server/tests/test_opd_orders.py"
+    ],
+    "size_days": 3.5,
+    "depends_on": [
+     "opd-10"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Editor save, sign and lock; disposition flows; an order carries the visit and is scope-checked; print shows the registration number and no invented text. Browser check."
+   },
+   {
+    "id": "opd-12",
+    "title": "OPD prescription on the shared medication-order store",
+    "description": "Prescription lines are written to the medorder store with setting 'outpatient', opd_visit_id, duration_days, quantity and instructions. Each line is screened by enforce_medication_safety(entry_point='opd_prescription', actor_role) for allergies, interactions and dose. Requires opd.consult plus medication.prescribe (doctor only today; consistent with held R010, decides nothing about it). It never creates medications rows (the eMAR reads those) or helix orders directly; OP dispensing is the pharmacy epic's lane. Printed prescription.",
+    "files_touched": [
+     "server/routes/opd_routes.py",
+     "server/services/opd_service.py",
+     "src/pages/panels/opd/ConsultationEditor.tsx"
+    ],
+    "files_new": [
+     "src/components/print/OpdPrescriptionPrint.tsx",
+     "server/tests/test_opd_prescription.py"
+    ],
+    "size_days": 3.5,
+    "depends_on": [
+     "opd-11",
+     "medorder-1"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Allergy interlock fires (428) for a penicillin-allergic outpatient; the dose guard blocks; a nurse gets 403. No medications, eMAR or helix row. After conversion, the OPD prescription does not appear on the inpatient MAR. The order-gate behaviour follows whatever R011 rules."
+   },
+   {
+    "id": "opd-13",
+    "title": "OPD charges: registration fee, clinic codes, follow-up rule, payer at registration",
+    "description": "Migration M52 opd_charge_rules. Consultation code resolves doctor, then department, then OPD-CONSULT. An OPD-FOLLOWUP code applies inside a rule's window, and a REG-FEE line is raised on first registration. Both new items are registered unpriced (never an implicit Rs 0). Payer category captured at registration as a patient_payer_policies row with no admission, plus a per-visit payer snapshot. ORB_OPD_CHARGE_AT=registration raises the consultation line at registration instead of completion; it stays idempotent on the visit.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/frontdesk_service.py",
+     "server/services/billing_masters.py",
+     "server/services/registration_service.py",
+     "server/routes/registration_routes.py"
+    ],
+    "files_new": [
+     "server/tests/test_opd_charges.py"
+    ],
+    "size_days": 3.5,
+    "depends_on": [
+     "opd-4",
+     "opd-8"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "Unpriced stays unpriced; department and doctor codes resolve; follow-up inside the window uses OPD-FOLLOWUP; the registration fee is charged once; an insured patient is priced on the payer tariff; the hospital day is right at 02:00 IST; replay does not double-charge."
+   },
+   {
+    "id": "opd-14",
+    "title": "Outpatient billing at the counter",
+    "description": "GET /api/billing/op-patients?date= (billing.read; outpatients with pending op charges; phi_access audited). BillingPanel Charges picker merges these with ward and discharged patients. 'Bill this visit' calls create_invoice with encounter_type 'op' and no admission. OPD counter invoice form on the existing /patients/{id}/opd-invoice route (W137 item 2).",
+    "files_touched": [
+     "server/routes/billing_routes.py",
+     "server/services/billing_service.py",
+     "src/pages/panels/BillingPanel.tsx",
+     "src/api/billing.ts"
+    ],
+    "files_new": [
+     "server/tests/test_billing_op_patients.py",
+     "src/pages/panels/BillingPanel.opd.test.tsx"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "opd-13"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "A walk-in with a pending charge is selectable; an invoice takes only that patient's op lines; an inpatient line is never swept onto an OPD bill; cashier still cannot reach billing screens."
+   },
+   {
+    "id": "opd-15",
+    "title": "Clinic session master and availability",
+    "description": "Migration M53: clinic_sessions and clinic_session_exceptions. New clinic_schedule_service.py and schedule_routes.py (schedule.manage to write; registration.read or patient.read_all to read availability). Slots are computed in hospital-local time, never stored. Overlapping sessions for one doctor are refused. Front Desk 'Clinic timings' view.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/main.py",
+     "src/pages/panels/FrontDeskPanel.tsx"
+    ],
+    "files_new": [
+     "server/services/clinic_schedule_service.py",
+     "server/routes/schedule_routes.py",
+     "src/api/schedule.ts",
+     "src/pages/panels/frontdesk/ClinicSessionsView.tsx",
+     "server/tests/test_clinic_schedule.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "opd-3"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "Weekly sessions generate slots; an exception removes them; overlap refused; hospital-local day boundaries; flag off gives 404; only schedule.manage writes."
+   },
+   {
+    "id": "opd-16",
+    "title": "Appointments with a doctor and a slot, check-in and no-shows",
+    "description": "Migration M54: in-transaction rebuild of appointments (not an FK parent) adding checked_in and no_show statuses, the doctor, session and attendance columns, and a partial unique index on live doctor slots (pre-checked for existing clashes). appointments_routes:\n- doctor and slot booking, double-book returns 409;\n- reschedule (new row linked to the old);\n- check-in creates the OPD visit with appointment_id and a token;\n- no-show: manual, or computed at session end on read (no background loop);\n- fixes the unscoped cancel and complete routes and the date.today() in /mine.\nforecast get_appointments returns the doctor. Front Desk 'Appointments' day view; AppointmentsPanel shows the doctor. Patient portal requests stay as they are.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/routes/appointments_routes.py",
+     "server/services/forecast_service.py",
+     "server/services/frontdesk_service.py",
+     "src/pages/panels/AppointmentsPanel.tsx",
+     "src/pages/panels/FrontDeskPanel.tsx"
+    ],
+    "files_new": [
+     "src/pages/panels/frontdesk/AppointmentsDayView.tsx",
+     "server/tests/test_appointments_slots.py"
+    ],
+    "size_days": 4.5,
+    "depends_on": [
+     "opd-15",
+     "opd-8"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "Double booking refused; reschedule keeps history; check-in yields one visit (idempotent); no-show marked after the session; cross-ward cancel and complete now return 404; test_bridge_appointments and test_forecast_appointments_booked_only stay green; migration row parity."
+   },
+   {
+    "id": "opd-17",
+    "title": "OPD to inpatient conversion and returning-patient readmission",
+    "description": "admission_service.admit_existing_patient refactors admit_patient's inserts into shared helpers so one transaction:\n- moves status from 'registered' or 'discharged' to 'admitted' with no new patient or MRN;\n- creates a Bridge login only if none exists;\n- links admissions.opd_visit_id and the visit (disposition 'admitted');\n- carries the provisional diagnosis and complaint;\n- keeps charted allergies;\n- writes a clinical_access audit in-transaction (scope moves to the ward).\nPOST /api/admissions/admit-existing. A duplicate MRN on /admit becomes 409 naming no patient. AdmitPatientModal gets an existing-patient mode: identity fixed, demographics read-only, OPD vitals and OPD medicines shown for reference only with their times. OpdPanel 'Advise admission'. Uses the adt-1 bed picker if it has landed. Shared with the Ward Record 'returning patient reopens the same record' item.",
+    "files_touched": [
+     "server/services/admission_service.py",
+     "server/routes/admission_routes.py",
+     "src/components/AdmitPatientModal.tsx",
+     "src/pages/panels/OpdPanel.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_opd_to_ip_conversion.py",
+     "src/components/AdmitPatientModal.existing.test.tsx"
+    ],
+    "size_days": 4.5,
+    "depends_on": [
+     "opd-4",
+     "opd-10"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "OPD-S1, OPD-S3, OPD-S4",
+    "migrations": 0,
+    "tests": "Same patient id and MRN after conversion; the OPD department loses access and the ward gains it; the OPD charge stays op and appears in the stay advisory; no OPD vitals copied into vitals; no OPD Rx copied into medications; allergies preserved; readmitting a discharged patient keeps history; duplicate MRN gives 409, not 500; replay is idempotent. Scribe quick-admit and admission form tests stay green."
+   },
+   {
+    "id": "opd-18",
+    "title": "Front office MIS",
+    "description": "GET /api/frontdesk/mis/daily returns aggregates only for one hospital-local day:\n- new vs returning registrations;\n- visits by clinic and doctor;\n- median and longest wait, LWBS;\n- no-shows (when opd-16 is in), OPD-to-IP conversions.\nFront Desk 'Day summary' view with CSV export.",
+    "files_touched": [
+     "server/routes/frontdesk_routes.py",
+     "server/services/frontdesk_service.py",
+     "src/pages/panels/FrontDeskPanel.tsx"
+    ],
+    "files_new": [
+     "src/pages/panels/frontdesk/DaySummaryView.tsx",
+     "server/tests/test_front_office_mis.py"
+    ],
+    "size_days": 2.5,
+    "depends_on": [
+     "opd-8"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Counts against fixtures; hospital-local day; no PHI fields in the response; scoped account sees its clinic only."
+   },
+   {
+    "id": "opd-19",
+    "title": "DPDP notice and consent at the registration desk",
+    "description": "After ruling N3: consent.record granted to receptionist, and a registration step records notice acknowledgement and treatment consent through consent_service, in the patient's preferred language. Erasure and retention text confirms demographics are part of the clinical record.",
+    "files_touched": [
+     "server/permissions.py",
+     "src/lib/roles.ts",
+     "server/services/registration_service.py",
+     "src/pages/panels/frontdesk/RegisterPatientView.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_registration_consent.py"
+    ],
+    "size_days": 2,
+    "depends_on": [
+     "opd-6"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Consent row written with the registration; a withdrawal path exists; a receptionist without the grant gets 403 when N3 says no."
+   }
+  ],
+  "product_rulings": [
+   {
+    "question": "OPD-S1 (new, patient safety): before the desk attaches a visit, or a clinician attaches an admission, to an EXISTING patient record found by search, which identifiers must be confirmed?",
+    "options": "(a) two identifiers shown and confirmed with the patient (name plus DOB or stated age, plus UHID), recorded in the audit; (b) UHID alone; (c) a name match alone",
+    "recommendation": "(a). Wrong-patient selection attaches someone else's allergies and history. This also governs the Ward Record clerk's returning-patient screen.",
+    "safety": true
+   },
+   {
+    "question": "OPD-S2 (new, patient safety): when registration finds a probable duplicate, should the server warn or block?",
+    "options": "(a) warn, require a reason, audit it and open a worklist item; hard refusal only on exact UHID or active ABHA; (b) block above the threshold until a supervisor reviews; (c) warn only, no reason",
+    "recommendation": "(a). Duplicate charts split the allergy history, but blocking a sick walk-in at the counter is worse. Default ORB_DUPLICATE_MODE=warn.",
+    "safety": true
+   },
+   {
+    "question": "OPD-S3 (new, patient safety, the analogue of held W111; this does not decide W111): do vitals taken in OPD enter the observation chart and count as the patient's latest vitals after OPD-to-IP conversion?",
+    "options": "(a) no: they stay inside the OPD record, are shown on the admission form with their time, and the ward charts a fresh set; (b) copy them into vitals at conversion",
+    "recommendation": "(a). Otherwise hours-old OPD values become the board's latest reading and its NEWS2.",
+    "safety": true
+   },
+   {
+    "question": "OPD-S4 (new, patient safety, related to held R010): do active OPD prescriptions carry onto the inpatient medication chart at conversion?",
+    "options": "(a) never automatically: they are listed as OPD or home medicines for item-by-item reconciliation by the admitting prescriber; (b) carry them as active inpatient orders",
+    "recommendation": "(a). The eMAR would otherwise offer a nurse a take-home prescription as an inpatient dose.",
+    "safety": true
+   },
+   {
+    "question": "OPD-S5 (new, patient safety): may the front desk record allergies or 'no known allergies' at registration?",
+    "options": "(a) no allergy field at the desk; a clinician captures allergies at consultation or admission; (b) the desk may record allergies but never NKDA; (c) the desk records both",
+    "recommendation": "(a), which is how opd-4 is built. A clerk-typed NKDA would silence the interlock.",
+    "safety": true
+   },
+   {
+    "question": "N1: where does the UHID come from at each site, and in what format?",
+    "options": "hospital mode (type the existing HIS number, site regex); orb mode (Orb series with a Verhoeff check digit, site prefix)",
+    "recommendation": "Hospital mode by default (beside-HIS, Ward Record); orb mode with a check digit for a site Orb replaces. Never reset per year.",
+    "safety": false
+   },
+   {
+    "question": "N2: how long does an OPD visit let that clinic's staff read the patient's chart?",
+    "options": "same day only; 7 days; 30 days; until the follow-up appointment",
+    "recommendation": "7 days (ORB_OPD_SCOPE_DAYS), and only while the patient has no active admission elsewhere.",
+    "safety": false
+   },
+   {
+    "question": "N3: create a receptionist role, and should it also take consent (F123) and money?",
+    "options": "new role with registration only; plus consent.record; plus payments.record",
+    "recommendation": "New role holding registration.read and registration.write plus consent.record once counsel agrees. Money stays with the cashier role, so one person at a combined desk uses two accounts.",
+    "safety": false
+   },
+   {
+    "question": "N4: may a ward-scoped doctor search the whole patient index (name, UHID, age, sex only) to avoid duplicate registrations?",
+    "options": "yes, minimal fields, audited; no, own department only",
+    "recommendation": "Yes, minimal fields, minimum 3 characters, 20 results, every search audited with the matched ids.",
+    "safety": false
+   },
+   {
+    "question": "N5 (existing R018): must the desk capture date of birth?",
+    "options": "required; optional with stated age",
+    "recommendation": "Optional, with stated age stored with its date and the 'no date of birth, no discharge link' hint. Never store an estimated DOB.",
+    "safety": false
+   },
+   {
+    "question": "N6: when is the consultation fee charged, and is there a registration fee or free follow-up window?",
+    "options": "at registration (prepaid) or at completion (today); REG-FEE yes or no; follow-up window in days",
+    "recommendation": "Site setting, default completion. A follow-up window maps to its own OPD-FOLLOWUP code the site prices, never an implicit zero.",
+    "safety": false
+   },
+   {
+    "question": "N7: what does the waiting-room token board show?",
+    "options": "token only; token and initials; token and name",
+    "recommendation": "Token, doctor and room only (DPDP).",
+    "safety": false
+   },
+   {
+    "question": "N8: when Orb runs the OPD, may a visit be completed without a signed consultation note?",
+    "options": "signed note required; allowed with a reason ('note on paper')",
+    "recommendation": "Allowed with a reason, because many clinics will keep paper notes at first.",
+    "safety": false
+   },
+   {
+    "question": "N9: which queue priority categories apply?",
+    "options": "none; senior citizen, pregnant, differently abled, emergency; site list",
+    "recommendation": "A site-configured list with a reason captured, shown on the doctor's queue.",
+    "safety": false
+   },
+   {
+    "question": "N10: what identity document data may registration store?",
+    "options": "none; type plus last 4; full number",
+    "recommendation": "Type plus last 4, and never a full Aadhaar number (Aadhaar Act); counsel to confirm.",
+    "safety": false
+   }
+  ],
+  "risks": [
+   "The patients rebuild (opd-2) is an FK-parent rebuild under 35 child tables, done in an autocommit window that commits the runner's earlier work. A defect here loses or orphans patient rows. Mitigations: the proven _atomic_table_rebuild path, a frozen column list, row-count and foreign_key_check assertions, a verified backup before upgrade, and a dry run on a copy of the dev DB (isolated verify stack). It runs on every install, Ward Record included, even with the flags off.",
+   "Every new role is a users rebuild (FK parent of about 20 tables). The canonical column list in _rebuild_users_role_check is hard-coded, so any epic that ADDs a users column (for example qualification for prescriptions) must update it in the same change or the next role migration aborts. Batch receptionist, the Ward Record clerk and other epics' roles into one migration.",
+   "Migration version collisions: about ten sessions plus several epic architects will all claim numbers after 47. Two agents picking the same version gives a duplicate schema_migrations key and a server that will not boot (migrations.py m20 docstring). Reserve number blocks per epic before building.",
+   "The OPD scope arm widens who can read a chart. A wrong window, or forgetting the no-active-admission rule, re-opens the 2026-08-05 class of cross-ward reads, or lets a front-desk visit launder access to another ward's inpatient. It ships flag-gated, with every guarded route re-run against an OPD fixture.",
+   "Wrong-patient selection at the returning-patient search, and split duplicate charts, both lose allergy history. Those are the main clinical hazards of this epic (OPD-S1, OPD-S2, OPD-S5).",
+   "Audit volume: queue screens polled every few seconds would write one encrypted phi_access row per poll, and audit already drives storage at 200 beds. Content-free socket nudges with refetch-on-change keep reads proportional to changes.",
+   "Search performance: name LIKE scans over 100k+ patients in SQLCipher may be slow. opd-4 and opd-5 must measure at 100k rows and fall back to prefix keys. FTS5 availability in sqlcipher3-wheels is unverified.",
+   "OPD prescription depends on medorder-1. The tempting shortcut of writing OPD prescriptions into the medications table would put take-home drugs on the eMAR. A test must forbid it, and no fourth store may be built.",
+   "The lazy front-desk schema trap: a migration that ALTERs opd_visits before ensure_frontdesk_schema has created it would be ledgered as done with the columns missing. opd-1 folds the tables into the ledger first.",
+   "Lane competition: this epic is about 62 engineer-days, about 72 with browser re-verification and merge friction, which is about 4 calendar months at the sales plan's 4 engineer-days a week. It competes directly with the Ward Record build (28 to 44.5 days), which is the only paid product. The minimum useful slice (walk-in to billed consultation, no appointments, no Rx: opd-1 to opd-8, opd-10, opd-11, opd-13, opd-14) is about 40 days.",
+   "Defects found while mapping, outside any running session:\n- appointment cancel and complete are not ward-scoped (appointments_routes.py:476-598);\n- /api/appointments/mine uses the server's date.today() (:423);\n- the ghost POST /api/vigil/patients is still live and used by soak_test.py;\n- front-desk OPD audits are written after commit in a fail-soft category.\nThe first three are fixed inside opd-16 and opd-1, and are worth a separate quick fix before then.",
+   "Device class: the OPD screens must never show NEWS2, a band or AI advice (R023, the Ward Record no-score rule). OPD vitals stay in the OPD record and the existing AST scoring guard covers opd_service.",
+   "DPDP minimisation: new demographic fields (email, alternate phone, guardian) widen the record. They are classified under clinical_record retention, and the consent_service text saying Orb holds no separate contact store must stay true.",
+   "Prescription print needs the doctor's qualification, which Orb does not store (credentialing gap). Until the workforce or credentialing epic adds it, the print carries only the name and users.registration_number."
+  ],
+  "session_conflicts": [
+   "Scribe quick-admit department validation session (admission_service.py, scribe routes): opd-17 (admit_existing_patient, duplicate-MRN 409) must wait for it to land. The 409 fix was moved out of opd-1 for this reason. Scribe-drafted OPD notes are deferred entirely.",
+   "Admit-form ACVPU/O2 defaults work (src/components/AdmitPatientModal.tsx, modified in the working tree now): opd-17's existing-patient mode must start from that work's merged version.",
+   "Sage bed lookup session (server/services/sage_service.py): opd-7 deliberately does not touch Sage's duplicated scope functions (sage_service.py:1933-1960). Sage stays admission-only for outpatients and a test records that, so no edit is needed there.",
+   "CORS same-origin socket session (server/ws/realtime.py, src/api/client.ts): opd-8 only imports sio to emit a content-free nudge and adds new src/api/opd.ts and src/api/registration.ts files. It never edits client.ts; the dead createPatient wrapper there is left for a later cleanup.",
+   "Relay agentic confirm orphan orders session (server/routes/relay_routes.py, helix_service.create_order): opd-12 must write through the medorder store, not helix_service directly, and follow whatever R024 decides about order and state atomicity.",
+   "Bridge emergency flags session (bridge_service): no overlap. Outpatients get no portal account in this epic.",
+   "Cross-epic shared files:\n- server/migrations.py: version numbers;\n- server/roles.py, server/permissions.py, src/lib/roles.ts: one role batch, one users rebuild;\n- server/config.py enabled_modules and src/shellConfig.tsx: HOSPITAL_MODULE_IDS and the CLINICAL_MODULE_IDS pin;\n- server/database.py SCHEMA: the patients CHECK, one rebuild carrying the adt and death-record statuses too.\nThese need an agreed merge order.",
+   "ADT / bed master epic (adt): owns admission and bed allocation and may also refactor admission_service. Agree that admit_existing_patient (opd-17) and adt's bed allocation are one design, so admission_service does not get two competing rewrites.",
+   "Ward Record track (sales plan clerk role, hospital patient number, returning patient reopens the same record): opd-2, opd-3, opd-4 and opd-17 are the same identity core. If the Ward Record ships first, build them in that lane once rather than twice."
+  ]
+ }
+}

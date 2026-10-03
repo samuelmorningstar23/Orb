@@ -1,6 +1,6 @@
 # Sage bed and ward lookup: findings, 3 October 2026
 
-Status: open. A fix was built on 3 October, failed independent review for a wrong-patient path, and was backed out the same hour. The code in server/services/sage_service.py is exactly as it was before. This note is the starting point for the next attempt. Ruling R026 in docs/RULINGS_NEEDED_2026-10.md.
+Status: open. Two fixes were built on 3 October. Both failed independent review for wrong-patient paths and both were backed out the same evening. The code in server/services/sage_service.py is byte-identical to before (SHA-256 af7be48c...). R026 is now RULED (a); see the section "Attempt 2" at the end and the revised design in docs/SAGE_BED_LOCATOR_PLAN_2026-10-03.md.
 
 ## The defect today
 
@@ -48,3 +48,15 @@ Every case in the table above, driven through `get_relevant_context` with a `pat
 - With another department's patients in beds "9" and "17": "who is in bed 9917" is not an out-of-department hit; "who is in bed 9?" is.
 
 Run with the existing guards: tests/test_sage_patient_phrasing.py, test_sage_department_scope.py, test_patient_scope_routes.py, test_sage_sticky_anchor.py, test_sage_history_patient_name.py.
+
+## Attempt 2 (3 October, evening): built to the ruling, failed review, backed out
+
+Samuel ruled R026 (a) with D2 (leading zeros ignored), D3 (one missing bed in a list = no match for the whole turn) and D4 (a clinical-code bed label without "bed" makes Sage ask). Attempt 2 built one shared "bed reference" reader for the matcher, the open-chart gate and the history anchor, with an early NO MATCHING exit. 83 new tests passed, as did the Sage guard suites (1,674). An independent reviewer then broke it through `get_relevant_context` with a chart open:
+
+- Wrong patient, regressions against the old code. Bare numbers and phrasings the reader did not know fell to the open chart: "how is 12?", "12's potassium?", "what about 12?", "compare 12 and 14", "room 12", "cubicle 12", "pt 12", "12 wala patient", "bed-12" typed with an en dash or non-breaking hyphen. Stored label shapes it could not express: "MW/12", "GW.12", "CARDIO-12", "Room 204", "12A". A bed label equal to another department's ward label ("HDU-2"). The old substring matcher found all of these.
+- Wrong bed: "bed twenty one" read as bed 20, "beds 1-2" as bed 12; "beds 12 to 14" silently dropped bed 14.
+- Chart lost or false out-of-department denials (each one writes a security audit event against the clinician): "is the patient in 2nd degree heart block?", "patient in 2019", "1:1 nursing", "2:1 block"; "A1c", "D5W", "H2O", "ANC 500", "COVID-19" whenever any ward in the hospital used that letter or prefix; "ward 6 bed 12" denied because another ward has a bed 12.
+- Performance: 57.7 s end to end on a 50,000-character input (old code 0.56 s), and a 4,400-digit number crashed the turn and every later follow-up in that conversation.
+
+The lesson: a closed grammar of "what a bed reference looks like" always has holes, and the open-chart fallback turns every hole into a wrong-patient answer. Attempt 3 must find beds from the labels actually on the ward (any shape), and when it is unsure it must ask, never fall back. Attempt 2's code, tests, the reviewer's probes and outputs: docs/archive/bed-locator-attempt2-2026-10-03/ (attempt2.patch is the exact diff).
+

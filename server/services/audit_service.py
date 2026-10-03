@@ -40,8 +40,20 @@ logger = logging.getLogger("orb.audit")
 # lane serves PHI-bearing queries, so its record is held to the same rule as a
 # PHI access. tests/test_audit_fail_closed_categories.py checks every name here
 # against the source tree, so a renamed category cannot silently go dead again.
+#
+# The last three were registered on 3 October 2026, before their first writer,
+# so every hospital-system increment finds its category already fail-closed:
+#   patient_identity  registration, demographic and UHID corrections, duplicate
+#                     overrides and resolutions, failed identity checks (OPD)
+#   patient_movement  bed assignment, transfer, swap, leave, absconded,
+#                     movement corrections (ADT)
+#   clinical_config   laboratory test master, reference ranges, critical
+#                     limits, analyser mapping and credentials (LIS)
+# The test file lists them as pre-registered with the increment that will emit
+# each; that list must shrink, never grow, as the writers land.
 _FAIL_CLOSED_CATEGORIES = frozenset({
     "security", "clinical_access", "phi_access", "authentication", "ai_inference",
+    "patient_identity", "patient_movement", "clinical_config",
 })
 
 

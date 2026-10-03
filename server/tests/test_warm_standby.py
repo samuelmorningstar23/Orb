@@ -52,6 +52,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import textwrap
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -97,15 +98,50 @@ CURRENT_SCHEMA_VERSION = vr.expected_schema_version()
 # script-driven tests here failed at once, every one of them reporting a fixture
 # as "a backup that predates the schema" — which is the exact failure this file
 # exists to detect, so the report was maximally misleading. Name the real cause.
-_MANIFEST_SOURCES = (REPO_ROOT / "server" / "migrations.py", VERIFIER)
+#
+# From migration 48 on, migrations are one file each in server/migrations_his/,
+# and migrations.py merges them into MIGRATIONS at import. So the schema version
+# and the table list now come from that directory too: a file saved there, or a
+# new m<NNNN>_*.py dropped in (the next wave's migrations), moves both exactly as
+# an edit to migrations.py does.
+_HIS_MIGRATIONS_DIR = REPO_ROOT / "server" / "migrations_his"
+
+
+def _his_migration_files(directory: Path = _HIS_MIGRATIONS_DIR) -> list[Path]:
+    """Every per-file migration the runner collects: each .py file in the
+    directory except __init__.py. migrations_his.collect_from refuses any other
+    file name at import, so no file here is skipped quietly."""
+    if not directory.is_dir():
+        return []
+    return sorted(p for p in directory.glob("*.py") if p.name != "__init__.py")
+
+
+_MANIFEST_SOURCES = (REPO_ROOT / "server" / "migrations.py", VERIFIER, *_his_migration_files())
 _MANIFEST_DIGESTS_AT_COLLECTION = {
     p: hashlib.sha256(p.read_bytes()).hexdigest() for p in _MANIFEST_SOURCES if p.exists()
 }
+_HIS_FILES_AT_COLLECTION = tuple(p.name for p in _his_migration_files())
 
 
 @pytest.fixture(autouse=True)
 def _refuse_if_the_schema_manifest_moved():
     def _check(when: str) -> None:
+        now = tuple(p.name for p in _his_migration_files())
+        if now != _HIS_FILES_AT_COLLECTION:
+            pytest.fail(
+                f"\nThe migration files in server/migrations_his/ changed {when}: "
+                f"added {sorted(set(now) - set(_HIS_FILES_AT_COLLECTION))}, "
+                f"removed {sorted(set(_HIS_FILES_AT_COLLECTION) - set(now))}.\n"
+                f"\n"
+                f"The fixture backups in this file were built to schema version "
+                f"{CURRENT_SCHEMA_VERSION}, read at collection, but every script and "
+                f"verifier subprocess re-reads the migrations when it runs. They now "
+                f"disagree, so a perfectly good fixture looks like a backup that "
+                f"predates the schema.\n"
+                f"\n"
+                f"This is a moving working tree, NOT a bad backup and NOT a broken "
+                f"restore path. Re-run against a quiescent checkout.\n"
+            )
         for path, expected in _MANIFEST_DIGESTS_AT_COLLECTION.items():
             if not path.exists() or hashlib.sha256(path.read_bytes()).hexdigest() == expected:
                 continue
@@ -628,7 +664,8 @@ def _pre_spine_backup(path: Path) -> Path:
 
 # ── The manifest cannot silently fall behind the schema ──────────────────────
 def _tables_created_by_migrations() -> set[str]:
-    """Re-derive, from migrations.py's AST, every table a migration creates."""
+    """Re-derive, from the AST of migrations.py and of every file in
+    server/migrations_his/, every table a migration creates."""
     src = (REPO_ROOT / "server" / "migrations.py").read_text()
     tree = ast.parse(src)
     migration_fns = {
@@ -654,7 +691,77 @@ def _tables_created_by_migrations() -> set[str]:
         for const_name, node in consts.items():
             if re.search(r"\b" + re.escape(const_name) + r"\b", segment):
                 found |= set(pattern.findall(ast.get_source_segment(src, node) or ""))
+    # Migrations 48 onwards live one per file in server/migrations_his/. Before
+    # this walk existed, migration 49 created six Helix tables that the manifest
+    # did not list, and this test still passed.
+    found |= _tables_created_by_his_migrations()
     return found - {"schema_migrations"}
+
+
+# A table name after CREATE TABLE [IF NOT EXISTS]. The (?!IF\b) stops the
+# keyword itself being read as a name when the real name is not a literal
+# (f"CREATE TABLE IF NOT EXISTS {name} ..."), or when prose says "CREATE TABLE
+# IF NOT EXISTS, so ...".
+_HIS_CREATE_TABLE = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?!IF\b)([A-Za-z_][A-Za-z_0-9]*)", re.I
+)
+_HIS_CREATE_TABLE_ANY = re.compile(r"CREATE\s+TABLE\b", re.I)
+
+
+def _docstring_ids(tree: ast.AST) -> set[int]:
+    """The string nodes that are docstrings (module, class or function). They
+    are prose about the DDL, never DDL, and m0049's own docstring says
+    'CREATE TABLE IF NOT EXISTS, so an existing ...'."""
+    ids: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            body = node.body
+            if (body and isinstance(body[0], ast.Expr)
+                    and isinstance(body[0].value, ast.Constant)
+                    and isinstance(body[0].value.value, str)):
+                ids.add(id(body[0].value))
+    return ids
+
+
+def _rebuild_ddl_ids(tree: ast.AST) -> set[int]:
+    """The string nodes passed as create_new_sql= to database._atomic_table_rebuild.
+    That DDL creates a temporary <table>_new that is renamed over a table that
+    already exists, so it adds no table to the schema."""
+    ids: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.keyword) and node.arg == "create_new_sql":
+            ids |= {id(n) for n in ast.walk(node.value) if isinstance(n, ast.Constant)}
+    return ids
+
+
+def _scan_his_migrations(directory: Path = _HIS_MIGRATIONS_DIR) -> tuple[set[str], list[str]]:
+    """(tables created, DDL whose table name cannot be read) across every file
+    in server/migrations_his/.
+
+    Reads the string literals in each file's AST, so comments and docstrings
+    never count. A CREATE TABLE whose name is not spelled as a literal (built
+    with an f-string or by concatenation) is returned as unreadable rather than
+    skipped: a table this walk cannot name is a table the manifest guard cannot
+    protect, which is the silent miss this exists to prevent.
+    """
+    found: set[str] = set()
+    unreadable: list[str] = []
+    for path in _his_migration_files(directory):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        skip = _docstring_ids(tree) | _rebuild_ddl_ids(tree)
+        for node in ast.walk(tree):
+            if (not isinstance(node, ast.Constant) or not isinstance(node.value, str)
+                    or id(node) in skip):
+                continue
+            names = _HIS_CREATE_TABLE.findall(node.value)
+            found |= set(names)
+            if len(_HIS_CREATE_TABLE_ANY.findall(node.value)) > len(names):
+                unreadable.append(f"{path.name}:{node.lineno}")
+    return found, unreadable
+
+
+def _tables_created_by_his_migrations(directory: Path = _HIS_MIGRATIONS_DIR) -> set[str]:
+    return _scan_his_migrations(directory)[0]
 
 
 def test_manifest_covers_every_migrated_table():
@@ -669,8 +776,15 @@ def test_manifest_covers_every_migrated_table():
     manifest = set(vr.ALL_MIGRATED_TABLES)
     missing = derived - manifest
     assert not missing, (
-        "server/migrations.py creates tables that scripts/lib/verify_restore.py "
-        f"does not verify: {sorted(missing)}. Add them to MODULE_TABLES."
+        "server/migrations.py or server/migrations_his/ creates tables that "
+        f"scripts/lib/verify_restore.py does not verify: {sorted(missing)}. "
+        "Add them to MODULE_TABLES."
+    )
+    unreadable = _scan_his_migrations()[1]
+    assert not unreadable, (
+        "server/migrations_his/ has CREATE TABLE statements whose table name is not "
+        f"a string literal, so this guard cannot check them: {unreadable}. Spell "
+        "each CREATE TABLE out in full, table name included."
     )
     stale = manifest - derived
     assert not stale, (
@@ -680,6 +794,63 @@ def test_manifest_covers_every_migrated_table():
         "migrations 20-26 are documented everywhere as adding 62 tables; the "
         f"manifest now groups {len(ADMIN_SPINE_TABLES)} of them into the spine"
     )
+
+
+HELIX_TABLES = {
+    "helix_medication_master", "helix_inventory_lots", "helix_patient_med_orders",
+    "helix_pharmacy_verifications", "helix_stock_movements", "helix_transitions",
+}
+
+
+def test_manifest_walk_reads_the_one_file_migrations():
+    """Migration 49 (server/migrations_his/m0049_helix_tables_in_runner.py)
+    creates the six Helix tables. Before the walk covered migrations_his/, they
+    were in no derived list and in no manifest group, and the guard above still
+    passed. They must now be derived, and verified as their own group."""
+    his = _tables_created_by_his_migrations()
+    assert HELIX_TABLES <= his, sorted(HELIX_TABLES - his)
+    assert HELIX_TABLES <= _tables_created_by_migrations()
+    assert set(vr.MODULE_TABLES["helix pharmacy"]) == HELIX_TABLES
+    # m0049's docstring says "CREATE TABLE IF NOT EXISTS, so an existing ...";
+    # a regex over the raw file reads 'IF' as a table name.
+    assert not {t.upper() for t in his} & {"IF", "NOT", "EXISTS"}, sorted(his)
+
+
+def test_his_walk_ignores_prose_and_refuses_unreadable_ddl(tmp_path):
+    """The walk reads DDL, not prose: docstrings, comments, __init__.py and the
+    temporary table of a create_new_sql rebuild add nothing. And a CREATE TABLE
+    whose name it cannot read is reported, never silently skipped."""
+    (tmp_path / "__init__.py").write_text('"""CREATE TABLE decoy_init (id)"""\n')
+    (tmp_path / "m0098_example_tables.py").write_text(textwrap.dedent('''\
+        """Migration 98: an example.
+
+        Every table is CREATE TABLE IF NOT EXISTS, so an existing one is kept.
+        CREATE TABLE decoy_module_doc (id)
+        """
+        # CREATE TABLE decoy_comment (id)
+        _DDL = "CREATE TABLE IF NOT EXISTS real_table (id INTEGER PRIMARY KEY)"
+
+
+        def apply(conn):
+            """CREATE TABLE decoy_function_doc (id)"""
+            conn.execute(_DDL)
+            conn.execute("CREATE TABLE second_real (id)")
+            _atomic_table_rebuild(conn, table="real_table", shared_cols="id",
+                                  create_new_sql="CREATE TABLE real_table_new (id)",
+                                  post_sql=[])
+    '''))
+    found, unreadable = _scan_his_migrations(tmp_path)
+    assert found == {"real_table", "second_real"}
+    assert unreadable == []
+
+    (tmp_path / "m0099_dynamic_name.py").write_text(textwrap.dedent('''\
+        def apply(conn):
+            for name in ("one", "two"):
+                conn.execute(f"CREATE TABLE IF NOT EXISTS {name} (id)")
+    '''))
+    found, unreadable = _scan_his_migrations(tmp_path)
+    assert found == {"real_table", "second_real"}
+    assert [u.split(":")[0] for u in unreadable] == ["m0099_dynamic_name.py"]
 
 
 # ── The drill ────────────────────────────────────────────────────────────────

@@ -601,15 +601,15 @@ that removes it again. All timers are cleared and the list emptied on unmount or
 **Outbound:** `emitTyping` (`RelayPanel.tsx:265-271`) fires on every keystroke
 (`onChange` at `:728`) but is throttled to **once per 1.5s** by `typingEmitRef` (`:72`, `:268`).
 **API:** socket event, not HTTP.
-**Server:** `server/ws/realtime.py:407-424` `typing`, it re-checks channel authorisation via
+**Server:** `server/ws/realtime.py:503-520` `typing`, it re-checks channel authorisation via
 `_user_can_access_channel` (`:416`, which calls the same `get_channels_for_user` as REST,
-`realtime.py:363-377`), **re-derives the sender identity from the session rather than trusting
+`realtime.py:459-473`), **re-derives the sender identity from the session rather than trusting
 client fields** (`:418-423`), and re-broadcasts with `skip_sid=sid` so you never see yourself.
 **Change this →** `.relay-chat__typing` has **no CSS rule**, its entire appearance is the inline
 style at `:713` (2px/16px/4px padding, 0.72rem, `--text-muted`, italic). The line occupies zero
 height when nobody is typing, so the composer shifts up and down by ~14px as people type; giving it
 a fixed height would stop that. The name shown is `session["name"]` from the server
-(`realtime.py:422`), so it cannot be spoofed by the sending client.
+(`realtime.py:518`), so it cannot be spoofed by the sending client.
 
 ---
 
@@ -992,9 +992,9 @@ Registered in one effect keyed on `selectedChannel` (`RelayPanel.tsx:107-200`), 
 | `disconnect` | `:179` | the typing line clears |
 
 **Server side:** the socket room is entered by `join_channel`
-(`server/ws/realtime.py:380-396`), which admits a socket **only after**
+(`server/ws/realtime.py:476-492`), which admits a socket **only after**
 `_user_can_access_channel` → the same `get_channels_for_user` the REST layer uses
-(`realtime.py:363-377`). That single gate is what makes the room-scoped `relay:room_fit`
+(`realtime.py:459-473`). That single gate is what makes the room-scoped `relay:room_fit`
 broadcast safe even though it carries a suspected patient's **name**, see the corrected reasoning
 at `server/routes/relay_routes.py:555-578`. Narrowing the channel list narrows socket membership
 automatically; there is no second rule to keep in sync.

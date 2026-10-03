@@ -28,7 +28,11 @@
     "workforce": "Workforce",
     "biomedical": "Equipment",
     "nabh": "Accreditation",
-    "abdm": "ABDM"
+    "abdm": "ABDM",
+    "adt": "Beds",
+    "pharmacy-store": "Pharmacy store",
+    "lab": "Laboratory",
+    "opd": "OPD"
   },
   "subtitle": {
     "admin": "System governance & audit traceability",
@@ -59,7 +63,11 @@
     "workforce": "Duty roster, attendance, overtime & payroll export",
     "biomedical": "Equipment register, calibration, breakdowns & AMC",
     "nabh": "NABH evidence, quality indicators & incident register",
-    "abdm": "ABHA records, care-context links & consent artefacts"
+    "abdm": "ABHA records, care-context links & consent artefacts",
+    "adt": "Bed board, admissions, transfers and the daily census",
+    "pharmacy-store": "Drug purchasing, goods receipt, batches, expiry and stock",
+    "lab": "Specimens, results, validation and reports",
+    "opd": "Outpatient queue, consultations and prescriptions"
   },
   "shell": {
     "admitPatient": "Admit Patient",
@@ -91,7 +99,27 @@
     "admin": "Administrator",
     "pharmacist": "Pharmacist",
     "cashier": "Cashier",
+    "receptionist": "Receptionist",
+    "ward_clerk": "Ward clerk",
+    "lab_technician": "Lab technician",
+    "pathologist": "Pathologist",
+    "phlebotomist": "Phlebotomist",
     "staff": "Staff"
+  },
+  "moduleOff": {
+    "name": {
+      "registration": "Patient registration",
+      "adt": "Beds",
+      "lab": "Laboratory",
+      "opd": "OPD token board"
+    },
+    "checking": "Checking whether {{name}} is switched on…",
+    "off": "{{name}} is switched off on this site.",
+    "offHint": "Ask your administrator to switch it on.",
+    "unavailable": "{{name}} cannot be opened on this site yet.",
+    "unavailableHint": "Ask your administrator.",
+    "unreachable": "Orb could not reach the server to check whether {{name}} is switched on.",
+    "unreachableHint": "Check the connection, then reload the page."
   },
   "login": {
     "clinicianLogin": "Clinician Login",

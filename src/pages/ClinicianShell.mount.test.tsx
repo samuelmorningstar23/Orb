@@ -115,7 +115,9 @@ vi.mock('./panels/NabhPanel.tsx', () => marker('nabh'))
 vi.mock('./panels/AbdmPanel.tsx', () => marker('abdm'))
 
 import ClinicianShell from './ClinicianShell'
-import { getAccessibleTabs, HOSPITAL_MODULE_IDS, hospitalModuleInstalled, currentModuleFlags } from '../shellConfig'
+import {
+  getAccessibleTabs, HOSPITAL_MODULE_IDS, OPT_IN_MODULE_IDS, hospitalModuleInstalled, currentModuleFlags, isOptInModule,
+} from '../shellConfig'
 
 /** The tabs shellConfig gives an administrator IN THIS BUILD. Derived, never
  *  listed: a twelfth module must be covered by this file the day it lands. */
@@ -171,14 +173,20 @@ describe('the shell mounts every tab its rail advertises', () => {
      that a build which drops a module panel FILE (installed=false, so the tab is
      legitimately absent) fails here — naming the missing panel — instead of
      shrinking the walk to nothing and passing. */
+  /* AMENDED 3 October 2026 (HIS build plan, decision X1): the eleven are the
+     modules that default ON. The three opt-in modules (Beds, Pharmacy store,
+     Laboratory) default OFF and are on no rail until the server switches them
+     on; their panels are built in later waves, and the walk below covers each
+     one the day it is both switched on and installed. */
   it('an admin rail advertises all eleven hospital modules', async () => {
-    expect(Object.entries(hospitalModuleInstalled).filter(([, v]) => !v).map(([k]) => k))
-      .toEqual([])
-    expect(Object.entries(currentModuleFlags()).filter(([, v]) => !v).map(([k]) => k))
-      .toEqual([])
+    const standard = HOSPITAL_MODULE_IDS.filter(id => !isOptInModule(id))
+    expect(standard).toHaveLength(11)
+    expect(standard.filter(id => !hospitalModuleInstalled[id])).toEqual([])
+    expect(standard.filter(id => !currentModuleFlags()[id])).toEqual([])
     const container = await renderShell()
     const rail = railTabIds(container)
-    expect(HOSPITAL_MODULE_IDS.filter(id => !rail.includes(id))).toEqual([])
+    expect(standard.filter(id => !rail.includes(id))).toEqual([])
+    expect(OPT_IN_MODULE_IDS.filter(id => rail.includes(id))).toEqual([])
   })
 
   /* One case per tab so a severed mount names the tab in the failing test's

@@ -49,6 +49,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from database import db_session
+from services import lab_observations
 from services.sepsis_bundle_service import bundle_label, trigger_reason_text
 
 # One fixed-width, UTC-normalised rendering of any of the timestamp dialects
@@ -150,6 +151,10 @@ class _Source:
     # are simply not worth counting. Nothing currently sets this — it exists so
     # a future stream can opt out explicitly rather than by being forgotten.
     countable: bool = True
+    # The detail query's ORDER BY. Blank means newest first by the normalised
+    # ts_col. A stream with a shared reader that owns its ordering (lab
+    # results: services/lab_observations.py) passes that reader's.
+    order_sql: str = ""
 
     @property
     def base_table(self) -> str:
@@ -291,9 +296,14 @@ def _r_order_event(r: dict) -> dict:
 
 
 def _r_observation(r: dict) -> dict:
-    value = r.get("value_text")
-    if value in (None, "") and r.get("value_numeric") is not None:
-        value = r["value_numeric"]
+    # The lab's own text when it sent any, else the number: the one display
+    # rule every lab reader shares (lab_observations.display_value). A row
+    # with neither (an HL7 OBX with an empty OBX-5: a pending result or a
+    # comment-only line) prints no value at all, never the word None, which
+    # on a culture would read like a result.
+    value = lab_observations.display_value(r)
+    if value is None:
+        value = ""
     unit = r.get("unit") or ""
     flag = (r.get("abnormal_flag") or "").strip().upper()
     detail = f"{value} {unit}".strip()
@@ -463,7 +473,11 @@ SOURCES: tuple[_Source, ...] = (
     ),
     _Source(
         kind="observation",
-        from_sql="observations ob",
+        # Lab results come through the one reader every lab lane shares
+        # (services/lab_observations.py): a voided or superseded result is not
+        # on the rail or in the "new" count, and equal instants go to the
+        # later write. Simulated results stay, as on the chart's lab card.
+        from_sql=lab_observations.from_sql("ob"),
         patient_col="ob.patient_id",
         ts_col="COALESCE(ob.observed_at, ob.recorded_at, ob.created_at)",
         id_col="ob.id",
@@ -472,6 +486,8 @@ SOURCES: tuple[_Source, ...] = (
                      "ob.reference_range AS reference_range",
                      "ob.abnormal_flag AS abnormal_flag", "ob.panel_name AS panel_name",
                      "NULL AS actor_name"),
+        where_sql=lab_observations.live_observations_sql("ob"),
+        order_sql=lab_observations.order_by_sql("ob"),
         render=_r_observation,
     ),
     _Source(
@@ -527,10 +543,11 @@ def _detail_sql(src: _Source, limit: int) -> str:
     where = f"{src.patient_col} = ?"
     if src.where_sql:
         where = f"{where} AND {src.where_sql}"
+    order = src.order_sql or f"{_norm(src.ts_col)} DESC"
     return (
         f"SELECT {src.id_col} AS row_id, {src.ts_col} AS ts, {cols} "
         f"FROM {src.from_sql} WHERE {where} "
-        f"ORDER BY {_norm(src.ts_col)} DESC LIMIT {int(limit)}"
+        f"ORDER BY {order} LIMIT {int(limit)}"
     )
 
 

@@ -222,6 +222,32 @@ async def wait_healthy(base: str, deadline_s: float = 90.0) -> bool:
     return False
 
 
+def soak_admission_choice(choices: dict) -> tuple[str | None, str | None]:
+    """The department and attending doctor a synthetic admission uses, from
+    GET /api/admissions/options: the logged-in doctor's own department first,
+    then the first covered one; an attending from that department first, then
+    the first listed. (None, None) when the form offers nothing."""
+    departments = choices.get("departments") or []
+    department = choices.get("default_department") or (departments[0] if departments else None)
+    doctors = choices.get("doctors") or []
+    attending = next((d["id"] for d in doctors if d.get("department") == department),
+                     doctors[0]["id"] if doctors else None)
+    return department, attending
+
+
+def soak_admission_payload(idx: int, department: str, attending: str) -> dict:
+    """One synthetic admission, in the shape POST /api/admissions/admit takes."""
+    return {
+        "name": f"Soak Patient {idx:03d}",
+        "age": 40 + (idx % 40), "sex": "M" if idx % 2 else "F",
+        "admission_source": "ED", "admission_type": "emergency",
+        "department": department, "attending_doctor_id": attending,
+        "chief_complaint": "Soak load, synthetic admission",
+        "initial_diagnosis": "Soak load, synthetic admission",
+        "ward": "W1" if idx % 2 else "W2", "bed": f"SK-{idx:03d}",
+    }
+
+
 async def run_soak(base: str, minutes: float, target_census: int) -> dict:
     global RUN_T0
     RUN_T0 = time.monotonic()
@@ -239,23 +265,32 @@ async def run_soak(base: str, minutes: float, target_census: int) -> dict:
     client = httpx.AsyncClient(base_url=base, timeout=30.0, headers=headers, trust_env=False)
 
     # Pilot volume: top up census to the target by admitting synthetic patients.
-    # (/api/vigil/patients returns a plain list.)
+    # (/api/vigil/patients returns a plain list.) They come in through the
+    # admission door, POST /api/admissions/admit, the way a ward admits: the
+    # old POST /api/vigil/patients wrote patients with no admission row and is
+    # retired (410). The department and attending come from the admission
+    # form's own choices, the logged-in doctor's department first, so the
+    # synthetic patients land on the board this load polls.
     board = await client.get("/api/vigil/patients?limit=200")
     have = len(board.json()) if board.status_code == 200 else 0
+    options = await client.get("/api/admissions/options")
+    department, attending = soak_admission_choice(
+        options.json() if options.status_code == 200 else {})
     admitted = 0
     idx = 0
-    while have + admitted < target_census and idx < target_census * 2:
+    while (department and attending
+           and have + admitted < target_census and idx < target_census * 2):
         idx += 1
-        resp = await client.post("/api/vigil/patients", json={
-            "name": f"Soak Patient {idx:03d}",
-            "age": 40 + (idx % 40), "sex": "M" if idx % 2 else "F",
-            "diagnosis": "Soak load, synthetic admission",
-            "ward": "W1" if idx % 2 else "W2", "bed": f"SK-{idx:03d}",
-        })
+        resp = await client.post("/api/admissions/admit",
+                                 json=soak_admission_payload(idx, department, attending))
         if resp.status_code in (200, 201):
             admitted += 1
         else:
+            print(f"[soak] admission {idx} refused ({resp.status_code}): {resp.text[:200]}")
             break
+    if not (department and attending):
+        print("[soak] no covered department or attending doctor on the admission form; "
+              "census not topped up")
 
     pts = await client.get("/api/vigil/patients?limit=200")
     patient_ids = [p["id"] for p in pts.json()] if pts.status_code == 200 else []

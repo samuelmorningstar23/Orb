@@ -36,6 +36,7 @@ from services.vigil_service import compute_news2
 from services.news2_text import news2_description, news2_qualifiers
 from services.hospital_time import hospital_stamp
 from services.vital_charting import charted_text
+from services import lab_observations
 
 logger = logging.getLogger("orb.downtime")
 
@@ -49,13 +50,10 @@ _RECENT_NOTES = 5
 _RECENT_RISK = 5
 _RECENT_DOCUMENTS = 5
 _RECENT_LAB_REPORTS = 3
-# Structured results: the newest of each analyte, capped.
+# Structured results: the newest of each analyte, capped. Rows a sender
+# withdrew or marked in error, or a correction superseded, are left out by the
+# one lab reader every lane shares (services/lab_observations.py).
 _RECENT_LAB_RESULTS = 20
-
-# Lab rows a sender withdrew or marked in error are not results to act on.
-# The same exclusion the Vigil chart's lab card applies.
-_VOID_LAB_STATUSES = ("x", "d", "w", "cancelled", "deleted", "entered-in-error",
-                      "entered_in_error", "wrong")
 
 
 def _now_iso() -> str:
@@ -261,33 +259,12 @@ def capture_snapshot(patient_id: str, created_by: str = "auto") -> dict:
         ]
 
         # Interfaced results: the newest row of each analyte, newest first.
-        void = ",".join("?" * len(_VOID_LAB_STATUSES))
+        # Read through services/lab_observations.py, the one reader every lab
+        # lane shares (void and superseded rows left out, julianday order).
         lab_results = [
             _row_to_dict(r)
-            for r in db.execute(
-                f"""SELECT observation_name, value_numeric, value_text, unit,
-                           reference_range, abnormal_flag, status, observed_at
-                    FROM (
-                        SELECT observation_name, value_numeric, value_text, unit,
-                               reference_range, abnormal_flag, status,
-                               COALESCE(observed_at, recorded_at) AS observed_at, id,
-                               ROW_NUMBER() OVER (
-                                   PARTITION BY LOWER(TRIM(observation_name)),
-                                                TRIM(COALESCE(unit, ''))
-                                   ORDER BY julianday(COALESCE(observed_at, recorded_at)) DESC,
-                                            id DESC
-                               ) AS recency
-                        FROM observations
-                        WHERE patient_id = ?
-                          AND (value_numeric IS NOT NULL
-                               OR TRIM(COALESCE(value_text, '')) != '')
-                          AND LOWER(COALESCE(status, 'final')) NOT IN ({void})
-                    )
-                    WHERE recency = 1
-                    ORDER BY julianday(observed_at) DESC, id DESC
-                    LIMIT ?""",
-                (patient_id, *_VOID_LAB_STATUSES, _RECENT_LAB_RESULTS),
-            ).fetchall()
+            for r in lab_observations.latest_per_analyte(
+                db, patient_id, limit=_RECENT_LAB_RESULTS)
         ]
 
     # ── NEWS2 from the latest vitals row (rule-based, in-process, offline-safe) ──
@@ -1102,8 +1079,9 @@ def _render_labs(snap: dict) -> str:
     if results:
         rows = ""
         for r in results:
-            value = r.get("value_numeric")
-            shown = r.get("value_text") if value is None else value
+            # The lab's own text when it sent any ('1.20', '<0.01'), else the
+            # number: the one display rule (lab_observations.display_value).
+            shown = lab_observations.display_value(r)
             rows += (
                 f"<tr><td>{_e(r.get('observation_name'), dash='Unnamed test')}</td>"
                 f"<td>{_e(shown, dash='Not recorded')} {_e(r.get('unit'), dash='')}</td>"

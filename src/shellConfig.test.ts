@@ -17,16 +17,39 @@
  *    list, which is the defect this whole seam exists to kill.
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 vi.mock('./api/client', () => ({ getUser: () => null }))
 
 import {
   CLINICAL_MODULE_IDS,
+  DEFAULT_FEATURE_FLAGS,
+  DEFAULT_MODULE_FLAGS,
+  DIAGNOSTIC_MODULE_IDS,
+  FEATURE_FLAG_IDS,
+  FEATURE_TAB_FLAG,
+  FEATURE_TAB_IDS,
+  FEATURE_TAB_PANEL_PATH,
   HOSPITAL_MODULE_IDS,
   HOSPITAL_MODULE_PANEL_PATH,
   MONEY_MODULE_IDS,
+  OPT_IN_MODULE_IDS,
+  PHARMACY_DESK_MODULE_IDS,
   TABS,
+  currentFeatureFlags,
+  currentHealthProbe,
   currentModuleFlags,
+  featurePanel,
+  featureTabInstalled,
+  getModuleOffNotice,
+  isOptInModule,
+  isRoleFeatureOn,
+  offersFloatingSage,
+  resetFeatureFlags,
+  setFeatureFlags,
+  type FeatureFlagId,
+  type FeatureTabId,
   doctorHomeInstalled,
   getAccessibleTabs,
   getLandingTab,
@@ -43,12 +66,13 @@ import {
   type Tab,
 } from './shellConfig'
 import en from './i18n/locales/en.json'
+import hi from './i18n/locales/hi.json'
 
 /** Tabs that post-date the switch statement and are therefore not part of the
- *  behaviour-neutrality comparison: the doctor home and the five
- *  hospital-administration modules, each registered only when its own panel
- *  module is in the build. */
-const POST_REFACTOR = new Set<string>(['today', ...HOSPITAL_MODULE_IDS])
+ *  behaviour-neutrality comparison: the doctor home, the hospital modules and
+ *  the feature tabs (OPD), each registered only when its own panel module is in
+ *  the build. */
+const POST_REFACTOR = new Set<string>(['today', ...HOSPITAL_MODULE_IDS, ...FEATURE_TAB_IDS])
 
 /** getAccessibleTabs minus those. */
 const legacyTabs = (role: string | null, department?: string) =>
@@ -291,10 +315,16 @@ describe('hospital modules are registered, and only when they can render', () =>
       .toContain('procurement')
   })
 
-  it('flags default ON — the ruling is "visible by default"', () => {
+  /* AMENDED 3 October 2026 (HIS build plan, decision X1). The 2026-08-11
+     ruling "visible by default" still holds for every module that existed
+     then; Samuel departed from it for the three opt-in modules only (Beds,
+     Pharmacy store, Laboratory), which default OFF on the server and here. */
+  it('every non-opt-in module defaults ON, every opt-in module defaults OFF', () => {
     const flags = currentModuleFlags()
     expect(Object.keys(flags).sort()).toEqual([...HOSPITAL_MODULE_IDS].sort())
-    expect(Object.values(flags).every(Boolean)).toBe(true)
+    for (const id of HOSPITAL_MODULE_IDS) {
+      expect(flags[id], `'${id}' default`).toBe(!OPT_IN_MODULE_IDS.includes(id))
+    }
   })
 
   it('NO clinical role gets a money screen, even with every module on and built', () => {
@@ -309,9 +339,15 @@ describe('hospital modules are registered, and only when they can render', () =>
     // same, and conflating them would have forced a clinical screen — the one
     // that says who is NIL BY MOUTH — onto an admin-only rail. The exception set
     // is pinned by its own test below, so widening it is not a quiet edit.
+    //
+    // THE ONE PINNED EXCEPTION (GRN-R9, 3 October 2026): the pharmacist's rail
+    // carries the Pharmacy store, PHARMACY_DESK_MODULE_IDS, and nothing else
+    // from this list. Pinned by its own test below, next to the dietary one.
     for (const role of ['doctor', 'clinician', 'nurse', 'surgeon', 'pharmacist', '', null]) {
       const tabs = getAccessibleTabs(role, undefined, ALL_ON, ALL_INSTALLED)
+      const exempt: readonly string[] = role === 'pharmacist' ? PHARMACY_DESK_MODULE_IDS : []
       for (const id of MONEY_MODULE_IDS) {
+        if (exempt.includes(id)) continue
         expect(tabs, `${role || '(no role)'} must not see '${id}'`).not.toContain(id)
       }
     }
@@ -326,8 +362,10 @@ describe('hospital modules are registered, and only when they can render', () =>
     // above. Pinning the exact set means putting 'billing' on a nurse's rail
     // requires editing THIS line, in a test whose name says what that means.
     expect([...CLINICAL_MODULE_IDS]).toEqual(['dietary'])
+    // The laboratory is subtracted too, as a DIAGNOSTIC module (pinned below):
+    // it is neither a money screen nor a clinician's tab.
     expect([...MONEY_MODULE_IDS].sort()).toEqual(
-      HOSPITAL_MODULE_IDS.filter(id => id !== 'dietary').slice().sort(),
+      HOSPITAL_MODULE_IDS.filter(id => id !== 'dietary' && id !== 'lab').slice().sort(),
     )
   })
 
@@ -378,19 +416,26 @@ describe('hospital modules are registered, and only when they can render', () =>
     expect(currentModuleFlags().billing).toBe(true)
   })
 
+  /* AMENDED 3 October 2026, as above: a failed probe keeps every non-opt-in
+     module ON (a blip must not hide a module) and every opt-in module OFF (a
+     tab the server never confirmed would open onto 404s). */
   it('an unreachable server leaves the defaults alone — a blip must not hide a module', () => {
     // THE FAILURE: a network error read as "no modules", and a hospital's
     // billing screen vanishing because a health probe timed out.
     const throwingFetch = (async () => { throw new Error('offline') }) as unknown as typeof fetch
     return refreshModuleFlags(throwingFetch).then(flags => {
-      expect(Object.values(flags).every(Boolean)).toBe(true)
+      for (const id of HOSPITAL_MODULE_IDS) {
+        expect(flags[id], `'${id}' after an unreachable server`).toBe(!OPT_IN_MODULE_IDS.includes(id))
+      }
     })
   })
 
   it('a non-OK health response leaves the defaults alone', async () => {
     const badFetch = (async () => ({ ok: false, json: async () => ({}) })) as unknown as typeof fetch
     await refreshModuleFlags(badFetch)
-    expect(Object.values(currentModuleFlags()).every(Boolean)).toBe(true)
+    for (const id of HOSPITAL_MODULE_IDS) {
+      expect(currentModuleFlags()[id], `'${id}' after a non-OK answer`).toBe(!OPT_IN_MODULE_IDS.includes(id))
+    }
   })
 })
 
@@ -420,5 +465,524 @@ describe('the cashier lands on Payments and sees nothing else', () => {
   it('is offered no admit action, by the config and by the permission mirror', () => {
     expect(getRoleConfig('cashier').primaryAction).toBeNull()
     expect(getPrimaryAction('cashier')).toBeNull()
+  })
+})
+
+/* ── The HIS platform (build plan of 3 October 2026, wave 1) ──────────────── */
+
+/** Fixtures for the HIS blocks below. Built from the id lists, never written
+ *  out, so a fourth opt-in module is covered the day it lands. */
+const MODULES_ALL_ON = Object.fromEntries(
+  HOSPITAL_MODULE_IDS.map(id => [id, true]),
+) as Record<HospitalModuleId, boolean>
+const MODULES_ALL_INSTALLED = MODULES_ALL_ON
+const MODULES_DEFAULT = { ...DEFAULT_MODULE_FLAGS }
+const MODULES_NONE_INSTALLED = Object.fromEntries(
+  HOSPITAL_MODULE_IDS.map(id => [id, false]),
+) as Record<HospitalModuleId, boolean>
+const FEATURES_ALL_ON = Object.fromEntries(
+  FEATURE_FLAG_IDS.map(id => [id, true]),
+) as Record<FeatureFlagId, boolean>
+const FEATURES_OFF = { ...DEFAULT_FEATURE_FLAGS }
+const FEATURE_TABS_INSTALLED = Object.fromEntries(
+  FEATURE_TAB_IDS.map(id => [id, true]),
+) as Record<FeatureTabId, boolean>
+const FEATURE_TABS_ABSENT = Object.fromEntries(
+  FEATURE_TAB_IDS.map(id => [id, false]),
+) as Record<FeatureTabId, boolean>
+
+const HIS_ROLES = ['receptionist', 'ward_clerk', 'lab_technician', 'pathologist', 'phlebotomist'] as const
+const LAB_ROLES = ['lab_technician', 'pathologist', 'phlebotomist'] as const
+const CLINICAL_ROLES = ['doctor', 'clinician', 'nurse', 'surgeon'] as const
+
+describe('the opt-in modules default off and fail toward hidden', () => {
+  afterEach(() => {
+    delete window.__ORB_MODULES__
+    resetModuleFlags()
+    resetFeatureFlags()
+  })
+
+  it('are exactly Beds, the Pharmacy store and the Laboratory, and match the server keys', () => {
+    // server/config.py OPT_IN_MODULES publishes these exact keys inside
+    // 'modules' on /api/health. A rename on either side must fail here.
+    expect([...OPT_IN_MODULE_IDS]).toEqual(['adt', 'pharmacy-store', 'lab'])
+    for (const id of OPT_IN_MODULE_IDS) {
+      expect(HOSPITAL_MODULE_IDS).toContain(id)
+      expect(isOptInModule(id)).toBe(true)
+    }
+  })
+
+  it('the default table is derived: every opt-in id off, every other id on', () => {
+    expect(Object.keys(DEFAULT_MODULE_FLAGS).sort()).toEqual([...HOSPITAL_MODULE_IDS].sort())
+    for (const id of HOSPITAL_MODULE_IDS) {
+      expect(DEFAULT_MODULE_FLAGS[id]).toBe(!OPT_IN_MODULE_IDS.includes(id))
+    }
+  })
+
+  it('their panels are the files the later waves build', () => {
+    expect(HOSPITAL_MODULE_PANEL_PATH.adt).toBe('./pages/panels/BedBoardPanel.tsx')
+    expect(HOSPITAL_MODULE_PANEL_PATH['pharmacy-store']).toBe('./pages/panels/PharmacyStorePanel.tsx')
+    expect(HOSPITAL_MODULE_PANEL_PATH.lab).toBe('./pages/panels/LabPanel.tsx')
+  })
+
+  it('no opt-in tab reaches any rail on the default flags, however much is installed', () => {
+    const everyRole = [...CLINICAL_ROLES, 'admin', 'pharmacist', 'cashier', ...HIS_ROLES, '', null]
+    for (const role of everyRole) {
+      const tabs = getAccessibleTabs(role, undefined, MODULES_DEFAULT, MODULES_ALL_INSTALLED, FEATURES_ALL_ON)
+      for (const id of OPT_IN_MODULE_IDS) {
+        expect(tabs, `${role || '(no role)'} got '${id}' with its flag at the default`).not.toContain(id)
+      }
+    }
+  })
+
+  it('a flag table that does not mention an opt-in module leaves it off', () => {
+    // An older server publishes only the eleven; a partial fixture likewise.
+    // Every other module treats "not mentioned" as on; an opt-in module must not.
+    const elevenOnly = Object.fromEntries(
+      HOSPITAL_MODULE_IDS.filter(id => !isOptInModule(id)).map(id => [id, true]),
+    ) as Record<HospitalModuleId, boolean>
+    const tabs = getAccessibleTabs('admin', undefined, elevenOnly, MODULES_ALL_INSTALLED)
+    for (const id of OPT_IN_MODULE_IDS) expect(tabs).not.toContain(id)
+    expect(tabs).toContain('billing')
+  })
+
+  it('switched on by the server and installed, each appears for admin in the Hospital group', async () => {
+    const fakeFetch = (async () => ({
+      ok: true,
+      json: async () => ({ modules: { adt: true, 'pharmacy-store': true, lab: true } }),
+    })) as unknown as typeof fetch
+    await refreshModuleFlags(fakeFetch)
+    expect(currentModuleFlags().adt).toBe(true)
+    const config = getRoleConfig('admin', undefined, currentModuleFlags(), MODULES_ALL_INSTALLED)
+    for (const id of OPT_IN_MODULE_IDS) {
+      const entry = config.tabs.find(tab => tab.id === id)
+      expect(entry, `admin is missing '${id}'`).toBeTruthy()
+      expect(entry!.group).toBe('hospital')
+    }
+    // ...and still nothing without its panel file.
+    const none = getAccessibleTabs('admin', undefined, currentModuleFlags(), MODULES_NONE_INSTALLED)
+    for (const id of OPT_IN_MODULE_IDS) expect(none).not.toContain(id)
+  })
+
+  it('a build list or a runtime patch can switch an opt-in module off, never on', () => {
+    window.__ORB_MODULES__ = { adt: true, lab: true, billing: false }
+    resetModuleFlags()
+    expect(currentModuleFlags().adt).toBe(false)
+    expect(currentModuleFlags().lab).toBe(false)
+    expect(currentModuleFlags().billing).toBe(false)
+    // The server can still switch it on afterwards...
+    setModuleFlags({ adt: true })
+    expect(currentModuleFlags().adt).toBe(true)
+    // ...and an override can still take it back off.
+    window.__ORB_MODULES__ = { adt: false }
+    resetModuleFlags()
+    expect(currentModuleFlags().adt).toBe(false)
+  })
+
+  /* The shell probes /api/health on every mount, so an override has to hold
+     THROUGH the probe, not only until it answers. Before the fix the server's
+     'true' was merged over the override and both modules came back. */
+  it('a runtime off-override still holds after the health probe answers true', async () => {
+    window.__ORB_MODULES__ = { procurement: false, adt: false }
+    resetModuleFlags()
+    expect(currentModuleFlags().procurement).toBe(false)
+    expect(currentModuleFlags().adt).toBe(false)
+    const fakeFetch = (async () => ({
+      ok: true,
+      json: async () => ({ modules: { procurement: true, adt: true, billing: true } }),
+    })) as unknown as typeof fetch
+    await refreshModuleFlags(fakeFetch)
+    expect(currentHealthProbe()).toBe('answered')
+    // A standard module and an opt-in module both stay off...
+    expect(currentModuleFlags().procurement).toBe(false)
+    expect(currentModuleFlags().adt).toBe(false)
+    // ...and the rest of the server's answer is still adopted.
+    expect(currentModuleFlags().billing).toBe(true)
+  })
+
+  it('a build allow-list still holds after the health probe answers true', async () => {
+    vi.stubEnv('VITE_ORB_MODULES', 'billing,payments')
+    try {
+      resetModuleFlags()
+      const fakeFetch = (async () => ({
+        ok: true,
+        json: async () => ({ modules: { billing: true, payments: true, procurement: true, adt: true } }),
+      })) as unknown as typeof fetch
+      await refreshModuleFlags(fakeFetch)
+      expect(currentModuleFlags().billing).toBe(true)
+      expect(currentModuleFlags().payments).toBe(true)
+      // Not on the build list, so off whatever the server says.
+      expect(currentModuleFlags().procurement).toBe(false)
+      expect(currentModuleFlags().adt).toBe(false)
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('an override cannot switch an opt-in module on through the probe either', async () => {
+    window.__ORB_MODULES__ = { lab: true }
+    resetModuleFlags()
+    const fakeFetch = (async () => ({
+      ok: true,
+      json: async () => ({ modules: { lab: false, adt: true } }),
+    })) as unknown as typeof fetch
+    await refreshModuleFlags(fakeFetch)
+    // The server said off, and the override's 'on' was dropped.
+    expect(currentModuleFlags().lab).toBe(false)
+    // With no override naming it, the server alone switches an opt-in module on.
+    expect(currentModuleFlags().adt).toBe(true)
+  })
+
+  it('this build installs no opt-in panel except those whose files exist', () => {
+    for (const id of OPT_IN_MODULE_IDS) {
+      expect(modulePanel(id) !== null).toBe(hospitalModuleInstalled[id])
+    }
+  })
+})
+
+describe('the pharmacy-desk exception (GRN-R9) is exactly one module and one role', () => {
+  it('is pinned to the Pharmacy store alone', () => {
+    // THE GUARD ON THE SECOND EXCEPTION, beside the dietary one. Adding an id
+    // here would put another money screen on the pharmacist's rail.
+    expect([...PHARMACY_DESK_MODULE_IDS]).toEqual(['pharmacy-store'])
+    // It is NOT subtracted from the money list: for every other role the
+    // Pharmacy store is still a money screen.
+    expect(MONEY_MODULE_IDS).toContain('pharmacy-store')
+  })
+
+  it('the pharmacist gets it after the verify queue, only when on and installed', () => {
+    expect(getAccessibleTabs('pharmacist', undefined, MODULES_ALL_ON, MODULES_ALL_INSTALLED))
+      .toEqual(['helix', 'pharmacy-verify', 'pharmacy-store', 'sage'])
+    expect(getAccessibleTabs('pharmacist', undefined, MODULES_DEFAULT, MODULES_ALL_INSTALLED))
+      .toEqual(['helix', 'pharmacy-verify', 'sage'])
+    expect(getAccessibleTabs('pharmacist', undefined, MODULES_ALL_ON, MODULES_NONE_INSTALLED))
+      .toEqual(['helix', 'pharmacy-verify', 'sage'])
+  })
+
+  it('no other non-admin role ever sees it', () => {
+    for (const role of [...CLINICAL_ROLES, 'cashier', ...HIS_ROLES, '', null]) {
+      expect(
+        getAccessibleTabs(role, undefined, MODULES_ALL_ON, MODULES_ALL_INSTALLED, FEATURES_ALL_ON),
+        `${role || '(no role)'} must not see the Pharmacy store`,
+      ).not.toContain('pharmacy-store')
+    }
+    expect(getAccessibleTabs('doctor', 'Surgery', MODULES_ALL_ON, MODULES_ALL_INSTALLED))
+      .not.toContain('pharmacy-store')
+  })
+
+  it('the pharmacist receives no other money screen with everything on', () => {
+    const tabs = getAccessibleTabs('pharmacist', undefined, MODULES_ALL_ON, MODULES_ALL_INSTALLED, FEATURES_ALL_ON)
+    const money = tabs.filter(id => (MONEY_MODULE_IDS as readonly string[]).includes(id))
+    expect(money).toEqual([...PHARMACY_DESK_MODULE_IDS])
+  })
+})
+
+describe('the laboratory is a diagnostic module: lab staff and admin only', () => {
+  it('is the one diagnostic module', () => {
+    expect([...DIAGNOSTIC_MODULE_IDS]).toEqual(['lab'])
+    expect(MONEY_MODULE_IDS).not.toContain('lab')
+    expect(CLINICAL_MODULE_IDS).not.toContain('lab')
+  })
+
+  it('never reaches a clinical rail or the pharmacist, even with everything on', () => {
+    // Doctors and nurses reach lab work through Orders and the chart
+    // (LIS design), never through this tab.
+    for (const role of [...CLINICAL_ROLES, 'pharmacist', 'cashier', 'receptionist', 'ward_clerk', '', null]) {
+      expect(
+        getAccessibleTabs(role, undefined, MODULES_ALL_ON, MODULES_ALL_INSTALLED, FEATURES_ALL_ON),
+        `${role || '(no role)'} must not see the Laboratory`,
+      ).not.toContain('lab')
+    }
+  })
+
+  it.each(LAB_ROLES)('%s gets exactly the Laboratory, lands on it, and has no admit action', role => {
+    expect(getAccessibleTabs(role, undefined, MODULES_ALL_ON, MODULES_ALL_INSTALLED)).toEqual(['lab'])
+    expect(getRoleConfig(role, undefined, MODULES_ALL_ON, MODULES_ALL_INSTALLED).home).toBe('lab')
+    expect(getRoleConfig(role).primaryAction).toBeNull()
+    expect(getPrimaryAction(role)).toBeNull()
+  })
+})
+
+describe('feature flags default off, and only the server can switch one on', () => {
+  // Both sides: the module-level cache outlives a test, and the probe-state
+  // case below must start from 'pending' whatever ran before it.
+  beforeEach(() => {
+    resetModuleFlags()
+    resetFeatureFlags()
+  })
+  afterEach(() => {
+    resetModuleFlags()
+    resetFeatureFlags()
+  })
+
+  it('every feature defaults off', () => {
+    expect(Object.keys(DEFAULT_FEATURE_FLAGS).sort()).toEqual([...FEATURE_FLAG_IDS].sort())
+    expect(Object.values(DEFAULT_FEATURE_FLAGS).some(Boolean)).toBe(false)
+    expect(Object.values(currentFeatureFlags()).some(Boolean)).toBe(false)
+  })
+
+  it('names the server features the shell and later waves read', () => {
+    // server/config.py feature_flags(), published as 'features' on /api/health.
+    for (const id of ['registration', 'opd'] as const) expect(FEATURE_FLAG_IDS).toContain(id)
+  })
+
+  it('refreshModuleFlags adopts the features from the same answer', async () => {
+    const fakeFetch = (async () => ({
+      ok: true,
+      json: async () => ({ modules: {}, features: { registration: true, opd: true, not_a_feature: true } }),
+    })) as unknown as typeof fetch
+    await refreshModuleFlags(fakeFetch)
+    expect(currentFeatureFlags().registration).toBe(true)
+    expect(currentFeatureFlags().opd).toBe(true)
+    expect(currentFeatureFlags().lab_portal_reports).toBe(false)
+    expect(Object.keys(currentFeatureFlags())).not.toContain('not_a_feature')
+  })
+
+  it('only a strict boolean counts', () => {
+    setFeatureFlags({ opd: 'yes' as unknown as boolean, registration: 1 as unknown as boolean })
+    expect(currentFeatureFlags().opd).toBe(false)
+    expect(currentFeatureFlags().registration).toBe(false)
+  })
+
+  it('a failed, non-OK or module-less answer leaves every feature off', async () => {
+    const throwing = (async () => { throw new Error('offline') }) as unknown as typeof fetch
+    await refreshModuleFlags(throwing)
+    expect(Object.values(currentFeatureFlags()).some(Boolean)).toBe(false)
+    const bad = (async () => ({ ok: false, json: async () => ({ features: { opd: true } }) })) as unknown as typeof fetch
+    await refreshModuleFlags(bad)
+    expect(currentFeatureFlags().opd).toBe(false)
+    const noModules = (async () => ({ ok: true, json: async () => ({ features: { opd: true } }) })) as unknown as typeof fetch
+    await refreshModuleFlags(noModules)
+    expect(currentFeatureFlags().opd).toBe(false)
+  })
+
+  it('the probe state reads pending, then answered or failed', async () => {
+    expect(currentHealthProbe()).toBe('pending')
+    const ok = (async () => ({ ok: true, json: async () => ({ modules: {} }) })) as unknown as typeof fetch
+    await refreshModuleFlags(ok)
+    expect(currentHealthProbe()).toBe('answered')
+    const bad = (async () => ({ ok: false, json: async () => ({}) })) as unknown as typeof fetch
+    await refreshModuleFlags(bad)
+    expect(currentHealthProbe()).toBe('failed')
+    resetFeatureFlags()
+    expect(currentHealthProbe()).toBe('pending')
+    await refreshModuleFlags(null as unknown as typeof fetch)
+    // No fetch at all is not "pending forever": nothing can be checked.
+    expect(currentHealthProbe()).toBe('failed')
+  })
+})
+
+describe('the OPD feature tab', () => {
+  it('waits on the opd feature and its panel file', () => {
+    expect([...FEATURE_TAB_IDS]).toEqual(['opd'])
+    expect(FEATURE_TAB_FLAG.opd).toBe('opd')
+    expect(FEATURE_TAB_PANEL_PATH.opd).toBe('./pages/panels/OpdPanel.tsx')
+    expect(featurePanel('opd') !== null).toBe(featureTabInstalled.opd)
+    expect(featurePanel('vigil')).toBeNull()
+  })
+
+  it('is hidden by default, and CLINICAL_MODULE_IDS is untouched', () => {
+    expect(getAccessibleTabs('doctor')).not.toContain('opd')
+    expect(getAccessibleTabs('doctor', undefined, MODULES_ALL_ON, MODULES_ALL_INSTALLED, FEATURES_OFF, FEATURE_TABS_INSTALLED))
+      .not.toContain('opd')
+    expect([...CLINICAL_MODULE_IDS]).toEqual(['dietary'])
+  })
+
+  it('is hidden with the feature on while its panel is absent', () => {
+    expect(getAccessibleTabs('doctor', undefined, MODULES_ALL_ON, MODULES_ALL_INSTALLED, FEATURES_ALL_ON, FEATURE_TABS_ABSENT))
+      .not.toContain('opd')
+  })
+
+  it('reaches the doctor, the clinician alias and a surgery doctor, after the round', () => {
+    for (const [role, department] of [['doctor', undefined], ['clinician', undefined], ['doctor', 'Surgery']] as const) {
+      const tabs = getAccessibleTabs(role, department, MODULES_ALL_ON, MODULES_ALL_INSTALLED, FEATURES_ALL_ON, FEATURE_TABS_INSTALLED)
+      expect(tabs, `${role} in ${department ?? 'no department'}`).toContain('opd')
+      expect(tabs.indexOf('opd')).toBe(tabs.indexOf('round') + 1)
+    }
+  })
+
+  it('reaches nobody else', () => {
+    for (const role of ['nurse', 'admin', 'pharmacist', 'surgeon', 'cashier', ...HIS_ROLES, '', null]) {
+      expect(
+        getAccessibleTabs(role, undefined, MODULES_ALL_ON, MODULES_ALL_INSTALLED, FEATURES_ALL_ON, FEATURE_TABS_INSTALLED),
+        `${role || '(no role)'} must not see OPD`,
+      ).not.toContain('opd')
+    }
+  })
+
+  it('has tab metadata and an English and Hindi label', () => {
+    for (const id of FEATURE_TAB_IDS) {
+      const def = tabDef(id)
+      expect(def, `no TABS entry for '${id}'`).toBeTruthy()
+      expect(def!.pillar).toBeTruthy()
+      expect(def!.icon).toBeTruthy()
+      expect((en.nav as Record<string, string>)[id]).toBeTruthy()
+      expect((en.subtitle as Record<string, string>)[id]).toBeTruthy()
+      expect((hi.nav as Record<string, string>)[id]).toBeTruthy()
+      expect((hi.subtitle as Record<string, string>)[id]).toBeTruthy()
+    }
+  })
+})
+
+describe('the HIS roles: one screen each, live only while their feature is on', () => {
+  afterEach(() => {
+    resetModuleFlags()
+    resetFeatureFlags()
+  })
+
+  it('the receptionist gets exactly Front Desk with registration on, nothing with it off', () => {
+    const on = { ...FEATURES_OFF, registration: true }
+    expect(getAccessibleTabs('receptionist', undefined, MODULES_DEFAULT, MODULES_ALL_INSTALLED, on)).toEqual(['frontdesk'])
+    expect(getRoleConfig('receptionist', undefined, MODULES_DEFAULT, MODULES_ALL_INSTALLED, on).home).toBe('frontdesk')
+    expect(getAccessibleTabs('receptionist', undefined, MODULES_DEFAULT, MODULES_ALL_INSTALLED, FEATURES_OFF)).toEqual([])
+  })
+
+  it('the receptionist never sees a money screen or a clinical tab', () => {
+    const tabs = getAccessibleTabs('receptionist', undefined, MODULES_ALL_ON, MODULES_ALL_INSTALLED, FEATURES_ALL_ON, FEATURE_TABS_INSTALLED)
+    expect(tabs).toEqual(['frontdesk'])
+    for (const id of ['billing', 'payments', 'payer', 'vigil', 'relay', 'sage']) expect(tabs).not.toContain(id)
+  })
+
+  it('the ward clerk gets exactly Beds with the module on and built, nothing otherwise', () => {
+    expect(getAccessibleTabs('ward_clerk', 'Cardiology', MODULES_ALL_ON, MODULES_ALL_INSTALLED)).toEqual(['adt'])
+    expect(getRoleConfig('ward_clerk', 'Cardiology', MODULES_ALL_ON, MODULES_ALL_INSTALLED).home).toBe('adt')
+    expect(getAccessibleTabs('ward_clerk', 'Cardiology', MODULES_DEFAULT, MODULES_ALL_INSTALLED)).toEqual([])
+    expect(getAccessibleTabs('ward_clerk', 'Cardiology', MODULES_ALL_ON, MODULES_NONE_INSTALLED)).toEqual([])
+  })
+
+  it.each(HIS_ROLES)('%s never falls back to the clinical tabs it cannot open', role => {
+    expect(getAccessibleTabs(role, undefined, MODULES_DEFAULT, MODULES_NONE_INSTALLED, FEATURES_OFF)).toEqual([])
+    expect(getRoleConfig(role).primaryAction).toBeNull()
+    expect(getPrimaryAction(role)).toBeNull()
+  })
+
+  it.each(HIS_ROLES)('%s carries no floating Sage', role => {
+    expect(offersFloatingSage(role)).toBe(false)
+  })
+
+  it('every older role keeps the floating Sage exactly as before', () => {
+    for (const role of ['doctor', 'clinician', 'nurse', 'admin', 'pharmacist', 'cashier', 'surgeon', '', null]) {
+      expect(offersFloatingSage(role)).toBe(true)
+    }
+  })
+
+  it('isRoleFeatureOn reads modules for adt and lab, features for registration', () => {
+    expect(isRoleFeatureOn('doctor', MODULES_DEFAULT, FEATURES_OFF)).toBe(true)
+    expect(isRoleFeatureOn('cashier', MODULES_DEFAULT, FEATURES_OFF)).toBe(true)
+    expect(isRoleFeatureOn('ward_clerk', MODULES_DEFAULT, FEATURES_ALL_ON)).toBe(false)
+    expect(isRoleFeatureOn('ward_clerk', { ...MODULES_DEFAULT, adt: true }, FEATURES_OFF)).toBe(true)
+    expect(isRoleFeatureOn('pathologist', { ...MODULES_DEFAULT, lab: true }, FEATURES_OFF)).toBe(true)
+    expect(isRoleFeatureOn('pathologist', { ...MODULES_DEFAULT, adt: true }, FEATURES_ALL_ON)).toBe(false)
+    expect(isRoleFeatureOn('receptionist', MODULES_ALL_ON, FEATURES_OFF)).toBe(false)
+    expect(isRoleFeatureOn('Receptionist', MODULES_DEFAULT, { ...FEATURES_OFF, registration: true })).toBe(true)
+  })
+
+  it('every HIS role has an English and a Hindi role label', () => {
+    for (const role of HIS_ROLES) {
+      expect((en.role as Record<string, string>)[role], `en role.${role}`).toBeTruthy()
+      expect((hi.role as Record<string, string>)[role], `hi role.${role}`).toBeTruthy()
+    }
+  })
+
+  it('every opt-in module has an English and a Hindi nav label and subtitle', () => {
+    for (const id of OPT_IN_MODULE_IDS) {
+      expect((en.nav as Record<string, string>)[id]).toBeTruthy()
+      expect((hi.nav as Record<string, string>)[id]).toBeTruthy()
+      expect((en.subtitle as Record<string, string>)[id]).toBeTruthy()
+      expect((hi.subtitle as Record<string, string>)[id]).toBeTruthy()
+    }
+    expect((en.nav as Record<string, string>).adt).toBe('Beds')
+  })
+})
+
+describe('the switched-off notice names why a HIS role has no screen', () => {
+  it('says checking before the server answers', () => {
+    expect(getModuleOffNotice('ward_clerk', 'Cardiology', MODULES_DEFAULT, MODULES_ALL_INSTALLED, FEATURES_OFF, 'pending'))
+      .toEqual({ subject: 'adt', state: 'checking', home: 'adt' })
+  })
+
+  it('says off once the server answers off', () => {
+    expect(getModuleOffNotice('ward_clerk', 'Cardiology', MODULES_DEFAULT, MODULES_ALL_INSTALLED, FEATURES_OFF, 'answered'))
+      .toEqual({ subject: 'adt', state: 'off', home: 'adt' })
+    for (const role of LAB_ROLES) {
+      expect(getModuleOffNotice(role, undefined, MODULES_DEFAULT, MODULES_ALL_INSTALLED, FEATURES_OFF, 'answered'))
+        .toEqual({ subject: 'lab', state: 'off', home: 'lab' })
+    }
+    expect(getModuleOffNotice('receptionist', undefined, MODULES_DEFAULT, MODULES_ALL_INSTALLED, FEATURES_OFF, 'answered'))
+      .toEqual({ subject: 'registration', state: 'off', home: 'frontdesk' })
+  })
+
+  it('never claims off when the server could not be asked', () => {
+    expect(getModuleOffNotice('lab_technician', undefined, MODULES_DEFAULT, MODULES_ALL_INSTALLED, FEATURES_OFF, 'failed'))
+      .toEqual({ subject: 'lab', state: 'unreachable', home: 'lab' })
+  })
+
+  it('says unavailable when the feature is on but the screen cannot open', () => {
+    // ORB_ADT on, BedBoardPanel.tsx not yet in the build.
+    expect(getModuleOffNotice('ward_clerk', 'Cardiology', { ...MODULES_DEFAULT, adt: true }, MODULES_NONE_INSTALLED, FEATURES_OFF, 'answered'))
+      .toEqual({ subject: 'adt', state: 'unavailable', home: 'adt' })
+    // Registration on, the Front Desk module switched off.
+    expect(getModuleOffNotice('receptionist', undefined, { ...MODULES_DEFAULT, frontdesk: false }, MODULES_ALL_INSTALLED,
+      { ...FEATURES_OFF, registration: true }, 'answered'))
+      .toEqual({ subject: 'registration', state: 'unavailable', home: 'frontdesk' })
+  })
+
+  it('is absent once the role has its screen', () => {
+    expect(getModuleOffNotice('ward_clerk', 'Cardiology', MODULES_ALL_ON, MODULES_ALL_INSTALLED, FEATURES_OFF, 'answered')).toBeNull()
+    expect(getModuleOffNotice('receptionist', undefined, MODULES_DEFAULT, MODULES_ALL_INSTALLED,
+      { ...FEATURES_OFF, registration: true }, 'answered')).toBeNull()
+  })
+
+  it('is never shown to an older role, not even the cashier with Payments off', () => {
+    // Behaviour for roles that existed before the HIS plan is unchanged.
+    for (const role of ['doctor', 'clinician', 'nurse', 'admin', 'pharmacist', 'surgeon', '', null]) {
+      expect(getModuleOffNotice(role, undefined, MODULES_DEFAULT, MODULES_NONE_INSTALLED, FEATURES_OFF, 'answered')).toBeNull()
+    }
+    expect(getModuleOffNotice('cashier', undefined, { ...MODULES_DEFAULT, payments: false }, MODULES_ALL_INSTALLED, FEATURES_OFF, 'answered'))
+      .toBeNull()
+  })
+
+  it('has an English and a Hindi sentence for every state and subject', () => {
+    const enMo = en.moduleOff as unknown as Record<string, unknown>
+    const hiMo = hi.moduleOff as unknown as Record<string, unknown>
+    for (const key of ['checking', 'off', 'offHint', 'unavailable', 'unavailableHint', 'unreachable', 'unreachableHint']) {
+      expect(enMo[key], `en moduleOff.${key}`).toBeTruthy()
+      expect(hiMo[key], `hi moduleOff.${key}`).toBeTruthy()
+    }
+    for (const subject of ['registration', 'adt', 'lab', 'opd']) {
+      expect((enMo.name as Record<string, string>)[subject]).toBeTruthy()
+      expect((hiMo.name as Record<string, string>)[subject]).toBeTruthy()
+    }
+    // House rule: no em dash anywhere in what this wave added.
+    expect(JSON.stringify(en.moduleOff)).not.toContain('\u2014')
+    expect(JSON.stringify(hi.moduleOff)).not.toContain('\u2014')
+  })
+})
+
+/* ── Key parity with server/config.py ─────────────────────────────────────────
+ *
+ * "Keys match between server and frontend" is a property of two files, so it is
+ * read from the server's own source rather than restated here. A renamed module
+ * or feature on either side fails this the day it happens. */
+describe('module and feature ids match server/config.py', () => {
+  const config = readFileSync(resolve(__dirname, '../server/config.py'), 'utf8')
+  const dictKeys = (name: string): string[] => {
+    const block = config.match(new RegExp(`^${name} = \\{([\\s\\S]*?)^\\}`, 'm'))
+    expect(block, `server/config.py has no ${name} block`).toBeTruthy()
+    return Array.from(block![1].matchAll(/^\s+"([a-z_-]+)":/gm), m => m[1])
+  }
+
+  it('OPT_IN_MODULES are the opt-in module ids', () => {
+    expect(dictKeys('OPT_IN_MODULES').sort()).toEqual([...OPT_IN_MODULE_IDS].sort())
+  })
+
+  it('HOSPITAL_MODULE_ENV names every module id (the opt-in ones spread in)', () => {
+    const standard = dictKeys('HOSPITAL_MODULE_ENV')
+    expect([...standard, ...OPT_IN_MODULE_IDS].sort()).toEqual([...HOSPITAL_MODULE_IDS].sort())
+    expect(config).toMatch(/^HOSPITAL_MODULE_ENV = \{[\s\S]*?\*\*OPT_IN_MODULES,[\s\S]*?^\}/m)
+  })
+
+  it('FEATURE_FLAGS are the feature ids', () => {
+    expect(dictKeys('FEATURE_FLAGS').sort()).toEqual([...FEATURE_FLAG_IDS].sort())
   })
 })

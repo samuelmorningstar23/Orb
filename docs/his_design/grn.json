@@ -1,0 +1,1769 @@
+{
+ "design": {
+  "epic": "Pharmacy inventory and goods receipt",
+  "current_state": "Re-checked against the working tree on 3 Oct 2026 (git baseline cafe363 plus uncommitted work in progress). The highest migration is still 47 (vitals_carried_from); the MIGRATIONS registry is at server/migrations.py:5446-5495.\n\n1. TWO STOCK SYSTEMS, BY DESIGN\n- Procurement owns non-pharmacy stock: vendors, stores, inventory_items, indents(+lines), purchase_orders(+lines), goods_receipts(+lines), stock_movements (migration 20, migrations.py:2287-2552). By rule these tables declare no foreign keys (migrations.py:1771-1780), so they are not FK parents and can be rebuilt.\n- The drug boundary is enforced twice: CHECK (is_pharmacy = 0) on inventory_items (migrations.py:2357), and _helix_catalogue_match (procurement_service.py:823-922, F103).\n- Reusable machinery: state machines held as data (procurement_service.py:216-243), draft-then-post GRN with idempotency, over-receipt guard and PO status derived from lines (:1642-1956), paise and GST maths in services/money.py, document numbers stamped after commit (:397-452).\n- How procurement commits and audits (critique points 4 and 5 confirmed):\n  - every public write opens and commits its own db_session(immediate=True) (:1053, :1345, :1470, :1692, :1861);\n  - the routes audit under 'security' AFTER that commit (procurement_routes.py:133-157);\n  - numbering runs in a further transaction because next_document_number takes its own immediate session (billing_masters.py:651; procurement_service.py:404-452).\n- No function or route knows about a domain:\n  - create_goods_receipt resolves the item from inventory_items. For a line it cannot resolve, item=None skips the batch rule (:1757-1770).\n  - post_goods_receipt writes stock_movements through _insert_movement (:1872-1888).\n  - Expiry is compared with date.today() on the server clock (:1719, :1774-1784).\n  - Every id route needs only a tier (procurement_routes.py:574-870).\n  - The store master is shared, and approve tier can edit it (procurement_service.py:640-700; procurement_routes.py:452). Its store_type CHECK is 'central','sub_store','ot','ward','housekeeping','biomedical','linen' (migrations.py:2318-2329).\n- ORB_PROCUREMENT defaults ON (procurement_routes.py:76-96). The pharmacist holds procurement.read and write, not approve; admin holds all three (permissions.py:271-285).\n\n2. HELIX OWNS DRUGS BUT HAS NO STORE (helix_db.py:7-87)\n- helix_medication_master has 5 columns. helix_inventory_lots has id, medication_id, lot_number, quantity and expiration_date only.\n- FK parents (critique point 2 confirmed):\n  - helix_medication_master is the declared parent of lots.medication_id, orders.medication_id, orders.substitute_medication_id and movements.medication_id (:20, :30, :36, :64);\n  - helix_inventory_lots is the declared parent of helix_stock_movements.lot_id (:63);\n  - neither can be rebuilt inside the migration transaction, so a CHECK added to them by ALTER is frozen forever.\n- helix_stock_movements.order_id REFERENCES helix_patient_med_orders (:65). The reseed wipes orders (they carry patient_id), so it wipes the whole drug ledger every time, while lots survive until seed_helix deletes them.\n- The only writers of lots and movements in server code (grep):\n  - helix_service.py:785 and :795;\n  - seed_helix.py:88 and :102;\n  - populate_helix_from_medgemma.py:220-221 and :288;\n  - migrations.py:4984 (migration 35).\n- Nothing reconciles lots.quantity against the ledger. GET /api/helix/stock-movements is unpaged and no screen uses it (helix_routes.py:36-39, W120).\n- load_rxnorm_formulary.py:66-77 upserts generic_name, form and strength over existing rows with no audit.\n- Master readers fall into two groups:\n  - ordering and suggestion paths: helix_service.py:232 (insert_order), :247 (create_order LIKE), :339 (substitute check), :850 (pre_flight_alternative_suggestion), sage_routes.py:1843 (_match_medication), rxnorm_reconciler.py:43;\n  - safety screens, which read the master live on every call: allergy_interlock.py:230, patient_specific_screen.py:2273, drug_safety_service.py:755.\n- The Sage mutation-gate lexicon loads once at boot (main.py:398-403). sage_service.refresh_formulary_terms_from_db exists at :846.\n\n3. DISPENSE (helix_service.py:258-445, 704-800)\n- FEFO now picks in-date lots only, with the site's 'today' from _expiry_cutoff (:705-728, F064).\n- Still open:\n  - always 1 unit (:783);\n  - picks from any lot, regardless of location;\n  - absolute UPDATE after an autocommit read in a default db_session (:277, :785): a lost-update race.\n- transition_order_status calls conn.commit() inside the session body (:434). database.py:1164-1185 issues COMMIT itself in immediate mode, so a bare switch to immediate=True would fail with 'no transaction is active' after the writes had committed (critique point 6 confirmed). receive_order has the same shape (:688) but moves no stock.\n- The dispense writes only the generic fail-soft api_mutation row from audit_middleware (main.py:979-980; services/audit_middleware.py). There is no domain clinical_access row.\n- Callers:\n  - helix_routes.py:293, which runs the drug-safety gate on the effective drug first (:270-289);\n  - reset_db_and_seed.py:941 (seed_pharmacy_queue dispenses during every reseed);\n  - pre-flight, from relay_routes.py:1133-1138 and :1510-1524.\n- insert_order(conn, ...) at helix_service.py:219-240 was added today for R024.\n\n4. HELIX TABLES SIT OUTSIDE THE MIGRATION RUNNER\n- init_db runs the migrations (main.py:322; database.py:1983). init_helix_db runs later and non-fatally, through executescript (main.py:388-392; helix_db.py:89-105).\n- Migration 35 has to probe sqlite_master first (migrations.py:4920-4930).\n- _migrate_stock_movements still logs a misleading INFO line on a fresh boot (helix_db.py:151-167, W027).\n\n5. RESEED AND SEED ORDER (critique points 1 and 7 confirmed)\n- EXTRA_TABLES_TO_CLEAR includes indents, indent_lines, purchase_orders, purchase_order_lines, goods_receipts and goods_receipt_lines (reset_db_and_seed.py:25, :64-69).\n- patient_scoped_tables reads an undeclared column <stem>_id as a link to <stem>s, <stem> or <stem>es (:180-197).\n- Tables with a DELETE-abort trigger are kept, unless a conditional predicate is listed for them, as shadow_events lane='simulator' is (:84-121).\n- test_reseed_orphans.py:110-119 pins helix_inventory_lots and helix_medication_master as never wiped.\n- Of the stems a new column might use, only orders, medications, stores, vendors, patients and admissions exist as tables.\n- Seed order:\n  - seed() runs seed_modules (seed_clinical_data.py:524);\n  - then seed_helix (reset_db_and_seed.py:356) DELETEs every lot and every master row with foreign_keys OFF (seed_helix.py:84-110);\n  - then seed_pharmacy_queue dispenses (reset_db_and_seed.py:398).\n\n6. SCREENS\n- Pharmacist rail: helix, pharmacy-verify, sage (shellConfig.tsx:882-886).\n- HelixFormulary highlights expiry within 90 days. stock.ts:22 sets a fixed low-stock threshold of 30 for every drug.\n- No screen exists for drug GRN, transfers, the ledger, expiry or reorder.\n- Module machinery: HOSPITAL_MODULE_IDS (:177-184), DEFAULT_MODULE_FLAGS all true (:249-252), CLINICAL_MODULE_IDS = ['dietary'], and MONEY_MODULE_IDS = the rest (:825-829).\n- Pins:\n  - shellConfig.test.ts:298-329 asserts that no clinical role (pharmacist included) sees a money module;\n  - shellConfig.test.ts:297, :386 and :393 assert every flag defaults ON;\n  - test_money.py:786 asserts all(enabled_modules().values()).\n- src/api/pharmacy.ts already exists (the verify queue), so new wrappers need a distinct name.\n\n7. CUSTODY AND BILLING\n- helix.receive is nurse-only, and permissions.py:259-265 says that receipt returns 'nothing about inventory'.\n- Billing takes one tariff line per dispensed Helix order, priced and named on the PRESCRIBED medication_id even when a substitute left the shelf (billing_service.py:847-873). MRP exists nowhere.\n\n8. FLAGS\n- Admin modules use _module_enabled, default ON (config.py:642-648), and are registered in HOSPITAL_MODULE_ENV and enabled_modules() (:800-830).\n- A default-OFF idiom already exists inline (config.py:866-867, DISCHARGE_FINANCIAL_ENFORCE).\n\n9. OTHER FACTS THE DESIGN USES\n- audit_service.log_audit_event(..., db=conn) writes inside the caller's transaction. Fail-closed categories are security, clinical_access, phi_access, authentication and ai_inference (audit_service.py:43-45, :296-301).\n- pin_security has verify_pin, is_pin_locked and record_pin_failure.\n- drug_safety_service has classify_drug, interaction_recognised and the ISMP high-alert dose list (:159, :377, :1071-1160).\n- admission_service.resolve_admission_department canonicalises departments (:94-107).\n- No code mentions NDPS or Schedule H1, apart from a retention row (migrations.py:1263-1270) and procurement text that wrongly says Helix tracks schedule-H (procurement_service.py:915; ProcurementPanel.tsx:9).\n\nTESTS IN THIS AREA TODAY\n- Backend: test_procurement.py (75), test_procurement_helix_catalogue.py, test_helix_stock_rules.py, test_helix_ward_receipt.py, test_helix_order_lifecycle.py, test_helix_substitution_safety.py, test_fresh_database_init.py, test_reseed_orphans.py, test_money.py, test_rbac.py, and test_agentic_confirm_race.py (modified in the working tree for R024).\n- Frontend: ProcurementPanel, HelixPanel, HelixFormulary, HelixPatientBoard, DeliveriesSheet and shellConfig tests.",
+  "design": "A. SHAPE\n- Drugs reuse Procurement's document tables (PO, GRN, indent), state machines, GST maths and numbering, through a domain column ('stores' or 'pharmacy').\n- They do so through new connection-taking core functions with domain guards, so a stores route can never touch a pharmacy document.\n- Helix remains the only owner of drug stock. One new service, pharmacy_stock_service, is the only writer of helix_inventory_lots and helix_stock_movements.\n- inventory_items.is_pharmacy CHECK (is_pharmacy = 0) stays. No drug ever enters inventory_items or stock_movements, so each physical drug has exactly one ledger.\n\nB. SWITCHES (all default OFF)\n- config._module_opt_in(env) sits beside _module_enabled. It is ON only for 1, true, on or yes, the same idiom as config.py:866-867.\n  - ORB_PHARMACY_STORE: the module (routes, tab, new Helix transition fields).\n  - ORB_PHARMACY_WARD_STOCK: ward imprest and crash-cart stores may be created. A site turns it on only after GRN-RS5.\n  - ORB_PHARMACY_NDPS_REGISTER: the register hook. It refuses to turn on, logs an ERROR and stays off, unless ORB_PHARMACY_NDPS_ON_FAILURE is set to 'block' or 'record', which is the outcome of GRN-RS7. Both modes are built; neither is chosen by this design.\n  - ORB_PHARMACY_NEAR_EXPIRY_DAYS, default 90.\n- 'pharmacy-store' is registered in HOSPITAL_MODULE_ENV and enabled_modules(), so /api/health publishes it.\n- Client: OPT_IN_MODULE_IDS = ['pharmacy-store'], and DEFAULT_MODULE_FLAGS[id] = !OPT_IN_MODULE_IDS.includes(id). A failed health fetch keeps the defaults, so an opt-in module never appears because of a network blip.\n- The stock predicates are data-driven and never read the flag. Turning the flag off after use therefore cannot make quarantined, in-transit or ward stock dispensable.\n- Always-on changes, stated honestly. grn-1 and grn-3 are additive schema. grn-4 makes the dispense run in an immediate transaction, with a relative decrement and an in-transaction clinical_access audit row. Screens and behaviour (1 unit, FEFO, in date) are identical for legacy lots (store NULL, status 'available').\n\nC. DATA MODEL\nTwo migrations, numbered at merge after 47.\n\nM-a helix_tables_in_runner (grn-1)\n- A FROZEN copy of today's six Helix CREATE TABLE IF NOT EXISTS statements and four indexes, never an import of HELIX_SCHEMA.\n- Run one statement per conn.execute, as migration 44 does. executescript would commit the runner's transaction.\n- init_helix_db stays as an idempotent fallback.\n\nM-b pharmacy_store_schema (grn-3)\nAdditive only: ALTER ADD COLUMN, new tables, indexes and triggers. No rebuilds and no new foreign keys.\n\nRULE 1. NO CHECK ON COLUMNS ADDED TO HELIX TABLES\n- helix_medication_master and helix_inventory_lots are FK parents and can never be rebuilt in a migration.\n- helix_stock_movements is a child, but a ledger rebuild is costly, and its type list will grow (op_sale, consumption).\n- Their enums are therefore validated in pharmacy_stock_service and pharmacy_master_service against constants: LOT_STATUSES, MOVEMENT_TYPES, DRUG_SCHEDULES, NDPS_CATEGORIES, STORAGE_CONDITIONS, IDENTITY_STATUSES.\n- A test pins each set, and reconcile() reports any stored value outside it.\n- CHECKs are used only on new pharmacy_* and ndps_* tables and on columns added to the migration-20 tables, which have no FK children.\n\nRULE 2. NAMING THAT THE RESEED SWEEP CANNOT MISREAD\n- Never add a column named order_id, medication_id, admission_id, or <procurement table stem>_id without a declared FK.\n- Patient-order links use helix_order_id and helix_medication_id.\n- Links to procurement documents use the _ref suffix: receipt_line_ref, source_indent_ref, source_indent_line_ref, helix_lot_ref.\n- test_reseed_orphans asserts the intended wipe or keep membership of every new table by name.\n\nhelix_medication_master (new columns)\n- pack_size_units, purchase_uom, dispense_unit, hsn_code, manufacturer.\n- gst_rate_bp: NULL means 'Not configured'.\n- drug_schedule (none|G|H|H1|X|NULL); ndps_category (none|narcotic|psychotropic|NULL). NULL means unclassified and is never read as none.\n- is_essential_narcotic INTEGER NOT NULL DEFAULT 0.\n- storage_condition, reorder_level_units, reorder_qty_units, lead_time_days.\n- is_active INTEGER NOT NULL DEFAULT 1.\n- identity_status TEXT NOT NULL DEFAULT 'active' (draft|active|retired).\n- updated_by, updated_at.\n\nhelix_inventory_lots (new columns)\n- store_id INTEGER. NULL means legacy, before adoption by the dispensing store.\n- status TEXT NOT NULL DEFAULT 'available' (available|quarantined|recalled|nsq|pending_inspection|written_off|returned_to_vendor).\n- units_per_pack, mrp_pack_paise, unit_cost_paise, mfg_date, vendor_id, receipt_line_ref.\n- received_at; created_at, which is nullable because ALTER cannot default to CURRENT_TIMESTAMP. The service always sets it.\n- Indexes:\n  - (medication_id, store_id, status, expiration_date);\n  - partial UNIQUE (medication_id, store_id, lot_number, expiration_date) WHERE store_id IS NOT NULL.\n\nhelix_stock_movements (new columns)\n- movement_type, store_id, balance_after_units, unit_cost_paise, reference_type, reference_id, actor_id, remarks.\n- idempotency_key, with a partial UNIQUE index.\n- occurred_at: canonical UTC from clinical_time.\n- seq INTEGER, with a partial UNIQUE index. It is allocated as MAX(seq)+1 under the write lock and is the ledger's ordering key, because rowid on this TEXT-PK table can change on VACUUM.\n- Index on (medication_id, store_id, seq).\n\nColumns added to migration-20 tables (CHECKs allowed)\n- purchase_orders, goods_receipts, indents: domain TEXT NOT NULL DEFAULT 'stores' CHECK (stores|pharmacy).\n- indents: indent_kind (purchase|issue) and issuing_store_id.\n- purchase_order_lines, goods_receipt_lines, indent_lines: helix_medication_id and units_per_pack.\n- goods_receipt_lines: free_quantity_milli NOT NULL DEFAULT 0, mrp_pack_paise, mfg_date, helix_lot_ref.\n- indent_lines: issued_quantity_milli NOT NULL DEFAULT 0.\n- vendors: drug_licence_numbers, drug_licence_valid_to, ndps_licence_number.\n- stores: pharmacy_kind CHECK (NULL|dispensing|sub_store|ndps_vault|returns_quarantine|ward_imprest|crash_cart), with a partial UNIQUE index on pharmacy_kind WHERE pharmacy_kind='dispensing' AND is_active=1.\n\nNew tables (no FKs)\n- pharmacy_par_levels (master, kept on reseed).\n- pharmacy_transfers: transfer_number, from_store_id, to_store_id, source_indent_ref, status CHECK, dispatched_by/at, received_by/at, cancel_reason, idempotency_key UNIQUE.\n- pharmacy_transfer_lines: source_indent_line_ref, helix_medication_id, from_lot_id, to_lot_id, batch_no, expiry_date, quantity_units, received_units, discrepancy_reason.\n- pharmacy_lot_events: append-only by service.\n- pharmacy_stock_counts and pharmacy_stock_count_lines.\n- pharmacy_ward_returns: carries patient_id and helix_order_id.\n- pharmacy_vendor_returns and pharmacy_vendor_return_lines.\n- pharmacy_master_change_requests: helix_medication_id, change_kind CHECK (classification_downgrade|identity_create|identity_correction|retire), field, from_value, to_value, reason, requested_by/at, decided_by/at, decision CHECK (pending|approved|refused|withdrawn). A master, kept on reseed.\n- ndps_variances.\n- ndps_register:\n  - columns: store_id, helix_medication_id, lot_id, batch_no, entry_type CHECK, signed quantity_units, balance_after_units, counterparty_type, counterparty_ref, patient_id, helix_order_id, document_ref, actor_id, witness_id, seq, occurred_at, remarks;\n  - lane TEXT NOT NULL CHECK (live|non_production), written from config.DEPLOYMENT_PROFILE ('prod' means live);\n  - trg_ndps_register_no_update RAISE(ABORT);\n  - trg_ndps_register_no_delete RAISE(ABORT) WHEN OLD.lane <> 'non_production'.\n\nReseed wiring (in grn-3)\n- EXTRA_TABLES_TO_CLEAR gains pharmacy_transfers, pharmacy_transfer_lines, pharmacy_lot_events, pharmacy_stock_counts, pharmacy_stock_count_lines, pharmacy_vendor_returns, pharmacy_vendor_return_lines and ndps_variances.\n- pharmacy_ward_returns is wiped by its patient_id.\n- _CONDITIONAL_DELETE_PREDICATES gains ndps_register: \"lane = 'non_production'\". A dev reseed clears dev register rows; a prod register can never be deleted.\n- Kept: helix_inventory_lots and helix_medication_master (the existing pins still hold), pharmacy_par_levels and pharmacy_master_change_requests.\n\nDocument series rows: PHPO, PHGRN, PHIND, PHTRF, PHVR, PHRET, PHCNT, each with is_configured=0.\n\nBackfill\n- occurred_at = clinical_time.to_utc_iso(timestamp, naive_tz=UTC), because CURRENT_TIMESTAMP is naive UTC.\n- Legacy 'dispense' rows get movement_type 'dispense', reference_type 'helix_order' and reference_id = order_id.\n- For each lot whose quantity differs from SUM(quantity_change), write one 'opening' row:\n  - quantity = quantity minus the sum;\n  - dated 1 second before that lot's earliest movement, or at migration time when it has none;\n  - remark \"Balance brought forward when the stock ledger began\".\n- seq: opening rows first, then legacy rows by (occurred_at, rowid). balance_after is the running sum per lot, so no running balance is negative.\n- Then lot quantity = SUM(ledger) holds everywhere.\n\nD. SERVICES\n\nservices/pharmacy_stock_service.py (grn-4): the only writer of drug stock\n- site_today(): moved from helix_service._expiry_cutoff, which now delegates to it.\n- dispensable_lot_sql(): one predicate used by dispense, pre-flight, Formulary, reorder and reports:\n  - quantity > 0;\n  - date(expiration_date) >= site_today;\n  - status = 'available';\n  - and a location condition: store_id IS NULL (legacy), OR the store is the active 'dispensing' store, OR the store is an active 'ndps_vault' AND the drug's ndps_category is narcotic or psychotropic.\n- pick_fefo_lot(conn, medication_id, units, lot_id=None) and dispensable_units(conn, medication_id).\n- post_movement(conn, ...):\n  - asserts conn.in_transaction and validates movement_type;\n  - UPDATE quantity = quantity + ? WHERE id = ? AND quantity + ? >= 0, refusing when no row changes;\n  - allocates seq, writes balance_after, idempotency_key, actor and occurred_at;\n  - calls the NDPS hook, a no-op until grn-13 and the switch.\n- open_or_merge_lot(conn, ...); set_lot_status(conn, ...), which writes pharmacy_lot_events.\n- adopt_legacy_lots(conn, dispensing_store_id, actor): assigns NULL lots. Duplicate legacy lots (same drug, batch and expiry) are merged by paired transfer_out and transfer_in movements, never by deleting a row.\n- receive_grn_lines(conn, ...); reconcile(conn).\n- It never opens a db_session. Callers own one immediate session, so the module is safe under ORB_DB_POOL=0.\n- An AST test enforces the single-writer rule:\n  - it covers INSERT INTO, UPDATE and DELETE FROM on helix_inventory_lots and helix_stock_movements anywhere under server/ except tests;\n  - the allow-list is pharmacy_stock_service, migrations.py (backfill, migration 35), helix_db.py (DDL), and the DELETE-only wipes in seed_helix and populate_helix_from_medgemma.\n\nhelix_service.py (grn-4)\n- _atomic_dispense, _in_date_stock, get_inventory and both pre_flight functions delegate to the stock service.\n- transition_order_status runs in db_session(immediate=True). Its in-body conn.commit() is removed, and the two re-reads run inside the block before it exits.\n- Every dispense writes clinical_access 'helix_dispense_recorded' with db=conn: patient_id, order id, lot, quantity and movement id as string ids.\n- receive_order is unchanged; it moves no stock.\n- Substitution policy (R002) is not touched.\n\nprocurement_service.py (grn-20)\n- Each write is split into a connection-taking core, _<name>_core(db, ..., domain), plus the existing public wrapper, which opens the immediate session with domain 'stores'. Stores behaviour and post-commit audit are unchanged.\n- Every core that loads a document by id refuses a domain mismatch with code not_found (404).\n- A GRN's domain is derived from its PO and never taken from the request.\n- The pharmacy domain branch of post_goods_receipt never calls _insert_movement or updates inventory_items. It returns the posted lines for the caller.\n- The cores take a 'today' argument: stores pass date.today() as now, and pharmacy passes site_today().\n- Store master partition:\n  - list_stores, get_store and upsert_store exclude rows with pharmacy_kind unless domain='pharmacy';\n  - upsert_store refuses a code held by a pharmacy store;\n  - record_stock_movement, issue_stock and the stores reports refuse or exclude pharmacy stores.\n- _DOC_SERIES gains the pharmacy kinds.\n\nOther new services\n- pharmacy_purchasing_service.py (grn-7, grn-8, grn-22): opens db_session(immediate=True), calls the cores with domain 'pharmacy', calls pharmacy_stock_service, audits with db=conn in the same transaction, then stamps the document number after commit as procurement does.\n- pharmacy_master_service.py (grn-5, grn-6): drug fields, classification with two-person downgrade, identity governance, pharmacy stores and adoption, par levels, vendors (through the vendor core) and drug licences.\n- pharmacy_transfer_service.py (grn-11, grn-21).\n- pharmacy_store_service.py (grn-10, grn-12, grn-15, grn-22).\n- ndps_service.py (grn-13).\n\nE. ROUTES\nNew router server/routes/pharmacy_store_routes.py at /api/pharmacy-store. Handlers are plain def. Each uses require_module plus one tier dependency built at import: _PS_READ, _PS_WRITE (read+write), _PS_APPROVE (read+approve) or _PS_NDPS (read+ndps).\n- meta, overview.\n- Masters: drugs, drugs/{id}/classification-requests, stores, par-levels, vendors (create and update through the shared vendor core, so the module works with ORB_PROCUREMENT=0), vendors/{code}/drug-licence.\n- purchase-orders, plus submit, approve, issue, cancel and reorder-suggestions.\n- goods-receipts, plus post and cancel.\n- stock, lots, ledger (paged by seq), near-expiry, reorder, reconcile.\n- lots/{id}/quarantine, recall and write-off; recall-trace; vendor-returns.\n- transfers, plus dispatch, receive and cancel.\n- indents, plus submit, decide and issue-plan.\n- counts, plus submit and approve; adjustments; ward-returns, plus inspect.\n- ndps/register, ndps/balances, ndps/variances, ndps/export.csv.\n- Ward side, each gated on a ward_* permission plus department_scope: ward/stock, ward/transfers/awaiting, ward/transfers/{id}/receive, ward/indents, ward/returns.\n- Errors: a wrong-domain or other-ward id is 404; a separation-of-duties refusal is 403; conflicts are 409.\n\nChanges to existing routes:\n- POST /api/helix/orders/{id}/transition gains optional dispense_quantity_units and lot_id, honoured only when the module is on (grn-14).\n- main.py gains one include_router line.\n\nF. PERMISSIONS (permissions.py; roles.py unchanged, so no users rebuild)\n- New: pharmacy_store.read, pharmacy_store.write, pharmacy_store.approve, pharmacy_store.ndps, ward_stock.read, ward_stock.receive, ward_return.record, ward_indent.raise.\n- helix.receive keeps its documented meaning: receipt of patient orders only.\n- grn-2 grants admin pharmacy_store read, write and approve, mirroring admin's procurement grants from the 2026-08-18 desk split. The module is off by default, and GRN-R7 may change this. Nobody else gets anything.\n- Pharmacist grants (read, write, ndps) and the pharmacist tab land in grn-19, blocked by GRN-R7 and GRN-R9.\n- Nurse grants (ward_stock.read, ward_stock.receive, ward_indent.raise, ward_return.record) land with grn-21 and grn-15, blocked by GRN-R8 (W128).\n- A test pins every defined-but-ungranted permission as deliberate.\n- Separation rules, enforced in the service:\n  - PO approver differs from the creator;\n  - adjustment and write-off approver differs from the requester;\n  - transfer receiver differs from the dispatcher;\n  - count approver differs from the counter;\n  - NDPS witness differs from the actor;\n  - classification-downgrade approver differs from the requester.\n- src/lib/roles.ts mirrors only what the UI gates on.\n\nG. AUDIT\n- Every pharmacy write audits through audit_service with db=conn inside the same immediate transaction as its stock movements.\n- Document numbers are still stamped after commit. Allocation needs its own immediate session, and a number is not PHI. The audit row carries the document id as a string, and a stamping failure is logged and repairable as it is today.\n- target_id is always str(). There is one row per document action; the ledger is the line record.\n- 'clinical_access': helix_dispense_recorded (every dispense, grn-4), pharmacy_ward_return_recorded, pharmacy_ward_return_inspected.\n- 'phi_access': pharmacy_recall_trace_viewed.\n- 'security': pharmacy_po_*, pharmacy_grn_*, pharmacy_transfer_*, pharmacy_lot_status_changed, pharmacy_adjustment_posted, pharmacy_count_approved, pharmacy_drug_master_updated, pharmacy_classification_change_requested, pharmacy_classification_change_decided, pharmacy_store_upserted, pharmacy_legacy_lots_adopted, pharmacy_vendor_upserted, ndps_entry_witnessed, ndps_variance_raised, ndps_register_exported.\n\nH. UI\n- src/pages/panels/PharmacyStorePanel.tsx (lazy), tab id 'pharmacy-store', group 'hospital'.\n- grn-2 puts it on admin's HOSPITAL_MODULE_TABS only, so the existing money-adjacency pin keeps holding. The pharmacist entry and its pinned PHARMACY_DESK exception wait for grn-19.\n- Views: Overview; Purchasing; Receipts (draft then Post, expiry typed twice per GRN-RS6); Stock with a ledger drawer; Transfers; Expiry and recall; Stock take; NDPS (only with pharmacy_store.ndps); Masters.\n- The nurse 'Ward stock' section in DeliveriesSheet arrives with grn-21.\n- HelixFormulary and stock.ts use the server reorder level when present and keep 30 otherwise.\n- Wrappers go in src/api/pharmacyStore.ts (pharmacy.ts already exists). Nav keys go in en.json and hi.json.\n- Plain-language empty states, no demo wording. The NDPS screen shows an honesty label when lane = non_production.\n\nI. CONNECTIONS TO OTHER EPICS\n- ADT: ward stores carry department and ward text, and gain ward_id when the bed master lands.\n- Single medication-order store (mos):\n  - schedule-derived dispense quantity (W117);\n  - eMAR doses linked to helix_medication_id, which enables grn-17;\n  - mos edits helix_service, so grn-4 lands first.\n- OPD: the 'op_sale' movement is reserved.\n- LIS: reagents stay procurement stock.\n- Multi-site: stores.site_id, one dispensing store per site, inter-site transfer notes.\n- Billing: grn-16.\n- NABH: incidents (GRN-R14).\n- Retention (W168): GST 72 months on PO, GRN and vendor-return documents. ndps_register rows with lane 'live' are excluded from DPDP erasure as a legal obligation.\n\nJ. SEED PLAN (grn-4, grn-18)\n- seed_helix:\n  - upserts the master on id, updating name, generic_name, form and strength only, so pharmacist-entered fields survive;\n  - deletes all lots and their movements, which the reseed has already wiped because they are children of orders;\n  - opens seed lots through pharmacy_stock_service as opening movements.\n- A new seed_pharmacy_store() runs in reset_and_seed AFTER seed_helix and BEFORE seed_pharmacy_queue, and only on the dev profile with the flag on. It seeds:\n  - a dispensing store (which adopts the seed lots);\n  - a licensed vendor;\n  - one posted GRN;\n  - a near-expiry lot.\n  It seeds no NDPS stock (GRN-R14) and no ward imprest stock until grn-21.\n\nK. RESPONSE TO THE CRITIQUE (all 21 issues re-checked in code)\n1. ACCEPTED. goods_receipt_line_id and indent_id would match EXTRA_TABLES_TO_CLEAR stems (reset_db_and_seed.py:64-69, 180-197). Renamed to _ref columns. Pharmacy documents are added to EXTRA_TABLES_TO_CLEAR on purpose, because seed_helix deletes every lot. Reseed edits are in grn-3, with a membership test per table.\n2. ACCEPTED, and extended: the movement_type CHECK is dropped too. The FK parents were confirmed in helix_db.py:20-64. 'nsq' is added to the lot statuses.\n3. ACCEPTED. The dispensable predicate includes the NDPS vault for NDPS-classified drugs. Vault to dispensing transfers are also built (grn-11), and GRN-R14 asks which a site uses. There is a test that a GRN-received narcotic can be dispensed and is counted by pre-flight.\n4. ACCEPTED. Domain guards in every id-taking core, GRN domain from its PO, and a store partition (grn-20), with one stores-route test per endpoint.\n5. ACCEPTED. Connection-taking cores let pharmacy writes audit in the same transaction. Numbering stays post-commit and is stated as such.\n6. ACCEPTED. The in-body commit is removed. A test runs the route under ORB_DB_POOL=1 and =0. receive_order is left alone.\n7. ACCEPTED. Seed order is fixed (section J). The ndps_register lane and its conditional delete predicate follow the shadow_events precedent. NDPS reconciliation runs from the latest opening entry per drug and store as a second guard.\n8. ACCEPTED. The tab is admin-only in grn-2. Pharmacist grants and tab move to grn-19 (GRN-R7, GRN-R9). New ward_* permissions wait on GRN-R8, and helix.receive is unchanged. Admin's interim grants mirror the ruled procurement split and are called out in GRN-R7.\n9. ACCEPTED. grn-13 is safety-sensitive. New safety ruling GRN-RS7 is held, and both modes are built behind a switch that cannot enable without the ruling's value. Downgrades need a second approve-tier person (GRN-R20) and are refused while vault stock exists.\n10. ACCEPTED. The recall trace lists transfers to ward stock and consumption, with an 'issued to <ward> stock, patients not recorded' line and the unattributed unit count.\n11. ACCEPTED. A chosen lot must belong to COALESCE(substitute_medication_id, medication_id), checked in the immediate transaction; otherwise 422.\n12. ACCEPTED. identity_status (no CHECK, service-validated). Every ordering and suggestion path filters on active; safety screens and the Sage lexicon keep reading all rows. The loader refuses identity rewrites on rows with orders or lots (grn-5, consistent with every GRN-RS1 option). grn-6 waits for R024.\n13. ACCEPTED. One shared predicate; creating the dispensing store adopts legacy lots in one audited step.\n14. ACCEPTED. test_money.py:786 and shellConfig.test.ts:297, 386 and 393 are in grn-2, rewritten to 'non-opt-in ON, opt-in OFF'.\n15. ACCEPTED. seq column, canonical occurred_at backfill, opening rows dated before the first movement, nullable created_at always set by the service.\n16. ACCEPTED. The guard covers lot INSERT and DELETE. populate_helix_from_medgemma is converted. test_agentic_confirm_race.py is untouched until R024 lands.\n17. ACCEPTED. One statement per execute; no import of HELIX_SCHEMA.\n18. ACCEPTED. The pharmacy branch compares expiry and shelf life against site_today().\n19. ACCEPTED. Price is keyed on the dispense movement's lot and medication. Credits get their own key. The existing flag-off defect (billing names the prescribed drug, not the substitute) goes to the billing owner as a risk.\n20. ACCEPTED WITH A CORRECTION. A generic fail-soft api_mutation row does exist (audit_middleware). The gap is a domain, in-transaction, fail-closed row, which grn-4 adds for every dispense.\n21. ACCEPTED. grn-3 is now 5 days. Crash cart (grn-23) and vendor returns (grn-22) are a later wave. Vendor create is in pharmacy Masters.",
+  "functions": [
+   {
+    "function": "Drug item master: commercial and regulatory fields, maintenance screen",
+    "status_now": "Partial. 5-column helix_medication_master (helix_db.py:9-15), read-only GET /api/helix/catalog, rows only from scripts; load_rxnorm_formulary.py:66-77 rewrites identity unaudited.",
+    "in_scope": true,
+    "notes": "grn-5 adds fields and the loader identity refusal; grn-6 adds drug creation and identity governance (blocked by GRN-RS1). No CHECK on these columns (FK parent); validated in service."
+   },
+   {
+    "function": "Formulary identity governance (draft, active, retired)",
+    "status_now": "Absent. No state column; every ordering path reads every row.",
+    "in_scope": true,
+    "notes": "grn-3 adds identity_status (default active); grn-6 filters ordering and suggestion paths on active; safety screens keep reading all rows."
+   },
+   {
+    "function": "Vendor master with drug licence",
+    "status_now": "Partial. Shared vendors table has GSTIN and PAN only (migrations.py:2287-2316); vendor create exists only on procurement routes.",
+    "in_scope": true,
+    "notes": "grn-5: vendor create and update through the shared vendor core from pharmacy Masters (works with ORB_PROCUREMENT=0), plus licence columns."
+   },
+   {
+    "function": "Pharmacy locations: dispensing, sub-store, NDPS vault, returns quarantine",
+    "status_now": "Absent. stores holds non-pharmacy types (migrations.py:2318-2329); Helix lots have no location.",
+    "in_scope": true,
+    "notes": "grn-20 partitions the store master; grn-5 creates pharmacy stores and adopts legacy lots into the dispensing store. One dispensing store in v1 (GRN-R17)."
+   },
+   {
+    "function": "Ward imprest and crash-cart stores and par levels",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "grn-21 (imprest) and grn-23 (crash cart, later wave), both behind ORB_PHARMACY_WARD_STOCK and blocked by GRN-RS5."
+   },
+   {
+    "function": "Purchase orders for drugs",
+    "status_now": "Absent. create_purchase_order refuses items outside inventory_items (procurement_service.py:1389).",
+    "in_scope": true,
+    "notes": "grn-20 cores and domain guards, then grn-7."
+   },
+   {
+    "function": "GRN with batch, expiry, MRP, cost, free quantity and supplier invoice",
+    "status_now": "Absent for drugs. The stores GRN posts to stock_movements and compares expiry against date.today() (procurement_service.py:1719, 1872-1888).",
+    "in_scope": true,
+    "notes": "grn-8: draft, then Post; lots via the single writer in the same transaction; site timezone for expiry; NDPS into the vault only."
+   },
+   {
+    "function": "Drug stock ledger",
+    "status_now": "Partial. helix_stock_movements is written only by dispense, wiped on every reseed (child of orders), with no type, store, actor, balance, order key or reconciliation; unpaged read with no screen (W120).",
+    "in_scope": true,
+    "notes": "grn-3 schema and backfill (seq ordering); grn-4 single writer and AST guard; grn-9 paged view."
+   },
+   {
+    "function": "Batch FEFO at dispense",
+    "status_now": "Partial. In-date only (F064); always 1 unit; no location or status filter; lost-update race (helix_service.py:277, 785).",
+    "in_scope": true,
+    "notes": "grn-4: shared dispensable predicate, relative decrement in an immediate transaction, identical behaviour for legacy lots."
+   },
+   {
+    "function": "Dispense audit (domain, in-transaction, fail-closed)",
+    "status_now": "Partial. Only the generic fail-soft api_mutation row from audit_middleware.",
+    "in_scope": true,
+    "notes": "grn-4 adds clinical_access helix_dispense_recorded with db=conn."
+   },
+   {
+    "function": "Expiry management: near-expiry list, quarantine, write-off",
+    "status_now": "Name only: a 90-day highlight (HelixFormulary.tsx:28) plus the dispense refusal.",
+    "in_scope": true,
+    "notes": "grn-9 report; grn-10 actions. The release leg waits on GRN-RS2."
+   },
+   {
+    "function": "Return to vendor",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "grn-22, later wave."
+   },
+   {
+    "function": "Reorder levels and alerts",
+    "status_now": "Name only: a fixed 30 (src/components/helix/stock.ts:22).",
+    "in_scope": true,
+    "notes": "grn-9; 'No reorder level set' is never shown as 0."
+   },
+   {
+    "function": "Stock take and adjustments",
+    "status_now": "Absent for drugs.",
+    "in_scope": true,
+    "notes": "grn-12."
+   },
+   {
+    "function": "Pharmacy-internal transfers (dispensing, sub-store, NDPS vault)",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "grn-11; receiver differs from dispatcher; NDPS legs register when grn-13 is enabled."
+   },
+   {
+    "function": "Ward indent and issue",
+    "status_now": "Absent for drugs; procurement indents refuse drugs (procurement_service.py:1070); W128 unbuilt.",
+    "in_scope": true,
+    "notes": "grn-21, blocked by GRN-R8 (nurse grants) and GRN-RS5 (enabling ward stock)."
+   },
+   {
+    "function": "Ward receipt of issued stock (custody)",
+    "status_now": "Partial. Patient-order receipt is built (helix.receive, migration 35); nothing for stock transfers.",
+    "in_scope": true,
+    "notes": "grn-21 adds a new ward_stock.receive permission; helix.receive keeps its meaning."
+   },
+   {
+    "function": "IP returns (ward to pharmacy)",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "grn-15. Pharmacist counter recording first; nurse recording after GRN-R8; restock after GRN-RS3."
+   },
+   {
+    "function": "Batch recall trace",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "grn-10: patient dispenses plus ward-stock issues with unattributed counts; audited phi_access, fail-closed."
+   },
+   {
+    "function": "NDPS register hooks",
+    "status_now": "Absent; no classification column.",
+    "in_scope": true,
+    "notes": "grn-13: built behind ORB_PHARMACY_NDPS_REGISTER, enabled only with a GRN-RS7 value; dev-lane rows are reseed-clearable, live rows immutable."
+   },
+   {
+    "function": "Schedule H, H1, X and NDPS classification",
+    "status_now": "Absent; procurement text wrongly says Helix tracks schedule-H (procurement_service.py:915).",
+    "in_scope": true,
+    "notes": "grn-5 with a two-person downgrade (GRN-R20). The H1 register itself is W170."
+   },
+   {
+    "function": "Statutory register printouts (NDPS Forms 3D, 3E, 3H; H1 register)",
+    "status_now": "Absent.",
+    "in_scope": false,
+    "notes": "W170; layouts to be confirmed against the Rules text."
+   },
+   {
+    "function": "Dispense quantity and batch choice",
+    "status_now": "Partial: always 1 unit, FEFO.",
+    "in_scope": true,
+    "notes": "grn-14; the lot must belong to the effective drug."
+   },
+   {
+    "function": "Pharmacy charges at batch MRP",
+    "status_now": "Partial: one tariff line per order, priced on the prescribed drug even when a substitute was dispensed (billing_service.py:850-856).",
+    "in_scope": true,
+    "notes": "grn-16, keyed on the dispense movement; coordinate with the billing owner."
+   },
+   {
+    "function": "Ward stock consumption on eMAR administration",
+    "status_now": "Absent; eMAR uses free-text drug names (emar_service.py:553).",
+    "in_scope": true,
+    "notes": "grn-17 after mos and grn-21; never blocks a dose."
+   },
+   {
+    "function": "OP pharmacy counter sales",
+    "status_now": "Absent.",
+    "in_scope": false,
+    "notes": "OPD and billing epics; 'op_sale' reserved."
+   },
+   {
+    "function": "Formulary governance, high-alert and LASA flags",
+    "status_now": "Partial (coverage 2.6); ISMP dose list exists in drug_safety_service.",
+    "in_scope": false,
+    "notes": "A separate formulary-safety epic; GRN-RS5 reuses the ISMP list as a starting point."
+   }
+  ],
+  "increments": [
+   {
+    "id": "grn-1",
+    "title": "Create Helix tables inside the migration runner",
+    "description": "Migration helix_tables_in_runner: a FROZEN copy of today's six Helix CREATE TABLE IF NOT EXISTS statements and four indexes, executed one statement per conn.execute (no executescript, which would commit the runner's transaction; no import of HELIX_SCHEMA). From then on, later migrations can ALTER Helix tables on fresh and existing databases alike. init_helix_db stays as an idempotent fallback. _migrate_stock_movements gains the sqlite_master early return (closes W027).",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/helix_db.py",
+     "server/tests/test_fresh_database_init.py",
+     "server/tests/test_migrations.py"
+    ],
+    "files_new": [],
+    "size_days": 1,
+    "depends_on": [],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "A fresh DB has all six Helix tables after init_db() alone. PRAGMA table_info and foreign_key_list are identical between runner-created and HELIX_SCHEMA-created tables. A legacy tmp_path DB is untouched. A forced failure inside M-a rolls back the whole run (test_migration_atomicity pattern). The 'Migrating helix_stock_movements' line is absent on a fresh boot. test_reseed_orphans passes."
+   },
+   {
+    "id": "grn-2",
+    "title": "Opt-in module switch, permission constants, admin-only Pharmacy Store skeleton",
+    "description": "Server: config._module_opt_in; PHARMACY_STORE_ENABLED (ORB_PHARMACY_STORE), registered in HOSPITAL_MODULE_ENV and enabled_modules(). Permission constants pharmacy_store.read, write, approve and ndps, plus ward_stock.read, ward_stock.receive, ward_return.record and ward_indent.raise. Only admin is granted anything (pharmacy_store read, write and approve, mirroring admin's procurement grants). Router skeleton with require_module and /meta, and one include_router line in main.py. Client: 'pharmacy-store' id, OPT_IN_MODULE_IDS with defaults derived from it, a TABS entry and icon, an admin HOSPITAL_MODULE_TABS entry only, an honest empty panel, src/api/pharmacyStore.ts, and i18n keys. The opt-in helper and client set are shared with other HIS epics in this wave: build once.",
+    "files_touched": [
+     "server/config.py",
+     "server/main.py",
+     "server/permissions.py",
+     "server/tests/test_rbac.py",
+     "server/tests/test_money.py",
+     "src/shellConfig.tsx",
+     "src/shellConfig.test.ts",
+     "src/lib/roles.ts",
+     "src/i18n/locales/en.json",
+     "src/i18n/locales/hi.json"
+    ],
+    "files_new": [
+     "server/routes/pharmacy_store_routes.py",
+     "server/tests/test_pharmacy_store_module.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/pages/panels/PharmacyStorePanel.css",
+     "src/pages/panels/PharmacyStorePanel.test.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "size_days": 2,
+    "depends_on": [],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Unset, blank or 'no' means OFF, so every route returns 404 module_disabled and /api/health shows pharmacy-store false. test_money.py:786 and shellConfig.test.ts:297/386/393 are rewritten to assert that non-opt-in modules default ON and the opt-in set defaults OFF, including after a failed or non-OK health fetch. The tab appears for admin only when the flag is on and the panel is installed. The existing money-adjacency test passes UNCHANGED (pharmacist, doctor and nurse never see it). The CLINICAL_MODULE_IDS pin is unchanged. Module id parity holds between server and client. Every defined-but-ungranted permission is pinned as deliberate. Event-loop discipline holds (plain def handlers)."
+   },
+   {
+    "id": "grn-3",
+    "title": "Pharmacy store schema, ledger backfill and reseed wiring",
+    "description": "Migration pharmacy_store_schema, additive only (section C). No CHECK on columns added to the three Helix tables. CHECKs only on new tables and on migration-20 tables. Columns linking to procurement documents use the _ref suffix. New tables include pharmacy_master_change_requests, ndps_variances, and ndps_register with lane, a no-update trigger and a delete-abort trigger conditional on lane. Backfill: occurred_at via clinical_time.to_utc_iso(timestamp, naive_tz=UTC), legacy dispense typing, opening rows dated before each lot's first movement, then seq and balance_after. Document series rows with is_configured=0. Reseed wiring: EXTRA_TABLES_TO_CLEAR gains the pharmacy document tables, and _CONDITIONAL_DELETE_PREDICATES gains ndps_register lane='non_production'.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/scripts/reset_db_and_seed.py",
+     "server/tests/test_migrations.py",
+     "server/tests/test_reseed_orphans.py",
+     "server/tests/test_fresh_database_init.py"
+    ],
+    "files_new": [
+     "server/tests/test_pharmacy_store_schema.py"
+    ],
+    "size_days": 5,
+    "depends_on": [
+     "grn-1"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "Legacy tmp_path DB with lots and dispense rows: after migration, SUM(quantity_change) equals quantity for every lot, no balance_after is negative in seq order, seq is unique, and occurred_at is canonical UTC. Existing procurement rows read domain 'stores'. The inventory_items.is_pharmacy CHECK still refuses 1. CHECKs on the new tables reject bad enums. ndps_register refuses UPDATE, refuses DELETE of a 'live' row, and allows DELETE of a 'non_production' row. patient_scoped_tables membership is asserted for EVERY new table by name: helix_inventory_lots and helix_medication_master are still not wiped; the pharmacy document tables are wiped; pharmacy_par_levels and pharmacy_master_change_requests are kept; ndps_register is protected with its predicate. Idempotent on re-run."
+   },
+   {
+    "id": "grn-4",
+    "title": "One writer for drug stock; dispense refactor, race fix and dispense audit",
+    "description": "New pharmacy_stock_service (section D): site_today, dispensable_lot_sql, pick_fefo_lot, dispensable_units, post_movement, open_or_merge_lot and reconcile, with the enum constants. helix_service._atomic_dispense, _in_date_stock, _expiry_cutoff, get_inventory and both pre_flight functions delegate to it. transition_order_status moves to db_session(immediate=True); its in-body conn.commit() is removed and its two re-reads run inside the block. Every dispense writes clinical_access helix_dispense_recorded with db=conn. receive_order is untouched. seed_helix upserts the master (keeping the new fields), deletes lots and movements, and opens lots through the service. populate_helix_from_medgemma does the same. AST single-writer guard. Behaviour for legacy lots is identical (1 unit, FEFO, in date). Must start after the R024 helix_service edits land.",
+    "files_touched": [
+     "server/services/helix_service.py",
+     "server/scripts/seed_helix.py",
+     "server/scripts/populate_helix_from_medgemma.py",
+     "server/tests/test_helix_stock_rules.py",
+     "server/tests/test_helix_order_lifecycle.py"
+    ],
+    "files_new": [
+     "server/services/pharmacy_stock_service.py",
+     "server/tests/test_pharmacy_stock_ledger.py",
+     "server/tests/test_pharmacy_stock_single_writer.py",
+     "server/tests/test_helix_dispense_audit.py"
+    ],
+    "size_days": 4,
+    "depends_on": [
+     "grn-3"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "The existing Helix stock, lifecycle, substitution and ward-receipt suites pass unchanged. A dispense through the route returns 200 with exactly one movement under ORB_DB_POOL=1 and ORB_DB_POOL=0, with no hang. Two threads dispensing the last unit: exactly one succeeds. An idempotent replay writes no second movement. balance_after equals the lot quantity. Quarantined, sub-store, returns-quarantine and in-transit lots are never dispensed or counted by pre-flight or Formulary. An NDPS-classified drug's vault lot IS dispensable; a non-NDPS drug's vault lot is not. When the audit write fails, the dispense rolls back (no movement, status unchanged). A full reseed passes and reconcile() is clean afterwards, including seed_pharmacy_queue's dispense. The AST guard flags any INSERT, UPDATE or DELETE on lots or movements outside the allow-list."
+   },
+   {
+    "id": "grn-20",
+    "title": "Procurement connection-taking cores and domain guards",
+    "description": "Split each procurement write into _<name>_core(db, ..., domain), with the public wrapper unchanged for stores. Id-taking cores refuse a domain mismatch with not_found, and a GRN's domain comes from its PO. The pharmacy branch of the post core never calls _insert_movement or touches inventory_items. The expiry 'today' becomes a parameter (stores keep date.today()). Store master partition: list, get and upsert exclude pharmacy_kind rows unless domain='pharmacy'; upsert refuses a pharmacy store's code; stock movements, issues and reports refuse or exclude pharmacy stores. Vendor core for the shared vendors table. _DOC_SERIES gains the pharmacy kinds. No change for stores documents.",
+    "files_touched": [
+     "server/services/procurement_service.py",
+     "server/tests/test_procurement.py"
+    ],
+    "files_new": [
+     "server/tests/test_procurement_domain_guard.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "grn-3"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "All 75 procurement tests pass unchanged. For every stores endpoint that takes an id (indent submit, decide and cancel; PO get, submit, approve, issue and cancel; GRN create against a PO, get, post and cancel), a pharmacy-domain id returns 404. Lists exclude pharmacy documents and stores. A stores GRN against a pharmacy PO is refused. A stock movement into a pharmacy store is refused. upsert_store cannot rename or deactivate a pharmacy store. A pharmacy-domain post core writes no stock_movements row."
+   },
+   {
+    "id": "grn-5",
+    "title": "Pharmacy masters: drug fields, classification, stores and adoption, par levels, vendors, loader guard",
+    "description": "pharmacy_master_service plus routes and the Masters view. Editable drug fields: pack size, UOMs, HSN, GST (never seeded), manufacturer, storage condition, reorder defaults and active flag (write tier). Classification: upgrades apply at write tier; a downgrade of schedule or NDPS class is a pharmacy_master_change_requests row that a different approve-tier user must approve (GRN-R20), and it is refused while the drug has stock in an ndps_vault store. Pharmacy stores (approve tier): dispensing, sub_store, ndps_vault and returns_quarantine. Ward kinds are refused unless ORB_PHARMACY_WARD_STOCK is on. Ward departments are canonicalised by admission_service.resolve_admission_department (called, not edited). Creating the dispensing store calls adopt_legacy_lots in the same transaction. Par levels. Vendor create and update plus drug licence, through the vendor core. load_rxnorm_formulary refuses to change generic_name, form or strength on rows with orders or lots, and lists them; this is consistent with every GRN-RS1 option. In-transaction 'security' audit throughout.",
+    "files_touched": [
+     "server/routes/pharmacy_store_routes.py",
+     "server/services/pharmacy_stock_service.py",
+     "server/scripts/load_rxnorm_formulary.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "files_new": [
+     "server/services/pharmacy_master_service.py",
+     "server/tests/test_pharmacy_master.py",
+     "server/tests/test_formulary_loader_identity.py",
+     "src/pages/panels/PharmacyStorePanel.masters.test.tsx"
+    ],
+    "size_days": 4,
+    "depends_on": [
+     "grn-2",
+     "grn-4",
+     "grn-20"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Name, generic, form and strength cannot be changed through these routes (422). An out-of-set schedule, NDPS or storage value is refused (422). Unclassified drugs read 'Not classified'. A downgrade by one user stays pending, the requester cannot approve it, and it is refused while vault stock exists. A second active dispensing store is refused. Creating the dispensing store adopts every NULL lot, and duplicate legacy lots merge through paired movements with reconcile() clean. A ward imprest store is refused with the switch off. Unknown departments are refused. The loader leaves an in-use row's identity unchanged and reports it. Audit target_id values are strings."
+   },
+   {
+    "id": "grn-6",
+    "title": "Add a drug and govern its clinical identity",
+    "description": "Create a helix_medication_master row with generic name required, strength and form, and handle identity corrections and retirement as GRN-RS1 rules (for example draft then second-person confirm; retire and replace for in-use rows). Before saving, the screen previews the classes drug_safety_service.classify_drug and interaction_recognised will assign. Every ORDERING and SUGGESTION path filters identity_status='active': helix_service create_order, insert_order, the substitute check and pre_flight_alternative_suggestion; sage_routes._match_medication; rxnorm_reconciler; get_medication_catalog. Safety screens (allergy_interlock, patient_specific_screen, drug_safety_service) and the Sage lexicon keep reading all rows. After a create, sage_service.refresh_formulary_terms_from_db is called (not edited). The loader's handling of new rows follows the ruling. Starts after the R024 session lands insert_order.",
+    "files_touched": [
+     "server/services/pharmacy_master_service.py",
+     "server/services/helix_service.py",
+     "server/services/rxnorm_reconciler.py",
+     "server/routes/sage_routes.py",
+     "server/routes/pharmacy_store_routes.py",
+     "server/scripts/load_rxnorm_formulary.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "files_new": [
+     "server/tests/test_pharmacy_drug_identity.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "grn-5"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "GRN-RS1",
+    "migrations": 0,
+    "tests": "A missing generic name is refused. A duplicate molecule, strength and form is refused. A draft row cannot be ordered through create_order, insert_order, a Sage order match or a substitute suggestion, yet is still resolved by the allergy interlock. A new penicillin brand is screened as a penicillin. A retired row stays visible on historical orders. The Sage lexicon has the new name without a restart."
+   },
+   {
+    "id": "grn-7",
+    "title": "Pharmacy purchase orders",
+    "description": "pharmacy_purchasing_service: create, submit, approve, issue and cancel through the procurement cores with domain 'pharmacy', in one immediate transaction with the in-transaction audit, then the PHPO number after commit. Line resolver: the drug is active and classified (GRN-R18) and its pack size is configured. Units-per-pack snapshot. Valid vendor drug licence (GRN-R10), warning at 30 days. Approver differs from creator. Reorder suggestions become a draft PO. Purchasing view.",
+    "files_touched": [
+     "server/routes/pharmacy_store_routes.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "files_new": [
+     "server/services/pharmacy_purchasing_service.py",
+     "server/tests/test_pharmacy_purchase_orders.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "grn-5",
+     "grn-20"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "An unclassified drug or unlicensed vendor is refused. Self-approval returns 403. The audit row exists if and only if the PO commits (fault injection on the audit write rolls the PO back). GST matches money.compute_line. Numbers come from PHPO. A pharmacy PO is invisible and unreachable on /api/procurement. Works with PROCUREMENT_ENABLED patched off."
+   },
+   {
+    "id": "grn-8",
+    "title": "Pharmacy goods receipt: batch, expiry, MRP, free quantity, supplier invoice",
+    "description": "Pharmacy GRN through the cores: batch and MRP mandatory; expiry mandatory and typed twice (GRN-RS6); free quantity; optional mfg date. Expiry and minimum shelf life (GRN-R16, approve-tier override) are compared against site_today(). Rate above MRP warns. An existing batch with a different expiry is refused. Post runs in one immediate transaction: the core's pharmacy branch, pharmacy_stock_service.receive_grn_lines (open_or_merge_lot plus receipt movements into the GRN's store, status available), PO status derivation and the audit. The PHGRN number is stamped after commit. Unit cost per GRN-R12. NDPS-classified drugs only into an ndps_vault store. Draft, Post, cancel draft; invoice total mismatch warning; Receipts view.",
+    "files_touched": [
+     "server/services/pharmacy_purchasing_service.py",
+     "server/services/pharmacy_stock_service.py",
+     "server/routes/pharmacy_store_routes.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "files_new": [
+     "server/tests/test_pharmacy_grn.py",
+     "src/pages/panels/PharmacyStorePanel.grn.test.tsx"
+    ],
+    "size_days": 5,
+    "depends_on": [
+     "grn-4",
+     "grn-7"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Over-receipt is refused. Expired or short-dated stock is refused unless approve tier overrides, judged on the site date, not the server's UTC date. A mismatched second expiry is refused. An idempotent replay posts once. The same batch merges into one lot. Free units carry zero cost and are spread into the unit cost. reconcile() is clean after post. A failure at any step rolls back lots, movements, PO status and audit together. No inventory_items or stock_movements row appears. An NDPS drug into a non-vault store is refused. A narcotic received into the vault is then dispensable via Helix and counted by pre-flight."
+   },
+   {
+    "id": "grn-9",
+    "title": "Stock, ledger, reorder and near-expiry views",
+    "description": "Reports in pharmacy_stock_service: stock per store and drug, split into dispensable, in transit, quarantined and expired; lots; a paged ledger ordered by seq DESC (closes W120's ledger tab); reorder against per-store par or the drug default, counting dispensable units only; near-expiry with ORB_PHARMACY_NEAR_EXPIRY_DAYS, valued at cost and at MRP. Overview tiles and Stock view. HelixFormulary and stock.ts use the server reorder level when present and keep 30 otherwise.",
+    "files_touched": [
+     "server/services/pharmacy_stock_service.py",
+     "server/routes/pharmacy_store_routes.py",
+     "server/config.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts",
+     "src/components/helix/stock.ts",
+     "src/components/helix/HelixFormulary.tsx",
+     "src/components/helix/HelixFormulary.test.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_pharmacy_stock_reports.py",
+     "src/pages/panels/PharmacyStorePanel.stock.test.tsx"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "grn-4",
+     "grn-5"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "An unset level reads 'No reorder level set', never 0. Zero-balance lots are dropped from near-expiry. Paging is stable (seq). Formulary output is unchanged with the flag off and no levels set. 'Rate not configured' shows when cost is NULL."
+   },
+   {
+    "id": "grn-10",
+    "title": "Quarantine, recall, recall trace and write-off",
+    "description": "set_lot_status transitions with pharmacy_lot_events: quarantine (write tier), recall and nsq (terminal), and expiry or damage write-off (approve tier, reason, requester cannot approve). Recall by batch across every store. The recall trace lists: every patient dispense of the batch with patient, order and ward; every transfer_out to a ward or crash-cart store, labelled 'issued to <ward> stock, patients not recorded', with the unattributed unit count (issued minus returned minus attributed consumption); consumption rows once grn-17 exists; and current on-hand per store. It requires pharmacy_store.read and helix.read, is scoped by department_scope for ward-scoped accounts, and is audited as phi_access, fail-closed. Release from quarantine is not exposed until GRN-RS2.",
+    "files_touched": [
+     "server/services/pharmacy_stock_service.py",
+     "server/routes/pharmacy_store_routes.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "files_new": [
+     "server/services/pharmacy_store_service.py",
+     "server/tests/test_pharmacy_quarantine_recall.py"
+    ],
+    "size_days": 4,
+    "depends_on": [
+     "grn-8",
+     "grn-9"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "GRN-RS2 (release leg only; the rest can ship)",
+    "migrations": 0,
+    "tests": "Quarantined, recalled and nsq lots are never dispensed or counted in any Helix read path. Recall finds lots in every store kind. The trace includes ward-stock issues with the unattributed count, and refuses (500, nothing returned) when the phi_access audit write fails. Write-off needs approve tier, a reason and a different user. 'recalled' and 'nsq' are terminal. Out-of-set statuses are refused."
+   },
+   {
+    "id": "grn-11",
+    "title": "Pharmacy-internal transfers, including NDPS vault to dispensing",
+    "description": "pharmacy_transfer_service for transfers between dispensing, sub_store and ndps_vault stores: a FEFO issue plan from dispensable lots, dispatch (transfer_out into an in-transit state counted by neither store), receipt (transfer_in) by a pharmacy_store.write holder who did not dispatch, partial receipt with a discrepancy reason, and cancel before dispatch. NDPS legs write register rows and need a witness once grn-13 is enabled. This gives sites that keep a separate main vault the option of a daily dispensing cabinet (GRN-R14).",
+    "files_touched": [
+     "server/services/pharmacy_stock_service.py",
+     "server/routes/pharmacy_store_routes.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "files_new": [
+     "server/services/pharmacy_transfer_service.py",
+     "server/tests/test_pharmacy_transfers.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "grn-4",
+     "grn-5",
+     "grn-9"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Each transfer_out and transfer_in pair sums to zero. In-transit units are dispensable nowhere. The dispatcher receiving gets 403. A sub-store lot is never dispensed until transferred. An idempotent dispatch posts once. reconcile() is clean."
+   },
+   {
+    "id": "grn-12",
+    "title": "Stock take and adjustments",
+    "description": "Count sheets per store with a blind option, submit, approval by a different user, and count_variance movements. Ad hoc adjustments (approve tier) with reason codes (breakage, found, data correction). Negative balances are refused. NDPS variances need a witness once grn-13 is enabled.",
+    "files_touched": [
+     "server/services/pharmacy_store_service.py",
+     "server/services/pharmacy_stock_service.py",
+     "server/routes/pharmacy_store_routes.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "files_new": [
+     "server/tests/test_pharmacy_stock_counts.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "grn-9"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "A blind count hides the system quantity in the payload. The counter cannot approve. Variances post once. A missing reason is refused. reconcile() is clean after approval."
+   },
+   {
+    "id": "grn-13",
+    "title": "NDPS register, witness and reconciliation",
+    "description": "ndps_service is called by post_movement in the same transaction for every movement of an NDPS-classified drug (receipt, transfer, dispense, ward return, write-off, adjustment, count variance), but only when ORB_PHARMACY_NDPS_REGISTER is on. It writes a running balance per drug, store and lane. The dispense register row carries patient, order and prescriber. Witness by a different user's PIN (pin_security.verify_pin, is_pin_locked, record_pin_failure) for wastage, destruction, adjustment, variance and vault transfers. Reclassification of a drug with stock writes opening entries. Both GRN-RS7 failure modes are built: 'block' runs the hook inside the dispense transaction; 'record' runs it in a SAVEPOINT, and on failure rolls back the register leg only, commits the dispense, and writes ndps_variances plus a 'security' audit row, all in the dispense transaction. The switch refuses to enable without ORB_PHARMACY_NDPS_ON_FAILURE. Reconciliation runs from the latest opening entry per drug and store. Register view, balances, variances, and an audited CSV export. Statutory form layouts stay with W170.",
+    "files_touched": [
+     "server/services/pharmacy_stock_service.py",
+     "server/routes/pharmacy_store_routes.py",
+     "server/config.py",
+     "server/services/consent_service.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "files_new": [
+     "server/services/ndps_service.py",
+     "server/tests/test_ndps_register.py"
+    ],
+    "size_days": 5,
+    "depends_on": [
+     "grn-5",
+     "grn-8",
+     "grn-11"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "GRN-RS7 (to enable the register; the build can proceed)",
+    "migrations": 0,
+    "tests": "With the switch off, a narcotic dispense never calls the hook. With REGISTER=1 and no ON_FAILURE, the register stays off and an ERROR is logged. 'block': an injected hook failure rolls back the dispense. 'record': an injected failure commits the dispense, writes no register row, and writes one variance and one audit row. Every classified movement writes exactly one register row, and none on rollback. Register balance equals SUM(lots) per drug and store. Self-witness or a wrong PIN is refused and PIN lockout is respected. Live rows survive a reseed; non_production rows are cleared. Erasure and retention review skip live register rows. The export is audited."
+   },
+   {
+    "id": "grn-14",
+    "title": "Dispense quantity and batch choice at dispense",
+    "description": "With the module on, the 'dispensed' transition accepts dispense_quantity_units (default 1, bounded by a site maximum) and an optional lot_id. The lot must be dispensable AND its medication_id must equal COALESCE(substitute_medication_id, medication_id), checked inside the immediate transaction; otherwise 422 lot_wrong_drug. A lot without enough quantity returns 409 and is never silently split. The quantity and lot go into helix_dispense_recorded. HelixOrderReviewModal shows quantity and a lot picker only with the module on. Starts after R024 lands.",
+    "files_touched": [
+     "server/services/helix_service.py",
+     "server/routes/helix_routes.py",
+     "server/services/pharmacy_stock_service.py",
+     "src/components/helix/HelixOrderReviewModal.tsx",
+     "src/components/helix/HelixOrderReviewModal.lifecycle.test.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_pharmacy_dispense_quantity.py"
+    ],
+    "size_days": 2,
+    "depends_on": [
+     "grn-4"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Flag off: the new fields are ignored and behaviour is identical. Flag on: a lot of another drug, or of the prescribed drug when a substitute is set, gets 422. An expired, quarantined or ward lot is refused. The quantity is bounded. The drug-safety gate still screens the effective drug. The audit row carries the quantity and lot in the same transaction."
+   },
+   {
+    "id": "grn-15",
+    "title": "Ward returns of dispensed medicines",
+    "description": "The pharmacist records a return at the counter (pharmacy_store.write) against a delivered Helix order. Nurse recording (ward_return.record with department_scope, DeliveriesSheet action) is granted only after GRN-R8. The return cannot exceed units dispensed minus units already returned. Units land in returns_quarantine as pending_inspection and are never dispensable. Inspection: write-off now; restock to the original lot only after GRN-RS3. clinical_access audit in the same transaction. Exposes a credit candidate for grn-16. NDPS returns go to the register when it is enabled.",
+    "files_touched": [
+     "server/services/pharmacy_store_service.py",
+     "server/services/pharmacy_stock_service.py",
+     "server/routes/pharmacy_store_routes.py",
+     "server/permissions.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/pages/panels/nurse/DeliveriesSheet.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "files_new": [
+     "server/tests/test_pharmacy_ward_returns.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "grn-4",
+     "grn-10",
+     "grn-14"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "GRN-RS3 (restock leg); GRN-R8 (nurse recording)",
+    "migrations": 0,
+    "tests": "Over-return is refused. Returned units are excluded from every dispensable count. Restock is unavailable until ruled. The audit row commits with the return or neither commits. With patched nurse grants, another ward's order gets 404."
+   },
+   {
+    "id": "grn-16",
+    "title": "Pharmacy charges at batch MRP",
+    "description": "billing_service._clinical_candidates prices the pharmacy source from the dispense MOVEMENT: its medication (the substitute when one left the shelf) and its lot's MRP per unit times units dispensed, rounded by money.py, falling back to the tariff when no MRP exists (GRN-R12). The description names the dispensed drug. A ward return is a separate credit candidate keyed helix-return:<return id>, never a reuse of helix:<order>. Coordinate with the billing owner.",
+    "files_touched": [
+     "server/services/billing_service.py",
+     "server/tests/test_billing_permissions.py"
+    ],
+    "files_new": [
+     "server/tests/test_billing_pharmacy_mrp.py"
+    ],
+    "size_days": 2,
+    "depends_on": [
+     "grn-14",
+     "grn-15"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "A substituted order bills the substitute at its lot MRP. Line = units times MRP per unit. A return creates its own credit with its own key. A lot with no MRP and no tariff skips with 'rate_not_configured', never 0. A replay does not double-charge. Flag off: candidates are unchanged."
+   },
+   {
+    "id": "grn-17",
+    "title": "Ward stock consumption from eMAR administrations",
+    "description": "After an eMAR dose commits as 'given' for a drug linked to helix_medication_id (mos epic), post a 'consumption' movement against the ward imprest lot FEFO, post-commit. It never blocks or delays the dose, and flags a negative ward balance on the overview instead of refusing.",
+    "files_touched": [
+     "server/services/emar_service.py",
+     "server/services/pharmacy_stock_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_ward_stock_consumption.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "grn-21",
+     "mos-*"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "An administration succeeds when the consumption write fails (fault injection). No consumption for drugs outside ward stock. An idempotent replay consumes once. A negative balance is shown, not refused. The recall trace attributes consumed units to patients."
+   },
+   {
+    "id": "grn-18",
+    "title": "Seeds, retention mapping and operator docs",
+    "description": "seed_pharmacy_store() runs in reset_and_seed after seed_helix and before seed_pharmacy_queue, on the dev profile with the flag on only. It seeds a dispensing store (adopting the seed lots), a licensed vendor, one posted GRN and a near-expiry lot; no NDPS stock (GRN-R14) and no ward stock until grn-21. Map PO, GRN and vendor-return documents to GST 72-month retention with the W168 owner. Correct the procurement boundary text (procurement_service.py:915, ProcurementPanel.tsx:9). Hand-edit the module manual and its section sources (manual assembly drift trap).",
+    "files_touched": [
+     "server/scripts/reset_db_and_seed.py",
+     "server/scripts/seed_modules.py",
+     "server/services/consent_service.py",
+     "server/services/procurement_service.py",
+     "src/pages/panels/ProcurementPanel.tsx",
+     "docs/MODULE_MANUAL.md",
+     "docs/manual_sections/08_helix_lens_pulse_bridge.md",
+     "docs/manual_sections/16_hospital_admin_modules.md",
+     "docs/HOSPITAL_FUNCTION_COVERAGE_2026-10.md"
+    ],
+    "files_new": [
+     "server/scripts/seed_pharmacy_store.py"
+    ],
+    "size_days": 2,
+    "depends_on": [
+     "grn-8",
+     "grn-11"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "After a full reseed, reconcile() is clean and the seeded GRN's lots exist. A second reseed leaves no orphan pharmacy rows. Flag-off seed output is identical to today's. Retention review lists the new sources. A no-em-dash check passes over the changed docs."
+   },
+   {
+    "id": "grn-19",
+    "title": "Pharmacist desk access to Pharmacy Store",
+    "description": "Grant the pharmacist pharmacy_store.read, write and ndps as ruled in GRN-R7, mirrored in roles.ts. Add 'pharmacy-store' to ROLE_CONFIG.pharmacist after 'pharmacy-verify', through a new pinned PHARMACY_DESK_MODULE_IDS exception as ruled in GRN-R9, edited deliberately in the adjacency test next to the dietary exception. Revisit admin's interim grants if GRN-R7 says so.",
+    "files_touched": [
+     "server/permissions.py",
+     "server/tests/test_rbac.py",
+     "src/lib/roles.ts",
+     "src/shellConfig.tsx",
+     "src/shellConfig.test.ts"
+    ],
+    "files_new": [],
+    "size_days": 1,
+    "depends_on": [
+     "grn-2"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "GRN-R7, GRN-R9",
+    "migrations": 0,
+    "tests": "The pharmacist sees the tab only with the flag on and installed. Doctors, nurses and surgeons never see it. The exception set is pinned to exactly the ruled ids. Server and client permission parity holds."
+   },
+   {
+    "id": "grn-21",
+    "title": "Ward indents, ward imprest stores and ward receipt",
+    "description": "Issue indents (domain 'pharmacy', indent_kind 'issue') from a ward imprest store to the dispensing store, approve and decide, a FEFO issue plan, dispatch, and ward receipt with ward_stock.receive, department_scope and a receiver who did not dispatch. Imprest stores can be created only with ORB_PHARMACY_WARD_STOCK on. A drug without a par row for the store cannot be issued to it, and the barred list starts from drug_safety_service's ISMP high-alert set as GRN-RS5 rules. The nurse 'Ward stock' section in DeliveriesSheet. Nurse grants (ward_stock.read, ward_stock.receive, ward_indent.raise) after GRN-R8; until then the pharmacist raises on the ward's behalf. Administration from ward stock still needs an active eMAR order (no gate change).",
+    "files_touched": [
+     "server/services/pharmacy_transfer_service.py",
+     "server/services/pharmacy_stock_service.py",
+     "server/routes/pharmacy_store_routes.py",
+     "server/permissions.py",
+     "server/config.py",
+     "src/lib/roles.ts",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/pages/panels/nurse/DeliveriesSheet.tsx",
+     "src/pages/panels/nurse/DeliveriesSheet.test.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "files_new": [
+     "server/tests/test_pharmacy_ward_stock.py"
+    ],
+    "size_days": 4,
+    "depends_on": [
+     "grn-11",
+     "grn-20"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "GRN-RS5 (enabling ward stock); GRN-R8 (nurse grants)",
+    "migrations": 0,
+    "tests": "Helix dispense never draws a ward lot. With patched grants, a nurse sees only her department's store, and another ward's transfer is 404. The dispatcher receiving gets 403. A drug not on the imprest list cannot be issued. helix.receive alone reaches none of these routes. Stores-domain indent routes cannot see issue indents."
+   },
+   {
+    "id": "grn-22",
+    "title": "Return to vendor (later wave)",
+    "description": "Vendor return document (PHVR) from quarantined or near-expiry lots, posted through pharmacy_purchasing_service with vendor_return movements and in-transaction audit; vendor credit note reference. NDPS returns go to the register when it is enabled.",
+    "files_touched": [
+     "server/services/pharmacy_store_service.py",
+     "server/services/pharmacy_purchasing_service.py",
+     "server/routes/pharmacy_store_routes.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "files_new": [
+     "server/tests/test_pharmacy_vendor_returns.py"
+    ],
+    "size_days": 2,
+    "depends_on": [
+     "grn-10",
+     "grn-20"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "A return reduces the lot and numbers the document. It cannot exceed the lot quantity. An idempotent replay posts once. reconcile() is clean."
+   },
+   {
+    "id": "grn-23",
+    "title": "Crash-cart stores and checks (later wave)",
+    "description": "crash_cart store kind with par levels from the GRN-RS5 list, a seal-and-check record, top-up suggestions after use, and expiry within the cart surfaced on the overview. Behind ORB_PHARMACY_WARD_STOCK.",
+    "files_touched": [
+     "server/services/pharmacy_master_service.py",
+     "server/services/pharmacy_transfer_service.py",
+     "server/routes/pharmacy_store_routes.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "files_new": [
+     "server/tests/test_pharmacy_crash_cart.py"
+    ],
+    "size_days": 2,
+    "depends_on": [
+     "grn-21"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "GRN-RS5",
+    "migrations": 0,
+    "tests": "Cart lots are never dispensed by Helix. Top-up uses only listed drugs. Expiring cart items appear on the overview. The recall trace includes cart issues."
+   }
+  ],
+  "product_rulings": [
+   {
+    "question": "GRN-RS1: Who may add a drug to the formulary, or change a drug's clinical identity (generic name, strength, form)? generic_name drives allergy and interaction screening.",
+    "options": "(a) Any pharmacist alone, audited. (b) A pharmacist creates a draft; a second pharmacist or the medical lead confirms before it can be ordered; identity edits on rows with orders or stock are refused (retire and replace). (c) Only by import from a licensed knowledge base.",
+    "recommendation": "(b), with the class preview shown before save. Held for Samuel.",
+    "safety": true
+   },
+   {
+    "question": "GRN-RS2: Can a quarantined batch be released back to dispensable stock, and by whom? Are recalled or NSQ batches ever releasable?",
+    "options": "(a) Any pharmacist with a reason. (b) A different pharmacist from the one who quarantined, with a reason, audited; recalled and NSQ are terminal. (c) Never.",
+    "recommendation": "(b). Held for Samuel.",
+    "safety": true
+   },
+   {
+    "question": "GRN-RS3: May medicines returned from a ward re-enter dispensable stock?",
+    "options": "(a) Any in-date return. (b) Only sealed, in-date, non-cold-chain, non-NDPS unit packs after pharmacist inspection. (c) Never.",
+    "recommendation": "(b). Held for Samuel.",
+    "safety": true
+   },
+   {
+    "question": "GRN-RS4: Should a batch be dispensed when it expires within days, possibly before the supply runs out?",
+    "options": "(a) Refuse within N days. (b) Warn and record a reason. (c) As today.",
+    "recommendation": "(b), N a site setting defaulting to 30 days, until W117 gives a supply end date. Not built by this epic until ruled.",
+    "safety": true
+   },
+   {
+    "question": "GRN-RS5: Which drugs may be held as ward imprest or crash-cart stock, and does administration from ward stock still need an active eMAR order?",
+    "options": "(a) Any formulary drug. (b) A per-store list approved by pharmacy and the medical lead; concentrated electrolytes and site-listed high-alert drugs barred unless named; eMAR order still required. (c) No ward stock in v1.",
+    "recommendation": "(b), starting the barred list from drug_safety_service's ISMP set. ORB_PHARMACY_WARD_STOCK stays off until ruled. Held for Samuel.",
+    "safety": true
+   },
+   {
+    "question": "GRN-RS6: How is expiry entered at GRN, given that a typo can make an expired batch dispensable?",
+    "options": "(a) GS1 scan only. (b) Typed twice and compared, plus scan when available. (c) Typed once.",
+    "recommendation": "(b) now, (a) when scanners exist. Held for Samuel.",
+    "safety": true
+   },
+   {
+    "question": "GRN-RS7 (new): When the NDPS register write fails, or would leave a negative balance, during a dispense of a controlled drug, what happens to the dispense?",
+    "options": "(a) Block the dispense until the register is fixed. (b) Dispense; roll back only the register leg; record an NDPS variance and a security audit row; show it on the NDPS screen for same-day reconciliation. (c) As (b), and also block further NDPS dispenses of that drug in that store until it is reconciled.",
+    "recommendation": "(b), so a bookkeeping fault never withholds analgesia while the variance is still captured in the same transaction. Both modes are built; the register cannot be enabled until this is ruled. Held for Samuel.",
+    "safety": true
+   },
+   {
+    "question": "GRN-R7: Who holds the pharmacy-store permissions? Should a storekeeper role exist?",
+    "options": "Pharmacist read, write and ndps; admin read and approve (or read, write and approve, mirroring procurement, as grn-2 grants in the interim); no grants at all until ruled. A storekeeper role needs a users-table rebuild.",
+    "recommendation": "Pharmacist read, write and ndps; admin read and approve, dropping write after this ruling; no new role in v1.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R8 (W128): May nurses raise ward indents, see their ward's stock, receive ward transfers and record returns?",
+    "options": "(a) Yes, through new ward_stock.read, ward_stock.receive, ward_indent.raise and ward_return.record grants, department-scoped; helix.receive unchanged. (b) The pharmacist does it on the ward's behalf. (c) Paper.",
+    "recommendation": "(a).",
+    "safety": false
+   },
+   {
+    "question": "GRN-R9: May the pharmacist have a Pharmacy Store tab that shows purchase values, breaking the 'no money screen on a clinical rail' pin?",
+    "options": "(a) Yes, as a pinned pharmacy-desk exception. (b) Stock views inside Helix only; money views admin-only.",
+    "recommendation": "(a). The pharmacist already holds procurement.write through the API.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R10: Must a vendor have a valid drug licence on file before a pharmacy PO or GRN?",
+    "options": "Refuse; warn; ignore.",
+    "recommendation": "Refuse, and warn 30 days before expiry.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R11: Separate number series for pharmacy documents?",
+    "options": "Shared PO-/GRN- series, or PHPO/PHGRN/PHIND/PHTRF/PHVR/PHRET/PHCNT.",
+    "recommendation": "Separate, configured by the site before first use.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R12: Drug costing and billing price.",
+    "options": "Cost: lot landed cost spread over paid plus free units, or weighted average. Bill: batch MRP per unit, or tariff.",
+    "recommendation": "Lot cost; bill the dispensed drug at batch MRP, with the tariff only where no MRP exists. Coordinate with the billing owner.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R13: Who decides dispense quantity until W117 exists?",
+    "options": "The pharmacist enters it (default 1, site maximum), or it is computed from dose text.",
+    "recommendation": "Pharmacist-entered and bounded.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R14: NDPS controls: where narcotics are dispensed from, who may witness, what a variance triggers, and whether seeds may hold NDPS stock.",
+    "options": "Dispensing point: directly from the vault, or from a daily cabinet replenished by witnessed transfer. Witness: a second pharmacist, or also a registered nurse or doctor for ward wastage. Variance: report only, or also draft a NABH incident.",
+    "recommendation": "Vault-only receipt. Dispense directly from the vault in v1, with the cabinet option available through transfers. Second-user PIN witness. Every variance drafts an incident. No NDPS stock in seeds. Confirm form layouts with W170.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R15: How is ward stock consumption accounted before eMAR links to the drug master?",
+    "options": "Periodic count and top-up, or wait for automatic decrement.",
+    "recommendation": "Count-based top-up now; grn-17 after the mos epic, never blocking a dose.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R16: Near-expiry window, alert delivery and minimum shelf life at receipt.",
+    "options": "60, 90 or 180 days; screen only or a Relay digest; minimum shelf life none, 90 days or a site value.",
+    "recommendation": "90 days, screen only, refuse receipts with under 90 days left unless approve tier overrides.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R17: Satellite pharmacies as dispensing points in v1?",
+    "options": "One dispensing pharmacy with sub-stores, or several with routing.",
+    "recommendation": "One per site in v1.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R18: May a drug with no schedule or NDPS classification be purchased or received?",
+    "options": "Refuse, or treat unclassified as none.",
+    "recommendation": "Refuse. Classification never gates a dispense of existing stock.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R19: Should the drug ledger be append-only by trigger?",
+    "options": "Triggers on the ledger, or a single writer plus reconciliation and audit, with triggers on the NDPS register only.",
+    "recommendation": "The latter. Ledger rows reference patient orders and are wiped on reseed.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R20 (new): Who may downgrade a drug's NDPS or schedule classification?",
+    "options": "(a) Any holder of the write tier. (b) A request plus approval by a different approve-tier user, refused while vault stock exists. (c) Only the pharmacist-in-charge.",
+    "recommendation": "(b). An upgrade applies at once, because it only adds control.",
+    "safety": false
+   }
+  ],
+  "risks": [
+   "A second drug ledger is the failure this codebase warns about. Mitigations: the is_pharmacy CHECK stays; the pharmacy post core never calls _insert_movement (tested); an AST guard covers every INSERT, UPDATE and DELETE on lots and movements; the stores-domain guards in grn-20 have a test per endpoint.",
+   "Enums on the three Helix tables are enforced only by the service. Raw SQL (scripts, a future migration) can write an out-of-set status. reconcile() reports such values and the AST guard limits writers, but the database itself will not refuse them.",
+   "grn-4 changes always-on clinical code: the dispense moves to an immediate transaction and now fails closed when its clinical_access audit write fails. This is consistent with the existing fail-closed rule, but it means an audit outage now stops dispensing as well as charting.",
+   "The R024 session is editing helix_service.py and test_agentic_confirm_race.py now. grn-4, grn-6 and grn-14 must rebase on insert_order after it lands, or they will conflict or regress the orphan-order fix.",
+   "The pre-flight behaviour seen by Relay (relay_routes.py:1133-1138, 1510-1524) changes as soon as stores and statuses are used: quarantined or sub-store stock stops counting. This is correct, but it feeds the substitution suggestion flow behind held ruling R002, so it must be reviewed with that in mind.",
+   "The ndps_register lane is chosen from ORB_DEPLOYMENT_PROFILE at write time. A real site mistakenly run on the dev profile would write deletable register rows. The NDPS screen shows an honesty label for non_production rows, and the deployment checklist must confirm the profile.",
+   "Opening ledger rows are synthetic by construction. History before the migration is incomplete, and the remark says so rather than inventing dates.",
+   "Procurement cores (grn-20) refactor a 2,611-line file with 75 tests, and the stores module is ON by default everywhere. Every stores test must pass unchanged, and the refactor must land as its own increment.",
+   "Document numbers are still stamped after commit, so a pharmacy document can briefly exist unnumbered. This is existing procurement behaviour and repairable; it is stated, not hidden.",
+   "The billing pharmacy line today names and prices the prescribed drug even when a substitute was dispensed (billing_service.py:850-856). This is an existing defect, independent of the flag, and belongs to the billing owner. grn-16 fixes it only when the module is on.",
+   "Units: purchase packs against integer dispense units. Liquids, part-used ampoules and MRP-per-unit rounding need explicit rules. An unconfigured pack size blocks receipt and is never assumed to be 1.",
+   "GST rates for drugs changed in 2025. Rates are site-entered and never seeded.",
+   "Statutory specifics (NDPS Forms 3D, 3E and 3H, H1 fields, NDPS retention periods) are not verified in this repo and must be confirmed before W170.",
+   "Sizes total about 69 engineer-days, or about 62 for the first wave (excluding grn-17, grn-22 and grn-23). With review and isolated browser verification, plan about 15 weeks for one engineer. This competes with the approved Ward Record sales plan for the same time.",
+   "Real use waits on non-safety rulings GRN-R7 and GRN-R9 (pharmacist access) and GRN-R8 (nurses). Ask them first, or the epic ships as an admin-only module.",
+   "Migration numbers 48 and up, the EXTRA_TABLES_TO_CLEAR list, the opt-in flag helper and the client opt-in set are shared with other epics in this wave. Allocate numbers at merge and never renumber a shipped migration.",
+   "New drugs reach the Sage mutation gate only through grn-6's refresh call. Without it, a new brand slips past the 'stop the X' lock until the next restart."
+  ],
+  "session_conflicts": [
+   "R024 session (Relay agentic confirm orphan orders): edits server/services/helix_service.py (insert_order at :219-240), server/routes/relay_routes.py and server/tests/test_agentic_confirm_race.py, which is modified in the working tree. grn-4, grn-6 and grn-14 start after it lands. grn-4 changes the pre-flight functions that relay_routes calls without editing relay_routes. No increment touches test_agentic_confirm_race.py.",
+   "Scribe quick-admit department session: edits server/services/admission_service.py. grn-5 and grn-21 only call resolve_admission_department; re-check its signature when that session lands.",
+   "Sage bed lookup session: owns server/services/sage_service.py. grn-6 only calls refresh_formulary_terms_from_db. grn-6 edits server/routes/sage_routes.py (_match_medication at :1843); confirm that session is not editing sage_routes.py before starting.",
+   "CORS same-origin socket session: edits src/api/client.ts, server/ws/realtime.py and possibly the main.py CORS setup. New wrappers go in src/api/pharmacyStore.ts. grn-2 adds one include_router line to main.py; merge carefully.",
+   "AdmitPatientModal ACVPU/O2 session and Bridge red-flag session: no overlap.",
+   "Other HIS epic architects in this wave: the opt-in helper in server/config.py and OPT_IN_MODULE_IDS in src/shellConfig.tsx (build once in grn-2); migration numbering in server/migrations.py; EXTRA_TABLES_TO_CLEAR and _CONDITIONAL_DELETE_PREDICATES in server/scripts/reset_db_and_seed.py (grn-3); the default-ON pins in test_money.py and shellConfig.test.ts (grn-2).",
+   "Single medication-order store epic: will edit helix_service.py, helix_patient_med_orders and emar_service.py. Land grn-4 first; grn-17 waits for it.",
+   "ADT epic: may add a ward master that pharmacy stores should reference. Billing owner: grn-16 and the substitute-billing defect. W168 retention owner: consent_service.py in grn-13 and grn-18."
+  ]
+ },
+ "critique": {
+  "verdict": "needs_changes",
+  "issues": [
+   {
+    "severity": "major",
+    "issue": "Two new column names trip the reseed sweep, which contradicts grn-3's own tests and an existing one. reset_db_and_seed.py:64-69 lists indents, indent_lines, purchase_orders, purchase_order_lines, goods_receipts and goods_receipt_lines in EXTRA_TABLES_TO_CLEAR. patient_scoped_tables (reset_db_and_seed.py:180-197) treats an undeclared `<stem>_id` column as a link to `<stem>s`. Two consequences: (1) helix_inventory_lots.goods_receipt_line_id links lots to goods_receipt_lines, so lots join the wipe set, which breaks test_reseed_orphans.py:110-119 (`assert \"helix_inventory_lots\" not in wiped`); (2) pharmacy_transfers.indent_id and pharmacy_transfer_lines.indent_line_id are wiped too, so grn-3's test that 'patient_scoped_tables() does not list pharmacy_transfers' fails. In the other direction, pharmacy_lot_events and pharmacy_stock_counts/lines survive a reseed while seed_helix.py:89 deletes every lot, so they are left as orphans. The design's naming rule only covers order_id and medication_id, and reset_db_and_seed.py is not in any increment's files_touched.",
+    "evidence": "reset_db_and_seed.py:64-69, 180-197; test_reseed_orphans.py:110-119; seed_helix.py:89-90",
+    "fix": "Choose names that do not end in a wiped table's stem, such as grn_line_ref and source_indent_ref, or decide on purpose that transfers are wiped and say so in the test. Add pharmacy_lot_events and pharmacy_stock_counts(+lines) to EXTRA_TABLES_TO_CLEAR. Put reset_db_and_seed.py and test_reseed_orphans.py into grn-3's files_touched, with an assertion over every new table."
+   },
+   {
+    "severity": "major",
+    "issue": "CHECK enums added by ALTER ADD COLUMN to FK-parent tables can never be changed. In the live schema, helix_inventory_lots is the declared FK parent of helix_stock_movements.lot_id. helix_medication_master is the parent of lots, movements and orders (both substitute_medication_id and medication_id). Changing a CHECK means rebuilding the table, and an FK-parent rebuild is impossible inside the migration transaction (memory note: both pragmas are no-ops). The enums are therefore fixed forever: lot status, drug_schedule, ndps_category, storage_condition. GRN-RS2 already names an NSQ state that the status enum lacks, and ruling outcomes such as 'destroyed' or 'expired', or schedules such as C/C1, would need the impossible rebuild.",
+    "evidence": "Live DB PRAGMA foreign_key_list: helix_stock_movements -> helix_inventory_lots(lot_id), helix_medication_master(medication_id); helix_db.py:18-24,29,37",
+    "fix": "On those two tables, add the columns without CHECK and validate in pharmacy_master_service and pharmacy_stock_service, with a test that pins the allowed set. Keep CHECKs only on the new pharmacy_* tables and on the stores table, which has no FK children."
+   },
+   {
+    "severity": "major",
+    "issue": "Narcotics received by GRN can never be dispensed. grn-8 lets an NDPS-classified drug be received only into an ndps_vault store. grn-4's pick_fefo_lot reads the dispensing store only. grn-11 issues stock only from the dispensing store to ward stores. No vault-to-dispensing transfer is defined. Once the flag is on, every narcotic received by GRN is invisible to dispense and to pre-flight, so pre_flight_alternative_suggestion offers another brand. That feeds the substitution flow behind held ruling R002.",
+    "evidence": "Design grn-8 ('NDPS-classified drugs may be received only into an ndps_vault store'), grn-4 pick_fefo_lot, grn-11 issuing store; helix_service.py:822-865",
+    "fix": "In grn-11 or grn-13, define a vault-to-dispensing issue transfer with NDPS register entries on both legs and a witness. Alternatively allow pick_fefo_lot to read a designated NDPS dispensing cabinet. Add a test that a narcotic received by GRN can be dispensed."
+   },
+   {
+    "severity": "major",
+    "issue": "The stores routes can still post drugs into the stores ledger, the second-ledger failure the design names as its top risk. The pharmacist holds procurement.write, and POST /api/procurement/goods-receipts needs only _PROC_WRITE. create_goods_receipt resolves the item from inventory_items; a drug line yields item=None, item_requires_expiry(None) skips the batch rule, and post_goods_receipt calls _insert_movement into stock_movements. grn-7 filters only lists and gets. The id-based submit, approve, issue and cancel routes and the GRN create, post and cancel routes do not check domain, so admin could approve a pharmacy PO through procurement and skip the drug-licence rule (GRN-R10). The shared stores table is not partitioned either: procurement's approve-tier upsert_store can rename or deactivate an NDPS vault, and list_stores shows crash carts as procurement stores.",
+    "evidence": "procurement_routes.py:800-860 (_PROC_WRITE), 452-470; procurement_service.py:1757-1764, 1872-1888, 640, 658; permissions.py:281",
+    "fix": "Every procurement_service function that takes an id must load the document's domain and refuse a mismatch with its caller, with a stores-route test per endpoint. Derive a GRN's domain from its PO and never take it from the request. Make list_stores and upsert_store exclude rows with pharmacy_kind set unless the caller passes domain 'pharmacy'."
+   },
+   {
+    "severity": "major",
+    "issue": "'All audit rows in the same transaction (db=conn)' cannot hold for the documents grn-7 and grn-8 reuse. create_purchase_order, _move_po, create_goods_receipt and post_goods_receipt each open and commit their own db_session(immediate=True). The procurement routes audit after commit, and document numbers are stamped in a second transaction. A pharmacy route calling these functions cannot pass db=conn into their transaction, so a pharmacy PO approval or GRN post commits first and is audited afterwards. That is the pattern the design says it replaces.",
+    "evidence": "procurement_service.py:1345,1470,1692,1861 (own immediate sessions), 404-452; procurement_routes.py:133-157",
+    "fix": "Give the reused service functions an optional on_commit_audit(conn) callback or an audit-event argument, run inside the immediate block, and put that change in grn-7 and grn-8's scope. Otherwise state honestly that pharmacy documents follow procurement's post-commit audit."
+   },
+   {
+    "severity": "major",
+    "issue": "The move to db_session(immediate=True) in grn-4 is not a one-line change. transition_order_status (helix_service.py:434) and receive_order (about :683) call conn.commit() in the middle of the block. In immediate mode the session then runs `COMMIT` itself (database.py:1172-1185) and gets 'cannot commit - no transaction is active'. Every dispense and ward receipt would answer 500 after its writes had already committed.",
+    "evidence": "helix_service.py:434, ~683; database.py:1164-1185",
+    "fix": "State in grn-4 that the in-body commits are removed and the post-commit re-reads move inside the block or after it. Add a test that a dispense through the route returns 200 with exactly one movement under ORB_DB_POOL=1 and =0."
+   },
+   {
+    "severity": "major",
+    "issue": "grn-18's seed plan destroys its own output, and NDPS testing permanently breaks dev and verify databases. seed() runs seed_modules (seed_clinical_data.py:524) before seed_helix (reset_db_and_seed.py:356). seed_helix then DELETEs every lot and every helix_medication_master row (seed_helix.py:89-90), which removes the seeded GRN lots and every pharmacist-entered master field: classification, GST, reorder levels. The posted GRN documents are left pointing at deleted lots. Separately, ndps_register is preserved because of its abort trigger, but the lots are recreated, so after any grn-13 testing 'reconcile NDPS balances against lots' fails on that database forever and no cleanup is possible.",
+    "evidence": "seed_clinical_data.py:524-526; reset_db_and_seed.py:351-357; seed_helix.py:89-110; reset_db_and_seed.py:109-121 (abort-trigger tables preserved)",
+    "fix": "Seed pharmacy-store data after seed_helix, or change seed_helix to upsert the master and delete only the seed lots. Scope NDPS reconciliation to entries after the latest opening entry per drug and store, or give the register a reseed predicate, in the way shadow_events lane='simulator' works, for rows written on a dev profile."
+   },
+   {
+    "severity": "major",
+    "issue": "Increments build open rulings and widen permissions ahead of them. grn-2 (blocked_by_ruling empty) implements the GRN-R7 grants and the GRN-R9 pharmacist money-tab exception, which edits the pinned money-adjacency test. grn-11 and grn-15 extend helix.receive to ward-stock inventory reads and to ward-return writes that move stock. permissions.py documents helix.receive as the opposite: 'Receipt does not open the pharmacy ... nothing about inventory'. GRN-R8 and W128, which the design itself lists, are not ruled.",
+    "evidence": "permissions.py:259-265 (nurse HELIX_RECEIVE note); shellConfig.test.ts:298-329; design grn-2, grn-11, grn-15",
+    "fix": "Mark grn-2's pharmacist rail entry as blocked by GRN-R9 and ship an admin-only tab until it is ruled. Add separate ward_stock.read and ward_return.record permissions, granted only after GRN-R8, and keep helix.receive meaning patient-order receipt only."
+   },
+   {
+    "severity": "major",
+    "issue": "grn-13 is marked safety_sensitive false, but it adds a fail-closed write to the controlled-drug dispense transaction. Any exception in ndps_service, or a negative register balance after a reclassification or reseed, rolls back the morphine dispense. One pharmacist holding pharmacy_store.ndps can also reclassify a narcotic as 'none' and so stop the hook for every later movement.",
+    "evidence": "Design D (post_movement 'calls the NDPS hook'), grn-13, F (pharmacist holds ndps)",
+    "fix": "Set safety_sensitive true. Raise a ruling on how the hook fails during a dispense (block, or dispense and record a variance incident). Require a second, approve-tier person to downgrade an NDPS or schedule classification."
+   },
+   {
+    "severity": "major",
+    "issue": "The recall trace (grn-10) under-reports exposure. It returns patient dispenses only. Units issued to ward imprest or crash carts reach patients with no patient link until grn-17 (blocked on the mos epic), so a trace showing three patients is falsely reassuring when 50 units went to ICU imprest.",
+    "evidence": "Design grn-10 'every dispense of the batch'; grn-17 depends on mos-*",
+    "fix": "The trace must also list every transfer_out to a ward store and every consumption of the batch, labelled 'issued to <ward> stock, patients not recorded', with the unattributed unit count."
+   },
+   {
+    "severity": "major",
+    "issue": "In grn-14 the chosen lot_id is only required to be 'dispensable'. It is not required to belong to the effective drug, meaning the substitute when one is set, by the order_screen_target precedence. A lot of another drug would be decremented while the safety gate screened the ordered drug, which corrupts the ledger, the recall trace and MRP billing for that patient.",
+    "evidence": "helix_service.py:349-350, 448-470; helix_routes.py:270-289",
+    "fix": "Refuse (422) any lot whose medication_id differs from COALESCE(substitute_medication_id, medication_id), checked in the immediate transaction, with a test."
+   },
+   {
+    "severity": "major",
+    "issue": "GRN-RS1(b), 'cannot be ordered until confirmed' and 'retire and create a new row', has no schema state and is enforced nowhere. The schema adds only is_active and no pending-confirmation state. Nothing touches create_order (a LIKE lookup), insert_order, pre_flight_alternative_suggestion (which iterates every master row), the Sage lexicon or the catalog. load_rxnorm_formulary.py upserts generic_name, form and strength ON CONFLICT with no audit, so clinical identity can still be rewritten outside grn-6's governance.",
+    "evidence": "helix_service.py:219-250, 836-860; scripts/load_rxnorm_formulary.py:66-77",
+    "fix": "Add an identity_status column (draft, active, retired), validated in the service. Filter every ordering and suggestion path on active. Make the loader refuse identity changes on rows that have orders or stock. Because insert_order belongs to the R024 session and the mos epic, schedule this after them and say so."
+   },
+   {
+    "severity": "minor",
+    "issue": "The dispensing pharmacy has two identities: store_id NULL on legacy lots and the stores.id of the 'dispensing' row. The partial UNIQUE index (WHERE store_id IS NOT NULL) means a GRN batch never merges with a legacy lot of the same batch, and stock reports split the pharmacy in two.",
+    "evidence": "Design C (helix_inventory_lots.store_id, partial UNIQUE)",
+    "fix": "When the dispensing store is created, or when the flag is first enabled, assign legacy NULL lots to it in one audited step. Alternatively define one SQL predicate used by every reader and the merge rule."
+   },
+   {
+    "severity": "minor",
+    "issue": "Tests that pin modules as default ON are missing from grn-2's files_touched: test_money.py:786 asserts all(enabled_modules().values()), and shellConfig.test.ts asserts the same at lines 297, 386 and 393.",
+    "evidence": "server/tests/test_money.py:783-786; src/shellConfig.test.ts:297,386,393",
+    "fix": "Add them to grn-2 and rewrite each to assert 'non-opt-in modules default ON, OPT_IN set defaults OFF'."
+   },
+   {
+    "severity": "minor",
+    "issue": "Ledger ordering and backfill gaps. (1) rowid is not a stable tiebreak on a TEXT-PK table, because VACUUM may renumber it. (2) Legacy rows have no occurred_at unless it is backfilled from `timestamp`, a naive CURRENT_TIMESTAMP value. (3) Opening rows dated at migration time sort after the historic dispenses, which gives negative running balances. (4) ALTER ADD COLUMN cannot default to CURRENT_TIMESTAMP, so lots inserted by scripts or tests get NULL created_at.",
+    "evidence": "helix_db.py:60-68; migrations.py:5342 convention",
+    "fix": "Add an INTEGER seq column filled from MAX+1 under the write lock. Backfill occurred_at with clinical_time.to_utc_iso(timestamp). Date the opening row just before the lot's earliest movement, or exclude legacy rows from running balances."
+   },
+   {
+    "severity": "minor",
+    "issue": "The AST single-writer guard misses the real bypass, which is INSERT INTO helix_inventory_lots with quantity > 0 (seed_helix.py:102, populate_helix_from_medgemma.py:288 and about 10 test fixtures). populate_helix_from_medgemma is not in any increment. Moving fixtures to the service would edit test_agentic_confirm_race.py, which the running R024 session owns.",
+    "evidence": "grep: seed_helix.py:102; populate_helix_from_medgemma.py:288; tests listed (test_agentic_confirm_race.py:206)",
+    "fix": "Make the guard cover lot INSERT and DELETE as well. Convert populate_helix_from_medgemma or allow-list it. Leave R024's test file until that session has landed."
+   },
+   {
+    "severity": "minor",
+    "issue": "M-a must not use executescript, which commits the runner's transaction and so breaks all-or-nothing migration (run_pending_migrations). It must not import HELIX_SCHEMA either.",
+    "evidence": "migrations.py:5342; helix_db.py:105",
+    "fix": "Run one frozen statement per conn.execute, as migration 44 does."
+   },
+   {
+    "severity": "minor",
+    "issue": "The pharmacy GRN inherits procurement's expiry refusal, which uses date.today() on the server clock. The F064 dispense rule uses the site timezone through _expiry_cutoff, so the two can disagree for the first hours of a day in IST.",
+    "evidence": "procurement_service.py:1719,1774-1784; helix_service.py:705-725",
+    "fix": "In the pharmacy branch, compare expiry and minimum shelf life against helix_service._expiry_cutoff()."
+   },
+   {
+    "severity": "minor",
+    "issue": "grn-16 does not specify two things. (1) The billing candidate prices the prescribed medication_id, not the substitute that left the shelf. (2) A return credit cannot reuse the per-order idempotency key 'helix:<order>'.",
+    "evidence": "billing_service.py:847-873",
+    "fix": "Key the price on the dispense movement's lot and medication. Define the credit as a separate candidate or credit note with its own key."
+   },
+   {
+    "severity": "minor",
+    "issue": "The dispense is a PHI write with no audit_service row. grn-4 refactors exactly this path and leaves the gap; grn-14 audits only non-default quantities and NDPS drugs.",
+    "evidence": "helix_service.py:347-410",
+    "fix": "Add an in-transaction clinical_access audit for every dispense in grn-4."
+   },
+   {
+    "severity": "minor",
+    "issue": "Sizing and scope. grn-3, at 3 days for more than 12 tables, about 40 columns, triggers, backfill, reseed fixes and legacy-DB tests, is undersized; 5 days is more realistic. Crash-cart par levels and vendor returns could wait for a later wave without hurting day one. With ORB_PROCUREMENT=0 and the pharmacy store on, there is no route to create a vendor.",
+    "evidence": "Design increments; procurement_routes.py:401",
+    "fix": "Resize grn-3. Make crash cart a later increment. Add vendor create to the pharmacy Masters routes, using the shared upsert_vendor."
+   }
+  ],
+  "missed_existing_code": [
+   "server/scripts/reset_db_and_seed.py:64-69: EXTRA_TABLES_TO_CLEAR wipes indents, POs, GRNs and their lines, so any new undeclared indent_id or goods_receipt_line_id column pulls its table into the reseed wipe",
+   "server/tests/test_reseed_orphans.py:110-119: pins that helix_inventory_lots is never wiped",
+   "server/scripts/seed_clinical_data.py:524 together with reset_db_and_seed.py:356: seed_modules runs before seed_helix, which DELETEs every lot and master row (seed_helix.py:89-90)",
+   "Live schema: helix_stock_movements declares order_id REFERENCES helix_patient_med_orders, so the ledger is wiped on every reseed (the dev DB now has 14 lots holding 690 units and 0 movements)",
+   "server/scripts/load_rxnorm_formulary.py:66-77: an unaudited upsert that rewrites generic_name, form and strength on existing master rows",
+   "server/scripts/populate_helix_from_medgemma.py:288: inserts lots directly",
+   "server/services/helix_service.py:434 and ~683: conn.commit() inside the session body, which breaks under immediate=True",
+   "server/tests/test_money.py:783-786: asserts every module flag defaults ON",
+   "src/shellConfig.test.ts:297,386,393: three more default-ON pins",
+   "server/config.py:866-867: an existing inline default-OFF flag idiom (DISCHARGE_FINANCIAL_ENFORCE)",
+   "server/services/procurement_service.py:1757-1784: stores GRN path accepts a non-inventory item (item=None) and uses date.today() for expiry",
+   "server/services/procurement_service.py:640,658 and procurement_routes.py:452: store master is shared and editable at procurement approve tier",
+   "server/services/drug_safety_service.py:66 (_DRUG_CLASS_PATTERNS) and ~798 (ISMP high-alert dose ceilings): reusable for grn-6's class preview and the GRN-RS5 ward-stock bar",
+   "server/services/billing_service.py:850-856: pharmacy candidate uses the prescribed medication_id, not the substitute",
+   "server/services/site_config_service.py current_site_config().departments: a configured department list for validating store departments"
+  ]
+ },
+ "first_draft": {
+  "epic": "Pharmacy inventory and goods receipt",
+  "current_state": "Checked against the code on 3 Oct 2026: git baseline cafe363 plus uncommitted work in progress. The highest migration is 47 (vitals_carried_from), at server/migrations.py:5446-5495.\n\n1. TWO STOCK SYSTEMS, BY DESIGN.\n- Procurement owns non-pharmacy stock: vendors, stores, inventory_items, indents, indent_lines, purchase_orders, purchase_order_lines, goods_receipts, goods_receipt_lines and stock_movements (migration 20, migrations.py:2287-2552). By rule these tables have no foreign keys (migrations.py:1771).\n- The drug boundary is enforced twice:\n  - a database CHECK, `inventory_items.is_pharmacy ... CHECK (is_pharmacy = 0)` (migrations.py:2357);\n  - `_helix_catalogue_match`, which refuses any stores item that matches the Helix formulary (procurement_service.py:823-875, 878-922; F103).\n- Procurement's document machinery is mature and can be reused for drugs:\n  - state machines held as data (procurement_service.py:216-243);\n  - a draft-then-post GRN with idempotency key, over-receipt guard, refusal of expired stock on receipt, and PO status derived from the lines (procurement_service.py:1642-1956);\n  - GST and paise arithmetic through services/money.py (compute_line :497, compute_invoice :594);\n  - document numbers stamped after commit (procurement_service.py:397-452).\n- The routes sit behind ORB_PROCUREMENT, which defaults ON (procurement_routes.py:76-96).\n- There are three permission tiers (procurement_routes.py:106-108). The pharmacist holds procurement.read and write; admin holds all three.\n- Every procurement write is audited under 'security' AFTER the service has committed (procurement_routes.py:133-157).\n\n2. HELIX OWNS DRUGS BUT HAS NO STORE.\n- helix_medication_master has five columns: id, name, generic_name, form, strength (helix_db.py:9-15). It has no pack size, HSN, GST, MRP, schedule, NDPS class or reorder level.\n- The only API is read-only: GET /api/helix/catalog (helix_routes.py:16-19). Rows come only from scripts (scripts/seed_helix.py:13-62, populate_helix_from_medgemma.py).\n- helix_inventory_lots is a balance table (helix_db.py:18-24): lot_number, quantity as INTEGER dispense units, expiration_date. It has no location, status, cost, MRP, supplier or receipt link.\n- helix_stock_movements (helix_db.py:60-68) holds lot_id, medication_id, order_id, quantity_change, reason and timestamp.\n  - It has no movement type, store, actor, running balance or idempotency key.\n  - It is written in exactly one place, the dispense (helix_service.py:792-797).\n- Nothing reconciles lots.quantity against SUM(movements), and seeded lots have no opening movement.\n- GET /api/helix/stock-movements returns everything unpaged and no screen uses it (helix_routes.py:36-39; W120).\n\n3. DISPENSE (helix_service.py:740-798).\n- Fixed this week: FEFO now picks over in-date lots only (F064; _IN_DATE_LOT_SQL at :728; the hospital's \"today\" comes from the site timezone at :705-725). So the coverage map's \"expired lots dispense first\" no longer holds.\n- Still open:\n  - It always decrements exactly 1 unit (:783).\n  - It picks from any lot of the drug, regardless of location.\n  - transition_order_status runs in a default db_session (:277). The lot SELECT therefore runs in autocommit and the UPDATE writes an absolute value (:785), so two concurrent dispenses from one lot can lose a decrement. database.py:1103-1125 documents this class of race.\n  - The dispense writes helix_transitions but no audit_service row.\n- The R024 work added insert_order(conn, ...) at helix_service.py:219-240 today.\n\n4. HELIX TABLES ARE CREATED OUTSIDE THE MIGRATION RUNNER.\n- main.py:322 runs init_db, which runs the migrations (database.py:1983-1984). init_helix_db runs later and non-fatally, at main.py:388-392.\n- On a fresh database, any migration that touches a Helix table therefore finds no table and does nothing. That is why:\n  - migration 35 checks sqlite_master first (migrations.py:4920-4930);\n  - helix_db.HELIX_SCHEMA has to carry new columns by hand.\n- _migrate_stock_movements still logs a misleading INFO line on a fresh boot (helix_db.py:151-167; W027).\n\n5. SCREENS.\n- Pharmacist rail: helix, pharmacy-verify, sage (shellConfig.tsx:882-886).\n- HelixPanel has three views: Overview, Patient Board and Formulary (HelixPanel.tsx:12-18).\n  - Formulary shows lots with the server's in_date verdict and highlights expiry within 90 days (HelixFormulary.tsx:28).\n  - Every drug uses a fixed low-stock threshold of 30 (src/components/helix/stock.ts:22).\n- No screen exists for drug GRN, indents, transfers, adjustments, the ledger, expiry or reorder.\n- ProcurementPanel.tsx (1,958 lines) states the drug boundary in its header (:5-18). Its ReceiveForm creates and posts a GRN in one step (W158).\n- Admin modules mount through the module machinery in shellConfig.tsx:\n  - HOSPITAL_MODULE_IDS (:177-184);\n  - the lazy panel glob (:202-229);\n  - DEFAULT_MODULE_FLAGS, all true (:249-252).\n- shellConfig.test.ts:257-330 pins two things:\n  - all module flags default ON;\n  - no clinical role, the pharmacist included, gets any module tab other than dietary.\n\n6. CUSTODY AND BILLING.\n- Ward receipt of patient-specific dispenses is built:\n  - helix.receive is held by nurses only;\n  - the dispenser cannot also receive (helix_service.py:605-700, helix_routes.py:329-382, migration 35).\n- Billing takes one tariff-priced line per dispensed or delivered Helix order (billing_service.py:182-190, 847-873). MRP does not exist anywhere in the code.\n\n7. FLAGS.\n- Every admin module uses config._module_enabled (config.py:642-648). They default ON per the 2026-08-11 ruling.\n- They are registered in HOSPITAL_MODULE_ENV and enabled_modules() (config.py:799-830) and published on /api/health (main.py:1216).\n- There is no opt-in (default OFF) helper, and no Ward Record profile exists in code.\n\n8. TRAPS THAT SHAPE THE DESIGN.\n- (a) The reseed wipes two kinds of table (reset_db_and_seed.py:124-205):\n  - any table with a patient_id column;\n  - any table with a `<parent>_id` column that names a wiped table, when no foreign key is declared.\n  So a new column named order_id or medication_id with no declared FK would get its table wiped on every reseed.\n- (b) users is the FK parent of about 20 tables, so adding a role means a users-rebuild migration (roles.py:20-27, migrations.py:4697).\n- (c) Audit:\n  - audit_service can write inside the caller's transaction via db= (audit_service.py:296-301);\n  - the fail-closed categories are security, clinical_access, phi_access, authentication and ai_inference (audit_service.py:43-45);\n  - an integer target_id breaks the audit chain, so it must be passed as a string.\n- (d) No code mentions NDPS or Schedule H1, apart from:\n  - a retention row (migrations.py:1265);\n  - procurement text that wrongly says Helix tracks schedule-H (procurement_service.py:915, ProcurementPanel.tsx:9).\n- (e) The Sage formulary lexicon is loaded once, at boot (main.py:398-403).\n\nTESTS IN THIS AREA TODAY\n- Backend (server/tests): test_procurement.py (75 tests), test_procurement_helix_catalogue.py (5), test_helix_stock_rules.py (11), test_helix_ward_receipt.py (16), test_helix_order_lifecycle.py, test_helix_substitution_safety.py, test_fresh_database_init.py, test_reseed_orphans.py, test_agentic_confirm_race.py (being edited now for R024).\n- Frontend: ProcurementPanel.test.tsx, HelixPanel.test.tsx, HelixFormulary.test.tsx, HelixPatientBoard.test.tsx, nurse/DeliveriesSheet.test.tsx, shellConfig.test.ts.",
+  "design": "A. SHAPE\n- Reuse Procurement's vendor master, PO, GRN and indent documents, state machines, GST math and numbering for drugs by adding a `domain` column.\n- Keep Helix as the only owner of drug stock.\n- Make one new Helix-side service the single writer of lots and of the drug ledger.\n- inventory_items.is_pharmacy CHECK (is_pharmacy = 0) stays. No drug ever enters inventory_items or stock_movements, so there is still exactly one ledger per physical drug.\n\nB. FEATURE FLAG (off by default)\n- Server:\n  - Add config._module_opt_in(env) beside _module_enabled: unset, blank or anything other than 1/true/on/yes means OFF.\n  - PHARMACY_STORE_ENABLED = _module_opt_in('ORB_PHARMACY_STORE').\n  - Register 'pharmacy-store' in HOSPITAL_MODULE_ENV and enabled_modules(), so /api/health publishes it.\n- Client:\n  - Add 'pharmacy-store' to HospitalModuleId.\n  - Add OPT_IN_MODULE_IDS, whose DEFAULT_MODULE_FLAGS entry is false, so first paint never shows the tab.\n- When the flag is off:\n  - every /api/pharmacy-store route answers 404 module_disabled (the procurement require_module pattern);\n  - there is no tab;\n  - the Helix transition ignores the new dispense fields;\n  - Helix screens are unchanged.\n- Migrations still run; they are additive and invisible.\n- grn-4 behaves identically for legacy lots (store_id NULL, status 'available'), so Ward Record and the demos are unaffected.\n\nC. DATA MODEL\nMigration numbers are taken at merge, after 47; other epics in this wave will also take numbers.\n\nM-a helix_tables_in_runner (grn-1)\n- A frozen copy of today's six Helix CREATE TABLE IF NOT EXISTS statements plus their indexes.\n- After this, later migrations can ALTER Helix tables on fresh and existing databases alike.\n- init_helix_db stays as an idempotent fallback.\n\nM-b pharmacy_store_schema (grn-3)\n- Only ALTER ADD COLUMN, new tables and partial indexes. No table rebuilds, so the FK-parent rebuild trap cannot apply. No new foreign keys (the migration 20 rule).\n\nNew columns on helix_medication_master:\n- pack_size_units INTEGER, purchase_uom TEXT, dispense_unit TEXT, hsn_code TEXT, manufacturer TEXT.\n- gst_rate_bp INTEGER (NULL means not configured).\n- drug_schedule TEXT CHECK (NULL or none, G, H, H1, X).\n- ndps_category TEXT CHECK (NULL or none, narcotic, psychotropic). NULL means unclassified; it is never read as 'none'.\n- is_essential_narcotic INTEGER NOT NULL DEFAULT 0.\n- storage_condition TEXT CHECK (NULL or room, cold_chain, frozen).\n- reorder_level_units, reorder_qty_units, lead_time_days INTEGER.\n- is_active INTEGER NOT NULL DEFAULT 1, updated_by, updated_at.\n\nNew columns on helix_inventory_lots:\n- store_id INTEGER. NULL means the dispensing pharmacy, which is today's meaning.\n- status TEXT NOT NULL DEFAULT 'available' CHECK (available, quarantined, recalled, pending_inspection, written_off, returned_to_vendor).\n- units_per_pack, mrp_pack_paise, unit_cost_paise INTEGER.\n- mfg_date DATE, vendor_id INTEGER, goods_receipt_line_id INTEGER, received_at TEXT, created_at TEXT.\n- Index on (medication_id, store_id, status, expiration_date).\n- Partial UNIQUE on (medication_id, store_id, lot_number, expiration_date) WHERE store_id IS NOT NULL.\n\nNew columns on helix_stock_movements:\n- movement_type TEXT CHECK (NULL or opening, receipt, dispense, ward_return, return_restock, transfer_out, transfer_in, adjustment, count_variance, expiry_write_off, damage_write_off, vendor_return, consumption, op_sale).\n- store_id, balance_after_units, unit_cost_paise, reference_type, reference_id, actor_id, remarks.\n- idempotency_key, with a partial UNIQUE index.\n- occurred_at TEXT, written with clinical_time.utc_iso_now(). Readers order by occurred_at DESC, rowid DESC.\n\nNew columns on procurement tables:\n- purchase_orders.domain, goods_receipts.domain and indents.domain: TEXT NOT NULL DEFAULT 'stores' CHECK (stores, pharmacy).\n- indents.indent_kind: TEXT NOT NULL DEFAULT 'purchase' CHECK (purchase, issue).\n- indents.issuing_store_id.\n- helix_medication_id and units_per_pack on purchase_order_lines, goods_receipt_lines and indent_lines.\n- goods_receipt_lines: free_quantity_milli INTEGER NOT NULL DEFAULT 0, mrp_pack_paise, mfg_date, helix_lot_id.\n- indent_lines: issued_quantity_milli.\n- vendors: drug_licence_numbers, drug_licence_valid_to, ndps_licence_number.\n- stores.pharmacy_kind TEXT CHECK (NULL or dispensing, sub_store, ward_imprest, crash_cart, ndps_vault, returns_quarantine), with a partial UNIQUE index that allows one 'dispensing' store (the multi-site epic relaxes this to one per site).\n\nNew tables:\n- pharmacy_par_levels: store_id, helix_medication_id, par_units, reorder_level_units, max_units; UNIQUE (store_id, helix_medication_id).\n- pharmacy_transfers: transfer_number, from_store_id, to_store_id, indent_id, status (draft, dispatched, received, partially_received, cancelled), dispatched_by/at, received_by/at, cancel_reason, idempotency_key UNIQUE.\n- pharmacy_transfer_lines: pharmacy_transfer_id, line_no, indent_line_id, helix_medication_id, from_lot_id, to_lot_id, batch_no, expiry_date, quantity_units, received_units, discrepancy_reason.\n- pharmacy_lot_events: lot_id, from_status, to_status, reason, actor_id, second_actor_id, reference, occurred_at. Append-only.\n- pharmacy_stock_counts and pharmacy_stock_count_lines: system_units, counted_units, variance_units, reason.\n- pharmacy_ward_returns: return_number, helix_order_id, patient_id, store_id, lot_id, quantity_units, status (received_pending_inspection, restocked, written_off), returned_by, received_by, inspected_by, note, occurred_at.\n- pharmacy_vendor_returns, with lines.\n- ndps_register: store_id, helix_medication_id, lot_id, batch_no, entry_type, signed quantity_units, balance_after_units per drug and store, counterparty_type, counterparty_ref, patient_id, helix_order_id, document_ref, actor_id, witness_id, occurred_at, remarks. Append-only through trg_ndps_register_no_update and trg_ndps_register_no_delete (RAISE(ABORT)).\n\nNaming rule for new tables:\n- Use helix_order_id and helix_medication_id, never order_id or medication_id. The reseed sweep would read those as links to `orders` and `medications` and wipe the table on every reseed.\n\nDocument series (is_configured=0): PHPO, PHGRN, PHIND, PHTRF, PHVR, PHRET, PHCNT.\n\nBackfill:\n- Legacy 'dispense' rows get movement_type 'dispense' and reference_type 'helix_order'.\n- Each lot whose quantity differs from SUM(quantity_change) gets one 'opening' movement with the remark \"Balance brought forward when the stock ledger began\". From then on, lot quantity equals the ledger sum.\n\nD. SERVICES\n\nservices/pharmacy_stock_service.py (new)\n- The ONLY writer of helix_inventory_lots.quantity and helix_stock_movements.\n- post_movement(conn, ...) runs inside the caller's immediate transaction; it never opens a nested session. It:\n  - does a relative UPDATE quantity = quantity + ?, guarded against going negative;\n  - inserts the movement with balance_after, idempotency and actor;\n  - calls the NDPS hook.\n- Also provides:\n  - open_or_merge_lot;\n  - pick_fefo_lot: dispensing store only, status 'available', in date, FEFO;\n  - dispensable_units;\n  - reports: stock by store, lots, paged ledger, reorder, near-expiry valued at cost and at MRP;\n  - reconcile: lots against the ledger, and NDPS balances against lots;\n  - lot status transitions, recorded in pharmacy_lot_events.\n- An AST test enforces the single-writer rule; seed scripts are allow-listed.\n\nhelix_service.py changes\n- _atomic_dispense and _in_date_stock delegate to the new service.\n- transition_order_status and receive_order move to db_session(immediate=True). This closes the lost-update race.\n- get_inventory returns store and status, and lists dispensing-store lots only.\n- pre_flight_inventory_check and pre_flight_alternative_suggestion use the same rule.\n- Substitution policy (R002) is not touched.\n\nprocurement_service.py changes\n- A domain argument on create, list, get and move for POs, GRNs and indents.\n- Pharmacy lines resolve through pharmacy_master_service, so procurement still contains no Helix SQL.\n- post_goods_receipt for domain 'pharmacy' calls pharmacy_stock_service.receive_grn_lines(conn, ...) inside its own immediate transaction, never _insert_movement.\n- Stores-side lists default to domain 'stores'.\n\nOther new services\n- services/pharmacy_master_service.py: drug commercial and regulatory fields; classification; drug creation (after GRN-RS1); stores with pharmacy_kind; par levels; vendor drug licence.\n- services/pharmacy_transfer_service.py: issue indents, FEFO issue plans, dispatch, and ward receipt with receiver different from dispatcher.\n- services/pharmacy_store_service.py: counts, adjustments, quarantine, recall, write-off, vendor returns, ward returns.\n- services/ndps_service.py: register writes from the movement hook, witness by a second user's PIN (services/pin_security.verify_pin), balances, export.\n\nE. ROUTES\nNew router server/routes/pharmacy_store_routes.py, prefix /api/pharmacy-store. Handlers are plain def; each uses require_module plus a tier dependency.\n- meta, overview.\n- Masters: drugs, stores, par-levels, vendors/{code}/drug-licence.\n- purchase-orders, plus submit, approve, issue, cancel and reorder-suggestions.\n- goods-receipts, plus post and cancel.\n- stock, lots, ledger (paged), near-expiry, reorder, reconcile.\n- lots/{id}/quarantine, recall, release and write-off; recall-trace; vendor-returns.\n- indents, plus submit, decide, cancel and issue-plan.\n- transfers, plus dispatch and cancel.\n- Ward side, gated on helix.receive with department_scope:\n  - ward/transfers/awaiting;\n  - ward/transfers/{id}/receive;\n  - ward/stock.\n- counts, plus submit and approve; adjustments.\n- ward-returns, plus inspect.\n- ndps/register, ndps/balances, ndps/witness, ndps/export.csv.\n\nChanges to existing routes:\n- POST /api/helix/orders/{id}/transition gains optional dispense_quantity_units and lot_id, honoured only when the module is on.\n- procurement_routes passes domain 'stores'.\n- main.py gains one include_router line.\n\nF. PERMISSIONS\n- New in permissions.py: pharmacy_store.read, pharmacy_store.write, pharmacy_store.approve, pharmacy_store.ndps, ward_indent.raise.\n- roles.py is unchanged. No new role, so no users rebuild.\n- Proposed grants (ruling GRN-R7):\n  - pharmacist: read, write, ndps;\n  - admin: read, approve;\n  - nurse: none, plus ward_indent.raise after W128 is ruled.\n- Receipt of ward transfers reuses helix.receive (nurse only), scoped by department_scope against the receiving store's department. That department is canonicalised with admission_service.resolve_admission_department (read-only use).\n- Separation rules enforced in the service:\n  - PO approver differs from the creator;\n  - adjustment and write-off approver differs from the requester;\n  - transfer receiver differs from the dispatcher;\n  - count approver differs from the counter;\n  - NDPS witness differs from the actor.\n- src/lib/roles.ts mirrors only the permissions the UI gates on.\n\nG. AUDIT\nAll audit rows go through services.audit_service in the same transaction (db=conn), so nothing commits unaudited. target_id is always a string. One row per document action, not per ledger line; the ledger is the line record.\n- 'security': pharmacy_po_*, pharmacy_grn_*, pharmacy_transfer_*, pharmacy_lot_*, pharmacy_adjustment_posted, pharmacy_count_approved, pharmacy_drug_master_updated, pharmacy_drug_classification_changed, pharmacy_store_upserted, ndps_entry_witnessed, ndps_register_exported.\n- 'clinical_access': pharmacy_ward_return_recorded, pharmacy_ward_return_inspected, pharmacy_dispense_quantity_set (non-default quantity or an NDPS drug).\n- 'phi_access': pharmacy_recall_trace_viewed.\n\nH. UI\nNew module panel src/pages/panels/PharmacyStorePanel.tsx (with .css and tests), lazily loaded.\n- Tab id 'pharmacy-store', label \"Pharmacy Store\", group 'hospital'.\n- Added to ROLE_CONFIG.pharmacist after 'pharmacy-verify', and to HOSPITAL_MODULE_TABS for admin.\n- A new PHARMACY_DESK_MODULE_IDS exception is pinned in shellConfig.test.ts, beside the dietary exception.\n\nViews:\n- Overview (tiles);\n- Purchasing;\n- Receipts: a GRN grid with batch, expiry (typed twice, per GRN-RS6), MRP, free quantity and rate, saved as a draft and then Posted;\n- Stock: per store, lots, ledger drawer;\n- Indents and Transfers;\n- Expiry and Returns;\n- Stock take;\n- NDPS, shown only with pharmacy_store.ndps;\n- Masters.\n\nNurse side:\n- DeliveriesSheet.tsx gains a \"Ward stock\" section listing transfers awaiting receipt, with Receive.\n- A ward-return action follows later.\n- \"Request from pharmacy\" on the ward board waits for W128.\n\nOther UI changes:\n- HelixFormulary and stock.ts use server reorder levels when present and keep 30 otherwise.\n- API wrappers go in a new src/api/pharmacyStore.ts, not client.ts.\n- Nav keys are added to en.json and hi.json.\n- Empty states use plain language and no demo wording.\n\nI. CONNECTIONS TO OTHER EPICS\n- ADT (adt-*): ward and imprest stores carry ward and department text now. When the bed/ward master lands they gain ward_id. Discharge can prompt ward returns.\n- Single medication-order store (mos-*):\n  - mos supplies a dispense quantity from the authored schedule (W117);\n  - CPOE drugs reaching the pharmacy queue;\n  - eMAR doses linked to helix_medication_id, which enables ward-stock consumption (grn-17) and links a patient's dose to a batch.\n  - mos also edits helix_service, so grn-4 (a pure refactor) should land first.\n- OPD (opd-*): an OP counter sale would reuse FEFO picking and the 'op_sale' movement. Not built here.\n- LIS (lis-*): reagents stay procurement stock. Only the stores table is shared.\n- Multi-site (site-*):\n  - stores.site_id;\n  - one dispensing store per site;\n  - inter-site transfers through pharmacy_transfers, with a GST stock transfer note when GSTINs differ;\n  - document series per site.\n- Billing (grn-16): price at batch MRP, net of returns.\n- NABH: NDPS variances and expired-stock incidents can feed the incident register (GRN-R14).\n- Retention (W168): GST 72 months for PO, GRN and vendor-return documents. NDPS register rows are retained under legal obligation and excluded from DPDP erasure.",
+  "functions": [
+   {
+    "function": "Drug item master linked to helix_medication_master (commercial and regulatory fields, maintenance screen)",
+    "status_now": "Partial. Five-column table (helix_db.py:9-15) with read-only GET /api/helix/catalog (helix_routes.py:16-19). Rows are created only by seed scripts. No pack size, HSN, GST, MRP, schedule, NDPS or reorder fields.",
+    "in_scope": true,
+    "notes": "grn-5 adds commercial and regulatory fields. grn-6 (drug creation and clinical identity) waits on GRN-RS1. High-alert and LASA flags belong to the formulary-safety work, not here."
+   },
+   {
+    "function": "Vendor master with drug licence",
+    "status_now": "Partial. The shared vendors table (migrations.py:2287-2316) has GSTIN and PAN but no drug licence or NDPS licence.",
+    "in_scope": true,
+    "notes": "Additive columns on the shared vendors table, set through pharmacy_master_service."
+   },
+   {
+    "function": "Pharmacy locations: main, sub-store, ward imprest, crash cart, NDPS vault",
+    "status_now": "Absent for drugs. The stores table (migrations.py:2318-2329) holds non-pharmacy store types only, and Helix lots have no location.",
+    "in_scope": true,
+    "notes": "stores.pharmacy_kind added with ALTER, no rebuild. One dispensing store in v1 (GRN-R17)."
+   },
+   {
+    "function": "Purchase order intake for drugs",
+    "status_now": "Absent. PO machinery exists for non-pharmacy items only; create_purchase_order refuses items outside inventory_items (procurement_service.py:1389), and the is_pharmacy CHECK sits at migrations.py:2357.",
+    "in_scope": true,
+    "notes": "Reuse the procurement PO with domain='pharmacy' (grn-7)."
+   },
+   {
+    "function": "Goods receipt note with batch, expiry, MRP, cost, free quantity and supplier invoice",
+    "status_now": "Absent for drugs. Procurement's GRN has batch, expiry and invoice fields but no MRP or free quantity, and it posts to the non-pharmacy stock_movements (procurement_service.py:1642-1919). Only seed scripts create drug stock.",
+    "in_scope": true,
+    "notes": "grn-8: draft then explicit Post; lots are created through the single writer."
+   },
+   {
+    "function": "Drug stock ledger (receipt, dispense, return, transfer, adjustment, expiry write-off)",
+    "status_now": "Partial. helix_stock_movements (helix_db.py:60-68) is written only by dispense (helix_service.py:792-797). It has no type, store, actor, balance or idempotency, nothing reconciles it with lots.quantity, and the read is unpaged with no screen (W120).",
+    "in_scope": true,
+    "notes": "grn-3 adds the schema and backfill; grn-4 makes one writer; grn-9 adds the paged ledger view."
+   },
+   {
+    "function": "Batch FEFO at dispense",
+    "status_now": "Partial, improved this week. Expired and undated lots are now excluded (helix_service.py:728, 754-760; F064). Still always 1 unit (:783), no location or quarantine filter, and a lost-update race from the autocommit read plus absolute UPDATE (:277, :785).",
+    "in_scope": true,
+    "notes": "grn-4 refactors with the same behaviour for legacy lots and closes the race."
+   },
+   {
+    "function": "Expiry management: near-expiry list, quarantine, write-off, return to vendor",
+    "status_now": "Name only. A 90-day highlight in HelixFormulary.tsx:28 plus the dispense refusal. No report, write-off or vendor return.",
+    "in_scope": true,
+    "notes": "grn-9 (report) and grn-10 (actions). The release leg waits on GRN-RS2."
+   },
+   {
+    "function": "Reorder levels and alerts",
+    "status_now": "Name only. LOW_STOCK_THRESHOLD = 30 for every drug (src/components/helix/stock.ts:22).",
+    "in_scope": true,
+    "notes": "Per-drug defaults plus per-store par levels; 'not configured' is shown as such, never as 0 (grn-9)."
+   },
+   {
+    "function": "Stock take and adjustments",
+    "status_now": "Absent for drugs.",
+    "in_scope": true,
+    "notes": "grn-12; the approver must differ from the counter."
+   },
+   {
+    "function": "Sub-store and satellite transfers",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "Transfers are in scope. Satellite dispensing is deferred (GRN-R17)."
+   },
+   {
+    "function": "Ward indent and issue",
+    "status_now": "Absent for drugs. Procurement indents refuse drugs (procurement_service.py:1070). The ward 'request from stores' action is unbuilt (W128).",
+    "in_scope": true,
+    "notes": "grn-11. The nurse raise permission waits on W128 (GRN-R8)."
+   },
+   {
+    "function": "Crash cart and ward imprest par levels",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "grn-11. Which drugs may be ward stock is safety ruling GRN-RS5."
+   },
+   {
+    "function": "Ward receipt of issued stock (custody)",
+    "status_now": "Partial. Patient-specific ward receipt with separation of duties is built (helix_service.py:605-700, helix_routes.py:329-382, migration 35). Ward stock transfers have nothing.",
+    "in_scope": true,
+    "notes": "Reuse helix.receive and the receiver-is-not-dispatcher rule."
+   },
+   {
+    "function": "IP returns (ward to pharmacy)",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "grn-15. Restocking waits on GRN-RS3."
+   },
+   {
+    "function": "Batch recall trace (which patients received batch X)",
+    "status_now": "Absent.",
+    "in_scope": true,
+    "notes": "grn-10. A phi_access audited read."
+   },
+   {
+    "function": "NDPS register hooks",
+    "status_now": "Absent. No classification column, and no code mentions NDPS.",
+    "in_scope": true,
+    "notes": "grn-13: classification, an append-only register written in the same transaction as the movement, witness by PIN, reconciliation."
+   },
+   {
+    "function": "Schedule H, H1 and X classification",
+    "status_now": "Absent. Procurement text wrongly says Helix tracks schedule-H (procurement_service.py:915).",
+    "in_scope": true,
+    "notes": "Classification column plus the hook point here. The H1 register itself is W170."
+   },
+   {
+    "function": "Statutory register printouts (NDPS Forms 3D, 3E, 3H; Schedule H1 register)",
+    "status_now": "Absent.",
+    "in_scope": false,
+    "notes": "W170 statutory registers. Form layouts must be confirmed against the Rules text; RMI status belongs to the hospital."
+   },
+   {
+    "function": "Dispense quantity",
+    "status_now": "Partial. Always 1 unit.",
+    "in_scope": true,
+    "notes": "grn-14: pharmacist-entered, default 1 (GRN-R13). A schedule-derived quantity comes with the mos epic and W117."
+   },
+   {
+    "function": "Pharmacy charges on the bill at batch MRP",
+    "status_now": "Partial. One tariff-priced line per dispensed Helix order (billing_service.py:847-873); no MRP.",
+    "in_scope": true,
+    "notes": "grn-16 hook, coordinated with the billing owner (GRN-R12)."
+   },
+   {
+    "function": "Ward stock consumption on eMAR administration",
+    "status_now": "Absent. eMAR works on the medications table with free-text drug names (emar_service.py:553), with no link to the Helix master.",
+    "in_scope": true,
+    "notes": "grn-17 depends on the mos epic. Consumption must never block a dose."
+   },
+   {
+    "function": "OP pharmacy counter sales",
+    "status_now": "Absent.",
+    "in_scope": false,
+    "notes": "OPD and billing work. The ledger reserves the movement type 'op_sale'."
+   },
+   {
+    "function": "Formulary governance, high-alert and LASA flags",
+    "status_now": "Absent or partial (coverage 2.6).",
+    "in_scope": false,
+    "notes": "A separate formulary-safety epic. GRN-RS5 needs a high-alert list for the ward-stock bar."
+   }
+  ],
+  "increments": [
+   {
+    "id": "grn-1",
+    "title": "Create Helix tables inside the migration runner",
+    "description": "New migration helix_tables_in_runner: a FROZEN copy (not an import of HELIX_SCHEMA) of today's six Helix CREATE TABLE IF NOT EXISTS statements plus indexes, so every later migration can ALTER Helix tables on fresh and existing databases alike. init_helix_db keeps running as an idempotent fallback. Also gives _migrate_stock_movements the same sqlite_master early return as the orders branch (closes W027).",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/helix_db.py",
+     "server/tests/test_fresh_database_init.py",
+     "server/tests/test_migrations.py"
+    ],
+    "files_new": [],
+    "size_days": 1,
+    "depends_on": [],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "A fresh DB has all six Helix tables after init_db() alone. PRAGMA table_info parity between the runner-created and HELIX_SCHEMA-created tables. A tmp_path legacy DB with pre-existing Helix tables is untouched. init_helix_db afterwards is a no-op. The 'Migrating helix_stock_movements' INFO line is absent on fresh boot. The reseed orphan suite still passes."
+   },
+   {
+    "id": "grn-2",
+    "title": "Opt-in module switch and Pharmacy Store skeleton",
+    "description": "config._module_opt_in plus PHARMACY_STORE_ENABLED (ORB_PHARMACY_STORE, default OFF), registered in HOSPITAL_MODULE_ENV and enabled_modules(). New permission constants (pharmacy_store.read, write, approve, ndps; ward_indent.raise) with the grants proposed in GRN-R7, mirrored in src/lib/roles.ts. Router skeleton with require_module and /meta. Client: 'pharmacy-store' module id, OPT_IN_MODULE_IDS defaulting to false, TABS entry and icon, pharmacist and admin rail entries, PHARMACY_DESK_MODULE_IDS exception, an honest empty PharmacyStorePanel, nav keys in i18n. The opt-in helper is likely shared with other HIS epics in this wave: build it once.",
+    "files_touched": [
+     "server/config.py",
+     "server/main.py",
+     "server/permissions.py",
+     "src/shellConfig.tsx",
+     "src/shellConfig.test.ts",
+     "src/lib/roles.ts",
+     "src/i18n/locales/en.json",
+     "src/i18n/locales/hi.json",
+     "server/tests/test_rbac.py"
+    ],
+    "files_new": [
+     "server/routes/pharmacy_store_routes.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/pages/panels/PharmacyStorePanel.css",
+     "src/pages/panels/PharmacyStorePanel.test.tsx",
+     "src/api/pharmacyStore.ts",
+     "server/tests/test_pharmacy_store_module.py"
+    ],
+    "size_days": 2,
+    "depends_on": [],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Flag unset or blank means OFF; every /api/pharmacy-store route returns 404 module_disabled; /api/health modules shows pharmacy-store false. The tab is absent for every role by default, and present for pharmacist and admin only when on and installed. Doctor, nurse and surgeon never get it. The money-adjacency test still holds for the money modules, with the new exception pinned. Permission parity between server and roles.ts. The event-loop discipline test passes (plain def handlers)."
+   },
+   {
+    "id": "grn-3",
+    "title": "Pharmacy store schema and ledger backfill",
+    "description": "Migration pharmacy_store_schema, additive only (no rebuilds, no new FKs): the master, lot and movement columns on the Helix tables; domain, kind and pharmacy line columns on the procurement tables; vendor licence columns; stores.pharmacy_kind with a partial unique index for one dispensing store; new tables pharmacy_par_levels, pharmacy_transfers(+lines), pharmacy_lot_events, pharmacy_stock_counts(+lines), pharmacy_ward_returns, pharmacy_vendor_returns(+lines), ndps_register with no-update and no-delete triggers; document series rows set is_configured=0. Backfill types legacy dispense rows and writes one 'opening' movement per lot so the lot quantity equals the ledger sum. New column names avoid order_id and medication_id because of the reseed name-match sweep.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/tests/test_migrations.py",
+     "server/tests/test_reseed_orphans.py",
+     "server/tests/test_fresh_database_init.py"
+    ],
+    "files_new": [
+     "server/tests/test_pharmacy_store_schema.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "grn-1"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "A tmp_path legacy DB with seeded lots and dispense movements: after migration SUM(quantity_change) equals quantity for every lot, and legacy rows are typed 'dispense'. Existing procurement rows read domain 'stores'. The inventory_items.is_pharmacy CHECK still refuses 1. CHECK constraints reject bad enums. The ndps_register triggers refuse UPDATE and DELETE. patient_scoped_tables() does not list pharmacy_par_levels, pharmacy_transfers or pharmacy_stock_counts. The migration is idempotent if the ledger is reset."
+   },
+   {
+    "id": "grn-4",
+    "title": "One writer for drug stock; dispense refactor",
+    "description": "New pharmacy_stock_service with post_movement(conn, ...), open_or_merge_lot, pick_fefo_lot (dispensing store, status available, in date, FEFO), dispensable_units and reconcile. helix_service._atomic_dispense, _in_date_stock, get_inventory and the pre_flight checks delegate to it. transition_order_status and receive_order move to db_session(immediate=True), closing the lost-update race. Behaviour is identical for legacy lots (NULL store, available): still 1 unit, FEFO. seed_helix opens lots through the service so seeded data reconciles. Must land after the R024 helix_service edits.",
+    "files_touched": [
+     "server/services/helix_service.py",
+     "server/scripts/seed_helix.py",
+     "server/tests/test_helix_stock_rules.py",
+     "server/tests/test_helix_order_lifecycle.py"
+    ],
+    "files_new": [
+     "server/services/pharmacy_stock_service.py",
+     "server/tests/test_pharmacy_stock_ledger.py",
+     "server/tests/test_pharmacy_stock_single_writer.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "grn-3"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "The existing Helix stock, lifecycle, substitution and ward-receipt suites pass unchanged. Ward-imprest, crash-cart, quarantined and pending-inspection lots are never dispensed and never counted by pre-flight or Formulary. Two threads dispensing the last unit: exactly one succeeds and the other gets the no-stock error. An idempotent replay writes no second movement. balance_after equals the lot quantity. reconcile() is clean on a reseeded DB. An AST guard allows only pharmacy_stock_service (and allow-listed seed scripts) to UPDATE helix_inventory_lots.quantity or INSERT INTO helix_stock_movements."
+   },
+   {
+    "id": "grn-5",
+    "title": "Drug master commercial and regulatory fields; store, par and vendor licence masters",
+    "description": "pharmacy_master_service plus routes and the Masters view. Editable: pack size and UOMs, HSN, GST rate (never seeded), manufacturer, storage condition, reorder defaults and active flag (pharmacy_store.write); schedule and NDPS classification (pharmacy_store.ndps). Name, generic, form and strength are shown read-only. Stores with pharmacy_kind (approve tier), with ward store department canonicalised by admission_service.resolve_admission_department (called, not edited). Per-store par levels. Vendor drug licence numbers and validity (approve tier). In-transaction audit under 'security'.",
+    "files_touched": [
+     "server/routes/pharmacy_store_routes.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts",
+     "server/services/procurement_service.py"
+    ],
+    "files_new": [
+     "server/services/pharmacy_master_service.py",
+     "server/tests/test_pharmacy_master.py",
+     "src/pages/panels/PharmacyStorePanel.masters.test.tsx"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "grn-2",
+     "grn-3"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Name, generic, form and strength cannot be changed through these routes (422). A classification change is audited with before and after values. An unclassified drug is listed as 'Not classified', never as none. A second dispensing store is refused. A store department not matching a known admission department is refused or warned per F104. GST rate NULL reads 'Not configured'. Audit rows carry string target_id."
+   },
+   {
+    "id": "grn-6",
+    "title": "Add a drug to the formulary and govern its clinical identity",
+    "description": "Create a helix_medication_master row (generic name required, molecule, strength, form, route class) and handle corrections to clinical identity according to GRN-RS1, because generic_name drives allergy and interaction screening. Before saving, the screen shows which allergy and interaction classes the screen will map the generic to. After creation it calls sage_service.refresh_formulary_terms_from_db so the Sage mutation gate knows the new name without a restart (coordinate with the Sage bed-lookup session, which owns sage_service).",
+    "files_touched": [
+     "server/services/pharmacy_master_service.py",
+     "server/routes/pharmacy_store_routes.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "files_new": [
+     "server/tests/test_pharmacy_drug_identity.py"
+    ],
+    "size_days": 2,
+    "depends_on": [
+     "grn-5"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "GRN-RS1 (new safety ruling raised by this design)",
+    "migrations": 0,
+    "tests": "Missing generic name is refused. Duplicate molecule, strength and form under the same name is refused. Identity edits on a row with orders or stock follow the ruled path (for example retire and replace). The second-person confirm is enforced if ruled. A new brand of a penicillin is screened as a penicillin by allergy_interlock. The Sage lexicon contains the new name without a restart."
+   },
+   {
+    "id": "grn-7",
+    "title": "Pharmacy purchase orders",
+    "description": "Domain argument on procurement_service PO functions, with a pharmacy line resolver through pharmacy_master_service (active, classified, pack size configured). Units-per-pack snapshot on the line. PHPO series. Stores-side PO lists and gets filter domain 'stores' so the procurement routes cannot edit drug POs. Pharmacy-domain rules: valid vendor drug licence (GRN-R10) and approver different from creator. Reorder suggestions become a draft PO. Purchasing view.",
+    "files_touched": [
+     "server/services/procurement_service.py",
+     "server/routes/procurement_routes.py",
+     "server/routes/pharmacy_store_routes.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts",
+     "server/tests/test_procurement.py"
+    ],
+    "files_new": [
+     "server/tests/test_pharmacy_purchase_orders.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "grn-5"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "All 75 procurement tests still pass. A drug line on a stores PO is still refused. A pharmacy PO for an unclassified drug or an unlicensed vendor is refused. A pharmacy PO is invisible on /api/procurement/purchase-orders. Self-approval is refused. GST lines match money.compute_line. Document numbers come from PHPO."
+   },
+   {
+    "id": "grn-8",
+    "title": "Pharmacy goods receipt (GRN): batch, expiry, MRP, free quantity, supplier invoice",
+    "description": "Pharmacy branch in create_goods_receipt and post_goods_receipt. Batch and expiry are mandatory, with expiry typed twice per GRN-RS6. MRP is mandatory. Free quantity, optional mfg date, minimum remaining shelf life with an approve-tier override (GRN-R16), a warning when rate exceeds MRP, and refusal when an existing batch has a different expiry. Post writes lots and receipt movements via pharmacy_stock_service.receive_grn_lines(conn, ...) inside procurement's immediate transaction. Unit cost uses GRN-R12 (line total including non-creditable GST divided by paid plus free units). NDPS-classified drugs may be received only into an ndps_vault store. Draft, then explicit Post, then cancel draft; vendor invoice total mismatch warning; PHGRN series; Receipts view.",
+    "files_touched": [
+     "server/services/procurement_service.py",
+     "server/services/pharmacy_stock_service.py",
+     "server/routes/pharmacy_store_routes.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "files_new": [
+     "server/tests/test_pharmacy_grn.py",
+     "src/pages/panels/PharmacyStorePanel.grn.test.tsx"
+    ],
+    "size_days": 5,
+    "depends_on": [
+     "grn-4",
+     "grn-7"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Over-receipt refused. Expired or short-dated receipt refused unless overridden by approve tier. Mismatched second expiry entry refused. Idempotent replay posts once. Same batch, expiry and store merges into one lot. Free units added at zero cost and spread into unit cost. Lots land in the GRN's store with status available. reconcile() clean after post. A stores GRN still posts to stock_movements only. No row appears in inventory_items. An NDPS drug into a non-vault store is refused. Post failure rolls back lots, movements and PO status together."
+   },
+   {
+    "id": "grn-9",
+    "title": "Stock, ledger, reorder and near-expiry views",
+    "description": "Reports in pharmacy_stock_service: stock per store and drug split into dispensable, in transit, quarantined and expired; lots; paged ledger ordered by occurred_at DESC, rowid DESC (closes W120's stock-movement ledger tab); reorder against per-store par or the drug default; near-expiry with ORB_PHARMACY_NEAR_EXPIRY_DAYS (default 90) and value at cost and at MRP. Overview tiles and Stock view. HelixFormulary and stock.ts use the server reorder level when present and keep 30 otherwise, so the flag-off screens are identical.",
+    "files_touched": [
+     "server/services/pharmacy_stock_service.py",
+     "server/routes/pharmacy_store_routes.py",
+     "server/config.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts",
+     "src/components/helix/stock.ts",
+     "src/components/helix/HelixFormulary.tsx",
+     "src/components/helix/HelixFormulary.test.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_pharmacy_stock_reports.py",
+     "src/pages/panels/PharmacyStorePanel.stock.test.tsx"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "grn-4",
+     "grn-5"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Reorder counts only dispensable units. An unset level reads 'No reorder level set', never 0. Near-expiry drops zero-balance lots. Ledger paging is stable under ties. The Formulary snapshot is unchanged with the flag off. Value-at-risk shows 'Rate not configured' when cost is NULL."
+   },
+   {
+    "id": "grn-10",
+    "title": "Quarantine, recall, expiry write-off and return to vendor",
+    "description": "Lot status transitions with pharmacy_lot_events. Quarantine (write tier). Recall by batch across all stores including ward imprest and crash carts. Recall trace: every dispense of the batch with patient, order and ward, audited as phi_access fail-closed and scoped by department_scope for any ward-scoped account. Expiry and damage write-off (approve tier, reason). Vendor return document (PHVR) with movements. The dispense rule already excludes non-available lots (grn-4). The release-from-quarantine leg is not exposed until GRN-RS2 is ruled; until then quarantine ends only in write-off or vendor return.",
+    "files_touched": [
+     "server/services/pharmacy_stock_service.py",
+     "server/routes/pharmacy_store_routes.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "files_new": [
+     "server/services/pharmacy_store_service.py",
+     "server/tests/test_pharmacy_quarantine_recall.py"
+    ],
+    "size_days": 4,
+    "depends_on": [
+     "grn-8",
+     "grn-9"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "GRN-RS2 (release leg only; the rest can ship)",
+    "migrations": 0,
+    "tests": "Quarantined and recalled lots are never dispensed or counted, in all three Helix read paths. Recall finds lots in every store type. The trace returns every dispense of the batch and refuses (500) when the phi_access audit write fails. Write-off needs approve tier and a reason, and the requester cannot approve. Vendor return reduces the lot and numbers the document. 'recalled' is terminal."
+   },
+   {
+    "id": "grn-11",
+    "title": "Ward indents, issue transfers, ward receipt, imprest and crash-cart par levels",
+    "description": "pharmacy_transfer_service: issue indents (indents with domain 'pharmacy' and indent_kind 'issue', requesting ward store, issuing dispensing store), approve and decide, FEFO issue plan from in-date available dispensing-store lots, dispatch (transfer_out), ward receipt (transfer_in, helix.receive, department_scope, receiver different from dispatcher), in-transit view, par top-up suggestions for imprest and crash carts limited to the per-store imprest list (GRN-RS5). Nurses get a 'Ward stock' section in DeliveriesSheet. Raising indents stays with the pharmacist until W128 grants ward_indent.raise. Administration from ward stock still needs an active eMAR order (no gate changes).",
+    "files_touched": [
+     "server/routes/pharmacy_store_routes.py",
+     "server/services/pharmacy_stock_service.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/pages/panels/nurse/DeliveriesSheet.tsx",
+     "src/pages/panels/nurse/DeliveriesSheet.test.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "files_new": [
+     "server/services/pharmacy_transfer_service.py",
+     "server/tests/test_pharmacy_transfers.py"
+    ],
+    "size_days": 5,
+    "depends_on": [
+     "grn-4",
+     "grn-5",
+     "grn-9"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "GRN-RS5 (new safety ruling: which drugs may be ward or crash-cart stock); build behind the flag, enable at a site after the ruling",
+    "migrations": 0,
+    "tests": "Dispatch draws only dispensable lots FEFO. Each transfer_out and transfer_in pair sums to zero. In-transit units count in neither store's dispensable stock. The dispatcher receiving is refused with 403. A nurse sees only her department's ward store, and another ward's transfer is a 404. A drug not on the store's imprest list cannot be issued to it. Helix dispense never draws a ward lot. A partial receipt records a discrepancy reason."
+   },
+   {
+    "id": "grn-12",
+    "title": "Stock take and adjustments",
+    "description": "Count sheets per store with a blind option, submit, approve by a different user, and count_variance movements. Ad hoc adjustments (approve tier) with reason codes: breakage, found, data correction. A negative balance is refused. NDPS-classified variances require a witness once grn-13 lands.",
+    "files_touched": [
+     "server/services/pharmacy_store_service.py",
+     "server/services/pharmacy_stock_service.py",
+     "server/routes/pharmacy_store_routes.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "files_new": [
+     "server/tests/test_pharmacy_stock_counts.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "grn-9"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "A blind count hides system quantity in the payload. The counter cannot approve. Variances post exactly once (idempotent). An adjustment without a reason is refused. reconcile() is clean after approval."
+   },
+   {
+    "id": "grn-13",
+    "title": "NDPS register hooks and schedule classification",
+    "description": "ndps_service is called from post_movement in the same transaction for every movement of a narcotic or psychotropic drug (receipt, transfer, dispense, ward return, write-off, adjustment, count variance). It writes ndps_register with a running balance per drug and store. A witness, verified by a different user's PIN through pin_security.verify_pin, is required for wastage, destruction, adjustment and variance. Receipt only into the vault store. Reclassifying a drug that has stock writes an opening entry. Daily reconciliation report, register view and CSV export. Statutory form layouts stay with W170.",
+    "files_touched": [
+     "server/services/pharmacy_stock_service.py",
+     "server/routes/pharmacy_store_routes.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/api/pharmacyStore.ts",
+     "server/services/consent_service.py"
+    ],
+    "files_new": [
+     "server/services/ndps_service.py",
+     "server/tests/test_ndps_register.py"
+    ],
+    "size_days": 5,
+    "depends_on": [
+     "grn-4",
+     "grn-5",
+     "grn-8"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Every movement of a classified drug writes exactly one register row, and a rollback of the movement leaves none. The register balance equals SUM of lot quantities per store. A self-witness or wrong PIN is refused, with PIN lockout respected. The triggers refuse UPDATE and DELETE. Erasure and retention review skip register rows (legal obligation). The CSV export is audited."
+   },
+   {
+    "id": "grn-14",
+    "title": "Dispense quantity and batch choice at dispense",
+    "description": "When the module is on, the 'dispensed' transition accepts dispense_quantity_units (default 1, bounded by a site maximum) and an optional lot_id, which must be dispensable; otherwise FEFO. A lot without enough quantity returns 409 and is never silently split. The NDPS dispense register row carries patient, order and prescriber. HelixOrderReviewModal shows the quantity and a lot picker only when the module is on. Must follow the R024 helix_service and relay_routes work.",
+    "files_touched": [
+     "server/services/helix_service.py",
+     "server/routes/helix_routes.py",
+     "server/services/pharmacy_stock_service.py",
+     "src/components/helix/HelixOrderReviewModal.tsx",
+     "src/components/helix/HelixOrderReviewModal.lifecycle.test.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_pharmacy_dispense_quantity.py"
+    ],
+    "size_days": 2,
+    "depends_on": [
+     "grn-4"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Flag off: new fields are ignored and behaviour is byte-identical (1 unit, FEFO). Flag on: the quantity is bounded; an expired or quarantined chosen lot is refused; the drug-safety gate still runs on the effective drug; an NDPS dispense writes a register row; the audit row is written in the same transaction."
+   },
+   {
+    "id": "grn-15",
+    "title": "Ward returns of dispensed medicines",
+    "description": "A nurse (helix.receive, department-scoped) or pharmacist records the return of unused units against a delivered Helix order. The return cannot exceed units dispensed minus units already returned. Units land in returns_quarantine with status received_pending_inspection and are never dispensable. Inspection: write-off now; restock into the original lot only after GRN-RS3. Audited as clinical_access in the same transaction. A billing credit candidate is exposed for grn-16. NDPS returns go to the register.",
+    "files_touched": [
+     "server/services/pharmacy_store_service.py",
+     "server/services/pharmacy_stock_service.py",
+     "server/routes/pharmacy_store_routes.py",
+     "src/pages/panels/PharmacyStorePanel.tsx",
+     "src/pages/panels/nurse/DeliveriesSheet.tsx",
+     "src/api/pharmacyStore.ts"
+    ],
+    "files_new": [
+     "server/tests/test_pharmacy_ward_returns.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "grn-4",
+     "grn-10",
+     "grn-14"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "GRN-RS3 (restock leg only)",
+    "migrations": 0,
+    "tests": "Over-return refused. A nurse outside the patient's department gets 404. Returned units are excluded from every dispensable count. Restock is unavailable until ruled. The clinical_access audit row commits with the return or neither commits."
+   },
+   {
+    "id": "grn-16",
+    "title": "Pharmacy charges at batch MRP",
+    "description": "billing_service._clinical_candidates prices the pharmacy source at the dispensed lot's MRP per unit times dispensed units, net of returns, falling back to the tariff when no MRP exists (GRN-R12). Coordinate with the billing owner; the idempotency key stays per Helix order.",
+    "files_touched": [
+     "server/services/billing_service.py",
+     "server/tests/test_billing_permissions.py"
+    ],
+    "files_new": [
+     "server/tests/test_billing_pharmacy_mrp.py"
+    ],
+    "size_days": 2,
+    "depends_on": [
+     "grn-14",
+     "grn-15"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "Line equals units times MRP per unit, rounded by money.py. A return creates a credit. A lot with no MRP skips with reason 'rate_not_configured' rather than billing 0. A replay does not double-charge."
+   },
+   {
+    "id": "grn-17",
+    "title": "Ward stock consumption from eMAR administrations",
+    "description": "After an eMAR dose is committed as 'given' for a drug linked to helix_medication_id (from the mos epic), post a 'consumption' movement against the ward imprest lot, FEFO. This runs post-commit, never blocks or delays the dose, and flags negative ward stock on the overview instead of refusing.",
+    "files_touched": [
+     "server/services/emar_service.py",
+     "server/services/pharmacy_stock_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_ward_stock_consumption.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "grn-11",
+     "mos-*"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "An administration succeeds even when the consumption write fails (fault injection). No consumption for drugs not in ward stock. An idempotent eMAR replay consumes once. Negative ward balance is shown, not refused."
+   },
+   {
+    "id": "grn-18",
+    "title": "Seeds, retention mapping and operator docs",
+    "description": "seed_helix and seed_modules open stock through the ledger and, when the flag is on, seed a dispensing store, a licensed vendor, one posted GRN, a ward imprest store, a crash cart and a near-expiry lot. No demo wording; no NDPS-classified stock in the seed unless GRN-R14 says otherwise. Map PO, GRN and vendor-return documents to the GST 72-month retention category (coordinate with the W168 owner). Correct the procurement boundary text once it is true. Update the module manual and its section source by hand (manual assembly drift trap).",
+    "files_touched": [
+     "server/scripts/seed_helix.py",
+     "server/scripts/seed_modules.py",
+     "server/services/consent_service.py",
+     "server/services/procurement_service.py",
+     "src/pages/panels/ProcurementPanel.tsx",
+     "docs/MODULE_MANUAL.md",
+     "docs/HOSPITAL_FUNCTION_COVERAGE_2026-10.md"
+    ],
+    "files_new": [],
+    "size_days": 2,
+    "depends_on": [
+     "grn-11",
+     "grn-13"
+    ],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "reconcile() is clean on a freshly reseeded DB. Flag-off seed output is identical to today's. Retention review lists the new sources. A no-em-dash check passes over changed docs."
+   }
+  ],
+  "product_rulings": [
+   {
+    "question": "GRN-RS1: Who may add a drug to the formulary, or change a drug's clinical identity (generic name, strength, form)? generic_name drives allergy and interaction screening, and today rows come only from seed scripts.",
+    "options": "(a) Any pharmacist alone, audited. (b) A pharmacist creates; a second pharmacist or the medical lead confirms before the row can be ordered. Identity edits on a row with orders or stock are refused: retire it and create a new row. (c) Only by import from a licensed knowledge base.",
+    "recommendation": "(b). The screen must show which allergy and interaction classes the generic will map to before save.",
+    "safety": true
+   },
+   {
+    "question": "GRN-RS2: Can a quarantined batch be released back to dispensable stock, and by whom? Are recalled or NSQ (not of standard quality) batches ever releasable?",
+    "options": "(a) Any pharmacist, with a reason. (b) A different pharmacist from the one who quarantined, with a reason, audited; recalled and NSQ are terminal. (c) No release ever.",
+    "recommendation": "(b).",
+    "safety": true
+   },
+   {
+    "question": "GRN-RS3: May medicines returned from a ward re-enter dispensable stock?",
+    "options": "(a) Any in-date return. (b) Only sealed, in-date, non-cold-chain, non-NDPS unit packs after pharmacist inspection; everything else is written off or destroyed by process. (c) Never.",
+    "recommendation": "(b).",
+    "safety": true
+   },
+   {
+    "question": "GRN-RS4: Should a batch be dispensed when it expires within days, possibly before the supply runs out?",
+    "options": "(a) Refuse when expiry is within N days. (b) Warn the pharmacist and record a reason. (c) As today: any in-date lot.",
+    "recommendation": "(b), with N as a site setting defaulting to 30 days, until dispense quantity is schedule-derived (W117). Then compare against the supply end date.",
+    "safety": true
+   },
+   {
+    "question": "GRN-RS5: Which drugs may be held as ward imprest or crash-cart stock? Does administration from ward stock still require an active eMAR order?",
+    "options": "(a) Any formulary drug. (b) Only drugs on a per-store imprest list approved by pharmacy and the medical lead. Concentrated electrolytes (for example potassium chloride concentrate) and other site-listed high-alert drugs are barred unless named as an exception. eMAR order still required. (c) No ward stock in v1.",
+    "recommendation": "(b). This design changes no administration gate.",
+    "safety": true
+   },
+   {
+    "question": "GRN-RS6: How is expiry entered at GRN? A typo that makes an expired batch look in date would make it dispensable.",
+    "options": "(a) GS1 barcode scan only. (b) Expiry typed twice and compared, plus scan when available. (c) Single typed entry.",
+    "recommendation": "(b) now; (a) once scanners exist at the site.",
+    "safety": true
+   },
+   {
+    "question": "GRN-R7: Who holds the new pharmacy-store permissions? Should a 'storekeeper' role be added?",
+    "options": "Pharmacist read, write and ndps; admin read and approve; separation rules (approver is never the raiser) in the service. A storekeeper role needs a users-table rebuild migration.",
+    "recommendation": "As listed. No new role in v1; a site that wants a pharmacist-in-charge approver gets an explicit grant.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R8 (W128): May nurses raise ward indents to pharmacy and see their own ward's stock?",
+    "options": "(a) Yes: ward_indent.raise plus a ward stock view, department-scoped, with receipt via helix.receive. (b) Pharmacist raises on the ward's behalf. (c) Paper.",
+    "recommendation": "(a).",
+    "safety": false
+   },
+   {
+    "question": "GRN-R9: The shell rule keeps every non-dietary module (money screens) off clinical rails. Should the pharmacist get a Pharmacy Store tab that shows purchase values?",
+    "options": "(a) Yes, as a pinned pharmacy-desk exception. (b) Pharmacist gets stock views inside Helix only; money views stay admin-only.",
+    "recommendation": "(a). The pharmacist already holds procurement.read and write through the API, and drug purchasing is pharmacy work.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R10: Must a vendor have a valid drug licence on file before a pharmacy PO or GRN?",
+    "options": "Refuse; warn; ignore.",
+    "recommendation": "Refuse for the pharmacy domain, and warn 30 days before licence expiry.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R11: Separate document number series for pharmacy POs, GRNs, indents, transfers and returns?",
+    "options": "Shared PO-/GRN- series, or PHPO/PHGRN/PHIND/PHTRF/PHVR/PHRET/PHCNT.",
+    "recommendation": "Separate series, configured by the site before first use.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R12: Costing and billing price for drugs.",
+    "options": "Cost: lot landed cost including non-creditable GST spread over paid plus free units, or weighted average. Bill: batch MRP per unit, or tariff price list.",
+    "recommendation": "Lot cost; bill at batch MRP (a DPCO ceiling), with the tariff only where no MRP exists. Coordinate with the billing owner.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R13: Who decides dispense quantity until the authored administration schedule (W117) exists?",
+    "options": "Pharmacist enters it (default 1, site maximum); or computed from dose and frequency text.",
+    "recommendation": "Pharmacist-entered and bounded. Computed quantity comes with the single medication-order store.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R14: NDPS controls: vault-only receipt, who may witness, and what a variance triggers. May demo seeds contain NDPS stock?",
+    "options": "Witness by a second pharmacist; or any registered nurse or doctor for ward wastage. Variance: report only, or auto-draft a NABH incident.",
+    "recommendation": "Vault-only receipt. Second-user PIN witness: pharmacist plus admin for vault adjustments, and a registered nurse or doctor for ward wastage. Every variance drafts an incident. No NDPS stock in seeds, because the register is append-only and survives reseeds. Confirm form layouts with the W170 owner.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R15: How is ward stock consumption accounted before eMAR doses link to the drug master?",
+    "options": "Periodic count and top-up; or wait for automatic decrement on administration.",
+    "recommendation": "Count-based top-up now; automatic decrement (grn-17) once the mos epic lands, never blocking a dose.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R16: Near-expiry window, alert delivery and minimum shelf life on receipt.",
+    "options": "Window 60, 90 or 180 days. Alerts on screen only, or also a daily Relay digest. Minimum shelf life on receipt: none, 90 days, or a site value.",
+    "recommendation": "90 days; screen only first; refuse receipts with under 90 days left unless approve tier overrides.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R17: Satellite pharmacies (OT, ICU) as dispensing points in v1?",
+    "options": "One dispensing pharmacy with satellites as sub-stores; or multiple dispensing stores with order routing.",
+    "recommendation": "One dispensing pharmacy per site in v1. Routing belongs with the multi-site and medication-order epics.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R18: May a drug with no schedule or NDPS classification be purchased or received?",
+    "options": "Refuse; or allow and treat unclassified as 'none'.",
+    "recommendation": "Refuse. Unclassified is not 'none', or the NDPS hook could be bypassed by leaving the field blank.",
+    "safety": false
+   },
+   {
+    "question": "GRN-R19: Should the drug stock ledger (helix_stock_movements) be append-only by trigger?",
+    "options": "Triggers on the ledger; or integrity by single writer, reconciliation and audit, with triggers on the NDPS register only.",
+    "recommendation": "The latter. Ledger rows reference patient orders, and triggers would collide with DPDP erasure and reseed.",
+    "safety": false
+   }
+  ],
+  "risks": [
+   "A second drug ledger is the failure the codebase warns about. inventory_items.is_pharmacy CHECK must stay, and pharmacy GRNs must never call procurement _insert_movement. Enforce with an AST test, not convention.",
+   "Helix tables live outside the migration runner until grn-1. Any Helix ALTER shipped before it no-ops on fresh databases.",
+   "The existing dispense has a lost-update race (autocommit read plus absolute UPDATE at helix_service.py:277/785). grn-4 fixes it. Until then, concurrent dispenses can undercount.",
+   "The reseed sweep wipes any table whose `<parent>_id` column names a wiped table. New columns must use helix_order_id and helix_medication_id, and test_reseed_orphans must cover the new tables.",
+   "The opening-balance backfill dates opening rows at migration time, so ledger history before the migration is incomplete by construction. The remark must say so rather than invent dates.",
+   "About ten tests and two seed scripts insert lots directly, bypassing the ledger. reconcile() will report mismatches on dev DBs until seed_helix is changed (grn-4) and test fixtures move to the service.",
+   "The NDPS register is append-only and keyed to patients. It survives reseeds and must be excluded from DPDP erasure, which needs coordination with the W168 legal-hold work.",
+   "shellConfig.test.ts pins two things: all flags default ON, and no pharmacist gets a module tab. grn-2 must edit those pins deliberately, adding an opt-in set and a pharmacy-desk exception. Reviewers should read these as scoped exceptions, not a weakening.",
+   "Units: purchase packs versus integer dispense units. Liquids, partial ampoules and MRP-per-unit rounding need explicit rules. Pack size not configured must block receipt, not default to 1.",
+   "GST rates for drugs changed in 2025. Rates must be site-entered per drug and never seeded.",
+   "Statutory specifics (NDPS Forms 3D/3E/3H layouts, H1 register fields, retention periods for NDPS records) are not verified in this repo and must be confirmed before W170 builds printouts.",
+   "procurement_service.py is 2,611 lines with 75 tests. The domain branch risks regressions in the stores module, so every stores test must pass unchanged at each increment.",
+   "Sizes total about 54 engineer-days. With review and isolated browser verification, plan about 12 weeks for one engineer. This competes with the approved Ward Record sales plan for the same time.",
+   "Migration numbers 48 and up will be contested by other epics in this design wave. Allocate them at merge and never renumber a shipped one.",
+   "New drugs reach the Sage mutation gate only at boot (main.py:398-403) unless grn-6 triggers a refresh. A newly added brand would otherwise slip past 'stop the X' locking."
+  ],
+  "session_conflicts": [
+   "R024 session (Relay agentic confirm orphan orders): edits server/services/helix_service.py (insert_order added at :219-240), server/routes/relay_routes.py and server/tests/test_agentic_confirm_race.py (modified in the working tree). grn-4 and grn-14 must start after it lands and rebase on insert_order.",
+   "Scribe quick-admit department session: edits server/services/admission_service.py. grn-5 and grn-11 only call resolve_admission_department; wait if its signature changes.",
+   "Sage bed lookup session: owns server/services/sage_service.py. grn-6 wants to call refresh_formulary_terms_from_db after creating a drug; coordinate rather than edit.",
+   "CORS same-origin socket session: edits src/api/client.ts (and possibly main.py CORS config). All new wrappers go in src/api/pharmacyStore.ts. grn-2 adds one include_router line in main.py; merge carefully.",
+   "AdmitPatientModal ACVPU/O2 and Bridge red-flag sessions: no overlap.",
+   "Other HIS epic architects in this wave: the shared opt-in flag helper in server/config.py and the DEFAULT_MODULE_FLAGS opt-in set in src/shellConfig.tsx (build once, grn-2); migration numbering in server/migrations.py; the single medication-order store epic will edit helix_service.py, helix_patient_med_orders and emar_service.py (land grn-4 first as a pure refactor); the ADT epic may introduce a ward master that stores should reference; the billing owner for grn-16."
+  ]
+ }
+}

@@ -1,0 +1,1744 @@
+{
+ "design": {
+  "epic": "Single medication-order store (medorders)",
+  "current_state": "Re-verified against the code on 3 Oct 2026 for this revision (git baseline cafe363; the tree shows only server/tests/test_agentic_confirm_race.py modified among the files this epic needs, so the Relay session has not landed). The highest migration is 47, vitals_carried_from (function at migrations.py:5417, registered at :5494). Today there are four medication stores and eight writing lanes, and nothing links them.\n\nSTORES\n1. medications (database.py:229) is the chart and the eMAR's source. status CHECK is active|discontinued|prn; dosage and frequency are NOT NULL. source, verified_by, verified_at and idempotency_key were added in init_db (database.py:1861-1889). It is the FK parent of medication_administrations (database.py:249), medication_allergy_overrides (m6) and medication_dose_overrides (m10), so it can never be rebuilt inside the migration transaction.\n2. helix_patient_med_orders (helix_db.py:27) is the pharmacy order; one row is one dispense of ONE unit (helix_service.py:783-787). State machine pending->reviewing->verified->scheduled->dispensed->delivered. Receipt is helix.receive (helix_service.py:605, m35). Created by init_helix_db OUTSIDE the migration runner, by an executescript of HELIX_SCHEMA (helix_db.py:88-104). insert_order(conn, ...) already exists, takes an exact catalogue id, never commits, and hard-codes status 'pending' (helix_service.py:219-240). create_order binds by LIKE '%name%' in its own session (:243-255). transition_order_status opens its own deferred session and posts the case-room message itself (:258-440).\n3. orders with order_type='medication' (database.py:805) plus order_events (:824) hold CPOE and order-set drugs as drafts that reach nothing: the nurse board (nurse_shift_service.py:325-330), eMAR (emar_service.py:553) and interaction screen (drug_safety_service.py:638) all read medications; billing excludes medication orders (billing_service.py:183). orders_service.LEGAL_TRANSITIONS has no active->completed edge (orders_service.py:32-39). /orders/{id}/transition is open to every ORDER_WRITE holder, nurses included (orders_routes.py:478; permissions.py:256).\n4. order_set_applications (m13).\nmedication_administrations is the MAR, append-only by design but with no trigger.\n\nWRITERS (INSERT)\n- Chart add (Vigil): async route vigil_routes.py:907 calls the sync gate on the event loop (:934), then _insert_medication via run_db (:275-310). Gated on medication.write, which nurses hold (permissions.py:251). No Helix row.\n- CPOE: orders_routes.py:249, gate :287, drafts via orders_service.py:141; emits shadow clinical.action at create (:311).\n- Order sets: order_sets_service.py:925, per-item gate :743, drafts via create_order :1025; the route emits clinical.action per item (orders_routes.py:193).\n- Sage card handoff (live UI path): relay_routes.py:420 calls create_and_dispatch_handoff synchronously on the loop, reaching _dispatch_to_helix (sage_handoff_service.py:224). Gate non-interactive on the free-text target (:276). Chart row llm_extracted with dose 'REVIEW REQUIRED' in one session (:311), then create_order in a second (:321). Never linked. Moving that call into run_db is a documented landmine: the surgical transfer package silently never generates (sage_handoff_service.py:505-521).\n- Relay confirm_agentic (relay_routes.py:1343): Helix row only, no chart row; no UI calls it (W099).\n- Helix approve (helix_routes.py:139): helix.write, pharmacist stamped as prescriber (R010), LIKE binding.\n- Scribe extraction: nervous_system_triggers.py:684 gate, :754 chart row llm_extracted, no Helix row.\n- History import (generic table insert, history_import_service.py:217 source tag) and scripts (seed_clinical_data.py:399, populate_helix_from_medgemma.py:326, benchmark_wer.py:145).\n\nWRITERS (UPDATE) on medications: only pharmacy_verification_service.verify_medication (:365, sets dose/route/frequency/verified_by) and reject_medication (:417, sets discontinued + verified_by + a [REJECTED] note). On Helix rows: transition_order_status (:382) and receive_order (:672).\n\nLIFECYCLE THAT EXISTS\n- Verify Queue (pharmacy_routes.py:53, :116) covers AI sources only and does NOT call enforce_medication_safety: it uses _safety_alerts with exclude_med_id (pharmacy_verification_service.py:65-89), _with_dose_check (:105) and a ValueError 'severe_ack_required:' contract.\n- Helix verify (helix_routes.py:242) screens the effective drug at :284 with no dose, no role and no exclusion.\n- No route stops, holds or resumes a drug. Discontinued arises only from a pharmacist rejection or the add form's 'Discontinued' option (VigilPanel.tsx:2602).\n- eMAR record_administration (emar_service.py:489): deferred db_session (:552); status must be 'active' (:556), AI sources need verified_by (:560); idempotent replay check (:577) deliberately ABOVE the discharged-patient guard (:582-604) so a replay never gets a 4xx; interlock and dose guard inside the transaction; clinical_access fail-closed audit; ward scope via emar_routes._enforce_medication_scope (:71), which audits patient_scope_denied.\n\nSAFETY ENFORCEMENT\n- enforce_medication_safety (medication_safety_gate.py:178) has nine call sites but no exclude_med_id passthrough, although check_medication_safety supports one (drug_safety_service.py:686-704).\n- The interaction screen reads medications WHERE status='active' only (drug_safety_service.py:638) and lookup_interactions has no self-exclusion (interaction_db.py:251-285), so a drug already on the chart matches itself: ('anticoagulants','anticoagulants','class','severe') at interaction_db.py:43. pharmacy_verification_service.py:72-76 documents exactly this and excludes the row; Helix verify does not.\n- Severe-allergy acknowledgement at order time has no role check (medication_safety_gate.py:250); only a dose block needs medication.prescribe (:252, :162).\n- Two frequency parsers: nurse_shift_service.parse_frequency (:205, the board) and drug_safety_service.parse_frequency_hours (:1660, the bedside repeat window).\n\nDEFECTS FOUND IN THIS PASS (pre-existing, not caused by this epic)\n- F-A: Helix verify accepts the Sage placeholder dose. helix_service.py:328 refuses only an EMPTY dose, and the Sage lane writes 'REVIEW REQUIRED' into the Helix row (sage_handoff_service.py:239-241, :321). A Sage order can be verified, scheduled and dispensed with no real dose (the eMAR still refuses the chart twin until the Verify Queue verifies it).\n- F-B: Helix verify of a Sage pair screens the drug against its own llm_extracted chart twin (helix_routes.py:284, no exclusion), so every anticoagulant raises a false severe alert that the pharmacist must type through.\n- F-C: PRN-status drugs are listed on the round (nurse_shift_service.py:328) but every dose is refused (emar_service.py:556).\n- F-D: the chart add route runs the gate's SQLite work on the event loop (vigil_routes.py:907/:934).\n\nREGISTRIES THAT WALK THE SCHEMA (any new table must fit them)\n- Erase plan: admin_routes._build_erase_plan purges every patient_id table not in consent_service.ERASURE_RETAINED_TABLES (consent_service.py:1086); test_erase_plan_retained.py fails if the plan touches a table with a BEFORE DELETE RAISE(ABORT) trigger.\n- Reseed: scripts/reset_db_and_seed.py delete_protected_tables keeps every DELETE-abort table unless _CONDITIONAL_DELETE_PREDICATES names it.\n- Retention: consent_service._RETENTION_SOURCES 'prescription_and_dispensing' lists medications and medication_administrations (:646-657).\n- Socket: patient events go to department rooms plus dept:__all__ (ws/realtime.py:366-373); sync writers use schedule_on_loop / schedule_patient_vitals (:425-466), which is generic over the event name. There is no patient room.\n- Flags: _module_enabled defaults ON (config.py:642); default-off flags are written inline (config.py:360, :512, :866-867); /api/health publishes 'modules' (main.py:1216).\n\nWHAT CAN BE EXTENDED: enforce_medication_safety (add the passthrough), record_administration, helix insert_order and the Helix state machine, orders_service, order_sets apply, pharmacy_verification_service semantics (_is_placeholder, _UNVERIFIED_SOURCES, which is duplicated in emar_service.py:49, pharmacy_verification_service.py:29 and ipass_service.py:977), allergy_interlock, parse_frequency, the clinical_access fail-closed audit, permissions.department_scope / patient_in_scope / scope_patient_ids_sql, emar_routes._enforce_medication_scope as the scope-plus-audit model.\n\nTESTS: about 70 of 306 server test files touch these tables; 37 insert into medications directly, so unlinked rows must stay valid. 22 test files call init_helix_db. Frontend: AdministerModal (5), MedRoundSheet (2), PharmacyVerifyQueue (3), HelixOrderReviewModal (2), OrdersPanel, OrderSetsPanel, MedListPrintView, DeliveriesSheet; TS permission parity lives in src/lib/roles.test.ts (SERVER_GRANTS).",
+  "design": "PRINCIPLE\n- One authoritative record, med_orders, plus a ledger, med_order_events. The four existing tables stay, each demoted to one role: medications = the WARD PROJECTION (about 20 readers keep working); helix_patient_med_orders = the SUPPLY child (one row per dispense request, many per order); orders (medication) = the CPOE VIEW of a draft; medication_administrations = the MAR child. Nothing is renamed, rebuilt or dropped.\n- Strangler with two written invariants:\n  I1. The dose decision never depends on the store being in sync for a fact the projection already carries. The verification fact lives on medications.verified_by/verified_at, which EVERY verify path writes (legacy and store). The store adds only what the projection cannot express: held (and, after MO-R1, verify-before-dose). A legacy writer that updates a linked row can therefore never make a verified drug ungivable.\n  I2. Every code path that mutates a LINKED row writes through medorder_service, keyed on the link and not the flag: legacy verify and reject, /orders transitions on linked CPOE orders, Helix transitions and receipt on linked supply rows, and the eMAR. Unlinked rows keep exactly today's semantics.\n- Flag promise, stated precisely: with both flags off on a database that never ran lifecycle mode, every check, screen, query and response behaves as at cafe363; the only difference on a database that ran record mode is that link-keyed mirrors keep appending store rows. A database that ran lifecycle mode keeps held orders ungivable and linked CPOE orders managed by the store after the flag goes off (fails closed, MO-R9).\n\n1. DATA MODEL\nOne additive migration, numbered with the next free number after 47 at merge time (never pre-assigned; five sibling epics and about ten sessions share migrations.py). No declared FOREIGN KEYs on new tables (m20 rule 1), so they are never FK parents and a later CHECK widening is an ordinary in-transaction rebuild.\n\nmed_orders:\n- id TEXT PRIMARY KEY (uuid4); patient_id TEXT NOT NULL; admission_id TEXT\n- encounter_type TEXT NOT NULL DEFAULT 'ip' CHECK in ('ip','op','discharge') (reserved for OPD)\n- status TEXT NOT NULL CHECK in ('draft','prescribed','verified','held','stopped','completed','cancelled','rejected')\n- held_from TEXT (the state a resume returns to); version INTEGER NOT NULL DEFAULT 1\n- source TEXT NOT NULL: chart | cpoe | order_set | sage_handoff | relay_agentic | helix_approve | scribe_extracted | history_import | legacy_adopted | verbal\n- needs_verification INTEGER NOT NULL DEFAULT 0 (1 for today's _UNVERIFIED_SOURCES)\n- drug_name TEXT NOT NULL; formulary_id TEXT (exact helix_medication_master.id, never LIKE)\n- dose, route, frequency TEXT; schedule_kind TEXT (nurse_shift_service.parse_frequency kind)\n- is_prn INTEGER NOT NULL DEFAULT 0; prn_indication TEXT\n- priority TEXT CHECK in ('routine','urgent','stat'); start_at, end_at, duration_text, indication, notes TEXT\n- supply_source TEXT CHECK in ('pharmacy','ward_stock','patient_own') NULL (NULL until MO-R12)\n- entered_by TEXT NOT NULL, entered_by_role TEXT; prescriber_id, prescribed_at; verified_by, verified_at\n- status_reason, status_changed_by, status_changed_at\n- last_safety_json, last_screened_at, screen_fingerprint\n- projection_status TEXT CHECK in ('active','prn') NULL (NULL whenever the order is not live)\n- legacy_medication_id INTEGER; cpoe_order_id TEXT; order_set_application_id INTEGER; sage_action_id, sage_handoff_id, scribe_note_id TEXT\n- idempotency_key TEXT; facility_id TEXT (NULL = single site)\n- created_at, updated_at TEXT via services.clinical_time.utc_iso_now()\nIndexes: (patient_id, status); (status, needs_verification); (cpoe_order_id); (admission_id); UNIQUE(legacy_medication_id) WHERE NOT NULL; UNIQUE(idempotency_key) WHERE NOT NULL.\n\nmed_order_events (append-only by design):\n- id INTEGER PK AUTOINCREMENT; med_order_id TEXT NOT NULL; patient_id TEXT NOT NULL\n- kind: created | signed | verified | rejected | held | resumed | stopped | completed | cancelled | amended | adopted | supply_requested | supply_reviewing | supply_verified | dispensed | received | administered | not_given\n- from_status, to_status, actor_id, actor_role, entry_point, reason, ref_type, ref_id, payload_json, idempotency_key (UNIQUE partial), created_at. Read ORDER BY created_at, id.\n- ONE trigger, trg_med_order_events_no_update. Deliberately NO no-delete trigger: (i) a DELETE-abort table must either be retained after a patient erasure, which keeps drug names, doses and reasons (PHI) beyond the erasure and is a decision for Samuel (MO-R13), or it breaks test_erase_plan_retained; (ii) the reseed keeps DELETE-abort tables, so every morning's reseed would leave orphan events on reseeded patient ids, polluting timelines and the X013 counts; (iii) precedent: medication_administrations is append-only by design with no trigger. Tamper evidence comes from the hash-chained clinical_access audit row written beside every event.\n- Both tables are added to consent_service._RETENTION_SOURCES under 'prescription_and_dispensing' (created_at). Erase plan and reseed pick them up from their patient_id column with no edit.\n\nColumn additions:\n- medications ADD COLUMN med_order_id TEXT (UNIQUE partial index), held_at TEXT, hold_reason TEXT. held_at is the projection marker every administration-driving reader checks (section 7); it is NULL on every legacy row.\n- helix_patient_med_orders ADD COLUMN med_order_id TEXT: in the migration (guarded on the table existing, the m35 pattern) AND in HELIX_SCHEMA's CREATE TABLE (fresh databases create Helix tables after the runner). Its index is created only by the migration and by a column-guarded step in init_helix_db, never inside the HELIX_SCHEMA executescript, because 22 test files call init_helix_db and on a legacy table without the column an unguarded CREATE INDEX aborts the rest of the script.\n- No change to orders, medication_administrations or the override tables.\n\nADOPTION (not in the migration; migrations stay schema-only)\n- medorder_service.adopt_legacy() runs at boot when ORB_MED_ORDER_STORE is on, from server/scripts/medorder_parity.py --adopt, and from POST /api/medorders/admin/adopt. Idempotent, 500 rows per transaction, guarded by the unique index. NEVER on a GET path (the main.py:324-340 rule: SQLite is single-writer).\n- Pure mapping legacy_status_for(row), also used by GET routes to show unlinked rows as legacy items without writing:\n  - active or prn -> prescribed, or verified when verified_by is set; projection_status = old status.\n  - needs_verification = 1 for llm_extracted and agentic.\n  - discontinued + AI source + verified_by set -> rejected (reject_medication is the only writer of that combination, pharmacy_verification_service.py:417).\n  - any other discontinued -> stopped, reason 'stopped before the order store', projection_status NULL.\n- Unlinked Helix rows are not adopted (a Sage pair cannot be matched reliably); the parity report lists them.\n- Adopting unverified AI rows before medorders-5a is safe under I1: the eMAR still reads verified_by from the projection, and the legacy verify mirror (medorders-3) moves the store.\n\n2. LIFECYCLE\nLEGAL_TRANSITIONS:\n- draft -> prescribed | cancelled\n- prescribed -> verified | rejected | held | stopped | cancelled (cancelled only before any given dose)\n- verified -> held | stopped | completed\n- held -> held_from (prescribed or verified) | stopped\n- stopped, completed, cancelled, rejected are terminal.\nDispensed and administered are EVENTS, not statuses (a TDS course is dispensed many times and given 15 times).\n\norder_allows_dose(order): consulted by the eMAR for LINKED rows, for 'given' only, IN ADDITION to the unchanged legacy checks on the projection row:\n- prescribed or verified: allowed (the legacy check still demands verified_by for AI sources, I1);\n- held: refused, naming who held it, when and why, and saying 'not given (held)' can always be recorded;\n- draft or terminal: refused (unreachable in practice: drafts have no projection, terminal orders project 'discontinued').\nMO-R1 (follow-on) later adds: projection.verified_by required for every linked order, with the ruled stat exception.\n\nProjection rules (project_in_txn):\n- draft: no medications row.\n- prescribed, verified: status = projection_status, held_at NULL.\n- held: status UNCHANGED (the interaction screen and the regimen still see it), held_at and hold_reason set.\n- stopped, completed, cancelled, rejected: 'discontinued', held_at NULL.\n- verified_by/verified_at are copied to the projection on verify (I1).\n- CPOE mirror: the store writes orders.status itself, as a guarded UPDATE orders SET status=? WHERE id=? AND status=? plus an order_events row, inside the store transaction; never through orders_service.transition_order (it has no active->completed edge). Map: draft->draft; prescribed, verified, held->active; stopped, cancelled, rejected->cancelled; completed->completed. All fit the orders CHECK (database.py:812).\n- FHIR MedicationRequest.status: draft, active, on-hold, stopped, completed, cancelled (rejected maps to cancelled with a statusReason).\n\n3. SERVICE: server/services/medorder_service.py\n- Pure: LEGAL_TRANSITIONS, order_allows_dose(), legacy_status_for(), projection_for(), fhir_status_for(), screen_fingerprint().\n- In-transaction cores (take a connection, never commit, never open a session): create_in_txn, transition_in_txn (UPDATE ... WHERE id=? AND version=? AND status=?; rowcount 0 raises StaleOrderVersion), project_in_txn, record_event_in_txn, request_supply_in_txn (idempotent per order: returns the existing non-terminal linked supply row, else helix_service.insert_order(conn, ...) at 'pending' with the exact formulary_id; insert_order needs no change), mirror_legacy_decision_in_txn (legacy verify/reject hook), on_supply_transition_in_txn (the Helix callback), adopt_medication_in_txn.\n- Public steps: create, sign, verify, reject, hold, resume, stop, cancel, amend_placeholders, request_supply. Each runs:\n  (1) Load the order.\n  (2) Run the gate OUTSIDE any write transaction: enforce_medication_safety with the order's own drug, dose, route, the actor's role, entry_point 'medorder.<step>.<lane>' and exclude_med_id = the projection id (new keyword passthrough, default None, medorders-1). Why outside: db_session(immediate=True) must be the outermost session (database.py:1150-1162); on the unpooled path the gate's own sessions would contend with our write lock for the full busy timeout; and the gate's denial audit rows must not roll back with a refused step.\n  (3) db_session(immediate=True): re-read; check expected_version and screen_fingerprint (hash of active allergy ids and states plus the live order and unlinked active row ids). Mismatch answers 409 screen_stale so the client re-screens (closes W116c).\n  (4) Status, event, projection, CPOE mirror, supply row and clinical_access audit in that one transaction.\n  (5) Return the order and the safety verdict.\n- Gate points: create-as-prescribed and sign: full screen with dose; verify: full screen with dose and the pharmacist's role (a dose block still goes back to the prescriber), excluding the projection, and when a product is bound its name is screened too; resume: full screen, excluding the projection; Helix steps on a linked row: the effective drug as today plus exclusion, dose and role.\n- Formulary binding at verify is allowed only when the product's ingredient set equals the order's (helix_medication_master.generic_name resolved through drug_safety_service.interaction_terms ingredient terms). Any other product is a substitution: refused with 'this is a substitution and needs the prescriber' until R002 is ruled (medorders-15).\n- Errors: StaleOrderVersion and StaleScreen 409 with the current order; TransitionNotAllowed 409; NeedsInput 422; NotPermitted 403.\n- Queries: list_for_patient (read-only: linked orders plus unlinked rows shown via legacy_status_for); get; events; verification_queue(dept) and to_sign_queue(dept) filtered with permissions.scope_patient_ids_sql(dept); nurse_entered_live(dept); parity_report().\n\n4. LANE ADAPTERS\nStore flag (record mode): chart, Sage handoff, Scribe. Lifecycle flag: CPOE, order sets, sign, unified verification, hold, resume, stop, cancel, store-backed screening. The CPOE adapters are LIFECYCLE ONLY (in record mode a draft order reaches nothing anyway).\n- Chart add (vigil.med_add), both modes: the route calls await run_db(medorder_service.create_chart_order, ...), which runs the same gate call and then one transaction: the idempotency pre-check and medications INSERT exactly as _insert_medication, the med_order (prescribed, prescriber = actor, entered_by_role recorded), event and audit. This also takes the gate off the event loop (F-D). Add status 'prn' sets is_prn; 'discontinued' at add creates a stopped order.\n  Under lifecycle the chart lane does NOT change: a nurse still charts a live order and can still acknowledge a severe-allergy alert there (medication_safety_gate.py:250). That is R010/R011 territory and stays. So Sign makes a prescriber's signature the release step for CPOE and order-set drugs ONLY; the chart lane bypasses Sign until R010 is ruled. Nurse-entered live orders are listed in the prescriber's to-sign view under 'Entered by a nurse' for visibility, without gating.\n- CPOE and order sets (lifecycle): each medication order or item also creates a draft med_order linked by cpoe_order_id or order_set_application_id. Sign needs medication.prescribe. /orders/{id}/transition on a LINKED order (keyed on the link, so it holds after the flag goes off): to_status 'cancelled' delegates to medorder_service.cancel with section 8's permissions; every other target answers 409 managed_by_medication_order with the med_order_id. Shadow: under lifecycle a medication CPOE order or order-set medication item emits clinical.action at SIGN only (actor = signer); create stops emitting for medication. Lifecycle off: unchanged.\n- Sage handoff (store flag): one transaction holds the chart row (llm_extracted, as today), the med_order (prescribed, prescriber = confirming actor as today, needs_verification 1) and the linked supply row. The product is bound by the SAME LIKE lookup create_order uses today, run on the same connection through helix_service.resolve_by_name_in_txn(conn, name), extracted from create_order (:243-250) with no behaviour change. 'charted-only' is kept when nothing matches. Exact binding through the reconciler is a separate behaviour change (medorders-20), because rxnorm_reconciler is fuzzy (0.8 threshold, substring boosted to 0.85) and the gate screens the free-text target. The synchronous call at relay_routes.py:420 is NOT moved by this epic (sage_handoff_service.py:505-521 landmine); see risks.\n- Scribe extraction (store flag): one med_order per start inside _persist_extraction's transaction; prescriber = note author, needs_verification 1, no supply row, [SAFETY] note kept. Drafts instead are W111 (medorders-13).\n- Helix approve and Relay confirm_agentic: legacy until R010 and W099.\n- History import and scripts: unlinked; adopted at the next boot or by the adopt action.\n\n5. PHARMACIST VERIFICATION\n- Record mode: the Verify Queue keeps calling pharmacy_verification_service. On a LINKED row, its UPDATE is followed in the same session by mirror_legacy_decision_in_txn (a 'verified' or 'rejected' event and status; a held order records held_from='verified'). Helix transitions and receipt on a linked supply row write supply_reviewing, supply_verified, dispensed and received events only; they do not change the order's status.\n- Lifecycle: verify() and reject() are the one decision.\n  - Verify Queue routes call medorder_service for linked rows; pharmacy_verification_service stays the path for unlinked rows.\n  - Helix route, linked row: helix_routes runs the gate (effective drug, exclusion, dose, role), then calls helix_service.transition_order_status(..., on_applied=callback). The callback runs inside Helix's own session just before its commit and calls transition_in_txn for verified or rejected; a lost version race raises and rolls back the Helix transition too. The public verify() is never called from inside helix_service (immediate must be outermost). receive_order gains the same optional callback.\n  - Whichever surface verifies first verifies the ORDER (status verified; projection verified_by and verified_at). The Verify Queue then stops listing it; the Helix modal shows 'Order verified by X at T', and the Helix verified step is a supply step that does not re-verify the order.\n  - Placeholders: for linked rows, verify refuses 'REVIEW REQUIRED' on either surface (reusing _is_placeholder); corrections are 'amended' events with before and after values, allowed only on needs_verification orders (the F012 ruling applied once). This closes F-A for linked rows.\n- Supply: NO automatic supply row for chart or CPOE orders until MO-R12 is ruled. Lanes that create one today keep doing so (Sage handoff). A 'Request from pharmacy' action on a live, formulary-bound order calls request_supply_in_txn, which is idempotent (one open supply row per order). Verification never creates a supply row, so a Sage order has exactly one. Supply rows always start 'pending' through the unchanged insert_order, and the case-room message still comes from Helix's own transition path.\n- Custody, scoped down: an 'administered' event carries a supply id only when exactly one linked supply row is 'delivered' with received_by set and no earlier administered event references it (Helix dispenses one unit per row). Otherwise the event records 'supply not linked'. Lot-to-dose custody for multi-unit supply and ward stock moves to the pharmacy GRN epic.\n\n6. eMAR: record_administration (emar_service.py:489), linked rows only\n- The order-state check applies to 'given' only and sits BELOW the idempotent replay check (:577) and the discharged-patient guard (:582-604), for the reason the file gives: a replay must never get a 4xx that the offline client treats as a failed sync.\n- Pre-check before the allergy interlock, for a clean refusal before the nurse is prompted.\n- Re-check AFTER the medication_administrations INSERT, inside the same transaction: the INSERT holds the write lock, so no hold can commit in between; a held order raises and the dose rolls back. db_session(immediate=True) for the whole call was rejected because it serialises every dose on the ward.\n- 'not_given' is always allowed, including 'not given (held)' on a held order (the file's own principle: withholding must always be easy).\n- The 'administered' or 'not_given' event commits with the MAR row and its audit, or not at all.\n- Unlinked rows untouched; PRN unchanged until MO-R3.\n\n7. HELD STATE IN EVERY READER\nReaders of medications today, and what held does to each:\n- Administration-driving (medorders-6a): emar_service (link check, section 6); nurse_shift_service.py:325-330 (held rows go to an on_hold list, no due or overdue); downtime_service.py:162-166 (a separate 'ON HOLD: do not give' section on the paper MAR, because paper has no link check); MedRoundSheet (On hold group, no Administer); voice_agent_service.py:132 (labelled, never read out as due).\n- Presentation (medorders-6b): ipass_service.py:315 ('on hold since T: reason'); discharge_service.py:270 ('on hold'); bridge_routes.py:243 and :354 (plain text 'On hold', no colour and no explanation, in line with the portal rules); fhir_export_service.py:341 (on-hold); sage_service.py:3071 and sage_ambient_service.py:1315 (labelled); scribe_service.py:79 and patient_specific_screen.py:371 (kept in the set, held drugs still interact); vigil_routes.py:101 (SELECT * carries held_at to the UI).\n- Counts, unchanged and stated: forecast_service, impact_service, coding_service, sage_proactive_service.\n- test_medorder_reader_registry.py lists every module that reads FROM medications and fails on any module missing from this table, so a new reader cannot silently treat a held drug as givable.\n\n8. ROUTES: server/routes/medorder_routes.py, prefix /api/medorders\n- All def handlers. 404 when the store flag is off; write routes 404 unless lifecycle is on.\n- GET /patient/{patient_id}: require_patient_access(patient.read_all, audit_action='med_orders_viewed').\n- GET /{id} and /{id}/events: _med_order_in_scope_or_404, modelled on emar_routes._enforce_medication_scope, which audits patient_scope_denied before the 404 (orders_routes._order_in_scope_or_404 does not audit), plus log_phi_read.\n- POST '' (create): the patient is in the body, so the same local helper (enforce_patient_scope writes no audit row); Idempotency-Key; as='draft' needs order.write or medication.write; as='prescribed' (create and sign) needs medication.prescribe.\n- POST /{id}/sign: medication.prescribe, safety_ack, expected_version.\n- POST /{id}/verify and /{id}/reject: medication.verify.\n- POST /{id}/hold, /resume, /stop: medication.prescribe, pending MO-R2.\n- POST /{id}/cancel: a DRAFT by its creator or any order.write holder in scope; a PRESCRIBED order with no given dose needs medication.prescribe and is gated behind MO-R2 like stop (not offered until ruled).\n- POST /{id}/request-supply: medication.prescribe or medication.verify, behind MO-R12.\n- GET /queue/verification and /queue/to-sign (with the 'Entered by a nurse' visibility list); GET /admin/parity and POST /admin/adopt: admin.overview.\n- Socket: after commit, realtime.schedule_patient_vitals('medorders:update', {patient_id, med_order_id, status, version}). The helper is generic over the event name and routes to the patient's department room plus dept:__all__; payload has ids and status only, no drug name. realtime.py is not edited; a neutrally named alias can follow once the CORS session has landed.\n\n9. PERMISSIONS\n- No new role; roles.STORABLE_ROLES unchanged.\n- New constant MEDICATION_VERIFY = 'medication.verify': pharmacist, and admin only to preserve today's helix.write reach until MO-R4 (W178). Mirrored in src/lib/roles.ts and in SERVER_GRANTS in src/lib/roles.test.ts, plus server/tests/test_rbac.py.\n- Sign, hold, resume, stop and cancel-live reuse MEDICATION_PRESCRIBE (doctor only). Acknowledging a severe alert at SIGN is therefore prescriber-only; other lanes are unchanged (MO-R5 stays open).\n- Draft creation: ORDER_WRITE or MEDICATION_WRITE. Pharmacist stays hospital-wide (F109).\n\n10. AUDIT\n- Every state change: log_audit_event(db=conn) in the same transaction, event_category 'clinical_access' (fail-closed), action_type med_order_<verb>, target_type 'med_order', target_id str(id), patient_id; metadata from, to, entry_point, lane, reason, safety summary. Legacy mirrors and Helix callbacks audit the same way. Legacy integer ids always pass as str (the int target_id false-tamper trap).\n- The gate keeps its own clinical_safety rows. Reads use log_phi_read. Adoption writes one 'med_orders_adopted' row per batch with counts.\n\n11. FEATURE FLAGS (config.py)\n- _feature_on(env): a helper that factors the existing inline default-off pattern (config.py:360, :512, :866-867); accepts only 1/true/yes/on. _module_enabled (default ON) is not reused. The first HIS epic to land adds it; the others reuse it.\n- ORB_MED_ORDER_STORE (record mode) and ORB_MED_ORDER_LIFECYCLE (authoritative mode). config refuses to import with lifecycle on and the store off.\n- Published on /api/health as 'features' beside 'modules' (main.py:1216); the shell reads currentFeatureFlags().\n- The promise is the one stated under PRINCIPLE.\n\n12. UI (no new shell tab)\n- vigil: the chart Medications modal (VigilPanel.tsx:2366) renders MedOrderList (src/components/medorders/MedOrderList.tsx): a text status chip (Draft, Awaiting signature, Awaiting pharmacist, Verified, On hold, Stopped, Completed); supply line (Requested, Dispensed by, Received by, or 'supply not linked'); last dose; permission-driven Sign, Hold, Resume, Stop with required reasons; MedOrderTimeline.tsx (W120). The Add form KEEPS posting to the vigil route (R010), and its Discontinued option stays and records a stopped order.\n- orders: medication lines show the order state and Sign instead of MED_NOT_SENT; 'Awaiting my signature' filter; DoctorHomePanel count chip; the to-sign view shows 'Entered by a nurse'.\n- pharmacy-verify: PharmacyVerifyQueue reads /queue/verification (all sources needing verification), shows the allergy LIST, and offers a product picker restricted to same-ingredient products.\n- helix: HelixOrderReviewModal shows the linked order, 'Order verified by X at T' when it applies, and the timeline.\n- shift: MedRoundSheet gains On hold and Awaiting pharmacist groups; AdministerModal maps the refusal text; DeliveriesSheet names the order.\n- Client: src/api/medorders.ts (created in medorders-4) imports the existing socket export; client.ts is not edited. Status is never shown by colour alone; check-contrast passes.\n\n13. OTHER EPICS\n- ADT: admission_id on every order; transfer prompts reconciliation; discharge close-out is MO-R7. Scoping always goes through permissions.patient_in_scope / scope_patient_ids_sql.\n- OPD: 'op' orders become OP prescriptions with no projection.\n- Pharmacy GRN and drug master: formulary_id points at the drug master; schedule class, high-alert, LASA, MRP, multi-unit supply and lot-to-dose custody come from there.\n- LIS: eGFR and weight to the dose gate later. Multi-site: facility_id. Scorecard X013 counts med_order_events.\n\n14. TESTS (summarised; per increment below)\nPure transition tables; migration on fresh, tmp_path legacy and twice; init_helix_db after the runner and on a legacy table without the column; erase-plan, reseed and retention registries; adoption equivalence (status x source x verified_by); legacy verify after adoption releases the dose; store-on-then-off; fault injection for one-transaction lanes; two pharmacists racing (200 and 409); cross-ward 404 with an audit row; replay after a hold still returns the original dose; held drug never printed as givable on the downtime pack; anticoagulant hold->resume does not self-alert; a med_order_flags fixture re-runs the lane suites with the store on and unchanged expectations; the reader registry; finally an AST guard on single writers (follow-on).\n\n15. REVIEW DISPOSITION (critique of the previous revision)\n- Blocker, stale linked rows: ACCEPTED. Both fixes adopted: I1 (verification fact on the projection, store adds only held) and I2 (legacy verify/reject mirror through the store, keyed on the link). test_pharmacy_verification and a store-on-then-off scenario join medorders-3's re-run set.\n- Held leaks to readers: ACCEPTED. held_at/hold_reason projection marker, reader table, registry test, split into 6a and 6b.\n- orders.status divergence: ACCEPTED. Linked /orders transitions refused (cancel delegated); mirror is a guarded UPDATE plus order_events.\n- Self-screening: ACCEPTED and confirmed by reading (interaction_db.py:43, :251-285). exclude_med_id passthrough in medorders-1. F-B recorded.\n- Two supply rows: ACCEPTED, different fix: verification never creates a supply row; supply is idempotent per order and always starts 'pending' through the unchanged insert_order, so no status parameter is needed.\n- Binding as substitution: ACCEPTED. Same-ingredient only; bound product screened.\n- Reconciled id is a behaviour change: ACCEPTED. medorders-8 keeps LIKE; exact binding is medorders-20.\n- run_db move: ACCEPTED, removed (landmine confirmed at sage_handoff_service.py:505-521).\n- Registries: ACCEPTED, different fix: no DELETE-abort trigger (reasons in section 1), tables added to retention sources; retaining PHI after erasure is offered as MO-R13 rather than decided.\n- eMAR placement and race: ACCEPTED (section 6).\n- Sign claim overstated: ACCEPTED; narrowed to CPOE and order sets; MO-R5 not closed.\n- Cancel permission: ACCEPTED (section 8).\n- Custody overclaim: ACCEPTED; scoped down; MO-R12 added.\n- Socket room: ACCEPTED; uses schedule_patient_vitals, which needs no edit to realtime.py.\n- Shadow contradiction: ACCEPTED; sign only under lifecycle.\n- Lazy adoption on GET: ACCEPTED; removed.\n- medorders-5 undersized: ACCEPTED; split 5a, 5b, 5c with the on_applied callback.\n- Code facts: ACCEPTED, corrected (second parser, TS parity file, scope helpers, scope_patient_ids_sql, projection_status NULL, rejected mapping, :5494, one flag for CPOE, record versus lifecycle verification). One claim in the critique is itself inaccurate: orders_routes._order_in_scope_or_404 (:433-448) writes no audit row; only emar_routes._enforce_medication_scope does, so that is the model.\n- HELIX_SCHEMA index: ACCEPTED (section 1).\n- Scope too large: ACCEPTED; day one is medorders-1 to 10 (13 increments after splits); 11 to 20 are a follow-on epic gated on rulings.\n- CORS overlap: ACCEPTED (session_conflicts).",
+  "functions": [
+   {
+    "function": "Inpatient medication prescribing (2.2, Day 1)",
+    "status_now": "Partial. Three unlinked stores: medications (vigil_routes.py:293), orders (orders_service.py:141) and Helix (helix_service.py:237). CPOE drugs never reach the eMAR (nurse_shift_service.py:325-330, emar_service.py:553). Nurses chart live drugs (medication.write, permissions.py:251) and can acknowledge a severe-allergy alert while doing so (medication_safety_gate.py:250). No verbal-order countersign.",
+    "in_scope": true,
+    "notes": "Core of the epic: medorders-3, 4, 7. Sign releases CPOE and order-set drugs only; the nurse chart lane is unchanged until R010 (medorders-12 is follow-on)."
+   },
+   {
+    "function": "Prescription capture to pharmacy (2.6, Day 1)",
+    "status_now": "Partial. Only the Sage handoff, Helix approve and Relay confirm lanes create Helix rows. Chart, CPOE and order-set drugs never reach the pharmacy.",
+    "in_scope": true,
+    "notes": "medorders-5b adds an idempotent 'Request from pharmacy' per order. Automatic supply for chart and CPOE orders waits on MO-R12 (ward stock versus pharmacy)."
+   },
+   {
+    "function": "Pharmacist review and verification (2.6, Day 1)",
+    "status_now": "Partial. Two independent verifications: the Verify Queue for AI sources only (pharmacy_verification_service.py:27) and Helix verify (helix_routes.py:242). Helix verify accepts the 'REVIEW REQUIRED' placeholder dose (helix_service.py:328, F-A) and screens a Sage drug against its own chart twin (F-B). The pharmacist sees alerts but not the allergy list.",
+    "in_scope": true,
+    "notes": "medorders-5a/5b: one decision in lifecycle mode, placeholders refused on both surfaces for linked rows, self-exclusion. Mandatory verification for all orders is MO-R1 (follow-on medorders-11)."
+   },
+   {
+    "function": "Order-time drug-allergy checking (2.2/2.6)",
+    "status_now": "Partial. The gate runs on 9 lanes and grades by documented reaction since 3 Oct. Severe-allergy acknowledgement has no role check (medication_safety_gate.py:250).",
+    "in_scope": true,
+    "notes": "Prescriber-only at the new sign step by construction. Every other lane stays as today: MO-R5 is open and overlaps the held R010 and R011."
+   },
+   {
+    "function": "Dose range checking at order entry",
+    "status_now": "Partial. Runs on the chart, CPOE (structured dose), order sets, Helix approve, Relay confirm and the Verify Queue. Not at Helix verify or dispense (helix_routes.py:284 passes no dose). No weight or renal dosing.",
+    "in_scope": true,
+    "notes": "Placement in scope: the gate runs inside the state machine and on linked Helix steps with dose and role (medorders-5b). Weight and renal dosing need the LIS or a licensed source: out of scope."
+   },
+   {
+    "function": "Duplicate order checks",
+    "status_now": "Partial. Only the bedside repeat-dose WARN (drug_safety_service.py:1726) and same-class interaction rows (interaction_db.py:44). No same-ingredient check at order time.",
+    "in_scope": true,
+    "notes": "Notice at sign in medorders-4/7; acknowledge or block per MO-R6 in medorders-9."
+   },
+   {
+    "function": "Drug-drug interaction screening source",
+    "status_now": "Partial. Reads medications WHERE status='active' only (drug_safety_service.py:638), missing PRN-status, CPOE and Helix-only drugs. The gate cannot exclude the row being screened, so a charted drug matches itself (interaction_db.py:43).",
+    "in_scope": true,
+    "notes": "Self-exclusion passthrough in medorders-1; store-backed screen in medorders-9 (MO-R3). Licensed knowledge base out of scope."
+   },
+   {
+    "function": "Order sets, drug items (2.2 differentiator)",
+    "status_now": "Partial. Drafts land in orders only (order_sets_service.py:1025) and never reach the ward. Screen-to-write window open (W116c).",
+    "in_scope": true,
+    "notes": "medorders-7: drafts signed into the store; the sign step re-screens and checks the fingerprint."
+   },
+   {
+    "function": "eMAR gating by order state (2.3, Day 1)",
+    "status_now": "Partial. Ward scope fixed (emar_routes.py:71, F008). PRN-status drugs refused (emar_service.py:556, F-C). No held state. Schedule derived from frequency text.",
+    "in_scope": true,
+    "notes": "medorders-3 adds the link-keyed check below the replay and discharge guards, with a post-INSERT re-check; 'not given' always allowed. MAR grid and barcode out of scope."
+   },
+   {
+    "function": "Stop, hold and resume a medication order",
+    "status_now": "Absent. No route. Discontinued only via pharmacist rejection or the add form's 'Discontinued' option (VigilPanel.tsx:2602).",
+    "in_scope": true,
+    "notes": "medorders-6a (service, routes, administration-driving readers incl. the paper MAR) and 6b (presentation readers, registry test). Blocked on MO-R2."
+   },
+   {
+    "function": "Verbal or telephone order with read-back and countersign",
+    "status_now": "Absent",
+    "in_scope": false,
+    "notes": "Follow-on medorders-12, blocked on R010."
+   },
+   {
+    "function": "Pharmacy-to-ward custody chain linked to the dose (2.6 differentiator)",
+    "status_now": "Partial. Ward receipt exists (helix_service.py:605) but no MAR row references a dispense.",
+    "in_scope": true,
+    "notes": "Scoped down in medorders-5b: a dose links to a supply row only when exactly one received, unconsumed unit exists. Multi-unit and ward-stock custody belong to the GRN epic."
+   },
+   {
+    "function": "Substitution with prescriber acceptance",
+    "status_now": "Partial. Pre-flight alternative is same-molecule only (helix_service.py:828). A pharmacist can substitute and verify alone (R002).",
+    "in_scope": false,
+    "notes": "Follow-on medorders-15 (R002). Day one refuses any non-same-ingredient binding at verify instead of letting it through."
+   },
+   {
+    "function": "Medication reconciliation at admission, transfer and discharge (W105)",
+    "status_now": "Partial. Discharge reconciliation endpoint exists (discharge_service.py:258), print fixed (F005). Home medications stored at admission, never read.",
+    "in_scope": false,
+    "notes": "Follow-on medorders-17; depends on ADT, MO-R7 and the held R009 for the gate itself."
+   },
+   {
+    "function": "Prescriber-authored administration schedule (W117)",
+    "status_now": "Absent. scheduled_for never written; frequency text parsed on the board.",
+    "in_scope": false,
+    "notes": "Follow-on medorders-19, blocked on MO-R8."
+   },
+   {
+    "function": "Order history and lifecycle views (W120)",
+    "status_now": "Not built. GET /helix/orders/{id}/transitions exists with no screen.",
+    "in_scope": true,
+    "notes": "MedOrderTimeline in medorders-10; Helix modal timeline in medorders-5c."
+   },
+   {
+    "function": "Pharmacy charges on the bill",
+    "status_now": "Partial. Billing reads Helix dispensed rows only (billing_service.py:847).",
+    "in_scope": false,
+    "notes": "Improves once supply rows exist per order; pricing and MRP belong to GRN and billing epics."
+   },
+   {
+    "function": "IP dispensing quantity and formulary binding",
+    "status_now": "Partial. One unit per order (helix_service.py:783), LIKE binding (:247).",
+    "in_scope": false,
+    "notes": "Same-ingredient exact binding at verify is in scope (5a). Exact binding for the Sage lane is follow-on medorders-20. Multi-unit supply is the GRN epic."
+   },
+   {
+    "function": "High-alert controls and independent double check",
+    "status_now": "Partial. Bedside rules exist; no drug-master flag.",
+    "in_scope": false,
+    "notes": "Needs GRN drug-master fields; will consume med_order_events."
+   },
+   {
+    "function": "Schedule H1, X and NDPS registers (W170)",
+    "status_now": "Absent",
+    "in_scope": false,
+    "notes": "Registers epic; reads med_orders plus dispense rows."
+   },
+   {
+    "function": "Medication error and ADR reporting; scorecard medication-safety section (X013)",
+    "status_now": "Partial / Not built",
+    "in_scope": false,
+    "notes": "med_order_events makes blocks, holds and rejections countable."
+   },
+   {
+    "function": "Barcode administration",
+    "status_now": "Name only (AdministerModal.tsx:301 always sends 'typed').",
+    "in_scope": false,
+    "notes": "Needs scanners and wristbands."
+   },
+   {
+    "function": "Antimicrobial stewardship",
+    "status_now": "Partial (sage_proactive Rule 4 reads active medications)",
+    "in_scope": false,
+    "notes": "Keeps reading the projection; listed as a count reader in the registry."
+   },
+   {
+    "function": "OP prescriptions and OP pharmacy sale",
+    "status_now": "Absent",
+    "in_scope": false,
+    "notes": "OPD and GRN epics; encounter_type 'op' reserved."
+   }
+  ],
+  "increments": [
+   {
+    "id": "medorders-1",
+    "title": "Schema, flags, state machine, registries and the gate exclusion passthrough",
+    "description": "One additive migration (next free number after 47 at merge):\n- med_orders and med_order_events (no-UPDATE trigger only, no DELETE-abort trigger);\n- medications.med_order_id (unique partial index), held_at, hold_reason;\n- helix_patient_med_orders.med_order_id, guarded on the table existing; the column also goes into HELIX_SCHEMA's CREATE TABLE, and its index only into the migration and a column-guarded step of init_helix_db.\nconsent_service._RETENTION_SOURCES: both new tables under prescription_and_dispensing.\nconfig.py: _feature_on, MED_ORDER_STORE_ENABLED, MED_ORDER_LIFECYCLE_ENABLED, import-time refusal of lifecycle without the store, features() published on /api/health.\nmedication_safety_gate.enforce_medication_safety gains exclude_med_id (default None, passed to check_medication_safety); no caller changes yet.\nmedorder_service core: LEGAL_TRANSITIONS, order_allows_dose, legacy_status_for, projection_for, fhir_status_for, screen_fingerprint, record_event_in_txn, transition_in_txn with version check and clinical_access audit on the caller's connection. Nothing calls the service yet.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/helix_db.py",
+     "server/config.py",
+     "server/main.py",
+     "server/services/medication_safety_gate.py",
+     "server/services/consent_service.py"
+    ],
+    "files_new": [
+     "server/services/medorder_service.py",
+     "server/tests/test_medorder_state_machine.py",
+     "server/tests/test_medorder_migration.py",
+     "server/tests/test_medorder_registries.py"
+    ],
+    "size_days": 3.5,
+    "depends_on": [],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "- Every legal and illegal transition pair; held_from round-trips.\n- The UPDATE trigger refuses; DELETE is allowed.\n- Migration on a fresh DB, on a tmp_path legacy DB holding medications and Helix rows, and twice.\n- init_helix_db after the runner yields the column and index; init_helix_db alone on a legacy Helix table without the column completes the whole script.\n- Re-run test_erase_plan_retained, test_reseed_orphans, test_reseed_patient_scope and test_dpdp_compliance: unchanged and passing.\n- exclude_med_id: an enoxaparin row screened with its own id excluded raises no anticoagulant self-alert; default None behaves exactly as today (re-run test_safety_gate_*).\n- Both flags default off; lifecycle without store refuses import; /api/health carries 'features'.\n- Full suite unchanged (run without the shipping .env)."
+   },
+   {
+    "id": "medorders-2",
+    "title": "Boot adoption and the parity report",
+    "description": "adopt_legacy() at boot when the store flag is on, plus server/scripts/medorder_parity.py --adopt and the admin adopt action. Never on a GET path. Mapping via the pure legacy_status_for: active/prn -> prescribed or verified (verified_by set); AI sources -> needs_verification 1; discontinued + AI source + verified_by -> rejected; other discontinued -> stopped with projection_status NULL. Chunks of 500 per transaction, one audit row per batch. Unlinked Helix rows are not adopted.\nparity_report(): unlinked live rows, Helix rows without an order, CPOE medication rows without an order, projection mismatches (status, verified_by, held_at), linked supply rows whose order is terminal.",
+    "files_touched": [
+     "server/services/medorder_service.py",
+     "server/main.py"
+    ],
+    "files_new": [
+     "server/scripts/medorder_parity.py",
+     "server/tests/test_medorder_adoption.py"
+    ],
+    "size_days": 2.5,
+    "depends_on": [
+     "medorders-1"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "- Table-driven equivalence: the eMAR verdict (legacy checks plus order_allows_dose) before and after adoption matches for every status x source x verified_by combination.\n- A pharmacist-rejected AI row adopts as rejected; an add-form 'discontinued' row as stopped.\n- Second run changes nothing.\n- A Sage pair adopts into one order plus one unlinked Helix row, which parity reports.\n- A GET of the patient list writes nothing (row counts and write-lock probe unchanged)."
+   },
+   {
+    "id": "medorders-3",
+    "title": "Chart lane write-through, the eMAR order-state check and the legacy verify mirror",
+    "description": "Chart add (vigil_routes.py:907) calls await run_db(medorder_service.create_chart_order, ...): the same gate call, then ONE transaction with the _insert_medication idempotency logic, the medications INSERT, the med_order (prescribed, prescriber = actor, entered_by_role), event and audit. Store flag only; unchanged otherwise.\nemar_service.record_administration, linked rows, 'given' only: order_allows_dose pre-check placed below the replay check (:577) and the discharge guard (:582-604); re-check after the MAR INSERT in the same transaction; 'not_given' always allowed; administered/not_given event in the dose's transaction.\npharmacy_verification_service.verify_medication and reject_medication: on a linked row, mirror_legacy_decision_in_txn in the same session (I2), whatever the flags say.",
+    "files_touched": [
+     "server/routes/vigil_routes.py",
+     "server/services/emar_service.py",
+     "server/services/pharmacy_verification_service.py",
+     "server/services/medorder_service.py"
+    ],
+    "files_new": [
+     "server/tests/medorder_flags.py",
+     "server/tests/test_medorder_chart_lane.py",
+     "server/tests/test_medorder_emar.py",
+     "server/tests/test_medorder_legacy_mirror.py"
+    ],
+    "size_days": 4,
+    "depends_on": [
+     "medorders-1",
+     "medorders-2"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "- Re-run with the store on, expectations unchanged: test_emar, test_safety_gate_vigil, test_dose_guard, test_allergy_interlock, test_allergy_override_prescriber, test_nurse_write_scope, test_pharmacy_verification.\n- Adopted unverified AI row, then legacy verify: the dose is allowed (the blocker scenario) and the store shows verified.\n- Store on, chart and verify, then both flags off: every eMAR and Verify Queue verdict equals cafe363's.\n- A replayed dose after a hold returns the original record (no 4xx); a new 'given' on a held order is refused; 'not_given (held)' succeeds.\n- Hold committed between pre-check and INSERT (injected) rolls the dose back.\n- Fault after the projection INSERT rolls back the order; Idempotency-Key replay returns one order and one event."
+   },
+   {
+    "id": "medorders-4",
+    "title": "Medication-order API, scoping, the verify permission and the socket event",
+    "description": "medorder_routes.py: list, get, events, create (draft or prescribed), sign, cancel (draft only until MO-R2), to-sign queue (with the nurse-entered visibility list), admin parity and adopt. def handlers; 404 when the store is off; writes 404 unless lifecycle. Scope via require_patient_access and a local _med_order_in_scope_or_404 modelled on emar_routes._enforce_medication_scope (patient_scope_denied audit, then 404); log_phi_read on reads; queues filtered with scope_patient_ids_sql.\nSign: gate outside the transaction with exclusion, dose and role; fingerprint and version re-checked under an immediate session; 409 screen_stale; same-ingredient duplicate as a notice; medication.prescribe.\nMEDICATION_VERIFY to pharmacist and admin (until MO-R4), mirrored in roles.ts and roles.test.ts.\nAfter commit, realtime.schedule_patient_vitals('medorders:update', ids-only payload).\nsrc/api/medorders.ts thin typed client.",
+    "files_touched": [
+     "server/main.py",
+     "server/permissions.py",
+     "src/lib/roles.ts",
+     "src/lib/roles.test.ts",
+     "server/tests/test_rbac.py",
+     "server/services/medorder_service.py"
+    ],
+    "files_new": [
+     "server/routes/medorder_routes.py",
+     "src/api/medorders.ts",
+     "server/tests/test_medorder_routes.py"
+    ],
+    "size_days": 3.5,
+    "depends_on": [
+     "medorders-3"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "- Cross-ward GET and POST answer 404 and write a patient_scope_denied row.\n- Flag off: every route 404.\n- A nurse cannot sign (403) or create as prescribed; a doctor signing gets 428 on a severe allergy; a nurse's acknowledgement can never clear it.\n- Stale version 409; allergy charted between screen and write gives 409 screen_stale.\n- A nurse cannot cancel a prescribed order; the draft creator can cancel a draft.\n- The socket emit targets the department room and dept:__all__ and carries no drug name.\n- Python and TS permission parity tests pass."
+   },
+   {
+    "id": "medorders-5a",
+    "title": "One pharmacist verification: service and Verify Queue",
+    "description": "medorder_service.verify() and reject(): gate with dose, route, pharmacist role and exclude_med_id; bound product screened too; same-ingredient binding only (anything else refused as a substitution pending R002); placeholder correction on needs_verification orders only (reusing _is_placeholder), as 'amended' events; projection verified_by/verified_at written (I1).\nIn lifecycle mode the Verify Queue routes (pharmacy_routes.py:53, :116) call the store for linked rows; pharmacy_verification_service remains the path for unlinked rows. /queue/verification lists every order needing verification with the patient's allergy list.",
+    "files_touched": [
+     "server/services/pharmacy_verification_service.py",
+     "server/routes/pharmacy_routes.py",
+     "server/services/medorder_service.py",
+     "server/routes/medorder_routes.py"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_verify_unified.py"
+    ],
+    "size_days": 3.5,
+    "depends_on": [
+     "medorders-4"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "- Re-run test_pharmacy_verification and test_dose_guard_order_lanes with the store on and with lifecycle on.\n- Two pharmacists verifying at once: one 200, one 409.\n- Verifying an anticoagulant raises no self-alert.\n- A different-ingredient product is refused; a same-ingredient product binds and its name is screened (brand-name allergy caught).\n- A placeholder dose is refused until corrected; the correction is an amended event.\n- A dose block at verify still names medication.prescribe."
+   },
+   {
+    "id": "medorders-5b",
+    "title": "Helix hook, idempotent supply and the scoped custody link",
+    "description": "helix_service.transition_order_status and receive_order gain an optional on_applied(conn, order, from, to, transition_id) callback, invoked inside Helix's session before its commit (no other Helix change; insert_order unchanged).\nhelix_routes.transition_order, linked row: gate with the projection excluded, dose and role. Record mode: the callback writes supply events only. Lifecycle: verified/rejected also move the order via transition_in_txn (version-checked, so a lost race rolls back the Helix step); an already-verified order's Helix verify is a supply step; placeholder doses refused for linked rows (closes F-A for them).\nrequest_supply_in_txn and POST /{id}/request-supply (idempotent, one open supply row per order), behind MO-R12.\neMAR administered event carries a supply id only when exactly one received, unconsumed linked unit exists.\nStart only after the Relay helix_service and relay_routes changes land.",
+    "files_touched": [
+     "server/services/helix_service.py",
+     "server/routes/helix_routes.py",
+     "server/services/emar_service.py",
+     "server/services/medorder_service.py",
+     "server/routes/medorder_routes.py"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_helix_link.py"
+    ],
+    "size_days": 4,
+    "depends_on": [
+     "medorders-5a"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "- Re-run test_helix_order_lifecycle, test_helix_orders_gate, test_helix_substitution_safety, test_helix_ward_receipt and test_agentic_confirm_race with the store on.\n- A Sage order verified from either queue has exactly one supply row and shows verified on both surfaces (lifecycle).\n- Record mode: Helix verify writes a supply event and leaves the order status alone.\n- A version race in the callback rolls back the Helix transition and its case-room message.\n- Dose guard fires at Helix verify on a linked row.\n- Two received units: the dose records 'supply not linked'; one unit: linked, and a second dose does not reuse it.\n- request-supply twice returns the same row."
+   },
+   {
+    "id": "medorders-5c",
+    "title": "Pharmacy screens for the unified verification",
+    "description": "PharmacyVerifyQueue reads /queue/verification: all sources needing verification, the allergy list, a same-ingredient product picker, placeholder correction, 409 reload. HelixOrderReviewModal shows the linked order, 'Order verified by X at T' and the order timeline.",
+    "files_touched": [
+     "src/components/helix/PharmacyVerifyQueue.tsx",
+     "src/components/helix/HelixOrderReviewModal.tsx",
+     "src/api/pharmacy.ts",
+     "src/api/medorders.ts"
+    ],
+    "files_new": [
+     "src/components/helix/PharmacyVerifyQueue.medorders.test.tsx",
+     "src/components/helix/HelixOrderReviewModal.medorders.test.tsx"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "medorders-5a",
+     "medorders-5b"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "- Existing PharmacyVerifyQueue (3) and HelixOrderReviewModal (2) suites pass with the feature off.\n- Vitest: allergy list shown; picker offers same-ingredient products only; 409 reloads the row.\n- check-contrast passes; status by text."
+   },
+   {
+    "id": "medorders-6a",
+    "title": "Hold, resume and stop, and the readers that drive administration",
+    "description": "Service steps and routes for hold (reason, held_from), resume (re-runs the gate with exclusion; returns to held_from), stop (terminal, reason, projection discontinued). Projection writes held_at/hold_reason. Case room told as Helix rejections are.\nReaders: nurse_shift_service (held rows to an on_hold list, no due or overdue), downtime_service paper MAR (separate 'ON HOLD: do not give' section), voice_agent_service (labelled, never due), MedRoundSheet (On hold group, no Administer).",
+    "files_touched": [
+     "server/services/medorder_service.py",
+     "server/routes/medorder_routes.py",
+     "server/services/nurse_shift_service.py",
+     "server/services/downtime_service.py",
+     "server/services/voice_agent_service.py",
+     "src/pages/panels/nurse/MedRoundSheet.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_hold_stop.py",
+     "server/tests/test_medorder_held_admin_readers.py"
+    ],
+    "size_days": 4,
+    "depends_on": [
+     "medorders-4"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "MO-R2 (new, safety)",
+    "migrations": 0,
+    "tests": "- Held order refused at the bedside; 'not given (held)' accepted.\n- Held drug never printed in the givable list of the downtime pack.\n- Held drug has no due or overdue on the nurse board.\n- Enoxaparin hold then resume raises no self-alert; a newly charted allergy blocks resume.\n- Roles follow MO-R2; every step writes an event and an audit row."
+   },
+   {
+    "id": "medorders-6b",
+    "title": "Held state in presentation readers and the reader registry",
+    "description": "Label held drugs in ipass_service, discharge_service reconciliation, bridge_routes (plain 'On hold', no colour, no explanation), fhir_export_service (on-hold), sage_service and sage_ambient_service. Keep held drugs in scribe_service and patient_specific_screen sets. test_medorder_reader_registry.py fails on any module reading FROM medications that is not classified.",
+    "files_touched": [
+     "server/services/ipass_service.py",
+     "server/services/discharge_service.py",
+     "server/routes/bridge_routes.py",
+     "server/services/fhir_export_service.py",
+     "server/services/sage_service.py",
+     "server/services/sage_ambient_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_reader_registry.py",
+     "server/tests/test_medorder_held_labels.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "medorders-6a"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "MO-R2 (via medorders-6a)",
+    "migrations": 0,
+    "tests": "- I-PASS, discharge reconciliation, FHIR and Sage context show held drugs as on hold.\n- Portal shows 'On hold' with no colour class and no verdict text.\n- Registry test fails when a new reader is added unclassified.\n- Start sage_service.py only after the Sage bed lookup session lands."
+   },
+   {
+    "id": "medorders-7",
+    "title": "CPOE and order-set drugs reach the ward after a prescriber signs",
+    "description": "Lifecycle only: CPOE medication orders and order-set medication items also create linked drafts; the CPOE form collects drug, dose, route, frequency, PRN and priority as fields. Sign projects the order to the board, eMAR and interaction screen; the store mirrors orders.status with a guarded UPDATE plus order_events. /orders/{id}/transition on a linked order: cancel delegated to the store, every other target 409 managed_by_medication_order (keyed on the link). Shadow clinical.action for medication orders moves from create to sign. MED_NOT_SENT copy becomes flag-aware; Orders gains Sign and an 'Awaiting my signature' filter.",
+    "files_touched": [
+     "server/routes/orders_routes.py",
+     "server/services/orders_service.py",
+     "server/services/order_sets_service.py",
+     "server/services/medorder_service.py",
+     "src/components/orders/OrdersPanel.tsx",
+     "src/components/orders/OrderSetsPanel.tsx",
+     "src/components/orders/medicationRouting.ts",
+     "src/api/medorders.ts"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_cpoe_lane.py",
+     "src/components/orders/OrdersPanel.medorders.test.tsx"
+    ],
+    "size_days": 5,
+    "depends_on": [
+     "medorders-4",
+     "medorders-5a"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "- Lifecycle off: test_order_sets, test_orders_service, test_cpoe_dose_guard and test_caller_named_patient_scope unchanged.\n- Order set applies as N drafts, none on the board; after sign the drug is on the board and eMAR.\n- A nurse cannot sign; a nurse cancelling a linked active order via /orders gets 403 from the delegated cancel; completing it gets 409.\n- Exactly one shadow clinical.action per signed medication order, none at draft creation; non-medication orders unchanged.\n- Vitest for Sign button and copy per permission."
+   },
+   {
+    "id": "medorders-8",
+    "title": "Sage handoff and Scribe extraction write through the store",
+    "description": "_dispatch_to_helix: one transaction for the llm_extracted chart row, the med_order (prescribed, needs_verification 1, prescriber = confirming actor) and the supply row via insert_order(conn) with the product found by helix_service.resolve_by_name_in_txn, the same LIKE query create_order runs today (behaviour preserved; 'charted-only' kept). Scribe _persist_extraction creates one med_order per start in its existing transaction, no supply row. relay_routes.py:420 is NOT touched (landmine). W111 and R010 untouched.",
+    "files_touched": [
+     "server/services/sage_handoff_service.py",
+     "server/services/nervous_system_triggers.py",
+     "server/services/helix_service.py",
+     "server/services/medorder_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_ai_lanes.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "medorders-3",
+     "medorders-5b"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "- Re-run test_handoff, test_handoff_blocked, test_agentic_order_failopen, test_ehr_extraction_provenance and any surgical-transfer handoff test with the store on.\n- Fault after the chart INSERT leaves neither row (today it leaves an orphan chart row).\n- The bound product equals what create_order's LIKE would have chosen for every seeded drug.\n- Lifecycle only: one pharmacist verification covers both rows. Record mode: the two verifications stay separate, each writing its own event."
+   },
+   {
+    "id": "medorders-9",
+    "title": "Interaction and duplicate screens and discharge reconciliation read the store",
+    "description": "_screen_interactions reads live signed orders (prescribed, verified, held; PRN included; drafts excluded) plus unlinked legacy active rows, excluding the order's own id. Same-ingredient duplicate becomes a gate finding as MO-R6 rules. PRN orders become givable as MO-R3 rules. build_medication_reconciliation reads store statuses and reasons.",
+    "files_touched": [
+     "server/services/drug_safety_service.py",
+     "server/services/medication_safety_gate.py",
+     "server/services/discharge_service.py",
+     "server/services/medorder_service.py",
+     "server/services/emar_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_screen_scope.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "medorders-7",
+     "medorders-8"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "MO-R3 (new, safety); MO-R6 for the duplicate acknowledgement",
+    "migrations": 0,
+    "tests": "- Warfarin against a PRN or signed CPOE anticoagulant alerts; drafts are not screened against.\n- Re-run test_interaction_coverage, test_order_time_allergy_grading, test_discharge_review.\n- A PRN order passes the full bedside gate set."
+   },
+   {
+    "id": "medorders-10",
+    "title": "Lifecycle on the chart, the round, deliveries and the doctor's home",
+    "description": "MedOrderList and MedOrderTimeline in the chart Medications modal (text status chips, supply line or 'supply not linked', last dose, permission-driven Sign, Hold, Resume, Stop with reasons). The Add form keeps posting to the vigil route (R010) and keeps its Discontinued option. MedRoundSheet adds 'Awaiting pharmacist'. AdministerModal maps the held refusal and offers 'not given (held)'. DeliveriesSheet names the order. DoctorHomePanel to-sign chip and the 'Entered by a nurse' list. shellConfig reads features; everything refreshes on 'medorders:update'.",
+    "files_touched": [
+     "src/pages/panels/VigilPanel.tsx",
+     "src/pages/panels/nurse/MedRoundSheet.tsx",
+     "src/components/vigil/AdministerModal.tsx",
+     "src/pages/panels/nurse/DeliveriesSheet.tsx",
+     "src/pages/panels/DoctorHomePanel.tsx",
+     "src/shellConfig.tsx",
+     "src/api/medorders.ts"
+    ],
+    "files_new": [
+     "src/components/medorders/MedOrderList.tsx",
+     "src/components/medorders/MedOrderTimeline.tsx",
+     "src/components/medorders/MedOrderList.test.tsx",
+     "src/components/medorders/MedOrderTimeline.test.tsx"
+    ],
+    "size_days": 5,
+    "depends_on": [
+     "medorders-4",
+     "medorders-5a",
+     "medorders-7"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "- Vitest for every status x permission combination; flag off renders the old modal.\n- Existing AdministerModal (5), MedRoundSheet (2), DeliveriesSheet and MedListPrintView suites pass.\n- check-contrast; status never by colour alone.\n- Browser walk on the isolated verify stack as doctor, nurse and pharmacist."
+   },
+   {
+    "id": "medorders-11",
+    "title": "[Follow-on] Pharmacist verification before the first dose",
+    "description": "order_allows_dose requires projection.verified_by for every linked order, with the stat or urgent exception if ruled. MAR shows 'Given before pharmacist check'; queue gets a retrospective window.",
+    "files_touched": [
+     "server/services/medorder_service.py",
+     "server/services/emar_service.py",
+     "src/pages/panels/nurse/MedRoundSheet.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_verify_before_dose.py"
+    ],
+    "size_days": 2,
+    "depends_on": [
+     "medorders-5b"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "MO-R1 (new, safety)",
+    "migrations": 0,
+    "tests": "- Routine order refused until verified; stat allowed and flagged as ruled; unlinked rows unchanged."
+   },
+   {
+    "id": "medorders-12",
+    "title": "[Follow-on] Verbal and telephone orders with read-back and countersign",
+    "description": "Nurse enters a 'verbal' order with read-back; administrable only as R010 rules; countersign window, to-sign queue entry and overdue escalation.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/medorder_service.py",
+     "server/routes/medorder_routes.py",
+     "src/pages/panels/VigilPanel.tsx",
+     "src/components/orders/OrdersPanel.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_verbal.py"
+    ],
+    "size_days": 4,
+    "depends_on": [
+     "medorders-7"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "R010",
+    "migrations": 1,
+    "tests": "- Read-back required; overdue countersign surfaces and is audited; a nurse cannot countersign."
+   },
+   {
+    "id": "medorders-13",
+    "title": "[Follow-on] Scribe-extracted medicines as drafts",
+    "description": "Extracted starts become drafts a clinician signs instead of prescribed orders only the pharmacist checks.",
+    "files_touched": [
+     "server/services/nervous_system_triggers.py",
+     "server/services/medorder_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_scribe_drafts.py"
+    ],
+    "size_days": 2,
+    "depends_on": [
+     "medorders-8"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "W111",
+    "migrations": 0,
+    "tests": "- Extracted drug appears in to-sign, not in the Verify Queue or on the board; provenance test passes."
+   },
+   {
+    "id": "medorders-14",
+    "title": "[Follow-on] Stat order completes on its first given dose",
+    "description": "A 'given' administration of a stat or once order moves it to completed in the dose's transaction.",
+    "files_touched": [
+     "server/services/medorder_service.py",
+     "server/services/emar_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_stat_completion.py"
+    ],
+    "size_days": 1.5,
+    "depends_on": [
+     "medorders-3"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "R001",
+    "migrations": 0,
+    "tests": "- Second given dose from a stale tab refused or warned as ruled; replay of the first still returns its record; not_given does not complete."
+   },
+   {
+    "id": "medorders-15",
+    "title": "[Follow-on] Substitution as an order amendment",
+    "description": "A pharmacy substitute becomes an 'amended' proposal accepted or declined by the prescriber or auto-accepted as R002 and the site interchange list rule; projection changes only after acceptance. Replaces day one's refusal of non-same-ingredient bindings.",
+    "files_touched": [
+     "server/services/helix_service.py",
+     "server/services/medorder_service.py",
+     "server/routes/medorder_routes.py",
+     "src/components/helix/HelixOrderReviewModal.tsx",
+     "src/components/medorders/MedOrderList.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_substitution.py"
+    ],
+    "size_days": 4,
+    "depends_on": [
+     "medorders-5b"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "R002",
+    "migrations": 0,
+    "tests": "- Therapeutic interchange waits for the prescriber; same-molecule follows the ruling; allergy screen runs on the substitute."
+   },
+   {
+    "id": "medorders-16",
+    "title": "[Follow-on] Helix approve and Relay confirm lanes onto the store",
+    "description": "Helix approve creates a draft a prescriber signs, or as R010 rules. confirm_agentic calls create_in_txn on _persist_confirmation's connection if W099 wires it; nothing if retired.",
+    "files_touched": [
+     "server/routes/helix_routes.py",
+     "server/routes/relay_routes.py",
+     "src/components/sage/SageMessage.tsx",
+     "server/services/medorder_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_pharmacy_lanes.py"
+    ],
+    "size_days": 2.5,
+    "depends_on": [
+     "medorders-5b",
+     "medorders-8"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "R010 (and W099 for the Relay half)",
+    "migrations": 0,
+    "tests": "- test_agentic_confirm_race and test_optimized_agentic_orders: a lost race leaves no order and no med_order; the pharmacist is never prescriber unless R010 says so."
+   },
+   {
+    "id": "medorders-17",
+    "title": "[Follow-on] Medication reconciliation at admission, transfer and discharge (W105)",
+    "description": "med_reconciliations records continue, stop or modify per item, prescriber-signed; home meds seeded from admission; transfer prompts reconciliation; discharge closes live orders as MO-R7 rules.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/discharge_service.py",
+     "server/routes/vigil_routes.py",
+     "server/services/admission_service.py",
+     "server/services/medorder_service.py"
+    ],
+    "files_new": [
+     "src/components/medorders/MedReconciliation.tsx",
+     "server/tests/test_medorder_reconciliation.py"
+    ],
+    "size_days": 5,
+    "depends_on": [
+     "medorders-9",
+     "adt-1"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "MO-R7 (new, safety); the discharge gate itself is R009",
+    "migrations": 1,
+    "tests": "- Unverified items acknowledged before the summary; a stopped drug never prints as continued; transfer creates a reconciliation."
+   },
+   {
+    "id": "medorders-18",
+    "title": "[Follow-on] Retire the legacy write paths (single writer)",
+    "description": "After lifecycle is on at every site and parity has been clean 14 days: remove direct medications and Helix INSERTs from routes and services, move route gate calls into medorder_service, AST guard enforces both. Fixtures may still insert unlinked rows.",
+    "files_touched": [
+     "server/routes/vigil_routes.py",
+     "server/services/sage_handoff_service.py",
+     "server/services/nervous_system_triggers.py",
+     "server/routes/orders_routes.py",
+     "server/routes/helix_routes.py"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_single_writer_ast.py"
+    ],
+    "size_days": 2.5,
+    "depends_on": [
+     "medorders-8",
+     "medorders-9",
+     "medorders-16"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "R010 (through medorders-16)",
+    "migrations": 0,
+    "tests": "- AST guard fails on a new direct writer; full suite passes; parity empty on a migrated DB copy."
+   },
+   {
+    "id": "medorders-19",
+    "title": "[Follow-on] Prescriber-authored administration schedule (W117)",
+    "description": "med_order_schedule_times with explicit due times defaulted from a signed site_config map; the board uses authored times when present.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/nurse_shift_service.py",
+     "server/services/medorder_service.py",
+     "src/components/orders/OrdersPanel.tsx"
+    ],
+    "files_new": [
+     "server/site_config/dose_times.json",
+     "server/tests/test_medorder_schedule.py"
+    ],
+    "size_days": 5,
+    "depends_on": [
+     "medorders-7"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "MO-R8 (new, safety)",
+    "migrations": 1,
+    "tests": "- TDS shows the site's three times; missing map falls back; overdue from authored times."
+   },
+   {
+    "id": "medorders-20",
+    "title": "[Follow-on] Exact formulary binding for the Sage lane",
+    "description": "Behaviour change: bind the Sage handoff to the reconciler's match (0.8 threshold) instead of LIKE, screen the matched product's name as relay confirm does, keep 'charted-only' below the threshold. Revisit once the GRN drug master exists.",
+    "files_touched": [
+     "server/services/sage_handoff_service.py",
+     "server/services/medorder_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_sage_binding.py"
+    ],
+    "size_days": 2.5,
+    "depends_on": [
+     "medorders-8"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "- A substring-boosted wrong match is refused or flagged; the screened name equals the dispensed product; below threshold stays charted-only."
+   }
+  ],
+  "product_rulings": [
+   {
+    "question": "MO-R1: Must every medication order be verified by a pharmacist before its first dose? Today only AI or agentic sources need it.",
+    "options": "(a) Every order; stat and urgent first doses may be given at 'prescribed' and verified afterwards, flagged on the MAR. (b) AI or agentic only, as today. (c) Every order, no exceptions.",
+    "recommendation": "(a), with a retrospective window set by the site pharmacist (suggest before the next scheduled dose). Follow-on medorders-11.",
+    "safety": true
+   },
+   {
+    "question": "MO-R2: Who may hold, resume, stop, and cancel a live medication order? Today no route does any of these.",
+    "options": "(a) The prescriber (medication.prescribe) for all four; the nurse records a single dose as not given, as today; the pharmacist rejects or queries in Relay. (b) As (a), and nurses may also hold for nil-by-mouth or a procedure, with the prescriber told. (c) Pharmacists may also hold pending a query.",
+    "recommendation": "(a)",
+    "safety": true
+   },
+   {
+    "question": "MO-R3: Should a drug charted as PRN be givable (today it shows on the round but every dose is refused, emar_service.py:556)? And should the order-time interaction and duplicate screen include PRN, held and signed CPOE orders, but not unsigned drafts?",
+    "options": "(a) Yes to both. (b) Givable, screening stays on 'active' only. (c) Leave as today.",
+    "recommendation": "(a)",
+    "safety": true
+   },
+   {
+    "question": "MO-R4 (W178): Should an administrator keep the ability to verify medication orders? Today they can, through helix.write.",
+    "options": "(a) Pharmacist only; a site may grant it to others. (b) Keep admin.",
+    "recommendation": "(a). In code it stays granted to admin until you rule.",
+    "safety": false
+   },
+   {
+    "question": "MO-R5: Should acknowledging a SEVERE allergy alert at order time need medication.prescribe on every lane, as the bedside override has since 2026-08-15? Today anyone with medication.write or order.write can type a reason (medication_safety_gate.py:250), including a nurse on the chart lane.",
+    "options": "(a) Prescriber-only on every lane. (b) Prescriber-only at the new sign step only. (c) As today.",
+    "recommendation": "(a). The store's sign step gives (b) by construction, but the nurse chart lane still allows (c) and overlaps the held R010 and R011, so this ruling stays open.",
+    "safety": true
+   },
+   {
+    "question": "MO-R6: At order time the same ingredient is already on a live order. Notice, 428 acknowledgement with a reason, or block?",
+    "options": "(a) Notice only. (b) 428 with a reason, recorded. (c) Hard block.",
+    "recommendation": "(b). Stat top-ups and route changes are legitimate.",
+    "safety": true
+   },
+   {
+    "question": "MO-R7: What happens to live medication orders at discharge, death or transfer?",
+    "options": "(a) Complete with reason 'discharged' only after the discharge reconciliation is signed; transfer keeps them live and prompts a transfer reconciliation. (b) Complete automatically at discharge. (c) Leave live, as today.",
+    "recommendation": "(a). The discharge gate itself is R009, which stays held.",
+    "safety": true
+   },
+   {
+    "question": "MO-R8 (W117): Standard administration times per frequency (for example TDS 08/14/20 or 06/14/22)?",
+    "options": "(a) A site_config file signed by pharmacy and the physician champion. (b) Built-in defaults. (c) Keep the derived schedule.",
+    "recommendation": "(a), with no built-in default.",
+    "safety": true
+   },
+   {
+    "question": "MO-R9: If lifecycle mode is switched off after use, held orders stay ungivable (the bedside check follows the order link, not the flag) and linked CPOE orders can only be cancelled through Orders (all other transitions answer 409). They must be re-prescribed from the chart. Accept?",
+    "options": "(a) Accept: it fails closed. (b) Release held orders and unlink CPOE orders when the flag goes off.",
+    "recommendation": "(a), with an operations note before any site turns lifecycle on.",
+    "safety": true
+   },
+   {
+    "question": "MO-R10: What happens to drafts nobody signs, for example order-set drafts?",
+    "options": "(a) Never auto-cancel; drafts older than 24 h go to the top of the to-sign queue and onto handover. (b) Auto-cancel after a site-set time, with a Relay note.",
+    "recommendation": "(a)",
+    "safety": true
+   },
+   {
+    "question": "MO-R11: May a CPOE medication order name a drug that is not on the formulary?",
+    "options": "(a) Free text with a visible 'not supplied by pharmacy' line; the pharmacist binds a SAME-INGREDIENT product at verification. (b) Formulary products only.",
+    "recommendation": "(a) until the GRN drug master lands.",
+    "safety": false
+   },
+   {
+    "question": "MO-R12 (new): Which orders need a pharmacy supply request, and which are given from ward stock or the patient's own supply? Until ruled, Orb creates no automatic supply row for chart or CPOE orders; only today's lanes (Sage handoff) and an explicit 'Request from pharmacy' create one.",
+    "options": "(a) The prescriber picks pharmacy, ward stock or patient's own on each order, defaulted per drug from the drug master once it exists. (b) Every formulary order gets a pharmacy supply row at sign. (c) Keep supply manual.",
+    "recommendation": "(a). It does not change who may give a dose (that is MO-R1), only whether the pharmacy queue sees the order.",
+    "safety": false
+   },
+   {
+    "question": "MO-R13 (new): After a patient's erasure, should the medication-order ledger (drug names, doses, reasons) be deleted with the record, or retained?",
+    "options": "(a) Deleted with the medication record, like medication_administrations; tamper evidence stays in the hash-chained audit log. (b) Retained as append-only, listed in ERASURE_RETAINED_TABLES with its reason.",
+    "recommendation": "(a). The design builds (a); (b) is a one-line registry change plus a DELETE trigger if you choose it.",
+    "safety": false
+   },
+   {
+    "question": "HELD R010: Who is the prescriber of record for a Sage-drafted drug, and may nurses enter medication orders?",
+    "options": "As in docs/RULINGS_NEEDED_2026-10.md",
+    "recommendation": "Held; not decided here. Nurses keep today's chart lane (including acknowledging severe alerts there) and can create CPOE drafts. Follow-on medorders-12, 16 and 18 wait.",
+    "safety": true
+   },
+   {
+    "question": "HELD R001: Should the server block a second administration of a stat order?",
+    "options": "As in RULINGS_NEEDED",
+    "recommendation": "Held. Follow-on medorders-14 waits.",
+    "safety": true
+   },
+   {
+    "question": "HELD R002: May a pharmacist substitute without the prescriber, and from which list?",
+    "options": "As in RULINGS_NEEDED",
+    "recommendation": "Held. Day one refuses any non-same-ingredient binding at verification instead of deciding; Helix substitution is unchanged; follow-on medorders-15 waits.",
+    "safety": true
+   },
+   {
+    "question": "HELD R011: May a nurse override a bedside dose block, and must a moderate same-drug re-challenge carry a reason before the order is written?",
+    "options": "As in RULINGS_NEEDED",
+    "recommendation": "Held. No increment changes the bedside override path.",
+    "safety": true
+   },
+   {
+    "question": "HELD W111: Should Scribe-extracted data be proposed rather than live? (medication half)",
+    "options": "As in the register",
+    "recommendation": "Held. Extracted drugs stay 'prescribed, needs pharmacist'; follow-on medorders-13 waits.",
+    "safety": true
+   },
+   {
+    "question": "HELD R024: When a Relay confirm races a dismissal, what happens to the pharmacy order?",
+    "options": "As in RULINGS_NEEDED",
+    "recommendation": "Held. Every store write has a function that joins the caller's transaction, so either answer works.",
+    "safety": true
+   },
+   {
+    "question": "HELD R009: Discharge block or warn for a critical patient?",
+    "options": "As in RULINGS_NEEDED",
+    "recommendation": "Held. MO-R7 is only about what happens to orders; the gate stays R009.",
+    "safety": true
+   },
+   {
+    "question": "W099 (open): Wire or retire the agentic confirm and pre-flight routes?",
+    "options": "(a) Wire, with PIN and pre-flight. (b) Retire.",
+    "recommendation": "Not decided here. Follow-on medorders-16 follows the choice.",
+    "safety": false
+   }
+  ],
+  "risks": [
+   "Dual writes diverge during the move. Mitigation: I1 keeps the dose decision on facts the projection carries, I2 makes every mutation of a linked row write through the store whatever the flag says, unlinked rows keep today's semantics, the parity report counts mismatches, and the follow-on AST guard closes the door.",
+   "Adoption sets the link that the bedside check follows. Run the status x source x verified_by equivalence test, plus the legacy-verify-after-adoption and store-on-then-off scenarios, before any site turns the store on.",
+   "Gate inside a write transaction. db_session(immediate=True) must be outermost; on the unpooled path the gate's sessions would wait out the busy timeout; its denial audit rows must not roll back. Screen outside, re-check the fingerprint inside.",
+   "Held drugs read as current by a reader nobody updated. The paper MAR is the dangerous one because it has no link check. Mitigation: held_at marker, reader table, registry test that fails on an unclassified reader.",
+   "FK-parent rebuild trap. medications stays unrebuilt; new tables declare no FKs.",
+   "Helix tables are created outside the runner. The column must be in both the migration and HELIX_SCHEMA's CREATE TABLE; the index only in guarded code, never in the executescript (22 test files call init_helix_db).",
+   "A green suite on a fresh DB hides legacy-DB failures; every migration and adoption test needs a tmp_path legacy DB, and the suite must not run with the shipping .env.",
+   "Audit int target_id false-tamper alarm: always str(id); legacy medication ids are integers.",
+   "Shadow scorecard timing. Under lifecycle, medication CPOE orders emit clinical.action at sign instead of create, so a draft signed hours later is matched later (or falls outside the correlation window). Lifecycle off is unchanged; note it in the scorecard documentation before any pilot runs lifecycle.",
+   "Flag-off after lifecycle use leaves held orders ungivable and linked CPOE orders cancel-only (MO-R9).",
+   "Size. Day one (medorders-1 to 10, 13 increments after splits) is about 47 engineer-days: about 27 can start now (1, 2, 3, 4, 5a, 7, 10), 10 wait on the Relay session (5b, 5c, 8) and 10 wait on rulings (6a, 6b, 9). The follow-on epic (11 to 20) is about 31 more, almost all gated on rulings. The coverage map's 2 to 4 weeks counted three lanes, not eight.",
+   "Formulary quality. Without the GRN drug master many orders have no exact product, so same-ingredient binding often fails and the pharmacy keeps working the legacy way. The seed tags two brands with the wrong generic, which the same-ingredient check would accept as matching the WRONG ingredient set; fix the seed before any site verifies through the store.",
+   "LIKE binding stays on the Sage lane in day one (behaviour preserved), so a Sage order can still bind a product whose name merely contains the target. Exact binding is follow-on medorders-20.",
+   "Duplicate prescribing during the move: a doctor can sign a CPOE draft for a drug already charted from the chart, as MED_NOT_SENT told them to. Notice only until MO-R6.",
+   "Pre-existing defects found in this pass, outside this epic and worth separate small fixes now: F-A Helix verify accepts the 'REVIEW REQUIRED' dose (helix_service.py:328); F-B Helix verify of a Sage pair self-alerts (helix_routes.py:284, no exclusion); F-D the async chart add route runs the gate's SQLite on the event loop (vigil_routes.py:907/:934); and the surgical-transfer landmine means relay_routes.py:420 still runs the whole handoff synchronously on the loop. That last needs its own task that captures the loop and schedules the package (run_coroutine_threadsafe, or await the package after run_db), with a surgery-transfer test.",
+   "Hot shared files across about ten sessions and five sibling epics: config.py, migrations.py, permissions.py, main.py, shellConfig.tsx, roles.ts. Take migration numbers at merge and land each increment as its own commit.",
+   "Ward Record and demos depend on both flags staying off. A demo that turns the store on gets reseeded legacy rows adopted at the next boot; reseed runs before boot adoption only if the backend restarts, so check the parity report before presenting."
+  ],
+  "session_conflicts": [
+   "Relay agentic-confirm orphan orders session: server/routes/relay_routes.py (_persist_confirmation), server/services/helix_service.py (create_order, insert_order) and server/tests/test_agentic_confirm_race.py (modified in the tree now). Overlaps: medorders-5b (on_applied callback in transition_order_status and receive_order), medorders-8 (resolve_by_name_in_txn extracted from create_order), follow-on medorders-15/16. Start 5b, 5c and 8 only after that session lands. This revision no longer touches relay_routes.py in day one (the run_db move was removed).",
+   "CORS same-origin socket session (R025, approved and built per the rulings doc; test_ws_origin.py untracked in the tree): server/ws/realtime.py, the socket in src/api/client.ts, AND config.cors_allow_origins (config.py:79-90) plus the CORS block in main.py (:915-925). medorders-1 edits config.py and main.py (/api/health features map): land those edits after the CORS session. The design imports realtime.schedule_patient_vitals and the existing socket export without editing either file.",
+   "Sage bed lookup session (server/services/sage_service.py): medorders-6b adds a held label at sage_service.py:3071, so 6b starts after that session lands. Nothing else overlaps.",
+   "Bridge emergency flags work in progress (server/services/bridge_service.py): medorders-6b edits server/routes/bridge_routes.py (:243, :354), next door to that file; check what that work changed before landing 6b.",
+   "Scribe quick-admit department validation session (admission_service, scribe routes): follow-on medorders-17 edits admission_service.py and must wait. medorders-8 edits nervous_system_triggers.py, adjacent to Scribe but not scribe routes.",
+   "Admit-form ACVPU/O2 defaults session (src/components/AdmitPatientModal.tsx, modified in the tree now): any home-medication capture in follow-on medorders-17 would touch it; deferred.",
+   "Sibling HIS epics (OPD, ADT, pharmacy GRN, LIS, multi-site) share server/config.py (_feature_on and the features map), server/migrations.py (next free number at merge; 47 today, registered at :5494), server/permissions.py with src/lib/roles.ts and src/lib/roles.test.ts, server/main.py (/api/health, include_router), src/shellConfig.tsx, and consent_service._RETENTION_SOURCES."
+  ]
+ },
+ "critique": {
+  "verdict": "needs_changes",
+  "issues": [
+   {
+    "severity": "blocker",
+    "issue": "Linked rows go stale when a legacy UPDATE writer changes them, and the eMAR then refuses doses that are verified. The strangler assumes legacy writers only produce UNLINKED rows, but some legacy writers UPDATE rows that are already linked. medorders-2 adopts llm_extracted rows as prescribed with needs_verification=1. medorders-3 then ships the link-keyed administrable() check. The Verify Queue is only converted in medorders-5 (5 depends on 4, which depends on 3). In between, the legacy verify_medication sets medications.verified_by but never touches med_orders, so administrable() stays false and the bedside refuses a drug the pharmacist has verified. The same thing happens permanently on any database that ran with the store on and then turned it off: the links persist, the eMAR check ignores flags, and the legacy verify never writes the store. That contradicts the design's own promise that 'with both off, every path behaves exactly as at cafe363'.",
+    "evidence": "pharmacy_verification_service.py:365-371 (UPDATE medications SET verified_by only), :417 (reject); emar_service.py:556-560 legacy checks; the design's \u00a76 says 'The check keys on the LINK, not the flag'; increment deps medorders-3 <- 1,2 and medorders-5 <- 4 <- 3; the medorders-3 re-run list omits test_pharmacy_verification.",
+    "fix": "Choose one and state it. (a) Until medorders-18, administrable() for a linked row also honours the legacy columns (verified_by or status on the projection), so a legacy verify still releases the dose. (b) Every service that mutates a linked row writes through medorder_service whatever the flag says, keyed on the link like the eMAR. Also do not adopt AI-sourced unverified rows before medorders-5 lands. Add test_pharmacy_verification and a store-on-then-off scenario to medorders-3's re-run fixture."
+   },
+   {
+    "severity": "major",
+    "issue": "Held orders are projected as 'active', and that leaks into readers that drive administration. The design only changes MedRoundSheet. The downtime paper MAR prints a held drug as active, and on paper there is no eMAR link check to stop the dose. The nurse board computes due and overdue for it. I-PASS, the voice agent, Bridge and the discharge reconciliation all present it as current.",
+    "evidence": "downtime_service.py:162-166 (status IN ('active','prn')); nurse_shift_service.py:325-330; 21 service and route files read medications (I-PASS, discharge, voice_agent, bridge_routes, sage_proactive and others); medorders-6 files_touched lists only MedRoundSheet.tsx for the UI.",
+    "fix": "Expose held state to every reader that drives administration. Either add a projection marker (a nullable medications.hold_reason, or a join to med_orders) or keep a reader-by-reader table. Update at least downtime_service, the nurse_shift_service due/overdue logic, ipass_service and discharge_service in medorders-6. Add a test that a held drug never prints as givable on the downtime pack."
+   },
+   {
+    "severity": "major",
+    "issue": "orders.status and med_orders can diverge. Only the CPOE 'active' transition is delegated to the store. /orders/{id}/transition stays open to ORDER_WRITE holders, nurses included, so a linked medication order can be cancelled or completed in Orders while the drug stays live on the eMAR. Mirroring 'completed' into orders also fails, because orders_service has no active->completed edge.",
+    "evidence": "orders_routes.py:478-491 (ORDER_WRITE, transition_order); orders_service.py:32-39 LEGAL_TRANSITIONS (active -> in_progress|resulted|cancelled only); nurses hold ORDER_WRITE (permissions.py:256).",
+    "fix": "For orders linked to a med_order, refuse every /orders transition with a 409 'managed by the medication order' and route it through the store. Write the orders.status mirror as a guarded UPDATE plus an order_events row inside the store transaction, not through transition_order."
+   },
+   {
+    "severity": "major",
+    "issue": "At verify and resume, an order is screened against its own projection row. enforce_medication_safety has no way to exclude a row, and the interaction lookup does not exclude the drug itself. A held anticoagulant keeps an 'active' projection, so resuming it (and verifying any projected order) matches the severe anticoagulants+anticoagulants row against itself and returns 428 every time. medication_safety_gate.py is not in the files of medorders-5 or medorders-6. The same self-match very likely exists today at Helix verify of a Sage pair: the llm_extracted chart twin is in the screened set.",
+    "evidence": "medication_safety_gate.py:178-201 calls check_medication_safety(patient_id, drug_name) with no exclude; drug_safety_service.py:625-642 already supports exclude_med_id; interaction_db.py:43 ('anticoagulants','anticoagulants','class','severe'); interaction_db.lookup_interactions :251-285 has no self-exclusion; helix_routes.py:284.",
+    "fix": "Add an exclude_med_id passthrough to enforce_medication_safety in medorders-1 or medorders-4. Pass the projection id on verify, resume and amend, and the chart twin id on Helix verify of a linked row. Add an enoxaparin hold->resume test."
+   },
+   {
+    "severity": "major",
+    "issue": "Sage orders would get two supply rows. medorders-8 writes a linked pending Helix row at handoff. \u00a75 and medorders-5 then say verification 'creates the supply row at Helix status verified'. For Sage orders that means two dispenses and two charges. insert_order also hard-codes status 'pending', so creating a row 'at verified' needs a change to helix_service (a file the Relay session owns), and it skips the case-room post that transition_order_status makes.",
+    "evidence": "helix_service.py:219-240 (status 'pending' literal); helix_service.py:401-424 (case-room message only in transition_order_status); billing_service.py:189 bills dispensed/delivered rows.",
+    "fix": "Make request_supply_in_txn idempotent per order. If a non-terminal linked supply row exists, transition it rather than inserting a new one. Add an explicit status parameter to insert_order after the Relay session lands. Post the same case-room message. Test that a Sage order verified from either queue has exactly one supply row."
+   },
+   {
+    "severity": "major",
+    "issue": "Binding a formulary product at verification is an unguarded substitution, and R002 is held. MO-R11(a) has the pharmacist bind a product to a free-text order, and the seed tags two brands with the wrong generic. The gate screens the order's drug_name, not the bound product. So a pharmacist could bind a different molecule, and the allergy and dose screen would never see it.",
+    "evidence": "Design \u00a75 'binds the exact formulary product'; risk list 'seed tags two brands with the wrong generic'; helix_service.order_screen_target :447 already screens the EFFECTIVE drug; R002 in RULINGS_NEEDED_2026-10.md:12.",
+    "fix": "At verify, allow only a same-ingredient binding (compare the product's generic and interaction terms with drug_name). Send any other binding down the R002-held substitution path (medorders-15). Screen the bound product's name as well as drug_name."
+   },
+   {
+    "severity": "major",
+    "issue": "medorders-8 claims the Sage lane's behaviour is preserved, but 'reconciled id instead of LIKE' changes it. reconcile_medication is a fuzzy matcher: 0.8 threshold, and any substring hit is boosted to 0.85. The gate in _dispatch_to_helix screens the free-text target, not the matched product, so the screen and the dispensed drug can differ.",
+    "evidence": "rxnorm_reconciler.py:30-70; sage_handoff_service.py:276-282 (screens target_med); relay_routes.py:1274 (confirm screens 'by id, not by name').",
+    "fix": "Present this as a behaviour change with its own tests. Screen the reconciled product's name, as the relay confirm path does. Keep 'charted-only' when no match clears the threshold."
+   },
+   {
+    "severity": "major",
+    "issue": "Moving create_and_dispatch_handoff into run_db (medorders-8) triggers a landmine the code itself warns about. Off the loop, get_running_loop() fails silently, so the surgical transfer package is never generated and the case stays at emergency_pending. The change is also outside the medication scope. relay_routes.py is missing from medorders-8's files_touched, and that file belongs to the running Relay session.",
+    "evidence": "sage_handoff_service.py:505-521 'THREAD-AFFINITY LANDMINE ... Wrap that call in run_db and it silently takes the RuntimeError path'; relay_routes.py:418-420.",
+    "fix": "Remove it from this epic. Raise it as a separate task that captures the loop and schedules the package (run_coroutine_threadsafe, or await the package after run_db), with a surgery-transfer test."
+   },
+   {
+    "severity": "major",
+    "issue": "The append-only med_order_events table breaks the existing registries that are derived from the schema, so medorders-1's 'full suite unchanged' claim is false. The erase plan purges every table with a patient_id unless the table is in ERASURE_RETAINED_TABLES, so test_the_plan_never_deletes_from_an_append_only_table fails. The demo reseed walks the same schema: it wipes med_orders but keeps the events table (it has a DELETE-abort trigger). Every morning's reseed then leaves orphaned events attached to reseeded patient ids, which pollutes the X013 counts and the timelines. The retention map does not list the new tables either.",
+    "evidence": "admin_routes.py:676-720 _build_erase_plan; consent_service.py:1086 ERASURE_RETAINED_TABLES; tests/test_erase_plan_retained.py:35; scripts/reset_db_and_seed.py:87-120 delete_protected_tables / _CONDITIONAL_DELETE_PREDICATES; consent_service.py:646-657 _RETENTION_SOURCES.",
+    "fix": "In medorders-1: register med_order_events in ERASURE_RETAINED_TABLES with a stated reason (payload_json holds PHI, so Samuel needs to see that line). Either make the no-delete trigger conditional or add a reseed predicate, the way the shadow_events simulator lane is handled. Add both tables under prescription_and_dispensing."
+   },
+   {
+    "severity": "major",
+    "issue": "The design does not say where the eMAR order-state check goes or which statuses it covers. The existing status check runs before the idempotent-replay check, and the file explains why new order-state guards must sit below it: a retried dose would get a 4xx that the client treats as a failed sync, for a dose that is charted. The design also does not say whether 'not_given' is refused on held orders. The code's own principle is that withholding must always be easy. Separately, record_administration uses a deferred session, so a hold can commit between the read and the write.",
+    "evidence": "emar_service.py:556 (status check) precedes :577 (replay) and :582-604 (discharge guard placed below replay on purpose); database.py:1100-1123 db_session race note; emar_service uses db_session() not immediate.",
+    "fix": "Put the administrable() check after the replay check, and apply it to 'given' only. Allow 'not_given (held)' on held orders. Re-read the order state under the write lock: make the session immediate, or re-check after the INSERT inside the transaction."
+   },
+   {
+    "severity": "major",
+    "issue": "Lifecycle mode does not make 'only a prescriber's signature' release a drug, which the design claims (\u00a74 and \u00a78). Nurses keep medication.write and the chart lane. That lane creates 'prescribed' orders with needs_verification=0, and a nurse can acknowledge a severe-allergy alert there. A nurse who cannot Sign a CPOE draft can enter the same drug in the chart modal instead.",
+    "evidence": "permissions.py:251-262 (nurse MEDICATION_WRITE); vigil_routes.py:907-948; medication_safety_gate.py:250 (acknowledgement has no role check); design \u00a74 'only a prescriber's signature makes one reach the ward'.",
+    "fix": "Narrow the claim to CPOE and order-set lanes, and say plainly that the chart lane bypasses Sign until R010 is ruled. Record entered_by_role and show nurse-entered live orders in the prescriber's to-sign view for visibility, without gating them. Do not count MO-R5 as closed."
+   },
+   {
+    "severity": "major",
+    "issue": "No permission is named for POST /{id}/cancel. Cancelling a 'prescribed' (live) order is in effect a discontinuation, and that is exactly what MO-R2 is meant to rule. If cancel inherits ORDER_WRITE or MEDICATION_WRITE, nurses can cancel a doctor's live order before the first dose.",
+    "evidence": "Design \u00a77 route list ('POST /{id}/cancel' with no permission); LEGAL_TRANSITIONS prescribed -> cancelled.",
+    "fix": "Cancelling a draft: the creator, or ORDER_WRITE. Cancelling a prescribed order: MEDICATION_PRESCRIBE, gated behind MO-R2 like hold and stop."
+   },
+   {
+    "severity": "major",
+    "issue": "The custody chain from lot to dose is not actually delivered. Verification creates one supply row, Helix dispenses one unit per row, and no increment creates the later supply requests. An 'administered' event carrying 'the latest received supply id' therefore ties doses 2 to 15 of a TDS course, and any doses from ward stock, to unit 1. There is also no ruling on which orders need pharmacy supply at all. In lifecycle mode every chart order (paracetamol from ward stock included) would join the pharmacy queue.",
+    "evidence": "helix_service.py:782-787 (decrement by 1 unit); design \u00a75 'administered event carries the latest received supply id'.",
+    "fix": "Scope the claim down: link a dose only when exactly one received, unconsumed unit exists, or defer the custody link to the GRN multi-unit epic. Add a ruling on supply source (ward stock or dispensed) before supply rows are auto-created."
+   },
+   {
+    "severity": "major",
+    "issue": "The design emits to a patient room that does not exist. Patient events are routed to department rooms (plus __all__) by emit_patient_vitals. A def handler cannot await sio.emit; sync writers use schedule_on_loop. A global emit would broadcast PHI across wards, and a non-existent room means the UI never refreshes.",
+    "evidence": "ws/realtime.py:366-373 emit_patient_vitals (dept rooms); :425-460 schedule_on_loop; relay_routes emits only from async handlers (:428).",
+    "fix": "Emit through schedule_on_loop with a department-scoped emitter, importing from realtime.py without editing it. Or add a generic emit_patient_event to realtime.py once the CORS session has landed."
+   },
+   {
+    "severity": "minor",
+    "issue": "The design contradicts itself on the shadow scorecard. The medorders-7 tests require that 'each signature emits exactly one shadow clinical.action', while the risk list says a signature must not emit a second event. CPOE create and order-set apply already emit one each.",
+    "evidence": "orders_routes.py:311 and :193 (_shadow_clinical_action).",
+    "fix": "Decide which emits: under lifecycle, a medication CPOE order emits at sign only (create stops emitting for medication), and the scorecard notes say so."
+   },
+   {
+    "severity": "minor",
+    "issue": "Lazy adoption inside list_for_patient makes a GET path write. The codebase rejected write-on-read for exactly this reason: SQLite has a single writer, so every read would take a write lock.",
+    "evidence": "main.py:324-340 (model-registry reconcile deliberately kept off the read path).",
+    "fix": "Adopt at boot and at lane write time only. Have GET routes show unlinked rows as legacy items."
+   },
+   {
+    "severity": "minor",
+    "issue": "medorders-5 is undersized and badly coupled. It covers ten backend and frontend files: unified verify and reject, the Helix hook, supply creation, custody events and two UIs, and it also waits on the Relay session. A public verify() that opens db_session(immediate=True) cannot be called from inside transition_order_status's open session (db_session raises if the immediate session is not the outermost).",
+    "evidence": "database.py:1150-1162 (immediate must be outermost); helix_service.py:258-282 holds a session.",
+    "fix": "Split it into (a) service unification plus the Verify Queue route, (b) the Helix route hook (gate in helix_routes, transition_in_txn inside the Helix session) plus the supply link, and (c) the UI. Never call the public verify() from inside helix_service."
+   },
+   {
+    "severity": "minor",
+    "issue": "The design gets several existing code facts wrong or invents helpers. parse_frequency is not the only frequency parser: the bedside dose guard's repeat window uses drug_safety_service.parse_frequency_hours. The TypeScript permission parity lives in src/lib/roles.test.ts, not test_rbac.py. _in_scope_or_404 does not exist, and enforce_patient_scope writes no audit row. The queues should use permissions.scope_patient_ids_sql rather than the a.status='active' join. projection_status is defined as 'active' or 'prn', yet adoption sets it to 'discontinued'. Pharmacist-rejected rows are adopted as 'stopped' instead of 'rejected'. Migration 47 is at line 5494. \u00a74 puts the CPOE adapters behind the STORE flag, while medorders-7 says lifecycle. The medorders-8 test 'one verification covers both rows' contradicts \u00a75's statement that record mode mirrors the two verifications separately.",
+    "evidence": "drug_safety_service.py:1660; src/lib/roles.test.ts:28-48; emar_routes.py:71 _enforce_medication_scope, orders_routes.py:411 _order_in_scope_or_404; permissions.py:479-503 (no audit), :434-444 scope_patient_ids_sql.",
+    "fix": "Correct the facts. Reuse _enforce_medication_scope and _order_in_scope_or_404, which already audit patient_scope_denied. Map rejected rows to 'rejected'. Pick one flag for the CPOE adapters."
+   },
+   {
+    "severity": "minor",
+    "issue": "Putting the med_order_id index into HELIX_SCHEMA is a hazard. 22 test files call init_helix_db, some without the runner. On a legacy table without the column, an executescript CREATE INDEX aborts the rest of HELIX_SCHEMA.",
+    "evidence": "services/helix_db.py:88-102 (executescript HELIX_SCHEMA); main.py:388-392 (non-fatal); 22 test files call init_helix_db.",
+    "fix": "Put the column in HELIX_SCHEMA's CREATE TABLE. Create the index only in the migration and in a column-guarded step of init_helix_db."
+   },
+   {
+    "severity": "minor",
+    "issue": "The epic has 19 increments and 8 of them wait on rulings. medorders-17 and medorders-19 add new tables and depend on ADT-1, MO-R7 and MO-R8. That is beyond a sensible day-one store, and it inflates the 65-day figure.",
+    "evidence": "Increment list, blocked_by_ruling fields.",
+    "fix": "Define day one as medorders-1 to 10 (minus the run_db move and the custody claim). Move 12 to 19 to a follow-on epic gated on the rulings."
+   },
+   {
+    "severity": "minor",
+    "issue": "The conflict list misses an overlap. The in-progress CORS work's area includes config.cors_allow_origins and the CORS block in main.py, and medorders-1 edits both config.py and main.py.",
+    "evidence": "config.py:79; main.py:915-919.",
+    "fix": "Add this overlap to session_conflicts and land medorders-1's config and health edits after the CORS session."
+   }
+  ],
+  "missed_existing_code": [
+   "drug_safety_service._screen_interactions/check_medication_safety(exclude_med_id) (drug_safety_service.py:625-704): exclusion already exists, but enforce_medication_safety does not pass it through",
+   "pharmacy_verification_service.verify_medication/reject_medication (:215, :383) do NOT call enforce_medication_safety; they use _safety_alerts + _with_dose_check with exclude med_id and a ValueError 'severe_ack_required:' contract",
+   "routes/admin_routes._build_erase_plan + services/consent_service.ERASURE_RETAINED_TABLES + tests/test_erase_plan_retained.py (append-only table registry)",
+   "scripts/reset_db_and_seed.delete_protected_tables / _CONDITIONAL_DELETE_PREDICATES (the reseed keeps append-only tables)",
+   "consent_service._RETENTION_SOURCES 'prescription_and_dispensing' category",
+   "ws/realtime.schedule_on_loop and emit_patient_vitals (department-room routing; there is no patient room)",
+   "emar_routes._enforce_medication_scope and orders_routes._order_in_scope_or_404/_scope_by_order (scope plus patient_scope_denied audit)",
+   "permissions.scope_patient_ids_sql / PATIENT_DEPARTMENT_SQL for queue scoping",
+   "sage_handoff_service.py:505-521 thread-affinity landmine note on moving create_and_dispatch_handoff off the loop",
+   "rxnorm_reconciler.reconcile_medication (fuzzy, 0.8 threshold, substring boosted to 0.85)",
+   "drug_safety_service.parse_frequency_hours (second frequency parser, used by the bedside repeat window)",
+   "downtime_service.py:162 paper MAR reads medications active/prn",
+   "src/lib/roles.test.ts SERVER_GRANTS (the actual TS permission parity check)",
+   "_UNVERIFIED_SOURCES duplicated in emar_service.py:49, pharmacy_verification_service.py:29, ipass_service.py:977",
+   "config.DISCHARGE_FINANCIAL_ENFORCE (config.py:27-28): an inline default-off flag pattern already exists",
+   "helix_service.insert_order hard-codes status 'pending' (helix_service.py:236-238)",
+   "orders_service.LEGAL_TRANSITIONS has no active->completed edge (orders_service.py:32-39)",
+   "database.db_session(immediate=True) must be the outermost session (database.py:1150-1170)"
+  ]
+ },
+ "first_draft": {
+  "epic": "Single medication-order store (medorders)",
+  "current_state": "Verified against the code on 3 Oct 2026 (git baseline cafe363; the highest migration is 47, vitals_carried_from, migrations.py:5493). Today there are four medication stores and eight writing lanes, and nothing links them.\n\nSTORES\n1. medications (database.py:229) is the chart and the eMAR's source. Its status CHECK is active|discontinued|prn. source, verified_by, verified_at and idempotency_key were added in init_db (database.py:1861-1889). It is the FK parent of medication_administrations (database.py:249), medication_allergy_overrides (m6, migrations.py:304) and medication_dose_overrides (m10, migrations.py:567). So it can never be rebuilt inside the migration transaction (the FK-parent trap, migrations.py:4697).\n2. helix_patient_med_orders (helix_db.py:27) is the pharmacy order, and one row is one dispense of ONE unit (helix_service.py:783). It has its own state machine, pending->reviewing->verified->scheduled->dispensed->delivered (helix_service.py:15). Ward receipt is gated on helix.receive (helix_service.py:605, m35). The table is created by init_helix_db, which runs OUTSIDE the migration runner (helix_db.py:88; see the m35 note at migrations.py:4920).\n3. orders with order_type='medication' (database.py:805), plus order_events (:824), holds CPOE and order-set drugs. No reader treats these as medicines:\n   - the nurse board reads medications (nurse_shift_service.py:327)\n   - the eMAR reads medications (emar_service.py:553)\n   - the interaction screen reads medications (drug_safety_service.py:638)\n   - billing deliberately excludes medication orders (billing_service.py:183)\n   The UI admits this with MED_NOT_SENT (src/components/orders/medicationRouting.ts), shown at OrdersPanel.tsx:417 and :723 and OrderSetsPanel.tsx:507.\n4. order_set_applications (m13, migrations.py:844).\nmedication_administrations is the append-only MAR, keyed to medications.id.\n\nWRITERS\n- Chart add (Vigil): vigil_routes.py:907. Gate at :934 (entry vigil.med_add), then _insert_medication at :279/:293. The row is active at once. The route is gated on medication.write, which nurses hold (permissions.py:251). No Helix row is written, so the pharmacy never sees these drugs.\n- CPOE: orders_routes.py:249. Gate at :287; the dose is passed only when detail.medication carries it (:232). Rows go to orders_service.py:141 as drafts that reach nothing.\n- Order sets: order_sets_service.py:925. Per-item gate at :743, then orders_service.create_order at :1025, as drafts.\n- Sage card handoff (the live UI path): the Relay transition (relay_routes.py:400) calls create_and_dispatch_handoff synchronously on the event loop (:420), which reaches _dispatch_to_helix (sage_handoff_service.py:224). The gate runs non-interactive (:276). Then an llm_extracted 'REVIEW REQUIRED' medications row is written in one session (:311), and helix_service.create_order runs in a second session (:321). The two rows are never linked.\n- Relay confirm_agentic: relay_routes.py:1343, with _persist_confirmation at :1225 and helix_service.insert_order on the shared transaction at :1276. It writes a Helix row only, no chart row. No UI calls it: SageAmbientSidebar.tsx:82 uses transitionSageAction (W099).\n- Helix approve: helix_routes.py:139, the Sage card 'Approve & Send to Helix' (SageMessage.tsx:379). It needs helix.write (pharmacist or admin), so the pharmacist is stamped as prescriber (R010). The drug is bound by LIKE '%name%' (helix_service.py:247).\n- Scribe signed-note extraction: screened non-interactively at nervous_system_triggers.py:684, charted as llm_extracted at :754. It never writes a Helix row.\n- History import (SOURCE_TAG history_import, history_import_service.py:217) and the seed scripts.\n\nLIFECYCLE THAT EXISTS\n- Pharmacist verify and reject apply only to AI sources (pharmacy_verification_service.py:27, :162, :215, :365, :417), gated on helix.write (pharmacy_routes.py:53 and :116).\n- A separate Helix verification runs on Helix rows (helix_routes.py:242). Its gate call at :284 passes no dose and no role, so the dose guard does not run at Helix verify or dispense.\n- No route stops, holds or resumes a medication. A row becomes discontinued only when a pharmacist rejects an AI drug (:417), or when someone picks 'Discontinued' while ADDING a new drug (VigilPanel.tsx:2602).\n- eMAR, record_administration (emar_service.py:489):\n  - it requires status 'active' (:556), and pharmacist verification for AI sources (:560);\n  - the bedside allergy interlock and dose guard run inside the transaction;\n  - every dose is audited as clinical_access, fail-closed (:723);\n  - ward scope is now enforced (emar_routes.py:71, F008), so the coverage row saying there is no ward check is out of date.\n\nSAFETY ENFORCEMENT\n- enforce_medication_safety (medication_safety_gate.py:178) is already the one screen function. Nine call sites use it: vigil_routes.py:934, orders_routes.py:287, order_sets_service.py:743, helix_routes.py:165 and :284, relay_routes.py:1593, sage_handoff_service.py:276, nervous_system_triggers.py:684 and sage_assessment_service.py:1679.\n- What is NOT single: each lane decides when to call the gate and with which arguments, and each lane separately decides whether the drug can then be given.\n- Order-time acknowledgement of a severe allergy alert has no role check (medication_safety_gate.py:250). Only a dose block needs medication.prescribe (:252, _dose_ack_refusal :162). The bedside override, by contrast, has been prescriber-only since 2026-08-15.\n- The interaction screen reads only medications WHERE status='active' (drug_safety_service.py:638). It cannot see PRN-status drugs, CPOE or order-set drugs, or Helix-only (Relay-confirmed) drugs.\n- PRN defect, found by reading the code (no test covers it): a drug charted with status 'prn' is listed on the nurse round (nurse_shift_service.py:328), but the eMAR refuses every dose of it (emar_service.py:556, 'not an active order').\n\nWHAT CAN BE EXTENDED RATHER THAN REPLACED\n- enforce_medication_safety (the gate)\n- record_administration (the bedside last line, kept as it is)\n- the Helix state machine and receipt (to become the order's supply child)\n- the orders_service state machine (to become the CPOE view)\n- order_sets apply (to become the draft producer)\n- pharmacy_verification_service (its verify semantics, including _is_placeholder)\n- allergy_interlock fingerprints\n- nurse_shift_service.parse_frequency (:205, the one frequency parser)\n- the clinical_access fail-closed audit pattern\n- permissions.department_scope and patient_in_scope\n- the config module-flag machinery (config.py:640-835)\n\nTESTS\n- About 70 of the 306 server test files touch these tables.\n- 37 of them insert into medications directly (56 statements), so medication rows that are not linked to an order must stay valid.\n- Frontend: AdministerModal (5 test files), MedRoundSheet (2), PharmacyVerifyQueue (3), HelixOrderReviewModal (2), OrdersPanel, OrderSetsPanel, MedListPrintView and DeliveriesSheet.",
+  "design": "PRINCIPLE\n- One authoritative record, med_orders, plus an append-only ledger, med_order_events.\n- The four existing tables stay. Each is demoted to one role:\n  - medications becomes the order's WARD PROJECTION. About 25 readers already read it: nurse board, eMAR, I-PASS, Sage, Bridge, FHIR, downtime pack, discharge, timeline and others.\n  - helix_patient_med_orders becomes the order's SUPPLY child: one row per dispense request, many per order.\n  - orders (type medication) becomes the CPOE VIEW of a draft.\n  - medication_administrations stays the MAR child, keyed by the projection row.\n- Nothing is renamed, rebuilt or dropped.\n- Strangler: medorder_service becomes the writer of all four tables through per-lane adapters. Rows written behind its back (tests, seeds, history import, unconverted lanes) stay valid as UNLINKED legacy rows with exactly today's semantics, and are adopted when read.\n\n1. DATA MODEL\nOne additive migration, numbered with the next free number after 47 at merge time (never pre-assigned). The five sibling HIS epics and about ten sessions share migrations.py.\n\nmed_orders: no declared FOREIGN KEYs, following the m20 rule 1 at migrations.py:1771. This means med_orders is never an FK parent, so a future status CHECK widening is an ordinary in-transaction rebuild (the m39 shape), not the users trap.\n- id TEXT PRIMARY KEY (uuid4)\n- patient_id TEXT NOT NULL\n- admission_id TEXT: the active admission when the order is created\n- encounter_type TEXT NOT NULL DEFAULT 'ip', CHECK in ('ip','op','discharge'). Reserved now so the OPD epic does not force a rebuild.\n- status TEXT NOT NULL, CHECK in ('draft','prescribed','verified','held','stopped','completed','cancelled','rejected')\n- version INTEGER NOT NULL DEFAULT 1: optimistic concurrency, like sage_actions.version\n- source TEXT NOT NULL: chart | cpoe | order_set | sage_handoff | relay_agentic | helix_approve | scribe_extracted | history_import | legacy_adopted | verbal\n- needs_verification INTEGER NOT NULL DEFAULT 0: 1 for today's _UNVERIFIED_SOURCES\n- drug_name TEXT NOT NULL\n- formulary_id TEXT: helix_medication_master.id, bound by exact id and never by LIKE\n- dose, route, frequency TEXT\n- schedule_kind TEXT: the nurse_shift_service.parse_frequency kind, stored at write time\n- is_prn INTEGER NOT NULL DEFAULT 0, and prn_indication TEXT\n- priority TEXT, CHECK in ('routine','urgent','stat')\n- start_at, end_at, duration_text TEXT: lets discharge print a real course instead of a 5-day default\n- indication, notes TEXT\n- entered_by TEXT NOT NULL, entered_by_role TEXT\n- prescriber_id, prescribed_at\n- verified_by, verified_at\n- status_reason, status_changed_by, status_changed_at\n- last_safety_json, last_screened_at, screen_fingerprint\n- projection_status TEXT: 'active' or 'prn', the legacy status the projection carries while the order is live\n- legacy_medication_id INTEGER\n- cpoe_order_id TEXT, order_set_application_id INTEGER\n- sage_action_id, sage_handoff_id, scribe_note_id TEXT\n- idempotency_key TEXT\n- facility_id TEXT: NULL means the single site; the multi-site epic fills it\n- created_at, updated_at TEXT, written with services.clinical_time.utc_iso_now()\nIndexes:\n- (patient_id, status)\n- (status, needs_verification)\n- (cpoe_order_id)\n- (admission_id)\n- UNIQUE(legacy_medication_id) WHERE NOT NULL\n- UNIQUE(idempotency_key) WHERE NOT NULL\n\nmed_order_events (append-only):\n- id INTEGER PRIMARY KEY AUTOINCREMENT\n- med_order_id TEXT NOT NULL\n- patient_id TEXT NOT NULL\n- kind: created | signed | verified | rejected | held | resumed | stopped | completed | cancelled | amended | adopted | supply_requested | dispensed | received | administered | not_given | countersigned\n- from_status, to_status\n- actor_id, actor_role\n- entry_point: for example 'vigil.med_add', 'orders.cpoe', 'helix.verified'\n- reason\n- ref_type, ref_id: an administration id, Helix transition id or stock movement id\n- payload_json: before and after values for amendments, and the safety verdict\n- idempotency_key, with a UNIQUE partial index\n- created_at\nTriggers trg_med_order_events_no_update and trg_med_order_events_no_delete, the m14 consent pattern. Reads are ordered ORDER BY created_at, id.\n\nColumn additions:\n- medications ADD COLUMN med_order_id TEXT, with a UNIQUE partial index.\n- helix_patient_med_orders ADD COLUMN med_order_id TEXT, with an index. Guarded on the table existing (the m35 pattern), AND added to HELIX_SCHEMA in helix_db.py. Fresh databases create Helix tables after the runner, so without the second site they would never get the column.\n- No change to orders, medication_administrations or the override tables.\n\nAdoption is NOT in the migration. Migrations stay schema-only and safe to ledger. medorder_service.adopt_legacy() runs at boot only when ORB_MED_ORDER_STORE is on. It is idempotent, chunked at 500 rows per transaction, and guarded by the unique index. Mapping:\n- active or prn becomes prescribed, or verified when verified_by is set.\n- needs_verification is set for llm_extracted and agentic rows.\n- discontinued becomes stopped, with the reason 'stopped before the order store'.\n- projection_status is the old status.\n- Helix rows without a link are NOT adopted. A Sage pair cannot be matched reliably to its chart row, so those rows stay on the legacy flow and appear in the parity report.\n\n2. LIFECYCLE\nLEGAL_TRANSITIONS:\n- draft -> prescribed | cancelled\n- prescribed -> verified | rejected | held | stopped | cancelled (cancelled only before any dose)\n- verified -> held | stopped | completed\n- held -> prescribed or verified (resume, back to the state it was held from) | stopped\n- stopped, completed, cancelled and rejected are terminal.\n\nThe brief's 'dispensed' and 'administered' are EVENTS on the order, not its status. A TDS course for 5 days is dispensed several times and given 15 times, and Helix's one-unit dispense model needs many supply rows per order. The timeline UI still shows all eight milestones.\n\nadministrable(order) is the one function the eMAR consults:\n- verified, or\n- prescribed with needs_verification = 0 (today's rule for orders a person entered, until MO-R1 is ruled);\n- never draft, held or terminal.\nProjected PRN-status rows stay refused until MO-R3 is ruled.\n\nProjection rules (project_in_txn):\n- draft: no medications row, so drafts never leak to legacy readers.\n- prescribed, verified and held: one row whose status is projection_status, so held drugs stay in every reader's regimen and the interaction screen. The eMAR refuses them through the order link.\n- stopped, completed, cancelled and rejected: the row becomes 'discontinued'.\n- orders.status for a CPOE-linked order is mirrored: draft->draft; prescribed, verified and held->active; stopped, cancelled and rejected->cancelled; completed->completed. Every value fits the existing CHECK.\n- FHIR MedicationRequest.status: draft, active, on-hold, stopped, completed, cancelled.\n\n3. SERVICE: server/services/medorder_service.py\n- Pure helpers: LEGAL_TRANSITIONS, ADMINISTRABLE, administrable(), projection_status_for(), fhir_status_for().\n- In-transaction cores take a connection, never commit and never open a second connection: create_in_txn, transition_in_txn, project_in_txn, record_event_in_txn, request_supply_in_txn (helix_service.insert_order(conn, ...) by exact formulary_id) and adopt_medication_in_txn. These let Relay's single-transaction confirm (R024) and Scribe's _persist_extraction join their callers' transactions.\n- Public steps: create, sign, verify, reject, hold, resume, stop, cancel, amend_placeholders.\n- Each public step runs in this order:\n  (1) Load the order.\n  (2) Run the gate OUTSIDE any write transaction: enforce_medication_safety with the order's OWN drug, dose and route plus the actor's role, entry_point 'medorder.<step>.<lane>'. The gate opens its own connections and audit writes, and running it inside a write transaction is the WAL self-deadlock.\n  (3) Open db_session(immediate=True). Re-read the order, then check expected_version and screen_fingerprint (a hash of the active allergy row ids and states plus the live order ids). On mismatch, answer 409 screen_stale, so the client re-screens. This closes the screen-to-write window (W116c).\n  (4) Write the status, the event, the projection, any supply row and the audit in that one transaction, then commit.\n  (5) Return the order and the safety verdict.\n- Gate points:\n  - create-as-prescribed and sign: full screen including the dose;\n  - verify: full screen, excluding the order's own projection row; a dose block stays prescriber-only, as today;\n  - resume: full screen;\n  - Helix dispensed: effective drug, as today.\n  The bedside interlock and dose guard stay in emar_service, unchanged, as the last line at the moment of the dose.\n- Errors: StaleOrderVersion and StaleScreen give 409 with the current order; TransitionNotAllowed gives 409; NeedsInput gives 422; NotPermitted gives 403.\n- Queries:\n  - list_for_patient: lazily adopts unlinked rows;\n  - get and events;\n  - verification_queue(dept) and to_sign_queue(dept): same admissions.department join as helix_service.orders_awaiting_receipt (:536), department from permissions.department_scope;\n  - parity_report().\n\n4. LANE ADAPTERS\nAll behind ORB_MED_ORDER_STORE. Each preserves today's behaviour; anything that changes behaviour is its own increment.\n- Chart add (vigil.med_add): status prescribed, prescriber is the actor (as today), projection is the same row as today. One transaction replaces get_db().commit().\n- CPOE and order sets: a draft linked by cpoe_order_id or order_set_application_id. Signing needs medication.prescribe. A nurse can still create drafts (R010 untouched); only a prescriber's signature makes one reach the ward.\n- Sage handoff: prescribed, prescriber is the confirming actor (as today), needs_verification = 1. The chart row and the linked supply row are written in ONE transaction, using the reconciled id instead of LIKE.\n- Scribe extraction: prescribed, prescriber is the note author (as today), needs_verification = 1, no supply row. Turning these into drafts is W111.\n- Helix approve and Relay confirm_agentic: left on the legacy flow until R010 and W099 are ruled.\n- History import and seeds: unlinked, adopted when read.\n\n5. PHARMACIST VERIFICATION IN ONE PLACE\n- verify() and reject() are called both by the Verify Queue routes (pharmacy_routes.py:53, :116) and by Helix reviewing->verified/rejected on a linked row (helix_service.transition_order_status).\n- Record mode mirrors each of today's two verifications separately. Lifecycle mode makes one decision move both rows.\n- Placeholder correction is allowed only on needs_verification orders, reusing _is_placeholder, so the F012 ruling applies once. Each correction is an 'amended' event with before and after values.\n- Verification binds the exact formulary product and creates the supply row at Helix status 'verified', with a helix_transitions row whose payload notes the med order. Scheduling, dispensing and ward receipt then run unchanged.\n- dispensed and received on linked rows write order events.\n- An 'administered' event carries the latest received supply id. That is the custody link from lot to dispense to receipt to dose.\n\n6. eMAR\nrecord_administration gains a check for rows with med_order_id: it refuses unless administrable(), with text naming the order state and who to call. It also writes 'administered' or 'not_given' in the same transaction as the MAR row and its audit. The check keys on the LINK, not the flag, so switching the lifecycle flag off can never make a held order givable. Unlinked rows are untouched.\n\n7. ROUTES: server/routes/medorder_routes.py, prefix /api/medorders\n- All handlers are def (run on the threadpool).\n- Every route answers 404 when the store flag is off (the billing_routes.py:84 pattern). Write routes answer 404 unless the lifecycle flag is on.\n- Routes:\n  - GET /patient/{patient_id}: require_patient_access(patient.read_all, audit_action='med_orders_viewed')\n  - GET /{id} and GET /{id}/events: _in_scope_or_404 plus log_phi_read\n  - POST '' (create): enforce_patient_scope, Idempotency-Key\n  - POST /{id}/sign: medication.prescribe, safety_ack, expected_version\n  - POST /{id}/verify and /{id}/reject: medication.verify\n  - POST /{id}/hold, /{id}/resume and /{id}/stop: medication.prescribe, pending MO-R2\n  - POST /{id}/cancel\n  - GET /queue/verification and GET /queue/to-sign\n  - GET /admin/parity: admin.overview\n- Out-of-ward access answers 404, never 403, with a patient_scope_denied audit row.\n- After commit, the route emits 'medorders:update' {patient_id, med_order_id, status} to the patient room via sio, as relay_routes does. ws/realtime.py is not edited.\n\n8. PERMISSIONS\n- No new role: roles.STORABLE_ROLES is unchanged.\n- One new constant in permissions.py, MEDICATION_VERIFY = 'medication.verify'. It goes to the pharmacist, and to admin only to preserve today's helix.write reach until MO-R4 (W178) is ruled. Mirrored in src/lib/roles.ts and covered by the test_rbac parity test.\n- Sign, hold, resume and stop reuse MEDICATION_PRESCRIBE (doctor only, permissions.py:228). So acknowledging a severe allergy or dose alert at sign is prescriber-only by construction.\n- Draft creation reuses ORDER_WRITE or MEDICATION_WRITE.\n- The pharmacist stays hospital-wide (F109).\n\n9. AUDIT\n- Every state change writes log_audit_event: event_category 'clinical_access' (fail-closed), on db=conn in the same transaction. action_type is med_order_<verb>, target_type 'med_order', target_id str(id) (string ids avoid the int target_id false-tamper trap), with the patient_id. metadata carries from, to, entry_point, lane, reason and the safety summary.\n- The gate keeps its own clinical_safety rows (fail-open by design).\n- Reads use log_phi_read (phi_access, fail-closed).\n- Adoption writes one 'med_orders_adopted' row per batch, with counts.\n\n10. FEATURE FLAGS (config.py)\n- A new default-off helper, _feature_on(env), that accepts only explicit 1/true/on/yes. The existing _module_enabled defaults ON and must not be reused. The first HIS epic to land adds the helper; the others reuse it.\n- ORB_MED_ORDER_STORE (record mode): lanes write through the store, read screens and parity appear, and every check behaves as today.\n- ORB_MED_ORDER_LIFECYCLE (authoritative mode): signing, unified verification, hold and stop, and store-backed screening. config refuses to import when lifecycle is on and the store is off, like the ORB_DEPLOYMENT_PROFILE check at config.py:12.\n- Both are published on /api/health as a new 'features' map beside 'modules', because module ids are shell tab ids. The shell reads it with currentFeatureFlags().\n- With both off, every path, query, screen and test behaves exactly as at cafe363, so the Ward Record profile and the demos are unaffected.\n\n11. UI\nNo new shell tab; everything mounts inside existing tabs.\n- vigil: the chart Medications modal (VigilPanel.tsx:2366) renders a new MedOrderList (src/components/medorders/MedOrderList.tsx):\n  - a text status chip: Draft, Awaiting signature, Awaiting pharmacist, Verified, On hold, Stopped, Completed;\n  - a supply line: Requested, Dispensed by, Received by;\n  - the last dose;\n  - permission-driven Sign, Hold, Resume and Stop, each with a reason;\n  - MedOrderTimeline.tsx, the W120 history drawer.\n  The Add form posts to /api/medorders and drops its 'Discontinued' option.\n- orders: medication lines show the order state and a Sign button instead of MED_NOT_SENT, an 'Awaiting my signature' filter, and a count chip on DoctorHomePanel.\n- pharmacy-verify: PharmacyVerifyQueue reads /queue/verification, which covers all sources and shows the patient's allergy LIST plus a formulary picker.\n- helix: HelixOrderReviewModal shows the linked order and its timeline.\n- shift: MedRoundSheet gains 'On hold' and 'Awaiting pharmacist' groups. AdministerModal maps the new refusal text.\n- The client lives in a new module, src/api/medorders.ts, not in client.ts.\n\n12. OTHER EPICS\n- ADT: admission_id on every order; a transfer prompts reconciliation; discharge close-out is ruling MO-R7. Department scoping always goes through permissions.patient_in_scope, so it follows whatever ADT changes.\n- OPD: 'op' orders become OP prescriptions with no projection, consumed by the OP pharmacy sale.\n- Pharmacy GRN and drug master: formulary_id points at the drug master. Schedule H1/X/NDPS class, high-alert, LASA and MRP come from that epic, as do multi-unit supply quantities. The H1 and NDPS registers read med_orders plus dispense rows; billing keeps reading dispenses.\n- LIS: later supplies eGFR and weight to the dose gate.\n- Multi-site: facility_id, and queues filter on it.\n- Scorecard X013 counts med_order_events.\n\n13. TESTS (per increment, summarised)\n- Pure transition tables.\n- Migrations on a fresh database and on a tmp_path legacy database, including init_helix_db running after the runner.\n- An adoption equivalence table covering status x source x verified_by.\n- Fault injection to prove each lane writes in one transaction.\n- Two pharmacists racing: one 200, one 409.\n- Cross-ward access answers 404 and writes an audit row.\n- A med_order_flags fixture that re-runs the existing lane suites with the store on, with unchanged expectations.\n- A final AST guard: no module outside medorder_service writes medications or helix_patient_med_orders, and no route calls enforce_medication_safety directly.",
+  "functions": [
+   {
+    "function": "Inpatient medication prescribing (2.2, Day 1)",
+    "status_now": "Partial. Three unlinked stores: medications (vigil_routes.py:293), orders (orders_service.py:141) and Helix (helix_service.py:237). CPOE drugs never reach the eMAR (nurse_shift_service.py:327, emar_service.py:553). Nurses can chart active drugs (medication.write, permissions.py:251). There is no verbal-order countersign. The dose guard now runs on CPOE orders that carry a structured dose (orders_routes.py:287).",
+    "in_scope": true,
+    "notes": "The core of this epic: medorders-3, 4 and 7. The verbal-order part waits on R010."
+   },
+   {
+    "function": "Prescription capture to pharmacy (2.6, Day 1)",
+    "status_now": "Partial. Only the Sage handoff, Helix approve and Relay confirm lanes create Helix rows. Chart, CPOE and order-set drugs never reach the pharmacy.",
+    "in_scope": true,
+    "notes": "medorders-5 creates the supply row at verification for formulary-bound orders."
+   },
+   {
+    "function": "Pharmacist review and verification (2.6, Day 1)",
+    "status_now": "Partial. There are two independent verifications: the Verify Queue for AI sources only (pharmacy_verification_service.py:27) and Helix verify on Helix rows (helix_routes.py:242). The pharmacist sees allergy alerts but not the allergy list.",
+    "in_scope": true,
+    "notes": "medorders-5 merges them into one decision. Making verification mandatory for every order is MO-R1."
+   },
+   {
+    "function": "Order-time drug-allergy checking (2.2/2.6)",
+    "status_now": "Partial. The gate runs on 9 lanes and has graded by the documented reaction since 3 Oct. Acknowledging a severe allergy alert at order time has no role check (medication_safety_gate.py:250).",
+    "in_scope": true,
+    "notes": "Signing is prescriber-only by construction. Extending this to every lane is MO-R5, which overlaps the held R010 and R011."
+   },
+   {
+    "function": "Dose range checking at order entry",
+    "status_now": "Partial. It runs on the chart, CPOE (structured dose), order sets, Helix approve, Relay confirm and the Verify Queue. It does NOT run at Helix verify or dispense (helix_routes.py:284 passes no dose). There is no weight or renal dosing.",
+    "in_scope": true,
+    "notes": "Placement is in scope: the gate runs inside the state machine. Weight and renal dosing need a licensed source or the LIS and are out of scope."
+   },
+   {
+    "function": "Duplicate order checks",
+    "status_now": "Partial. Only the bedside repeat-dose WARN (drug_safety_service.py:1726) and a few same-class interaction rows (interaction_db.py:44). Nothing checks for the same ingredient at order time.",
+    "in_scope": true,
+    "notes": "A notice at sign comes in medorders-4 and 7. Whether it should acknowledge or block is MO-R6."
+   },
+   {
+    "function": "Drug-drug interaction screening source",
+    "status_now": "Partial. It reads medications WHERE status='active' only (drug_safety_service.py:638), so it misses PRN-status, CPOE and Helix-only drugs.",
+    "in_scope": true,
+    "notes": "medorders-9 points it at the store (MO-R3). Licensed knowledge-base coverage is out of scope."
+   },
+   {
+    "function": "Order sets, drug items (2.2 differentiator)",
+    "status_now": "Partial. Drafts land in orders only (order_sets_service.py:1025) and never reach the ward. The screen-to-write window is open (W116c).",
+    "in_scope": true,
+    "notes": "medorders-7: drafts are signed into the store, and the sign step re-screens."
+   },
+   {
+    "function": "eMAR gating by order state (2.3, Day 1)",
+    "status_now": "Partial. Ward scope is fixed (emar_routes.py:71, F008). Drugs with status PRN are refused (emar_service.py:556). There is no held state. The schedule is derived from frequency text.",
+    "in_scope": true,
+    "notes": "The order-state check comes in medorders-3. The MAR grid, back-timing and barcode work are out of scope."
+   },
+   {
+    "function": "Stop, hold and resume a medication order",
+    "status_now": "Absent. No route exists. A drug becomes discontinued only through a pharmacist rejection or the add form's 'Discontinued' option (VigilPanel.tsx:2602).",
+    "in_scope": true,
+    "notes": "medorders-6, blocked on MO-R2."
+   },
+   {
+    "function": "Verbal or telephone order with read-back and countersign",
+    "status_now": "Absent",
+    "in_scope": true,
+    "notes": "medorders-12, blocked on R010."
+   },
+   {
+    "function": "Pharmacy-to-ward custody chain linked to the dose (2.6 differentiator)",
+    "status_now": "Partial. Ward receipt exists (helix_service.py:605), but no MAR row references a dispense.",
+    "in_scope": true,
+    "notes": "In medorders-5, the administered event carries the received supply id."
+   },
+   {
+    "function": "Substitution with prescriber acceptance",
+    "status_now": "Partial. The pre-flight alternative is same-molecule only (helix_service.py:828). A pharmacist can still substitute and verify alone (R002).",
+    "in_scope": true,
+    "notes": "medorders-15, blocked on R002."
+   },
+   {
+    "function": "Medication reconciliation at admission, transfer and discharge (W105)",
+    "status_now": "Partial or name only. The discharge reconciliation endpoint exists (discharge_service.py:258) and the print was fixed (F005). Home medications are stored at admission but never read.",
+    "in_scope": true,
+    "notes": "medorders-17. Depends on the ADT epic; blocked on MO-R7."
+   },
+   {
+    "function": "Prescriber-authored administration schedule (W117)",
+    "status_now": "Absent. scheduled_for is never written, and frequency text is parsed on the board.",
+    "in_scope": true,
+    "notes": "medorders-19, blocked on MO-R8."
+   },
+   {
+    "function": "Order history and lifecycle views (W120)",
+    "status_now": "Not built. The GET /helix/orders/{id}/transitions route exists but no screen uses it.",
+    "in_scope": true,
+    "notes": "MedOrderTimeline in medorders-10."
+   },
+   {
+    "function": "Pharmacy charges on the bill",
+    "status_now": "Partial. Billing reads Helix dispensed rows only (billing_service.py:847).",
+    "in_scope": false,
+    "notes": "This improves on its own once every signed, formulary-bound order gets a supply row. Pricing and MRP belong to the GRN and billing epics."
+   },
+   {
+    "function": "IP dispensing quantity and formulary binding",
+    "status_now": "Partial. One unit per order (helix_service.py:783), bound by LIKE (:247).",
+    "in_scope": false,
+    "notes": "Exact binding at verification is in scope (medorders-5). Multi-unit supply belongs to the pharmacy GRN epic."
+   },
+   {
+    "function": "High-alert controls and independent double check",
+    "status_now": "Partial. Bedside rules exist, and Relay confirm requires an acknowledgement for high-risk drugs. There is no drug-master flag.",
+    "in_scope": false,
+    "notes": "Needs drug-master fields from the GRN epic. It will consume med_order_events."
+   },
+   {
+    "function": "Schedule H1, X and NDPS registers (W170)",
+    "status_now": "Absent",
+    "in_scope": false,
+    "notes": "Registers epic. They will read med_orders (prescriber) plus dispense rows."
+   },
+   {
+    "function": "Medication error and ADR reporting; scorecard medication-safety section (X013)",
+    "status_now": "Partial (generic incident, admin form) / Not built",
+    "in_scope": false,
+    "notes": "med_order_events makes blocks, overrides and rejections countable."
+   },
+   {
+    "function": "Barcode administration",
+    "status_now": "Name only. The UI always sends 'typed' (AdministerModal.tsx:301).",
+    "in_scope": false,
+    "notes": "Needs scanners and wristbands."
+   },
+   {
+    "function": "Antimicrobial stewardship",
+    "status_now": "Partial (sage_proactive Rule 4 reads medications as active)",
+    "in_scope": false,
+    "notes": "Keeps reading the projection."
+   },
+   {
+    "function": "OP prescriptions and OP pharmacy sale",
+    "status_now": "Absent",
+    "in_scope": false,
+    "notes": "OPD and GRN epics. encounter_type 'op' is reserved now so no rebuild is needed later."
+   }
+  ],
+  "increments": [
+   {
+    "id": "medorders-1",
+    "title": "Schema, flags and the order state machine (no lane uses it)",
+    "description": "One additive migration, numbered with the next free number after 47 at merge:\n- med_orders;\n- med_order_events, with no-update and no-delete triggers;\n- medications.med_order_id and helix_patient_med_orders.med_order_id, each with a unique or plain index. The Helix column is also added to HELIX_SCHEMA, because Helix tables are created after the runner.\nNo FKs and no rebuilds.\n\nconfig.py:\n- the _feature_on default-off helper;\n- MED_ORDER_STORE_ENABLED and MED_ORDER_LIFECYCLE_ENABLED;\n- an import-time refusal of lifecycle without the store;\n- a features() map published on /api/health.\n\nmedorder_service core:\n- LEGAL_TRANSITIONS, administrable(), projection_status_for() and fhir_status_for();\n- record_event_in_txn and transition_in_txn, with the version check and a clinical_access audit on the caller's connection.\nNothing calls the service yet.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/helix_db.py",
+     "server/config.py",
+     "server/main.py"
+    ],
+    "files_new": [
+     "server/services/medorder_service.py",
+     "server/tests/test_medorder_state_machine.py",
+     "server/tests/test_medorder_migration.py"
+    ],
+    "size_days": 3,
+    "depends_on": [],
+    "safety_sensitive": false,
+    "blocked_by_ruling": "",
+    "migrations": 1,
+    "tests": "- Every legal and illegal transition pair.\n- The event triggers refuse UPDATE and DELETE.\n- The migration on a fresh database, on a tmp_path legacy database holding medications and Helix rows, and run twice (idempotent).\n- init_helix_db after the runner still yields the column.\n- Both flags default off, and lifecycle without the store refuses to import.\n- /api/health carries 'features'.\n- The full suite is unchanged."
+   },
+   {
+    "id": "medorders-2",
+    "title": "Legacy adoption and the parity report",
+    "description": "adopt_legacy() creates one med_order per unlinked medications row and reproduces today's administrability exactly:\n- active or prn becomes prescribed, or verified when verified_by is set;\n- needs_verification is set for llm_extracted and agentic rows;\n- discontinued becomes stopped, with a stated reason;\n- projection_status is the old status.\nIt runs at boot only when the store flag is on, in chunks of 500 rows per transaction, and lists for a patient adopt their rows when read.\nHelix rows without a link are NOT adopted.\nparity_report() and server/scripts/medorder_parity.py list: unlinked live rows, Helix rows without an order, CPOE medication rows without an order, and projection mismatches.",
+    "files_touched": [
+     "server/services/medorder_service.py",
+     "server/main.py"
+    ],
+    "files_new": [
+     "server/scripts/medorder_parity.py",
+     "server/tests/test_medorder_adoption.py"
+    ],
+    "size_days": 2.5,
+    "depends_on": [
+     "medorders-1"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "- A table-driven equivalence check: the administrable() verdict before and after adoption matches for every status x source x verified_by combination.\n- Running it again changes nothing.\n- A Sage pair adopts into one order plus one unlinked Helix row, and parity reports that row.\n- One audit row per batch."
+   },
+   {
+    "id": "medorders-3",
+    "title": "Chart lane write-through and the bedside order-state check",
+    "description": "Vigil add-medication (vigil_routes.py:907) writes through medorder_service.create_chart_order in ONE transaction:\n- the same medications INSERT and idempotency handling as _insert_medication;\n- the med_order (prescribed, prescriber is the actor as today, entered_by_role recorded);\n- the event and the clinical_access audit.\nIn record mode the gate stays where it is.\n\nemar_service.record_administration, for linked rows only:\n- refuses unless administrable();\n- writes the administered or not_given event in the dose's own transaction.\nThe check keys on the link, not the flag. Unlinked rows behave exactly as today, and so does PRN.",
+    "files_touched": [
+     "server/routes/vigil_routes.py",
+     "server/services/emar_service.py",
+     "server/services/medorder_service.py"
+    ],
+    "files_new": [
+     "server/tests/medorder_flags.py",
+     "server/tests/test_medorder_chart_lane.py",
+     "server/tests/test_medorder_emar.py"
+    ],
+    "size_days": 3.5,
+    "depends_on": [
+     "medorders-1",
+     "medorders-2"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "- Re-run test_emar, test_safety_gate_vigil, test_dose_guard, test_allergy_interlock, test_allergy_override_prescriber and test_nurse_write_scope with the store on; expectations unchanged.\n- A fault injected after the projection INSERT rolls back the order.\n- An Idempotency-Key replay returns the same order with a single event.\n- The administered event commits with the MAR row and its audit, or not at all."
+   },
+   {
+    "id": "medorders-4",
+    "title": "Medication-order API, scoping and the verify permission",
+    "description": "medorder_routes.py routes:\n- list, get and events;\n- create, sign and cancel;\n- the to-sign queue;\n- admin parity.\nAll are def handlers. They answer 404 when the store is off, and writes answer 404 unless lifecycle is on. Scoping uses require_patient_access, enforce_patient_scope and _in_scope_or_404 (404, never 403), with a scope-denied audit row and log_phi_read on reads.\n\nSign:\n- runs the gate inside the service: screen outside the transaction, then re-check the fingerprint and version inside, answering 409 screen_stale on a mismatch;\n- requires medication.prescribe;\n- shows the same-ingredient duplicate as a notice only.\n\nPermissions: MEDICATION_VERIFY goes to the pharmacist, and to admin until MO-R4; mirrored in src/lib/roles.ts.\nThe route emits a 'medorders:update' socket event after commit.",
+    "files_touched": [
+     "server/main.py",
+     "server/permissions.py",
+     "src/lib/roles.ts",
+     "server/tests/test_rbac.py",
+     "server/services/medorder_service.py"
+    ],
+    "files_new": [
+     "server/routes/medorder_routes.py",
+     "server/tests/test_medorder_routes.py"
+    ],
+    "size_days": 3.5,
+    "depends_on": [
+     "medorders-3"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "- Cross-ward access answers 404 and writes an audit row.\n- With the flag off every route answers 404.\n- A nurse cannot sign (403); a doctor signs and gets a 428 on a severe allergy, and a nurse's acknowledgement can never clear it.\n- A stale version answers 409.\n- A new allergy charted between screen and write answers 409 screen_stale.\n- The permission parity test passes."
+   },
+   {
+    "id": "medorders-5",
+    "title": "One pharmacist verification and the supply link",
+    "description": "verify() and reject():\n- run the gate with the dose, route and the pharmacist's role; a dose block still goes back to the prescriber;\n- correct placeholders on AI orders only, reusing _is_placeholder;\n- bind the exact formulary product;\n- create the supply row through helix_service.insert_order(conn) at status 'verified', with a transition row.\n\nThe Verify Queue routes and Helix reviewing->verified or rejected on a linked row both call them. Record mode mirrors today's two verifications; lifecycle mode makes them one decision.\nHelix dispensed and received on linked rows write order events, and administered events carry the received supply id (the custody link).\n/queue/verification shows the allergy list.\nThe UI changes are in PharmacyVerifyQueue and HelixOrderReviewModal.",
+    "files_touched": [
+     "server/services/pharmacy_verification_service.py",
+     "server/routes/pharmacy_routes.py",
+     "server/services/helix_service.py",
+     "server/routes/helix_routes.py",
+     "server/services/emar_service.py",
+     "server/services/medorder_service.py",
+     "server/routes/medorder_routes.py",
+     "src/components/helix/PharmacyVerifyQueue.tsx",
+     "src/components/helix/HelixOrderReviewModal.tsx",
+     "src/api/pharmacy.ts"
+    ],
+    "files_new": [
+     "src/api/medorders.ts",
+     "server/tests/test_medorder_verify_unified.py",
+     "src/components/helix/PharmacyVerifyQueue.medorders.test.tsx"
+    ],
+    "size_days": 5,
+    "depends_on": [
+     "medorders-4"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "- Re-run test_pharmacy_verification, test_helix_order_lifecycle, test_helix_orders_gate, test_helix_substitution_safety, test_helix_ward_receipt and test_dose_guard_order_lanes with the store on.\n- Two pharmacists verifying at once: one 200, one 409.\n- A Helix verify then shows as verified in the Verify Queue.\n- The dose guard now fires at Helix verify.\n- A dispense, receipt and dose form one traceable chain.\n- Start only after the Relay helix_service change lands."
+   },
+   {
+    "id": "medorders-6",
+    "title": "Hold, resume and stop",
+    "description": "New hold, resume and stop routes plus the service steps:\n- resume re-runs the gate;\n- stop is terminal and needs a reason;\n- a held order keeps its projection status for readers, while the eMAR refuses it through the link;\n- a stopped order's projection becomes 'discontinued';\n- the case room is told, the same way Helix rejections are posted today;\n- MedRoundSheet gets an 'On hold' group with no Administer button.",
+    "files_touched": [
+     "server/services/medorder_service.py",
+     "server/routes/medorder_routes.py",
+     "server/services/emar_service.py",
+     "src/pages/panels/nurse/MedRoundSheet.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_hold_stop.py"
+    ],
+    "size_days": 2.5,
+    "depends_on": [
+     "medorders-4"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "MO-R2 (new, safety)",
+    "migrations": 0,
+    "tests": "- A held order is refused at the bedside and stays on I-PASS and in the interaction regimen.\n- Resume runs the screen again, so a newly charted allergy blocks it.\n- Who may hold and stop follows MO-R2.\n- Every step writes an audit row and an event."
+   },
+   {
+    "id": "medorders-7",
+    "title": "CPOE and order-set drugs reach the ward after a prescriber signs",
+    "description": "With lifecycle on:\n- a CPOE medication order and each order-set medication item also create a draft med_order, linked by cpoe_order_id or order_set_application_id;\n- the CPOE form collects drug, dose, route and frequency as structured fields.\n\nSigning makes the order prescribed and projects it, so it reaches the board, eMAR and interaction screen. Sign is a button in Orders; moving a medication order to active through /orders/{id}/transition delegates to the same step. orders.status stays in sync.\n\nThe sign re-screen closes the W116c window.\nMED_NOT_SENT gets flag-aware copy, and Orders gets an 'Awaiting my signature' filter plus a DoctorHome chip.\nNurses can still create drafts (R010 untouched).",
+    "files_touched": [
+     "server/routes/orders_routes.py",
+     "server/services/orders_service.py",
+     "server/services/order_sets_service.py",
+     "server/services/medorder_service.py",
+     "src/components/orders/OrdersPanel.tsx",
+     "src/components/orders/OrderSetsPanel.tsx",
+     "src/components/orders/medicationRouting.ts",
+     "src/pages/panels/DoctorHomePanel.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_cpoe_lane.py",
+     "src/components/orders/OrdersPanel.medorders.test.tsx"
+    ],
+    "size_days": 5,
+    "depends_on": [
+     "medorders-4",
+     "medorders-5"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "- Re-run test_order_sets, test_orders_service, test_cpoe_dose_guard and test_caller_named_patient_scope (lifecycle off: unchanged).\n- An order set applies as N drafts with none on the board; after sign the drug is on the board and the eMAR.\n- A nurse cannot sign.\n- Each signature emits exactly one shadow clinical.action.\n- The vitest checks the Sign button and copy for each permission."
+   },
+   {
+    "id": "medorders-8",
+    "title": "Sage handoff and Scribe extraction write through the store",
+    "description": "_dispatch_to_helix, in ONE transaction:\n- the chart row (llm_extracted, as today);\n- the med_order (prescribed, prescriber is the confirming actor as today, needs_verification = 1);\n- the linked supply row, via insert_order with the reconciled id instead of LIKE.\nThe 'charted-only' card text is kept for drugs not on the formulary.\n\nScribe _persist_extraction creates one med_order per start inside its existing transaction, keeps the [SAFETY] note and writes no supply row.\n\nBehaviour is preserved, and W111 and R010 stay untouched.\nAlso move the synchronous create_and_dispatch_handoff call (relay_routes.py:420) to run_db, coordinated with the Relay session.",
+    "files_touched": [
+     "server/services/sage_handoff_service.py",
+     "server/services/nervous_system_triggers.py",
+     "server/services/medorder_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_ai_lanes.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "medorders-3",
+     "medorders-5"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "- Re-run test_handoff, test_handoff_blocked, test_agentic_order_failopen and test_ehr_extraction_provenance with the store on.\n- A fault after the chart INSERT leaves neither row (today it leaves an orphan chart row).\n- One pharmacist verification covers both rows."
+   },
+   {
+    "id": "medorders-9",
+    "title": "Interaction and duplicate screens, and discharge reconciliation, read the store",
+    "description": "_screen_interactions (drug_safety_service.py:625) reads:\n- live signed orders: prescribed, verified and held, PRN included, drafts excluded;\n- plus unlinked legacy active rows;\n- excluding the order's own id.\n\nThe same-ingredient duplicate becomes a gate finding, as MO-R6 rules.\nPRN orders become administrable as MO-R3 rules.\nbuild_medication_reconciliation reads store statuses and their reasons.",
+    "files_touched": [
+     "server/services/drug_safety_service.py",
+     "server/services/medication_safety_gate.py",
+     "server/services/discharge_service.py",
+     "server/services/medorder_service.py",
+     "server/services/emar_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_screen_scope.py"
+    ],
+    "size_days": 3,
+    "depends_on": [
+     "medorders-7",
+     "medorders-8"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "MO-R3 (new, safety); MO-R6 for the duplicate acknowledgement",
+    "migrations": 0,
+    "tests": "- Warfarin against a PRN or CPOE-signed anticoagulant now alerts.\n- Drafts are not screened against.\n- Re-run test_interaction_coverage, test_order_time_allergy_grading and test_discharge_review.\n- A PRN order can be given through the full set of bedside gates."
+   },
+   {
+    "id": "medorders-10",
+    "title": "Lifecycle on the chart, the round and the deliveries sheet",
+    "description": "MedOrderList and MedOrderTimeline in the chart Medications modal:\n- text status chips;\n- the supply line and the last dose;\n- Sign, Hold, Resume and Stop driven by permissions, each with a required reason.\nThe Add form posts to /api/medorders.\nMedRoundSheet gets 'Awaiting pharmacist' and 'On hold' groups.\nAdministerModal maps the new refusal.\nDeliveriesSheet names the order.\nshellConfig reads the features flag. All of it refreshes on the socket event.",
+    "files_touched": [
+     "src/pages/panels/VigilPanel.tsx",
+     "src/pages/panels/nurse/MedRoundSheet.tsx",
+     "src/components/vigil/AdministerModal.tsx",
+     "src/pages/panels/nurse/DeliveriesSheet.tsx",
+     "src/shellConfig.tsx",
+     "src/api/medorders.ts"
+    ],
+    "files_new": [
+     "src/components/medorders/MedOrderList.tsx",
+     "src/components/medorders/MedOrderTimeline.tsx",
+     "src/components/medorders/MedOrderList.test.tsx",
+     "src/components/medorders/MedOrderTimeline.test.tsx"
+    ],
+    "size_days": 5,
+    "depends_on": [
+     "medorders-4",
+     "medorders-5",
+     "medorders-7"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "",
+    "migrations": 0,
+    "tests": "- Vitest for every status and permission combination.\n- With the flag off the old modal renders.\n- check-contrast passes, and status is never shown by colour alone.\n- Browser walk on the isolated verify stack for doctor, nurse and pharmacist."
+   },
+   {
+    "id": "medorders-11",
+    "title": "Pharmacist verification before the first dose",
+    "description": "administrable() requires 'verified' as MO-R1 rules, with the stat or urgent exception if it is ruled in.\nThe MAR shows 'Given before pharmacist check' and the queue has a retrospective-verification window.",
+    "files_touched": [
+     "server/services/medorder_service.py",
+     "server/services/emar_service.py",
+     "src/pages/panels/nurse/MedRoundSheet.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_verify_before_dose.py"
+    ],
+    "size_days": 2,
+    "depends_on": [
+     "medorders-5"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "MO-R1 (new, safety)",
+    "migrations": 0,
+    "tests": "- A routine order is refused at the bedside until verified.\n- A stat order is allowed and flagged, as ruled.\n- Unlinked legacy rows are unchanged."
+   },
+   {
+    "id": "medorders-12",
+    "title": "Verbal and telephone orders with read-back and countersign",
+    "description": "A nurse enters a 'verbal' order recording the read-back.\nIt is administrable only as R010 rules.\nThe countersign is due within a site-set window, appears in the prescriber's to-sign queue and is escalated when overdue.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/medorder_service.py",
+     "server/routes/medorder_routes.py",
+     "src/pages/panels/VigilPanel.tsx",
+     "src/components/orders/OrdersPanel.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_verbal.py"
+    ],
+    "size_days": 4,
+    "depends_on": [
+     "medorders-7"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "R010",
+    "migrations": 1,
+    "tests": "- Read-back is required.\n- An overdue countersign surfaces and is audited.\n- A nurse cannot countersign."
+   },
+   {
+    "id": "medorders-13",
+    "title": "Scribe-extracted medicines as drafts",
+    "description": "Extracted starts become drafts that a clinician signs, instead of prescribed orders that only the pharmacist checks.",
+    "files_touched": [
+     "server/services/nervous_system_triggers.py",
+     "server/services/medorder_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_scribe_drafts.py"
+    ],
+    "size_days": 2,
+    "depends_on": [
+     "medorders-8"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "W111",
+    "migrations": 0,
+    "tests": "- An extracted drug appears in the to-sign queue, not in the Verify Queue or on the board.\n- The provenance test keeps passing."
+   },
+   {
+    "id": "medorders-14",
+    "title": "Stat order completes on its first given dose",
+    "description": "A 'given' administration of a stat or once order moves it to completed in the same transaction, so a second dose needs a new order.",
+    "files_touched": [
+     "server/services/medorder_service.py",
+     "server/services/emar_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_stat_completion.py"
+    ],
+    "size_days": 1.5,
+    "depends_on": [
+     "medorders-3"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "R001",
+    "migrations": 0,
+    "tests": "- A second given dose from a stale tab is refused (or warned, as ruled).\n- A not_given dose does not complete the order."
+   },
+   {
+    "id": "medorders-15",
+    "title": "Substitution as an order amendment",
+    "description": "A pharmacy substitute becomes an 'amended' proposal on the order, accepted or declined by the prescriber or auto-accepted, as R002 and the site interchange list rule.\nThe projection changes only after acceptance.",
+    "files_touched": [
+     "server/services/helix_service.py",
+     "server/services/medorder_service.py",
+     "server/routes/medorder_routes.py",
+     "src/components/helix/HelixOrderReviewModal.tsx",
+     "src/components/medorders/MedOrderList.tsx"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_substitution.py"
+    ],
+    "size_days": 4,
+    "depends_on": [
+     "medorders-5"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "R002",
+    "migrations": 0,
+    "tests": "- A therapeutic interchange waits for the prescriber.\n- A same-molecule swap follows the ruling.\n- The allergy screen runs on the substitute."
+   },
+   {
+    "id": "medorders-16",
+    "title": "Helix approve and Relay confirm lanes onto the store",
+    "description": "Helix approve creates a draft that a prescriber signs, or whatever R010 rules.\nconfirm_agentic calls create_in_txn on _persist_confirmation's connection, if W099 wires it; if W099 retires it, nothing is needed.",
+    "files_touched": [
+     "server/routes/helix_routes.py",
+     "server/routes/relay_routes.py",
+     "src/components/sage/SageMessage.tsx",
+     "server/services/medorder_service.py"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_pharmacy_lanes.py"
+    ],
+    "size_days": 2.5,
+    "depends_on": [
+     "medorders-5",
+     "medorders-8"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "R010",
+    "migrations": 0,
+    "tests": "- Re-run test_agentic_confirm_race and test_optimized_agentic_orders: a lost race leaves no order and no med_order.\n- The pharmacist is never recorded as the prescriber unless R010 says so."
+   },
+   {
+    "id": "medorders-17",
+    "title": "Medication reconciliation at admission, transfer and discharge (W105)",
+    "description": "A med_reconciliations table records, for each item: continue, stop or modify, signed by the prescriber.\nHome medications are seeded from the admission profile.\nTransfer prompts a reconciliation.\nAt discharge, live orders close as MO-R7 rules, and the discharge prescription comes from the signed reconciliation.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/discharge_service.py",
+     "server/routes/vigil_routes.py",
+     "server/services/admission_service.py",
+     "server/services/medorder_service.py"
+    ],
+    "files_new": [
+     "src/components/medorders/MedReconciliation.tsx",
+     "server/tests/test_medorder_reconciliation.py"
+    ],
+    "size_days": 5,
+    "depends_on": [
+     "medorders-9",
+     "adt-1"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "MO-R7 (new, safety); the discharge gate itself is R009",
+    "migrations": 1,
+    "tests": "- Unverified items must be acknowledged before the summary.\n- A stopped drug never prints as continued.\n- Transfer creates a reconciliation."
+   },
+   {
+    "id": "medorders-18",
+    "title": "Retire the legacy write paths (single writer)",
+    "description": "Once lifecycle is on at every site and parity has been clean for 14 days:\n- remove the direct medications and Helix INSERTs from routes and services;\n- the routes stop calling enforce_medication_safety themselves;\n- an AST guard test enforces both.\nTest fixtures may keep inserting unlinked rows.",
+    "files_touched": [
+     "server/routes/vigil_routes.py",
+     "server/services/sage_handoff_service.py",
+     "server/services/nervous_system_triggers.py",
+     "server/routes/orders_routes.py",
+     "server/routes/helix_routes.py"
+    ],
+    "files_new": [
+     "server/tests/test_medorder_single_writer_ast.py"
+    ],
+    "size_days": 2.5,
+    "depends_on": [
+     "medorders-8",
+     "medorders-9",
+     "medorders-16"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "R010 (through medorders-16)",
+    "migrations": 0,
+    "tests": "- The AST guard fails on any new direct writer.\n- The full suite passes.\n- The parity report is empty on a migrated copy of the database."
+   },
+   {
+    "id": "medorders-19",
+    "title": "Prescriber-authored administration schedule (W117)",
+    "description": "A med_order_schedule_times child table holds explicit due times, defaulted from a signed site_config map of frequency to times.\nThe nurse board uses the authored times when present and the derived schedule otherwise.",
+    "files_touched": [
+     "server/migrations.py",
+     "server/services/nurse_shift_service.py",
+     "server/services/medorder_service.py",
+     "src/components/orders/OrdersPanel.tsx"
+    ],
+    "files_new": [
+     "server/site_config/dose_times.json",
+     "server/tests/test_medorder_schedule.py"
+    ],
+    "size_days": 5,
+    "depends_on": [
+     "medorders-7"
+    ],
+    "safety_sensitive": true,
+    "blocked_by_ruling": "MO-R8 (new, safety)",
+    "migrations": 1,
+    "tests": "- A TDS order shows the site's three times.\n- A missing map falls back to today's derived schedule.\n- Overdue is computed from the authored times."
+   }
+  ],
+  "product_rulings": [
+   {
+    "question": "MO-R1: Must every medication order be verified by a pharmacist before its first dose? Which orders are exempt? Today only AI or agentic-sourced drugs need verification.",
+    "options": "(a) Every order. Stat and urgent first doses may be given at 'prescribed' and verified afterwards, flagged on the MAR. (b) Only AI or agentic sources, as today. (c) Every order, no exceptions.",
+    "recommendation": "(a). The retrospective window is set by the site pharmacist; suggest before the next scheduled dose.",
+    "safety": true
+   },
+   {
+    "question": "MO-R2: Who may put a medication order on hold, resume it, and stop it? Today no route does any of these.",
+    "options": "(a) The prescriber (medication.prescribe) for all three. The nurse records a single dose as not given, as she can today. The pharmacist rejects an order or raises a query in Relay. (b) As (a), and nurses may also hold for nil-by-mouth or a procedure, with the prescriber told. (c) Pharmacists may also hold pending a query.",
+    "recommendation": "(a)",
+    "safety": true
+   },
+   {
+    "question": "MO-R3: Should a drug charted with status PRN be givable? Today it shows on the round but every dose is refused (emar_service.py:556). And should the order-time interaction and duplicate screen include PRN, held and signed CPOE orders, but not unsigned drafts?",
+    "options": "(a) Yes to both. (b) Givable, but keep screening on 'active' only. (c) Leave as today.",
+    "recommendation": "(a)",
+    "safety": true
+   },
+   {
+    "question": "MO-R4 (W178): Should an administrator keep the ability to verify medication orders? Today they can, through helix.write.",
+    "options": "(a) Pharmacist only; a site may grant it to others. (b) Keep admin.",
+    "recommendation": "(a). In code it stays granted to admin until you rule, so nothing changes silently.",
+    "safety": false
+   },
+   {
+    "question": "MO-R5: Should acknowledging a SEVERE allergy alert at order time need medication.prescribe on every lane, as the bedside override has since 2026-08-15? Today anyone with medication.write or order.write can type a reason (medication_safety_gate.py:250).",
+    "options": "(a) Prescriber-only on every lane. (b) Prescriber-only on the new sign step only. (c) As today.",
+    "recommendation": "(a). The store's sign step is prescriber-only by construction. The nurse chart-lane part overlaps R010 and R011, which are held, so that lane waits.",
+    "safety": true
+   },
+   {
+    "question": "MO-R6: At order time the same ingredient is already on a live order. Should Orb show a notice, require a 428 acknowledgement with a reason, or block?",
+    "options": "(a) Notice only. (b) 428 with a reason, recorded. (c) Hard block.",
+    "recommendation": "(b). Stat top-ups and route changes are legitimate, so never a hard block.",
+    "safety": true
+   },
+   {
+    "question": "MO-R7: What happens to live medication orders at discharge, death or transfer?",
+    "options": "(a) Complete them with the reason 'discharged' only after the discharge reconciliation is signed; transfer keeps them live and prompts a transfer reconciliation. (b) Complete them automatically at discharge. (c) Leave them live, as today.",
+    "recommendation": "(a). Never close an order silently. The discharge gate itself is R009, which stays held.",
+    "safety": true
+   },
+   {
+    "question": "MO-R8 (W117): What are the standard administration times for each frequency, for example TDS as 08/14/20 or 06/14/22?",
+    "options": "(a) A site_config file signed by pharmacy and the physician champion. (b) Built-in defaults. (c) Keep the derived schedule.",
+    "recommendation": "(a), with no built-in default. Until a site signs one, the derived schedule continues.",
+    "safety": true
+   },
+   {
+    "question": "MO-R9: If the lifecycle flag is switched off after use, held orders stay ungivable, because the bedside check follows the order link rather than the flag. They then have to be re-prescribed from the chart. Accept?",
+    "options": "(a) Accept: it fails closed. (b) Release held orders when the flag goes off.",
+    "recommendation": "(a)",
+    "safety": true
+   },
+   {
+    "question": "MO-R10: What happens to drafts nobody signs, for example order-set drafts?",
+    "options": "(a) Never auto-cancel. Show drafts older than 24 h at the top of the to-sign queue and on handover. (b) Auto-cancel after a site-set time, with a Relay note.",
+    "recommendation": "(a)",
+    "safety": true
+   },
+   {
+    "question": "MO-R11: May a CPOE medication order name a drug that is not on the formulary?",
+    "options": "(a) Allow free text with a visible line saying it is not supplied by pharmacy; the pharmacist binds a product at verification. (b) Formulary products only.",
+    "recommendation": "(a) until the drug-master work in the GRN epic lands, then revisit.",
+    "safety": false
+   },
+   {
+    "question": "HELD R010: Who is the prescriber of record for a Sage-drafted drug, and may nurses enter medication orders?",
+    "options": "As in docs/RULINGS_NEEDED_2026-10.md",
+    "recommendation": "Held for Samuel; this design does not decide it. Until then, nurses keep today's chart lane and can create CPOE drafts. medorders-12, 16 and 18 wait.",
+    "safety": true
+   },
+   {
+    "question": "HELD R001: Should the server block a second administration of a stat order?",
+    "options": "As in RULINGS_NEEDED",
+    "recommendation": "Held. medorders-14 waits; stat orders stay live after a dose, as today.",
+    "safety": true
+   },
+   {
+    "question": "HELD R002: May a pharmacist substitute a drug without the prescriber, and from which list?",
+    "options": "As in RULINGS_NEEDED",
+    "recommendation": "Held. medorders-15 waits; Helix substitution is unchanged.",
+    "safety": true
+   },
+   {
+    "question": "HELD R011: May a nurse override a bedside dose block? And must a moderate same-drug re-challenge carry a reason before the order is written?",
+    "options": "As in RULINGS_NEEDED",
+    "recommendation": "Held. No increment changes the bedside override path (emar_service is untouched there).",
+    "safety": true
+   },
+   {
+    "question": "HELD W111: Should Scribe-extracted data be proposed rather than live? (Its medication half.)",
+    "options": "As in the register",
+    "recommendation": "Held. medorders-13 waits; extracted drugs stay 'prescribed, needs pharmacist', as today.",
+    "safety": true
+   },
+   {
+    "question": "HELD R024: When a Relay confirm races a dismissal, what happens to the pharmacy order?",
+    "options": "As in RULINGS_NEEDED",
+    "recommendation": "Held. The store gives every write a function that joins the caller's transaction, so either option works. The baseline already shares the connection (relay_routes.py:1276).",
+    "safety": true
+   },
+   {
+    "question": "W099 (open product ruling): Wire or retire the agentic confirm and pre-flight routes?",
+    "options": "(a) Wire, with PIN and pre-flight. (b) Retire.",
+    "recommendation": "Not decided here. medorders-16 follows whichever you choose.",
+    "safety": false
+   }
+  ],
+  "risks": [
+   "Dual writes can diverge during the move. Any path that writes the legacy tables outside medorder_service creates unlinked rows: 37 test files, the seed and reset scripts, history import and populate_helix_from_medgemma.py. Mitigation: unlinked rows keep today's semantics, are adopted when read, the parity report counts them, and the AST guard closes the door at the end.",
+   "Adoption decides who can be given a dose, because the bedside check follows the order link. A wrong status mapping would refuse or allow real doses. Run the table-driven equivalence test (status x source x verified_by) before any site turns the store on.",
+   "WAL self-deadlock and blocking the event loop. enforce_medication_safety opens its own connections and writes audit rows, so calling it inside an open write transaction deadlocks. Screen outside the transaction and re-check the fingerprint inside. Every new handler is a def handler or uses run_db. The Relay transition already calls create_and_dispatch_handoff synchronously on the loop (relay_routes.py:420), and medorders-8 adds work to that call.",
+   "FK-parent rebuild trap. medications is the FK parent of three tables and must never be rebuilt. The new tables declare no FKs, so they are never FK parents.",
+   "Helix tables are created outside the migration runner. If the HELIX_SCHEMA twin of med_order_id is forgotten, fresh databases silently lack the column (the m35 lesson).",
+   "A green suite on a fresh database hides failures on legacy databases (orb-verification-lessons). Every migration and adoption test needs a tmp_path legacy database, and the suite must not be run with the shipping .env.",
+   "Audit int target_id false-tamper alarm. Always pass str(id). Legacy medication ids are integers.",
+   "The shadow scorecard can double-count. CPOE create already emits clinical.action (orders_routes.py:315), so a signature must not emit a second event for the same decision.",
+   "Switching the lifecycle flag off after use leaves held orders ungivable and removes the resume route. It fails closed, but needs MO-R9 and an operations note.",
+   "Size. The coverage map estimates 2 to 4 weeks plus a week of gating. The honest total is about 65 engineer-days, of which about 30 can start now. The difference is eight lanes instead of the three the map counted, the dual-run and parity work, the UI, and increments held for rulings.",
+   "Formulary quality. Without the drug-master work (GRN epic), most orders have no exact product and get no supply row, so the pharmacy keeps working the legacy way for them. The seed tags two brands with the wrong generic, which would bind the wrong product at verification.",
+   "Duplicate prescribing during the move. With lifecycle on, a doctor can sign a CPOE or order-set draft for a drug they already charted from the chart, which the MED_NOT_SENT copy told them to do. Until MO-R6 is ruled, the sign screen shows only a notice.",
+   "Hot shared files across about ten sessions and five sibling epics: config.py, migrations.py, permissions.py, main.py and shellConfig.tsx. Take migration numbers at merge time and land each increment as its own commit now that git exists.",
+   "Ward Record and the demos depend on both flags staying off. A demo that turns the store on gets its reseeded legacy rows adopted at boot automatically; check the parity report before presenting."
+  ],
+  "session_conflicts": [
+   "Relay agentic-confirm orphan orders session. It edits server/routes/relay_routes.py (_persist_confirmation), server/services/helix_service.py (create_order and insert_order) and server/tests/test_agentic_confirm_race.py, which is modified in the tree now. Overlaps: medorders-5 (helix_service.transition_order_status hook), medorders-8 (sage_handoff_service moves from create_order to insert_order, and the run_db move at relay_routes.py:420) and medorders-16 (relay_routes.py). Start these after that session lands.",
+   "Scribe quick-admit department validation session (admission_service.py, scribe routes). medorders-17 edits admission_service.py for home medications, so it must wait. medorders-8 edits nervous_system_triggers.py, which is next door to Scribe but not scribe_routes.py.",
+   "Admit-form ACVPU/O2 defaults session (src/components/AdmitPatientModal.tsx, modified in the tree now). Any home-medication capture in medorders-17 would touch this file, so defer it.",
+   "CORS same-origin socket session (server/ws/realtime.py, the socket in src/api/client.ts). The design avoids both files: routes emit 'medorders:update' through sio directly, and the UI uses a new src/api/medorders.ts that only imports the socket.",
+   "Sage bed lookup session (server/services/sage_service.py). No overlap: Sage keeps reading the medications projection (sage_service.py:3071).",
+   "Bridge emergency flags session (server/services/bridge_service.py). No overlap: Bridge's medication reads stay on the projection (bridge_routes.py:243, :354).",
+   "Sibling HIS epics (OPD, ADT, pharmacy GRN, LIS, multi-site) share server/config.py (the default-off flag helper and the features map), server/migrations.py (numbering: take the next free number at merge; it is 47 today), server/permissions.py and src/lib/roles.ts, server/main.py (/api/health and include_router) and src/shellConfig.tsx."
+  ]
+ }
+}

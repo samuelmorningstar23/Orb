@@ -122,7 +122,7 @@ sequenceDiagram
 
 ### `server/services/audit_service.py`
 
-### `_HASH_FIELDS`: `server/services/audit_service.py:142`
+### `_HASH_FIELDS`: `server/services/audit_service.py:154`
 **Signature:** module constant: `tuple[str, ...]` (20 field names)
 **Does:** Defines exactly which columns, in which order, participate in every row's hash.
 **How it works:** A frozen tuple consumed by `compute_audit_row_hash`; order and membership are declared "part of the chain contract, do NOT reorder without a schema bump" (`audit_service.py:39-40`).
@@ -144,7 +144,7 @@ sequenceDiagram
 **Talks to:** called by `log_audit_event._do_insert` (`audit_service.py:142`), `flight_recorder_service._broken_audit_ids` (`flight_recorder_service.py:103`), `database.verify_audit_chain` (`server/database.py:1266`), and `reseal_audit_chain.py:54,78`.
 **Gotchas:** `default=str` silently stringifies anything non-JSON (e.g. if a caller ever passed a `datetime` for `timestamp`); harmless today because writers pass strings/ints/None, but it means type drift changes bytes and therefore hashes.
 
-### `AuditWriteError`: `server/services/audit_service.py:48`
+### `AuditWriteError`: `server/services/audit_service.py:60`
 **Signature:** `class AuditWriteError(RuntimeError)`
 **Does:** Signals that a fail-closed audit event could not be durably persisted.
 **How it works:** Raised only from `log_audit_event`'s exception handler when `event_category` is fail-closed (`audit_service.py:191-196`).

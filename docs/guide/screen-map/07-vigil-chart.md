@@ -214,15 +214,15 @@ handler at `VigilPanel.tsx:570-572`, and only when `data.patient_id === patientI
 `currentUser` is `getUser()` at `:489`.
 **API:** none, this is WebSocket, not REST. The client emits `enter_patient` on mount and on
 reconnect (`VigilPanel.tsx:569`:573:575) and `leave_patient` on unmount (`:579`).
-**Server:** `server/ws/realtime.py:310` `enter_patient` joins the room
-`patient-presence:{patient_id}` and calls `_broadcast_presence` (`realtime.py:301-307`), which
-emits `presence:update` with the deduped roster from `_roster` (`realtime.py:288`).
+**Server:** `server/ws/realtime.py:406` `enter_patient` joins the room
+`patient-presence:{patient_id}` and calls `_broadcast_presence` (`realtime.py:397-403`), which
+emits `presence:update` with the deduped roster from `_roster` (`realtime.py:384`).
 **Change this →** it renders **nothing** when you are the only viewer (`:2084-2085` filters out
 `selfId` and returns null on an empty list), deliberately silent in the common case. With one
 other viewer the text reads "*Priya Nair* also viewing"; with more it reads "*3* others viewing"
 (`:2101`). The hover title lists every name and role (`:2090`). Only the first four initials
 render (`:2093`, `.slice(0, 4)`); a fifth viewer is counted in the sentence but has no circle.
-Note the server gates room entry on `PATIENT_READ_ALL` (`realtime.py:321-326`), a pharmacist or
+Note the server gates room entry on `PATIENT_READ_ALL` (`realtime.py:417-422`), a pharmacist or
 patient socket silently never joins, so they never appear in anyone's roster.
 
 ### 2.5 Bed + risk badge
@@ -284,7 +284,7 @@ Styled `Vigil.css:156-162`.
 **API:** initial values via `GET /api/vigil/patients/{patient_id}`; updates via the
 `vitals:update` socket event.
 **Server:** `server/services/bot_service.py:347` emits `vitals:update` each simulator tick via
-`server/ws/realtime.py:271` `emit_patient_vitals`, which scopes the emit to the patient's
+`server/ws/realtime.py:367` `emit_patient_vitals`, which scopes the emit to the patient's
 department room plus `dept:__all__`, so a clinician on another ward never receives it. The
 payload shape is built by `bot_service.py:132` `_next_reading` (the emit dict at
 `bot_service.py:203-219`) and includes a full `risk` object from `compute_news2`
@@ -1058,7 +1058,7 @@ surfaces each failure differently:
 - **Care bundle actions without `alert.read`** → the red error line in the bundle card footer
   (`CareBundleTimer.tsx:388`).
 - **Presence** silently never joins for a role without `PATIENT_READ_ALL`
-  (`server/ws/realtime.py:321-326`), so the chips just never appear.
+  (`server/ws/realtime.py:417-422`), so the chips just never appear.
 
 ### 9.6 What gets audited when you open this chart
 Opening the chart writes a `phi_access` row via the `audit_action` on the route dependency:

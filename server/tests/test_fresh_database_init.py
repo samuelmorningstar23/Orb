@@ -281,3 +281,225 @@ def test_migration_35_still_upgrades_an_existing_helix_table(tmp_path):
     again = [r[1] for r in raw.execute("PRAGMA table_info(helix_patient_med_orders)").fetchall()]
     assert again == orders, f"second run changed the schema: {orders} -> {again}"
     raw.close()
+
+
+# ── Wave 1 of the hospital-system build: migrations 48 and 49 ────────────────
+
+_HELIX_TABLES = ["helix_medication_master", "helix_inventory_lots", "helix_patient_med_orders",
+                 "helix_pharmacy_verifications", "helix_stock_movements", "helix_transitions"]
+_NEW_ROLES = ["receptionist", "ward_clerk", "lab_technician", "pathologist", "phlebotomist"]
+
+
+def test_init_db_alone_creates_the_helix_tables_and_admits_the_new_roles(tmp_path):
+    """Migration 49 moved the Helix tables into the runner, so init_db() alone
+    (no init_helix_db) creates all six; migration 48's roles are in the fresh
+    users CHECK, rendered from roles.STORABLE_ROLES, and a plain INSERT of each
+    lands."""
+    proc, _ = _boot(tmp_path, """
+import json
+from database import init_db, get_db
+init_db()
+conn = get_db()
+tables = sorted(r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'"))
+ddl = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").fetchone()[0]
+inserted = []
+for role in %r:
+    conn.execute("INSERT INTO users (id, name, role, password_hash) VALUES (?, ?, ?, 'x')",
+                 ("FRESH-" + role, role, role))
+    inserted.append(conn.execute("SELECT role FROM users WHERE id = ?", ("FRESH-" + role,)).fetchone()[0])
+conn.commit()
+ledger = sorted(r[0] for r in conn.execute("SELECT version FROM schema_migrations"))
+print("ORB_TEST_JSON:" + json.dumps({"tables": tables, "ddl": ddl, "inserted": inserted,
+                                     "ledger": ledger}))
+""" % (_NEW_ROLES,))
+    got = _payload(proc)
+    missing = [t for t in _HELIX_TABLES if t not in got["tables"]]
+    assert not missing, f"init_db() alone did not create {missing} (migration 49)"
+    for role in _NEW_ROLES:
+        assert f"'{role}'" in got["ddl"], role
+    assert got["inserted"] == _NEW_ROLES
+    assert {48, 49} <= set(got["ledger"])
+
+
+def test_a_fresh_database_has_every_table_the_restore_verifier_checks(tmp_path):
+    """The other half of test_warm_standby's AST guard, at run time.
+
+    scripts/lib/verify_restore.py fails a backup that lacks any table in its
+    manifest. Every one of them must therefore exist after init_db() alone on a
+    brand new database, or the first backup of a new appliance fails its drill.
+    Pinned for the Helix group in particular: migration 49 creates those six in
+    the runner, so they are checked as migrated tables, not as baseline."""
+    lib_dir = SERVER_DIR.parent / "scripts" / "lib"
+    proc, _ = _boot(tmp_path, """
+import json, sys
+from database import init_db, get_db
+init_db()
+sys.path.insert(0, %r)
+import verify_restore as vr
+conn = get_db()
+present = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+print("ORB_TEST_JSON:" + json.dumps({
+    "missing": sorted(set(vr.ALL_MIGRATED_TABLES) - present),
+    "helix_group": sorted(vr.MODULE_TABLES.get("helix pharmacy", ())),
+}))
+""" % (str(lib_dir),))
+    got = _payload(proc)
+    assert got["missing"] == [], (
+        f"a fresh init_db() lacks tables the restore verifier requires: {got['missing']}"
+    )
+    assert got["helix_group"] == sorted(_HELIX_TABLES)
+
+
+def test_runner_created_helix_tables_match_helix_schema(tmp_path):
+    """A fresh appliance's Helix tables (made by migration 49, then every later
+    migration) agree with HELIX_SCHEMA, the fallback init_helix_db still runs:
+    same columns and foreign keys per table, compared by name so a column a
+    later migration appends still matches."""
+    import sqlite3
+
+    proc, _ = _boot(tmp_path, """
+import json
+from database import init_db, get_db
+init_db()
+conn = get_db()
+out = {}
+for t in %r:
+    cols = sorted(list(r)[1:] for r in conn.execute("PRAGMA table_info(%%s)" %% t).fetchall())
+    fks = sorted(list(r)[2:] for r in conn.execute("PRAGMA foreign_key_list(%%s)" %% t).fetchall())
+    out[t] = [cols, fks]
+print("ORB_TEST_JSON:" + json.dumps(out))
+""" % (_HELIX_TABLES,))
+    runner = _payload(proc)
+
+    from services.helix_db import HELIX_SCHEMA
+    ref = sqlite3.connect(str(tmp_path / "reference.db"))
+    ref.executescript(HELIX_SCHEMA)
+    for t in _HELIX_TABLES:
+        cols = sorted(list(r)[1:] for r in ref.execute(f"PRAGMA table_info({t})").fetchall())
+        fks = sorted(list(r)[2:] for r in ref.execute(f"PRAGMA foreign_key_list({t})").fetchall())
+        assert runner[t] == json.loads(json.dumps([cols, fks])), (
+            f"{t}: the migration-created table and HELIX_SCHEMA disagree. A Helix column "
+            "added by a migration must be added to HELIX_SCHEMA too, and the reverse.")
+    ref.close()
+
+
+def test_a_fresh_boot_no_longer_migrates_a_stock_table_that_is_not_there(tmp_path):
+    """W027: init_helix_db logged "Migrating helix_stock_movements" on every
+    first boot, against a table that did not exist yet. Logging at INFO so the
+    line would show if it came back."""
+    proc, _ = _boot(tmp_path, """
+import logging
+logging.basicConfig(level=logging.INFO)
+from database import init_db
+from services.helix_db import init_helix_db
+init_db()
+init_helix_db()
+print("ORB_TEST_JSON:{}")
+""")
+    _payload(proc)
+    noise = proc.stdout + proc.stderr
+    assert "Migrating helix_stock_movements" not in noise, noise
+    assert "migration failed" not in noise
+
+
+def test_the_stock_table_guard_still_upgrades_an_old_table(tmp_path, caplog):
+    """The early return is for an ABSENT table only: an old table without
+    medication_id is still widened."""
+    import logging
+    import sqlite3
+
+    from services.helix_db import _migrate_stock_movements
+
+    empty = sqlite3.connect(str(tmp_path / "empty.db"))
+    with caplog.at_level(logging.INFO, logger="orb.helix_db"):
+        _migrate_stock_movements(empty)
+    assert "Migrating helix_stock_movements" not in caplog.text
+    assert empty.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall() == []
+    empty.close()
+
+    old = sqlite3.connect(str(tmp_path / "old.db"))
+    old.execute("CREATE TABLE helix_stock_movements (id TEXT PRIMARY KEY, lot_id TEXT, "
+                "quantity_change INTEGER)")
+    old.commit()
+    with caplog.at_level(logging.INFO, logger="orb.helix_db"):
+        _migrate_stock_movements(old)
+    cols = {r[1] for r in old.execute("PRAGMA table_info(helix_stock_movements)").fetchall()}
+    assert {"medication_id", "order_id"} <= cols
+    assert "Migrating helix_stock_movements" in caplog.text
+    old.close()
+
+
+def test_migration_48_rebuilds_users_on_a_database_that_predates_it(tmp_path):
+    """The deploy path on a live appliance, end to end in a subprocess: a
+    database whose users CHECK stops at 'cashier' (the migration 33 shape),
+    with users that FK children point at (a patient's attending doctor, a Helix
+    order's prescriber), boots through init_db() and init_helix_db(). Migration
+    48 rebuilds users: every row and child survives, the foreign key check is
+    clean, the five roles insert, and both migrations are ledgered."""
+    proc, _ = _boot(tmp_path, """
+import json
+import database
+from database import init_db, get_db
+from services.helix_db import init_helix_db
+
+init_db()
+init_helix_db()
+conn = get_db()
+conn.execute("INSERT INTO users (id, name, role, department, password_hash, token_version) "
+             "VALUES ('OLD-D1', 'Dr Old', 'doctor', 'Cardiology', 'h', 3)")
+conn.execute("INSERT INTO users (id, name, role, password_hash) VALUES ('OLD-C1', 'Csh', 'cashier', 'h')")
+conn.execute("INSERT INTO patients (id, name, mrn, attending_doctor_id) VALUES ('OLD-P1', 'Pt', 'MRN-OLD-1', 'OLD-D1')")
+conn.execute("INSERT INTO helix_patient_med_orders (id, patient_id, prescribed_by, status) "
+             "VALUES ('OLD-O1', 'OLD-P1', 'OLD-D1', 'pending')")
+conn.commit()
+
+# Narrow the CHECK back to the migration 33 list, the shape every live
+# appliance has today, through the same atomic rebuild helper.
+ddl = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").fetchone()[0]
+start = ddl.index("CHECK (role IN (")
+end = ddl.index("))", start) + 2
+narrow = (ddl[:start] + "CHECK (role IN ('doctor', 'nurse', 'admin', 'patient', 'pharmacist', 'cashier'))"
+          + ddl[end:]).replace("CREATE TABLE users", "CREATE TABLE users_new", 1)
+cols = ", ".join(r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall())
+database._atomic_table_rebuild(conn, table="users", create_new_sql=narrow, shared_cols=cols, post_sql=[])
+conn.execute("DELETE FROM schema_migrations WHERE version IN (48, 49)")
+conn.commit()
+before_ddl = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").fetchone()[0]
+before_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
+init_db()
+init_helix_db()
+conn = get_db()
+after_ddl = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").fetchone()[0]
+inserted = []
+for role in %r:
+    conn.execute("INSERT INTO users (id, name, role, password_hash) VALUES (?, ?, ?, 'x')",
+                 ("NEW-" + role, role, role))
+    inserted.append(role)
+conn.commit()
+print("ORB_TEST_JSON:" + json.dumps({
+    "before_ddl": before_ddl,
+    "after_ddl": after_ddl,
+    "before_users": before_users,
+    "after_users": conn.execute("SELECT COUNT(*) FROM users WHERE id NOT LIKE 'NEW-%%'").fetchone()[0],
+    "doctor": list(conn.execute("SELECT name, role, department, token_version FROM users WHERE id='OLD-D1'").fetchone()),
+    "patient_doctor": conn.execute("SELECT attending_doctor_id FROM patients WHERE id='OLD-P1'").fetchone()[0],
+    "order_prescriber": conn.execute("SELECT prescribed_by FROM helix_patient_med_orders WHERE id='OLD-O1'").fetchone()[0],
+    "fk_check": [list(r) for r in conn.execute("PRAGMA foreign_key_check").fetchall()],
+    "integrity": conn.execute("PRAGMA integrity_check").fetchone()[0],
+    "ledger": sorted(r[0] for r in conn.execute("SELECT version FROM schema_migrations")),
+    "inserted": inserted,
+}))
+""" % (_NEW_ROLES,))
+    got = _payload(proc)
+    assert "'ward_clerk'" not in got["before_ddl"], "precondition: the CHECK was narrowed"
+    for role in _NEW_ROLES:
+        assert f"'{role}'" in got["after_ddl"], role
+    assert got["after_users"] == got["before_users"], "users rows lost in the rebuild"
+    assert got["doctor"] == ["Dr Old", "doctor", "Cardiology", 3]
+    assert got["patient_doctor"] == "OLD-D1"
+    assert got["order_prescriber"] == "OLD-D1"
+    assert got["fk_check"] == []
+    assert got["integrity"] == "ok"
+    assert {48, 49} <= set(got["ledger"])
+    assert got["inserted"] == _NEW_ROLES

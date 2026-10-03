@@ -380,7 +380,7 @@ sequenceDiagram
 
 ### File: `server/migrations.py`: migration 13
 
-#### `_m13_order_sets`: `migrations.py:795`
+#### `_m13_order_sets`: `migrations.py:801`
 **Signature:** `(conn) -> None`; registered as `Migration(13, "order_sets", …)` at `:1622`
 **Does:** Three additive changes.
 **On screen:** without it, `apply_set` 500s on a missing table and every medication item in every shipped protocol fails terminology validation.

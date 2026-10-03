@@ -4,10 +4,12 @@ Why it exists: on 2026-09-04 a test seed literally named "S" showed that a
 one-letter patient record makes Sage deny clinicians their OWN patients
 (tests/test_sage_department_scope.py). The matchers now refuse to match a name
 with fewer than two letters; this module pins that the same names cannot be
-REGISTERED, through every door a record can come in: the Vigil create route,
-the admission service and its route, the HIS roster importer and the history
-importer. One predicate, four doors, and a parity check against the matcher
-floor so the two cannot drift apart.
+REGISTERED, through every door a record can come in: the admission service and
+its route, the HIS roster importer and the history importer. One predicate,
+three doors, and a parity check against the matcher floor so the two cannot
+drift apart. The fourth door, the Vigil create route (POST /api/vigil/patients),
+wrote a patient with no admission and is retired: it answers 410 and writes
+nothing whatever the name, which door 1 below pins.
 
 Every accepted name written here is discharged again by the autouse teardown,
 and no rejected name may leave a row behind, which the tests assert directly.
@@ -101,28 +103,19 @@ def test_registration_floor_equals_the_sage_matcher_floor_for_ascii_names():
         assert (name_letter_count(name) >= MIN_NAME_LETTERS) == (sage._name_letters(name) >= 2), name
 
 
-# ── door 1: the Vigil create-patient route ────────────────────────────────────
+# ── door 1: the retired Vigil create-patient route ────────────────────────────
 
-def test_vigil_create_patient_refuses_a_one_letter_name_and_writes_nothing():
-    before = _count_named("S")
+@pytest.mark.parametrize("name", ["S", "   ", "Regrule Ghost Realname"])
+def test_the_retired_vigil_create_route_writes_nothing_whatever_the_name(name):
+    """A one-letter name, a blank one and a real one all get 410 naming the
+    admission door, and none leaves a patient or a Bridge login behind."""
+    before, before_users = _count_named(name), _count_users_named(name)
     r = client.post("/api/vigil/patients", headers=_auth(),
-                    json={"name": "S", "ward": "General"})
-    assert r.status_code == 400, r.text
-    assert r.json()["detail"] == NAME_TOO_SHORT_MESSAGE
-    assert _count_named("S") == before
-
-    r = client.post("/api/vigil/patients", headers=_auth(),
-                    json={"name": "   ", "ward": "General"})
-    assert r.status_code == 400
-    assert r.json()["detail"] == NAME_REQUIRED_MESSAGE
-
-
-def test_vigil_create_patient_still_accepts_a_real_name():
-    name = f"Regrule Vigil {uuid.uuid4().hex[:6]}"
-    r = client.post("/api/vigil/patients", headers=_auth(), json={"name": name, "ward": "General"})
-    assert r.status_code == 200, r.text
-    _SEEDED.append(r.json()["id"])
-    assert _count_named(name) == 1
+                    json={"name": name, "ward": "General"})
+    assert r.status_code == 410, r.text
+    assert "/api/admissions/admit" in r.json()["detail"]
+    assert _count_named(name) == before
+    assert _count_users_named(name) == before_users
 
 
 # ── door 2: the admission service and its route ───────────────────────────────
@@ -148,6 +141,14 @@ def test_admit_route_refuses_a_one_letter_name_with_400_not_500():
 def _count_users_named(name):
     with db_session() as db:
         return db.execute("SELECT COUNT(*) FROM users WHERE name = ?", (name,)).fetchone()[0]
+
+
+def test_admit_route_refuses_a_blank_name_with_the_required_message():
+    """Moved here from the retired Vigil door: blank is still "name is
+    required", answered 400 with the rule's words."""
+    r = client.post("/api/admissions/admit", headers=_auth(), json=_admission_payload("   "))
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"] == NAME_REQUIRED_MESSAGE
 
 
 def test_admit_route_still_admits_a_real_name():

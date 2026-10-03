@@ -27,7 +27,7 @@
  * on the screen, because a pure function can be right while the chart still
  * paints the old value.
  */
-import { render, screen, act, waitFor } from '@testing-library/react'
+import { render, screen, act, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { openPatient } from '../../lib/orbBus'
 
@@ -75,9 +75,12 @@ const DETAIL = {
   trend: { trend: 'stable', reason: null },
 }
 
+/* A test that needs a different chart sets this; beforeEach puts it back. */
+let detailOverride: unknown = null
+
 vi.mock('../../api/client', () => ({
   apiFetch: vi.fn(async () => ({ allergies: [] })),
-  getPatientDetail: vi.fn(async () => DETAIL),
+  getPatientDetail: vi.fn(async () => detailOverride ?? DETAIL),
   getAdministrations: vi.fn(async () => []),
   // Real semantics, mirrored: only a 'given' dose carrying a recorded
   // override reason is marked as crossing a charted allergy.
@@ -245,6 +248,7 @@ describe('lab trend arrow colour is judged against the reference range', () => {
    ══════════════════════════════════════════════════════════════════════════ */
 beforeEach(() => {
   vi.clearAllMocks()
+  detailOverride = null
   vi.stubGlobal('fetch', vi.fn(async () => ({
     ok: true, status: 200, json: async () => [], headers: { get: () => '0' },
   })))
@@ -302,5 +306,35 @@ describe("Priya Nair's chart, as the ward sees it", () => {
     const arrow = await waitFor(() => arrowFor('SODIUM'))
     expect(arrow.dataset.trendTone).toBe('neutral')
     expect(arrow.getAttribute('style')).toContain('--text-muted')
+  })
+})
+
+/* ══════════════════════════════════════════════════════════════════════════
+   A SIMULATED STRUCTURED RESULT CARRIES THE HONESTY LABEL (lis-5, part a)
+   The chart route returns each observation's source. Observation points used
+   to drop it, so a result the simulator wrote showed with no "Simulated"
+   badge, as if it were this patient's. Lab documents were already labelled.
+   ══════════════════════════════════════════════════════════════════════════ */
+describe('structured results on the chart', () => {
+  const withObservations = (rows: unknown[]) => ({ ...DETAIL, notes: [], lab_observations: rows })
+  const potassium = (over: Record<string, unknown>) => ({
+    id: 1, observation_name: 'Potassium', value_numeric: 5.9, unit: 'mmol/L',
+    reference_range: '3.5-5.1', abnormal_flag: 'H', status: 'final',
+    source: 'ingested_hl7', observed_at: '2026-10-03 09:00:00', ...over,
+  })
+
+  it('labels a simulated result on its tile', async () => {
+    detailOverride = withObservations([potassium({ source: 'simulated' })])
+    await openChart()
+    const tile = await screen.findByRole('button', { name: /Open trend chart for Potassium/i })
+    expect(within(tile).getByRole('note')).toHaveTextContent('Simulated')
+  })
+
+  it('leaves an interfaced result unlabelled', async () => {
+    detailOverride = withObservations([potassium({ source: 'ingested_hl7' })])
+    await openChart()
+    const tile = await screen.findByRole('button', { name: /Open trend chart for Potassium/i })
+    expect(within(tile).queryByRole('note')).toBeNull()
+    expect(tile).toHaveTextContent('5.9')
   })
 })

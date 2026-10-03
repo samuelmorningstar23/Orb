@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, lazy, Suspense, Component, type ReactNode } from 'react'
+import { useState, useEffect, useCallback, useSyncExternalStore, lazy, Suspense, Component, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../App'
 import { getVitalsFeed } from '../api/client'
@@ -17,12 +17,22 @@ import {
   DoctorHomePanel,
   getAccessibleTabs,
   getLandingTab,
+  getModuleOffNotice,
+  offersFloatingSage,
   getPrimaryAction,
   modulePanel,
+  featurePanel,
   tabDef,
+  currentFeatureFlags,
+  currentHealthProbe,
+  currentModuleFlags,
+  refreshModuleFlags,
+  subscribeModuleFlags,
+  FEATURE_TAB_IDS,
   HOSPITAL_MODULE_IDS,
   type Tab,
 } from '../shellConfig'
+import ModuleOffNotice from '../components/ModuleOffNotice'
 import SageFloatingAssistant from '../components/sage/SageFloatingAssistant'
 import CommandPalette from '../components/CommandPalette'
 import KeyboardShortcuts from '../components/KeyboardShortcuts'
@@ -149,6 +159,17 @@ function ViewTabSync({ activeTab }: { activeTab: string }) {
 export default function ClinicianShell() {
   const { user, logout } = useAuth()
   const { t, i18n } = useTranslation()
+  /* The rail is derived from the module and feature flags, which /api/health
+     settles once per sign-in. Subscribing here is what lets an answer that
+     arrives after first paint add or remove a tab; the three snapshots are the
+     only inputs the derivation below reads from the store. A probe that fails
+     or answers non-OK leaves every opt-in module and every feature OFF, and
+     every other module at its default ON, so a default site's rail is the same
+     before and after it answers. */
+  useSyncExternalStore(subscribeModuleFlags, currentModuleFlags)
+  useSyncExternalStore(subscribeModuleFlags, currentFeatureFlags)
+  useSyncExternalStore(subscribeModuleFlags, currentHealthProbe)
+  useEffect(() => { void refreshModuleFlags() }, [])
   /* One role input, one answer: everything role-dependent in this component
      comes through shellConfig. `user.role` must not appear in the JSX below —
      that rule is what stops the flag drift this file was refactored out of
@@ -182,6 +203,32 @@ export default function ClinicianShell() {
     setVisitedTabs(prev => (prev.has(tab) ? prev : new Set(prev).add(tab)))
     setActiveTabState(tab)
   }, [])
+  /* When the rail changes under the open tab (the health probe answered after
+     first paint and switched an opt-in module on or a module off), and the open
+     tab is no longer on it, move to the landing tab. Adjusted during render,
+     keyed on the rail itself, so a rail that never changes (every default site)
+     never takes this branch. A ward clerk who signed in before the probe
+     answered lands on Beds the moment it does, instead of on a rail with the
+     notice gone and nothing open. */
+  const railKey = accessibleTabs.join(',')
+  const [seenRailKey, setSeenRailKey] = useState(railKey)
+  if (seenRailKey !== railKey) {
+    setSeenRailKey(railKey)
+    if (!accessibleTabs.includes(activeTab) && accessibleTabs.includes(landingTab)) {
+      setVisitedTabs(prev => (prev.has(landingTab) ? prev : new Set(prev).add(landingTab)))
+      setActiveTabState(landingTab)
+    }
+  }
+  /* A HIS role (receptionist, ward clerk, lab) whose feature is off has an
+     EMPTY rail. This names why, instead of showing a blank body. Null for every
+     other role. */
+  const moduleOffNotice = getModuleOffNotice(user?.role, user?.department)
+  // While the notice stands the header names the role's own home (Beds, Front
+  // Desk, Laboratory), never the fallback tab the account cannot open.
+  const headerTab: Tab = moduleOffNotice ? moduleOffNotice.home : activeTab
+  // The HIS roles hold no sage.query, so their screen carries no Sage orb.
+  // Every other role keeps it exactly as before.
+  const floatingSage = offersFloatingSage(user?.role)
   const shouldRenderPanel = (tab: Tab) => accessibleTabs.includes(tab) && visitedTabs.has(tab)
   // The rail's one call-to-action, or null. Permission-derived — see shellConfig.
   const primaryAction = getPrimaryAction(user?.role, user?.department)
@@ -249,7 +296,12 @@ export default function ClinicianShell() {
   // 'surgeon' is a doctor variant the backend may emit on a direct/refresh path
   // (see getAccessibleTabs); label it Physician rather than the generic "Staff".
   const normalizedRole = (user?.role as string) === 'surgeon' ? 'doctor' : (user?.role ?? '')
-  const roleKey = ['doctor', 'nurse', 'admin', 'pharmacist', 'cashier'].includes(normalizedRole)
+  // Every role server/roles.py stores, so each reads by its own name in the
+  // user chip; anything else is "Staff".
+  const roleKey = [
+    'doctor', 'nurse', 'admin', 'pharmacist', 'cashier',
+    'receptionist', 'ward_clerk', 'lab_technician', 'pathologist', 'phlebotomist',
+  ].includes(normalizedRole)
     ? normalizedRole
     : 'staff'
   const roleLabel = t(`role.${roleKey}`)
@@ -438,9 +490,9 @@ export default function ClinicianShell() {
         <header className="shell__header">
           <div className="shell__header-left">
             <h1 className="shell__page-title">
-              Orb {tabDef(activeTab)?.pillar}
+              Orb {tabDef(headerTab)?.pillar}
             </h1>
-            <span className="shell__page-subtitle">{t(`subtitle.${activeTab}`)}</span>
+            <span className="shell__page-subtitle">{t(`subtitle.${headerTab}`)}</span>
           </div>
           <div className="shell__header-right">
             {syncFailed > 0 ? (
@@ -652,6 +704,30 @@ export default function ClinicianShell() {
               </div>
             )
           })}
+          {/* Feature tabs (OPD): the same mount-through-a-lookup as the modules,
+              through shellConfig's `featurePanel`, so a feature panel that lands
+              is mounted the day its tab appears. */}
+          {FEATURE_TAB_IDS.map(id => {
+            const Panel = featurePanel(id)
+            if (!Panel || !shouldRenderPanel(id)) return null
+            return (
+              <div
+                key={id}
+                id={`panel-${id}`}
+                role="tabpanel"
+                aria-labelledby={`nav-${id}`}
+                className="shell__module-scroll"
+                style={{ display: activeTab === id ? 'flex' : 'none' }}
+              >
+                <PanelErrorBoundary label={id} active={activeTab === id}><Panel /></PanelErrorBoundary>
+              </div>
+            )
+          })}
+          {/* A HIS role whose feature is switched off: say so plainly, never a
+              blank body and never tabs the account cannot open. */}
+          {moduleOffNotice && (
+            <ModuleOffNotice subject={moduleOffNotice.subject} state={moduleOffNotice.state} />
+          )}
                   </Suspense>
         </section>
       </main>
@@ -680,7 +756,7 @@ export default function ClinicianShell() {
           never reach a tab this role has no permission for. */}
       <KeyboardShortcuts accessibleTabs={accessibleTabs} onGoto={handleShortcutGoto} />
 
-      <SageFloatingAssistant activeTab={activeTab} />
+      {floatingSage && <SageFloatingAssistant activeTab={activeTab} />}
     </div>
     </SageRuntimeProvider>
     </ActiveViewProvider>

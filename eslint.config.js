@@ -12,7 +12,9 @@ export default defineConfig([
   // again. Archives are evidence of what changed, not source. The rest of
   // docs/ is not source either: research and workflow scripts saved there
   // (some are fragments that do not parse) must not move the ratchet.
-  globalIgnores(['dist', 'docs']),
+  // .claude holds local tool state, including whole
+  // copies of src/ that would count every problem twice.
+  globalIgnores(['dist', 'docs', '.claude']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

@@ -444,19 +444,19 @@ code seeded a shared `"patient123"` password; do not reintroduce a default.
 | POST | `/api/relay/channels/{channel_id}/messages` | perm: relay.send | `{content, message_type}` | message | Send message; broadcast + fire ambient AI. | `relay_routes.py:516` |
 | POST | `/api/relay/alerts/{message_id}/resolve` | perm: relay.send | `{action:"confirm"\|...}` | `{status}` | Resolve/escalate an alert message. | `relay_routes.py:1051` |
 | GET | `/api/relay/channels/{channel_id}/sage_actions/{action_id}/pre_flight` | perm: relay.execute_action | n/a | `{action,resolved_medication,reconciliation_score,stock_status,alternative_suggestion,is_high_risk}` | Pre-flight an agentic med order. | `relay_routes.py:1096` |
-| POST | `/api/relay/channels/{channel_id}/sage_actions/{action_id}/confirm_agentic` | perm: relay.execute_action | `{clinician_pin, co_signer_id?, co_signer_pin?, override_reason?, dose_confirmation?, safety_ack?}` | `{status,action_id,order_id,correlation_id,delegation_hash,safety}` | PIN-verified agentic order → Helix + hash-chain audit. | `relay_routes.py:1312` |
+| POST | `/api/relay/channels/{channel_id}/sage_actions/{action_id}/confirm_agentic` | perm: relay.execute_action | `{clinician_pin, co_signer_id?, co_signer_pin?, override_reason?, dose_confirmation?, safety_ack?}` | `{status,action_id,order_id,correlation_id,delegation_hash,safety}` | PIN-verified agentic order → Helix + hash-chain audit. | `relay_routes.py:1342` |
 
 This table lists the routes this reference has always covered; the router also serves direct channels, channel members, Sage assessments and room-fit flags (`relay_routes.py:174-490`, `:787`, `:853`).
 
 #### execute_ambient_action: removed 2026-10-03
 `POST /api/relay/actions/{message_id}/execute` no longer exists (the note at `server/routes/relay_routes.py:949-954`). It executed legacy `ambient_action` cards (add, stop or replace a medication, discharge, surgery prep) from a message row. No screen had called it since the cards were retired, nothing writes new cards, and clients can no longer post a message of that type, so it was only an unused door onto the chart. Legacy rows stay in the `messages` table and the readers keep skipping them. Confirmed Sage actions reach the chart through the transition endpoint above and `sage_handoff_service` (guide 22), or through `confirm_agentic` below.
 
-#### confirm_agentic_action: `server/routes/relay_routes.py:1313` (route decorator `:1312`)
+#### confirm_agentic_action: `server/routes/relay_routes.py:1343` (route decorator `:1342`)
 **Does:** the highest-stakes route: converts a Sage agentic medication action
 into a real Helix pharmacy order after a PIN check, then records a cryptographic
 delegation hash chain in the audit log. The handler takes a per-action lock
 (`_confirm_lock`, `:1203`) so a double-click cannot dispatch two orders, and the
-body runs in `_confirm_agentic_action` (`:1324`).
+body runs in `_confirm_agentic_action` (`:1354`).
 > Three claims in an earlier version of this block were **security-relevant and
 > wrong**, and are corrected below: the PIN is no longer plain SHA-256, the
 > delegation hash no longer folds in the raw PIN, and high-risk drugs now *do* gate
@@ -464,15 +464,15 @@ body runs in `_confirm_agentic_action` (`:1324`).
 
 **How it works:**
 1. Channel-membership check, then `pin_security.verify_pin(user_row, req.clinician_pin)`
-   (`relay_routes.py:1381`) → `401` on mismatch, with a `pin_failure` security audit
+   (`relay_routes.py:1411`) → `401` on mismatch, with a `pin_failure` security audit
    row and a lockout counter. `verify_pin` **upgrades a legacy unsalted SHA-256
    digest to bcrypt on success**, so the "plain SHA-256" this guide used to describe
    is now only a legacy-migration path, not the scheme.
-2. Immediately after a successful verify, **re-read** `pin_hash` (`relay_routes.py:1401-1402`).
-   The comment at `:1397-1400` is the reason: the pre-upgrade digest of a 4–8 digit
+2. Immediately after a successful verify, **re-read** `pin_hash` (`relay_routes.py:1431-1432`).
+   The comment at `:1427-1430` is the reason: the pre-upgrade digest of a 4–8 digit
    PIN is offline-brute-forceable, so folding it into the persisted delegation hash
    would leak the PIN much like the raw value would.
-3. **Co-signer, fail-closed** (`relay_routes.py:1404-1450`) when `co_signer_id` is
+3. **Co-signer, fail-closed** (`relay_routes.py:1434-1480`) when `co_signer_id` is
    supplied: must differ from the confirming clinician (`400`), must not be
    PIN-locked (`429`), must be an active user (`403`), must have a provisioned
    signing PIN (`403`), and must pass `verify_pin` (`401`, audited). A
@@ -481,38 +481,41 @@ body runs in `_confirm_agentic_action` (`:1324`).
    tamper-evident chain, so an unverified id would attribute a sign-off to a
    colleague who never saw the order and could not repudiate it.
 4. Load the action; reject if already resolved. Reconcile the target drug to the
-   Helix master via the phonetic `rxnorm_reconciler` (`relay_routes.py:1463-1464`);
+   Helix master via the phonetic `rxnorm_reconciler` (`relay_routes.py:1493-1494`);
    unmatched → `400`.
 5. **Stock:** the order is always for the drug the clinician confirmed. Out of
    stock with no `override_reason` is a **`409 out_of_stock`** that orders nothing
    and names any in-stock exact equivalent (same molecule, strength and form) as a
-   suggestion to prescribe separately (`relay_routes.py:1483-1521`); with a reason
+   suggestion to prescribe separately (`relay_routes.py:1513-1551`); with a reason
    the drug is ordered as written for pharmacy to source. (It used to switch the
    order silently to a therapeutic alternative.)
 6. **Dose:** the agentic pipeline resolves no dose, so a missing or `TBD`
-   `dose_confirmation` is a **`422 dose_confirmation_required`** (`:1523-1553`);
+   `dose_confirmation` is a **`422 dose_confirmation_required`** (`:1553-1583`);
    route (IV/IM/SC) is parsed heuristically from the rationale unless the
    confirmation names one.
 7. **Drug-safety gate and high-risk gate:** every dispatch runs
-   `enforce_medication_safety` (`:1559-1570`; severe alerts use the 428
+   `enforce_medication_safety` off the event loop (`:1592-1603`; severe alerts use the 428
    `safety_ack` contract). A high-alert medication (the `high_risk_names` set at
-   `:1474`, epinephrine, heparin, insulin, potassium, tPA, and the opioids) also
+   `:1504`, epinephrine, heparin, insulin, potassium, tPA, and the opioids) also
    returns **`428 drug_safety_acknowledgement_required`** unless the request
    carries a `safety_ack` that is both `acknowledged` **and** has a non-empty
-   `reason` (`:1571-1582`). This is a real block on dispatch, not audit metadata.
-8. Create the Helix order (`create_order`, `:1584-1597`). It commits in its own
-   transaction, with status `pending`, before anything below runs.
-9. Build a **delegation hash**: `sha256(source_msg_id : llm_prompt_signature :
+   `reason` (`:1604-1615`). This is a real block on dispatch, not audit metadata.
+8. Build a **delegation hash**: `sha256(source_msg_id : llm_prompt_signature :
    verification_hash)` where `verification_hash = sha256(user_id : pin_hash_at_signing)`,
-   the post-upgrade **hash**, never the PIN (`relay_routes.py:1599-1607`), and
-   write it into `sage_action_events`, `sage_actions` (state→confirmed, conditional
-   so a racing dismissal is not overwritten), and a `clinical_safety` /
-   `agentic_med_confirm` `audit_logs` row (`_persist_confirmation`, `:1225`). If the
-   conditional write loses, the request gets `409` and none of those three rows
-   persists, but the Helix order from step 8 is **not** rolled back: it stays
-   `pending` in the pharmacist's queue. Open defect, awaiting a ruling (Discrepancy 8
-   below; guide 08-relay, Discrepancy 9).
-10. Emit `sage:action_update` and `patient:timeline_updated` sockets (`:1619-1620`).
+   the post-upgrade **hash**, never the PIN (`relay_routes.py:1617-1625`).
+9. `_persist_confirmation` (`:1225`) does the rest in **one transaction**: it
+   flips `sage_actions` to confirmed **conditionally** and bumps `version`
+   (`:1259-1264`), so a racing dismissal or a confirm on another worker gets
+   `409` before anything is written; then writes the `pending` Helix order through
+   `helix_service.insert_order` on the same connection, for the catalogue row the
+   reconciler matched and the safety screen checked, by id (`:1274-1287`, `500` on
+   failure); then the `sage_action_events` row and the `clinical_safety` /
+   `agentic_med_confirm` `audit_logs` row. A `409` or any failure rolls back the
+   order with the rest, so a lost race leaves nothing in the pharmacist's queue.
+   The `version` bump stops a dismissal that read the action just before this
+   commit from overwriting it. Regression tests:
+   `server/tests/test_agentic_confirm_race.py`.
+10. Emit `sage:action_update` and `patient:timeline_updated` sockets (`:1640-1641`).
 **Data out:** `{status, action_id, order_id, correlation_id, delegation_hash, safety}`.
 
 ---
@@ -971,7 +974,7 @@ Other subsystems depend on these exact facts:
   06-realtime**): `message:new` (`relay_routes.py:570,916`, `surgery_routes.py:649,651`,
   `lens_routes.py:384`), `message:update` (`relay_routes.py:1065`),
   `sage:action_update` (`relay_routes.py:428,1619`, `sage_proactive_routes.py:142`),
-  `patient:timeline_updated` (`relay_routes.py:1620`), and `sage:insight`
+  `patient:timeline_updated` (`relay_routes.py:1641`), and `sage:insight`
   (`sage_proactive_routes.py:55,143,168`, `main.py:144`). These are all
   server→client emits; the inbound socket handlers (`join`, `send_message`,
   `typing`) live in `ws/realtime.py` and belong to guide 06.
@@ -1077,11 +1080,14 @@ schemes and the audit path, the whole HTTP boundary is then live.
    same pattern the code elsewhere (`lens_routes.py:155`) explicitly moved away
    from.
 
-8. **Open defect, awaiting a ruling: `confirm_agentic` can leave an order behind a
-   409.** `helix_service.create_order` opens its own `db_session` and commits
-   (`server/services/helix_service.py:219-235`) before `_persist_confirmation`
-   runs its conditional state write (`server/routes/relay_routes.py:1253-1266`).
-   A 409 there rolls back only the confirmation's own rows, so a dismissal that
-   races a confirm, or two confirms on two workers (`_confirm_lock` is per
-   process), leaves a `pending` Helix order that reaches the pharmacist with no
-   `agentic_med_confirm` audit row naming it.
+8. ~~**Open defect: `confirm_agentic` can leave an order behind a 409.**~~
+   **RESOLVED 2026-10-03.** `helix_service.create_order` used to commit the order
+   in its own session before `_persist_confirmation` ran its conditional state
+   write, so a dismissal racing a confirm, or two confirms on two workers
+   (`_confirm_lock` is per process), left a `pending` Helix order with no
+   `agentic_med_confirm` audit row naming it. `_persist_confirmation`
+   (`server/routes/relay_routes.py:1225`) now claims the action, inserts the order
+   through `helix_service.insert_order` (`server/services/helix_service.py:219`) and
+   writes the audit row in one transaction, and the claim bumps `version` so a
+   racing dismissal cannot overwrite it. Regression tests:
+   `server/tests/test_agentic_confirm_race.py`.

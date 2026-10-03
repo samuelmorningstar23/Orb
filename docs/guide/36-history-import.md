@@ -583,7 +583,7 @@ It also states the one thing the four-step flow cannot enforce (`:408-412`): **d
 
 ### File: `server/migrations.py`: migration 15
 
-#### `_m15_history_import`: `migrations.py:1345`
+#### `_m15_history_import`: `migrations.py:1354`
 **Signature:** `(conn) -> None`; registered as `Migration(15, "history_import", …)` at `:1624`
 **Does:** Adds `admissions.discharged_at`; adds three provenance columns plus two indexes to six tables; creates the xref and the two ledgers.
 **On screen:** nothing. A database where migration 15 has not run makes every history-import endpoint fail on a missing column or table.

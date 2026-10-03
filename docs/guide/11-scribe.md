@@ -422,7 +422,7 @@ Socket.IO is a real-time bidirectional messaging layer over WebSocket. Scribe's 
 #### _require_authenticated: `server/ws/scribe_stream.py:34`
 **Signature:** `async (sid) -> bool`
 **Does:** Returns `True` iff the Socket.IO session for this `sid` has a `user_id`, i.e. the client passed the authenticated handshake in `ws/realtime.py:connect`.
-**Why it exists:** Scribe streams carry patient audio (PHI); an unauthenticated socket must be rejected. `connect` (`realtime.py:151`) already refuses unauthenticated clients and stores the user, so an empty session ⇒ no valid JWT.
+**Why it exists:** Scribe streams carry patient audio (PHI); an unauthenticated socket must be rejected. `connect` (`realtime.py:247`) already refuses unauthenticated clients and stores the user, so an empty session ⇒ no valid JWT.
 **Gotchas:** Only `handle_start_session` calls this, the per-chunk handlers rely on the session dict existing (which only start_session creates), so an unauthenticated client never gets a session and its chunks are dropped.
 
 #### _create_session / _get_session / _destroy_session: `server/ws/scribe_stream.py:53` / `:48` / `:68`
@@ -452,7 +452,7 @@ Per-`sid` state in a module-global `_sessions` dict: `{patient_id, hints, langua
 | `handle_scribe_disconnect` | `disconnect` | `:233` | Clean up the session on socket drop. |
 
 **Change guide:** To send interim (mid-utterance) transcripts, you'd transcribe partial buffers on a timer inside `handle_audio_chunk` and emit `is_final:false`; knock-on: far more ASR load and the client must reconcile interim/final; watch out for the REP daemon being single-threaded.
-**Gotchas:** `handle_scribe_disconnect` registers a **second** `disconnect` handler on the same default namespace (the first is `realtime.py:93`). See Discrepancies for the shadowing question.
+**Gotchas:** `handle_scribe_disconnect` registers a **second** `disconnect` handler on the same default namespace (the first is `realtime.py:189`). See Discrepancies for the shadowing question.
 
 ---
 
@@ -713,7 +713,7 @@ A **React hook** is a reusable function that plugs state/effects into a componen
 
 2. **`test_verify_note_returns_none_on_empty_input` relies on verify being disabled.** `verify_note` (`scribe_service.py:540`) checks `enabled` *before* the empty-input check, and the empty-input branch returns `_unverified_report(...)` (a dict), not `None`. The test at `:166` asserts `None` for empty input, it only passes because the default config disables verify and short-circuits at the first check. If verification were enabled, that test would fail (empty input returns a dict). The test's *name* implies a contract the code doesn't hold when enabled. Not a runtime bug, but a misleading test.
 
-3. **Two `disconnect` handlers on the same namespace.** `realtime.py:93` (`@sio.event async def disconnect`) and `scribe_stream.py:233` (`@sio.on("disconnect")`) both register a `disconnect` handler on the default namespace, and `scribe_stream` is imported at the *bottom* of `realtime.py` (`:204`). Depending on python-socketio's handler-registration semantics (last registration wins vs. both invoked), the Scribe cleanup handler may shadow the realtime one (or vice-versa). Worth verifying that the realtime disconnect logging still fires; if not, session cleanup for non-scribe features could be affected. Open question, not verified against the socketio version in this session.
+3. **Two `disconnect` handlers on the same namespace.** `realtime.py:189` (`@sio.event async def disconnect`) and `scribe_stream.py:233` (`@sio.on("disconnect")`) both register a `disconnect` handler on the default namespace, and `scribe_stream` is imported at the *bottom* of `realtime.py` (`:204`). Depending on python-socketio's handler-registration semantics (last registration wins vs. both invoked), the Scribe cleanup handler may shadow the realtime one (or vice-versa). Worth verifying that the realtime disconnect logging still fires; if not, session cleanup for non-scribe features could be affected. Open question, not verified against the socketio version in this session.
 
 4. **Daemon vs. worker config drift.** `whisper_daemon.load_model` (`:63`) and `whisper_daemon.transcribe` (`:82`) hard-code `batch_size=12, quant=None`, whereas the subprocess worker takes `batch_size`/`quant` from `config.SCRIBE.asr` (argv). Changing `ORB_SCRIBE_ASR_BATCH_SIZE` affects only the cold path; the warm daemon ignores it. Minor, but a surprising inconsistency when tuning.
 

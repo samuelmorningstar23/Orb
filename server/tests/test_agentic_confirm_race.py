@@ -15,6 +15,10 @@ outside its transaction). A dismissal that read the action just before the
 confirm committed therefore still matched on version and overwrote 'confirmed'
 with 'dismissed', leaving a dismissed action with a live order.
 
+Fixed the same day: _persist_confirmation claims the action (bumping version),
+inserts the order through helix_service.insert_order and writes the audit row
+in one transaction, and orders the reconciled catalogue row by id.
+
 The race windows are opened deterministically with monkeypatches, at points
 that exist whichever way the order write is structured, so these tests keep
 exercising the race after the fix instead of passing vacuously.

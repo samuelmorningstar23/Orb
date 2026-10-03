@@ -642,7 +642,18 @@ def data_principal_export(patient_id: str, *,
 # use an index on the timestamp column, whereas wrapping it in substr() forces a
 # full scan of a table like audit_logs, which on a live appliance is the biggest
 # one there is.
-
+#
+# PRE-REGISTERED TABLES (3 October 2026). The hospital-system build registered
+# every PHI table it plans for registration and outpatients, the laboratory and
+# the pharmacy store here in wave 1, before most of them exist, so no later
+# increment can create a PHI table the retention review never sees. A table
+# that does not exist yet is skipped without a word (retention_review checks
+# sqlite_master first), so its line in the review appears only once the table
+# is created. One of them exists already: opd_visits, the front desk's visit
+# register, which the review had never counted and now does.
+# tests/test_opt_in_platform.py checks that every registered table that DOES
+# exist has the patient and timestamp columns named here: a later migration
+# that names them differently fails there, not silently here.
 _RETENTION_SOURCES: dict[str, list[tuple[str, str, str]]] = {
     # category: [(table, patient_column, timestamp_column)]
     "clinical_record": [
@@ -652,10 +663,31 @@ _RETENTION_SOURCES: dict[str, list[tuple[str, str, str]]] = {
         ("observations", "patient_id", "recorded_at"),
         ("problem_list", "patient_id", "recorded_at"),
         ("admissions", "patient_id", "created_at"),
+        # Registration and outpatients (opd-1 j, opd-10, opd-10a).
+        ("opd_visits", "patient_id", "registered_at"),
+        ("patient_demographics", "patient_id", "registered_at"),
+        ("patient_identity_changes", "patient_id", "changed_at"),
+        ("patient_match_keys", "patient_id", "computed_at"),
+        ("opd_consultations", "patient_id", "created_at"),
+        ("opd_consultation_addenda", "patient_id", "created_at"),
+        ("patient_allergy_assessments", "patient_id", "assessed_at"),
+        # Laboratory (lis design, section 10). result_quarantine holds results
+        # no patient has been matched to yet, so it has no patient column.
+        ("lab_specimens", "patient_id", "created_at"),
+        ("lab_specimen_events", "patient_id", "occurred_at"),
+        ("lab_order_items", "patient_id", "created_at"),
+        ("lab_results", "patient_id", "entered_at"),
+        ("lab_result_events", "patient_id", "occurred_at"),
+        ("lab_critical_notifications", "patient_id", "raised_at"),
+        ("lab_critical_events", "patient_id", "occurred_at"),
+        ("result_quarantine", None, "created_at"),
     ],
     "prescription_and_dispensing": [
         ("medications", "patient_id", "started_at"),
         ("medication_administrations", "patient_id", "administered_at"),
+        # Pharmacy store (grn-15). The NDPS register is NOT here: its live rows
+        # are kept by law, see ERASURE_RETAINED_TABLES.
+        ("pharmacy_ward_returns", "patient_id", "created_at"),
     ],
     "imaging": [
         ("lens_analyses", "patient_id", "created_at"),
@@ -767,6 +799,13 @@ def retention_review(*, now: datetime | None = None,
     out: list[dict] = []
 
     with db_session() as db:
+        # Pre-registered tables that a later increment has not created yet are
+        # skipped silently (see _RETENTION_SOURCES), so the review reads the same
+        # as before they were registered.
+        existing_tables = {
+            r[0] for r in db.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+        }
         for p in policies:
             days = p["retention_days"]
             entry = {
@@ -814,6 +853,8 @@ def retention_review(*, now: datetime | None = None,
                     "held_age_unknown": 0,
                 }
             for table, pcol, tcol in _RETENTION_SOURCES[p["category"]]:
+                if table not in existing_tables:
+                    continue
                 if patient_id and not pcol:
                     # This table is not keyed by patient (the breach register is
                     # about incidents, not people). Counting it unfiltered would
@@ -1097,6 +1138,21 @@ ERASURE_RETAINED_TABLES: dict[str, str] = {
     "erasure_decisions": "The sealed decision for each category, with its reason and authority.",
     "erasure_executions": "The record of what was erased, when and by whom.",
     "breach_notifications": "Who was told about a breach and when (DPDP s.8(6)).",
+    # Pre-registered 3 October 2026 for the pharmacy store (grn-13): the table
+    # arrives with migration 54 and is skipped until then. Only its LIVE rows
+    # are a legal record (a delete-abort trigger guards them); rows written on a
+    # non-production profile are cleared by a development reseed, and the count
+    # below leaves them out (ERASURE_RETAINED_ROW_FILTERS).
+    "ndps_register": (
+        "The narcotic and psychotropic drug register. Its live entries are a "
+        "statutory record under the NDPS Act and cannot be erased."
+    ),
+}
+
+#: Which rows of a retained table the erasure result reports as kept. A table
+#: absent here is reported whole.
+ERASURE_RETAINED_ROW_FILTERS: dict[str, str] = {
+    "ndps_register": "lane = 'live'",
 }
 
 
@@ -1113,7 +1169,9 @@ def _retained_after_erasure(db, patient_id: str) -> list[dict]:
             cols = {c[1] for c in db.execute(f'PRAGMA table_info("{table}")').fetchall()}
             if "patient_id" not in cols:
                 continue
-            n = db.execute(f'SELECT COUNT(*) AS n FROM "{table}" WHERE patient_id = ?',
+            row_filter = ERASURE_RETAINED_ROW_FILTERS.get(table)
+            n = db.execute(f'SELECT COUNT(*) AS n FROM "{table}" WHERE patient_id = ?'
+                           + (f" AND {row_filter}" if row_filter else ""),
                            (patient_id,)).fetchone()["n"]
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("erasure: could not count retained %s: %s", table, exc)

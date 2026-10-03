@@ -87,7 +87,7 @@ vi.mock('./panels/NabhPanel.tsx', () => marker('nabh'))
 vi.mock('./panels/AbdmPanel.tsx', () => marker('abdm'))
 
 import ClinicianShell from './ClinicianShell'
-import { HOSPITAL_MODULE_IDS } from '../shellConfig'
+import { HOSPITAL_MODULE_IDS, isOptInModule } from '../shellConfig'
 
 async function renderShell() {
   const { container } = render(<ClinicianShell />)
@@ -169,8 +169,11 @@ describe('the shortcut sheet traps the keyboard only while it is open', () => {
   })
 })
 
+/* The opt-in modules (Beds, Pharmacy store, Laboratory) default OFF since
+   3 October 2026 (HIS build plan, decision X1), so they are on no rail here;
+   they mount through the same loop and the same container once switched on. */
 describe('every hospital module renders inside the shell scroll container', () => {
-  it.each(HOSPITAL_MODULE_IDS)('"%s" mounts in .shell__module-scroll', async id => {
+  it.each(HOSPITAL_MODULE_IDS.filter(id => !isOptInModule(id)))('"%s" mounts in .shell__module-scroll', async id => {
     const container = await renderShell()
     const button = container.querySelector<HTMLButtonElement>(`#nav-${id}`)
     expect(button).toBeTruthy()

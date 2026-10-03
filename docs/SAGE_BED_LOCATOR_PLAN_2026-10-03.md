@@ -1,0 +1,144 @@
+# Sage bed lookup: build plan, 3 October 2026
+
+Status: RULED 3 October 2026, 20:55 (R026 (a), D2, D3, D4 as recommended). Attempt 2 was built to this plan, FAILED independent review at 23:30 and was backed out (sage_service.py byte-identical to before). The design below the line "Attempt 3" replaces sections 1 to 4. Waiting on Samuel for Q1 to Q3.
+Reads with: docs/SAGE_BED_LOCATOR_FINDINGS_2026-10-03.md (the defect and why the first fix was backed out).
+
+## The idea in one paragraph
+
+Today Sage finds a bed by checking whether the squashed bed label appears anywhere inside the squashed question. That over-matches (GM-1 inside GM-103, A1 inside HbA1c), and the over-matching was hiding a second hole: when nothing matches, Sage falls back to the chart that is open on screen. The fix is one shared "bed locator" reader that finds every bed reference in the question, resolves each one as a whole label, and reports which ones it could not resolve. The open-chart gate reads the same locator list, so anything the reader calls a bed reference can never fall through to the open chart. A reference that resolves to nobody ends the turn with NO MATCHING PATIENT (or "outside your department" if it is another department's bed).
+
+## What changes, file by file
+
+Only server/services/sage_service.py, plus one new test file. Backup first to docs/archive/pre-bed-locator-2026-10-03/server/services/sage_service.py. Targeted edits only. No other work in progress touches this file today (checked docs/archive at 20:49).
+
+### 1. One locator reader: `_find_bed_locators(query_lower)`
+
+Pure and DB-free, so it can run inside the name gate. It returns each reference with its text span, its normalised label, and how it was written. What counts as a bed reference:
+
+| Form | Examples | Rule |
+|---|---|---|
+| Keyword first | bed 12, beds 12 and 14, cot 12, bay 3, bed no. 12, bed num 12, bed number 12, bed #12, bed:12, bed GM-103, bed twelve | Keywords bed(s), cot(s), bay(s). Optional no / no. / num / number / #. Lists joined by `,` `and` `&` `or` `/`. Number words one to twenty. Any label shape after the keyword. |
+| Number then keyword | 12 number bed, 12 no bed | Indian English phrasing. |
+| "patient in N" | the patient in 12, the lady in 14, pt in GM-103 | patient, pt, man, woman, lady, gentleman, guy, chap, boy, girl, baby, child, one, fellow, then "in", then a label. |
+| Ward prefix, joined | GM-103, gm103, CCU-01, RB-106 | Letter run of 2 to 5 letters that begins a bed or ward label on record anywhere in the hospital. With a hyphen: any such prefix. With no separator: not if the prefix is a clinical abbreviation or English word (see stop list). |
+| Ward prefix, spaced | gm 103, ccu 01 | Same prefixes, minus the stop list, and only when not preceded by a number (so "2 gm 12 hourly" is a dose, not a bed). |
+| Single letter | A1, A-1, B104 | Joined only ("a 1" is ordinary text). Letter must begin a bed label on record. Short clinical codes are excluded unless a keyword is present (decision D4). |
+
+Guards on every form:
+- A number followed by a time or unit word is not a bed: "bed 2 days ago", "in 12 hours", "ICU 2 days ago", "12 hrly", "12 mg".
+- Stop list for prefix forms without a keyword: English words and ward-round abbreviations that would read as prefixes (or, no, in, at, on, to, is, it, hr, bp, rr, gm when spaced after a number, mg, ml, kg, iu, pt, ph, na, ct, dr, mr, st). A site with a Recovery Room ward "RR-1" must not turn "RR 24, is that high?" into a bed lookup. Those sites still reach their beds with the keyword or the hyphen ("bed RR-24", "RR-24").
+- Regex hygiene from the findings note: the keyword prefix is `bed[\s#:.\-]*(?:(?:no\.?|num(?:ber)?)[\s#:.\-]*)?`, no two overlapping `*` groups. A test feeds 50,000 spaces and asserts it returns in under 50 ms.
+
+The prefix list comes from the census refresh that already runs at the start of every Sage turn (`_refresh_census_name_tokens`, hospital-wide on purpose). I extend that one query to read bed and ward labels too, and keep a second module global `_CENSUS_BED_PREFIXES`. No new DB read on the event loop.
+
+### 2. Resolution: whole labels only
+
+Each reference is compared to each bed label as a whole label: lower case, separators removed, never a substring. "gm 101", "GM101" and "GM-101" are the same label; "GM-1011" is not GM-101. Leading zeros: decision D2.
+
+Order inside `_match_patients`:
+1. Names, exactly as today (no change to the name matcher).
+2. Bed references, resolved against admitted in-scope patients. Discharged patients are never matched by bed: their bed now belongs to someone else.
+3. Bed reference text is blanked out of the question, then wards are matched as whole labels in what remains. So "Summarise CCU-01" finds one patient, not all of CCU. A ward label that ends in a letter does not match when digits follow ("ICU" inside "ICU-06"). A digits-only ward label needs the word "ward".
+4. Ward and bed written together ("ward 5 bed 12", "GM-1 bed 12", "bed 12 on ward 5") match the intersection. A ward mentioned elsewhere in a sentence that also names a bed is ignored, so "transfer bed 12 to ward GM-2" still finds bed 12.
+
+`_match_patients` keeps its signature and return value (both lanes and the history anchor call it). A new `_locate_patients(...)` returns matches plus the unresolved references, and `_match_patients` becomes a thin wrapper over it.
+
+### 3. The gate and the open-chart fallback
+
+- `_names_a_specific_patient`: the line `\bbed\s*\d+\b` becomes "any bed reference the locator reader finds". Everything else in the gate stays. So the gate now recognises every phrasing the matcher understands, which is the first requirement in the findings note.
+- `get_relevant_context`, right after the out-of-department block and before the census branch:
+  - For each unresolved reference, check other departments' admitted beds by whole label. Any hit: the existing OUT_OF_SCOPE answer, audited (reason `bed_outside_department`). This now also fires when one bed in "beds 12 and 14" is ours and the other is not.
+  - Any reference still unresolved: return the existing NO MATCHING PATIENT grounding at once. No chart, no census, no anchor, no pronoun branch. Same return shape and scope label as today's no-such-patient early exit, so nothing downstream changes.
+- Because that exit comes before the pronoun branch, "the potassium of the patient in bed 15" (no bed 15) can no longer be answered from the open chart. That closes the hole the reviewer found under both old and new code.
+- The second `\bbed\s*\d+\b` check further down (`names_unambiguously`) reads the same locator list, so there is one definition.
+
+### 4. The conversation-history anchor
+
+`_anchor_patient_from_history` walks back over the clinician's own turns. Today a turn naming nobody is skipped and the walk continues to older turns. A turn whose bed reference resolved to nobody will now STOP the walk, the same way a turn naming two patients already does. Otherwise "Summarise bed 99" (no such bed) followed by "and her lactate?" would answer about whoever was discussed three turns earlier.
+
+### 5. Out-of-department bed lookups
+
+`_out_of_scope_locators` returns a bed only for admitted rows (`CASE WHEN status = 'admitted' THEN bed END`). The projection stays three columns, as its docstring requires. Today a discharged patient in another department who once lay in bed 9 makes "who is in bed 9?" answer "that patient is outside your department". Names still match discharged rows exactly as today.
+
+## What I am deliberately not changing
+
+- The name matcher, the possessive and contraction rules, the clinical vocabulary list.
+- The DISAMBIGUATE, BROAD, aggregate and anchor lanes, apart from the early exit above.
+- Ward-level questions. "How is ward GM-1 doing?" still lists all of GM-1. (Noted, not fixed: a ward with exactly ONE admitted patient makes any mention of that ward attach that patient's chart. That is today's behaviour and it is outside R026.)
+- Whether "bed 103" finds "GM-103". It does not today and will not after this. A bare number must equal the whole label. Changing that is a separate decision.
+- ai_governance's PHI classifier has its own bed regex. It decides whether a turn may leave the box, not which chart Sage reads, and its DB match already catches beds on record. Listed as a follow-up, not touched.
+
+## Tests
+
+One new file, tests/test_sage_bed_locator.py. Its own department and bed prefixes, so it cannot collide with other files in the shared session DB, and its patients are discharged at teardown (the isolation rule in test_sage_sticky_anchor.py). Every behaviour test goes through `get_relevant_context` with `patient_id` set to an open chart, so the fallback is always exercised.
+
+I run the file against today's code FIRST and record which tests fail, before any edit.
+
+Wrong patient today, must be fixed (numeric beds 7, 12, 14; bed 7's chart open):
+1. "compare beds 12 and 14": both beds, never bed 7.
+2. "cot 12 lactate?": bed 12.
+3. "bed num 12 lactate?": bed 12.
+4. "what is the potassium of the patient in 12?": bed 12.
+5. "bed 12 and 14 potassium?": both beds.
+6. "Summarise RB-106" (ward RB-1 exists, RB-102 open, no RB-106): NO MATCHING PATIENT, no chart.
+7. "the potassium of the patient in bed 15" (no bed 15): NO MATCHING PATIENT, no chart.
+
+Matcher cases from the findings note:
+8. Five GM-1 patients: "Summarise bed GM-103" finds GM-103 only; "how is GM-1011" finds nobody; "Summarise CCU-01" finds one; "How is ward GM-1 doing?" finds all of GM-1.
+9. Beds 9, 17, 99: "Who is in bed 9917" nobody; "Is a NEWS2 of 9 reassuring?" nobody and the open chart stays; "how is bed 9" bed 9; "bed no. 17 please" bed 17.
+10. Bed A1: "what is a normal HbA1c?" and "is a 1 point rise significant" find nobody and keep the open chart; "summarise A1" and "summarise bed A-1" find it.
+11. Another department in beds 9 and 17: "who is in bed 9917" is not out of department; "who is in bed 9?" is.
+
+The other direction, the chart must stay open (this is what the first attempt never tested):
+12. "potassium after 12 hours", "is vitamin b12 low?", "500 mg 12 hourly", "give 1 gm 8 hourly", "is the potassium 5 or 6?" with an OR ward on record, "RR 24, is that high?" with an RR ward on record, "transferred from ICU 2 days ago", "keep on bed rest", "compare ceftriaxone and cefepime". Each must stay PATIENT_ANCHORED on the open chart.
+
+Also:
+13. "ward 5 bed 12" picks the intersection; "transfer bed 12 to ward GM-2" still finds bed 12.
+14. History: "Summarise bed 99" then "and her lactate?" with no chart open anchors nobody.
+15. Discharged out-of-department patient once in bed 9: "who is in bed 9?" is NO MATCHING, not out of department.
+16. 50,000 spaces after "bed" returns in under 50 ms.
+
+Guard suites, each file once, clean env, never the shipping .env: test_sage_patient_phrasing, test_sage_department_scope, test_patient_scope_routes, test_sage_sticky_anchor, test_sage_history_patient_name, then all of tests/test_sage*.py once, plus test_caller_named_patient_scope and test_audit_fixes. test_a_bed_alone_is_enough_to_warn should stop being order-dependent, because "bed 9917" no longer matches a short bed "9" left by another file.
+
+After green: an independent review tries to break it the way the last reviewer did (through `get_relevant_context`, open chart set), and I fix or back out on what it finds. Then I update the findings note, the R026 row and GAP_FIXES, and diff against my backup to confirm only my hunks changed.
+
+## Decisions I need from you
+
+- **D1, ruling R026.** (a) any bed reference that resolves to nobody stops the open-chart fallback and returns NO MATCHING PATIENT; (b) keep today's behaviour. I recommend (a). Nothing gets built without this.
+- **D2, leading zeros.** Should "bed 9" find a bed labelled "09", and "CCU 1" find "CCU-01"? I recommend yes. If both "9" and "09" exist, Sage lists both and asks.
+- **D3, a list where only some beds exist.** "compare beds 12 and 99" with no bed 99. (a) NO MATCHING PATIENT for the whole turn, the doctor retypes; (b) answer for bed 12 with a line saying bed 99 is not in the census. I recommend (a): it is the literal reading of R026, and nothing is silently dropped.
+- **D4, a bed label that is also a clinical code** (B12, T4, V5, L4, A2, D3) written without "bed". (a) Sage asks "did you mean the patient in bed B12?" when that bed is on the doctor's ward, otherwise reads it as clinical text; (b) always read it as clinical text, the keyword is required. I recommend (a). (b) is simpler but turns "summarise B12" into an answer from the open chart, which is the wrong-patient shape this whole fix is about. Neither arises on the seeded naming (GM-101, CCU-01); it matters only for sites with one-letter bed codes.
+
+---
+
+## Attempt 3: revised design (proposed 3 October, 23:45)
+
+Why attempt 2 failed is in the findings note. In one line: it guessed what a bed reference looks like, every gap in that guess fell to the open chart, and the gaps were common speech ("how is 12?") and ordinary label shapes ("MW/12").
+
+### The idea
+
+Find beds from what is actually ON the doctor's ward, then decide how sure we are. When Sage is unsure, it asks. It never falls back to the open chart for a turn that mentions a bed on the ward.
+
+1. **Read the question once.** Unicode dashes and non-breaking hyphens become "-". The question becomes runs of letters and runs of digits with the gaps between them. One linear pass, done once per turn and shared by the gate, the matcher and the history anchor. Digit runs longer than 6 are never a bed (no int() crash).
+2. **Find.** Every bed label on the doctor's ward is looked for as a whole sequence of those runs, ignoring case, separators and leading zeros. The shape comes from the stored label, so "MW/12", "GW.12", "Room 205", "CARDIO-12", "12A", "ICU Bed 3" and "HDU-2" all work, and "GM-1" can never match inside "GM-103" nor "A1" inside "HbA1c". Each hit is one of:
+   - **Certain**: written after a bed word ("bed 12", "cot 12", "the patient in 12", "12 number bed"), or a lettered code written as a code ("GM-103", "Room 205", "RR-24", "A1"). Sage answers from that chart.
+   - **Discarded**: plainly not a bed. Followed by a unit, duration, decimal, ratio, degree, ordinal or "+" ("12 hours", "5.2", "2:1", "30 degrees", "2nd", "4+"); a dose ("2 gm 12"); after a score or lab word ("NEWS2 of 9", "GCS 8", "potassium 5").
+   - **Unsure**: everything else, including bare numbers ("how is 12?", "12's potassium?", "compare 12 and 14"), clinical codes ("is vitamin b12 low?" on a ward with bed B12), vitals-style codes ("RR 24" on a recovery ward) and destinations ("transfer her to bed 12"). Sage asks "did you mean the patient in bed 12?" (Q1).
+3. **Missing (R026).** A reference written with a bed word, or a code whose letters are one of THIS department's bed or ward prefixes (including discharged patients' labels, so a ward emptied today still counts), that matches nobody on the ward: NO MATCHING PATIENT. A label that exists exactly in another department: the out-of-department answer (Q2 for bare numbers). Ranges ("beds 12-14", "12 to 14"), "bed 1 2" and number words it cannot fully read ("bed hundred and two") get NO MATCHING rather than a guess. Number words up to ninety-nine.
+4. **Other departments' prefixes never start a reference** unless that exact label exists there. So "A1c", "D5W", "H2O", "ANC 500" and "COVID-19" stay clinical text in every department.
+5. **Wards.** A ward written beside a bed with any connector ("ward 6 bed 12", "bed 12 (ward 6)", "ward-6/bed-12", "bed 12 from ward 6", "6th ward bed 12") narrows the bed. If nobody is in both, it is NO MATCHING, never out-of-department.
+6. **Guards the reviewer showed were missing:** a bed word never reaches past the end of a sentence ("out of bed. 2 nurses"), "head of bed 30 degrees", "1:1 nursing", "2 litres O2", "2nd degree", "in 2019", "12 number beds free".
+7. **The route.** On a no-match bed turn, the "viewing patient <name>" line is dropped from the prompt (routes/sage_routes.py, `_describe_view`'s caller), so the model has no open-patient name to drift to.
+8. **Speed.** Linear. Tested on 512 KB inputs (the request cap) at under one second end to end.
+9. A failed census refresh is logged as a warning, not at debug level.
+
+### Tests
+
+All 83 attempt-2 tests, and every reviewer probe as a regression test (W1 to W8, L1 to L5, P1, P2), each driven through `get_relevant_context` with a chart open. Run on today's code first to show what fails, then the guard suites, then a fresh independent reviewer briefed with attempt 2's probes plus a mandate to find new holes.
+
+### Decisions needed
+
+- **Q1, bare numbers.** "how is 12?" or "12's potassium?" on a ward with a bed 12, written without "bed". (a) Sage asks "did you mean the patient in bed 12?". (b) It answers from bed 12, as the old code did. Recommend (a). (b) is right for "how is 12?" but answers from the wrong chart whenever an incidental number slips past the discard guards. The cost of (a) is an occasional extra question on wards with numbered beds.
+- **Q2, a bare bed number another department has.** "bed 12" when your ward has no bed 12 but Surgery does. (a) NO MATCHING, because bed numbers repeat across wards. Lettered codes that belong to one ward (CCU-01) still get the out-of-department answer. (b) Out-of-department, as today, which also files a security audit event against the doctor. Recommend (a).
+- **Q3, "bay".** (a) A bay is a room of several beds, not a bed, so "bay 2" makes Sage ask if there is a bed 2. (b) Treat "bay" like "bed". Recommend (a).
+

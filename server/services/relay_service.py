@@ -4,6 +4,7 @@ import logging
 import sqlite3
 from db_backend import DBIntegrityError
 from database import get_db, db_session
+from roles import ROLE_FEATURE
 
 logger = logging.getLogger("orb.relay")
 
@@ -26,6 +27,23 @@ def get_channels_for_user(user_id: str, user_role: str) -> list:
       * direct     — explicit rows in `channel_members` (migration 8). Nothing
                      is inferred, and there is no admin bypass.
     """
+    # A ROLE FROM AN OPT-IN PART OF ORB WITHOUT relay.read GETS NO CHANNEL
+    # (W1-A, 4 October 2026). The roles in roles.ROLE_FEATURE (receptionist,
+    # ward clerk and the three lab roles) were ruled out of Relay (OPD-N3,
+    # adt-17, LIS-R12) and hold no relay.read. The REST routes refuse them on
+    # that permission, but the websocket's join_channel authorises only by
+    # asking this function, and the case-room branch below hands every case
+    # room in the hospital to an account with no department, which a lab role
+    # always is. A ward clerk would also get its own ward's staff room. So the
+    # rule sits here, at the one boundary every lane shares. If permissions.py
+    # ever grants one of these roles relay.read, it passes with no second edit.
+    #
+    # Limited to ROLE_FEATURE roles on purpose, so every older role answers
+    # exactly as before. cashier and pharmacist are also department-less with
+    # no relay.read and still see case rooms here: closing that is a ruling
+    # for Samuel, not a side effect of this change.
+    if user_role in ROLE_FEATURE and not _relay_capable(user_role):
+        return []
     with db_session() as db:
         # Get user department
         user_row = db.execute("SELECT department FROM users WHERE id = ?", (user_id,)).fetchone()

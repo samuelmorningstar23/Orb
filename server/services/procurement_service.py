@@ -54,6 +54,18 @@ module's master. Stated in docs and in the panel header, not left to folklore.
     go through `database.run_db`; the route module uses plain `def` handlers so
     FastAPI threadpools them. Blocking DB work inside `async def` is banned and
     tests/test_event_loop_discipline.py enforces it.
+  * CONNECTION-TAKING CORES (grn-20 part a, 3 October 2026). Every write is
+    split in two. `_<name>_core(db, ...)` validates and runs the SQL on a
+    connection the CALLER owns: it never opens, commits or nests a session,
+    never stamps a document number and never re-reads through a public getter,
+    because each of those opens a session of its own. The public function keeps
+    its signature and its behaviour: it opens the same session it always did,
+    calls the core, and only after the commit stamps the number and re-reads
+    the document. A later caller can therefore run a core together with its own
+    audit row in ONE immediate transaction, and stamp the number after it. A
+    core that compares a date with "today" takes it as `today=` (a date, or an
+    ISO YYYY-MM-DD string): the stores wrappers here pass `date.today()`, as
+    they always read it, and no core reads the server clock for a calendar date.
   * MONEY IS INTEGER PAISE and all arithmetic goes through services/money.py.
     There is no rounding rule in this file.
   * QUANTITIES ARE INTEGER `_milli` — thousandths of a unit — everywhere EXCEPT
@@ -373,6 +385,26 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _calendar_today(today: date | datetime | str) -> date:
+    """The caller's "today" as a calendar date, for a core that compares one.
+
+    Required, never defaulted: which clock decides "today" is the CALLER's
+    decision (the stores wrappers pass `date.today()`; a site-timezone caller
+    passes its own date), and a silent fallback to the server clock is exactly
+    the defect this parameter exists to remove. A datetime is cut to its date.
+    Anything else is a programming error and fails loudly.
+    """
+    if isinstance(today, datetime):
+        return today.date()
+    if isinstance(today, date):
+        return today
+    if isinstance(today, str):
+        return date.fromisoformat(today.strip())
+    raise TypeError(
+        f"today must be a date or an ISO YYYY-MM-DD string, not {type(today).__name__}"
+    )
+
+
 def _as_date_str(value: Optional[date | datetime | str], field_name: str) -> Optional[str]:
     if value is None:
         return None
@@ -549,6 +581,46 @@ def upsert_vendor(
     account number would make it a payments target for no operational gain. Four
     digits are enough to reconcile a transfer somebody else made.
     """
+    with db_session() as db:
+        return _upsert_vendor_core(
+            db, code=code, name=name, vendor_type=vendor_type, gstin=gstin, pan=pan,
+            msme_number=msme_number, state_code=state_code, address=address,
+            contact_name=contact_name, contact_phone=contact_phone,
+            contact_email=contact_email, payment_terms_days=payment_terms_days,
+            bank_name=bank_name, account_last4=account_last4, ifsc=ifsc,
+            rating=rating, is_active=is_active, notes=notes, created_by=created_by,
+            create_only=create_only,
+        )
+
+
+def _upsert_vendor_core(
+    db,
+    *,
+    code: str,
+    name: str,
+    vendor_type: str = "supplier",
+    gstin: Optional[str] = None,
+    pan: Optional[str] = None,
+    msme_number: Optional[str] = None,
+    state_code: Optional[str] = None,
+    address: Optional[str] = None,
+    contact_name: Optional[str] = None,
+    contact_phone: Optional[str] = None,
+    contact_email: Optional[str] = None,
+    payment_terms_days: Optional[int] = None,
+    bank_name: Optional[str] = None,
+    account_last4: Optional[str] = None,
+    ifsc: Optional[str] = None,
+    rating: Optional[int] = None,
+    is_active: bool = True,
+    notes: Optional[str] = None,
+    created_by: Optional[str] = None,
+    create_only: bool = False,
+) -> dict:
+    """`upsert_vendor` on the caller's connection: validate, write, read back.
+
+    The vendors table is shared by every purchasing desk, so this is the one
+    place a vendor row is written; see `upsert_vendor` for the rules."""
     code = _clean(code, field_name="vendor code", required=True).upper()
     name = _clean(name, field_name="vendor name", required=True)
     vendor_type = (vendor_type or "supplier").strip().lower()
@@ -569,42 +641,41 @@ def upsert_vendor(
     if rating is not None and not (0 <= int(rating) <= 5):
         raise ProcurementError("vendor rating must be 0–5", code="bad_rating")
 
-    with db_session() as db:
-        if create_only:
-            _refuse_existing(db, "vendors", code, "vendor")
-        db.execute(
-            """INSERT INTO vendors (code, name, vendor_type, gstin, pan, msme_number,
-                   state_code, address, contact_name, contact_phone, contact_email,
-                   payment_terms_days, bank_name, account_last4, ifsc, rating,
-                   is_active, notes, created_by)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-               ON CONFLICT(code) DO UPDATE SET
-                   name = excluded.name,
-                   vendor_type = excluded.vendor_type,
-                   gstin = COALESCE(excluded.gstin, gstin),
-                   pan = COALESCE(excluded.pan, pan),
-                   msme_number = COALESCE(excluded.msme_number, msme_number),
-                   state_code = COALESCE(excluded.state_code, state_code),
-                   address = COALESCE(excluded.address, address),
-                   contact_name = COALESCE(excluded.contact_name, contact_name),
-                   contact_phone = COALESCE(excluded.contact_phone, contact_phone),
-                   contact_email = COALESCE(excluded.contact_email, contact_email),
-                   payment_terms_days = COALESCE(excluded.payment_terms_days, payment_terms_days),
-                   bank_name = COALESCE(excluded.bank_name, bank_name),
-                   account_last4 = COALESCE(excluded.account_last4, account_last4),
-                   ifsc = COALESCE(excluded.ifsc, ifsc),
-                   rating = COALESCE(excluded.rating, rating),
-                   is_active = excluded.is_active,
-                   notes = COALESCE(excluded.notes, notes),
-                   updated_at = CURRENT_TIMESTAMP""",
-            (code, name, vendor_type, gstin, pan, msme_number, state_code, address,
-             contact_name, contact_phone, contact_email,
-             int(payment_terms_days) if payment_terms_days is not None else None,
-             bank_name, account_last4, ifsc,
-             int(rating) if rating is not None else None,
-             1 if is_active else 0, notes, created_by),
-        )
-        row = db.execute("SELECT * FROM vendors WHERE code = ?", (code,)).fetchone()
+    if create_only:
+        _refuse_existing(db, "vendors", code, "vendor")
+    db.execute(
+        """INSERT INTO vendors (code, name, vendor_type, gstin, pan, msme_number,
+               state_code, address, contact_name, contact_phone, contact_email,
+               payment_terms_days, bank_name, account_last4, ifsc, rating,
+               is_active, notes, created_by)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(code) DO UPDATE SET
+               name = excluded.name,
+               vendor_type = excluded.vendor_type,
+               gstin = COALESCE(excluded.gstin, gstin),
+               pan = COALESCE(excluded.pan, pan),
+               msme_number = COALESCE(excluded.msme_number, msme_number),
+               state_code = COALESCE(excluded.state_code, state_code),
+               address = COALESCE(excluded.address, address),
+               contact_name = COALESCE(excluded.contact_name, contact_name),
+               contact_phone = COALESCE(excluded.contact_phone, contact_phone),
+               contact_email = COALESCE(excluded.contact_email, contact_email),
+               payment_terms_days = COALESCE(excluded.payment_terms_days, payment_terms_days),
+               bank_name = COALESCE(excluded.bank_name, bank_name),
+               account_last4 = COALESCE(excluded.account_last4, account_last4),
+               ifsc = COALESCE(excluded.ifsc, ifsc),
+               rating = COALESCE(excluded.rating, rating),
+               is_active = excluded.is_active,
+               notes = COALESCE(excluded.notes, notes),
+               updated_at = CURRENT_TIMESTAMP""",
+        (code, name, vendor_type, gstin, pan, msme_number, state_code, address,
+         contact_name, contact_phone, contact_email,
+         int(payment_terms_days) if payment_terms_days is not None else None,
+         bank_name, account_last4, ifsc,
+         int(rating) if rating is not None else None,
+         1 if is_active else 0, notes, created_by),
+    )
+    row = db.execute("SELECT * FROM vendors WHERE code = ?", (code,)).fetchone()
     return _row(row)
 
 
@@ -615,18 +686,26 @@ def set_vendor_blacklist(
     """Blacklist / un-blacklist a vendor. A blacklisted vendor cannot take a new
     purchase order; orders already placed are untouched, because the goods may
     already be on a lorry."""
+    with db_session() as db:
+        row = _set_vendor_blacklist_core(db, code, blacklisted=blacklisted, reason=reason)
+    logger.info("vendor %s blacklist=%s by %s", code, blacklisted, actor)
+    return row
+
+
+def _set_vendor_blacklist_core(
+    db, code: str, *, blacklisted: bool, reason: Optional[str] = None,
+) -> dict:
+    """`set_vendor_blacklist` on the caller's connection."""
     if blacklisted and not (reason or "").strip():
         raise ProcurementError("a blacklist needs a reason", code="missing_field")
-    with db_session() as db:
-        cur = db.execute(
-            "UPDATE vendors SET is_blacklisted = ?, blacklist_reason = ?, "
-            "updated_at = CURRENT_TIMESTAMP WHERE code = ?",
-            (1 if blacklisted else 0, (reason or "").strip() or None, code),
-        )
-        if cur.rowcount == 0:
-            raise ProcurementError(f"no vendor with code {code!r}", code="not_found")
-        row = db.execute("SELECT * FROM vendors WHERE code = ?", (code,)).fetchone()
-    logger.info("vendor %s blacklist=%s by %s", code, blacklisted, actor)
+    cur = db.execute(
+        "UPDATE vendors SET is_blacklisted = ?, blacklist_reason = ?, "
+        "updated_at = CURRENT_TIMESTAMP WHERE code = ?",
+        (1 if blacklisted else 0, (reason or "").strip() or None, code),
+    )
+    if cur.rowcount == 0:
+        raise ProcurementError(f"no vendor with code {code!r}", code="not_found")
+    row = db.execute("SELECT * FROM vendors WHERE code = ?", (code,)).fetchone()
     return _row(row)
 
 
@@ -666,6 +745,27 @@ def upsert_store(
     is_active: bool = True,
     create_only: bool = False,
 ) -> dict:
+    with db_session() as db:
+        return _upsert_store_core(
+            db, code=code, name=name, store_type=store_type, department=department,
+            ward=ward, incharge_user_id=incharge_user_id, is_active=is_active,
+            create_only=create_only,
+        )
+
+
+def _upsert_store_core(
+    db,
+    *,
+    code: str,
+    name: str,
+    store_type: str = "sub_store",
+    department: Optional[str] = None,
+    ward: Optional[str] = None,
+    incharge_user_id: Optional[str] = None,
+    is_active: bool = True,
+    create_only: bool = False,
+) -> dict:
+    """`upsert_store` on the caller's connection: validate, write, read back."""
     code = _clean(code, field_name="store code", required=True).upper()
     name = _clean(name, field_name="store name", required=True)
     store_type = (store_type or "sub_store").strip().lower()
@@ -674,24 +774,23 @@ def upsert_store(
             f"unknown store type {store_type!r}; expected one of {list(STORE_TYPES)}",
             code="bad_store_type",
         )
-    with db_session() as db:
-        if create_only:
-            _refuse_existing(db, "stores", code, "store")
-        db.execute(
-            """INSERT INTO stores (code, name, store_type, department, ward,
-                   incharge_user_id, is_active)
-               VALUES (?,?,?,?,?,?,?)
-               ON CONFLICT(code) DO UPDATE SET
-                   name = excluded.name,
-                   store_type = excluded.store_type,
-                   department = COALESCE(excluded.department, department),
-                   ward = COALESCE(excluded.ward, ward),
-                   incharge_user_id = COALESCE(excluded.incharge_user_id, incharge_user_id),
-                   is_active = excluded.is_active""",
-            (code, name, store_type, department, ward, incharge_user_id,
-             1 if is_active else 0),
-        )
-        row = db.execute("SELECT * FROM stores WHERE code = ?", (code,)).fetchone()
+    if create_only:
+        _refuse_existing(db, "stores", code, "store")
+    db.execute(
+        """INSERT INTO stores (code, name, store_type, department, ward,
+               incharge_user_id, is_active)
+           VALUES (?,?,?,?,?,?,?)
+           ON CONFLICT(code) DO UPDATE SET
+               name = excluded.name,
+               store_type = excluded.store_type,
+               department = COALESCE(excluded.department, department),
+               ward = COALESCE(excluded.ward, ward),
+               incharge_user_id = COALESCE(excluded.incharge_user_id, incharge_user_id),
+               is_active = excluded.is_active""",
+        (code, name, store_type, department, ward, incharge_user_id,
+         1 if is_active else 0),
+    )
+    row = db.execute("SELECT * FROM stores WHERE code = ?", (code,)).fetchone()
     return _row(row)
 
 
@@ -909,6 +1008,45 @@ def upsert_inventory_item(
     master's `exempt` default — because a hospital's SERVICES are GST-exempt in
     India while the gloves, reagents and implants it buys are not.
     """
+    with db_session() as db:
+        return _upsert_inventory_item_core(
+            db, code=code, name=name, category=category, uom=uom,
+            pack_size=pack_size, hsn_sac=hsn_sac, gst_treatment=gst_treatment,
+            gst_rate_bp=gst_rate_bp, is_chargeable=is_chargeable,
+            service_item_id=service_item_id, reorder_level_qty=reorder_level_qty,
+            reorder_qty=reorder_qty, lead_time_days=lead_time_days,
+            default_store_id=default_store_id, is_active=is_active, notes=notes,
+            is_pharmacy=is_pharmacy, create_only=create_only,
+        )
+
+
+def _upsert_inventory_item_core(
+    db,
+    *,
+    code: str,
+    name: str,
+    category: str = "consumable",
+    uom: str = "each",
+    pack_size: int = 1,
+    hsn_sac: Optional[str] = None,
+    gst_treatment: str = "taxable",
+    gst_rate_bp: int = 0,
+    is_chargeable: bool = False,
+    service_item_id: Optional[int] = None,
+    reorder_level_qty: Optional[int] = None,
+    reorder_qty: Optional[int] = None,
+    lead_time_days: Optional[int] = None,
+    default_store_id: Optional[int] = None,
+    is_active: bool = True,
+    notes: Optional[str] = None,
+    is_pharmacy: bool = False,
+    create_only: bool = False,
+) -> dict:
+    """`upsert_inventory_item` on the caller's connection.
+
+    The Helix catalogue screen runs HERE, inside the core, so no caller can
+    reach the item master without it. It reads the catalogue through
+    helix_service, which takes its own (nested, read-only) session."""
     if is_pharmacy:
         raise PharmacyItemRefused(
             "drugs are not stocked here. Medication stock lives in Helix "
@@ -950,38 +1088,37 @@ def upsert_inventory_item(
         if value is not None and int(value) < 0:
             raise ProcurementError(f"{label} must not be negative", code="bad_quantity")
 
-    with db_session() as db:
-        if create_only:
-            _refuse_existing(db, "inventory_items", code, "item")
-        db.execute(
-            """INSERT INTO inventory_items (code, name, category, uom, pack_size,
-                   hsn_sac, gst_treatment, gst_rate_bp, is_chargeable, service_item_id,
-                   reorder_level_qty, reorder_qty, lead_time_days, default_store_id,
-                   is_pharmacy, is_active, notes)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)
-               ON CONFLICT(code) DO UPDATE SET
-                   name = excluded.name,
-                   category = excluded.category,
-                   uom = excluded.uom,
-                   pack_size = excluded.pack_size,
-                   hsn_sac = COALESCE(excluded.hsn_sac, hsn_sac),
-                   gst_treatment = excluded.gst_treatment,
-                   gst_rate_bp = excluded.gst_rate_bp,
-                   is_chargeable = excluded.is_chargeable,
-                   service_item_id = COALESCE(excluded.service_item_id, service_item_id),
-                   reorder_level_qty = COALESCE(excluded.reorder_level_qty, reorder_level_qty),
-                   reorder_qty = COALESCE(excluded.reorder_qty, reorder_qty),
-                   lead_time_days = COALESCE(excluded.lead_time_days, lead_time_days),
-                   default_store_id = COALESCE(excluded.default_store_id, default_store_id),
-                   is_active = excluded.is_active,
-                   notes = COALESCE(excluded.notes, notes),
-                   updated_at = CURRENT_TIMESTAMP""",
-            (code, name, category, (uom or "each").strip(), int(pack_size or 1),
-             hsn_sac, treatment, rate_bp, 1 if is_chargeable else 0, service_item_id,
-             reorder_level_qty, reorder_qty, lead_time_days, default_store_id,
-             1 if is_active else 0, notes),
-        )
-        row = db.execute("SELECT * FROM inventory_items WHERE code = ?", (code,)).fetchone()
+    if create_only:
+        _refuse_existing(db, "inventory_items", code, "item")
+    db.execute(
+        """INSERT INTO inventory_items (code, name, category, uom, pack_size,
+               hsn_sac, gst_treatment, gst_rate_bp, is_chargeable, service_item_id,
+               reorder_level_qty, reorder_qty, lead_time_days, default_store_id,
+               is_pharmacy, is_active, notes)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)
+           ON CONFLICT(code) DO UPDATE SET
+               name = excluded.name,
+               category = excluded.category,
+               uom = excluded.uom,
+               pack_size = excluded.pack_size,
+               hsn_sac = COALESCE(excluded.hsn_sac, hsn_sac),
+               gst_treatment = excluded.gst_treatment,
+               gst_rate_bp = excluded.gst_rate_bp,
+               is_chargeable = excluded.is_chargeable,
+               service_item_id = COALESCE(excluded.service_item_id, service_item_id),
+               reorder_level_qty = COALESCE(excluded.reorder_level_qty, reorder_level_qty),
+               reorder_qty = COALESCE(excluded.reorder_qty, reorder_qty),
+               lead_time_days = COALESCE(excluded.lead_time_days, lead_time_days),
+               default_store_id = COALESCE(excluded.default_store_id, default_store_id),
+               is_active = excluded.is_active,
+               notes = COALESCE(excluded.notes, notes),
+               updated_at = CURRENT_TIMESTAMP""",
+        (code, name, category, (uom or "each").strip(), int(pack_size or 1),
+         hsn_sac, treatment, rate_bp, 1 if is_chargeable else 0, service_item_id,
+         reorder_level_qty, reorder_qty, lead_time_days, default_store_id,
+         1 if is_active else 0, notes),
+    )
+    row = db.execute("SELECT * FROM inventory_items WHERE code = ?", (code,)).fetchone()
     return _decorate_item(_row(row))
 
 
@@ -1045,51 +1182,12 @@ def create_indent(
     indent full of invented item names is how a purchase department ends up
     buying three spellings of the same glove.
     """
-    if priority not in ("routine", "urgent", "emergency"):
-        raise ProcurementError(f"unknown priority {priority!r}", code="bad_priority")
-    parsed = _coerce_indent_lines(lines)
-    required = _as_date_str(required_by, "required_by")
-
     with db_session(immediate=True) as db:
-        store_id = None
-        if store_code:
-            store = db.execute(
-                "SELECT id FROM stores WHERE code = ?", (store_code.upper(),)
-            ).fetchone()
-            if not store:
-                raise ProcurementError(f"no store with code {store_code!r}",
-                                       code="not_found")
-            store_id = store["id"]
-
-        resolved: list[tuple[IndentLineInput, dict]] = []
-        for line in parsed:
-            assert_positive_quantity_milli(line.quantity_milli, "line quantity_milli")
-            item = _resolve_item(db, line.item_code)
-            if not item:
-                raise ProcurementError(
-                    f"no non-pharmacy item with code {line.item_code!r}. If it is "
-                    "a medication it belongs to Helix (pharmacy), not to stores.",
-                    code="unknown_item",
-                )
-            resolved.append((line, item))
-
-        status = "submitted" if submit else "draft"
-        cur = db.execute(
-            """INSERT INTO indents (indent_number, store_id, department, ward,
-                   priority, status, required_by, requested_by, remarks)
-               VALUES (NULL,?,?,?,?,?,?,?,?)""",
-            (store_id, department, ward, priority, status, required, requested_by, remarks),
+        indent_id = _create_indent_core(
+            db, store_code=store_code, department=department, ward=ward,
+            priority=priority, required_by=required_by, lines=lines,
+            requested_by=requested_by, remarks=remarks, submit=submit,
         )
-        indent_id = cur.lastrowid
-        for line_no, (line, item) in enumerate(resolved, start=1):
-            db.execute(
-                """INSERT INTO indent_lines (indent_id, line_no, inventory_item_id,
-                       item_code, description, uom, quantity_milli, status, remarks)
-                   VALUES (?,?,?,?,?,?,?, 'pending', ?)""",
-                (indent_id, line_no, item["id"], item["code"],
-                 line.description or item["name"], line.uom or item["uom"],
-                 line.quantity_milli, line.remarks),
-            )
     if submit:
         # Numbers are drawn at SUBMIT, never at draft creation: a draft somebody
         # abandons must not take a number out of a series.
@@ -1097,19 +1195,89 @@ def create_indent(
     return get_indent(indent_id) or {}
 
 
+def _create_indent_core(
+    db,
+    *,
+    store_code: Optional[str] = None,
+    department: Optional[str] = None,
+    ward: Optional[str] = None,
+    priority: str = "routine",
+    required_by: Optional[date | str] = None,
+    lines: Sequence[Any],
+    requested_by: Optional[str] = None,
+    remarks: Optional[str] = None,
+    submit: bool = False,
+) -> int:
+    """`create_indent` on the caller's connection. Returns the new indent id.
+
+    It draws no number: a caller that passes `submit=True` stamps the indent
+    number after its transaction commits, as `create_indent` does."""
+    if priority not in ("routine", "urgent", "emergency"):
+        raise ProcurementError(f"unknown priority {priority!r}", code="bad_priority")
+    parsed = _coerce_indent_lines(lines)
+    required = _as_date_str(required_by, "required_by")
+
+    store_id = None
+    if store_code:
+        store = db.execute(
+            "SELECT id FROM stores WHERE code = ?", (store_code.upper(),)
+        ).fetchone()
+        if not store:
+            raise ProcurementError(f"no store with code {store_code!r}",
+                                   code="not_found")
+        store_id = store["id"]
+
+    resolved: list[tuple[IndentLineInput, dict]] = []
+    for line in parsed:
+        assert_positive_quantity_milli(line.quantity_milli, "line quantity_milli")
+        item = _resolve_item(db, line.item_code)
+        if not item:
+            raise ProcurementError(
+                f"no non-pharmacy item with code {line.item_code!r}. If it is "
+                "a medication it belongs to Helix (pharmacy), not to stores.",
+                code="unknown_item",
+            )
+        resolved.append((line, item))
+
+    status = "submitted" if submit else "draft"
+    cur = db.execute(
+        """INSERT INTO indents (indent_number, store_id, department, ward,
+               priority, status, required_by, requested_by, remarks)
+           VALUES (NULL,?,?,?,?,?,?,?,?)""",
+        (store_id, department, ward, priority, status, required, requested_by, remarks),
+    )
+    indent_id = cur.lastrowid
+    for line_no, (line, item) in enumerate(resolved, start=1):
+        db.execute(
+            """INSERT INTO indent_lines (indent_id, line_no, inventory_item_id,
+                   item_code, description, uom, quantity_milli, status, remarks)
+               VALUES (?,?,?,?,?,?,?, 'pending', ?)""",
+            (indent_id, line_no, item["id"], item["code"],
+             line.description or item["name"], line.uom or item["uom"],
+             line.quantity_milli, line.remarks),
+        )
+    return int(indent_id)
+
+
 def submit_indent(indent_id: int, *, actor: Optional[str] = None) -> dict:
     with db_session(immediate=True) as db:
-        row = db.execute("SELECT * FROM indents WHERE id = ?", (indent_id,)).fetchone()
-        if not row:
-            raise ProcurementError(f"no indent {indent_id}", code="not_found")
-        assert_transition("indent", row["status"], "submitted")
-        db.execute(
-            "UPDATE indents SET status = 'submitted', requested_by = COALESCE(?, requested_by), "
-            "requested_at = ? WHERE id = ?",
-            (actor, _now(), indent_id),
-        )
+        _submit_indent_core(db, indent_id, actor=actor)
     _stamp_document_number("indent", indent_id)
     return get_indent(indent_id) or {}
+
+
+def _submit_indent_core(db, indent_id: int, *, actor: Optional[str] = None) -> None:
+    """`submit_indent` on the caller's connection. The caller stamps the number
+    after commit."""
+    row = db.execute("SELECT * FROM indents WHERE id = ?", (indent_id,)).fetchone()
+    if not row:
+        raise ProcurementError(f"no indent {indent_id}", code="not_found")
+    assert_transition("indent", row["status"], "submitted")
+    db.execute(
+        "UPDATE indents SET status = 'submitted', requested_by = COALESCE(?, requested_by), "
+        "requested_at = ? WHERE id = ?",
+        (actor, _now(), indent_id),
+    )
 
 
 def decide_indent(
@@ -1136,104 +1304,135 @@ def decide_indent(
     ward sister argues about at the month end.
     """
     with db_session(immediate=True) as db:
-        row = db.execute("SELECT * FROM indents WHERE id = ?", (indent_id,)).fetchone()
-        if not row:
-            raise ProcurementError(f"no indent {indent_id}", code="not_found")
-        lines = db.execute(
-            "SELECT * FROM indent_lines WHERE indent_id = ? ORDER BY line_no",
-            (indent_id,),
-        ).fetchall()
-        if reject:
-            assert_transition("indent", row["status"], "rejected")
-            if not (reason or "").strip():
-                raise ProcurementError("a rejection needs a reason", code="missing_field")
-            db.execute(
-                "UPDATE indents SET status = 'rejected', rejected_reason = ?, "
-                "approved_by = ?, approved_at = ? WHERE id = ?",
-                (reason.strip(), actor, _now(), indent_id),
-            )
-            db.execute(
-                "UPDATE indent_lines SET status = 'rejected', approved_quantity_milli = 0 "
-                "WHERE indent_id = ?", (indent_id,),
-            )
-            return get_indent(indent_id) or {}
-
-        approvals = {int(k): v for k, v in (approvals or {}).items()}
-        known = {int(line["line_no"]) for line in lines}
-        unknown = set(approvals) - known
-        if unknown:
-            raise ProcurementError(
-                f"indent {indent_id} has no line(s) {sorted(unknown)}", code="bad_line")
-
-        any_cut = False
-        all_zero = True
-        for line in lines:
-            requested = int(line["quantity_milli"])
-            approved = approvals.get(int(line["line_no"]), requested)
-            approved = assert_quantity_milli(approved, "approved_quantity_milli")
-            if approved < 0:
-                raise ProcurementError("approved quantity must not be negative",
-                                       code="bad_quantity")
-            if approved > requested:
-                raise ProcurementError(
-                    f"line {line['line_no']}: cannot approve {format_quantity(approved)} "
-                    f"against a request for {format_quantity(requested)}: raise a new "
-                    "indent for the extra rather than inflating this one",
-                    code="over_approval",
-                )
-            if approved < requested:
-                any_cut = True
-            if approved > 0:
-                all_zero = False
-            db.execute(
-                "UPDATE indent_lines SET approved_quantity_milli = ?, status = ? "
-                "WHERE id = ?",
-                (approved, "approved" if approved > 0 else "rejected", line["id"]),
-            )
-
-        target = "rejected" if all_zero else ("partially_approved" if any_cut else "approved")
-        assert_transition("indent", row["status"], target)
-        db.execute(
-            "UPDATE indents SET status = ?, approved_by = ?, approved_at = ?, "
-            "rejected_reason = COALESCE(?, rejected_reason) WHERE id = ?",
-            (target, actor, _now(), (reason or "").strip() or None, indent_id),
-        )
+        _decide_indent_core(db, indent_id, approvals=approvals, reject=reject,
+                            reason=reason, actor=actor)
     return get_indent(indent_id) or {}
+
+
+def _decide_indent_core(
+    db,
+    indent_id: int,
+    *,
+    approvals: Optional[dict[int, int]] = None,
+    reject: bool = False,
+    reason: Optional[str] = None,
+    actor: Optional[str] = None,
+) -> None:
+    """`decide_indent` on the caller's connection; see it for the rules.
+
+    The reject branch used to re-read the indent through `get_indent` INSIDE
+    the immediate transaction. That nested read is gone from the core: the
+    wrapper re-reads after the commit, which is the same document on a pooled
+    connection and, on an unpooled one, the committed rejection rather than the
+    pre-rejection row a second connection could see."""
+    row = db.execute("SELECT * FROM indents WHERE id = ?", (indent_id,)).fetchone()
+    if not row:
+        raise ProcurementError(f"no indent {indent_id}", code="not_found")
+    lines = db.execute(
+        "SELECT * FROM indent_lines WHERE indent_id = ? ORDER BY line_no",
+        (indent_id,),
+    ).fetchall()
+    if reject:
+        assert_transition("indent", row["status"], "rejected")
+        if not (reason or "").strip():
+            raise ProcurementError("a rejection needs a reason", code="missing_field")
+        db.execute(
+            "UPDATE indents SET status = 'rejected', rejected_reason = ?, "
+            "approved_by = ?, approved_at = ? WHERE id = ?",
+            (reason.strip(), actor, _now(), indent_id),
+        )
+        db.execute(
+            "UPDATE indent_lines SET status = 'rejected', approved_quantity_milli = 0 "
+            "WHERE indent_id = ?", (indent_id,),
+        )
+        return
+
+    approvals = {int(k): v for k, v in (approvals or {}).items()}
+    known = {int(line["line_no"]) for line in lines}
+    unknown = set(approvals) - known
+    if unknown:
+        raise ProcurementError(
+            f"indent {indent_id} has no line(s) {sorted(unknown)}", code="bad_line")
+
+    any_cut = False
+    all_zero = True
+    for line in lines:
+        requested = int(line["quantity_milli"])
+        approved = approvals.get(int(line["line_no"]), requested)
+        approved = assert_quantity_milli(approved, "approved_quantity_milli")
+        if approved < 0:
+            raise ProcurementError("approved quantity must not be negative",
+                                   code="bad_quantity")
+        if approved > requested:
+            raise ProcurementError(
+                f"line {line['line_no']}: cannot approve {format_quantity(approved)} "
+                f"against a request for {format_quantity(requested)}: raise a new "
+                "indent for the extra rather than inflating this one",
+                code="over_approval",
+            )
+        if approved < requested:
+            any_cut = True
+        if approved > 0:
+            all_zero = False
+        db.execute(
+            "UPDATE indent_lines SET approved_quantity_milli = ?, status = ? "
+            "WHERE id = ?",
+            (approved, "approved" if approved > 0 else "rejected", line["id"]),
+        )
+
+    target = "rejected" if all_zero else ("partially_approved" if any_cut else "approved")
+    assert_transition("indent", row["status"], target)
+    db.execute(
+        "UPDATE indents SET status = ?, approved_by = ?, approved_at = ?, "
+        "rejected_reason = COALESCE(?, rejected_reason) WHERE id = ?",
+        (target, actor, _now(), (reason or "").strip() or None, indent_id),
+    )
 
 
 def cancel_indent(indent_id: int, *, reason: Optional[str] = None,
                   actor: Optional[str] = None) -> dict:
     with db_session(immediate=True) as db:
-        row = db.execute("SELECT status FROM indents WHERE id = ?", (indent_id,)).fetchone()
-        if not row:
-            raise ProcurementError(f"no indent {indent_id}", code="not_found")
-        assert_transition("indent", row["status"], "cancelled")
-        db.execute(
-            "UPDATE indents SET status = 'cancelled', rejected_reason = COALESCE(?, rejected_reason) "
-            "WHERE id = ?", ((reason or "").strip() or None, indent_id),
-        )
-        db.execute(
-            "UPDATE indent_lines SET status = 'cancelled' WHERE indent_id = ? "
-            "AND status NOT IN ('received','ordered')", (indent_id,),
-        )
+        _cancel_indent_core(db, indent_id, reason=reason)
     logger.info("indent %s cancelled by %s", indent_id, actor)
     return get_indent(indent_id) or {}
 
 
+def _cancel_indent_core(db, indent_id: int, *, reason: Optional[str] = None) -> None:
+    """`cancel_indent` on the caller's connection."""
+    row = db.execute("SELECT status FROM indents WHERE id = ?", (indent_id,)).fetchone()
+    if not row:
+        raise ProcurementError(f"no indent {indent_id}", code="not_found")
+    assert_transition("indent", row["status"], "cancelled")
+    db.execute(
+        "UPDATE indents SET status = 'cancelled', rejected_reason = COALESCE(?, rejected_reason) "
+        "WHERE id = ?", ((reason or "").strip() or None, indent_id),
+    )
+    db.execute(
+        "UPDATE indent_lines SET status = 'cancelled' WHERE indent_id = ? "
+        "AND status NOT IN ('received','ordered')", (indent_id,),
+    )
+
+
 def get_indent(indent_id: int) -> Optional[dict]:
     with db_session() as db:
-        row = db.execute(
-            """SELECT i.*, s.code AS store_code, s.name AS store_name
-                 FROM indents i LEFT JOIN stores s ON s.id = i.store_id
-                WHERE i.id = ?""", (indent_id,),
-        ).fetchone()
-        if not row:
-            return None
-        doc = _row(row)
-        doc["lines"] = [_row(r) for r in db.execute(
-            "SELECT * FROM indent_lines WHERE indent_id = ? ORDER BY line_no",
-            (indent_id,),
-        ).fetchall()]
+        return _get_indent_core(db, indent_id)
+
+
+def _get_indent_core(db, indent_id: int) -> Optional[dict]:
+    """`get_indent` on the caller's connection, so a caller can answer with the
+    document from inside its own transaction."""
+    row = db.execute(
+        """SELECT i.*, s.code AS store_code, s.name AS store_name
+             FROM indents i LEFT JOIN stores s ON s.id = i.store_id
+            WHERE i.id = ?""", (indent_id,),
+    ).fetchone()
+    if not row:
+        return None
+    doc = _row(row)
+    doc["lines"] = [_row(r) for r in db.execute(
+        "SELECT * FROM indent_lines WHERE indent_id = ? ORDER BY line_no",
+        (indent_id,),
+    ).fetchall()]
     for line in doc["lines"]:
         requested = int(line["quantity_milli"])
         approved = line.get("approved_quantity_milli")
@@ -1341,178 +1540,217 @@ def create_purchase_order(
     it, the vendor's state code is shown next to the switch, and the default is
     intra-state because most hospital purchasing is local.
     """
-    parsed = _coerce_po_lines(lines)
     with db_session(immediate=True) as db:
-        vendor = db.execute(
-            "SELECT * FROM vendors WHERE code = ?", (vendor_code.upper(),)
-        ).fetchone()
-        if not vendor:
-            raise ProcurementError(f"no vendor with code {vendor_code!r}", code="not_found")
-        if vendor["is_blacklisted"]:
-            raise ProcurementError(
-                f"vendor {vendor['name']} is blacklisted"
-                + (f": {vendor['blacklist_reason']}" if vendor["blacklist_reason"] else ""),
-                code="vendor_blacklisted",
-            )
-        if not vendor["is_active"]:
-            raise ProcurementError(f"vendor {vendor['name']} is inactive", code="vendor_inactive")
-
-        store_id = None
-        if store_code:
-            store = db.execute("SELECT id FROM stores WHERE code = ?",
-                               (store_code.upper(),)).fetchone()
-            if not store:
-                raise ProcurementError(f"no store with code {store_code!r}", code="not_found")
-            store_id = store["id"]
-
-        if indent_id is not None:
-            indent = db.execute("SELECT * FROM indents WHERE id = ?", (indent_id,)).fetchone()
-            if not indent:
-                raise ProcurementError(f"no indent {indent_id}", code="not_found")
-            if indent["status"] not in ("approved", "partially_approved", "converted"):
-                raise ProcurementError(
-                    f"indent {indent_id} is {indent['status']!r}; a purchase order may "
-                    "only be raised against an APPROVED indent",
-                    code="indent_not_approved",
-                )
-
-        computed: list[tuple[POLineInput, dict, Any]] = []
-        for line in parsed:
-            assert_positive_quantity_milli(line.quantity_milli, "line quantity_milli")
-            rate = assert_paise(line.unit_rate_paise)
-            if rate < 0:
-                raise ProcurementError(
-                    "a purchase order line rate must not be negative", code="bad_rate")
-            item = _resolve_item(db, line.item_code)
-            if not item:
-                raise ProcurementError(
-                    f"no non-pharmacy item with code {line.item_code!r}",
-                    code="unknown_item")
-            treatment = _gst_treatment(line.gst_treatment or item["gst_treatment"])
-            rate_bp = int(line.gst_rate_bp if line.gst_rate_bp is not None
-                          else item["gst_rate_bp"] or 0)
-            totals = compute_line(
-                unit_rate_paise=rate,
-                quantity_milli=line.quantity_milli,
-                discount_paise=line.discount_paise,
-                discount_bp=line.discount_bp,
-                gst_rate_bp=rate_bp,
-                gst_treatment=treatment,
-                interstate=bool(is_interstate),
-            )
-            computed.append((line, item, totals))
-
-        # Foot the lines WITHOUT the round-off, add other charges, THEN round
-        # once. Rounding before the freight line would leave a printed total
-        # that is not a whole rupee, which is the one thing the Indian
-        # "Round Off" line exists to prevent.
-        foot = compute_invoice([t for _, _, t in computed], round_off_to_rupee=False)
-        other = assert_paise(other_charges_paise or 0)
-        # Other charges (freight, packing) are NOT taxed here. Freight on a
-        # taxable supply is legally part of the taxable value, but which charges
-        # attract which rate is a per-vendor decision Orb has no basis to make —
-        # so it is carried as a separate, visible amount rather than silently
-        # taxed at the last line's rate.
-        before_rounding = foot.total_paise + other
-        payable = round_to_rupee(before_rounding)
-        rounding_adjustment = payable - before_rounding
-
-        cur = db.execute(
-            """INSERT INTO purchase_orders (po_number, vendor_id, indent_id, store_id,
-                   status, order_date, expected_date, place_of_supply, is_interstate,
-                   subtotal_paise, discount_paise, taxable_value_paise, cgst_paise,
-                   sgst_paise, igst_paise, tax_paise, other_charges_paise,
-                   rounding_adjustment_paise, total_paise, terms, created_by, remarks)
-               VALUES (NULL,?,?,?, 'draft', ?,?,?,?, ?,?,?,?,?,?,?,?,?,?, ?,?,?)""",
-            (vendor["id"], indent_id, store_id,
-             _as_date_str(order_date, "order_date") or date.today().isoformat(),
-             _as_date_str(expected_date, "expected_date"),
-             place_of_supply or vendor["state_code"], 1 if is_interstate else 0,
-             foot.subtotal_paise, foot.discount_paise, foot.taxable_value_paise,
-             foot.cgst_paise, foot.sgst_paise, foot.igst_paise, foot.tax_paise,
-             other, rounding_adjustment, payable, terms, created_by, remarks),
+        po_id = _create_purchase_order_core(
+            db, vendor_code=vendor_code, lines=lines, store_code=store_code,
+            indent_id=indent_id, order_date=order_date, expected_date=expected_date,
+            place_of_supply=place_of_supply, is_interstate=is_interstate,
+            other_charges_paise=other_charges_paise, terms=terms, remarks=remarks,
+            created_by=created_by, today=date.today(),
         )
-        po_id = cur.lastrowid
-        for line_no, (line, item, totals) in enumerate(computed, start=1):
-            db.execute(
-                """INSERT INTO purchase_order_lines (purchase_order_id, line_no,
-                       indent_line_id, inventory_item_id, item_code, description,
-                       hsn_sac, uom, quantity_milli, received_quantity_milli,
-                       unit_rate_paise, gross_paise, discount_paise, gst_treatment,
-                       gst_rate_bp, taxable_value_paise, cgst_paise, sgst_paise,
-                       igst_paise, tax_paise, total_paise, status, remarks)
-                   VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?, 'open', ?)""",
-                (po_id, line_no, line.indent_line_id, item["id"], item["code"],
-                 line.description or item["name"], item["hsn_sac"],
-                 line.uom or item["uom"], line.quantity_milli,
-                 line.unit_rate_paise, totals.gross_paise, totals.discount_paise,
-                 totals.gst_treatment, totals.gst_rate_bp, totals.taxable_value_paise,
-                 totals.cgst_paise, totals.sgst_paise, totals.igst_paise,
-                 totals.tax_paise, totals.total_paise, line.remarks),
-            )
-        if indent_id is not None:
-            db.execute(
-                "UPDATE indent_lines SET status = 'ordered' WHERE indent_id = ? "
-                "AND status = 'approved'", (indent_id,),
-            )
-            indent_status = db.execute(
-                "SELECT status FROM indents WHERE id = ?", (indent_id,)
-            ).fetchone()["status"]
-            if indent_status in ("approved", "partially_approved"):
-                assert_transition("indent", indent_status, "converted")
-                db.execute("UPDATE indents SET status = 'converted' WHERE id = ?",
-                           (indent_id,))
     return get_purchase_order(po_id) or {}
+
+
+def _create_purchase_order_core(
+    db,
+    *,
+    vendor_code: str,
+    lines: Sequence[Any],
+    store_code: Optional[str] = None,
+    indent_id: Optional[int] = None,
+    order_date: Optional[date | str] = None,
+    expected_date: Optional[date | str] = None,
+    place_of_supply: Optional[str] = None,
+    is_interstate: bool = False,
+    other_charges_paise: int = 0,
+    terms: Optional[str] = None,
+    remarks: Optional[str] = None,
+    created_by: Optional[str] = None,
+    today: date | datetime | str,
+) -> int:
+    """`create_purchase_order` on the caller's connection. Returns the new PO id.
+
+    `today` is the order date used when the caller gives none; it is required
+    so the caller decides which clock that is (see `_calendar_today`)."""
+    default_order_date = _calendar_today(today).isoformat()
+    parsed = _coerce_po_lines(lines)
+    vendor = db.execute(
+        "SELECT * FROM vendors WHERE code = ?", (vendor_code.upper(),)
+    ).fetchone()
+    if not vendor:
+        raise ProcurementError(f"no vendor with code {vendor_code!r}", code="not_found")
+    if vendor["is_blacklisted"]:
+        raise ProcurementError(
+            f"vendor {vendor['name']} is blacklisted"
+            + (f": {vendor['blacklist_reason']}" if vendor["blacklist_reason"] else ""),
+            code="vendor_blacklisted",
+        )
+    if not vendor["is_active"]:
+        raise ProcurementError(f"vendor {vendor['name']} is inactive", code="vendor_inactive")
+
+    store_id = None
+    if store_code:
+        store = db.execute("SELECT id FROM stores WHERE code = ?",
+                           (store_code.upper(),)).fetchone()
+        if not store:
+            raise ProcurementError(f"no store with code {store_code!r}", code="not_found")
+        store_id = store["id"]
+
+    if indent_id is not None:
+        indent = db.execute("SELECT * FROM indents WHERE id = ?", (indent_id,)).fetchone()
+        if not indent:
+            raise ProcurementError(f"no indent {indent_id}", code="not_found")
+        if indent["status"] not in ("approved", "partially_approved", "converted"):
+            raise ProcurementError(
+                f"indent {indent_id} is {indent['status']!r}; a purchase order may "
+                "only be raised against an APPROVED indent",
+                code="indent_not_approved",
+            )
+
+    computed: list[tuple[POLineInput, dict, Any]] = []
+    for line in parsed:
+        assert_positive_quantity_milli(line.quantity_milli, "line quantity_milli")
+        rate = assert_paise(line.unit_rate_paise)
+        if rate < 0:
+            raise ProcurementError(
+                "a purchase order line rate must not be negative", code="bad_rate")
+        item = _resolve_item(db, line.item_code)
+        if not item:
+            raise ProcurementError(
+                f"no non-pharmacy item with code {line.item_code!r}",
+                code="unknown_item")
+        treatment = _gst_treatment(line.gst_treatment or item["gst_treatment"])
+        rate_bp = int(line.gst_rate_bp if line.gst_rate_bp is not None
+                      else item["gst_rate_bp"] or 0)
+        totals = compute_line(
+            unit_rate_paise=rate,
+            quantity_milli=line.quantity_milli,
+            discount_paise=line.discount_paise,
+            discount_bp=line.discount_bp,
+            gst_rate_bp=rate_bp,
+            gst_treatment=treatment,
+            interstate=bool(is_interstate),
+        )
+        computed.append((line, item, totals))
+
+    # Foot the lines WITHOUT the round-off, add other charges, THEN round
+    # once. Rounding before the freight line would leave a printed total
+    # that is not a whole rupee, which is the one thing the Indian
+    # "Round Off" line exists to prevent.
+    foot = compute_invoice([t for _, _, t in computed], round_off_to_rupee=False)
+    other = assert_paise(other_charges_paise or 0)
+    # Other charges (freight, packing) are NOT taxed here. Freight on a
+    # taxable supply is legally part of the taxable value, but which charges
+    # attract which rate is a per-vendor decision Orb has no basis to make,
+    # so it is carried as a separate, visible amount rather than silently
+    # taxed at the last line's rate.
+    before_rounding = foot.total_paise + other
+    payable = round_to_rupee(before_rounding)
+    rounding_adjustment = payable - before_rounding
+
+    cur = db.execute(
+        """INSERT INTO purchase_orders (po_number, vendor_id, indent_id, store_id,
+               status, order_date, expected_date, place_of_supply, is_interstate,
+               subtotal_paise, discount_paise, taxable_value_paise, cgst_paise,
+               sgst_paise, igst_paise, tax_paise, other_charges_paise,
+               rounding_adjustment_paise, total_paise, terms, created_by, remarks)
+           VALUES (NULL,?,?,?, 'draft', ?,?,?,?, ?,?,?,?,?,?,?,?,?,?, ?,?,?)""",
+        (vendor["id"], indent_id, store_id,
+         _as_date_str(order_date, "order_date") or default_order_date,
+         _as_date_str(expected_date, "expected_date"),
+         place_of_supply or vendor["state_code"], 1 if is_interstate else 0,
+         foot.subtotal_paise, foot.discount_paise, foot.taxable_value_paise,
+         foot.cgst_paise, foot.sgst_paise, foot.igst_paise, foot.tax_paise,
+         other, rounding_adjustment, payable, terms, created_by, remarks),
+    )
+    po_id = cur.lastrowid
+    for line_no, (line, item, totals) in enumerate(computed, start=1):
+        db.execute(
+            """INSERT INTO purchase_order_lines (purchase_order_id, line_no,
+                   indent_line_id, inventory_item_id, item_code, description,
+                   hsn_sac, uom, quantity_milli, received_quantity_milli,
+                   unit_rate_paise, gross_paise, discount_paise, gst_treatment,
+                   gst_rate_bp, taxable_value_paise, cgst_paise, sgst_paise,
+                   igst_paise, tax_paise, total_paise, status, remarks)
+               VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?, 'open', ?)""",
+            (po_id, line_no, line.indent_line_id, item["id"], item["code"],
+             line.description or item["name"], item["hsn_sac"],
+             line.uom or item["uom"], line.quantity_milli,
+             line.unit_rate_paise, totals.gross_paise, totals.discount_paise,
+             totals.gst_treatment, totals.gst_rate_bp, totals.taxable_value_paise,
+             totals.cgst_paise, totals.sgst_paise, totals.igst_paise,
+             totals.tax_paise, totals.total_paise, line.remarks),
+        )
+    if indent_id is not None:
+        db.execute(
+            "UPDATE indent_lines SET status = 'ordered' WHERE indent_id = ? "
+            "AND status = 'approved'", (indent_id,),
+        )
+        indent_status = db.execute(
+            "SELECT status FROM indents WHERE id = ?", (indent_id,)
+        ).fetchone()["status"]
+        if indent_status in ("approved", "partially_approved"):
+            assert_transition("indent", indent_status, "converted")
+            db.execute("UPDATE indents SET status = 'converted' WHERE id = ?",
+                       (indent_id,))
+    return int(po_id)
 
 
 def _move_po(po_id: int, target: str, *, actor: Optional[str] = None,
              reason: Optional[str] = None) -> dict:
     with db_session(immediate=True) as db:
-        row = db.execute("SELECT * FROM purchase_orders WHERE id = ?", (po_id,)).fetchone()
-        if not row:
-            raise ProcurementError(f"no purchase order {po_id}", code="not_found")
-        assert_transition("purchase_order", row["status"], target)
-
-        if target == "cancelled":
-            received = db.execute(
-                "SELECT COALESCE(SUM(received_quantity_milli),0) AS q "
-                "FROM purchase_order_lines WHERE purchase_order_id = ?", (po_id,)
-            ).fetchone()["q"]
-            if received:
-                raise ProcurementError(
-                    "goods have already been received against this order; it cannot "
-                    "be cancelled. Short-close the outstanding lines instead, so the "
-                    "receipt that did happen stays on the record.",
-                    code="already_received",
-                )
-            if not (reason or "").strip():
-                raise ProcurementError("a cancellation needs a reason", code="missing_field")
-            db.execute(
-                "UPDATE purchase_orders SET status = 'cancelled', cancelled_by = ?, "
-                "cancelled_at = ?, cancel_reason = ? WHERE id = ?",
-                (actor, _now(), reason.strip(), po_id),
-            )
-            db.execute(
-                "UPDATE purchase_order_lines SET status = 'cancelled' "
-                "WHERE purchase_order_id = ? AND status = 'open'", (po_id,),
-            )
-        elif target == "approved":
-            db.execute(
-                "UPDATE purchase_orders SET status = 'approved', approved_by = ?, "
-                "approved_at = ? WHERE id = ?", (actor, _now(), po_id),
-            )
-        elif target == "issued":
-            db.execute(
-                "UPDATE purchase_orders SET status = 'issued', issued_at = ? WHERE id = ?",
-                (_now(), po_id),
-            )
-        else:
-            db.execute("UPDATE purchase_orders SET status = ? WHERE id = ?", (target, po_id))
+        _move_po_core(db, po_id, target, actor=actor, reason=reason)
     if target == "issued":
         # The number is drawn at ISSUE — the moment the document leaves the
         # building and becomes something a vendor quotes back at you.
         _stamp_document_number("purchase_order", po_id)
     return get_purchase_order(po_id) or {}
+
+
+def _move_po_core(db, po_id: int, target: str, *, actor: Optional[str] = None,
+                  reason: Optional[str] = None) -> None:
+    """`_move_po` on the caller's connection. It draws no number: a caller that
+    issues a PO stamps the PO number after its transaction commits."""
+    row = db.execute("SELECT * FROM purchase_orders WHERE id = ?", (po_id,)).fetchone()
+    if not row:
+        raise ProcurementError(f"no purchase order {po_id}", code="not_found")
+    assert_transition("purchase_order", row["status"], target)
+
+    if target == "cancelled":
+        received = db.execute(
+            "SELECT COALESCE(SUM(received_quantity_milli),0) AS q "
+            "FROM purchase_order_lines WHERE purchase_order_id = ?", (po_id,)
+        ).fetchone()["q"]
+        if received:
+            raise ProcurementError(
+                "goods have already been received against this order; it cannot "
+                "be cancelled. Short-close the outstanding lines instead, so the "
+                "receipt that did happen stays on the record.",
+                code="already_received",
+            )
+        if not (reason or "").strip():
+            raise ProcurementError("a cancellation needs a reason", code="missing_field")
+        db.execute(
+            "UPDATE purchase_orders SET status = 'cancelled', cancelled_by = ?, "
+            "cancelled_at = ?, cancel_reason = ? WHERE id = ?",
+            (actor, _now(), reason.strip(), po_id),
+        )
+        db.execute(
+            "UPDATE purchase_order_lines SET status = 'cancelled' "
+            "WHERE purchase_order_id = ? AND status = 'open'", (po_id,),
+        )
+    elif target == "approved":
+        db.execute(
+            "UPDATE purchase_orders SET status = 'approved', approved_by = ?, "
+            "approved_at = ? WHERE id = ?", (actor, _now(), po_id),
+        )
+    elif target == "issued":
+        db.execute(
+            "UPDATE purchase_orders SET status = 'issued', issued_at = ? WHERE id = ?",
+            (_now(), po_id),
+        )
+    else:
+        db.execute("UPDATE purchase_orders SET status = ? WHERE id = ?", (target, po_id))
 
 
 def submit_purchase_order(po_id: int, *, actor: Optional[str] = None) -> dict:
@@ -1534,24 +1772,53 @@ def cancel_purchase_order(po_id: int, *, reason: str, actor: Optional[str] = Non
     return _move_po(po_id, "cancelled", actor=actor, reason=reason)
 
 
+def _submit_purchase_order_core(db, po_id: int, *, actor: Optional[str] = None) -> None:
+    """`submit_purchase_order` on the caller's connection."""
+    _move_po_core(db, po_id, "pending_approval", actor=actor)
+
+
+def _approve_purchase_order_core(db, po_id: int, *, actor: Optional[str] = None) -> None:
+    """`approve_purchase_order` on the caller's connection. Like the wrapper it
+    records the approver and does not compare it with the creator; a caller
+    that needs separation of duties checks it before calling."""
+    _move_po_core(db, po_id, "approved", actor=actor)
+
+
+def _issue_purchase_order_core(db, po_id: int, *, actor: Optional[str] = None) -> None:
+    """`issue_purchase_order` on the caller's connection. The caller stamps the
+    PO number after its transaction commits."""
+    _move_po_core(db, po_id, "issued", actor=actor)
+
+
+def _cancel_purchase_order_core(db, po_id: int, *, reason: str,
+                                actor: Optional[str] = None) -> None:
+    """`cancel_purchase_order` on the caller's connection."""
+    _move_po_core(db, po_id, "cancelled", actor=actor, reason=reason)
+
+
 def get_purchase_order(po_id: int) -> Optional[dict]:
     with db_session() as db:
-        row = db.execute(
-            """SELECT p.*, v.code AS vendor_code, v.name AS vendor_name,
-                      v.gstin AS vendor_gstin, v.state_code AS vendor_state_code,
-                      s.code AS store_code, s.name AS store_name
-                 FROM purchase_orders p
-                 LEFT JOIN vendors v ON v.id = p.vendor_id
-                 LEFT JOIN stores s ON s.id = p.store_id
-                WHERE p.id = ?""", (po_id,),
-        ).fetchone()
-        if not row:
-            return None
-        doc = _row(row)
-        doc["lines"] = [_row(r) for r in db.execute(
-            "SELECT * FROM purchase_order_lines WHERE purchase_order_id = ? ORDER BY line_no",
-            (po_id,),
-        ).fetchall()]
+        return _get_purchase_order_core(db, po_id)
+
+
+def _get_purchase_order_core(db, po_id: int) -> Optional[dict]:
+    """`get_purchase_order` on the caller's connection."""
+    row = db.execute(
+        """SELECT p.*, v.code AS vendor_code, v.name AS vendor_name,
+                  v.gstin AS vendor_gstin, v.state_code AS vendor_state_code,
+                  s.code AS store_code, s.name AS store_name
+             FROM purchase_orders p
+             LEFT JOIN vendors v ON v.id = p.vendor_id
+             LEFT JOIN stores s ON s.id = p.store_id
+            WHERE p.id = ?""", (po_id,),
+    ).fetchone()
+    if not row:
+        return None
+    doc = _row(row)
+    doc["lines"] = [_row(r) for r in db.execute(
+        "SELECT * FROM purchase_order_lines WHERE purchase_order_id = ? ORDER BY line_no",
+        (po_id,),
+    ).fetchall()]
     outstanding_total = 0
     for line in doc["lines"]:
         ordered = int(line["quantity_milli"])
@@ -1674,179 +1941,226 @@ def create_goods_receipt(
     store's stock by exactly one delivery, and nobody finds it until a physical
     count months later.
     """
+    # Validated HERE as well as in the core, and BEFORE the replay check, so a
+    # malformed retry is still refused rather than answered with the receipt.
     parsed = _coerce_grn_lines(lines)
     if qc_status not in ("pending", "passed", "failed", "partial"):
         raise ProcurementError(f"unknown qc_status {qc_status!r}", code="bad_qc_status")
 
     if idempotency_key:
         with db_session() as db:
-            existing = db.execute(
-                "SELECT id FROM goods_receipts WHERE idempotency_key = ?",
-                (idempotency_key,),
-            ).fetchone()
-        if existing:
-            doc = get_goods_receipt(existing["id"]) or {}
+            existing_id = _goods_receipt_id_for_key(db, idempotency_key)
+        if existing_id is not None:
+            doc = get_goods_receipt(existing_id) or {}
             doc["idempotent_replay"] = True
             return doc
 
     with db_session(immediate=True) as db:
-        po = db.execute("SELECT * FROM purchase_orders WHERE id = ?",
-                        (purchase_order_id,)).fetchone()
-        if not po:
-            raise ProcurementError(f"no purchase order {purchase_order_id}", code="not_found")
-        if po["status"] not in RECEIVABLE_PO_STATUSES:
-            raise ProcurementError(
-                f"purchase order is {po['status']!r}; goods may only be received "
-                f"against an order in {sorted(RECEIVABLE_PO_STATUSES)}",
-                code="po_not_receivable",
-            )
-        po_lines = {int(r["line_no"]): _row(r) for r in db.execute(
-            "SELECT * FROM purchase_order_lines WHERE purchase_order_id = ?",
-            (purchase_order_id,),
-        ).fetchall()}
-
-        store_id = po["store_id"]
-        if store_code:
-            store = db.execute("SELECT id FROM stores WHERE code = ?",
-                               (store_code.upper(),)).fetchone()
-            if not store:
-                raise ProcurementError(f"no store with code {store_code!r}", code="not_found")
-            store_id = store["id"]
-        if store_id is None:
-            raise ProcurementError(
-                "a goods receipt needs a store, neither the purchase order nor "
-                "this receipt names one", code="missing_store")
-
-        today = date.today()
-        prepared: list[dict] = []
-        for line in parsed:
-            if line.po_line_no is None:
-                raise ProcurementError(
-                    "each receipt line must name the purchase-order line it is "
-                    "against (po_line_no)", code="bad_line")
-            po_line = po_lines.get(int(line.po_line_no))
-            if not po_line:
-                raise ProcurementError(
-                    f"purchase order {purchase_order_id} has no line {line.po_line_no}",
-                    code="bad_line")
-            if po_line["status"] in ("cancelled", "short_closed"):
-                raise ProcurementError(
-                    f"line {line.po_line_no} is {po_line['status']!r} and cannot receive",
-                    code="line_closed")
-
-            accepted = assert_quantity_milli(line.accepted_quantity_milli,
-                                             "accepted_quantity_milli")
-            rejected = assert_quantity_milli(line.rejected_quantity_milli,
-                                             "rejected_quantity_milli")
-            if accepted < 0 or rejected < 0:
-                raise ProcurementError("receipt quantities must not be negative",
-                                       code="bad_quantity")
-            if accepted == 0 and rejected == 0:
-                raise ProcurementError(
-                    f"line {line.po_line_no} receives nothing; leave it off the "
-                    "receipt instead", code="empty_line")
-
-            ordered = int(po_line["quantity_milli"])
-            already = int(po_line["received_quantity_milli"] or 0)
-            outstanding = ordered - already
-            if accepted + rejected > outstanding:
-                raise ProcurementError(
-                    f"line {line.po_line_no}: receiving "
-                    f"{format_quantity(accepted + rejected)} against an outstanding "
-                    f"{format_quantity(outstanding)} would over-receive the order. "
-                    "Raise an amended purchase order for the excess.",
-                    code="over_receipt",
-                )
-
-            item = None
-            if po_line.get("inventory_item_id"):
-                item_row = db.execute("SELECT * FROM inventory_items WHERE id = ?",
-                                      (po_line["inventory_item_id"],)).fetchone()
-                item = _row(item_row) if item_row else None
-            if item is None:
-                item = _resolve_item(db, po_line["item_code"])
-
-            expiry = _as_date_str(line.expiry_date, "expiry_date")
-            batch = _clean(line.batch_no, field_name="batch_no")
-            if accepted > 0 and item_requires_expiry(item) and (not batch or not expiry):
-                raise ProcurementError(
-                    f"{po_line['item_code']} is a {item.get('category')}: it must be "
-                    "received with a batch number and an expiry date, because a "
-                    "recall or an invalidated result has to be traceable to a lot",
-                    code="expiry_required",
-                )
-            if accepted > 0 and expiry and date.fromisoformat(expiry) < today:
-                # Applies to ANY item that was given a date, not only the
-                # mandatory categories: if a storekeeper typed an expiry, the
-                # system must act on it rather than file it.
-                raise ProcurementError(
-                    f"{po_line['item_code']} batch {batch or '(none)'} expired on "
-                    f"{expiry}; expired stock must not be received into a store",
-                    code="expired_on_receipt",
-                )
-            if rejected > 0 and not (line.rejection_reason or "").strip():
-                raise ProcurementError(
-                    f"line {line.po_line_no} rejects "
-                    f"{format_quantity(rejected)} with no reason given",
-                    code="missing_field")
-
-            rate = (assert_paise(line.unit_rate_paise) if line.unit_rate_paise is not None
-                    else int(po_line["unit_rate_paise"] or 0))
-            totals = compute_line(
-                unit_rate_paise=rate,
-                quantity_milli=accepted,
-                gst_rate_bp=int(po_line["gst_rate_bp"] or 0),
-                gst_treatment=po_line["gst_treatment"],
-                interstate=bool(po["is_interstate"]),
-            )
-            prepared.append({
-                "po_line": po_line, "item": item, "accepted": accepted,
-                "rejected": rejected, "batch": batch, "expiry": expiry,
-                "rate": rate, "totals": totals, "input": line,
-            })
-
-        foot = compute_invoice([p["totals"] for p in prepared], round_off_to_rupee=False)
-        cur = db.execute(
-            """INSERT INTO goods_receipts (grn_number, purchase_order_id, vendor_id,
-                   store_id, vendor_invoice_number, vendor_invoice_date,
-                   vendor_invoice_total_paise, status, qc_status, subtotal_paise,
-                   taxable_value_paise, cgst_paise, sgst_paise, igst_paise, tax_paise,
-                   total_paise, received_by, idempotency_key, remarks)
-               VALUES (NULL,?,?,?,?,?,?, 'draft', ?, ?,?,?,?,?,?,?, ?,?,?)""",
-            (purchase_order_id, po["vendor_id"], store_id, vendor_invoice_number,
-             _as_date_str(vendor_invoice_date, "vendor_invoice_date"),
-             assert_paise(vendor_invoice_total_paise)
-             if vendor_invoice_total_paise is not None else None,
-             qc_status, foot.subtotal_paise, foot.taxable_value_paise, foot.cgst_paise,
-             foot.sgst_paise, foot.igst_paise, foot.tax_paise, foot.total_paise,
-             received_by, idempotency_key, remarks),
+        grn_id = _create_goods_receipt_core(
+            db, purchase_order_id=purchase_order_id, lines=parsed,
+            store_code=store_code, vendor_invoice_number=vendor_invoice_number,
+            vendor_invoice_date=vendor_invoice_date,
+            vendor_invoice_total_paise=vendor_invoice_total_paise,
+            qc_status=qc_status, received_by=received_by, remarks=remarks,
+            idempotency_key=idempotency_key, today=date.today(),
         )
-        grn_id = cur.lastrowid
-        for line_no, p in enumerate(prepared, start=1):
-            po_line, totals = p["po_line"], p["totals"]
-            db.execute(
-                """INSERT INTO goods_receipt_lines (goods_receipt_id, line_no,
-                       purchase_order_line_id, inventory_item_id, item_code, description,
-                       batch_no, expiry_date, uom, quantity_milli, accepted_quantity_milli,
-                       rejected_quantity_milli, rejection_reason, unit_rate_paise,
-                       gross_paise, discount_paise, gst_treatment, gst_rate_bp,
-                       taxable_value_paise, cgst_paise, sgst_paise, igst_paise,
-                       tax_paise, total_paise, remarks)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (grn_id, line_no, po_line["id"], po_line.get("inventory_item_id"),
-                 po_line["item_code"],
-                 p["input"].description or po_line["description"],
-                 p["batch"], p["expiry"], p["input"].uom or po_line["uom"],
-                 p["accepted"] + p["rejected"], p["accepted"], p["rejected"],
-                 (p["input"].rejection_reason or "").strip() or None, p["rate"],
-                 totals.gross_paise, totals.discount_paise, totals.gst_treatment,
-                 totals.gst_rate_bp, totals.taxable_value_paise, totals.cgst_paise,
-                 totals.sgst_paise, totals.igst_paise, totals.tax_paise,
-                 totals.total_paise, p["input"].remarks),
-            )
     if post:
         return post_goods_receipt(grn_id, actor=received_by)
     return get_goods_receipt(grn_id) or {}
+
+
+def _goods_receipt_id_for_key(db, idempotency_key: str) -> Optional[int]:
+    """The receipt already saved under this idempotency key, or None."""
+    row = db.execute(
+        "SELECT id FROM goods_receipts WHERE idempotency_key = ?",
+        (idempotency_key,),
+    ).fetchone()
+    return int(row["id"]) if row else None
+
+
+def _create_goods_receipt_core(
+    db,
+    *,
+    purchase_order_id: int,
+    lines: Sequence[Any],
+    store_code: Optional[str] = None,
+    vendor_invoice_number: Optional[str] = None,
+    vendor_invoice_date: Optional[date | str] = None,
+    vendor_invoice_total_paise: Optional[int] = None,
+    qc_status: str = "passed",
+    received_by: Optional[str] = None,
+    remarks: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+    today: date | datetime | str,
+) -> int:
+    """`create_goods_receipt` on the caller's connection, as a DRAFT. Returns the
+    new receipt id.
+
+    Every rule in `create_goods_receipt` is enforced here. What is NOT here:
+    the idempotent replay (look the key up with `_goods_receipt_id_for_key`
+    first, inside the same transaction) and the post (call
+    `_post_goods_receipt_core`). `today` is the date an expiry is compared
+    with: "expired" means before it. It is required so the caller decides
+    which clock that is (see `_calendar_today`)."""
+    receipt_today = _calendar_today(today)
+    parsed = _coerce_grn_lines(lines)
+    if qc_status not in ("pending", "passed", "failed", "partial"):
+        raise ProcurementError(f"unknown qc_status {qc_status!r}", code="bad_qc_status")
+
+    po = db.execute("SELECT * FROM purchase_orders WHERE id = ?",
+                    (purchase_order_id,)).fetchone()
+    if not po:
+        raise ProcurementError(f"no purchase order {purchase_order_id}", code="not_found")
+    if po["status"] not in RECEIVABLE_PO_STATUSES:
+        raise ProcurementError(
+            f"purchase order is {po['status']!r}; goods may only be received "
+            f"against an order in {sorted(RECEIVABLE_PO_STATUSES)}",
+            code="po_not_receivable",
+        )
+    po_lines = {int(r["line_no"]): _row(r) for r in db.execute(
+        "SELECT * FROM purchase_order_lines WHERE purchase_order_id = ?",
+        (purchase_order_id,),
+    ).fetchall()}
+
+    store_id = po["store_id"]
+    if store_code:
+        store = db.execute("SELECT id FROM stores WHERE code = ?",
+                           (store_code.upper(),)).fetchone()
+        if not store:
+            raise ProcurementError(f"no store with code {store_code!r}", code="not_found")
+        store_id = store["id"]
+    if store_id is None:
+        raise ProcurementError(
+            "a goods receipt needs a store, neither the purchase order nor "
+            "this receipt names one", code="missing_store")
+
+    prepared: list[dict] = []
+    for line in parsed:
+        if line.po_line_no is None:
+            raise ProcurementError(
+                "each receipt line must name the purchase-order line it is "
+                "against (po_line_no)", code="bad_line")
+        po_line = po_lines.get(int(line.po_line_no))
+        if not po_line:
+            raise ProcurementError(
+                f"purchase order {purchase_order_id} has no line {line.po_line_no}",
+                code="bad_line")
+        if po_line["status"] in ("cancelled", "short_closed"):
+            raise ProcurementError(
+                f"line {line.po_line_no} is {po_line['status']!r} and cannot receive",
+                code="line_closed")
+
+        accepted = assert_quantity_milli(line.accepted_quantity_milli,
+                                         "accepted_quantity_milli")
+        rejected = assert_quantity_milli(line.rejected_quantity_milli,
+                                         "rejected_quantity_milli")
+        if accepted < 0 or rejected < 0:
+            raise ProcurementError("receipt quantities must not be negative",
+                                   code="bad_quantity")
+        if accepted == 0 and rejected == 0:
+            raise ProcurementError(
+                f"line {line.po_line_no} receives nothing; leave it off the "
+                "receipt instead", code="empty_line")
+
+        ordered = int(po_line["quantity_milli"])
+        already = int(po_line["received_quantity_milli"] or 0)
+        outstanding = ordered - already
+        if accepted + rejected > outstanding:
+            raise ProcurementError(
+                f"line {line.po_line_no}: receiving "
+                f"{format_quantity(accepted + rejected)} against an outstanding "
+                f"{format_quantity(outstanding)} would over-receive the order. "
+                "Raise an amended purchase order for the excess.",
+                code="over_receipt",
+            )
+
+        item = None
+        if po_line.get("inventory_item_id"):
+            item_row = db.execute("SELECT * FROM inventory_items WHERE id = ?",
+                                  (po_line["inventory_item_id"],)).fetchone()
+            item = _row(item_row) if item_row else None
+        if item is None:
+            item = _resolve_item(db, po_line["item_code"])
+
+        expiry = _as_date_str(line.expiry_date, "expiry_date")
+        batch = _clean(line.batch_no, field_name="batch_no")
+        if accepted > 0 and item_requires_expiry(item) and (not batch or not expiry):
+            raise ProcurementError(
+                f"{po_line['item_code']} is a {item.get('category')}: it must be "
+                "received with a batch number and an expiry date, because a "
+                "recall or an invalidated result has to be traceable to a lot",
+                code="expiry_required",
+            )
+        if accepted > 0 and expiry and date.fromisoformat(expiry) < receipt_today:
+            # Applies to ANY item that was given a date, not only the
+            # mandatory categories: if a storekeeper typed an expiry, the
+            # system must act on it rather than file it.
+            raise ProcurementError(
+                f"{po_line['item_code']} batch {batch or '(none)'} expired on "
+                f"{expiry}; expired stock must not be received into a store",
+                code="expired_on_receipt",
+            )
+        if rejected > 0 and not (line.rejection_reason or "").strip():
+            raise ProcurementError(
+                f"line {line.po_line_no} rejects "
+                f"{format_quantity(rejected)} with no reason given",
+                code="missing_field")
+
+        rate = (assert_paise(line.unit_rate_paise) if line.unit_rate_paise is not None
+                else int(po_line["unit_rate_paise"] or 0))
+        totals = compute_line(
+            unit_rate_paise=rate,
+            quantity_milli=accepted,
+            gst_rate_bp=int(po_line["gst_rate_bp"] or 0),
+            gst_treatment=po_line["gst_treatment"],
+            interstate=bool(po["is_interstate"]),
+        )
+        prepared.append({
+            "po_line": po_line, "item": item, "accepted": accepted,
+            "rejected": rejected, "batch": batch, "expiry": expiry,
+            "rate": rate, "totals": totals, "input": line,
+        })
+
+    foot = compute_invoice([p["totals"] for p in prepared], round_off_to_rupee=False)
+    cur = db.execute(
+        """INSERT INTO goods_receipts (grn_number, purchase_order_id, vendor_id,
+               store_id, vendor_invoice_number, vendor_invoice_date,
+               vendor_invoice_total_paise, status, qc_status, subtotal_paise,
+               taxable_value_paise, cgst_paise, sgst_paise, igst_paise, tax_paise,
+               total_paise, received_by, idempotency_key, remarks)
+           VALUES (NULL,?,?,?,?,?,?, 'draft', ?, ?,?,?,?,?,?,?, ?,?,?)""",
+        (purchase_order_id, po["vendor_id"], store_id, vendor_invoice_number,
+         _as_date_str(vendor_invoice_date, "vendor_invoice_date"),
+         assert_paise(vendor_invoice_total_paise)
+         if vendor_invoice_total_paise is not None else None,
+         qc_status, foot.subtotal_paise, foot.taxable_value_paise, foot.cgst_paise,
+         foot.sgst_paise, foot.igst_paise, foot.tax_paise, foot.total_paise,
+         received_by, idempotency_key, remarks),
+    )
+    grn_id = cur.lastrowid
+    for line_no, p in enumerate(prepared, start=1):
+        po_line, totals = p["po_line"], p["totals"]
+        db.execute(
+            """INSERT INTO goods_receipt_lines (goods_receipt_id, line_no,
+                   purchase_order_line_id, inventory_item_id, item_code, description,
+                   batch_no, expiry_date, uom, quantity_milli, accepted_quantity_milli,
+                   rejected_quantity_milli, rejection_reason, unit_rate_paise,
+                   gross_paise, discount_paise, gst_treatment, gst_rate_bp,
+                   taxable_value_paise, cgst_paise, sgst_paise, igst_paise,
+                   tax_paise, total_paise, remarks)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (grn_id, line_no, po_line["id"], po_line.get("inventory_item_id"),
+             po_line["item_code"],
+             p["input"].description or po_line["description"],
+             p["batch"], p["expiry"], p["input"].uom or po_line["uom"],
+             p["accepted"] + p["rejected"], p["accepted"], p["rejected"],
+             (p["input"].rejection_reason or "").strip() or None, p["rate"],
+             totals.gross_paise, totals.discount_paise, totals.gst_treatment,
+             totals.gst_rate_bp, totals.taxable_value_paise, totals.cgst_paise,
+             totals.sgst_paise, totals.igst_paise, totals.tax_paise,
+             totals.total_paise, p["input"].remarks),
+        )
+    return int(grn_id)
 
 
 def post_goods_receipt(grn_id: int, *, actor: Optional[str] = None) -> dict:
@@ -1859,63 +2173,71 @@ def post_goods_receipt(grn_id: int, *, actor: Optional[str] = None) -> dict:
     taken in.
     """
     with db_session(immediate=True) as db:
-        grn = db.execute("SELECT * FROM goods_receipts WHERE id = ?", (grn_id,)).fetchone()
-        if not grn:
-            raise ProcurementError(f"no goods receipt {grn_id}", code="not_found")
-        assert_transition("goods_receipt", grn["status"], "posted")
-        lines = [_row(r) for r in db.execute(
-            "SELECT * FROM goods_receipt_lines WHERE goods_receipt_id = ? ORDER BY line_no",
-            (grn_id,)).fetchall()]
-
-        for line in lines:
-            accepted = int(line["accepted_quantity_milli"] or 0)
-            if accepted > 0:
-                _insert_movement(
-                    db,
-                    inventory_item_id=line.get("inventory_item_id"),
-                    item_code=line["item_code"],
-                    store_id=grn["store_id"],
-                    batch_no=line.get("batch_no"),
-                    expiry_date=line.get("expiry_date"),
-                    movement_type="receipt",
-                    quantity_milli=accepted,
-                    unit_rate_paise=line.get("unit_rate_paise"),
-                    reference_type="grn",
-                    reference_id=str(grn_id),
-                    moved_by=actor,
-                    idempotency_key=f"grn:{grn_id}:line:{line['line_no']}",
-                    remarks=None,
-                )
-                rate = line.get("unit_rate_paise")
-                if rate is not None and int(rate) > 0 and line.get("inventory_item_id"):
-                    # LATEST PURCHASE RATE, not a weighted average. Stated
-                    # plainly because it matters: this is the rate the last
-                    # delivery came in at, and it is what stock issues are
-                    # valued at below. A finance department that wants moving
-                    # weighted average or FIFO needs a costing layer this
-                    # version does not have.
-                    db.execute(
-                        "UPDATE inventory_items SET last_purchase_rate_paise = ?, "
-                        "rate_is_configured = 1, updated_at = CURRENT_TIMESTAMP "
-                        "WHERE id = ?", (int(rate), line["inventory_item_id"]),
-                    )
-            if line.get("purchase_order_line_id"):
-                db.execute(
-                    "UPDATE purchase_order_lines SET received_quantity_milli = "
-                    "received_quantity_milli + ? WHERE id = ?",
-                    (accepted, line["purchase_order_line_id"]),
-                )
-
-        db.execute(
-            "UPDATE goods_receipts SET status = 'posted', posted_by = ?, posted_at = ? "
-            "WHERE id = ?", (actor, _now(), grn_id),
-        )
-        if grn["purchase_order_id"]:
-            _refresh_po_receipt_status(db, grn["purchase_order_id"])
+        _post_goods_receipt_core(db, grn_id, actor=actor)
     # Deliberately AFTER the commit: the stock is on the shelf either way, and a
     # blank GRN number is a repairable annoyance where a failed post would not be.
     _stamp_document_number("goods_receipt", grn_id)
     return get_goods_receipt(grn_id) or {}
+
+
+def _post_goods_receipt_core(db, grn_id: int, *, actor: Optional[str] = None) -> list[dict]:
+    """`post_goods_receipt` on the caller's connection. Returns the receipt's
+    lines as they were posted. The caller stamps the GRN number after its
+    transaction commits."""
+    grn = db.execute("SELECT * FROM goods_receipts WHERE id = ?", (grn_id,)).fetchone()
+    if not grn:
+        raise ProcurementError(f"no goods receipt {grn_id}", code="not_found")
+    assert_transition("goods_receipt", grn["status"], "posted")
+    lines = [_row(r) for r in db.execute(
+        "SELECT * FROM goods_receipt_lines WHERE goods_receipt_id = ? ORDER BY line_no",
+        (grn_id,)).fetchall()]
+
+    for line in lines:
+        accepted = int(line["accepted_quantity_milli"] or 0)
+        if accepted > 0:
+            _insert_movement(
+                db,
+                inventory_item_id=line.get("inventory_item_id"),
+                item_code=line["item_code"],
+                store_id=grn["store_id"],
+                batch_no=line.get("batch_no"),
+                expiry_date=line.get("expiry_date"),
+                movement_type="receipt",
+                quantity_milli=accepted,
+                unit_rate_paise=line.get("unit_rate_paise"),
+                reference_type="grn",
+                reference_id=str(grn_id),
+                moved_by=actor,
+                idempotency_key=f"grn:{grn_id}:line:{line['line_no']}",
+                remarks=None,
+            )
+            rate = line.get("unit_rate_paise")
+            if rate is not None and int(rate) > 0 and line.get("inventory_item_id"):
+                # LATEST PURCHASE RATE, not a weighted average. Stated
+                # plainly because it matters: this is the rate the last
+                # delivery came in at, and it is what stock issues are
+                # valued at below. A finance department that wants moving
+                # weighted average or FIFO needs a costing layer this
+                # version does not have.
+                db.execute(
+                    "UPDATE inventory_items SET last_purchase_rate_paise = ?, "
+                    "rate_is_configured = 1, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE id = ?", (int(rate), line["inventory_item_id"]),
+                )
+        if line.get("purchase_order_line_id"):
+            db.execute(
+                "UPDATE purchase_order_lines SET received_quantity_milli = "
+                "received_quantity_milli + ? WHERE id = ?",
+                (accepted, line["purchase_order_line_id"]),
+            )
+
+    db.execute(
+        "UPDATE goods_receipts SET status = 'posted', posted_by = ?, posted_at = ? "
+        "WHERE id = ?", (actor, _now(), grn_id),
+    )
+    if grn["purchase_order_id"]:
+        _refresh_po_receipt_status(db, grn["purchase_order_id"])
+    return lines
 
 
 def _refresh_po_receipt_status(db, po_id: int) -> str:
@@ -1960,38 +2282,49 @@ def cancel_goods_receipt(grn_id: int, *, reason: str, actor: Optional[str] = Non
     """Cancel a DRAFT receipt. A posted one cannot be cancelled — see
     GRN_TRANSITIONS: the stock has already moved."""
     with db_session(immediate=True) as db:
-        row = db.execute("SELECT status FROM goods_receipts WHERE id = ?",
-                         (grn_id,)).fetchone()
-        if not row:
-            raise ProcurementError(f"no goods receipt {grn_id}", code="not_found")
-        assert_transition("goods_receipt", row["status"], "cancelled")
-        if not (reason or "").strip():
-            raise ProcurementError("a cancellation needs a reason", code="missing_field")
-        db.execute(
-            "UPDATE goods_receipts SET status = 'cancelled', cancelled_by = ?, "
-            "cancelled_at = ?, cancel_reason = ? WHERE id = ?",
-            (actor, _now(), reason.strip(), grn_id),
-        )
+        _cancel_goods_receipt_core(db, grn_id, reason=reason, actor=actor)
     return get_goods_receipt(grn_id) or {}
+
+
+def _cancel_goods_receipt_core(db, grn_id: int, *, reason: str,
+                               actor: Optional[str] = None) -> None:
+    """`cancel_goods_receipt` on the caller's connection."""
+    row = db.execute("SELECT status FROM goods_receipts WHERE id = ?",
+                     (grn_id,)).fetchone()
+    if not row:
+        raise ProcurementError(f"no goods receipt {grn_id}", code="not_found")
+    assert_transition("goods_receipt", row["status"], "cancelled")
+    if not (reason or "").strip():
+        raise ProcurementError("a cancellation needs a reason", code="missing_field")
+    db.execute(
+        "UPDATE goods_receipts SET status = 'cancelled', cancelled_by = ?, "
+        "cancelled_at = ?, cancel_reason = ? WHERE id = ?",
+        (actor, _now(), reason.strip(), grn_id),
+    )
 
 
 def get_goods_receipt(grn_id: int) -> Optional[dict]:
     with db_session() as db:
-        row = db.execute(
-            """SELECT g.*, v.code AS vendor_code, v.name AS vendor_name,
-                      s.code AS store_code, s.name AS store_name, p.po_number
-                 FROM goods_receipts g
-                 LEFT JOIN vendors v ON v.id = g.vendor_id
-                 LEFT JOIN stores s ON s.id = g.store_id
-                 LEFT JOIN purchase_orders p ON p.id = g.purchase_order_id
-                WHERE g.id = ?""", (grn_id,),
-        ).fetchone()
-        if not row:
-            return None
-        doc = _row(row)
-        doc["lines"] = [_row(r) for r in db.execute(
-            "SELECT * FROM goods_receipt_lines WHERE goods_receipt_id = ? ORDER BY line_no",
-            (grn_id,)).fetchall()]
+        return _get_goods_receipt_core(db, grn_id)
+
+
+def _get_goods_receipt_core(db, grn_id: int) -> Optional[dict]:
+    """`get_goods_receipt` on the caller's connection."""
+    row = db.execute(
+        """SELECT g.*, v.code AS vendor_code, v.name AS vendor_name,
+                  s.code AS store_code, s.name AS store_name, p.po_number
+             FROM goods_receipts g
+             LEFT JOIN vendors v ON v.id = g.vendor_id
+             LEFT JOIN stores s ON s.id = g.store_id
+             LEFT JOIN purchase_orders p ON p.id = g.purchase_order_id
+            WHERE g.id = ?""", (grn_id,),
+    ).fetchone()
+    if not row:
+        return None
+    doc = _row(row)
+    doc["lines"] = [_row(r) for r in db.execute(
+        "SELECT * FROM goods_receipt_lines WHERE goods_receipt_id = ? ORDER BY line_no",
+        (grn_id,)).fetchall()]
     for line in doc["lines"]:
         line["accepted_quantity_display"] = format_quantity(
             line.get("accepted_quantity_milli"), line.get("uom"))
@@ -2127,6 +2460,39 @@ def record_stock_movement(
     act on: it means the ledger and the shelf disagree, and continuing to issue
     against it hides the discrepancy instead of surfacing it.
     """
+    with db_session(immediate=True) as db:
+        return _record_stock_movement_core(
+            db, item_code=item_code, store_code=store_code,
+            movement_type=movement_type, quantity_milli=quantity_milli,
+            batch_no=batch_no, expiry_date=expiry_date,
+            unit_rate_paise=unit_rate_paise, reference_type=reference_type,
+            reference_id=reference_id, patient_id=patient_id, moved_by=moved_by,
+            idempotency_key=idempotency_key, remarks=remarks,
+            allow_negative=allow_negative,
+        )
+
+
+def _record_stock_movement_core(
+    db,
+    *,
+    item_code: str,
+    store_code: str,
+    movement_type: str,
+    quantity_milli: int,
+    batch_no: Optional[str] = None,
+    expiry_date: Optional[date | str] = None,
+    unit_rate_paise: Optional[int] = None,
+    reference_type: Optional[str] = None,
+    reference_id: Optional[str] = None,
+    patient_id: Optional[str] = None,
+    moved_by: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+    remarks: Optional[str] = None,
+    allow_negative: bool = False,
+) -> dict:
+    """`record_stock_movement` on the caller's connection. The on-hand check
+    reads and writes in the caller's transaction, so that transaction must be
+    an immediate one (it is in the wrapper)."""
     if movement_type not in INWARD_MOVEMENTS + OUTWARD_MOVEMENTS:
         raise ProcurementError(f"unknown movement type {movement_type!r}",
                                code="bad_movement_type")
@@ -2139,45 +2505,44 @@ def record_stock_movement(
             "pass a positive magnitude; the direction comes from movement_type "
             "(only 'adjustment' may be signed)", code="bad_quantity")
 
-    with db_session(immediate=True) as db:
-        item = _resolve_item(db, item_code.upper())
-        if not item:
-            raise ProcurementError(f"no non-pharmacy item with code {item_code!r}",
-                                   code="unknown_item")
-        store = db.execute("SELECT * FROM stores WHERE code = ?",
-                           (store_code.upper(),)).fetchone()
-        if not store:
-            raise ProcurementError(f"no store with code {store_code!r}", code="not_found")
+    item = _resolve_item(db, item_code.upper())
+    if not item:
+        raise ProcurementError(f"no non-pharmacy item with code {item_code!r}",
+                               code="unknown_item")
+    store = db.execute("SELECT * FROM stores WHERE code = ?",
+                       (store_code.upper(),)).fetchone()
+    if not store:
+        raise ProcurementError(f"no store with code {store_code!r}", code="not_found")
 
-        signed = -qty if (movement_type in OUTWARD_MOVEMENTS and qty > 0) else qty
-        current = db.execute(
-            "SELECT COALESCE(SUM(quantity_milli),0) AS q FROM stock_movements "
-            "WHERE item_code = ? AND store_id IS ?", (item["code"], store["id"]),
-        ).fetchone()["q"]
-        if not allow_negative and int(current) + signed < 0:
-            raise ProcurementError(
-                f"{item['code']} in {store['code']} has "
-                f"{format_quantity(int(current), item['uom'])} on hand; issuing "
-                f"{format_quantity(abs(signed), item['uom'])} would take it negative",
-                code="insufficient_stock",
-            )
-
-        rate = unit_rate_paise
-        if rate is None and movement_type in OUTWARD_MOVEMENTS:
-            rate = (item["last_purchase_rate_paise"]
-                    if item.get("rate_is_configured") else None)
-
-        movement_id = _insert_movement(
-            db,
-            inventory_item_id=item["id"], item_code=item["code"], store_id=store["id"],
-            movement_type=movement_type, quantity_milli=qty, batch_no=batch_no,
-            expiry_date=_as_date_str(expiry_date, "expiry_date"), unit_rate_paise=rate,
-            reference_type=reference_type, reference_id=reference_id,
-            patient_id=patient_id, moved_by=moved_by, idempotency_key=idempotency_key,
-            remarks=remarks,
+    signed = -qty if (movement_type in OUTWARD_MOVEMENTS and qty > 0) else qty
+    current = db.execute(
+        "SELECT COALESCE(SUM(quantity_milli),0) AS q FROM stock_movements "
+        "WHERE item_code = ? AND store_id IS ?", (item["code"], store["id"]),
+    ).fetchone()["q"]
+    if not allow_negative and int(current) + signed < 0:
+        raise ProcurementError(
+            f"{item['code']} in {store['code']} has "
+            f"{format_quantity(int(current), item['uom'])} on hand; issuing "
+            f"{format_quantity(abs(signed), item['uom'])} would take it negative",
+            code="insufficient_stock",
         )
-        row = db.execute("SELECT * FROM stock_movements WHERE id = ?",
-                         (movement_id,)).fetchone()
+
+    rate = unit_rate_paise
+    if rate is None and movement_type in OUTWARD_MOVEMENTS:
+        rate = (item["last_purchase_rate_paise"]
+                if item.get("rate_is_configured") else None)
+
+    movement_id = _insert_movement(
+        db,
+        inventory_item_id=item["id"], item_code=item["code"], store_id=store["id"],
+        movement_type=movement_type, quantity_milli=qty, batch_no=batch_no,
+        expiry_date=_as_date_str(expiry_date, "expiry_date"), unit_rate_paise=rate,
+        reference_type=reference_type, reference_id=reference_id,
+        patient_id=patient_id, moved_by=moved_by, idempotency_key=idempotency_key,
+        remarks=remarks,
+    )
+    row = db.execute("SELECT * FROM stock_movements WHERE id = ?",
+                     (movement_id,)).fetchone()
     return _row(row)
 
 
@@ -2200,11 +2565,34 @@ def issue_stock(
     left the store for this patient so it can be charged. It writes nothing to
     any clinical table and nothing clinical reads it.
     """
+    with db_session(immediate=True) as db:
+        return _issue_stock_core(
+            db, item_code=item_code, store_code=store_code,
+            quantity_milli=quantity_milli, department=department,
+            patient_id=patient_id, batch_no=batch_no, moved_by=moved_by,
+            idempotency_key=idempotency_key, remarks=remarks,
+        )
+
+
+def _issue_stock_core(
+    db,
+    *,
+    item_code: str,
+    store_code: str,
+    quantity_milli: int,
+    department: Optional[str] = None,
+    patient_id: Optional[str] = None,
+    batch_no: Optional[str] = None,
+    moved_by: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+    remarks: Optional[str] = None,
+) -> dict:
+    """`issue_stock` on the caller's connection."""
     note = remarks
     if department:
         note = f"{department}" + (f", {remarks}" if remarks else "")
-    return record_stock_movement(
-        item_code=item_code, store_code=store_code, movement_type="issue",
+    return _record_stock_movement_core(
+        db, item_code=item_code, store_code=store_code, movement_type="issue",
         quantity_milli=quantity_milli, batch_no=batch_no,
         reference_type="patient_charge" if patient_id else "manual",
         patient_id=patient_id, moved_by=moved_by, idempotency_key=idempotency_key,

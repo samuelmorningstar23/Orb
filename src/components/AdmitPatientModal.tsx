@@ -136,8 +136,12 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
     spo2: '',
     temperature: '',
     rr: '',
-    consciousness: 'alert',
-    on_oxygen: 'no',
+    // '' is "not assessed", sent as null. Both used to start at Alert and room
+    // air, so a form nobody touched recorded an assessment nobody made, NEWS2
+    // scored it as a complete set, and a confused patient on oxygen could be
+    // admitted 5 points low (ruled 2026-10-03, "fix and build everything").
+    consciousness: '',
+    on_oxygen: '',
 
     // Notes
     admitting_notes: '',
@@ -254,8 +258,10 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
           spo2: parseFloat(formData.spo2) || undefined,
           temperature: parseFloat(formData.temperature) || undefined,
           rr: parseFloat(formData.rr) || undefined,
-          consciousness: formData.consciousness,
-          on_oxygen: formData.on_oxygen === 'yes',
+          // null, never a guess: the server stores NULL and NEWS2 reports the
+          // set as incomplete. "" would be stored as on air (bool("") is False).
+          consciousness: formData.consciousness || null,
+          on_oxygen: formData.on_oxygen === 'yes' ? true : formData.on_oxygen === 'no' ? false : null,
         } : undefined
       };
 
@@ -606,8 +612,9 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
                         <input type="number" className="admit-input" value={formData.rr} onChange={e => handleChange('rr', e.target.value)} />
                       </div>
                       <div className="admit-form-group">
-                        <label>Consciousness (ACVPU)</label>
-                        <select className="admit-input" value={formData.consciousness} onChange={e => handleChange('consciousness', e.target.value)}>
+                        <label htmlFor="admit-acvpu">Consciousness (ACVPU)</label>
+                        <select id="admit-acvpu" className="admit-input" value={formData.consciousness} onChange={e => handleChange('consciousness', e.target.value)}>
+                          <option value="">Not assessed</option>
                           <option value="alert">Alert</option>
                           <option value="confusion">New confusion</option>
                           <option value="voice">Responds to voice</option>
@@ -616,8 +623,9 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
                         </select>
                       </div>
                       <div className="admit-form-group">
-                        <label>On supplemental O₂</label>
-                        <select className="admit-input" value={formData.on_oxygen} onChange={e => handleChange('on_oxygen', e.target.value)}>
+                        <label htmlFor="admit-oxygen">On supplemental O₂</label>
+                        <select id="admit-oxygen" className="admit-input" value={formData.on_oxygen} onChange={e => handleChange('on_oxygen', e.target.value)}>
+                          <option value="">Not assessed</option>
                           <option value="no">No (room air)</option>
                           <option value="yes">Yes</option>
                         </select>

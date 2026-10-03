@@ -336,3 +336,259 @@ def test_users_role_check_parity_with_storable_roles():
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
         ).fetchone()[0]
     assert f"CHECK (role IN ({role_check_sql()}))" in ddl
+
+
+# ── Migration 48: the hospital-system role batch (users rebuild) ─────────────
+
+_ROLES_33 = ("doctor", "nurse", "admin", "patient", "pharmacist", "cashier")
+_ROLES_48_NEW = ("receptionist", "ward_clerk", "lab_technician", "pathologist", "phlebotomist")
+
+
+def _legacy_users_db(drv, path, roles: tuple):
+    """A users table in the full column shape with a narrow role CHECK, two FK
+    children (one like audit trails, one like patients.attending_doctor_id),
+    foreign_keys ON like every Orb connection, and a few rows."""
+    raw = drv.connect(str(path))
+    raw.execute("PRAGMA foreign_keys = ON")
+    role_list = ", ".join(f"'{r}'" for r in roles)
+    raw.execute(f"""CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ({role_list})),
+        department TEXT,
+        registration_number TEXT,
+        password_hash TEXT NOT NULL,
+        pin_hash TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        failed_login_attempts INTEGER DEFAULT 0,
+        login_locked_until REAL,
+        totp_secret TEXT,
+        totp_enabled INTEGER DEFAULT 0,
+        token_version INTEGER DEFAULT 0,
+        totp_last_step INTEGER DEFAULT -1,
+        is_active INTEGER DEFAULT 1,
+        device_pin_hash TEXT,
+        device_pin_set_at TIMESTAMP,
+        device_pin_failed_attempts INTEGER DEFAULT 0,
+        device_pin_locked_until REAL)""")
+    raw.execute("CREATE TABLE audit_like (id INTEGER PRIMARY KEY, actor TEXT REFERENCES users(id))")
+    raw.execute("CREATE TABLE patients_like (id TEXT PRIMARY KEY, "
+                "attending_doctor_id TEXT REFERENCES users(id))")
+    raw.execute("INSERT INTO users (id, name, role, department, password_hash, token_version, "
+                "is_active, totp_enabled) VALUES ('D1', 'Dr A', 'doctor', 'Cardiology', 'x', 7, 0, 1)")
+    raw.execute("INSERT INTO users (id, name, role, password_hash) VALUES ('A1', 'Adm', 'admin', 'y')")
+    if "cashier" in roles:
+        raw.execute("INSERT INTO users (id, name, role, password_hash) VALUES ('C1', 'Csh', 'cashier', 'z')")
+    raw.execute("INSERT INTO audit_like (actor) VALUES ('D1')")
+    raw.execute("INSERT INTO patients_like (id, attending_doctor_id) VALUES ('P1', 'D1')")
+    raw.commit()
+    return raw
+
+
+@pytest.mark.parametrize("driver", _REBUILD_DRIVERS)
+def test_migration_48_widens_users_role_check_on_a_post_33_db(tmp_path, driver):
+    """The rebuild against the shape every live appliance has today (the
+    migration 33 CHECK), inside an IMMEDIATE transaction exactly as the runner
+    holds one. Rows, column order and FK children survive, the five new roles
+    insert, an unknown role is still refused, the runner gets its transaction
+    back, and a second run is a byte-identical no-op."""
+    import importlib
+
+    from migrations_his.m0048_users_role_batch import MIGRATION as M48
+
+    drv = importlib.import_module(driver)
+    raw = _legacy_users_db(drv, tmp_path / "post33.db", _ROLES_33)
+    before = raw.execute("SELECT * FROM users ORDER BY id").fetchall()
+
+    raw.isolation_level = None
+    raw.execute("BEGIN IMMEDIATE")
+    M48.apply(raw)
+    assert raw.in_transaction, "the rebuild must hand the runner an open transaction back"
+    raw.execute("COMMIT")
+
+    ddl = raw.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").fetchone()[0]
+    for role in _ROLES_33 + _ROLES_48_NEW:
+        assert f"'{role}'" in ddl, f"CHECK lost or never gained {role}"
+    cols = [r[1] for r in raw.execute("PRAGMA table_info(users)").fetchall()]
+    assert cols == _USERS_CANONICAL_COLS, f"column drift after rebuild: {cols}"
+    assert raw.execute("SELECT * FROM users ORDER BY id").fetchall() == before, "rows changed"
+    assert raw.execute("SELECT actor FROM audit_like").fetchone()[0] == "D1"
+    assert raw.execute("SELECT attending_doctor_id FROM patients_like").fetchone()[0] == "D1"
+    assert raw.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert raw.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert raw.execute("PRAGMA foreign_keys").fetchone()[0] == 1, "FK enforcement not restored"
+
+    for i, role in enumerate(_ROLES_48_NEW):
+        raw.execute("INSERT INTO users (id, name, role, password_hash) VALUES (?, ?, ?, 'x')",
+                    (f"N{i}", role, role))
+    try:
+        raw.execute("INSERT INTO users (id, name, role, password_hash) VALUES ('W1', 'W', 'storekeeper', 'x')")
+        raise AssertionError("CHECK accepted an unknown role")
+    except drv.IntegrityError:
+        pass
+
+    raw.execute("BEGIN IMMEDIATE")
+    M48.apply(raw)
+    raw.execute("COMMIT")
+    assert raw.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").fetchone()[0] == ddl
+    raw.close()
+
+
+def test_the_runner_applies_33_then_48_to_a_pre_33_db(tmp_path, monkeypatch):
+    """Two FK-parent rebuilds in ONE runner call, with no transaction open at
+    entry (the ops-script path): each rebuild commits and re-opens the runner's
+    transaction, and both land in the ledger."""
+    import sqlite3
+
+    raw = _legacy_users_db(sqlite3, tmp_path / "pre33.db",
+                           ("doctor", "nurse", "admin", "patient", "pharmacist"))
+    keep = [m for m in migrations.MIGRATIONS if m.version in (33, 48)]
+    assert [m.version for m in keep] == [33, 48]
+    monkeypatch.setattr(migrations, "MIGRATIONS", keep)
+
+    assert raw.in_transaction is False
+    ran = migrations.run_pending_migrations(raw)
+    assert ran == [33, 48]
+    ledger = {r[0] for r in raw.execute("SELECT version FROM schema_migrations").fetchall()}
+    assert ledger == {33, 48}
+    ddl = raw.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").fetchone()[0]
+    assert all(f"'{r}'" in ddl for r in _ROLES_33 + _ROLES_48_NEW)
+    assert raw.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 2
+    assert raw.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert migrations.run_pending_migrations(raw) == []
+    raw.close()
+
+
+def test_migration_48_froze_the_current_role_list():
+    from migrations_his.m0048_users_role_batch import FROZEN_ROLES
+    from roles import STORABLE_ROLES
+    assert tuple(FROZEN_ROLES) == tuple(migrations.LATEST_USERS_ROLE_CHECK) == tuple(STORABLE_ROLES)
+
+
+def test_the_session_db_admits_every_new_role():
+    with db_session() as db:
+        for role in _ROLES_48_NEW:
+            uid = f"M48-{role}"
+            db.execute("INSERT INTO users (id, name, role, password_hash) VALUES (?, ?, ?, 'x')",
+                       (uid, role, role))
+            assert db.execute("SELECT role FROM users WHERE id = ?", (uid,)).fetchone()["role"] == role
+            db.execute("DELETE FROM users WHERE id = ?", (uid,))
+
+
+# ── Migration 49: the Helix tables inside the runner ─────────────────────────
+
+_HELIX_TABLES = ("helix_medication_master", "helix_inventory_lots", "helix_patient_med_orders",
+                 "helix_pharmacy_verifications", "helix_stock_movements", "helix_transitions")
+_HELIX_INDEXES = {"idx_helix_orders_patient", "idx_helix_orders_status",
+                  "idx_helix_transitions_order", "idx_helix_transitions_idem"}
+
+
+def _shape(conn, table):
+    cols = sorted(tuple(r[1:]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall())
+    fks = sorted(tuple(r[2:]) for r in conn.execute(f"PRAGMA foreign_key_list({table})").fetchall())
+    return cols, fks
+
+
+def test_migration_49_creates_exactly_what_helix_schema_creates(tmp_path):
+    """Frozen copy versus the live fallback: same columns (name, type, not
+    null, default, key) and the same foreign keys, table by table."""
+    import sqlite3
+
+    from migrations_his.m0049_helix_tables_in_runner import MIGRATION as M49
+    from services.helix_db import HELIX_SCHEMA
+
+    by_runner = sqlite3.connect(str(tmp_path / "runner.db"))
+    M49.apply(by_runner)
+    by_runner.commit()
+    by_schema = sqlite3.connect(str(tmp_path / "schema.db"))
+    by_schema.executescript(HELIX_SCHEMA)
+    for table in _HELIX_TABLES:
+        assert _shape(by_runner, table) == _shape(by_schema, table), table
+    idx = lambda c: {r[0] for r in c.execute(  # noqa: E731
+        "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_helix%'").fetchall()}
+    assert idx(by_runner) == idx(by_schema) == _HELIX_INDEXES
+    by_runner.close()
+    by_schema.close()
+
+
+def test_migration_49_is_idempotent(tmp_path):
+    import sqlite3
+
+    from migrations_his.m0049_helix_tables_in_runner import MIGRATION as M49
+
+    conn = sqlite3.connect(str(tmp_path / "twice.db"))
+    M49.apply(conn)
+    conn.commit()
+    first = conn.execute("SELECT type, name, sql FROM sqlite_master ORDER BY name").fetchall()
+    M49.apply(conn)
+    conn.commit()
+    assert conn.execute("SELECT type, name, sql FROM sqlite_master ORDER BY name").fetchall() == first
+    conn.close()
+
+
+def test_migration_49_never_touches_an_existing_legacy_helix_table(tmp_path):
+    """An old narrow orders table stays for init_helix_db to widen, and an
+    index whose column a legacy table lacks is skipped rather than failing
+    boot."""
+    import sqlite3
+
+    from migrations_his.m0049_helix_tables_in_runner import MIGRATION as M49
+
+    conn = sqlite3.connect(str(tmp_path / "legacy.db"))
+    conn.execute("CREATE TABLE helix_patient_med_orders (id TEXT PRIMARY KEY, patient_id TEXT, "
+                 "medication_id TEXT, status TEXT, prescribed_by TEXT)")
+    conn.execute("CREATE TABLE helix_transitions (id TEXT PRIMARY KEY, order_id TEXT, "
+                 "from_status TEXT, to_status TEXT)")
+    conn.execute("INSERT INTO helix_patient_med_orders (id, status) VALUES ('O1', 'pending')")
+    conn.commit()
+    legacy_ddl = conn.execute("SELECT sql FROM sqlite_master WHERE name='helix_patient_med_orders'").fetchone()[0]
+
+    M49.apply(conn)
+    conn.commit()
+
+    assert conn.execute("SELECT sql FROM sqlite_master WHERE name='helix_patient_med_orders'"
+                        ).fetchone()[0] == legacy_ddl
+    assert conn.execute("SELECT id FROM helix_patient_med_orders").fetchall() == [("O1",)]
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    assert set(_HELIX_TABLES) <= tables
+    idx = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()}
+    assert "idx_helix_transitions_idem" not in idx, "legacy table has no idempotency_key"
+    assert {"idx_helix_orders_patient", "idx_helix_orders_status", "idx_helix_transitions_order"} <= idx
+    conn.close()
+
+
+def test_a_failure_inside_migration_49_rolls_back_the_whole_run(tmp_path, monkeypatch):
+    """test_migration_atomicity's pattern: 47 and 49 pending together, 49 fails
+    after creating its tables, and the database is exactly as it was."""
+    import sqlite3
+
+    conn = sqlite3.connect(str(tmp_path / "atomic.db"))
+    conn.execute("CREATE TABLE vitals (id INTEGER PRIMARY KEY, patient_id TEXT)")
+    conn.commit()
+    real = {m.version: m for m in migrations.MIGRATIONS}
+
+    def failing_49(c):
+        real[49].apply(c)
+        raise RuntimeError("simulated failure after the Helix tables were created")
+
+    monkeypatch.setattr(migrations, "MIGRATIONS", [
+        real[47], migrations.Migration(49, real[49].name, failing_49)])
+    assert conn.in_transaction is False
+    with pytest.raises(RuntimeError):
+        migrations.run_pending_migrations(conn)
+
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    assert not (set(_HELIX_TABLES) & tables), "a failed run left Helix tables behind"
+    assert "carried_from" not in {r[1] for r in conn.execute("PRAGMA table_info(vitals)").fetchall()}
+    assert "schema_migrations" not in tables or not conn.execute(
+        "SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
+    conn.close()
+
+
+def test_the_session_db_has_the_helix_tables_and_both_migrations_ledgered():
+    with db_session() as db:
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        ledger = {r[0] for r in db.execute("SELECT version FROM schema_migrations").fetchall()}
+    assert set(_HELIX_TABLES) <= tables
+    assert {48, 49} <= ledger

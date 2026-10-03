@@ -60,7 +60,7 @@ graph TD
 | `server/migrations.py` | 1719 | Migration 12, `_m12_device_pin_identity` (`:713`), four `users` columns plus `enrolled_devices` (`:772`). |
 | `src/api/deviceAuth.ts` | 85 | The typed client: `DeviceStatus` (`:20`), `getDeviceStatus` (`:36`), `bindDevice` (`:49`), `pinLogin` (`:69`), `setOwnDevicePin` (`:80`). |
 | `src/pages/Login.tsx` | 506 | The only screen that uses any of it. PIN state (`:30`–`:37`), device probe (`:42`), `pinMode` (`:71`), `applyLoginResponse` (`:81`), `handlePinLogin` (`:106`), `handleBindDevice` (`:132`), `handleSubmit` (`:210`), the PIN form (`:297`), the two toggle buttons (`:439`, `:459`). |
-| `src/App.tsx` | 201 | `authMethod` on the user (`:26`), `IDLE_LOCK_MS` / `SHARED_DEVICE_IDLE_MS` (`:42`/`:43`), the shared-device branch (`:90`–`:96`), `logout` (`:135`). |
+| `src/App.tsx` | 201 | `authMethod` on the user (`:35`), `IDLE_LOCK_MS` / `SHARED_DEVICE_IDLE_MS` (`:51`/`:52`), the shared-device branch (`:99`-`:105`), `logout` (`:146`). |
 | `src/hooks/useIdleTimer.ts` | 87 | `useIdleTimer` (`:20`). |
 | `src/pages/Login.pin.test.tsx` | n/a | The behavioural spec for the screen: pad shown only when enrolled, fallback always available, the async-race escape hatch. |
 
@@ -94,7 +94,7 @@ graph TD
 Three independent mechanisms, none of which relies on the other:
 
 - **Server expiry.** 15 minutes, baked into the token. `/api/auth/refresh` cannot launder it longer.
-- **Client idle sign-out.** `src/App.tsx:91` runs `useIdleTimer` at `SHARED_DEVICE_IDLE_MS` = **2 minutes** when `user.authMethod === 'pin'`, and calls `logout()`, a full sign-out, not a lock modal.
+- **Client idle sign-out.** `src/App.tsx:100` runs `useIdleTimer` at `SHARED_DEVICE_IDLE_MS` = **2 minutes** when `user.authMethod === 'pin'`, and calls `logout()`, a full sign-out, not a lock modal.
 - **Admin revocation.** `POST /api/auth/devices/{id}/revoke` marks the row. `get_current_user` (`server/auth.py:457`) re-reads the device on **every** request and 401s a session whose tablet is no longer enrolled, the check is at `server/auth.py:505-511`, and note it fires on either a missing device row or a non-null `revoked_at`, so deleting the row revokes just as effectively as marking it.
 
 ```mermaid
@@ -355,7 +355,7 @@ This file predates the tablet feature and is used by it only for hashing. Everyt
 
 ### File: `server/migrations.py`: migration 12
 
-#### `_m12_device_pin_identity`: `migrations.py:713`
+#### `_m12_device_pin_identity`: `migrations.py:719`
 **Signature:** `(conn) -> None`; registered as `Migration(12, "device_pin_identity", …)` at `:1621`
 **Does:** Adds four columns to `users` and creates `enrolled_devices` plus one index.
 **On screen:** nothing. Without it, `load_active_device` returns `None` for everything and the PIN pad never appears, which is the intended graceful degradation, not a crash.
@@ -469,13 +469,13 @@ This file predates the tablet feature and is used by it only for hashing. Everyt
 
 ### File: `src/App.tsx`: the shared-device session rules
 
-#### `User.authMethod`: `App.tsx:26`
+#### `User.authMethod`: `App.tsx:35`
 **Signature:** `authMethod?: 'password' | 'pin'`
 **Does:** Records how this session was created. `'pin'` means a shared, enrolled ward tablet.
 **On screen:** invisible, but it is the switch for every rule below.
 **Breaks if you change it:** it is stored in `localStorage` with the rest of the user object (`storeUser`, `App.tsx:130`). A tampered value only affects the *client* timeout, the server's 15-minute expiry is the real control.
 
-#### `IDLE_LOCK_MS` / `SHARED_DEVICE_IDLE_MS`: `App.tsx:42` / `:43`
+#### `IDLE_LOCK_MS` / `SHARED_DEVICE_IDLE_MS`: `App.tsx:51` / `:43`
 **Signature:** `15 * 60_000` / `2 * 60_000`
 **Does:** Two inactivity budgets.
 **On screen:** at 15 minutes a personal workstation shows the idle-lock modal; at 2 minutes a PIN tablet returns to the login screen.
@@ -488,7 +488,7 @@ This file predates the tablet feature and is used by it only for hashing. Everyt
 **On screen:** the PIN pad reappears, or the lock modal appears.
 **Gotchas:** the comment at `App.tsx:38-41` is explicit, **this is the comfort layer, not the control.** The server mints PIN sessions with a short expiry of their own, so a tampered client cannot hold one open.
 
-#### `logout`: `App.tsx:135`
+#### `logout`: `App.tsx:146`
 **Signature:** `() -> void`
 **Does:** Clears the app user, the token, the socket, **the nurse drafts** (`clearNurseDrafts`), **the offline PHI cache** (`clearOfflineCache`) and **the offline write queue** (`clearOfflineQueue`).
 **On screen:** returns the tablet to the login card with nothing of the previous nurse left on it.

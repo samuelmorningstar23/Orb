@@ -271,11 +271,17 @@ Two settings people get wrong on the first install:
   It means only the appliance itself can reach Orb; bedside tablets and
   nurse-station desktops get nothing. Set `ORB_HOST=0.0.0.0` so it listens on
   the LAN.
-- **`ORB_CORS_ORIGINS` must contain the exact origin staff will type**, for
-  example `https://orb.hospital.local:8000`. If it does not, the realtime
-  Socket.IO connection is rejected, the boards stop updating by themselves,
-  and the browser's retries soon make every screen hang for 15 to 25 seconds
-  at a time, see
+- **`ORB_CORS_ORIGINS` lists the origins staff will type**, for example
+  `https://orb.hospital.local:8000`. Since 3 October 2026 the realtime
+  socket also accepts the appliance's own address without it, so a page
+  Orb serves itself keeps updating even if the entry is missing or staff
+  type the IP instead of the name. Two setups still depend on the list: a
+  front end served from a different address than the backend, and a
+  reverse proxy that rewrites the `Host` header (nginx does unless you add
+  `proxy_set_header Host $http_host;`). If an origin they need is missing, the
+  realtime connection is rejected, the boards stop updating by themselves,
+  and the browser's retries soon make every screen hang for 15 to 25
+  seconds at a time, see
   [F11](#f11-the-screens-stopped-updating-by-themselves).
 
 TLS in transit is not optional on a ward network. The installer generates a
@@ -1495,26 +1501,38 @@ update on its own. New vitals do not appear live. Within a few seconds of
 login, screens also start to hang on "Loading..." for 15 to 25 seconds at a
 time, then fill in all at once.
 
-**Cause, nine times out of ten:** the realtime Socket.IO connection was
-rejected because the browser's origin is not in `ORB_CORS_ORIGINS`. The very
-first requests work, so it looks nearly fine at first, which is what makes
-this confusing. It then gets worse: the browser keeps retrying the socket, and
-each retry leaves a long-poll request open for about 25 seconds. A browser
-allows only six open requests to one address, so after a handful of retries
-every ordinary request (a patient list, the appointments board) waits in line
-behind them. Measured on 3 October 2026: the appointments list took 17.5
-seconds to load with the origin missing and under a tenth of a second with it
-listed.
+**Cause, nine times out of ten:** the realtime Socket.IO connection is being
+rejected because the browser's origin is not one the socket accepts. The
+socket accepts the origins in `ORB_CORS_ORIGINS` and, since 3 October 2026,
+the address Orb itself served the page from. So on an appliance that serves
+its own pages this should not happen. It still happens when the front end is
+served from a different address than the backend, or when a reverse proxy in
+front rewrites the `Host` header (nginx's default) and the origin is not
+listed. On a build from before 3 October 2026, a missing own address caused
+it too.
+
+The very first requests work, so it looks nearly fine at first, which is
+what makes this confusing. It then gets worse: the browser keeps retrying the
+socket, and each retry leaves a long-poll request open for about 25 seconds.
+A browser allows only six open requests to one address, so after a handful of
+retries every ordinary request (a patient list, the appointments board) waits
+in line behind them. Measured on 3 October 2026: the appointments list took
+17.5 seconds to load with the origin missing and under a tenth of a second
+with it listed.
 
 **Diagnose.** Open the browser's developer console on an affected device and
 look for a 400 or 403 on `/socket.io/` requests (the first one succeeds, the
-POSTs that follow are rejected) and a failed WebSocket handshake. Then:
+POSTs that follow are rejected) and a failed WebSocket handshake. The
+backend's log shows the first refused origin since startup, as
+`<origin> is not an accepted origin.` Then:
 
 ```bash
 grep ORB_CORS_ORIGINS /opt/orb/.env
 ```
 
-**Fix.** The value must contain the **exact** origin staff type: scheme,
+**Fix.** Either list the origin, or let Orb recognise its own address.
+
+To list it, the value must contain the **exact** origin staff type: scheme,
 host and port, no trailing slash:
 
 ```bash
@@ -1523,6 +1541,12 @@ ORB_CORS_ORIGINS=https://orb.hospital.local:8000
 
 Restart Orb after changing it. If staff reach the appliance by more than one
 name (IP and DNS name), list both, comma-separated.
+
+Behind nginx, adding `proxy_set_header Host $http_host;` to the Orb
+location passes the address staff typed through to Orb, port included, and
+the socket then accepts it without a list entry. Use `$http_host`, not
+`$host`: `$host` drops the port, so a proxy on a port other than 443 would
+still be refused. Caddy and Traefik pass it through by default.
 
 **Other causes:** the device dropped off Wi-Fi; a proxy between device and
 appliance is not passing WebSocket upgrades. Check a wired station desktop.

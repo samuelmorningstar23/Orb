@@ -64,7 +64,7 @@ DOC_EXCLUDE = {"_CITATION_AUDIT.md"}
 #: citation (`client.ts:965`) could resolve to a stale archived copy and pass while the
 #: live file has moved on.
 SKIP_DIRS = ("/node_modules", "/.git", "/.venv", "__pycache__", "/dist", "/build", "/.next",
-             "/docs/archive")
+             "/docs/archive", "/.claude")
 
 #: A citation: some/path.ext:123 or some/path.ext:123-456
 CITATION = re.compile(

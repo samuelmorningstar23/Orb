@@ -794,9 +794,132 @@ DIETARY_ENABLED = _module_enabled("ORB_DIETARY")
 # flag off, a nurse's day is byte-identical.
 NABH_ENABLED = _module_enabled("ORB_NABH")
 
+# ── Opt-in switches: the whole-hospital-system build (3 October 2026) ────────
+#
+# THE OPPOSITE CONVENTION TO EVERYTHING ABOVE, AND ON PURPOSE. The modules above
+# default ON (ruling 2026-08-11) and none of them gates a clinical path. The
+# switches below default OFF, and they are allowed to gate clinical paths: bed
+# moves, outpatient consultations, laboratory results, controlled-drug stock.
+# Samuel ruled on 3 October 2026 that these three modules (ADT, pharmacy store,
+# laboratory) depart from "every module on", and that every new safety ruling
+# built behind a switch stays off at every site until he confirms it.
+#
+# ONE helper reads every one of them, so there is one answer to "what turns
+# this on?": only 1, true, yes or on (any case, surrounding spaces ignored).
+# Unset, blank, a typo and every other value mean OFF. An operator who writes
+# ORB_LAB= must land on the documented default, which here is off.
+#
+# Two kinds:
+#   * OPT_IN_MODULES: a whole module with its own tab. Published inside
+#     /api/health "modules" next to the default-on modules, so the shell has one
+#     place to look, and in "module_states" ('on', 'draining' or 'off').
+#   * FEATURE_FLAGS: a behaviour inside a module or across modules. Published
+#     as /api/health "features". A feature whose prerequisite is off is off,
+#     whatever its own variable says, and the boot log names what is missing.
+#
+# Every new route behind these answers 404 while its switch is off (see
+# routes/opt_in_gates.py), so the permissions granted for them in
+# permissions.py are inert until a site turns the switch on.
+
+_OPT_IN_ON_VALUES = ("1", "true", "yes", "on")
+
+import logging as _logging  # noqa: E402 (kept inside this block on purpose)
+
+_config_log = _logging.getLogger("orb.config")
+
+
+def _opt_in(env_name: str) -> bool:
+    """Read one opt-in switch. ON only for 1, true, yes or on; anything else,
+    including unset and blank, is OFF."""
+    return (os.getenv(env_name) or "").strip().lower() in _OPT_IN_ON_VALUES
+
+
+# The six designs proposed four names for this one helper. They are the same
+# function, kept so no later increment has to rename a call.
+_opt_in_enabled = _opt_in
+_module_opt_in = _opt_in
+_feature_enabled = _opt_in
+
+#: Opt-in module id -> env var. The ids are shell tab ids in src/shellConfig.tsx.
+OPT_IN_MODULES = {
+    "adt": "ORB_ADT",
+    "pharmacy-store": "ORB_PHARMACY_STORE",
+    "lab": "ORB_LAB",
+}
+
+# Beds and admissions: bed master, bed board, census, master-aware admit,
+# transfer and end of stay.
+# RELEASE GATE, stated where the switch lives: do not turn ORB_ADT on at a site
+# where Sage runs until adt-6c (the Relay transfer lane) has landed, and do not
+# rely on census or NABH figures before adt-8a, adt-8c and adt-6c.
+ADT_ENABLED = _opt_in("ORB_ADT")
+# Pharmacy store: drug purchasing, goods receipt, batches and expiry, transfers,
+# stock take, NDPS register. Helix stays the only owner of drug stock.
+PHARMACY_STORE_ENABLED = _opt_in("ORB_PHARMACY_STORE")
+# Laboratory information system. With the switch off but laboratory work still
+# open, the module reports 'draining' (see register_module_drain_check below)
+# so open specimens and critical results are never hidden.
+LAB_ENABLED = _opt_in("ORB_LAB")
+
+# Module id -> the constant that holds it. Read at call time, so a test that
+# monkeypatches config.LAB_ENABLED changes what every reader sees.
+_OPT_IN_MODULE_CONSTANTS = {
+    "adt": "ADT_ENABLED",
+    "pharmacy-store": "PHARMACY_STORE_ENABLED",
+    "lab": "LAB_ENABLED",
+}
+
+MODULE_STATES = ("on", "draining", "off")
+
+# Module id -> a cheap, cached, DB-free check that answers "is there open work
+# that must stay reachable although the switch is off?". Registered by the
+# module's own service at startup (the laboratory registers one in lab_module),
+# so /api/health learns about draining without main.py changing again.
+_MODULE_DRAIN_CHECKS: dict = {}
+
+
+def register_module_drain_check(module_id: str, check) -> None:
+    """Let an opt-in module report 'draining' while its switch is off.
+
+    `check()` must not open a database connection: /api/health calls it on
+    the event loop. Register None to remove it."""
+    if module_id not in OPT_IN_MODULES:
+        raise ValueError(f"{module_id!r} is not an opt-in module")
+    if check is None:
+        _MODULE_DRAIN_CHECKS.pop(module_id, None)
+    else:
+        _MODULE_DRAIN_CHECKS[module_id] = check
+
+
+def module_state(module_id: str) -> str:
+    """'on', 'draining' or 'off' for an opt-in module.
+
+    The switch alone decides 'on'. With the switch off, a registered drain check
+    that says open work exists makes it 'draining'. A drain check that fails is
+    read as 'draining', because the hazard a drain state exists for is hiding
+    open clinical work (LIS-R21), and an unknown answer must not hide it."""
+    const = _OPT_IN_MODULE_CONSTANTS[module_id]
+    if globals().get(const, False):
+        return "on"
+    check = _MODULE_DRAIN_CHECKS.get(module_id)
+    if check is None:
+        return "off"
+    try:
+        return "draining" if check() else "off"
+    except Exception:
+        _config_log.exception("Drain check for module %s failed; reporting draining", module_id)
+        return "draining"
+
+
+def module_states() -> dict[str, str]:
+    """Every opt-in module's state, as /api/health publishes it."""
+    return {m: module_state(m) for m in OPT_IN_MODULES}
+
+
 #: Module id → env var. The ids are the contract shared with the frontend: they
 #: are also the shell tab ids in src/shellConfig.tsx, so there is one vocabulary
-#: for "is the billing module on?" across the whole system.
+#: for "is the billing module on?" across the whole system. The opt-in modules
+#: are listed here too: one switch board, two default conventions.
 HOSPITAL_MODULE_ENV = {
     "billing": "ORB_BILLING",
     "payments": "ORB_PAYMENTS",
@@ -809,6 +932,7 @@ HOSPITAL_MODULE_ENV = {
     "dietary": "ORB_DIETARY",
     "nabh": "ORB_NABH",
     "abdm": "ORB_ABDM",
+    **OPT_IN_MODULES,
 }
 
 
@@ -819,6 +943,10 @@ def enabled_modules() -> dict[str, bool]:
     answer a client gets is exactly the answer the server's own routes use. A
     test that wants a module off must patch the constant, the same as any other
     config value.
+
+    An opt-in module is true while it is 'on' or 'draining' (module_state), so a
+    laboratory switched off with open work keeps its tab for the lab staff who
+    must finish that work.
     """
     return {
         "billing": BILLING_ENABLED,
@@ -832,7 +960,254 @@ def enabled_modules() -> dict[str, bool]:
         "dietary": DIETARY_ENABLED,
         "nabh": NABH_ENABLED,
         "abdm": ABDM_ENABLED,
+        **{m: module_state(m) != "off" for m in OPT_IN_MODULES},
     }
+
+
+# ── Feature flags (default OFF, may gate clinical paths) ─────────────────────
+#
+# Feature id -> env var. The ids are the contract with the frontend
+# (src/shellConfig.tsx FeatureFlagId) and with every later increment of the
+# hospital-system build. Same reader as the opt-in modules: only 1/true/yes/on.
+FEATURE_FLAGS = {
+    # Patient registration desk: UHID, demographics, duplicate check.
+    "registration": "ORB_REGISTRATION",
+    # Outpatient consultations. Needs registration and the front desk module.
+    "opd": "ORB_OPD",
+    # Refuse a ward or bed that is not in the bed master (F104). Needs ORB_ADT.
+    "adt_strict_locations": "ORB_ADT_STRICT_LOCATIONS",
+    # Ward imprest and crash-cart drug stores (GRN-RS5). Needs ORB_PHARMACY_STORE.
+    "pharmacy_ward_stock": "ORB_PHARMACY_WARD_STOCK",
+    # The NDPS register hook. Needs ORB_PHARMACY_STORE AND a failure mode in
+    # ORB_PHARMACY_NDPS_ON_FAILURE ('block' or 'record', ruling GRN-RS7). Without
+    # the mode it refuses to turn on and logs an error.
+    "ndps_register": "ORB_PHARMACY_NDPS_REGISTER",
+    # The analyser MLLP listener. Needs ORB_LAB (on, not draining).
+    "lab_analyser_listener": "ORB_LAB_ANALYSER_LISTENER",
+    # Unmatched ingestion results go to a queue instead of a patient-less row.
+    "result_quarantine": "ORB_RESULT_QUARANTINE",
+    # An external OBX 'C' supersedes the earlier final result.
+    "result_corrections": "ORB_RESULT_CORRECTIONS",
+    # External ORU results link to and close CPOE laboratory orders.
+    "oru_order_link": "ORB_ORU_ORDER_LINK",
+    # An external lab's own HH/LL/AA flag raises a critical callback (LIS-R22).
+    "lab_critical_interfaced": "ORB_LAB_CRITICAL_INTERFACED",
+    # Laboratory reports in the patient portal (LIS-R11).
+    "lab_portal_reports": "ORB_LAB_PORTAL_REPORTS",
+}
+
+# The failure mode for an NDPS register write that fails during a dispense
+# (ruling GRN-RS7, held for Samuel). None until a site sets one of the two
+# built modes; with None the register cannot be switched on.
+_NDPS_FAILURE_MODES = ("block", "record")
+_ndps_mode_raw = (os.getenv("ORB_PHARMACY_NDPS_ON_FAILURE") or "").strip().lower()
+PHARMACY_NDPS_ON_FAILURE = _ndps_mode_raw if _ndps_mode_raw in _NDPS_FAILURE_MODES else None
+
+# What each feature needs besides its own switch. ('feature', id), ('module',
+# id) for an opt-in or default-on module that must be on (an opt-in module must
+# be 'on', not 'draining'), or ('setting', name) for a value that must be set.
+FEATURE_PREREQUISITES = {
+    "opd": (("feature", "registration"), ("module", "frontdesk")),
+    "adt_strict_locations": (("module", "adt"),),
+    "pharmacy_ward_stock": (("module", "pharmacy-store"),),
+    "ndps_register": (("module", "pharmacy-store"),
+                      ("setting", "ORB_PHARMACY_NDPS_ON_FAILURE")),
+    "lab_analyser_listener": (("module", "lab"),),
+}
+
+# Feature id -> the constant that holds its switch. Each constant is the
+# switch AND its prerequisites as read at import; feature_enabled() re-checks
+# the prerequisites at call time, so patching one constant in a test cannot
+# switch on a feature whose prerequisite is off.
+_FEATURE_CONSTANTS = {
+    "registration": "REGISTRATION_ENABLED",
+    "opd": "OPD_ENABLED",
+    "adt_strict_locations": "ADT_STRICT_LOCATIONS_ENABLED",
+    "pharmacy_ward_stock": "PHARMACY_WARD_STOCK_ENABLED",
+    "ndps_register": "PHARMACY_NDPS_REGISTER_ENABLED",
+    "lab_analyser_listener": "LAB_ANALYSER_LISTENER_ENABLED",
+    "result_quarantine": "RESULT_QUARANTINE_ENABLED",
+    "result_corrections": "RESULT_CORRECTIONS_ENABLED",
+    "oru_order_link": "ORU_ORDER_LINK_ENABLED",
+    "lab_critical_interfaced": "LAB_CRITICAL_INTERFACED_ENABLED",
+    "lab_portal_reports": "LAB_PORTAL_REPORTS_ENABLED",
+}
+
+_PREREQUISITE_WORDS = {
+    ("feature", "registration"): "ORB_REGISTRATION is off",
+    ("module", "frontdesk"): "the front desk module is off (ORB_FRONTDESK=0)",
+    ("module", "adt"): "ORB_ADT is off",
+    ("module", "pharmacy-store"): "ORB_PHARMACY_STORE is off",
+    ("module", "lab"): "ORB_LAB is off",
+    ("setting", "ORB_PHARMACY_NDPS_ON_FAILURE"): (
+        "ORB_PHARMACY_NDPS_ON_FAILURE is not 'block' or 'record' (ruling GRN-RS7)"
+    ),
+}
+
+
+def _prerequisite_problems(flag_id: str) -> list[str]:
+    """The unmet prerequisites of one feature, as sentences for a log line."""
+    problems = []
+    for kind, ref in FEATURE_PREREQUISITES.get(flag_id, ()):
+        if kind == "feature":
+            ok = bool(globals().get(_FEATURE_CONSTANTS[ref], False)) and not _prerequisite_problems(ref)
+        elif kind == "module":
+            ok = (module_state(ref) == "on") if ref in OPT_IN_MODULES else bool(enabled_modules().get(ref))
+        elif kind == "setting" and ref == "ORB_PHARMACY_NDPS_ON_FAILURE":
+            ok = globals().get("PHARMACY_NDPS_ON_FAILURE") in _NDPS_FAILURE_MODES
+        else:  # an unknown prerequisite kind fails closed
+            ok = False
+        if not ok:
+            problems.append(_PREREQUISITE_WORDS.get((kind, ref), f"{kind} {ref} is off"))
+    return problems
+
+
+def feature_enabled(flag_id: str) -> bool:
+    """Is this feature on, its prerequisites included? Unknown ids are off."""
+    const = _FEATURE_CONSTANTS.get(flag_id)
+    if const is None or not globals().get(const, False):
+        return False
+    return not _prerequisite_problems(flag_id)
+
+
+def feature_flags() -> dict[str, bool]:
+    """Every feature flag, as /api/health publishes it under "features"."""
+    return {f: feature_enabled(f) for f in FEATURE_FLAGS}
+
+
+def switch_enabled(switch_id: str) -> bool:
+    """A feature id or a module id (default-on or opt-in), one question. Used by
+    roles.ROLE_FEATURE. An id that is neither is off: a typo must not unlock a
+    role."""
+    if switch_id in FEATURE_FLAGS:
+        return feature_enabled(switch_id)
+    return bool(enabled_modules().get(switch_id, False))
+
+
+_FEATURE_REQUESTED = {f: _opt_in(env) for f, env in FEATURE_FLAGS.items()}
+
+REGISTRATION_ENABLED = _FEATURE_REQUESTED["registration"]
+OPD_ENABLED = (_FEATURE_REQUESTED["opd"] and REGISTRATION_ENABLED and FRONTDESK_ENABLED)
+ADT_STRICT_LOCATIONS_ENABLED = _FEATURE_REQUESTED["adt_strict_locations"] and ADT_ENABLED
+PHARMACY_WARD_STOCK_ENABLED = _FEATURE_REQUESTED["pharmacy_ward_stock"] and PHARMACY_STORE_ENABLED
+PHARMACY_NDPS_REGISTER_ENABLED = (_FEATURE_REQUESTED["ndps_register"] and PHARMACY_STORE_ENABLED
+                                  and PHARMACY_NDPS_ON_FAILURE is not None)
+LAB_ANALYSER_LISTENER_ENABLED = _FEATURE_REQUESTED["lab_analyser_listener"] and LAB_ENABLED
+RESULT_QUARANTINE_ENABLED = _FEATURE_REQUESTED["result_quarantine"]
+RESULT_CORRECTIONS_ENABLED = _FEATURE_REQUESTED["result_corrections"]
+ORU_ORDER_LINK_ENABLED = _FEATURE_REQUESTED["oru_order_link"]
+LAB_CRITICAL_INTERFACED_ENABLED = _FEATURE_REQUESTED["lab_critical_interfaced"]
+LAB_PORTAL_REPORTS_ENABLED = _FEATURE_REQUESTED["lab_portal_reports"]
+
+
+def feature_flag_problems() -> dict[str, list[str]]:
+    """Features a site asked for (env set) that are off because a prerequisite
+    is missing, each with the reasons. Empty when nothing was asked for."""
+    return {
+        f: _prerequisite_problems(f)
+        for f, requested in _FEATURE_REQUESTED.items()
+        if requested and _prerequisite_problems(f)
+    }
+
+
+# Say so at boot, once, when a site switched something on that cannot be on.
+for _flag, _why in feature_flag_problems().items():
+    if _flag == "ndps_register" and PHARMACY_NDPS_ON_FAILURE is None:
+        _config_log.error(
+            "ORB_PHARMACY_NDPS_REGISTER is set but the NDPS register stays OFF "
+            "(ruling GRN-RS7 is held for Samuel): %s", "; ".join(_why))
+    else:
+        _config_log.warning("Feature %s (%s) is set but stays OFF: %s",
+                            _flag, FEATURE_FLAGS[_flag], "; ".join(_why))
+
+
+# ── Settings for the hospital-system build ───────────────────────────────────
+# Read once at import, each with its default. An unparseable value falls back to
+# the default (a typo must not become a zero), and choice settings fall back to
+# their default too. The defaults on safety settings are the STRICTEST option
+# the architect named, pending Samuel's confirmation of the ruling cited.
+
+def _int_setting(env_name: str, default: int, minimum: int = 0) -> int:
+    raw = (os.getenv(env_name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        _config_log.warning("%s=%r is not a whole number; using %d", env_name, raw, default)
+        return default
+
+
+def _choice_setting(env_name: str, choices: tuple, default: str) -> str:
+    raw = (os.getenv(env_name) or "").strip().lower()
+    if not raw:
+        return default
+    if raw in choices:
+        return raw
+    _config_log.warning("%s=%r is not one of %s; using %r", env_name, raw, choices, default)
+    return default
+
+
+# Registration and outpatients.
+#: Where UHIDs come from: 'hospital' (type the existing HIS number, OPD-N1
+#: default) or 'orb' (Orb's own series with a Verhoeff check digit, refused
+#: until the series is configured).
+UHID_SOURCE = _choice_setting("ORB_UHID_SOURCE", ("hospital", "orb"), "hospital")
+#: Optional site regex a hospital-mode UHID must match. Kept as typed; the
+#: registration service compiles it and refuses to register when it is invalid.
+UHID_PATTERN = (os.getenv("ORB_UHID_PATTERN") or "").strip() or None
+#: How many days an OPD visit opens the record view to its clinic (OPD-N2).
+OPD_SCOPE_DAYS = _int_setting("ORB_OPD_SCOPE_DAYS", 7, minimum=0)
+#: When the consultation fee is charged: at 'completion' (today) or 'registration'.
+OPD_CHARGE_AT = _choice_setting("ORB_OPD_CHARGE_AT", ("completion", "registration"), "completion")
+#: What a probable duplicate does at registration (ruling OPD-S2, held for
+#: Samuel). 'block' is the strictest option named and is the default until he
+#: confirms; 'warn' requires a reason, is audited and opens a worklist item.
+#: An exact UHID or active ABHA match is refused in both modes.
+DUPLICATE_MODE = _choice_setting("ORB_DUPLICATE_MODE", ("warn", "block"), "block")
+#: How often an open front desk queue re-reads until live nudges land (opd-9b).
+OPD_QUEUE_POLL_SECONDS = _int_setting("ORB_OPD_QUEUE_POLL_SECONDS", 30, minimum=5)
+
+# Beds and admissions.
+#: How far back an admission, transfer or departure time may be entered (ADT-P3).
+ADT_BACKTIME_HOURS = _int_setting("ORB_ADT_BACKTIME_HOURS", 72, minimum=0)
+#: Bed reservation expiry for ER and transfer reservations (ADT-P9).
+ADT_RESERVATION_MINUTES = _int_setting("ORB_ADT_RESERVATION_MINUTES", 120, minimum=1)
+#: Bed reservation expiry for elective and post-operative reservations (ADT-P9).
+ADT_RESERVATION_ELECTIVE_MINUTES = _int_setting("ORB_ADT_RESERVATION_ELECTIVE_MINUTES", 1440, minimum=1)
+#: After this long, the board prompts the bed manager to close an absconded
+#: stay. Advisory only; nothing closes on a timer (ADT-S3).
+ADT_ABSCONDED_CLOSE_HOURS = _int_setting("ORB_ADT_ABSCONDED_CLOSE_HOURS", 24, minimum=1)
+#: A leave longer than this prompts the doctor to discharge (ADT-P6).
+ADT_LEAVE_PROMPT_HOURS = _int_setting("ORB_ADT_LEAVE_PROMPT_HOURS", 48, minimum=1)
+#: Whether room rent is charged for leave days (ADT-P6: charged by default).
+#: Default ON like the modules above: only 0/false/off/no turns it off.
+ADT_LEAVE_RENT_CHARGED = _module_enabled("ORB_ADT_LEAVE_RENT_CHARGED")
+
+# Pharmacy store.
+#: Near-expiry window shown on the stock screens (GRN-R16).
+PHARMACY_NEAR_EXPIRY_DAYS = _int_setting("ORB_PHARMACY_NEAR_EXPIRY_DAYS", 90, minimum=1)
+#: Shortest shelf life accepted at goods receipt without an approve-tier
+#: override (GRN-R16).
+PHARMACY_MIN_SHELF_LIFE_DAYS = _int_setting("ORB_PHARMACY_MIN_SHELF_LIFE_DAYS", 90, minimum=0)
+#: Warn this many days before a vendor's drug licence lapses (GRN-R10).
+PHARMACY_LICENCE_WARN_DAYS = _int_setting("ORB_PHARMACY_LICENCE_WARN_DAYS", 30, minimum=0)
+#: Largest dispense quantity a pharmacist may enter (GRN-R13). 1 by default,
+#: which is exactly what a dispense moves today.
+PHARMACY_MAX_DISPENSE_UNITS = _int_setting("ORB_PHARMACY_MAX_DISPENSE_UNITS", 1, minimum=1)
+
+# Laboratory.
+#: The analyser MLLP listener port (2575 is the bedside monitor feed).
+LAB_MLLP_PORT = _int_setting("ORB_LAB_MLLP_PORT", 2576, minimum=1)
+#: Critical callback sweep period, in seconds.
+LAB_CRITICAL_SWEEP_S = _int_setting("ORB_LAB_CRITICAL_SWEEP_S", 60, minimum=5)
+#: A result must be entered and authorised by two different people (ruling
+#: LIS-R5, held for Samuel). ON by default, the strictest option; only
+#: 0/false/off/no lets one signatory do every step.
+LAB_REQUIRE_DISTINCT_AUTHORISER = _module_enabled("ORB_LAB_REQUIRE_DISTINCT_AUTHORISER")
+#: How far back a specimen collection time may be set, in minutes (ruling
+#: LIS-R6, held for Samuel). 0, the default, refuses any back-dating.
+LAB_COLLECTION_BACKDATE_MINUTES = _int_setting("ORB_LAB_COLLECTION_BACKDATE_MINUTES", 0, minimum=0)
 
 
 # ── Discharge financial clearance: ADVISORY BY DEFAULT ───────────────────────

@@ -631,7 +631,7 @@ The browser clients (the nurse station dashboard, the Sage chat UI, Relay) need 
 
 - `socketio`, The `python-socketio` library, which implements the Socket.IO protocol on top of WebSockets. Provides rooms (named groups of connections), sessions (per-connection server-side state), and event routing.
 - `database.db_session`, For looking up the authenticated user's DB record during handshake.
-- `config.CORS_ORIGINS`, `config.DEPLOYMENT_PROFILE`, CORS configuration. The allowed origins list is explicitly set (never `"*"`) to prevent unauthorized origins from opening authenticated sockets.
+- `config.CORS_ORIGINS`, `config.DEPLOYMENT_PROFILE`, CORS configuration. The socket admits the origins in that list plus the page's own address (see `_origin_allowed` below), so another site cannot open a socket with a clinician's cookie.
 - `auth.decode_token`, JWT decoder used during the handshake authentication.
 - `permissions.has_permission`, RBAC permission checker.
 - `services.relay_service.get_channels_for_user`, Returns the list of Relay channels a given user/role can access. Used to enforce channel authorization on WebSocket join.
@@ -643,14 +643,14 @@ The browser clients (the nurse station dashboard, the Sage chat UI, Relay) need 
 ```python
 sio = socketio.AsyncServer(
     async_mode="asgi",
-    cors_allowed_origins=_cors_allowed,
+    cors_allowed_origins=_origin_allowed,
     ...
 )
 ```
 
 This is the Socket.IO server instance. It is imported by other parts of the code (especially `nervous_system_triggers.py`) to push events to clients: `await sio.emit("patient:timeline_updated", {...}, room=patient_id)`. The `room` parameter means only clients who have joined that room (typically identified by `patient_id`) receive the message.
 
-> ⚠️ **If you change this:** The `cors_allowed_origins` previously used `"*"` (any origin). It was changed to `CORS_ORIGINS` from config. If you are testing locally and WebSocket connections fail with a CORS error, check that your development origin (e.g., `http://localhost:5173`) is in `CORS_ORIGINS`.
+> ⚠️ **If you change this:** `cors_allowed_origins` is the function `_origin_allowed`, not a list. It admits an origin listed in `ORB_CORS_ORIGINS`, or the page's own address (the `Origin` host and port match the `Host` header, over http or https). Do not replace it with a list: a list that leaves out the appliance's own address makes the browser retry the socket until every screen hangs (INSTALL_RUNBOOK F11), and an empty list tells engine.io to skip the origin check, which let every origin in until 3 October 2026. If WebSocket connections fail locally with a CORS error, check that your development origin (e.g., `http://localhost:5173`) is in `CORS_ORIGINS`: the Vite proxy rewrites `Host`, so the dev page is only recognised through the list.
 
 ---
 

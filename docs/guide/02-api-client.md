@@ -74,7 +74,7 @@ sequenceDiagram
 ### Flow 2: session lifecycle (login → socket → logout)
 
 1. `login()` POSTs credentials to `/auth/login`, then persists `token` → `orb_token` and `user` → `orb_user` (`src/api/client.ts:278-288`).
-2. It calls `authenticateSocket()` (`src/api/client.ts:592`, defined at `:57`), which re-points the socket.io handshake auth at the fresh token and forces a disconnect/reconnect (`src/api/client.ts:57-64`). The socket itself is a module-level singleton created on first import with `auth` as a *callback* that re-reads the token on every connection attempt (`src/api/client.ts:42-49`), but with `autoConnect: false` (`:43`), so it opens only once a token or session cookie exists (`:54`); the server's `connect` handler verifies the handshake before accepting (`server/ws/realtime.py:151`, guide 06-realtime).
+2. It calls `authenticateSocket()` (`src/api/client.ts:592`, defined at `:57`), which re-points the socket.io handshake auth at the fresh token and forces a disconnect/reconnect (`src/api/client.ts:57-64`). The socket itself is a module-level singleton created on first import with `auth` as a *callback* that re-reads the token on every connection attempt (`src/api/client.ts:42-49`), but with `autoConnect: false` (`:43`), so it opens only once a token or session cookie exists (`:54`); the server's `connect` handler verifies the handshake before accepting (`server/ws/realtime.py:247`, guide 06-realtime).
 3. On logout, `App.tsx:74` calls `deauthenticateSocket()` (`src/api/client.ts:60-65`) and clears storage via `clearToken()` (`src/api/client.ts:73-76`), so neither REST nor realtime keeps the old identity.
 4. Any 401 from any endpoint at any time repeats the logout effect automatically (Flow 1, step 5).
 
@@ -139,7 +139,7 @@ graph TD
 #### socket: `src/api/client.ts:42`
 **Signature:** module constant → socket.io `Socket`
 **Does:** Creates the app-wide realtime WebSocket connection at module load, presenting the JWT in the handshake.
-**How it works:** 1. `io(API_HOST, { autoConnect: true, auth: (cb) => cb({ token: getToken() }) })` (`:43-46`). 2. Because `auth` is a callback, the *current* localStorage token is read on every (re)connection attempt. 3. A **WebSocket** is a persistent two-way TCP connection the server can push on; **socket.io** is a library layered on it adding rooms, reconnection, and a **handshake**, the initial exchange where this `auth` payload is delivered. 4. The server's `connect(sid, environ, auth)` handler verifies the token and refuses unauthenticated clients (`server/ws/realtime.py:69`; rationale comment `:28-42`).
+**How it works:** 1. `io(API_HOST, { autoConnect: true, auth: (cb) => cb({ token: getToken() }) })` (`:43-46`). 2. Because `auth` is a callback, the *current* localStorage token is read on every (re)connection attempt. 3. A **WebSocket** is a persistent two-way TCP connection the server can push on; **socket.io** is a library layered on it adding rooms, reconnection, and a **handshake**, the initial exchange where this `auth` payload is delivered. 4. The server's `connect(sid, environ, auth)` handler verifies the token and refuses unauthenticated clients (`server/ws/realtime.py:165`; rationale comment `:29-138`).
 **Why it exists:** One shared authenticated socket for the whole app; sending the JWT in the handshake makes realtime enforce the same identity as REST, otherwise any client could join any patient room (`:33-35`).
 **Data in/out:** handshake `auth = { token: string | null }` → connected socket (or a refused connection before login).
 **Talks to:** imported by VigilPanel, RelayPanel, SurgicalSuitePanel, SageAmbientSidebar, SageInsightsFeed, `useStreamingTranscription`, and others (they register `socket.on(...)` handlers, event catalog in guide 06-realtime).
@@ -812,7 +812,7 @@ Purpose (header `:1-8`): the closed loop for AI-charted medications, list meds w
 | `orb_user` | JSON `StoredUser` | `setUser` (`:90`) | `getUser` (`:95`), App session restore |
 | `orb_offline_queue` | JSON `OfflineRequest[]` | `queueRequest`/`processOfflineQueue` (`:216`, `:257`) | replay loop (`:229`) and ClinicianShell's badge (`ClinicianShell.tsx:277-286`) |
 
-**Socket contract:** handshake `auth: {token: <JWT or null>}` (`client.ts:43-46`); the server must verify it in `connect(sid, environ, auth)` and refuse unauthenticated clients (`server/ws/realtime.py:69`; full event catalog in guide 06-realtime).
+**Socket contract:** handshake `auth: {token: <JWT or null>}` (`client.ts:43-46`); the server must verify it in `connect(sid, environ, auth)` and refuse unauthenticated clients (`server/ws/realtime.py:165`; full event catalog in guide 06-realtime).
 
 **REST endpoints consumed**, grouped by server router (all prefixes verified in `server/routes/*.py`; routers mounted in `server/main.py:297-329`). Every path below is called with `Authorization: Bearer <clinician JWT>` except where noted.
 

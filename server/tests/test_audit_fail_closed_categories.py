@@ -79,14 +79,38 @@ def emitted_categories(root: Path = SERVER_ROOT) -> dict[str, list[str]]:
 
 # ── 1. The set may only name categories that something really emits ──────────
 
+# Registered ahead of their first writer by the hospital-system build's wave 1
+# (3 October 2026), so each epic's first audited write is fail-closed from the
+# start. Each maps to the increment that will emit it. When that writer lands
+# its name may be deleted here (the guard below then covers it like any other);
+# this list may only shrink. A name that is still unemitted after its increment
+# shipped is the dead-guard failure this file exists for, so check it then.
+_PRE_REGISTERED = {
+    "patient_identity": "opd-4 registration_service (W4-A)",
+    "patient_movement": "adt-3 adt_service (W3-B)",
+    "clinical_config": "lis-3 lab_master_service (W2-D)",
+}
+
+
 def test_every_fail_closed_category_is_emitted_by_a_real_call_site():
     emitted = emitted_categories()
-    dead = sorted(_FAIL_CLOSED_CATEGORIES - emitted.keys())
+    dead = sorted(_FAIL_CLOSED_CATEGORIES - emitted.keys() - set(_PRE_REGISTERED))
     assert not dead, (
         f"fail-closed categories that no call site under server/ emits: {dead}. "
         "A name here that nothing writes guards nothing: the events it was meant "
         f"to protect are fail-open. Emitted categories: {sorted(emitted)}"
     )
+
+
+def test_pre_registered_categories_only_ever_shrink():
+    # Pinned to the three wave-1 names, so the exemption above can lose a name
+    # as its writer lands but can never grow to excuse a typo or a new name.
+    assert set(_PRE_REGISTERED) <= {"patient_identity", "patient_movement", "clinical_config"}
+    assert set(_PRE_REGISTERED) <= _FAIL_CLOSED_CATEGORIES
+
+
+def test_the_three_his_categories_are_fail_closed():
+    assert {"patient_identity", "patient_movement", "clinical_config"} <= _FAIL_CLOSED_CATEGORIES
 
 
 def test_the_two_misnamed_guards_now_name_what_is_emitted():

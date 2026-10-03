@@ -205,6 +205,56 @@ OUTCOME_RECORD = "outcome.record"
 # product decision; when it is made, it is one line in the table below.
 CONSENT_RECORD = "consent.record"
 
+# ── The whole-hospital-system build (3 October 2026) ─────────────────────────
+# Registered all at once in wave 1 so every later increment finds its
+# permission already here and src/lib/roles.ts can mirror one stable list.
+# EVERY ONE OF THESE IS INERT until its switch is on: each route that checks
+# them sits behind an opt-in module or feature flag (config.py) and answers 404
+# while it is off. tests/test_role_batch.py pins each grant below, so a change
+# to who holds one is a deliberate, reviewed edit.
+
+# Registration and outpatients (OPD epic, ruling OPD-N3).
+REGISTRATION_READ = "registration.read"      # Registration desk reads, minimal-field patient search
+REGISTRATION_WRITE = "registration.write"    # Register a patient, correct demographics
+OPD_CONSULT = "opd.consult"                  # Run an outpatient consultation
+SCHEDULE_MANAGE = "schedule.manage"          # Clinic sessions, display boards (configuration, no PHI)
+
+# Beds and admissions (ADT epic). No ADT permission ends a stay: end of stay
+# keeps discharge.generate plus scope. Doctors reach moves and presence through
+# the patient.write arm of each route, not through these grants.
+ADT_READ = "adt.read"                        # Bed board, availability, census, movement history
+ADT_BED = "adt.bed"                          # Assign, change, swap or reserve a bed; never changes the treating department
+ADT_TRANSFER = "adt.transfer"                # Change the treating department (a scope change)
+ADT_PRESENCE = "adt.presence"                # Record leave, absconded and return
+BED_MASTER = "bed.master"                    # Bed setup, reconciliation link, register complete
+
+# Pharmacy store (GRN epic, rulings GRN-R7 and GRN-R8). helix.receive keeps its
+# meaning: ward receipt of a patient's dispensed drug, nothing else.
+PHARMACY_STORE_READ = "pharmacy_store.read"        # Drug stock, lots, ledgers, documents
+PHARMACY_STORE_WRITE = "pharmacy_store.write"      # Raise purchase orders, receive goods, transfers, counts
+PHARMACY_STORE_APPROVE = "pharmacy_store.approve"  # Approve orders, adjustments, write-offs, downgrades
+PHARMACY_STORE_NDPS = "pharmacy_store.ndps"        # The NDPS register and its witness steps
+WARD_STOCK_READ = "ward_stock.read"                # A ward's own imprest stock (department-scoped)
+WARD_STOCK_RECEIVE = "ward_stock.receive"          # Receive a pharmacy transfer on the ward
+WARD_RETURN_RECORD = "ward_return.record"          # Record a medicine returned from the ward
+WARD_INDENT_RAISE = "ward_indent.raise"            # Raise a ward indent to the pharmacy
+
+# Laboratory (LIS epic, rulings LIS-R12 and LIS-R17).
+LAB_READ = "lab.read"                        # Laboratory views, reports, worklists
+LAB_COLLECT = "lab.collect"                  # Collect a specimen (two-identifier check)
+LAB_RECEIVE = "lab.receive"                  # Receive or reject a specimen in the laboratory
+LAB_RESULT = "lab.result"                    # Enter and technically validate a result
+LAB_AUTHORISE = "lab.authorise"              # Authorise and release, amend or withdraw a result
+LAB_MASTER = "lab.master"                    # Test catalogue, reference ranges, critical limits
+LAB_CRITICAL_LOG = "lab.critical_log"        # Log a critical-result phone callback
+LAB_CRITICAL_ACK = "lab.critical_ack"        # Acknowledge a critical result on the ward, with read-back
+LAB_INTERFACE = "lab.interface"              # Analyser registry and credentials
+# Attach an unmatched result to a patient, or discard it. A wrong-patient
+# decision that feeds the chart and Tier 1, so laboratory roles only (LIS-R17),
+# never admin and never a department-scoped role: the queue shows raw
+# identifiers from every ward.
+INGEST_RECONCILE = "ingest.reconcile"
+
 # Governance
 AUDIT_READ = "audit.read"                      # Read audit log entries
 AUDIT_TRACE = "audit.trace"                    # Trace correlation IDs
@@ -237,6 +287,14 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         OUTCOME_RECORD,
         # Consent capture at the bedside. See the constant's note above.
         CONSENT_RECORD,
+        # Hospital-system build, all inert until their switches are on.
+        # Registration and outpatients (OPD-N3).
+        REGISTRATION_READ, REGISTRATION_WRITE, OPD_CONSULT,
+        # The bed board. Moves, transfers and presence come through the
+        # patient.write arm of each ADT route, not through a grant here.
+        ADT_READ,
+        # Specimen collection and the ward critical-result acknowledgement.
+        LAB_COLLECT, LAB_CRITICAL_ACK,
     },
     "nurse": {
         # VITALS_WRITE (recording a bedside observation set) is a nurse's core
@@ -267,6 +325,14 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         # not open the pharmacy — the ward endpoint returns only the orders for
         # patients already on this nurse's ward, and nothing about inventory.
         HELIX_RECEIVE,
+        # Hospital-system build, all inert until their switches are on.
+        # Ward stock, indents and returns for her own department (GRN-R8).
+        WARD_STOCK_READ, WARD_STOCK_RECEIVE, WARD_INDENT_RAISE, WARD_RETURN_RECORD,
+        # Specimen collection and the ward critical-result acknowledgement.
+        LAB_COLLECT, LAB_CRITICAL_ACK,
+        # NO ADT permission, deliberately. Ruling ADT-S7 (who records leave and
+        # absconded, and whether nurses see the bed board) is held for Samuel,
+        # and the strictest option is "nurses get nothing new".
     },
     "pharmacist": {
         # Limited to pharmacy workflow + Sage for clinical context
@@ -284,6 +350,11 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         # walk an order from "scheduled" to "delivered" without the drug ever
         # leaving the room, and the custody trail would show two steps taken by
         # one person. See HELIX_RECEIVE's note above.
+        #
+        # The pharmacy store desk (GRN-R7), inert until ORB_PHARMACY_STORE is on.
+        # NOT approve: approving a purchase order, an adjustment or a write-off
+        # stays with a second person, the same split as procurement above.
+        PHARMACY_STORE_READ, PHARMACY_STORE_WRITE, PHARMACY_STORE_NDPS,
     },
     "admin": {
         # Governance + read-only clinical + pharmacy access
@@ -322,6 +393,18 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         OUTCOME_RECORD,
         # Governance-specific
         AUDIT_READ, AUDIT_TRACE, INGEST_MONITOR, ADMIN_OVERVIEW,
+        # Hospital-system build, all inert until their switches are on.
+        # Registration reads and clinic configuration, NOT registration.write:
+        # registering patients is the desk's and the doctor's job (OPD-N3).
+        REGISTRATION_READ, SCHEDULE_MANAGE,
+        # The bed manager's set: board, moves, transfers, presence, bed setup.
+        ADT_READ, ADT_BED, ADT_TRANSFER, ADT_PRESENCE, BED_MASTER,
+        # Pharmacy store read and approve, NOT write (GRN-R7): the pharmacist
+        # raises and receives, the administrator approves.
+        PHARMACY_STORE_READ, PHARMACY_STORE_APPROVE,
+        # Laboratory views and the analyser registry. NOT ingest.reconcile:
+        # attaching a result to a patient is a wrong-patient decision (LIS-R17).
+        LAB_READ, LAB_INTERFACE,
     },
     "patient": {
         # Self-only access through Bridge
@@ -335,6 +418,37 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     # CLOSE_COUNTER because reconciling their own shift is the cashier's job.
     "cashier": {
         PAYMENTS_READ, PAYMENTS_RECORD, PAYMENTS_CLOSE_COUNTER,
+    },
+    # ── Roles added by migration 48 (users_role_batch). Each can only be
+    # created while its switch is on (roles.ROLE_FEATURE), and every grant
+    # below is inert until then.
+    #
+    # The registration desk (OPD-N3). No chart, no money, no consent capture
+    # (consent.record waits for counsel), no transfers.
+    "receptionist": {
+        REGISTRATION_READ, REGISTRATION_WRITE,
+    },
+    # The ward clerk (adt-17): the board and same-department bed moves only.
+    # No patient.read_all (no chart), no adt.transfer (ADT-S8 held: a clerk
+    # never changes who can read the chart), no adt.presence (ADT-S7 held), and
+    # no admission or end of stay (ADT-S3, ADT-S5 held). Department required.
+    "ward_clerk": {
+        ADT_READ, ADT_BED,
+    },
+    # Laboratory roles (LIS-R12): hospital-wide, no department, and none of
+    # patient.read_all, relay.* or sage.query. A technician never authorises
+    # (LIS-R5); only the pathologist (any authorised signatory) does.
+    "phlebotomist": {
+        LAB_READ, LAB_COLLECT,
+    },
+    "lab_technician": {
+        LAB_READ, LAB_COLLECT, LAB_RECEIVE, LAB_RESULT, LAB_CRITICAL_LOG,
+        INGEST_RECONCILE,
+    },
+    "pathologist": {
+        LAB_READ, LAB_COLLECT, LAB_RECEIVE, LAB_RESULT, LAB_CRITICAL_LOG,
+        INGEST_RECONCILE,
+        LAB_AUTHORISE, LAB_MASTER,
     },
 }
 
@@ -403,7 +517,12 @@ def department_scope(user: dict) -> str | None:
 # at all; requiring one would recreate that defect. Admin and cashier hold no
 # ward-scoped PHI reads. Whether a doctor or nurse may ever be hospital-wide is
 # an open product decision; until it is made there is no such account.
-DEPARTMENT_REQUIRED_ROLES: frozenset[str] = frozenset({"doctor", "nurse"})
+#
+# ward_clerk joined on 3 October 2026 (adt-17): a clerk with no department
+# would see every ward's bed board. The receptionist is absent on purpose (a
+# blank department is a central desk serving every clinic, OPD-N3), and so are
+# the laboratory roles, which are hospital-wide by ruling LIS-R12.
+DEPARTMENT_REQUIRED_ROLES: frozenset[str] = frozenset({"doctor", "nurse", "ward_clerk"})
 
 
 # ════════════════════════════════════════════════════════════════

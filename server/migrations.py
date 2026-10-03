@@ -15,6 +15,11 @@ backend (see docs/DATA_LAYER.md).
 
 Migrations MUST be idempotent (use ``IF NOT EXISTS`` etc.): the ledger prevents
 re-application, but idempotency keeps them safe even if the ledger is reset.
+
+From migration 48 on (3 October 2026), each new migration is its own file under
+``server/migrations_his/`` (``m<NNNN>_<name>.py``), collected by version and
+merged into ``MIGRATIONS`` at the bottom of this module. This file keeps 1 to
+47, the runner and the users rebuild helper.
 """
 from __future__ import annotations
 
@@ -4819,8 +4824,13 @@ def _rebuild_users_role_check(conn, allowed_roles: tuple) -> None:
 # (see _rebuild_users_role_check on why migrations freeze their list).
 # Reassigned by each newer rebuild migration; the parity test compares it to
 # STORABLE_ROLES so the list cannot grow without a migration to carry it.
+#
+# Newest: migration 48, users_role_batch (migrations_his/
+# m0048_users_role_batch.py, 3 October 2026), whose FROZEN_ROLES must equal this
+# tuple. Migration 33 (cashier) froze the first six.
 LATEST_USERS_ROLE_CHECK: tuple = (
     "doctor", "nurse", "admin", "patient", "pharmacist", "cashier",
+    "receptionist", "ward_clerk", "lab_technician", "pathologist", "phlebotomist",
 )
 
 
@@ -5493,6 +5503,61 @@ MIGRATIONS: list[Migration] = [
     Migration(46, "simulated_result_source", _m46_simulated_result_source),
     Migration(47, "vitals_carried_from", _m47_vitals_carried_from),
 ]
+
+# ── Migrations 48 onwards: one file each, under server/migrations_his/ ───────
+# Collected by version and merged into the one sorted list the runner applies.
+# The collector refuses (at this import, so at boot and at the start of every
+# test session) a misnamed file, a file whose MIGRATION disagrees with its
+# name, and a version defined twice here or there. Add new migrations as files
+# there, not to the list above. See migrations_his/__init__.py for the contract.
+#
+# This module is also loaded BY FILE PATH under another name, with server/ not
+# on sys.path: scripts/lib/verify_restore.py reads MIGRATIONS that way to learn
+# the schema version a restored backup must reach. The per-file migrations
+# import "migrations" and "migrations_his" by name, so both names are made to
+# resolve to THIS checkout before collecting, and a migrations_his package
+# found anywhere else is refused rather than used.
+
+
+def _with_his_migrations(core: list) -> list:
+    import importlib.util
+    import sys
+    import types
+    from pathlib import Path
+
+    pkg_dir = Path(__file__).resolve().parent / "migrations_his"
+    alias = None
+    if "migrations" not in sys.modules:
+        # Loaded by path under another name: let "from migrations import
+        # Migration" in the migration files reach this module's definitions
+        # for the length of the collection, then take the alias away again.
+        alias = sys.modules.get(__name__)
+        if alias is None:
+            alias = types.ModuleType("migrations")
+            alias.__dict__.update(globals())
+        sys.modules["migrations"] = alias
+    try:
+        pkg = sys.modules.get("migrations_his")
+        if pkg is None:
+            try:
+                import migrations_his as pkg
+            except ImportError:
+                spec = importlib.util.spec_from_file_location(
+                    "migrations_his", pkg_dir / "__init__.py",
+                    submodule_search_locations=[str(pkg_dir)])
+                pkg = importlib.util.module_from_spec(spec)
+                sys.modules["migrations_his"] = pkg
+                spec.loader.exec_module(pkg)
+        if Path(pkg.__file__).resolve().parent != pkg_dir:
+            raise RuntimeError(
+                f"migrations_his was imported from {pkg.__file__}, not from {pkg_dir}")
+        return pkg.merge(core, pkg.collect())
+    finally:
+        if alias is not None and sys.modules.get("migrations") is alias:
+            del sys.modules["migrations"]
+
+
+MIGRATIONS = _with_his_migrations(MIGRATIONS)
 
 
 def _apply_pending(conn) -> list[int]:

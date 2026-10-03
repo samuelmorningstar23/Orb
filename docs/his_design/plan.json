@@ -1,0 +1,2165 @@
+{
+ "summary": "Build plan for the six HIS epics: OPD and registration, ADT and bed master, single medication-order store, pharmacy inventory and GRN, LIS, and multi-site. Everything new sits behind a default-off flag, so the Ward Record profile and the demos do not change.\n\n**Shape**\n- 14 waves, 81 clusters, about 460 engineer-days scheduled.\n- About 37 more engineer-days are held: 7 increments blocked by Samuel's held rulings, plus 3 LIS increments waiting on external inputs.\n- The highest migration was checked in code: 47, vitals_carried_from (server/migrations.py:5494). New migrations 48 to 75 are pre-allocated, one owner per number.\n\n**Three wave-1 layout changes that make disjoint clusters possible**\n1. One opt-in flag system, built once. It registers every OPD, ADT, GRN and LIS flag, setting, permission constant and v1 grant up front. config.py, roles.py and shellConfig.tsx are then rarely touched again.\n2. Migrations move to one file per migration under server/migrations_his/, picked up automatically by version number. migrations.py is edited only in wave 1.\n3. Route packages are pre-created and registered in main.py in wave 1: adt, lab and pharmacy_store, plus the OPD, registration and schedule route files. New panels find their views and tile actions automatically from their folders (import.meta.glob). After that, clusters mostly add files instead of editing shared ones.\n\n**Duplicates merged across the designs**\n- The flag helpers proposed by all six epics become one. adt-0, grn-19, lis-2 and the role and frontend parts of opd-3 and adt-17 fold into wave 1.\n- One users-role rebuild covers receptionist, ward_clerk and the three lab roles. Each role can only be created while its feature is on.\n- adt-2 alone owns patient_movements; opd-1 no longer creates it.\n- One readmission design: opd-17a, 17b and 17c absorb adt-18a and 18b. The one-active-admission index lands once.\n- The ghost POST /api/vigil/patients is retired once, in wave 1.\n\n**Added**\n- multisite-8h1, 8h2 and 8h3: about 7.5 days to sweep the new HIS routes for facility scope. The multi-site architect could not have counted these routes.\n\n**Order**\n- Wave 1: platform. It touches no file a running session owns; config.py and main.py are limited to the flag block and /api/health, rebased after the CORS session.\n- Waves 2 and 3: schema and core writers for OPD, ADT, GRN and LIS.\n- Medication-order store code: waves 4 to 10, starting only after Samuel rules its architectural decisions.\n- Multi-site: spine in wave 7, scope core in wave 8, then registry and sweeps in waves 11 to 14. These run after every other epic has stopped adding SQL. No other epic depends on multi-site, so the whole tail can be dropped.\n\n**Rulings**\n- Increments blocked by held rulings (R001, R002, R009, R010, W111, R023) are in held_for_samuel.\n- New safety rulings raised by the architects are built to the architect's recommendation. Where the architect shipped a stricter interim default (LIS-R5, LIS-R6, GRN-RS7), that default stays until Samuel confirms. Their flags stay off until he confirms them.\n\n**Pushback**\nThis is about 115 engineer-weeks at the sales plan's 4 engineer-days a week. It competes directly with the Ward Record, the only priced product. Every wave ends in a mergeable state, so Samuel can stop after any wave.",
+ "total_engineer_days": 460,
+ "waves": [
+  {
+   "wave": 1,
+   "goal": "Shared platform: one default-off flag system for all six epics, one users-role rebuild, per-file migration discovery, pre-created route packages, plus two fixes that need no schema. Touches no file a running session owns (config.py and main.py: flag block and /api/health only, rebased after the CORS session). Hot files this wave: config.py, main.py, migrations.py, roles.py, permissions.py owned by W1-A; shellConfig.tsx owned by W1-B; src/api/client.ts never edited.",
+   "clusters": [
+    {
+     "cluster": "W1-A Server platform spine",
+     "increments": [
+      "his-1 (new) opt-in flag platform: config._opt_in; FEATURE_FLAGS (registration, opd, adt_strict_locations, pharmacy_ward_stock, ndps_register with its refusal without ORB_PHARMACY_NDPS_ON_FAILURE, lab analyser_listener, result_quarantine, result_corrections, oru_order_link, lab_critical_interfaced, lab_portal_reports) published as 'features' on /api/health; OPT_IN_MODULES adt, pharmacy-store, lab merged into HOSPITAL_MODULE_ENV and enabled_modules, default off; every OPD, ADT, GRN and LIS setting with its default; test_money pin becomes 'non-opt-in ON, opt-in OFF' (absorbs the flag parts of opd-1, adt-0, grn-2, lis-1)",
+      "his-1 (cont.) migration discovery: server/migrations_his/m00NN_<name>.py collected by version, refused at import on a duplicate or a filename/version mismatch, merged into the sorted MIGRATIONS run",
+      "his-1 (cont.) route skeletons registered once in main.py: routes/adt, routes/lab, routes/pharmacy_store packages (one empty sub-router per concern) and opd_routes, registration_routes, schedule_routes, each 404 while its flag is off",
+      "his-1 (cont.) pre-registration with a table-exists guard: retention sources for every planned OPD, LIS and GRN PHI table and ERASURE_RETAINED_TABLES for live ndps_register rows; fail-closed audit categories patient_identity, patient_movement, clinical_config",
+      "his-2 (new) migration 48 users_role_batch (receptionist, ward_clerk, lab_technician, pathologist, phlebotomist) with LATEST_USERS_ROLE_CHECK; roles.ROLE_FEATURE map; ward_clerk in DEPARTMENT_REQUIRED_ROLES; permission constants and v1 grants for OPD, ADT, GRN, LIS as listed under product rulings; admin_users_routes refuses a role whose feature is off (absorbs the role parts of opd-3, adt-17, lis-2 and the grant part of grn-19)",
+      "grn-1 migration 49 helix_tables_in_runner"
+     ],
+     "files": [
+      "server/config.py",
+      "server/main.py",
+      "server/migrations.py",
+      "server/roles.py",
+      "server/permissions.py",
+      "server/routes/admin_users_routes.py",
+      "server/services/consent_service.py",
+      "server/services/audit_service.py",
+      "server/services/helix_db.py",
+      "server/tests/test_money.py",
+      "server/tests/test_rbac.py",
+      "server/tests/test_migrations.py",
+      "server/tests/test_fresh_database_init.py",
+      "server/tests/test_audit_fail_closed_categories.py",
+      "server/migrations_his/__init__.py",
+      "server/migrations_his/m0048_users_role_batch.py",
+      "server/migrations_his/m0049_helix_tables_in_runner.py",
+      "server/routes/adt/__init__.py",
+      "server/routes/adt/master.py",
+      "server/routes/adt/board.py",
+      "server/routes/adt/moves.py",
+      "server/routes/adt/presence.py",
+      "server/routes/adt/end_stay.py",
+      "server/routes/adt/reservations.py",
+      "server/routes/adt/census.py",
+      "server/routes/lab/__init__.py",
+      "server/routes/lab/master.py",
+      "server/routes/lab/orders.py",
+      "server/routes/lab/specimens.py",
+      "server/routes/lab/results.py",
+      "server/routes/lab/criticals.py",
+      "server/routes/lab/reports.py",
+      "server/routes/lab/tat.py",
+      "server/routes/lab/analysers.py",
+      "server/routes/pharmacy_store/__init__.py",
+      "server/routes/pharmacy_store/masters.py",
+      "server/routes/pharmacy_store/purchasing.py",
+      "server/routes/pharmacy_store/stock.py",
+      "server/routes/pharmacy_store/lots.py",
+      "server/routes/pharmacy_store/transfers.py",
+      "server/routes/pharmacy_store/counts.py",
+      "server/routes/pharmacy_store/ndps.py",
+      "server/routes/pharmacy_store/ward.py",
+      "server/routes/pharmacy_store/returns.py",
+      "server/routes/pharmacy_store/vendor_returns.py",
+      "server/routes/opd_routes.py",
+      "server/routes/registration_routes.py",
+      "server/routes/schedule_routes.py",
+      "server/tests/test_opt_in_platform.py",
+      "server/tests/test_migration_discovery.py",
+      "server/tests/test_role_batch.py",
+      "server/tests/test_his_route_skeletons.py"
+     ],
+     "migrations": 2,
+     "note": "7.5 days. Migration 48 is an FK-parent rebuild of users: run it on a backup_db.py copy on the isolated verify stack first. No epic may add a users column (it would abort the next role rebuild). Every grant is inert because every new route 404s while its flag is off. The SALES Ward Record profile sees only the role CHECK widening."
+    },
+    {
+     "cluster": "W1-B Client platform shell",
+     "increments": [
+      "his-3 (new) client opt-in platform: OPT_IN_MODULE_IDS with DEFAULT_MODULE_FLAGS derived (opt-in false, also after a failed or non-OK health probe); DEFAULT_FEATURE_FLAGS all false with currentFeatureFlags(); DIAGNOSTIC_MODULE_IDS=['lab'] excluded from the MONEY derivation; pinned PHARMACY_DESK_MODULE_IDS=['pharmacy-store'] exception; ModuleOffNotice; shellConfig.test default-ON pins amended (absorbs adt-0, lis-1, grn-2 and grn-19 shell parts)",
+      "his-4 (new) tabs, rails, roles: module tabs 'adt' (Beds), 'pharmacy-store', 'lab' with panel paths not yet present (not installed); 'opd' feature tab on doctor and clinician rails; ROLE_CONFIG for receptionist (Front Desk), ward_clerk (Beds) and the three lab roles, each with the module-off notice; pharmacist rail entry for pharmacy-store; roles.ts mirror of every new constant and grant; App.tsx UserRole and the /display/opd kiosk route with a stub page; UsersPanel hides roles whose feature is off; en and hi labels (absorbs the frontend parts of opd-3 and adt-17)"
+     ],
+     "files": [
+      "src/shellConfig.tsx",
+      "src/shellConfig.test.ts",
+      "src/lib/roles.ts",
+      "src/lib/roles.test.ts",
+      "src/App.tsx",
+      "src/pages/panels/admin/UsersPanel.tsx",
+      "src/pages/ClinicianShell.tsx",
+      "src/i18n/locales/en.json",
+      "src/i18n/locales/hi.json",
+      "src/components/ModuleOffNotice.tsx",
+      "src/components/ModuleOffNotice.test.tsx",
+      "src/pages/OpdTokenBoard.tsx"
+     ],
+     "migrations": 0,
+     "note": "4 days. Ids, permission strings and grants must match W1-A exactly (contract in this plan); the CLINICAL_MODULE_IDS ['dietary'] pin and the money-adjacency test stay as they are apart from the one pinned pharmacy-desk exception. Contrast gate, no em dashes."
+    },
+    {
+     "cluster": "W1-C Procurement cores and Pharmacy Store shell",
+     "increments": [
+      "grn-20 (part a): split each procurement write into a connection-taking _<name>_core(db, ...) plus the unchanged public wrapper; the expiry 'today' becomes a parameter; pure refactor",
+      "grn-2 (remainder): PharmacyStorePanel shell that discovers views from ./pharmacyStore/*View.tsx with an honest empty state; src/api/pharmacyStore/index.ts"
+     ],
+     "files": [
+      "server/services/procurement_service.py",
+      "server/tests/test_procurement.py",
+      "server/tests/test_procurement_cores.py",
+      "src/pages/panels/PharmacyStorePanel.tsx",
+      "src/pages/panels/PharmacyStorePanel.css",
+      "src/pages/panels/PharmacyStorePanel.test.tsx",
+      "src/api/pharmacyStore/index.ts"
+     ],
+     "migrations": 0,
+     "note": "3 days. All 75 procurement tests must pass unchanged; stores procurement is ON by default everywhere."
+    },
+    {
+     "cluster": "W1-D Observation reader parity and ghost route retirement",
+     "increments": [
+      "lis-5 (part a): services/lab_observations.py (void and superseded filters, julianday(COALESCE(observed_at, recorded_at)) DESC, id DESC, previous_result, display_value) adopted by the chart lab query, downtime pack, Tier 1 creatinine lane and timeline; guard test covering FROM/JOIN and from_sql strings; labTrends passes simulated for observation points",
+      "opd-1 (part g): retire the ghost POST /api/vigil/patients with a 410 naming the admission door; soak_test.py and test_patient_name_rule.py move to /api/admissions/admit (also covers adt-5's legacy-route item)"
+     ],
+     "files": [
+      "server/routes/vigil_routes.py",
+      "server/services/downtime_service.py",
+      "server/services/patient_specific_screen.py",
+      "server/services/patient_timeline_service.py",
+      "src/lib/labTrends.ts",
+      "src/pages/panels/VigilPanel.labtrend.test.tsx",
+      "server/scripts/soak_test.py",
+      "server/tests/test_patient_name_rule.py",
+      "server/services/lab_observations.py",
+      "server/tests/test_lab_observation_readers.py",
+      "src/lib/labTrends.test.ts",
+      "server/tests/test_ghost_patient_route_retired.py"
+     ],
+     "migrations": 0,
+     "note": "3 days. Both changes are ungated on purpose: the Tier 1 lane stops reading voided and simulated creatinine (a parity defect fix), and the ghost route stops creating admission-less patients. Samuel can ask for the Tier 1 part to sit behind ORB_LAB instead."
+    }
+   ]
+  },
+  {
+   "wave": 2,
+   "goal": "Schema foundations for OPD, ADT, GRN and LIS and the first services that need only that schema. Migrations 50 to 57. Hot files this wave: main.py owned by W2-D (lab lifespan hook only); permissions.py owned by W2-E; config.py, roles.py, shellConfig.tsx, migrations.py untouched (new migration files have one owner each).",
+   "clusters": [
+    {
+     "cluster": "W2-A Front desk schema, movement ledger and the registered status",
+     "increments": [
+      "opd-1 (schema): migration 50 registration_opd_foundation (frozen opd_visits DDL and new columns, admissions.opd_visit_id, orders.opd_visit_id, document_number_series resets_yearly and check_digit with an unconfigured UHID row, patient_demographics, append-only patient_identity_changes, patient_duplicate_candidates, patient_match_keys, opd_display_boards); ensure_frontdesk_schema kept in step; patient_movements left to adt-2",
+      "adt-2: migration 51 adt_movement_ledger (numbered patient_movements, old shape rebuilt with explicit rowid copy, vocabulary trigger, id columns and indexes); frontdesk_service imports the DDL; billing _admission_moves reads move types only",
+      "opd-2: migration 52 patients_status_registered (FK-parent rebuild through _atomic_table_rebuild, frozen column list, database.SCHEMA parity); never-admitted rows excluded from the shadow scorecard and NABH inpatient-days"
+     ],
+     "files": [
+      "server/database.py",
+      "server/services/frontdesk_service.py",
+      "server/services/billing_service.py",
+      "server/services/shadow_scorecard_service.py",
+      "server/services/nabh_service.py",
+      "server/migrations_his/m0050_registration_opd_foundation.py",
+      "server/migrations_his/m0051_adt_movement_ledger.py",
+      "server/migrations_his/m0052_patients_status_registered.py",
+      "server/tests/test_registration_opd_foundation.py",
+      "server/tests/test_adt_ledger_migration.py",
+      "server/tests/test_patients_registered_status_migration.py"
+     ],
+     "migrations": 3,
+     "note": "7 days. Migration 52 runs on every install including the Ward Record: verified backup first, dry run on a dev DB copy, row count and foreign_key_check assertions. The shadow-instrumentation owner reviews the scorecard change (pilot evidence instrument). The 36 frontdesk tests pass unchanged."
+    },
+    {
+     "cluster": "W2-B ADT bed master",
+     "increments": [
+      "adt-1: migration 53 adt_bed_master (wards with a 'MAIN' facility_code label, ward_rooms, bed_classes, bed_master_events, housekeeping_units columns also in HOUSEKEEPING_TABLES and the lazy ALTER); housekeeping_service.register_unit_on; bed_master_service; Bed setup API in routes/adt/master.py; housekeeping register refuses bed units with ORB_ADT on"
+     ],
+     "files": [
+      "server/services/housekeeping_service.py",
+      "server/routes/housekeeping_routes.py",
+      "server/routes/adt/master.py",
+      "server/services/bed_master_service.py",
+      "server/migrations_his/m0053_adt_bed_master.py",
+      "server/tests/test_bed_master.py"
+     ],
+     "migrations": 1,
+     "note": "4 days. Permission constants, router registration and roles.ts mirror were done in wave 1. Ward codes are immutable once referenced and are unique case-insensitively, which already satisfies multi-site MS-R4 while every ward is 'MAIN'."
+    },
+    {
+     "cluster": "W2-C Pharmacy store schema and domain guards",
+     "increments": [
+      "grn-3: migration 54 pharmacy_store_schema (no CHECK on columns added to Helix tables, _ref naming, NDPS register with lane and triggers, ledger backfill with opening rows and seq); reseed wiring (EXTRA_TABLES_TO_CLEAR, ndps_register conditional predicate)",
+      "grn-20 (part b): domain guards in every id-taking core, GRN domain from its PO, store master partition, vendor core, pharmacy document series"
+     ],
+     "files": [
+      "server/scripts/reset_db_and_seed.py",
+      "server/tests/test_reseed_orphans.py",
+      "server/tests/test_fresh_database_init.py",
+      "server/services/procurement_service.py",
+      "server/migrations_his/m0054_pharmacy_store_schema.py",
+      "server/tests/test_pharmacy_store_schema.py",
+      "server/tests/test_procurement_domain_guard.py"
+     ],
+     "migrations": 1,
+     "note": "6.5 days. Legacy tmp_path DB test: SUM(ledger) equals every lot quantity afterwards; the inventory_items is_pharmacy CHECK still refuses 1."
+    },
+    {
+     "cluster": "W2-D LIS module state, contract and observation links",
+     "increments": [
+      "lis-1 (remainder): services/lab_module.py with on, draining and off state computed at startup and cached; compliance drain check; require_lab_module(allow_draining) on routes/lab; main.py lifespan calls lab_module.startup/shutdown (the only main.py edit LIS ever needs); LabPanel shell discovering ./lab/*View.tsx; src/api/lab/index.ts",
+      "lis-3: migration 55 lab_contract; lab_master_service; starter catalogue (ketones, VBG, ABG as ward_poct, no ranges or limits) loaded and registered in terminology only with ORB_LAB on; cutover events",
+      "lis-5 (part b): migration 56 observations_lab_links; chart query selects lab_result_id; labTrends takes status from the lab's own flag for LIS rows"
+     ],
+     "files": [
+      "server/main.py",
+      "server/services/compliance_service.py",
+      "server/services/terminology_service.py",
+      "server/routes/lab/__init__.py",
+      "server/routes/lab/master.py",
+      "server/routes/vigil_routes.py",
+      "src/lib/labTrends.ts",
+      "src/lib/labTrends.test.ts",
+      "server/services/lab_module.py",
+      "server/services/lab_master_service.py",
+      "server/site_config/lab_catalogue.starter.json",
+      "server/migrations_his/m0055_lab_contract.py",
+      "server/migrations_his/m0056_observations_lab_links.py",
+      "src/pages/panels/LabPanel.tsx",
+      "src/pages/panels/LabPanel.test.tsx",
+      "src/api/lab/index.ts",
+      "server/tests/test_lab_module_flag.py",
+      "server/tests/test_lab_master.py",
+      "server/tests/test_lab_contract_migration.py"
+     ],
+     "migrations": 2,
+     "note": "6 days. /api/health never opens a DB connection for module_states. Terminology row count unchanged with ORB_LAB off."
+    },
+    {
+     "cluster": "W2-E Registration desk dependency and clinic sessions",
+     "increments": [
+      "opd-3 (remainder): permissions.require_registration_desk(mode) with audited denial; frontdesk_routes moves OPD reads, the doctors list, register and cancel onto it; transfers keep require_frontdesk_write",
+      "opd-15: migration 57 clinic_sessions; clinic_schedule_service and schedule_routes; Clinic timings view; FrontDeskPanel learns to discover ./frontdesk/*View.tsx when the registration flag is on"
+     ],
+     "files": [
+      "server/permissions.py",
+      "server/routes/frontdesk_routes.py",
+      "server/routes/schedule_routes.py",
+      "src/pages/panels/FrontDeskPanel.tsx",
+      "server/services/clinic_schedule_service.py",
+      "server/migrations_his/m0057_clinic_sessions.py",
+      "src/api/schedule.ts",
+      "src/pages/panels/frontdesk/ClinicSessionsView.tsx",
+      "server/tests/test_receptionist_role.py",
+      "server/tests/test_clinic_schedule.py"
+     ],
+     "migrations": 1,
+     "note": "5 days. Receptionist: chart routes 404 or 403, transfers 403, payments 403."
+    }
+   ]
+  },
+  {
+   "wave": 3,
+   "goal": "Core writers: the opt-in OPD scope arm, the single ADT location writer and end of stay, the single Helix stock writer, LIS order intake, the unmatched-results queue. Migrations 58 to 60. Gate: the Relay agentic-confirm (R024) session has merged before W3-C starts. Hot files: permissions.py owned by W3-A; no other hot file touched.",
+   "clusters": [
+    {
+     "cluster": "W3-A OPD visit scope arm",
+     "increments": [
+      "opd-7: permissions.patient_in_opd_scope reached only through require_patient_access/enforce_patient_scope(opd_arm=True) on a pinned whitelist; opd_registration_allowed allows any patient with no active admission in OPD mode; create_opd_visit audits in-transaction plus 'opd_scope_opened' (self_registered flag); GET /api/opd/patients/{id}/record via new opd_service"
+     ],
+     "files": [
+      "server/permissions.py",
+      "server/services/frontdesk_service.py",
+      "server/routes/frontdesk_routes.py",
+      "server/routes/opd_routes.py",
+      "server/services/opd_service.py",
+      "server/tests/test_opd_scope.py",
+      "server/tests/test_opd_scope_drift.py",
+      "server/tests/test_opd_chart_writes_closed.py"
+     ],
+     "migrations": 0,
+     "note": "4.5 days. patient_in_scope, scope_patient_ids_sql and PATIENT_DEPARTMENT_SQL are unchanged, so the Sage parity test and Sage provenance are untouched. OPD-N2 applied (7 days, extent ii, self-registered counts and is flagged)."
+    },
+    {
+     "cluster": "W3-B ADT writer core and end of stay",
+     "increments": [
+      "adt-3: migration 58 adt_admission_location (ward_id, bed_id, presence and discharge_type columns with vocabulary triggers, partial unique bed lock); services/adt package with core.py (current_location, record_movement_on, locate_admission_on); reconciliation, link, register-complete, rename and retire guards",
+      "adt-8a: migration 59 adt_discharge_dispositions; _close_admission_on extracted from discharge_patient; end_stay with server read-back (confirm_mrn), de-duplicated dispositions, discharge_preconditions returning [] on every door; roster close through end_stay when on"
+     ],
+     "files": [
+      "server/services/bed_master_service.py",
+      "server/routes/adt/master.py",
+      "server/routes/adt/end_stay.py",
+      "server/services/discharge_service.py",
+      "server/routes/vigil_routes.py",
+      "server/services/nabh_service.py",
+      "server/services/roster_import.py",
+      "server/services/adt/__init__.py",
+      "server/services/adt/core.py",
+      "server/services/adt/end_stay.py",
+      "server/migrations_his/m0058_adt_admission_location.py",
+      "server/migrations_his/m0059_adt_discharge_dispositions.py",
+      "server/tests/test_adt_location_link.py",
+      "server/tests/test_adt_end_stay.py"
+     ],
+     "migrations": 2,
+     "note": "8 days. The admissions-trigger note lives in the migration file, not database.py. Open escalation chains are listed at end of stay, never closed (R009 held). ADT-P8 applied for the portal login only (deactivated on death, restored by reopen). Flag-off discharge snapshot identical."
+    },
+    {
+     "cluster": "W3-C Helix single stock writer and pharmacy masters",
+     "increments": [
+      "grn-4: pharmacy_stock_service as the only writer of lots and movements (dispensable predicate, FEFO, relative decrement, seq, hook registry for NDPS); transition_order_status in db_session(immediate=True) without the in-body commit; in-transaction clinical_access helix_dispense_recorded; seeds open lots through the service; AST single-writer guard",
+      "grn-5: pharmacy_master_service and routes/pharmacy_store/masters.py: drug commercial and regulatory fields, two-person classification downgrade, pharmacy stores with legacy-lot adoption, par levels, vendors and drug licences; loader refuses identity rewrites of in-use rows; MastersView"
+     ],
+     "files": [
+      "server/services/helix_service.py",
+      "server/scripts/seed_helix.py",
+      "server/scripts/populate_helix_from_medgemma.py",
+      "server/scripts/load_rxnorm_formulary.py",
+      "server/tests/test_helix_stock_rules.py",
+      "server/tests/test_helix_order_lifecycle.py",
+      "server/routes/pharmacy_store/masters.py",
+      "server/services/pharmacy_stock_service.py",
+      "server/services/pharmacy_master_service.py",
+      "src/pages/panels/pharmacyStore/MastersView.tsx",
+      "src/pages/panels/pharmacyStore/MastersView.test.tsx",
+      "src/api/pharmacyStore/masters.ts",
+      "server/tests/test_pharmacy_stock_ledger.py",
+      "server/tests/test_pharmacy_stock_single_writer.py",
+      "server/tests/test_helix_dispense_audit.py",
+      "server/tests/test_pharmacy_master.py",
+      "server/tests/test_formulary_loader_identity.py"
+     ],
+     "migrations": 0,
+     "note": "8 days. Gate: R024 session merged; rebase on insert_order; test_agentic_confirm_race.py untouched. Always-on change: every dispense now fails closed on an audit outage. Later GRN increments put their logic in their own modules and call post_movement; only grn-8, grn-13, grn-14 and grn-17 edit pharmacy_stock_service, each in a different wave."
+    },
+    {
+     "cluster": "W3-D LIS order intake and setup screens",
+     "increments": [
+      "lis-6: post-commit intake hook on activation plus ensure_intake sweep from lab_module.startup, cutover and ward_poct skip, panel explosion, specimen planning, accession (hospital-local day, Damm, loud overflow)",
+      "lis-4: lab Setup view (tests, panels, ranges, critical limits, rejection reasons) with loud 'not configured' counts"
+     ],
+     "files": [
+      "server/services/orders_service.py",
+      "server/routes/lab/orders.py",
+      "server/services/lab_module.py",
+      "server/services/lab_order_service.py",
+      "server/services/lab_accession.py",
+      "src/pages/panels/lab/SetupView.tsx",
+      "src/pages/panels/lab/SetupView.test.tsx",
+      "src/pages/panels/lab/RangeEditor.tsx",
+      "src/pages/panels/lab/CriticalLimitEditor.tsx",
+      "src/api/lab/master.ts",
+      "server/tests/test_lab_order_intake.py",
+      "server/tests/test_lab_accession.py"
+     ],
+     "migrations": 0,
+     "note": "7 days. LIS-R13 and LIS-R18 applied. Orders activated before the cutover are never intaken."
+    },
+    {
+     "cluster": "W3-E Unmatched results queue and corrected results",
+     "increments": [
+      "lis-19: migration 60 result_quarantine; unresolved results to the queue with ORB_RESULT_QUARANTINE on; attach and discard need ingest.reconcile with two-identifier confirmation; admin sees list and counts only; ReconcileView discovered by LabPanel",
+      "lis-20: external OBX 'C' supersedes the prior final for the same patient, code, sub-id and filler or sender placer, never the generated group id"
+     ],
+     "files": [
+      "server/services/ingestion_service.py",
+      "server/services/ingestion_adapters.py",
+      "server/routes/ingestion_routes.py",
+      "server/services/compliance_service.py",
+      "src/pages/panels/admin/IngestionMonitor.tsx",
+      "server/migrations_his/m0060_result_quarantine.py",
+      "server/services/result_quarantine_service.py",
+      "src/components/lab/QuarantineQueue.tsx",
+      "src/components/lab/QuarantineQueue.test.tsx",
+      "src/pages/panels/lab/ReconcileView.tsx",
+      "server/tests/test_result_quarantine.py",
+      "server/tests/test_oru_corrections.py"
+     ],
+     "migrations": 1,
+     "note": "5.5 days. LIS-R17 applied (lab roles only). test_ingestion_alert_parity stays green. ingestion_service.py is then touched serially in waves 7, 8 and 10."
+    }
+   ]
+  },
+  {
+   "wave": 4,
+   "goal": "First usable slices behind their flags (registration, bed board, pharmacy purchasing and stock views, LIS guard and collection, OPD queue and consultation record) and the medication-order store foundation. Gate: Samuel has ruled the medication-order architectural decisions before W4-E starts; Bridge session merged before W4-B; CORS session merged before W4-F. Migrations 61 and 62. Hot files: config.py and main.py owned by W4-E.",
+   "clusters": [
+    {
+     "cluster": "W4-A Registration and duplicate detection",
+     "increments": [
+      "opd-4: registration_service, patient_matching (normalisers, keys, self-healing sync_keys), registration_routes; one immediate transaction for patient, demographics, match keys, unverified ABHA placeholder via abdm_service.record_abha_on and the patient_identity audit; UHID hospital or orb mode (Verhoeff, refused until configured); minimal-field hospital-wide search; check_identity oracle with rate limit",
+      "opd-5: matcher bands, hard matches on UHID and active ABHA, server-enforced duplicate mode, worklist and resolve"
+     ],
+     "files": [
+      "server/services/billing_masters.py",
+      "server/services/abdm_service.py",
+      "server/routes/registration_routes.py",
+      "server/services/registration_service.py",
+      "server/services/patient_matching.py",
+      "server/tests/test_registration_service.py",
+      "server/tests/test_registration_routes.py",
+      "server/tests/test_patient_matching.py",
+      "server/tests/test_registration_duplicates.py"
+     ],
+     "migrations": 0,
+     "note": "8 days. OPD-S2 applied as warn-with-reason (default ORB_DUPLICATE_MODE=warn). Measure sync_keys plus match on 100k synthetic patients in SQLCipher."
+    },
+    {
+     "cluster": "W4-B Bed board, reopen and stay-time helpers",
+     "increments": [
+      "adt-4a: bed_board with the full precedence (occupancy and reservation above out_of_service, ledger-derived needs_cleaning, 'cleaning not tracked'); awaiting and unlinked lists; BedBoardPanel discovering ./adt/*View.tsx and tile actions from src/components/adt/actions/*Action.tsx",
+      "adt-8b: reopen a summary-less end recorded in error (correction row, voided disposition)",
+      "adt-8c: services/stay_times.py adopted by forecast, impact, NABH readmission, the bridge discharge view, the /discharged list and the housekeeping sweep (keyed on the ended admission's bed)"
+     ],
+     "files": [
+      "server/services/bed_master_service.py",
+      "server/routes/adt/board.py",
+      "server/routes/adt/end_stay.py",
+      "server/services/adt/end_stay.py",
+      "server/services/nabh_service.py",
+      "server/services/forecast_service.py",
+      "server/services/impact_service.py",
+      "server/routes/bridge_routes.py",
+      "server/routes/vigil_routes.py",
+      "server/services/housekeeping_service.py",
+      "server/services/billing_service.py",
+      "server/services/stay_times.py",
+      "src/pages/panels/BedBoardPanel.tsx",
+      "src/pages/panels/BedBoardPanel.css",
+      "src/pages/panels/BedBoardPanel.test.tsx",
+      "src/pages/panels/adt/BoardView.tsx",
+      "src/pages/panels/adt/AwaitingView.tsx",
+      "src/components/adt/actions/index.ts",
+      "src/api/adt/board.ts",
+      "server/tests/test_adt_board.py",
+      "server/tests/test_adt_reopen.py",
+      "server/tests/test_stay_times.py"
+     ],
+     "migrations": 0,
+     "note": "8 days. The board renders server status words generically, so later presence and reservation states need no BoardView edit. The m15 note correction goes into the stay_times docstring (migrations.py is not edited). Gate: Bridge session merged (bridge_routes is next to its file)."
+    },
+    {
+     "cluster": "W4-C Pharmacy purchasing and stock views",
+     "increments": [
+      "grn-7: pharmacy_purchasing_service (PO create, submit, approve, issue, cancel through the cores with in-transaction audit; licence and classification checks; reorder suggestions to draft PO); PurchasingView",
+      "grn-9: stock, paged ledger, reorder and near-expiry reports in a new pharmacy_stock_reports.py; Formulary uses the server reorder level when present"
+     ],
+     "files": [
+      "server/routes/pharmacy_store/purchasing.py",
+      "server/routes/pharmacy_store/stock.py",
+      "src/components/helix/stock.ts",
+      "src/components/helix/HelixFormulary.tsx",
+      "src/components/helix/HelixFormulary.test.tsx",
+      "server/services/pharmacy_purchasing_service.py",
+      "server/services/pharmacy_stock_reports.py",
+      "src/pages/panels/pharmacyStore/PurchasingView.tsx",
+      "src/pages/panels/pharmacyStore/StockView.tsx",
+      "src/pages/panels/pharmacyStore/StockView.test.tsx",
+      "src/api/pharmacyStore/purchasing.ts",
+      "src/api/pharmacyStore/stock.ts",
+      "server/tests/test_pharmacy_purchase_orders.py",
+      "server/tests/test_pharmacy_stock_reports.py"
+     ],
+     "migrations": 0,
+     "note": "6 days. GRN-R10, R11, R18 applied. Works with ORB_PROCUREMENT patched off."
+    },
+    {
+     "cluster": "W4-D LIS order guard and specimen collection",
+     "increments": [
+      "lis-7: OrderManagedByLab guard keyed on lab_order_items (409 on /transition and /result whatever the flag), conn-taking helpers, lab-mediated cancel, completion rule, OrdersPanel lab-managed display and catalogue typeahead",
+      "lis-8: Code 128 SVG encoder, label print view, ward Samples view, phlebotomy list, collect with two-identifier confirmation in one immediate transaction"
+     ],
+     "files": [
+      "server/services/orders_service.py",
+      "server/routes/orders_routes.py",
+      "server/services/lab_order_service.py",
+      "server/routes/lab/orders.py",
+      "server/routes/lab/specimens.py",
+      "src/components/orders/OrdersPanel.tsx",
+      "src/components/orders/OrdersPanel.test.tsx",
+      "src/pages/panels/nurse/NursePanel.tsx",
+      "src/print.css",
+      "src/api/lab/orders.ts",
+      "src/api/lab/specimens.ts",
+      "src/lib/code128.ts",
+      "src/lib/code128.test.ts",
+      "src/components/print/SpecimenLabelPrintView.tsx",
+      "src/components/print/SpecimenLabelPrintView.test.tsx",
+      "src/pages/panels/nurse/SamplesSheet.tsx",
+      "src/pages/panels/nurse/SamplesSheet.test.tsx",
+      "src/pages/panels/lab/CollectView.tsx",
+      "server/tests/test_lab_order_guard.py",
+      "server/tests/test_lab_collection.py"
+     ],
+     "migrations": 0,
+     "note": "8 days. LIS-R6 back-dating ships refused (strict interim), LIS-R15 and R16 applied. The guard stops early 'completed' lab billing."
+    },
+    {
+     "cluster": "W4-E Medication-order store foundation (record mode)",
+     "increments": [
+      "medorders-1: migration 61 med_order_store (med_orders, med_order_events with a no-update trigger only, medications.med_order_id, held_at, hold_reason, helix_patient_med_orders.med_order_id also in HELIX_SCHEMA with a guarded index step); ORB_MED_ORDER_STORE and ORB_MED_ORDER_LIFECYCLE join FEATURE_FLAGS (lifecycle without store refuses import); enforce_medication_safety gains exclude_med_id; services/medorders package core (state machine, projection, fingerprint, transition_in_txn); routes/medorders package pre-created and registered (core, verify, lifecycle, supply)",
+      "medorders-2: boot adoption only with the store flag on (never on a GET), medorder_parity.py, parity report"
+     ],
+     "files": [
+      "server/config.py",
+      "server/main.py",
+      "server/services/helix_db.py",
+      "server/services/medication_safety_gate.py",
+      "server/services/consent_service.py",
+      "server/services/medorders/__init__.py",
+      "server/services/medorders/core.py",
+      "server/services/medorders/adoption.py",
+      "server/routes/medorders/__init__.py",
+      "server/routes/medorders/core.py",
+      "server/routes/medorders/verify.py",
+      "server/routes/medorders/lifecycle.py",
+      "server/routes/medorders/supply.py",
+      "server/migrations_his/m0061_med_order_store.py",
+      "server/scripts/medorder_parity.py",
+      "server/tests/test_medorder_state_machine.py",
+      "server/tests/test_medorder_migration.py",
+      "server/tests/test_medorder_registries.py",
+      "server/tests/test_medorder_adoption.py"
+     ],
+     "migrations": 1,
+     "note": "6 days. Starts only after the architectural decisions are ruled. Package layout lets later medorders clusters own separate modules. Erase plan, reseed and retention registries re-run unchanged."
+    },
+    {
+     "cluster": "W4-F OPD queue and consultation record",
+     "increments": [
+      "opd-8: queue actions (call, skip, recall, assign, priority, room, LWBS as a coded cancel with no charge), /start and /complete need opd.consult in OPD mode, GET /api/opd/my-queue, OpdPanel feature tab (Sage assistant hidden, no view_context patient), content-free 'opd:queue_changed' nudge via realtime.schedule_on_loop; queue logic in a new opd_queue_service; add-walk-in deferred to W5-A",
+      "opd-10: migration 62 opd_consultations and append-only addenda; draft, save, sign, addenda; free-text diagnoses with optional code and code_status; OPD vitals kept in vitals_json and never scored; timeline shows OPD visits; dedicated no-scoring AST guard"
+     ],
+     "files": [
+      "server/services/frontdesk_service.py",
+      "server/routes/frontdesk_routes.py",
+      "server/routes/opd_routes.py",
+      "server/services/opd_service.py",
+      "server/services/patient_timeline_service.py",
+      "src/pages/ClinicianShell.tsx",
+      "src/pages/panels/FrontDeskPanel.tsx",
+      "server/services/opd_queue_service.py",
+      "src/api/opd.ts",
+      "src/pages/panels/OpdPanel.tsx",
+      "src/pages/panels/OpdPanel.css",
+      "src/pages/panels/OpdPanel.test.tsx",
+      "src/pages/panels/frontdesk/QueueView.tsx",
+      "server/migrations_his/m0062_opd_consultations.py",
+      "server/tests/test_opd_queue_actions.py",
+      "server/tests/test_opd_consultation.py",
+      "server/tests/test_opd_no_scoring.py"
+     ],
+     "migrations": 1,
+     "note": "8 days. Desk polls every 30 s until opd-9b (audit cost stated). OPD-N8 (completion without a signed note needs a reason) and OPD-N9 applied. realtime.py is imported, not edited."
+    }
+   ]
+  },
+  {
+   "wave": 5,
+   "goal": "Clinical entry points: register view and identity check, admission into a master bed, drug identity governance and goods receipt, LIS receipt and result entry, the medication-order chart lane, eMAR check and API, analyser registry, pharmacy transfers, end-of-stay screens. Gates: Scribe quick-admit and AdmitPatientModal ACVPU sessions merged before W5-B; Sage bed session confirmed off sage_routes.py before W5-C; CORS merged before W5-E. Migrations 63 and 64. Hot files: permissions.py and roles.ts owned by W5-E.",
+   "clusters": [
+    {
+     "cluster": "W5-A Register view, identity check, OPD allergy review",
+     "increments": [
+      "opd-6a: identity_check required for a visit picked from search (stated identifiers, match or no match, never the stored DOB); Register view search-first, IdentityConfirmDialog, duplicate warning with reason, DOB or stated age with the R018 hint, unverified ABHA placeholder",
+      "opd-10a: migration 63 patient_allergy_assessments (append-only); allergy review through clinical_records_service.record_allergies_on plus the assessment in one audited transaction; signing needs a review",
+      "opd-8 (remainder): add walk-in in OpdPanel reusing RegisterPatientView"
+     ],
+     "files": [
+      "server/routes/frontdesk_routes.py",
+      "server/services/frontdesk_service.py",
+      "server/routes/opd_routes.py",
+      "server/services/opd_service.py",
+      "src/pages/panels/FrontDeskPanel.tsx",
+      "src/pages/panels/FrontDeskPanel.css",
+      "src/pages/panels/FrontDeskPanel.test.tsx",
+      "src/pages/panels/OpdPanel.tsx",
+      "src/api/registration.ts",
+      "src/pages/panels/frontdesk/RegisterPatientView.tsx",
+      "src/pages/panels/frontdesk/RegisterPatientView.test.tsx",
+      "src/pages/panels/frontdesk/PatientIndexSearch.tsx",
+      "src/pages/panels/frontdesk/IdentityConfirmDialog.tsx",
+      "server/migrations_his/m0063_patient_allergy_assessments.py",
+      "server/tests/test_opd_visit_identity_check.py",
+      "server/tests/test_opd_allergy_review.py"
+     ],
+     "migrations": 1,
+     "note": "7 days. OPD-S1, S5, S7 applied. allergy_interlock and drug_safety_service unchanged, so R011 is untouched. Browser check on an isolated verify stack."
+    },
+    {
+     "cluster": "W5-B Admit into a master bed and bed setup",
+     "increments": [
+      "adt-5: AdmissionRequest gains optional ward_id, bed_id, awaiting_bed, admitted_at, out_of_service_reason, boarder_acknowledged (ward and bed keep their str types); master-aware admit in an immediate session through locate_admission_on with the admission movement and audit; Idempotency-Key; boarder acknowledgement with clinical_access audit and case-room line; POST /api/adt/admissions/{id}/bed; BedPicker in AdmitPatientModal when flags.adt",
+      "adt-4b: Bed setup view (wards, rooms, bulk beds with preview, classes, site-config import, reconciliation, register complete)"
+     ],
+     "files": [
+      "server/services/admission_service.py",
+      "server/routes/admission_routes.py",
+      "server/services/adt/core.py",
+      "server/routes/adt/moves.py",
+      "src/components/AdmitPatientModal.tsx",
+      "src/components/adt/BedPicker.tsx",
+      "src/components/adt/BedPicker.test.tsx",
+      "src/components/AdmitPatientModal.adt.test.tsx",
+      "src/api/adt/moves.ts",
+      "src/pages/panels/adt/SetupView.tsx",
+      "src/pages/panels/adt/SetupView.test.tsx",
+      "src/api/adt/master.ts",
+      "server/tests/test_adt_admit.py"
+     ],
+     "migrations": 0,
+     "note": "7 days. Gate: both admission sessions merged; re-read the files first. ADT-S1 applied as (a): an occupied bed is refused and 'add an extra bed' creates a temporary bed with its own label (the shared-bed reason is not built). ADT-S2 applied as (c). ADT-P3 72 h back-time. Flag-off admission row snapshot unchanged and a missing bed field is still 422."
+    },
+    {
+     "cluster": "W5-C Drug identity governance and pharmacy goods receipt",
+     "increments": [
+      "grn-6: add a drug and govern its identity (draft, second-person confirm, retire and replace); ordering and suggestion paths filter identity_status='active' while safety screens read every row; sage_service.refresh_formulary_terms_from_db called, not edited",
+      "grn-8: pharmacy GRN with batch, MRP, double-typed expiry against site_today, free quantity, supplier invoice; post in one immediate transaction through receive_grn_lines; NDPS drugs only into the vault"
+     ],
+     "files": [
+      "server/services/pharmacy_master_service.py",
+      "server/services/helix_service.py",
+      "server/services/rxnorm_reconciler.py",
+      "server/routes/sage_routes.py",
+      "server/routes/pharmacy_store/masters.py",
+      "server/scripts/load_rxnorm_formulary.py",
+      "server/services/pharmacy_purchasing_service.py",
+      "server/services/pharmacy_stock_service.py",
+      "server/routes/pharmacy_store/purchasing.py",
+      "src/pages/panels/pharmacyStore/MastersView.tsx",
+      "src/api/pharmacyStore/masters.ts",
+      "src/pages/panels/pharmacyStore/ReceiptsView.tsx",
+      "src/pages/panels/pharmacyStore/ReceiptsView.test.tsx",
+      "src/api/pharmacyStore/receipts.ts",
+      "server/tests/test_pharmacy_drug_identity.py",
+      "server/tests/test_pharmacy_grn.py"
+     ],
+     "migrations": 0,
+     "note": "8 days. GRN-RS1 (b), RS6 (b), R12 and R16 applied. Fix the seed's two brands tagged with the wrong generic before any site verifies through the store."
+    },
+    {
+     "cluster": "W5-D LIS receipt, worklists and result entry",
+     "increments": [
+      "lis-9: receive and reject with reason codes, recollect, rejected-no-decision list, NABH incident prompt",
+      "lis-10: lab_result_service entry and edit at reporting precision, comparators, coded values, flags only against approved ranges, worklists and entry grid"
+     ],
+     "files": [
+      "server/services/lab_order_service.py",
+      "server/routes/lab/specimens.py",
+      "server/services/lab_master_service.py",
+      "server/routes/lab/results.py",
+      "src/pages/panels/nurse/SamplesSheet.tsx",
+      "server/services/lab_result_service.py",
+      "src/pages/panels/lab/ReceiveView.tsx",
+      "src/pages/panels/lab/ReceiveView.test.tsx",
+      "src/pages/panels/lab/WorklistView.tsx",
+      "src/pages/panels/lab/ResultEntryGrid.tsx",
+      "src/lib/labValue.ts",
+      "src/lib/labValue.test.ts",
+      "src/api/lab/results.ts",
+      "server/tests/test_lab_receipt.py",
+      "server/tests/test_lab_result_entry.py"
+     ],
+     "migrations": 0,
+     "note": "7.5 days. LIS-R2 and R7 applied: no ranges ship; no flag without an approved range; missing DOB means no range."
+    },
+    {
+     "cluster": "W5-E Medication orders: chart lane, eMAR order-state check and API",
+     "increments": [
+      "medorders-3: chart add through await run_db(create_chart_order) in one transaction (also takes the gate off the event loop); eMAR order_allows_dose for linked rows, 'given' only, below the replay and discharge guards with a post-INSERT re-check; legacy verify and reject mirror through the store keyed on the link",
+      "medorders-4: routes/medorders/core.py (list, get, events, create, sign, draft cancel, to-sign queue with 'Entered by a nurse', admin parity and adopt), scope with audited 404, MEDICATION_VERIFY constant, socket emit via realtime.schedule_patient_vitals with ids only"
+     ],
+     "files": [
+      "server/routes/vigil_routes.py",
+      "server/services/emar_service.py",
+      "server/services/pharmacy_verification_service.py",
+      "server/permissions.py",
+      "src/lib/roles.ts",
+      "src/lib/roles.test.ts",
+      "server/tests/test_rbac.py",
+      "server/routes/medorders/core.py",
+      "server/services/medorders/chart_lane.py",
+      "server/services/medorders/emar_check.py",
+      "server/services/medorders/queries.py",
+      "src/api/medorders.ts",
+      "server/tests/medorder_flags.py",
+      "server/tests/test_medorder_chart_lane.py",
+      "server/tests/test_medorder_emar.py",
+      "server/tests/test_medorder_legacy_mirror.py",
+      "server/tests/test_medorder_routes.py"
+     ],
+     "migrations": 0,
+     "note": "7.5 days. MO-R4 applied: medication.verify to the pharmacist only. The chart lane keeps today's nurse behaviour (R010 and R011 held). Re-run the eMAR, safety-gate, dose-guard, allergy and pharmacy-verification suites with the store on and expectations unchanged."
+    },
+    {
+     "cluster": "W5-F Analyser registry",
+     "increments": [
+      "lis-23: migration 64 lab_analysers (instruments with hashed credential and rotation, test-code map); Analysers view; map changes audited clinical_config"
+     ],
+     "files": [
+      "server/routes/lab/analysers.py",
+      "server/migrations_his/m0064_lab_analysers.py",
+      "src/pages/panels/lab/AnalysersView.tsx",
+      "src/api/lab/analysers.ts",
+      "server/tests/test_lab_instruments.py"
+     ],
+     "migrations": 1,
+     "note": "3 days."
+    },
+    {
+     "cluster": "W5-G Pharmacy-internal transfers",
+     "increments": [
+      "grn-11: pharmacy_transfer_service (FEFO issue plan, dispatch into in-transit, receipt by a different user, partial receipt, cancel); TransfersView"
+     ],
+     "files": [
+      "server/routes/pharmacy_store/transfers.py",
+      "server/services/pharmacy_transfer_service.py",
+      "src/pages/panels/pharmacyStore/TransfersView.tsx",
+      "src/api/pharmacyStore/transfers.ts",
+      "server/tests/test_pharmacy_transfers.py"
+     ],
+     "migrations": 0,
+     "note": "3 days. Uses post_movement and pick_fefo_lot; does not edit pharmacy_stock_service."
+    },
+    {
+     "cluster": "W5-H End of stay and reopen screens",
+     "increments": [
+      "adt-9: discharge modal 'How the stay ended'; EndStayDrawer with typed MRN read-back and open escalations and bundles listed; ReopenStayDialog; 'Record end of stay' tile action"
+     ],
+     "files": [
+      "src/pages/panels/VigilPanel.tsx",
+      "src/pages/panels/VigilPanel.discharge.test.tsx",
+      "src/components/adt/EndStayDrawer.tsx",
+      "src/components/adt/EndStayDrawer.test.tsx",
+      "src/components/adt/ReopenStayDialog.tsx",
+      "src/components/adt/ReopenStayDialog.test.tsx",
+      "src/components/adt/actions/EndStayAction.tsx",
+      "src/api/adt/endStay.ts"
+     ],
+     "migrations": 0,
+     "note": "3 days. Select absent with the flag off; existing discharge modal tests pass."
+    }
+   ]
+  },
+  {
+   "wave": 6,
+   "goal": "Second slices: OPD consultation screen and demographics, admission-door duplicate checks and stay keying, ADT transfers with housekeeping turnaround, one pharmacist verification with hold and stop, pharmacy expiry and stock take, LIS validation and release, analyser intake. Migrations 65 and 66. No hot file touched.",
+   "clusters": [
+    {
+     "cluster": "W6-A OPD consultation screen, investigations, demographics and prints",
+     "increments": [
+      "opd-11: ConsultationEditor, DiagnosisPicker on GET /api/opd/terminology/search, AllergyReviewPanel, timed vitals shown as plain values, visit-scoped orders through orders_service.create_order(opd_visit_id) with no order sets, disposition dialog, consultation print",
+      "opd-6b: DemographicsDrawer (reasoned correction with row_version, history), UHID card and token slip prints opened from the register view"
+     ],
+     "files": [
+      "src/pages/panels/OpdPanel.tsx",
+      "src/api/opd.ts",
+      "server/routes/opd_routes.py",
+      "server/services/orders_service.py",
+      "server/services/terminology_service.py",
+      "src/api/registration.ts",
+      "src/pages/panels/frontdesk/RegisterPatientView.tsx",
+      "src/pages/panels/opd/ConsultationEditor.tsx",
+      "src/pages/panels/opd/ConsultationEditor.test.tsx",
+      "src/pages/panels/opd/DiagnosisPicker.tsx",
+      "src/pages/panels/opd/AllergyReviewPanel.tsx",
+      "src/components/print/OpdConsultationPrint.tsx",
+      "src/pages/panels/frontdesk/DemographicsDrawer.tsx",
+      "src/pages/panels/frontdesk/DemographicsDrawer.test.tsx",
+      "src/components/print/UhidCardPrint.tsx",
+      "src/components/print/OpdTokenSlipPrint.tsx",
+      "server/tests/test_opd_orders.py"
+     ],
+     "migrations": 0,
+     "note": "7 days. orders_routes untouched. Prints carry name and users.registration_number only."
+    },
+    {
+     "cluster": "W6-B Admission-door duplicate checks and stay keying",
+     "increments": [
+      "opd-5b: admit_patient and Scribe quick-admit honour ORB_UHID_SOURCE and run the hard match when registration is on; a duplicate MRN on /admit becomes 409 for every profile",
+      "opd-17b (absorbs adt-18a's migration): migration 65 stay_keying (discharge_summaries.admission_id with backfill, partial unique one-active-admission index after a pre-check); discharge writes admission_id; /vigil/discharged one row per patient; NABH and scorecard per stay; one case room per patient pinned; written audit of stay-keyed readers"
+     ],
+     "files": [
+      "server/services/admission_service.py",
+      "server/routes/admission_routes.py",
+      "server/routes/scribe_routes.py",
+      "server/services/discharge_service.py",
+      "server/routes/vigil_routes.py",
+      "server/services/nabh_service.py",
+      "server/services/shadow_scorecard_service.py",
+      "server/migrations_his/m0065_stay_keying.py",
+      "server/tests/test_admission_index_match.py",
+      "server/tests/test_stay_keying.py"
+     ],
+     "migrations": 1,
+     "note": "6.5 days. The 500-to-409 change and the one-active-admission index are always-on. test_scribe_quick_admit and test_admission_form_choices stay green. Shadow-instrumentation owner reviews."
+    },
+    {
+     "cluster": "W6-C ADT transfers and housekeeping turnaround",
+     "increments": [
+      "adt-6a: services/adt/transfer.py with rules A, B, C verbatim, cover resolved before BEGIN IMMEDIATE, lock and expected_bed_id, boarder acknowledgement; /api/frontdesk/transfers delegates when on and skips its post-commit audit; roster updates write movements; MoveDrawer and Move action",
+      "adt-7: migration 66 housekeeping_movement_links; sync_adt_movements with one task key per event; best-effort sync after commit"
+     ],
+     "files": [
+      "server/services/frontdesk_service.py",
+      "server/routes/frontdesk_routes.py",
+      "server/services/roster_import.py",
+      "src/pages/panels/FrontDeskPanel.tsx",
+      "server/routes/adt/moves.py",
+      "server/services/housekeeping_service.py",
+      "server/routes/housekeeping_routes.py",
+      "src/pages/panels/HousekeepingPanel.tsx",
+      "src/api/adt/moves.ts",
+      "server/services/adt/transfer.py",
+      "src/components/adt/MoveDrawer.tsx",
+      "src/components/adt/MoveDrawer.test.tsx",
+      "src/components/adt/actions/MoveAction.tsx",
+      "server/migrations_his/m0066_housekeeping_movement_links.py",
+      "server/tests/test_adt_transfer.py",
+      "server/tests/test_housekeeping_adt_link.py"
+     ],
+     "migrations": 1,
+     "note": "6.5 days. Release gate: ORB_ADT is not switched on at any Sage site until adt-6c (W7-C). The 36 frontdesk, 76 roster and 46 housekeeping tests pass with the flag off."
+    },
+    {
+     "cluster": "W6-D One pharmacist verification; hold, resume and stop",
+     "increments": [
+      "medorders-5a: verify() and reject() with dose, route, role and exclude_med_id; same-ingredient binding only (other products refused pending held R002); placeholder correction as amended events; Verify Queue routes call the store for linked rows",
+      "medorders-6a: hold, resume, stop with reasons; held_at projection; nurse board on-hold list, separate 'ON HOLD: do not give' paper MAR section, voice agent label, MedRoundSheet On hold group"
+     ],
+     "files": [
+      "server/services/pharmacy_verification_service.py",
+      "server/routes/pharmacy_routes.py",
+      "server/routes/medorders/verify.py",
+      "server/routes/medorders/lifecycle.py",
+      "server/services/nurse_shift_service.py",
+      "server/services/downtime_service.py",
+      "server/services/voice_agent_service.py",
+      "src/pages/panels/nurse/MedRoundSheet.tsx",
+      "server/services/medorders/verify.py",
+      "server/services/medorders/lifecycle.py",
+      "server/tests/test_medorder_verify_unified.py",
+      "server/tests/test_medorder_hold_stop.py",
+      "server/tests/test_medorder_held_admin_readers.py"
+     ],
+     "migrations": 0,
+     "note": "7.5 days. MO-R2 applied (prescriber-only hold, resume, stop). 'Not given (held)' always allowed."
+    },
+    {
+     "cluster": "W6-E Pharmacy expiry, recall and stock take",
+     "increments": [
+      "grn-10: quarantine, recall, NSQ, write-off and the release leg in a new pharmacy_store_service; recall trace including ward-stock issues, audited phi_access fail-closed; ExpiryView",
+      "grn-12: count sheets (blind option), approval by a different user, count_variance movements, reasoned adjustments; CountsView"
+     ],
+     "files": [
+      "server/routes/pharmacy_store/lots.py",
+      "server/routes/pharmacy_store/counts.py",
+      "server/services/pharmacy_store_service.py",
+      "src/pages/panels/pharmacyStore/ExpiryView.tsx",
+      "src/pages/panels/pharmacyStore/CountsView.tsx",
+      "src/api/pharmacyStore/lots.ts",
+      "src/api/pharmacyStore/counts.ts",
+      "server/tests/test_pharmacy_quarantine_recall.py",
+      "server/tests/test_pharmacy_stock_counts.py"
+     ],
+     "migrations": 0,
+     "note": "7 days. GRN-RS2 (b) applied: release by a different pharmacist with a reason; recalled and NSQ terminal."
+    },
+    {
+     "cluster": "W6-F LIS validation, release and delta checks",
+     "increments": [
+      "lis-11: technical validation and authorisation with release into observations in one immediate transaction; completion rule; release never blocked by order state",
+      "lis-12: delta checks via lab_observations.previous_result; reason required before technical validation"
+     ],
+     "files": [
+      "server/services/lab_result_service.py",
+      "server/services/lab_order_service.py",
+      "server/routes/lab/results.py",
+      "src/pages/panels/lab/ResultEntryGrid.tsx",
+      "src/pages/panels/lab/ValidateView.tsx",
+      "src/pages/panels/lab/ValidateView.test.tsx",
+      "server/tests/test_lab_release.py",
+      "server/tests/test_lab_delta.py"
+     ],
+     "migrations": 0,
+     "note": "7 days. LIS-R5 ships the strict interim (two different people) with the recommended single-signatory mode as a site setting; LIS-R9 applied."
+    },
+    {
+     "cluster": "W6-G Analyser framework, HL7 adapter and MLLP listener",
+     "increments": [
+      "lis-24: AnalyserAdapter framework with conformance suite, router writing entered results only, HL7 ORU adapter, HTTP intake with X-Instrument-Key",
+      "lis-25: MLLP listener on MllpFramer with finish-the-batch, started from lab_module.startup only with ORB_LAB and the listener switch"
+     ],
+     "files": [
+      "server/routes/lab/analysers.py",
+      "server/services/result_quarantine_service.py",
+      "server/services/lab_module.py",
+      "src/pages/panels/lab/AnalysersView.tsx",
+      "server/services/lab_analyser/__init__.py",
+      "server/services/lab_analyser/framework.py",
+      "server/services/lab_analyser/router.py",
+      "server/services/lab_analyser/hl7_adapter.py",
+      "server/services/lab_analyser/listener.py",
+      "server/tests/test_lab_analyser_framework.py",
+      "server/tests/fixtures/lab_oru_cbc.hl7",
+      "server/tests/test_lab_mllp_listener.py"
+     ],
+     "migrations": 0,
+     "note": "7 days. LIS-R8 (no autoverification) and R14 applied. Entered results go through lab_result_service functions (call only)."
+    }
+   ]
+  },
+  {
+   "wave": 7,
+   "goal": "Workflow completion: OPD charges and appointments, OPD-to-inpatient conversion and token board, ADT swap, Relay lane and census, presence and reservations, Helix supply hook and held labels, CPOE drugs through the store, NDPS register, LIS amendments and lab-side criticals, reports and TAT, and the multi-site spine. Gates: Relay session merged (W7-C, W7-E); Sage and Bridge sessions merged (W7-E); Samuel has ruled the multi-site decisions before W7-J. Migrations 67 to 70. Hot files: config.py, main.py, permissions.py, shellConfig.tsx owned by W7-J.",
+   "clusters": [
+    {
+     "cluster": "W7-A OPD charges and appointments with a doctor and slot",
+     "increments": [
+      "opd-13: migration 67 opd_charge_rules; consultation code by doctor, then department, then OPD-CONSULT; follow-up code; registration fee; payer at registration; prepaid charge voided on cancel or LWBS; charge logic in a new opd_charges_service",
+      "opd-16: migration 68 appointments_slots (in-transaction rebuild with orphan and clash pre-checks, origin and department carried, both indexes recreated); doctor and slot booking, reschedule, check-in creating the visit, no-show; cancel and complete ward-scoped; every date check on hospital_time; Appointments day view"
+     ],
+     "files": [
+      "server/services/frontdesk_service.py",
+      "server/services/billing_masters.py",
+      "server/services/registration_service.py",
+      "server/routes/registration_routes.py",
+      "server/routes/appointments_routes.py",
+      "server/services/forecast_service.py",
+      "src/pages/panels/AppointmentsPanel.tsx",
+      "server/services/opd_charges_service.py",
+      "server/migrations_his/m0067_opd_charge_rules.py",
+      "server/migrations_his/m0068_appointments_slots.py",
+      "src/pages/panels/frontdesk/AppointmentsDayView.tsx",
+      "server/tests/test_opd_charges.py",
+      "server/tests/test_appointments_slots.py"
+     ],
+     "migrations": 2,
+     "note": "8 days. Also fixes two pre-existing appointment defects (cross-ward cancel and complete; server-clock dates). OPD-N6 applied. test_bridge_appointments and test_forecast_appointments_booked_only stay green."
+    },
+    {
+     "cluster": "W7-B OPD to inpatient conversion and token board",
+     "increments": [
+      "opd-17a (absorbs adt-18a core): admit_existing_patient for status 'registered' only, one immediate transaction, same patient and MRN, case room and profile created once, no second portal login, admissions.opd_visit_id, AdmitPatientModal existing-patient mode with the adt-5 BedPicker, OpdPanel 'Advise admission'",
+      "opd-9: name-free token board with per-board device keys (opd_display_boards), board snapshot in opd_queue_service, kiosk page reading the key from the URL fragment, Display boards view"
+     ],
+     "files": [
+      "server/services/admission_service.py",
+      "server/routes/admission_routes.py",
+      "src/components/AdmitPatientModal.tsx",
+      "src/pages/panels/OpdPanel.tsx",
+      "server/routes/frontdesk_routes.py",
+      "server/services/opd_queue_service.py",
+      "src/pages/OpdTokenBoard.tsx",
+      "src/pages/OpdTokenBoard.css",
+      "src/pages/OpdTokenBoard.test.tsx",
+      "src/pages/panels/frontdesk/DisplayBoardsView.tsx",
+      "src/components/AdmitPatientModal.existing.test.tsx",
+      "server/tests/test_opd_to_ip_conversion.py",
+      "server/tests/test_opd_board_no_phi.py"
+     ],
+     "migrations": 0,
+     "note": "6.5 days. OPD-S3 and S4 applied: no OPD vitals copied into vitals and no OPD prescription onto the inpatient chart; both listed with their times for reference. OPD-N7 applied. A 'discharged' patient is refused here (W8-A)."
+    },
+    {
+     "cluster": "W7-C ADT swap, correction, Relay transfer lane and census",
+     "increments": [
+      "adt-6b: swap with both admissions in scope and both expected bed ids, correction rows",
+      "adt-6c: sage_handoff_service._dispatch_to_transfer calls adt transfer with rule C cover when ORB_ADT is on; confirmation stands as the boarder acknowledgement",
+      "adt-13a: adt_census_service (midnight census, transfers, ends by type, per-stay days, occupancy, ALOS, return to ICU) with 'insufficient data' before each ward's ledger start; Census view and CSV"
+     ],
+     "files": [
+      "server/services/adt/transfer.py",
+      "server/routes/adt/moves.py",
+      "src/components/adt/MoveDrawer.tsx",
+      "src/api/adt/moves.ts",
+      "server/services/sage_handoff_service.py",
+      "server/routes/adt/census.py",
+      "src/components/adt/actions/SwapAction.tsx",
+      "server/services/adt_census_service.py",
+      "src/pages/panels/adt/CensusView.tsx",
+      "src/api/adt/census.ts",
+      "server/tests/test_adt_swap_correct.py",
+      "server/tests/test_adt_relay_transfer.py",
+      "server/tests/test_adt_census.py"
+     ],
+     "migrations": 0,
+     "note": "7 days. Gate: Relay session merged; verify relay_routes.py:419 holds no outer session. The flag-off Relay department-list defect (ward labels from portal logins) should get its own task for the Relay owner. ADT-P4 applied."
+    },
+    {
+     "cluster": "W7-D ADT presence and bed reservations",
+     "increments": [
+      "adt-10: leave and absconded recording (movement plus presence_status, bed held), 'Not on ward since HH:MM' on Vigil and nurse rows, display only",
+      "adt-12: migration 69 bed_reservations; reserve, release, expire; locate_admission_on refuses a bed reserved for someone else; retire refuses reserved beds"
+     ],
+     "files": [
+      "server/services/adt/core.py",
+      "server/services/bed_master_service.py",
+      "server/routes/adt/presence.py",
+      "server/routes/adt/reservations.py",
+      "server/routes/vigil_routes.py",
+      "server/services/nurse_shift_service.py",
+      "src/pages/panels/VigilPanel.tsx",
+      "src/pages/panels/nurse/NursePanel.tsx",
+      "server/services/adt/presence.py",
+      "server/services/adt/reservations.py",
+      "server/migrations_his/m0069_bed_reservations.py",
+      "src/components/adt/PresenceDrawer.tsx",
+      "src/components/adt/PresenceDrawer.test.tsx",
+      "src/components/adt/actions/PresenceAction.tsx",
+      "src/components/adt/actions/ReserveAction.tsx",
+      "src/api/adt/presence.ts",
+      "src/api/adt/reservations.ts",
+      "server/tests/test_adt_presence.py",
+      "server/tests/test_adt_reservations.py"
+     ],
+     "migrations": 1,
+     "note": "5 days. ADT-S7 applied (doctors and nurses record presence; grants pre-registered in wave 1); ADT-P9 applied. Obs-due and escalation outputs byte-identical until adt-11."
+    },
+    {
+     "cluster": "W7-E Helix supply hook, custody link and held labels in readers",
+     "increments": [
+      "medorders-5b: on_applied callback in transition_order_status and receive_order; linked Helix steps screened with exclusion, dose and role; placeholder refused for linked rows (closes F-A for them); idempotent request-supply; dose links a supply row only when exactly one received unconsumed unit exists",
+      "medorders-6b: held labels in I-PASS, discharge reconciliation, the portal ('On hold', no colour, no verdict), FHIR on-hold, Sage context; reader registry test"
+     ],
+     "files": [
+      "server/services/helix_service.py",
+      "server/routes/helix_routes.py",
+      "server/services/emar_service.py",
+      "server/routes/medorders/supply.py",
+      "server/services/ipass_service.py",
+      "server/services/discharge_service.py",
+      "server/routes/bridge_routes.py",
+      "server/services/fhir_export_service.py",
+      "server/services/sage_service.py",
+      "server/services/sage_ambient_service.py",
+      "server/services/medorders/supply.py",
+      "server/tests/test_medorder_helix_link.py",
+      "server/tests/test_medorder_reader_registry.py",
+      "server/tests/test_medorder_held_labels.py"
+     ],
+     "migrations": 0,
+     "note": "7 days. Gates: Relay, Sage and Bridge sessions merged. MO-R12 applied (prescriber picks the supply source). Re-run test_agentic_confirm_race and the Helix lifecycle, gate, substitution and ward-receipt suites with the store on."
+    },
+    {
+     "cluster": "W7-F CPOE and order-set drugs reach the ward after a prescriber signs",
+     "increments": [
+      "medorders-7: lifecycle-only linked drafts for CPOE and order-set drugs; sign projects to board, eMAR and screen; guarded orders.status mirror plus order_events; linked /orders transitions refused except a delegated cancel; shadow clinical.action at sign"
+     ],
+     "files": [
+      "server/routes/orders_routes.py",
+      "server/services/orders_service.py",
+      "server/services/order_sets_service.py",
+      "src/components/orders/OrdersPanel.tsx",
+      "src/components/orders/OrderSetsPanel.tsx",
+      "src/components/orders/medicationRouting.ts",
+      "src/api/medorders.ts",
+      "server/services/medorders/cpoe.py",
+      "server/tests/test_medorder_cpoe_lane.py",
+      "src/components/orders/OrdersPanel.medorders.test.tsx"
+     ],
+     "migrations": 0,
+     "note": "5 days. Keeps the lis-7 lab-managed guard intact. MO-R10 and MO-R11 applied. Note the shadow-scorecard timing change in its documentation before any pilot runs lifecycle mode."
+    },
+    {
+     "cluster": "W7-G NDPS register and return to vendor",
+     "increments": [
+      "grn-13: ndps_service through the stock-service hook, running balance per drug and store, PIN witness by a different user, both failure modes built, register refuses to enable without ORB_PHARMACY_NDPS_ON_FAILURE, audited CSV export",
+      "grn-22: vendor return documents (PHVR) with in-transaction audit"
+     ],
+     "files": [
+      "server/services/pharmacy_stock_service.py",
+      "server/services/pharmacy_store_service.py",
+      "server/services/pharmacy_purchasing_service.py",
+      "server/routes/pharmacy_store/ndps.py",
+      "server/routes/pharmacy_store/vendor_returns.py",
+      "server/services/ndps_service.py",
+      "src/pages/panels/pharmacyStore/NdpsView.tsx",
+      "src/pages/panels/pharmacyStore/VendorReturnsView.tsx",
+      "src/api/pharmacyStore/ndps.ts",
+      "src/api/pharmacyStore/vendorReturns.ts",
+      "server/tests/test_ndps_register.py",
+      "server/tests/test_pharmacy_vendor_returns.py"
+     ],
+     "migrations": 0,
+     "note": "7 days. GRN-RS7 stays unset (strict interim): the register cannot be enabled until Samuel confirms a mode. GRN-R14 applied (vault receipt, PIN witness, no NDPS seed stock)."
+    },
+    {
+     "cluster": "W7-H LIS amendments and lab-side critical notification",
+     "increments": [
+      "lis-13: amend and withdraw with versions, superseded observations, post-commit notice",
+      "lis-15: services/case_room_alerts.py extracted from _persist_relay_alert (wrapper keeps the Vigil sender and shadow emits); lab_critical_service with delivery status, no-case-room escalation, callback log, sweep from lab_module.startup, tiers from site.toml with no default ladder; Critical view"
+     ],
+     "files": [
+      "server/services/lab_result_service.py",
+      "server/services/lab_order_service.py",
+      "server/routes/lab/results.py",
+      "src/pages/panels/lab/ValidateView.tsx",
+      "server/services/ingestion_service.py",
+      "server/services/site_config_service.py",
+      "server/site_config/site.example.toml",
+      "server/services/lab_module.py",
+      "server/routes/lab/criticals.py",
+      "server/services/case_room_alerts.py",
+      "server/services/lab_critical_service.py",
+      "src/pages/panels/lab/CriticalView.tsx",
+      "server/tests/test_lab_amend.py",
+      "server/tests/test_lab_critical.py",
+      "server/tests/test_lab_critical_sweep_loop.py",
+      "server/tests/test_case_room_alert_parity.py"
+     ],
+     "migrations": 0,
+     "note": "7.5 days. Built behind ORB_LAB; go-live is held (LIS-R20 asks whether these surfaces sit inside held R023). LIS-R1, R3, R4, R10, R19 applied as build defaults. test_ingestion_alert_parity stays green."
+    },
+    {
+     "cluster": "W7-I LIS reports and turnaround",
+     "increments": [
+      "lis-14 (without the Vigil modal): lab_report_service, LabReportPrintView with signatory, range snapshot and versions, Reports view",
+      "lis-18: lab_tat_service, TAT view and CSV, optional NABH indicators"
+     ],
+     "files": [
+      "server/routes/lab/reports.py",
+      "server/routes/lab/tat.py",
+      "server/services/nabh_service.py",
+      "src/print.css",
+      "server/services/lab_report_service.py",
+      "server/services/lab_tat_service.py",
+      "src/components/print/LabReportPrintView.tsx",
+      "src/components/print/LabReportPrintView.test.tsx",
+      "src/pages/panels/lab/ReportsView.tsx",
+      "src/pages/panels/lab/TatView.tsx",
+      "server/tests/test_lab_report.py",
+      "server/tests/test_lab_tat.py"
+     ],
+     "migrations": 0,
+     "note": "6 days. The Vigil Lab Reports modal change lands in W8-D, where VigilPanel is free."
+    },
+    {
+     "cluster": "W7-J Multi-site spine",
+     "increments": [
+      "multisite-1: ORB_MULTI_SITE joins FEATURE_FLAGS; migration 70 facilities_spine (facilities with id 1 MAIN, departments seeded from users, site.toml, admissions and ADT wards.department, user_facilities, enterprise_access_grants, patients.registered_facility_id, admissions.facility_id, two admissions indexes); facility_service read helpers with a 30 s multi_facility_data cache; facility_fence with the '*' sentinel and middleware active only with multi-facility data; /api/health platform object; ops_health checks",
+      "multisite-2 (part): facility.read and facility.manage constants and the shellConfig platform-flag read; facility_routes skeleton registered"
+     ],
+     "files": [
+      "server/config.py",
+      "server/main.py",
+      "server/permissions.py",
+      "src/shellConfig.tsx",
+      "src/shellConfig.test.ts",
+      "server/services/ops_health_service.py",
+      "server/services/facility_service.py",
+      "server/facility_fence.py",
+      "server/routes/facility_routes.py",
+      "server/migrations_his/m0070_facilities_spine.py",
+      "server/tests/test_multisite_spine.py",
+      "server/tests/test_facility_fence.py"
+     ],
+     "migrations": 1,
+     "note": "4.5 days. Starts only after Samuel rules the multi-site decisions; if he defers, drop every multi-site cluster and nothing else changes. Isolation is keyed on data, so this is inert until a second facilities row exists. Run with the test env, never the shipping .env."
+    }
+   ]
+  },
+  {
+   "wave": 8,
+   "goal": "Readmission onto the same record, OPD prescription and counter billing, LIS ward card and interfaced criticals, Helix AI lanes and verification screens, ward stock, verify-before-dose and authored schedules, the multi-site scope core. Gates: Sage session merged (W8-A, W8-E); CORS merged (W8-B); Bridge merged (W8-J). Migration 71. Hot files: permissions.py owned by W8-K; server/ws/realtime.py owned by W8-B.",
+   "clusters": [
+    {
+     "cluster": "W8-A Readmit a discharged patient onto the same record",
+     "increments": [
+      "opd-17c (absorbs adt-18b): admit_existing_patient extended to 'discharged' patients with an identity check; previous-stay active and prn medications discontinued in the readmission transaction and listed for re-prescribing; profile updated never blanked; case room reused with a READMISSION line; Sage room memory archived and restarted; previous-stay vitals and risk rows shown only with their date and a 'previous stay' label on the board, NEWS2 and Sage, never as current latest"
+     ],
+     "files": [
+      "server/services/admission_service.py",
+      "server/routes/admission_routes.py",
+      "src/components/AdmitPatientModal.tsx",
+      "server/services/vigil_service.py",
+      "server/routes/vigil_routes.py",
+      "server/services/sage_service.py",
+      "server/tests/test_readmission_same_record.py",
+      "server/tests/test_adt_readmit_boundaries.py"
+     ],
+     "migrations": 0,
+     "note": "7 days. OPD-S8 and ADT-S9 applied as build defaults. Every latest-vitals reader keeps ORDER BY timestamp DESC, id DESC and is covered by one test. This is also the Ward Record's 'returning patient reopens the same record'. Highest-risk clinical increment in the plan."
+    },
+    {
+     "cluster": "W8-B Counter billing, front-office MIS and live desk nudges",
+     "increments": [
+      "opd-14: GET /api/billing/op-patients, Charges picker includes outpatients, OPD counter form uses the existing createOpdInvoice wrapper",
+      "opd-18: daily front-office MIS (aggregates only, hospital-local day) and Day summary view",
+      "opd-9b: realtime.connect joins registration.read holders to opd rooms; desk stops polling; queue read audit deduped per OPD-N12"
+     ],
+     "files": [
+      "server/routes/billing_routes.py",
+      "server/services/billing_service.py",
+      "src/pages/panels/BillingPanel.tsx",
+      "src/api/billing.ts",
+      "server/routes/frontdesk_routes.py",
+      "server/services/opd_queue_service.py",
+      "server/ws/realtime.py",
+      "src/pages/panels/frontdesk/QueueView.tsx",
+      "src/pages/panels/frontdesk/DaySummaryView.tsx",
+      "src/pages/panels/BillingPanel.opd.test.tsx",
+      "server/tests/test_billing_op_patients.py",
+      "server/tests/test_front_office_mis.py",
+      "server/tests/test_opd_socket_rooms.py"
+     ],
+     "migrations": 0,
+     "note": "6.5 days. test_ws_origin stays green. Cashier still cannot reach billing screens."
+    },
+    {
+     "cluster": "W8-C OPD prescription on the shared store",
+     "increments": [
+      "opd-12: outpatient-setting med_orders via a new services/medorders/outpatient.py, screened by enforce_medication_safety(entry_point='opd_prescription'); opd.consult and medication.prescribe; never writes medications or Helix rows; printed prescription"
+     ],
+     "files": [
+      "server/routes/opd_routes.py",
+      "server/services/opd_service.py",
+      "src/pages/panels/opd/ConsultationEditor.tsx",
+      "server/services/medorders/outpatient.py",
+      "src/components/print/OpdPrescriptionPrint.tsx",
+      "server/tests/test_opd_prescription.py"
+     ],
+     "migrations": 0,
+     "note": "3.5 days. Needs ORB_MED_ORDER_STORE; if Samuel defers the medication-order store, this increment waits with it. OPD-S7 applied: refused until an allergy assessment exists."
+    },
+    {
+     "cluster": "W8-D NABH indicators, capacity source, ward clerk checks and the Vigil lab reports list",
+     "increments": [
+      "adt-13b: QI-UTL-01, QI-OUT-04 and per-stay inpatient days for complete wards only",
+      "adt-14: capacity from the bed register for register-complete wards, refreshed after master writes",
+      "adt-17 (remainder): clerk scope and refusal tests (role, grants and creation gating landed in wave 1)",
+      "lis-14 (remainder): VigilPanel Lab Reports modal lists LIS reports"
+     ],
+     "files": [
+      "server/services/nabh_service.py",
+      "server/tests/test_nabh.py",
+      "server/services/forecast_service.py",
+      "server/tests/test_forecast_service.py",
+      "server/services/bed_master_service.py",
+      "src/pages/panels/ForecastPanel.tsx",
+      "src/pages/panels/VigilPanel.tsx",
+      "server/tests/test_adt_nabh_indicators.py",
+      "server/tests/test_adt_capacity_source.py",
+      "server/tests/test_ward_clerk_role.py"
+     ],
+     "migrations": 0,
+     "note": "6 days. ADT-P5 applied. NABH keeps the rule that residual bias may only make the hospital look worse."
+    },
+    {
+     "cluster": "W8-E Pharmacy verification screens, AI lanes through the store, dispense quantity",
+     "increments": [
+      "medorders-5c: PharmacyVerifyQueue on /queue/verification with the allergy list and a same-ingredient picker; Helix modal shows the linked order and timeline",
+      "medorders-8: Sage handoff writes chart row, med_order and supply row in one transaction with the same LIKE binding (resolve_by_name_in_txn); Scribe extraction creates med_orders; relay_routes.py:420 untouched",
+      "grn-14: dispense quantity and lot choice with the lot bound to the effective drug"
+     ],
+     "files": [
+      "src/components/helix/PharmacyVerifyQueue.tsx",
+      "src/components/helix/HelixOrderReviewModal.tsx",
+      "src/components/helix/HelixOrderReviewModal.lifecycle.test.tsx",
+      "src/api/pharmacy.ts",
+      "src/api/medorders.ts",
+      "server/services/sage_handoff_service.py",
+      "server/services/nervous_system_triggers.py",
+      "server/services/helix_service.py",
+      "server/routes/helix_routes.py",
+      "server/services/pharmacy_stock_service.py",
+      "server/services/medorders/ai_lanes.py",
+      "src/components/helix/PharmacyVerifyQueue.medorders.test.tsx",
+      "src/components/helix/HelixOrderReviewModal.medorders.test.tsx",
+      "server/tests/test_medorder_ai_lanes.py",
+      "server/tests/test_pharmacy_dispense_quantity.py"
+     ],
+     "migrations": 0,
+     "note": "8 days. One cluster because all three edit the Helix review modal and helix_service. GRN-R13 applied. W111 untouched (Scribe drugs stay 'prescribed, needs pharmacist')."
+    },
+    {
+     "cluster": "W8-F Ward indents and imprest stock; seeds and docs",
+     "increments": [
+      "grn-21: issue indents from ward imprest stores, FEFO issue plan, dispatch, ward receipt by a different user, imprest list starting from the ISMP high-alert set; nurse Ward stock section",
+      "grn-18: seed_pharmacy_store after seed_helix and before seed_pharmacy_queue (dev profile, flag on); GST 72-month retention mapping; procurement boundary text corrected; manual hand-edited"
+     ],
+     "files": [
+      "server/services/pharmacy_transfer_service.py",
+      "server/routes/pharmacy_store/ward.py",
+      "src/pages/panels/nurse/DeliveriesSheet.tsx",
+      "src/pages/panels/nurse/DeliveriesSheet.test.tsx",
+      "server/scripts/reset_db_and_seed.py",
+      "server/scripts/seed_modules.py",
+      "server/services/consent_service.py",
+      "server/services/procurement_service.py",
+      "src/pages/panels/ProcurementPanel.tsx",
+      "docs/MODULE_MANUAL.md",
+      "docs/manual_sections/08_helix_lens_pulse_bridge.md",
+      "docs/manual_sections/16_hospital_admin_modules.md",
+      "docs/HOSPITAL_FUNCTION_COVERAGE_2026-10.md",
+      "src/pages/panels/pharmacyStore/WardStockView.tsx",
+      "src/api/pharmacyStore/ward.ts",
+      "server/scripts/seed_pharmacy_store.py",
+      "server/tests/test_pharmacy_ward_stock.py"
+     ],
+     "migrations": 0,
+     "note": "6 days. GRN-RS5 (b) and GRN-R8 (a) applied; ORB_PHARMACY_WARD_STOCK stays off until Samuel confirms RS5. Never re-run _assemble.py on the manual (assembly drift)."
+    },
+    {
+     "cluster": "W8-G LIS ward critical card and interfaced criticals",
+     "increments": [
+      "lis-16: CriticalLabCard on the nurse home and the doctor home (the lab's own flag and the agreed limit, no Orb-computed severity), read-back acknowledgement",
+      "lis-22: OBX-8 HH/LL/AA from an external LIS raises a critical callback with ORB_LAB_CRITICAL_INTERFACED on, service identity system_lab added to database.SERVICE_ACCOUNT_IDS"
+     ],
+     "files": [
+      "src/pages/panels/nurse/NursePanel.tsx",
+      "src/pages/panels/DoctorHomePanel.tsx",
+      "server/routes/lab/criticals.py",
+      "server/services/lab_critical_service.py",
+      "server/database.py",
+      "server/services/ingestion_service.py",
+      "server/services/lab_module.py",
+      "src/components/lab/CriticalLabCard.tsx",
+      "src/components/lab/CriticalLabCard.test.tsx",
+      "server/tests/test_lab_critical_ack.py",
+      "server/tests/test_lab_critical_interfaced.py"
+     ],
+     "migrations": 0,
+     "note": "6 days. Built behind default-off switches; go-live held with lis-15 on LIS-R20 (an R023 question). LIS-R22 applied as the build default."
+    },
+    {
+     "cluster": "W8-I Verify before first dose and prescriber-authored schedule",
+     "increments": [
+      "medorders-11: order_allows_dose requires projection verified_by for every linked order, with stat and urgent first doses allowed and flagged",
+      "medorders-19: migration 71 med_order_schedule_times; due times from a signed site_config map with no built-in default; the board uses authored times when present"
+     ],
+     "files": [
+      "server/services/emar_service.py",
+      "server/services/medorders/emar_check.py",
+      "src/pages/panels/nurse/MedRoundSheet.tsx",
+      "server/services/nurse_shift_service.py",
+      "src/components/orders/OrdersPanel.tsx",
+      "server/services/medorders/schedule.py",
+      "server/migrations_his/m0071_med_order_schedule_times.py",
+      "server/site_config/dose_times.example.json",
+      "server/tests/test_medorder_verify_before_dose.py",
+      "server/tests/test_medorder_schedule.py"
+     ],
+     "migrations": 1,
+     "note": "7 days. MO-R1 and MO-R8 applied as build defaults (follow-on increments that need no held ruling); both can be dropped without affecting anything else."
+    },
+    {
+     "cluster": "W8-J Patient portal lab reports",
+     "increments": [
+      "lis-29: authorised LIS reports in the portal behind ORB_LAB_PORTAL_REPORTS after the site delay or clinician release, flags as printed text with no colour, self-scope only"
+     ],
+     "files": [
+      "server/routes/bridge_routes.py",
+      "src/pages/PatientShell.tsx",
+      "server/tests/test_portal_lis_reports.py"
+     ],
+     "migrations": 0,
+     "note": "2 days. Below the LIS architect's cut line; optional. LIS-R11 (c) applied. Gate: Bridge session merged."
+    },
+    {
+     "cluster": "W8-K Multi-site facility scope core",
+     "increments": [
+      "multisite-5a: facility_scope_for reading only id, role and department plus caches (all six user loaders agree); permissions.facility_scope, FACILITY_PATIENT_SQL, facilities= keyword on scope_patient_ids_sql and patient_in_scope; facility-caused denials audited in both helpers; UserOut and /me carry the facility"
+     ],
+     "files": [
+      "server/permissions.py",
+      "server/models/user.py",
+      "server/routes/auth_routes.py",
+      "server/services/facility_service.py",
+      "server/tests/test_facility_scope.py",
+      "server/tests/test_facility_resolver_loaders.py"
+     ],
+     "migrations": 0,
+     "note": "5 days. With one facility, test_patient_scope_routes and test_caller_named_patient_scope are green and the statement count is unchanged. MS-R5 (a) applied."
+    }
+   ]
+  },
+  {
+   "wave": 9,
+   "goal": "Clerk admission and departure, strict locations, live bed board, presence-aware clinical lanes, store-backed screening, medication lifecycle screens, ward returns, crash carts, consent at registration, terminology loader, facility identity and facility users. Migration 72. Hot files: permissions.py and roles.ts owned by W9-G; shellConfig.tsx owned by W9-D; realtime.py owned by W9-A.",
+   "clusters": [
+    {
+     "cluster": "W9-A Clerk admission and departure, strict locations, live bed board",
+     "increments": [
+      "adt-17b: clerk registration-level admission with clinical fields 'Not yet assessed' (never NKDA, interlock treats unknown as unknown, board flags 'admission assessment due'); clerk 'left the ward' through end_stay with discharge_preconditions and read-back; clerk executes a department transfer only when it names the ordering doctor",
+      "adt-16: ORB_ADT_STRICT_LOCATIONS refuses unlisted wards and beds on every lane",
+      "adt-19: content-free 'adt:changed' {ward_id} emitted after commit from the route layer; board refetches, 30 s poll as fallback"
+     ],
+     "files": [
+      "server/services/admission_service.py",
+      "server/routes/admission_routes.py",
+      "src/components/AdmitPatientModal.tsx",
+      "server/routes/scribe_routes.py",
+      "server/services/roster_import.py",
+      "server/services/frontdesk_service.py",
+      "server/services/adt/core.py",
+      "server/services/adt/end_stay.py",
+      "server/routes/adt/end_stay.py",
+      "server/routes/adt/moves.py",
+      "server/routes/adt/presence.py",
+      "server/ws/realtime.py",
+      "src/pages/panels/BedBoardPanel.tsx",
+      "src/components/adt/actions/DepartAction.tsx",
+      "src/pages/panels/BedBoardPanel.live.test.tsx",
+      "server/tests/test_ward_clerk_admit_depart.py",
+      "server/tests/test_adt_strict_locations.py"
+     ],
+     "migrations": 0,
+     "note": "6.5 days. ADT-S5, S3 and S8 (b) applied as build defaults; clerk grants were pre-registered in wave 1. F104 applied: warn until a ward is register-complete, then strict per site."
+    },
+    {
+     "cluster": "W9-B Clinical lanes honour presence",
+     "increments": [
+      "adt-11: one presence helper read by nurse_shift_service (obs and med due paused with the reason), the escalation sweep (pause and resume, never close), sepsis auto-start, the vitals simulator (skips absent patients) and the ward pack ('not on ward')"
+     ],
+     "files": [
+      "server/services/nurse_shift_service.py",
+      "server/services/escalation_service.py",
+      "server/services/sepsis_bundle_service.py",
+      "server/services/bot_service.py",
+      "server/services/downtime_service.py",
+      "src/pages/panels/nurse/NursePanel.tsx",
+      "server/tests/test_adt_presence_lanes.py"
+     ],
+     "migrations": 0,
+     "note": "3.5 days. ADT-S4 (a) applied as the build default. It changes no discharge or end-of-stay chain handling, which stays with held R009."
+    },
+    {
+     "cluster": "W9-C Store-backed interaction and duplicate screens; exact Sage binding",
+     "increments": [
+      "medorders-9: _screen_interactions reads live signed orders (PRN and held included, drafts excluded) plus unlinked legacy rows with self-exclusion; same-ingredient duplicate as a 428 with reason; PRN orders givable; discharge reconciliation reads store statuses",
+      "medorders-20: Sage handoff binds the reconciler match at 0.8 and screens the matched product's name"
+     ],
+     "files": [
+      "server/services/drug_safety_service.py",
+      "server/services/medication_safety_gate.py",
+      "server/services/discharge_service.py",
+      "server/services/emar_service.py",
+      "server/services/sage_handoff_service.py",
+      "server/services/medorders/ai_lanes.py",
+      "server/services/medorders/screening.py",
+      "server/tests/test_medorder_screen_scope.py",
+      "server/tests/test_medorder_sage_binding.py"
+     ],
+     "migrations": 0,
+     "note": "5.5 days. MO-R3 (a) and MO-R6 (b) applied. Bedside override path unchanged (R011 held)."
+    },
+    {
+     "cluster": "W9-D Medication lifecycle screens and ward returns",
+     "increments": [
+      "medorders-10: MedOrderList and MedOrderTimeline in the chart Medications modal (text status chips, supply line, permission-driven Sign, Hold, Resume, Stop), Awaiting pharmacist group, held refusal mapped in AdministerModal, DeliveriesSheet names the order, doctor's to-sign chip, shellConfig reads features",
+      "grn-15: ward returns into returns quarantine, inspection with restock to the original lot, nurse recording from DeliveriesSheet"
+     ],
+     "files": [
+      "src/pages/panels/VigilPanel.tsx",
+      "src/pages/panels/nurse/MedRoundSheet.tsx",
+      "src/components/vigil/AdministerModal.tsx",
+      "src/pages/panels/nurse/DeliveriesSheet.tsx",
+      "src/pages/panels/DoctorHomePanel.tsx",
+      "src/shellConfig.tsx",
+      "src/api/medorders.ts",
+      "server/services/pharmacy_store_service.py",
+      "server/routes/pharmacy_store/returns.py",
+      "src/components/medorders/MedOrderList.tsx",
+      "src/components/medorders/MedOrderList.test.tsx",
+      "src/components/medorders/MedOrderTimeline.tsx",
+      "src/components/medorders/MedOrderTimeline.test.tsx",
+      "src/api/pharmacyStore/returns.ts",
+      "server/tests/test_pharmacy_ward_returns.py"
+     ],
+     "migrations": 0,
+     "note": "8 days. The chart Add form keeps posting to the vigil route (R010 held). GRN-RS3 (b) applied for the restock leg. Browser walk as doctor, nurse and pharmacist on an isolated verify stack."
+    },
+    {
+     "cluster": "W9-E Facility identity and invoice supplier snapshot",
+     "increments": [
+      "multisite-2: facility_routes GET and PATCH for facility 1 with the flag off; create and deactivate 404 with the flag off, then the create gate (always refuses while the fence holds '*'); migration 72 invoice_supplier_snapshot written once at numbering; reprints use the snapshot; identity helpers in a new facility_identity.py; Facilities admin tab with the identity card"
+     ],
+     "files": [
+      "server/routes/facility_routes.py",
+      "server/services/billing_service.py",
+      "server/services/payments_service.py",
+      "server/routes/payments_routes.py",
+      "server/routes/vigil_routes.py",
+      "server/services/discharge_access_service.py",
+      "src/pages/panels/AdminPanel.tsx",
+      "server/services/facility_identity.py",
+      "server/migrations_his/m0072_invoice_supplier_snapshot.py",
+      "src/api/facilities.ts",
+      "src/pages/panels/admin/FacilitiesPanel.tsx",
+      "src/pages/panels/admin/FacilitiesPanel.test.tsx",
+      "server/tests/test_facility_routes.py",
+      "server/tests/test_invoice_supplier_snapshot.py"
+     ],
+     "migrations": 1,
+     "note": "4.5 days. Facility 1 identity works with ORB_MULTI_SITE off (W162 half needs no ruling); an issued GST invoice never changes after issue."
+    },
+    {
+     "cluster": "W9-F Crash-cart stores",
+     "increments": [
+      "grn-23: crash_cart store kind with par levels from the approved list, seal-and-check record, top-up suggestions, cart expiry on the overview"
+     ],
+     "files": [
+      "server/services/pharmacy_master_service.py",
+      "server/services/pharmacy_transfer_service.py",
+      "server/routes/pharmacy_store/ward.py",
+      "src/pages/panels/pharmacyStore/CrashCartView.tsx",
+      "server/tests/test_pharmacy_crash_cart.py"
+     ],
+     "migrations": 0,
+     "note": "2 days. Behind ORB_PHARMACY_WARD_STOCK (GRN-RS5 confirmation needed before go-live)."
+    },
+    {
+     "cluster": "W9-G Consent at registration and terminology loader",
+     "increments": [
+      "opd-19: registration step records notice acknowledgement and treatment consent through consent_service in the preferred language; consent.record granted to the receptionist",
+      "opd-20: server/scripts/load_terminology.py (the loader the docstring names), idempotent with a version row, never rewriting signed notes"
+     ],
+     "files": [
+      "server/permissions.py",
+      "src/lib/roles.ts",
+      "server/services/registration_service.py",
+      "src/pages/panels/frontdesk/RegisterPatientView.tsx",
+      "server/services/terminology_service.py",
+      "server/scripts/load_terminology.py",
+      "server/tests/test_registration_consent.py",
+      "server/tests/test_load_terminology.py"
+     ],
+     "migrations": 0,
+     "note": "4 days. OPD-N3: the receptionist consent grant ships only after counsel agrees. OPD-N11: the loader is built but no ICD-10 release is loaded until counsel confirms the licence."
+    },
+    {
+     "cluster": "W9-H Facility users, grants and shell chip",
+     "increments": [
+      "multisite-6: facility column and home-facility select for department-less staff; home row written in the same transaction; refusals for department-scoped staff and out-of-scope moves; enterprise grants (security, fail-closed); grant_enterprise_access.py bootstrap; roleLine shows the facility with multi-facility data"
+     ],
+     "files": [
+      "server/routes/admin_users_routes.py",
+      "server/scripts/create_admin.py",
+      "src/pages/panels/admin/UsersPanel.tsx",
+      "src/pages/ClinicianShell.tsx",
+      "src/App.tsx",
+      "server/scripts/grant_enterprise_access.py",
+      "server/tests/test_enterprise_grants.py",
+      "src/pages/panels/admin/UsersPanel.facility.test.tsx"
+     ],
+     "migrations": 0,
+     "note": "3.5 days. MS-R6 (a) admin-only grants applied."
+    }
+   ]
+  },
+  {
+   "wave": 10,
+   "goal": "Billing completions, facility-aware admission and ingestion binding, ward stock consumption. Migration 73. After this wave every non-held increment outside multi-site is built. Hot files: config.py owned by W10-B.",
+   "clusters": [
+    {
+     "cluster": "W10-A Billing owner: bed-class bed days, pharmacy MRP, per-facility numbering",
+     "increments": [
+      "adt-15: bed-day charges by the bed class at the midnight census from stay_start, leave days per site setting, 'Post bed days through [date]'",
+      "grn-16: pharmacy candidates priced from the dispense movement's lot MRP and the dispensed drug, returns as their own credit key",
+      "multisite-7a: migration 73 document_series_per_facility (rebuild with facility_id and UNIQUE(facility_id, series_code)); next_document_number(series_code, facility_id=1) at the four lookups and about 13 call sites; prefix validation against other facilities and issued numbers; series editor"
+     ],
+     "files": [
+      "server/services/billing_service.py",
+      "server/routes/billing_routes.py",
+      "src/pages/panels/BillingPanel.tsx",
+      "server/tests/test_billing_bed_days_and_encounter.py",
+      "server/tests/test_billing_permissions.py",
+      "server/services/billing_masters.py",
+      "server/services/payments_service.py",
+      "server/routes/payments_routes.py",
+      "server/services/payer_service.py",
+      "server/services/procurement_service.py",
+      "server/services/dietary_service.py",
+      "server/services/nabh_service.py",
+      "src/pages/panels/admin/FacilitiesPanel.tsx",
+      "server/migrations_his/m0073_document_series_per_facility.py",
+      "server/tests/test_adt_bed_class_billing.py",
+      "server/tests/test_billing_pharmacy_mrp.py",
+      "server/tests/test_facility_document_series.py"
+     ],
+     "migrations": 1,
+     "note": "8 days. One cluster because all three edit billing_service. The series rebuild must carry opd-1's resets_yearly and check_digit columns and the UHID row. ADT-P6 and GRN-R12 applied. The billing owner should also review the pre-existing defect where billing names the prescribed drug, not the substitute (flag-independent)."
+    },
+    {
+     "cluster": "W10-B Facility-aware admission and ingestion binding",
+     "increments": [
+      "multisite-3: covering departments and resolve_admission_department facility-aware; admissions and patients stamped from the departments master; cross-facility transfers refused with an audit row; site.toml [[facilities]] validated",
+      "multisite-16: MLLP and REST sources bound to a facility; _resolve_patient_id(db, raw, facility_id); unbound or cross-facility matches take today's unknown-patient path with an audit row"
+     ],
+     "files": [
+      "server/services/frontdesk_service.py",
+      "server/services/admission_service.py",
+      "server/routes/admin_users_routes.py",
+      "server/services/site_config_service.py",
+      "server/services/ingestion_service.py",
+      "server/routes/ingestion_routes.py",
+      "server/config.py",
+      "server/services/ops_health_service.py",
+      "server/tests/test_facility_departments.py",
+      "server/tests/test_facility_ingestion_binding.py"
+     ],
+     "migrations": 0,
+     "note": "6 days. MS-R4 and MS-R14 applied. The vitals INSERT path (clinical_time, carried_from) is not touched."
+    },
+    {
+     "cluster": "W10-C Ward stock consumption and the analyser simulator",
+     "increments": [
+      "grn-17: post-commit 'consumption' movement against the ward imprest lot after an eMAR 'given' for a drug linked to helix_medication_id; never blocks or delays a dose",
+      "lis-28: DEMO_MODE-only analyser simulator through the real path with source 'simulated' and honesty labels"
+     ],
+     "files": [
+      "server/services/emar_service.py",
+      "server/services/pharmacy_stock_service.py",
+      "server/services/lab_module.py",
+      "server/services/lab_analyser/simulator.py",
+      "server/tests/test_ward_stock_consumption.py",
+      "server/tests/test_lab_analyser_simulator.py"
+     ],
+     "migrations": 0,
+     "note": "4.5 days. grn-17 needs the medication-order store (eMAR link to formulary_id); lis-28 is below the LIS cut line and optional."
+    }
+   ]
+  },
+  {
+   "wave": 11,
+   "goal": "Multi-site columns and the SQL-site registry, built over a codebase where every other epic has stopped adding SQL. Migrations 74 and 75. Hot files: permissions.py owned by W11-A.",
+   "clusters": [
+    {
+     "cluster": "W11-A Encounters and wards carry the facility",
+     "increments": [
+      "multisite-4: migration 74 facility_columns_encounters (opd_visits, appointments, surgeries, roster and history import runs, plus wards.facility_id mapped from the 'MAIN' label and lab_specimens.site_id); writers stamp the facility; FACILITY_PATIENT_SQL gains OPD visits and appointments; roster import enforces the one-facility-per-patient attribution invariant"
+     ],
+     "files": [
+      "server/services/frontdesk_service.py",
+      "server/routes/appointments_routes.py",
+      "server/services/surgery_service.py",
+      "server/services/roster_import.py",
+      "server/services/history_import_service.py",
+      "server/permissions.py",
+      "server/migrations_his/m0074_facility_columns_encounters.py",
+      "server/tests/test_facility_encounter_stamping.py"
+     ],
+     "migrations": 1,
+     "note": "4 days. The ops_health count of patients with admissions at more than one facility must stay 0."
+    },
+    {
+     "cluster": "W11-B SQL-site registry, real fence list, leak sweep",
+     "increments": [
+      "multisite-5b: registry classifying every SQL site on patients, admissions, opd_visits, appointments, surgeries, orders, medications, invoices, payments and audit_logs, including the new HIS packages; AST ratchet; FACILITY_BLIND_SURFACES generated from the blind rows (replaces '*'); leak sweep over every GET and the enumerated POST read lanes; INSERT INTO users ratchet"
+     ],
+     "files": [
+      "server/facility_fence.py",
+      "server/tests/facility_sql_sites/__init__.py",
+      "server/tests/facility_sql_sites/clinical.py",
+      "server/tests/facility_sql_sites/sage.py",
+      "server/tests/facility_sql_sites/audit.py",
+      "server/tests/facility_sql_sites/exports.py",
+      "server/tests/facility_sql_sites/money.py",
+      "server/tests/facility_sql_sites/admin.py",
+      "server/tests/facility_sql_sites/opd_adt.py",
+      "server/tests/facility_sql_sites/lab_meds.py",
+      "server/tests/facility_sql_sites/pharmacy.py",
+      "server/tests/test_facility_sql_registry.py",
+      "server/tests/test_cross_facility_leak_sweep.py",
+      "server/tests/test_user_creation_sites.py"
+     ],
+     "migrations": 0,
+     "note": "4 days. The registry is split by area so each later sweep cluster edits only its own file."
+    },
+    {
+     "cluster": "W11-C Money, stores and assets carry the facility",
+     "increments": [
+      "multisite-7b: migration 75 facility_columns_admin (invoices, payments, refunds, claims, deposits, counters, encounter charges, stores, indents, POs, GRNs, housekeeping units, biomedical assets, kitchen indents, NABH incidents and exports, ABDM care contexts, enrolled devices, Helix lots and movements; nullable on tariff plans, forecasts, holidays); writers stamp the facility"
+     ],
+     "files": [
+      "server/services/helix_db.py",
+      "server/services/billing_service.py",
+      "server/services/payments_service.py",
+      "server/services/payer_service.py",
+      "server/services/procurement_service.py",
+      "server/services/housekeeping_service.py",
+      "server/services/biomedical_service.py",
+      "server/services/nabh_service.py",
+      "server/services/abdm_service.py",
+      "server/services/dietary_service.py",
+      "server/migrations_his/m0075_facility_columns_admin.py",
+      "server/tests/test_facility_admin_stamping.py"
+     ],
+     "migrations": 1,
+     "note": "3.5 days."
+    }
+   ]
+  },
+  {
+   "wave": 12,
+   "goal": "Multi-site scope sweep, part 1: clinical lanes, Sage and sockets, audit, exports, pharmacy queue and money, front desk, OPD and ADT lanes. Hot files: main.py owned by W12-A; realtime.py owned by W12-B.",
+   "clusters": [
+    {
+     "cluster": "W12-A Scope sweep: clinical lanes",
+     "increments": [
+      "multisite-8: facilities passed at every blind clinical row (board, discharged list, search, timeline, orders, eMAR, bundles, Lens, FHIR export, forecast, appointments, escalation, sepsis, surgery scope, consent, ward brief, shadow routes, media route, Scribe and Relay case lists)"
+     ],
+     "files": [
+      "server/routes/vigil_routes.py",
+      "server/routes/nurse_routes.py",
+      "server/routes/orders_routes.py",
+      "server/routes/emar_routes.py",
+      "server/routes/bundle_routes.py",
+      "server/routes/lens_routes.py",
+      "server/routes/search_routes.py",
+      "server/routes/patient_timeline_routes.py",
+      "server/routes/appointments_routes.py",
+      "server/routes/fhir_export_routes.py",
+      "server/routes/forecast_routes.py",
+      "server/services/forecast_service.py",
+      "server/services/escalation_service.py",
+      "server/services/sepsis_bundle_service.py",
+      "server/services/surgery_scope.py",
+      "server/services/consent_service.py",
+      "server/services/vigil_service.py",
+      "server/services/sage_narrator_service.py",
+      "server/routes/shadow_routes.py",
+      "server/routes/scribe_routes.py",
+      "server/routes/relay_routes.py",
+      "server/main.py",
+      "server/tests/facility_sql_sites/clinical.py"
+     ],
+     "migrations": 0,
+     "note": "5 days."
+    },
+    {
+     "cluster": "W12-B Scope sweep: Sage lane, out-of-scope locator and socket rooms",
+     "increments": [
+      "multisite-10: sage_service _scope_sql and _patient_in_scope changed in lockstep with permissions (parity on two-facility fixtures); _out_of_scope_locators limited to the caller's facilities; 'no matching patient at <facility>'; facility socket rooms once multi-facility data exists"
+     ],
+     "files": [
+      "server/services/sage_service.py",
+      "server/routes/sage_routes.py",
+      "server/services/sage_relay_context.py",
+      "server/services/sage_provenance_service.py",
+      "server/services/voice_agent_service.py",
+      "server/services/sage_proactive_service.py",
+      "server/services/nervous_system_triggers.py",
+      "server/ws/realtime.py",
+      "server/tests/facility_sql_sites/sage.py",
+      "server/tests/test_facility_socket_rooms.py",
+      "server/tests/test_sage_facility_locator.py"
+     ],
+     "migrations": 0,
+     "note": "4.5 days. The bed matcher is not touched (R026 held). MS-R13 applied."
+    },
+    {
+     "cluster": "W12-C Audit attribution and every audit reader",
+     "increments": [
+      "multisite-11: facility in hashed metadata only with multi-facility data, resolver with caches, truncation stub keeps facility_id; every audit_logs reader classified and filtered by the epoch rule; build_audit_facility_index.py maintenance CLI"
+     ],
+     "files": [
+      "server/services/audit_service.py",
+      "server/routes/audit_routes.py",
+      "server/routes/flight_recorder_routes.py",
+      "server/services/flight_recorder_service.py",
+      "server/routes/admin_routes.py",
+      "server/routes/admin_users_routes.py",
+      "server/services/compliance_service.py",
+      "server/services/impact_service.py",
+      "src/pages/panels/admin/AuditLogTable.tsx",
+      "src/pages/panels/admin/SecurityActivity.tsx",
+      "server/tests/facility_sql_sites/audit.py",
+      "server/scripts/build_audit_facility_index.py",
+      "server/tests/test_audit_facility.py"
+     ],
+     "migrations": 0,
+     "note": "4.5 days. Time the index CLI on a backup copy first. test_audit_trail_attack and test_audit_fail_closed_categories stay green."
+    },
+    {
+     "cluster": "W12-D Downtime packs, exports and backup statements per facility",
+     "increments": [
+      "multisite-15: ward packs and the nightly self-export per facility folder with local mirrors; FHIR Organization and Encounter.serviceProvider; facility extract CLI; restore-rolls-back-every-facility statement on Data and Backups and in the CIO questionnaire"
+     ],
+     "files": [
+      "server/services/downtime_service.py",
+      "server/services/fhir_export_service.py",
+      "server/services/site_config_service.py",
+      "server/routes/backup_routes.py",
+      "src/pages/panels/admin/DataPanel.tsx",
+      "docs/CIO_SECURITY_QUESTIONNAIRE.md",
+      "server/tests/facility_sql_sites/exports.py",
+      "server/scripts/facility_extract.py",
+      "server/tests/test_facility_exports.py"
+     ],
+     "migrations": 0,
+     "note": "3.5 days. MS-R12 applied."
+    },
+    {
+     "cluster": "W12-E Scope sweep: pharmacy queue, money, front desk and group identity match",
+     "increments": [
+      "multisite-9a: pharmacy queue (zero scope calls today), Helix routes, payments, billing, payer and front desk facility-scoped, document-keyed for money and queues",
+      "multisite-17: group-wide minimal-demographics identity match for the desk, audited with a reason and rate-limited"
+     ],
+     "files": [
+      "server/routes/pharmacy_routes.py",
+      "server/services/pharmacy_verification_service.py",
+      "server/routes/helix_routes.py",
+      "server/routes/payments_routes.py",
+      "server/services/payments_service.py",
+      "server/routes/billing_routes.py",
+      "server/routes/payer_routes.py",
+      "server/routes/frontdesk_routes.py",
+      "server/services/frontdesk_service.py",
+      "src/pages/panels/FrontDeskPanel.tsx",
+      "server/tests/facility_sql_sites/money.py",
+      "server/tests/test_facility_pharmacy_queue.py",
+      "server/tests/test_group_identity_match.py"
+     ],
+     "migrations": 0,
+     "note": "7.5 days. MS-R9 (a) and MS-R11 (a) applied."
+    },
+    {
+     "cluster": "W12-F Scope sweep: OPD and ADT lanes",
+     "increments": [
+      "multisite-8h1 (new): facility scope and stamping for opd_routes, registration_routes, schedule_routes, OPD services, the routes/adt package, services/adt, bed master and census"
+     ],
+     "files": [
+      "server/routes/opd_routes.py",
+      "server/routes/registration_routes.py",
+      "server/routes/schedule_routes.py",
+      "server/services/opd_service.py",
+      "server/services/registration_service.py",
+      "server/services/opd_queue_service.py",
+      "server/routes/adt/master.py",
+      "server/routes/adt/board.py",
+      "server/routes/adt/moves.py",
+      "server/routes/adt/presence.py",
+      "server/routes/adt/end_stay.py",
+      "server/routes/adt/reservations.py",
+      "server/routes/adt/census.py",
+      "server/services/adt/core.py",
+      "server/services/adt/transfer.py",
+      "server/services/adt/end_stay.py",
+      "server/services/adt/presence.py",
+      "server/services/adt/reservations.py",
+      "server/services/bed_master_service.py",
+      "server/services/adt_census_service.py",
+      "server/tests/facility_sql_sites/opd_adt.py",
+      "server/tests/test_facility_opd_adt_scope.py"
+     ],
+     "migrations": 0,
+     "note": "3.5 days. Not in the multi-site architect's estimate: these routes did not exist when that design was written."
+    }
+   ]
+  },
+  {
+   "wave": 13,
+   "goal": "Multi-site scope sweep, part 2, and per-facility configuration. Hot files: permissions.py owned by W13-E.",
+   "clusters": [
+    {
+     "cluster": "W13-A Administrative lanes and Command Center per facility",
+     "increments": [
+      "multisite-9b: dietary, compliance, NABH, ABDM, procurement, workforce, housekeeping, biomedical, admin routes and the Command Center named list facility-scoped",
+      "multisite-12: house_snapshot(facility_ids), capacity per facility from the bed master, NABH indicators and evidence export per facility, Command Center selector for enterprise users"
+     ],
+     "files": [
+      "server/routes/dietary_routes.py",
+      "server/services/dietary_service.py",
+      "server/routes/compliance_routes.py",
+      "server/routes/nabh_routes.py",
+      "server/routes/abdm_routes.py",
+      "server/services/abdm_service.py",
+      "server/routes/procurement_routes.py",
+      "server/routes/workforce_routes.py",
+      "server/routes/housekeeping_routes.py",
+      "server/routes/biomedical_routes.py",
+      "server/routes/admin_routes.py",
+      "server/routes/command_center_routes.py",
+      "server/services/command_center_service.py",
+      "server/services/forecast_service.py",
+      "server/services/nabh_service.py",
+      "src/components/command/CommandCenter.tsx",
+      "src/pages/panels/NabhPanel.tsx",
+      "server/tests/facility_sql_sites/admin.py",
+      "server/tests/test_command_center_facility.py"
+     ],
+     "migrations": 0,
+     "note": "8 days."
+    },
+    {
+     "cluster": "W13-B Price lists per facility",
+     "increments": [
+      "multisite-13: default_tariff_plan(facility_id) replaces the four inline queries; facility plan, then group plan, then default; interstate from the facility state code; price list editor"
+     ],
+     "files": [
+      "server/services/billing_masters.py",
+      "server/services/billing_service.py",
+      "server/routes/billing_routes.py",
+      "src/pages/panels/BillingPanel.tsx",
+      "src/pages/panels/admin/FacilitiesPanel.tsx",
+      "server/tests/test_facility_tariffs.py"
+     ],
+     "migrations": 0,
+     "note": "3 days."
+    },
+    {
+     "cluster": "W13-C Pharmacy stock per facility and pharmacy-store sweep",
+     "increments": [
+      "multisite-14: dispensing draws only the admission facility's lots (dispensable predicate gains the facility), GRN into a facility store, stock and formulary on-hand per facility",
+      "multisite-8h3 (new): facility scope for the routes/pharmacy_store package and pharmacy store services"
+     ],
+     "files": [
+      "server/services/helix_service.py",
+      "server/routes/helix_routes.py",
+      "server/services/pharmacy_verification_service.py",
+      "server/routes/pharmacy_routes.py",
+      "server/services/pharmacy_stock_service.py",
+      "src/pages/panels/HelixPanel.tsx",
+      "server/routes/pharmacy_store/masters.py",
+      "server/routes/pharmacy_store/purchasing.py",
+      "server/routes/pharmacy_store/stock.py",
+      "server/routes/pharmacy_store/lots.py",
+      "server/routes/pharmacy_store/transfers.py",
+      "server/routes/pharmacy_store/counts.py",
+      "server/routes/pharmacy_store/ndps.py",
+      "server/routes/pharmacy_store/ward.py",
+      "server/routes/pharmacy_store/returns.py",
+      "server/routes/pharmacy_store/vendor_returns.py",
+      "server/services/pharmacy_master_service.py",
+      "server/services/pharmacy_purchasing_service.py",
+      "server/services/pharmacy_store_service.py",
+      "server/services/pharmacy_transfer_service.py",
+      "server/services/pharmacy_stock_reports.py",
+      "server/services/ndps_service.py",
+      "server/tests/facility_sql_sites/pharmacy.py",
+      "server/tests/test_facility_pharmacy_stock.py"
+     ],
+     "migrations": 0,
+     "note": "5.5 days. Never move create_order's transaction boundary (R024)."
+    },
+    {
+     "cluster": "W13-D Scope sweep: LIS and medication-order lanes",
+     "increments": [
+      "multisite-8h2 (new): facility scope for the routes/lab package, lab services and quarantine, the routes/medorders package and services/medorders; performing_facility stamping for lab work"
+     ],
+     "files": [
+      "server/routes/lab/master.py",
+      "server/routes/lab/orders.py",
+      "server/routes/lab/specimens.py",
+      "server/routes/lab/results.py",
+      "server/routes/lab/criticals.py",
+      "server/routes/lab/reports.py",
+      "server/routes/lab/tat.py",
+      "server/routes/lab/analysers.py",
+      "server/services/lab_order_service.py",
+      "server/services/lab_result_service.py",
+      "server/services/lab_critical_service.py",
+      "server/services/lab_report_service.py",
+      "server/services/lab_tat_service.py",
+      "server/services/result_quarantine_service.py",
+      "server/routes/medorders/core.py",
+      "server/routes/medorders/verify.py",
+      "server/routes/medorders/lifecycle.py",
+      "server/routes/medorders/supply.py",
+      "server/services/medorders/queries.py",
+      "server/tests/facility_sql_sites/lab_meds.py",
+      "server/tests/test_facility_lab_meds_scope.py"
+     ],
+     "migrations": 0,
+     "note": "2.5 days. Not in the multi-site architect's estimate."
+    },
+    {
+     "cluster": "W13-E Visiting consultants: session facility switch",
+     "increments": [
+      "multisite-19: 'visiting' user_facilities rows with their own department, JWT 'fac' claim validated per request, POST /api/auth/facility audited, effective department overlaid so department_scope is unchanged"
+     ],
+     "files": [
+      "server/auth.py",
+      "server/routes/auth_routes.py",
+      "server/permissions.py",
+      "server/services/facility_service.py",
+      "src/pages/ClinicianShell.tsx",
+      "server/tests/test_facility_switch.py"
+     ],
+     "migrations": 0,
+     "note": "4 days. MS-R7 (a) applied. Separate accounts remain the first-go-live option."
+    }
+   ]
+  },
+  {
+   "wave": 14,
+   "goal": "Two-facility go-live drill: the create gate passes through the product only when every sweep is done.",
+   "clusters": [
+    {
+     "cluster": "W14-A Two-facility drill and runbook",
+     "increments": [
+      "multisite-18: second-facility seed on the isolated verify stack (honest wording, no demo labels in the app), audit index built on a realistic copy, create gate passed through the product, browser pass as F1 nurse, F2 nurse, F2 admin, F2 pharmacist, F2 cashier and enterprise admin, two-facility soak, docs/MULTI_SITE.md runbook (flag, grant bootstrap, index window, ingestion keys, satellite mirrors, reverse-proxy Host caveat)"
+     ],
+     "files": [
+      "server/scripts/seed_second_facility.py",
+      "server/tests/test_two_facility_e2e.py",
+      "docs/MULTI_SITE.md"
+     ],
+     "migrations": 0,
+     "note": "3 days. FACILITY_BLIND_SURFACES must be empty and the leak sweep strict everywhere; booting with the flag off and two facilities keeps isolation."
+    }
+   ]
+  }
+ ],
+ "migration_plan": "**Current state (verified in code)**\n- The highest migration is 47, vitals_carried_from, registered at server/migrations.py:5494.\n- The runner applies every version missing from schema_migrations, in ascending order (migrations.py:5496-5513). It checks membership, not MAX(version).\n- So a gap, or a higher number landing before a lower one, is safe. Nothing in this plan depends on landing order beyond its stated dependencies.\n\n**Mechanism (wave 1, cluster W1-A)**\n- New migrations live one per file: server/migrations_his/m00NN_<name>.py.\n- Each file exports one Migration whose version must equal NN.\n- The package collects them by version and merges them into the sorted MIGRATIONS run.\n- Import fails on a duplicate version or a filename/version mismatch, so a collision fails in CI and at boot, as today.\n- migrations.py is edited only in wave 1: the collection hook and LATEST_USERS_ROLE_CHECK. That removes it as a shared hot file for every later wave.\n\n**Allocation (one owner per number)**\n- 48 users_role_batch: W1-A, his-2. FK-parent rebuild of users.\n- 49 helix_tables_in_runner: W1-A, grn-1.\n- 50 registration_opd_foundation: W2-A, opd-1. Does not create patient_movements.\n- 51 adt_movement_ledger: W2-A, adt-2.\n- 52 patients_status_registered: W2-A, opd-2. FK-parent rebuild of patients.\n- 53 adt_bed_master: W2-B, adt-1.\n- 54 pharmacy_store_schema: W2-C, grn-3.\n- 55 lab_contract: W2-D, lis-3.\n- 56 observations_lab_links: W2-D, lis-5 part b.\n- 57 clinic_sessions: W2-E, opd-15.\n- 58 adt_admission_location: W3-B, adt-3.\n- 59 adt_discharge_dispositions: W3-B, adt-8a.\n- 60 result_quarantine: W3-E, lis-19.\n- 61 med_order_store: W4-E, medorders-1. Its Helix column also goes into HELIX_SCHEMA; the index is created only in guarded code.\n- 62 opd_consultations: W4-F, opd-10.\n- 63 patient_allergy_assessments: W5-A, opd-10a.\n- 64 lab_analysers: W5-F, lis-23.\n- 65 stay_keying: W6-B, opd-17b. Includes the one-active-admission partial unique index that adt-18a also asked for, built once, after a pre-check.\n- 66 housekeeping_movement_links: W6-C, adt-7.\n- 67 opd_charge_rules: W7-A, opd-13.\n- 68 appointments_slots: W7-A, opd-16. An in-transaction rebuild; appointments is not an FK parent.\n- 69 bed_reservations: W7-D, adt-12.\n- 70 facilities_spine: W7-J, multisite-1.\n- 71 med_order_schedule_times: W8-I, medorders-19.\n- 72 invoice_supplier_snapshot: W9-E, multisite-2.\n- 73 document_series_per_facility: W10-A, multisite-7a. This rebuild carries opd-1's resets_yearly and check_digit columns and the UHID row.\n- 74 facility_columns_encounters: W11-A, multisite-4. Also adds wards.facility_id, mapping the 'MAIN' label to facility 1.\n- 75 facility_columns_admin: W11-C, multisite-7b.\n\n**Held increments**\nHeld increments get no number now. medorders-12 and medorders-17 each need one and take the next free number when Samuel releases them.\n\n**Rules every migration follows**\n- Additive only: ADD COLUMN and CREATE IF NOT EXISTS, guarded by PRAGMA introspection.\n- No new FOREIGN KEY, so no new table becomes an FK parent.\n- One statement per conn.execute, never executescript (it would commit the runner's transaction).\n- No CHECK on columns added to Helix tables, which are FK parents; their enums are validated in the service.\n- Vocabularies on admissions and patient_movements are enforced by triggers, so they can be widened later without a rebuild.\n- Every migration is tested three ways: on a fresh DB, on a tmp_path legacy DB, and run twice.\n- The suite runs without the shipping .env.\n\n**The two FK-parent rebuilds (48 users, 52 patients)**\n- Both use database._atomic_table_rebuild with a frozen column list, plus row-count and PRAGMA foreign_key_check assertions.\n- Each is a separate deploy step, done after a verified backup_db.py backup and a dry run on a dev DB copy on the isolated verify stack.\n- Both commit the runner's open transaction by construction, which is why they are batched to one rebuild per table.\n- No epic may add a users column; it would abort the next role rebuild (migrations.py:4773).\n- ADT adds no patients or admissions status values: presence and discharge type are columns. So patients is rebuilt only once.\n\n**Lazy schema owners**\n- grn-1 brings the Helix tables into the runner.\n- opd-1 freezes the opd_visits DDL and adt-2 freezes patient_movements. ensure_frontdesk_schema and init_helix_db stay as idempotent fallbacks that are kept in step.\n\n**Flags and profiles**\nMigrations run on every profile, including the Ward Record and demo DBs, with the flags off. New columns stay NULL and new tables stay empty.\n\n**Collisions**\nIf a running session claims a number in 48 to 75 first, renumber this plan's not-yet-merged file to the next free number and update this table before merge. Never renumber a migration that has shipped to any DB.",
+ "architectural_decisions": [
+  {
+   "decision": "Medication orders A1: where the authoritative medication order lives",
+   "options": "(a) New med_orders and med_order_events tables become the record. medications stays as the ward projection (about 20 readers and 37 test files keep working). Helix rows are supply children, many per order. CPOE orders are the draft view. Nothing is renamed or rebuilt (strangler). (b) Rebuild medications into the order store. It is the FK parent of administrations and both override tables, so the rebuild runs outside the migration transaction. (c) Make helix_patient_med_orders the order. Wrong grain: one row is one dispense of one unit.",
+   "recommendation": "(a). Waves 4 to 10 assume it. If Samuel picks anything else, the medication-order clusters and opd-12 and grn-17 stop; nothing else depends on them."
+  },
+  {
+   "decision": "Medication orders A2: rollout modes and what happens if lifecycle mode is switched off (MO-R9)",
+   "options": "(a) Two flags. ORB_MED_ORDER_STORE (record mode): the chart, Sage and Scribe lanes write through, and legacy semantics are kept. ORB_MED_ORDER_LIFECYCLE (authoritative): sign, verify, hold, stop. Switching lifecycle off after use fails closed: held orders stay ungivable and linked CPOE orders become cancel-only. (b) One flag with a big-bang cutover. (c) Two flags, but held orders are released and CPOE orders unlinked when the flag goes off.",
+   "recommendation": "(a), with an operations note before any site turns lifecycle on."
+  },
+  {
+   "decision": "Medication orders A3: how the bedside dose decision stays safe while two stores coexist",
+   "options": "(a) Two invariants. I1: the verification fact stays on medications.verified_by, which every verify path writes; the store adds only 'held'. I2: every mutation of a linked row writes through the store, keyed on the link and not the flag. The eMAR check sits below the replay and discharge guards and is re-checked after the INSERT. (b) Once a row is adopted, the eMAR trusts only the store.",
+   "recommendation": "(a). A legacy writer can then never make a verified drug ungivable, and an offline replay never gets a 4xx."
+  },
+  {
+   "decision": "Medication orders A4: supply rows and the ledger after erasure (MO-R12, MO-R13)",
+   "options": "Supply: (a) the prescriber picks pharmacy, ward stock or patient's own on each order, defaulted per drug from the drug master later; (b) every signed formulary order gets a pharmacy supply row; (c) supply stays manual. Ledger after a patient's erasure: (a) deleted with the medication record, with tamper evidence kept in the hash-chained audit; (b) retained append-only, with a DELETE-abort trigger and an ERASURE_RETAINED_TABLES entry.",
+   "recommendation": "Supply (a); erasure (a). The build assumes both. Erasure (b) is a one-line registry change plus a trigger if Samuel prefers it."
+  },
+  {
+   "decision": "Medication orders A5: how much to build now",
+   "options": "(a) Day one (medorders-1 to 10) plus the follow-ons that need no held ruling: 11 (verify before first dose), 19 (authored schedule) and 20 (exact Sage binding). About 56 engineer-days. 12 to 18 stay held on R001, R002, R009, R010, W111 and W099. (b) Day one only, about 47 engineer-days.",
+   "recommendation": "(a) as scheduled. 11, 19 and 20 can be dropped without touching anything else."
+  },
+  {
+   "decision": "Multi-site M1: tenancy (MS-R1)",
+   "options": "(a) One appliance per legal entity, with a row-level facility_id in the one SQLCipher DB, one PAN across all facilities and no tenant_id. (b) One appliance per facility with a federated patient index. (c) Row-level, with a tenant_id for franchises.",
+   "recommendation": "(a). It keeps one DPDP data fiduciary, keeps CIO questionnaire 1.5 true, and gives consultants one login. facilities.uuid keeps federation open for later."
+  },
+  {
+   "decision": "Multi-site M2: what switches isolation on",
+   "options": "(a) Data: once more than one facilities row exists (rows are never deleted), facility scope is enforced whatever the flag says. A runtime fence answers 503 on any route not yet swept. The flag only gates growth. (b) The ORB_MULTI_SITE flag itself.",
+   "recommendation": "(a). A flag-off restore of a two-facility backup cannot leak. The fence makes an unfinished screen an outage, not a disclosure."
+  },
+  {
+   "decision": "Multi-site M3: department, ward and bed codes (MS-R4)",
+   "options": "(a) Unique across the group, each owned by one facility. Ward-scoped staff are then isolated without touching the 116 user-taking scope call sites. (b) Duplicates allowed, with every comparison facility-qualified. This roughly doubles the multi-site work and adds facility_id to the OPD token index.",
+   "recommendation": "(a). The ADT bed master already enforces case-insensitive unique codes."
+  },
+  {
+   "decision": "Multi-site M4: chart visibility across facilities (MS-R2) and attribution",
+   "options": "(a) The whole chart is visible. The facility is derived through the patient's admissions, under an invariant that refuses cross-facility re-admission and department moves until encounter attribution exists. (b) This facility's encounters only, with allergies, active medications and problems group-wide. Needs admission_id on about 20 clinical tables: 10 to 15 days in the MPI epic, not in this plan. (c) This facility's encounters only.",
+   "recommendation": "(a). Never filter allergies, active medications or problems by facility."
+  },
+  {
+   "decision": "Multi-site M5: build order against ADT, and who owns the departments master",
+   "options": "(a) ADT first. adt-1 (wave 2) creates wards with a facility_code label 'MAIN'. multisite-1 (wave 7) creates a departments master seeded from users, site.toml, admissions and ADT wards. multisite-4 adds wards.facility_id. (b) multisite-1 before adt-1, as its architect asked. That pulls the architectural epic into wave 2, ahead of Samuel's decisions.",
+   "recommendation": "(a). Multi-site stays behind its decisions and off the critical path, and the code-uniqueness contract still holds because every ward is 'MAIN' until a second facility exists."
+  },
+  {
+   "decision": "Multi-site M6: audit attribution and department-less staff (MS-R5)",
+   "options": "Audit: (a) the facility goes into hashed metadata_json, only when multi-facility data exists. History before the first expansion belongs to facility 1. The index is built by a maintenance CLI. (b) A new audit_logs column, which bumps the chain and risks the int-versus-TEXT target_id trap. Department-less admin, pharmacist and cashier: (a) the facility of the patient's latest encounter; (b) any encounter ever; (c) active, or within N days.",
+   "recommendation": "Audit (a); staff (a)."
+  },
+  {
+   "decision": "Cross-epic X1: one default-off flag system for all HIS work",
+   "options": "(a) One config._opt_in helper. FEATURE_FLAGS is published as 'features' on /api/health. OPT_IN_MODULES (adt, pharmacy-store, lab) sit inside 'modules', default off. Client defaults fail toward hidden. This departs from the 2026-08-11 'every module defaults ON' ruling for these three modules only, and test_money and the shell pins are amended to say so. (b) Each epic builds its own; the six designs proposed five different helper names.",
+   "recommendation": "(a), built once in wave 1 with every OPD, ADT, GRN and LIS flag and setting registered. The medication-order and multi-site flags are added in their own first waves."
+  },
+  {
+   "decision": "Cross-epic X2: migration file layout",
+   "options": "(a) One file per migration under server/migrations_his/, collected by version and refused on a duplicate. migrations.py is edited only in wave 1. (b) Keep every migration in migrations.py with one owning cluster per wave. That caps schema work at about 8 days a wave and adds about four waves.",
+   "recommendation": "(a). The existing runner already tolerates gaps and out-of-order landing, so the change is a small collection hook."
+  },
+  {
+   "decision": "Cross-epic X3: code layout so several clusters can build one epic in the same wave",
+   "options": "(a) Route packages (routes/adt, routes/lab, routes/pharmacy_store, routes/medorders) and service packages (services/adt, services/medorders), pre-created and registered in main.py once. New panels find their views and tile actions with import.meta.glob, the pattern shellConfig already uses. (b) One route file and one service file per epic, so each epic gets one cluster per wave.",
+   "recommendation": "(a). Without it, OPD, ADT, GRN and LIS each run one cluster a wave and the plan grows by several waves."
+  },
+  {
+   "decision": "Cross-epic X4: roles, the patients rebuild, and one readmission design",
+   "options": "(a) One users-role rebuild (migration 48) for receptionist, ward_clerk, lab_technician, pathologist and phlebotomist, each creatable only while its feature is on. One patients rebuild (migration 52), adding only 'registered'. One readmission design: opd-17a/17b/17c absorb adt-18a/18b, and the one-active-admission index lands once in migration 65. This shared identity core is also the Ward Record's returning-patient path. (b) A rebuild per epic and two readmission paths.",
+   "recommendation": "(a). Every users or patients rebuild is an FK-parent rebuild that commits the runner's transaction, so fewer is safer. A second writer of admission_service would also compete with the running Scribe work."
+  }
+ ],
+ "held_for_samuel": [
+  "medorders-12 (verbal and telephone orders with read-back and countersign): blocked by held R010.",
+  "medorders-13 (Scribe-extracted medicines as drafts): blocked by held W111.",
+  "medorders-14 (stat order completes on its first given dose): blocked by held R001.",
+  "medorders-15 (pharmacy substitution as an amendment the prescriber accepts): blocked by held R002. Until then, day one refuses any verification binding that is not the same ingredient.",
+  "medorders-16 (Helix approve and Relay confirm lanes onto the store): blocked by held R010 and the open W099 (wire or retire).",
+  "medorders-17 (medication reconciliation at admission, transfer and discharge, W105): its acknowledgement before the discharge summary is a discharge gate, which is held R009. It also needs MO-R7. Needs one migration number when released.",
+  "medorders-18 (retire the legacy medication write paths): depends on medorders-16, so it is blocked by R010.",
+  "lis-17 (open lab critical shown on the Vigil board and chart): build-blocked on held R023 (intended-use statement).",
+  "multisite-20 (inter-facility transfer workflow): blocked by held R009 and by MS-R3. MS-R3 stays at option (c), refuse, until R009 is ruled.",
+  "Go-live only (the code is built in waves 7 and 8 behind default-off switches): the LIS critical notification lis-15, the ward critical card lis-16 and interfaced criticals lis-22. LIS-R20 asks whether they sit inside held R023, so they stay switched off until Samuel answers.",
+  "Not decided, not scheduled: ADT-S6 (whether host-ward nurses can open a boarder's chart). It changes PATIENT_DEPARTMENT_SQL and its Sage twin. Until Samuel decides, the boarder acknowledgement and the case-room line built in adt-5 and adt-6a stand in.",
+  "Not decided, not scheduled: MO-R5 (prescriber-only acknowledgement of a severe allergy on every lane). It overlaps held R010 and R011, so only the new sign step gets prescriber-only acknowledgement, as a side effect of its design.",
+  "R024 and R026 are not decided anywhere. grn-4, grn-6, grn-14, medorders-5b and medorders-8 only wait for the in-progress Relay code to land, and either R024 answer works. multisite-10 leaves the Sage bed matcher untouched.",
+  "External inputs Samuel must get from a site: lis-21 needs a real site ORU sample (W108). lis-26 and lis-27 (ASTM framer, transport and host query) need the site's analyser list and protocol documents. opd-20 is built in W9-G, but no ICD-10 release is loaded until counsel confirms the licence (OPD-N11).",
+  "Go-live confirmations: the new safety rulings below were applied as build defaults, and their flags stay off at every site until Samuel confirms them. OPD-S1 to S8; ADT-S1, S2, S3, S4, S5, S7, S8, S9; MO-R1, R2, R3, R6, R8, R10; GRN-RS1, RS2, RS3, RS5, RS6, RS7; LIS-R1 to R10, R16 to R19, R21, R22; MS-R2, R4, R8, R11, R13, R14. Where the architect shipped a stricter interim (LIS-R5 two people, LIS-R6 no back-dating, GRN-RS7 register disabled until a mode is chosen), the strict default stays until he confirms."
+ ],
+ "product_rulings_applied": [
+  "How rulings were applied: non-safety rulings follow the architect's recommendation. New safety rulings raised by the architects also follow it, as build defaults only; their flags stay off until Samuel confirms them (listed in held_for_samuel). Held rulings R001, R002, R009, R010, R011, W111, R023, R024, R025, R026 are not decided anywhere in this plan.",
+  "OPD-S1 (a): to attach a visit or an admission to an existing record, the server checks two identifiers the patient states and answers only 'match' or 'no match'. The stored date of birth is never shown. Rate-limited and audited.",
+  "OPD-S2 (a): a probable duplicate gives a warning, needs a reason and opens a worklist item. Exact UHID or active ABHA is a hard refusal. ORB_DUPLICATE_MODE defaults to warn.",
+  "OPD-S3 (a) and OPD-S4 (a): OPD vitals are never copied into vitals, and OPD prescriptions never reach the inpatient chart at conversion. Both are listed with their times for reconciliation.",
+  "OPD-S5 (a): no allergy field at the front desk. OPD-S6 (a): no automatic prompt on OPD vitals.",
+  "OPD-S7 (a): signing a consultation, and writing an OPD prescription, need an allergy review: allergies charted, 'none known', or 'unable to obtain' with a reason.",
+  "OPD-S8 (a): readmission discontinues previous-stay active and prn medications in the same transaction and lists them for re-prescribing.",
+  "OPD-N1: hospital-number mode by default. Orb mode uses a Verhoeff check digit, never resets yearly, and is refused until the series is configured.",
+  "OPD-N2: the OPD record view opens for 7 days to the clinic's department. It shows identity, allergies, problems, OPD-linked results and all clinics' signed consultations. Self-registered visits count, flagged and audited.",
+  "OPD-N3: receptionist role holds registration.read and registration.write. consent.record is granted only after counsel agrees. Admin gets registration.read only; money stays with the cashier.",
+  "OPD-N4: hospital-wide search returns minimal fields, needs at least 3 characters, returns at most 20 results and audits matched ids. OPD-N5 (R018): DOB is optional; a stated age is stored with its date.",
+  "OPD-N6: a site setting, defaulting to charging at completion. Follow-up visits use their own OPD-FOLLOWUP code. Cancel and LWBS void a pending prepaid line.",
+  "OPD-N7: the token board shows token, doctor and room only. OPD-N8: a visit may complete without a signed note if a reason is given. OPD-N9: queue priorities come from a site list. OPD-N10: ID document type plus last 4 digits only.",
+  "OPD-N11: diagnoses are free text with an optional code; counsel confirms the ICD-10 licence before any load. OPD-N12 (b): one queue read audit per user per visible visit set per 10 minutes.",
+  "ADT-S1 (a): an occupied bed is refused, and 'add an extra bed' creates a temporary bed with its own label. This replaces the design's interim shared-bed-with-reason.",
+  "ADT-S2 (c): beds awaiting a terminal clean are blocked unless a named person authorises. Standard-clean and out-of-service beds are allowed with a reason. Wards that do not track cleaning raise no warning.",
+  "ADT-S3: death, LAMA and DAMA are doctor-only, with read-back. A nurse or clerk records the physical departure only after a doctor's discharge. The bed manager closes an absconded stay after 24 h. In the Ward Record the clerk records 'left the ward'.",
+  "ADT-S4 (a): patients on leave or absconded stay on boards with a 'Not on ward' chip. Obs and medication due times and escalation pause and resume; nothing is closed.",
+  "ADT-S5 (a): a clerk admission marks clinical fields 'Not yet assessed', never NKDA, and the board flags 'admission assessment due'.",
+  "ADT-S7: doctors and nurses record leave and absconded. Nurses get a read-only board for their own ward.",
+  "ADT-S8 (b): a clerk may change the treating department only to carry out a transfer that names the ordering doctor.",
+  "ADT-S9 (a): after readmission, previous-stay vitals show only with their date and a 'previous stay' label, never as the latest. Sage memory is archived and restarted, and the case room gets a dividing line.",
+  "ADT-S6 is not applied: the scope change is outside these epics.",
+  "F104: warn about unlisted wards and beds until the bed manager marks setup complete, then strict per site. ADT-P3: back-time up to 72 h. ADT-P4: report both occupancy methods. ADT-P5: capacity comes from the register for complete wards. ADT-P6: bed held on leave, rent per site setting, doctor prompted after 48 h. ADT-P9: reservations expire after 120 min (24 h for elective and post-op).",
+  "ADT-P8: only the portal login deactivation is built (restored by reopen) and no discharge link is issued. Stopping diet orders and making the Relay room read-only are not scheduled. ADT-P2 (Ward Record turns ORB_ADT on) is noted, not applied: the Ward Record is outside this plan.",
+  "MO-R1 (a): every linked order needs pharmacist verification before its first dose. Stat and urgent first doses are allowed and flagged.",
+  "MO-R2 (a): only the prescriber can hold, resume, stop or cancel a live order. MO-R3 (a): PRN orders can be given, and screening includes PRN, held and signed CPOE orders. MO-R4 (a): medication.verify for pharmacists only.",
+  "MO-R6 (b): a same-ingredient duplicate needs acknowledgement with a reason. MO-R8 (a): dose times come from a signed site_config file, with no built-in default.",
+  "MO-R9 (a): switching the lifecycle flag off fails closed. MO-R10 (a): unsigned drafts are never auto-cancelled; drafts older than 24 h rise in the to-sign queue. MO-R11 (a): non-formulary free text is allowed, with same-ingredient binding at verification.",
+  "MO-R12 (a): the prescriber picks the supply source per order. MO-R13 (a): the ledger is deleted with the record on erasure. MO-R7 is not applied: it is bound to held medorders-17.",
+  "GRN-RS1 (b): a new drug is a draft until a second pharmacist confirms it. Identity edits on drugs with orders or stock are refused (retire and replace).",
+  "GRN-RS2 (b): a different pharmacist releases quarantine, with a reason; recalled and NSQ are terminal. GRN-RS3 (b): only sealed, in-date, non-cold-chain, non-NDPS unit packs are restocked after inspection.",
+  "GRN-RS5 (b): ward and crash-cart stock comes from a per-store approved list that starts from the ISMP high-alert bar, and an eMAR order is still required. The ward-stock switch stays off until confirmed.",
+  "GRN-RS6 (b): expiry is typed twice at receipt. GRN-RS7: both failure modes are built; the register stays disabled until a mode is confirmed. GRN-RS4 is not built: no increment exists for it.",
+  "GRN-R7: the pharmacist holds pharmacy_store read, write and ndps; admin holds read and approve. GRN-R8 (a): nurses get department-scoped ward stock, indent and return grants. GRN-R9 (a): a pinned pharmacy-desk tab exception.",
+  "GRN-R10: vendors need a valid drug licence, with a warning 30 days before expiry. GRN-R11: separate document series per pharmacy document type. GRN-R12: lot cost; billing at batch MRP, falling back to the tariff.",
+  "GRN-R13: the pharmacist enters the dispense quantity, bounded. GRN-R14: narcotics are received into the vault and dispensed from it, with a second-user PIN witness; every variance drafts an incident; no NDPS stock in seeds.",
+  "GRN-R15: ward stock is topped up by count until grn-17. GRN-R16: 90-day near-expiry window and 90-day minimum shelf life at receipt. GRN-R17: one dispensing store per site. GRN-R18: unclassified drugs are refused for purchase and receipt. GRN-R19: the ledger has a single writer; triggers only on the NDPS register. GRN-R20 (b): a two-person downgrade, refused while vault stock exists.",
+  "LIS-R1 (a) and LIS-R2 (a): no critical limits and no reference ranges ship; the pathologist approves them. LIS-R3: three tiers, closed by a phone log or an in-app read-back, never by a Relay post.",
+  "LIS-R4 (a): a critical is communicated at technical validation, marked preliminary. LIS-R5: two people by default (strict interim); one signatory doing every step is a site setting.",
+  "LIS-R6: back-dating is refused until confirmed; afterwards up to 2 h with a reason. LIS-R7 (a): no DOB means no range and no flag. LIS-R8 (a): no autoverification. LIS-R9 (a): a delta check needs a reason before validation. LIS-R10 (a): every amendment raises a notice.",
+  "LIS-R11 (c): portal lab reports off by default; shown after a delay or clinician release, with no colour. LIS-R12: three lab roles. LIS-R13: 12-digit accession with a Damm check digit. LIS-R14 (a): HL7 now, ASTM when a site sends documents. LIS-R15: browser printing to thermal printers.",
+  "LIS-R16 (a): partial panels release analyte by analyte. LIS-R17 (a): only lab roles reconcile quarantined results. LIS-R18: ketones, VBG and ABG are bedside tests (ward_poct). LIS-R19 (c): post-discharge criticals go to the last ward's card and the lab phones. LIS-R21 (a): switching the module off drains open work. LIS-R22 (a): interfaced criticals off by default. LIS-R23 (a): no shadow lab lane.",
+  "MS-R1 (a), MS-R2 (a), MS-R4 (a), MS-R5 (a), MS-R6 (a), MS-R7 (a) with separate accounts for the first go-live, MS-R9 (a), MS-R11 (a), MS-R12 (a), MS-R13 (a), MS-R14 (a).",
+  "MS-R8: one timezone. One shared escalation ladder only if every facility's clinical lead signs it; per-facility ladders (about 3 more days) are not scheduled. MS-R3 stays at (c), refuse, because of held R009."
+ ],
+ "risks": [
+  "Size and priority. About 460 engineer-days are scheduled, plus about 37 held. At the sales plan's 4 engineer-days a week that is roughly 115 engineer-weeks, against an approved plan whose only priced product is the Ward Record. Every wave ends in a mergeable state, so Samuel can stop after any wave. Multi-site (waves 7 and 9 to 14) and the medication-order store can each be dropped without affecting the other epics, except that opd-12 and grn-17 need the store.",
+  "Some changes are always on, whatever the flags say: the users and patients FK-parent rebuilds (48, 52); the patient_movements rebuild (51); Helix tables moving into the runner (49); dispenses running in an immediate transaction that fails closed on an audit outage (grn-4); the Tier 1 creatinine parity fix (lis-5a); the ghost-route 410; duplicate MRN returning 409 instead of 500 (opd-5b); and the one-active-admission index (65). They reach the Ward Record and the demo DBs too.",
+  "The two FK-parent rebuilds can lose or orphan patient or user rows if the column list is wrong. Mitigations: frozen column lists, row-count and foreign_key_check assertions, a verified backup first, and a dry run on a dev DB copy on the isolated verify stack before any real DB.",
+  "Wave 1 changes core files: migration discovery, route packages, glob-discovered views and every grant registered at once. A defect there blocks every later wave. Review W1-A and W1-B as one block, and pin the grants in test_rbac and roles.test before anything builds on them.",
+  "Grants are registered before the code that uses them. They are inert because every route 404s while its flag is off, but they enlarge the permission matrix that reviewers see. The parity tests must state which grants are deliberately unused.",
+  "Multi-site still leaks if a SQL site is missed. The ratchet, the runtime fence and the leak sweep reduce that risk, but the sweep only finds identifiers it plants. This plan added about 7.5 days (multisite-8h1 to 8h3) for routes the multi-site architect could not have counted. Any HIS code added after wave 11 must register its SQL sites in the area registry.",
+  "Running sessions. Clusters that edit admission_service, scribe_routes, AdmitPatientModal, helix_service, relay_routes or sage_handoff_service, sage_service or sage_routes, bridge_routes, realtime.py or the config.py and main.py CORS block carry gates, and must re-read those files after the owning session merges. About ten sessions edit the tree, so run ListAgents before every wave and land each increment as its own commit.",
+  "Migration numbers 48 to 75 are pre-allocated. If other work claims one first, the duplicate check stops the boot. Renumber the unmerged file and update the owner table; never renumber a shipped migration.",
+  "Readmission is the sharpest clinical hazard. Until W8-A, a returning patient cannot reopen the same record. W8-A then changes every latest-vitals reader and Sage memory, under ADT-S9 and OPD-S8 build defaults that Samuel has not yet confirmed. It is the highest-risk increment in the plan.",
+  "The medication-order store keeps two stores in step during the move. I1, I2, the parity report and the reader registry reduce drift, and the paper downtime MAR is the most dangerous reader because it has no link check. The seed tags two brands with the wrong generic, which the same-ingredient check would accept; fix the seed before any site verifies through the store.",
+  "The shadow scorecard, the pilot's only evidence instrument, changes in opd-2 and opd-17b. In lifecycle mode, medication CPOE events move from create to sign. The shadow-instrumentation owner must review all three before any pilot runs with these flags on.",
+  "Shared domain files (frontdesk_service, admission_service, billing_service, nabh_service, vigil_routes, helix_service) are edited in many waves. File sets are disjoint inside each wave, but rebase conflicts across waves are certain; keep increments small.",
+  "Pre-existing defects found by the architects are fixed only where an increment touches them: appointment cancel scope and server-clock dates (W7-A), the ghost route (W1-D), and OPD audits written after commit (W3-A). Others need separate tasks now: Helix verify accepting the 'REVIEW REQUIRED' dose and self-screening a Sage pair (F-A, F-B); the Relay transfer lane writing ward labels as departments when the flag is off; billing naming the prescribed drug instead of the substitute; and relay_routes.py:420 running the handoff synchronously on the event loop.",
+  "The escalation ladder tick has no patient-status filter, so chains keep escalating after any end of stay, including death. This is R009 territory and unchanged by the plan. End-of-stay screens list open chains and never close them.",
+  "Boarders stay invisible to host-ward nurses (ADT-S6, not scheduled). The bed board will make that gap visible to staff.",
+  "Audit volume. Front-desk queue polling writes up to about 1,200 phi_access rows per open screen per day until opd-9b (W8-B). Audit already drives appliance storage.",
+  "The suite cannot run with the shipping .env. Every increment's tests patch flags and must run under the test env. Browser verification of each screen needs the isolated verify stack.",
+  "No go-live is possible without inputs only Samuel or a site can supply: hospital critical-value lists and reference ranges, analyser protocol documents, a site ORU sample, ICD-10 licence advice, an NDPS failure mode, and confirmation of every new safety ruling applied here as a build default."
+ ]
+}

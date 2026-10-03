@@ -196,9 +196,13 @@ export function buildLabTrends(notes: unknown, observations: unknown): LabTrend[
   for (const o of Array.isArray(observations) ? observations : []) {
     if (!o || typeof o.observation_name !== 'string') continue
     const refText = typeof o.reference_range === 'string' && o.reference_range.trim() ? o.reference_range.trim() : null
+    /* Provenance rides along, as it does for lab documents above: a result the
+       simulator wrote (source 'simulated') carries the honesty label on the
+       card. It used to be dropped here, so a simulated structured result
+       showed as if it were this patient's. */
     add(o.observation_name, (o.unit || '').trim(), parseRange(refText), refText,
       o.observed_at, typeof o.value_numeric === 'number' ? o.value_numeric : Number(o.value_numeric),
-      typeof o.abnormal_flag === 'string' ? o.abnormal_flag : null)
+      typeof o.abnormal_flag === 'string' ? o.abnormal_flag : null, o.source === 'simulated')
   }
 
   return [...groups.values()].map(a => {

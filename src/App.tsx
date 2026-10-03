@@ -11,13 +11,19 @@ import PatientShell from './pages/PatientShell'
 import DischargeAccess from './pages/DischargeAccess'
 import DowntimeMode from './pages/DowntimeMode'
 import HandoffPage from './pages/HandoffPage'
+import OpdTokenBoard from './pages/OpdTokenBoard'
 import SessionExpiredModal from './components/SessionExpiredModal'
 import { bootTheme, storedTheme } from './lib/theme'
 import './App.css'
 
 // Mirrors server/roles.py STORABLE_ROLES. 'cashier' was missing although the
 // server staffs cashier accounts, so the type hid a role every login could carry.
-export type UserRole = 'doctor' | 'nurse' | 'admin' | 'patient' | 'pharmacist' | 'cashier' | null
+// The five HIS roles (migration 48) exist only while their feature is on; see
+// ROLE_FEATURE in src/lib/roles.ts.
+export type UserRole =
+  | 'doctor' | 'nurse' | 'admin' | 'patient' | 'pharmacist' | 'cashier'
+  | 'receptionist' | 'ward_clerk' | 'lab_technician' | 'pathologist' | 'phlebotomist'
+  | null
 
 export interface User {
   id: string
@@ -202,6 +208,10 @@ function App() {
           <Route path="/discharge/:token" element={<DischargeAccess />} />
           <Route path="/downtime/:patientId" element={user && user.role !== 'patient' ? <DowntimeMode /> : <Navigate to="/login/staff" />} />
           <Route path="/handoff/:patientId" element={user && user.role !== 'patient' ? <HandoffPage /> : <Navigate to="/login/staff" />} />
+          {/* The waiting-room token board: a kiosk DEVICE, never a signed-in
+              user, so it renders with or without a session and never redirects
+              to the sign-in screen. It shows no patient data (ruling OPD-N7). */}
+          <Route path="/display/opd" element={<OpdTokenBoard />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </BrowserRouter>

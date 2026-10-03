@@ -1,6 +1,12 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react'
 import type { FormEvent } from 'react'
 import { apiFetch } from '../../../api/client'
+import {
+  currentFeatureFlags,
+  currentModuleFlags,
+  isRoleFeatureOn,
+  subscribeModuleFlags,
+} from '../../../shellConfig'
 import { useFocusTrap } from '../../../hooks/useFocusTrap'
 import { AdminLoadingState, AdminErrorState, AdminEmptyState } from './AdminEmptyState'
 
@@ -26,7 +32,15 @@ interface UsersResponse {
 // Staff roles, from server/roles.py STORABLE_ROLES (the users.role CHECK
 // constraint) minus 'patient': portal accounts are made at admission and the
 // server refuses them here. The API 400s anything else, so keep them together.
-const STAFF_ROLES = ['doctor', 'nurse', 'admin', 'pharmacist', 'cashier'] as const
+//
+// The last five are the HIS roles (migration 48). Each can be created only
+// while its feature is on (server/roles.py ROLE_FEATURE, mirrored in
+// src/lib/roles.ts): the server refuses one whose feature is off, so this list
+// is filtered through `isRoleFeatureOn` before it is offered.
+const STAFF_ROLES = [
+  'doctor', 'nurse', 'admin', 'pharmacist', 'cashier',
+  'receptionist', 'ward_clerk', 'lab_technician', 'pathologist', 'phlebotomist',
+] as const
 
 const ROLE_LABELS: Record<string, string> = {
   doctor: 'Doctor',
@@ -34,16 +48,36 @@ const ROLE_LABELS: Record<string, string> = {
   admin: 'Administrator',
   pharmacist: 'Pharmacist',
   cashier: 'Cashier',
+  receptionist: 'Receptionist',
+  ward_clerk: 'Ward clerk',
+  lab_technician: 'Lab technician',
+  pathologist: 'Pathologist',
+  phlebotomist: 'Phlebotomist',
   patient: 'Patient portal',
 }
 
 const roleLabel = (role: string) => ROLE_LABELS[role] || role
 
+/** The staff roles this site can staff right now: every role whose feature is
+ *  on, plus `keep` (the role a user already holds) so that editing a user whose
+ *  feature was switched off later never silently swaps their role for the first
+ *  option in the list. Re-renders when /api/health answers. */
+function useOfferedRoles(keep?: string): string[] {
+  const modules = useSyncExternalStore(subscribeModuleFlags, currentModuleFlags)
+  const features = useSyncExternalStore(subscribeModuleFlags, currentFeatureFlags)
+  return STAFF_ROLES.filter(r => r === keep || isRoleFeatureOn(r, modules, features))
+}
+
 // Mirrors permissions.DEPARTMENT_REQUIRED_ROLES: for these a blank department
-// is not "no ward", it is every ward.
-const DEPARTMENT_REQUIRED = new Set(['doctor', 'nurse'])
+// is not "no ward", it is every ward. The ward clerk moves patients between the
+// beds of one department, so a blank department would be every ward.
+const DEPARTMENT_REQUIRED = new Set(['doctor', 'nurse', 'ward_clerk'])
 
 const DEPARTMENT_REQUIRED_MSG = 'Department is required for clinical roles'
+const WARD_CLERK_DEPARTMENT_MSG = 'Department is required for a ward clerk'
+
+const departmentRequiredMessage = (role: string) =>
+  role === 'ward_clerk' ? WARD_CLERK_DEPARTMENT_MSG : DEPARTMENT_REQUIRED_MSG
 
 const ROLE_COLORS: Record<string, { bg: string; color: string; border: string }> = {
   doctor:     { bg: 'var(--accent-glow)', color: 'var(--accent-text)', border: 'var(--accent-glow-strong)' },
@@ -52,6 +86,13 @@ const ROLE_COLORS: Record<string, { bg: string; color: string; border: string }>
   pharmacist: { bg: 'color-mix(in srgb, var(--status-ok) 10%, transparent)',  color: 'var(--status-ok-text)', border: 'color-mix(in srgb, var(--status-ok) 28%, transparent)' },
   // Its own colour: without one a cashier took the patient badge (the fallback).
   cashier:    { bg: 'color-mix(in srgb, var(--status-info) 10%, transparent)', color: 'var(--status-info-text)', border: 'color-mix(in srgb, var(--status-info) 28%, transparent)' },
+  // The HIS roles reuse existing pairs, so no new colour enters the contrast
+  // gate: the office roles take the cashier's, the lab roles the pharmacist's.
+  receptionist:   { bg: 'color-mix(in srgb, var(--status-info) 10%, transparent)', color: 'var(--status-info-text)', border: 'color-mix(in srgb, var(--status-info) 28%, transparent)' },
+  ward_clerk:     { bg: 'color-mix(in srgb, var(--status-info) 10%, transparent)', color: 'var(--status-info-text)', border: 'color-mix(in srgb, var(--status-info) 28%, transparent)' },
+  lab_technician: { bg: 'color-mix(in srgb, var(--status-ok) 10%, transparent)',  color: 'var(--status-ok-text)', border: 'color-mix(in srgb, var(--status-ok) 28%, transparent)' },
+  pathologist:    { bg: 'color-mix(in srgb, var(--status-ok) 10%, transparent)',  color: 'var(--status-ok-text)', border: 'color-mix(in srgb, var(--status-ok) 28%, transparent)' },
+  phlebotomist:   { bg: 'color-mix(in srgb, var(--status-ok) 10%, transparent)',  color: 'var(--status-ok-text)', border: 'color-mix(in srgb, var(--status-ok) 28%, transparent)' },
   patient:   { bg: 'color-mix(in srgb, var(--text-muted) 10%, transparent)', color: 'var(--text-muted)', border: 'color-mix(in srgb, var(--text-muted) 28%, transparent)' },
 }
 
@@ -177,6 +218,7 @@ function CreateUserModal({ departments, onClose, onCreated }: { departments: str
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const ref = useFocusTrap<HTMLDivElement>(submitting ? undefined : onClose)
+  const offeredRoles = useOfferedRoles()
 
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }))
 
@@ -184,7 +226,7 @@ function CreateUserModal({ departments, onClose, onCreated }: { departments: str
     e.preventDefault()
     setError(null)
     if (form.password.length < 8) { setError('Password must be at least 8 characters.'); return }
-    if (DEPARTMENT_REQUIRED.has(form.role) && !form.department.trim()) { setError(DEPARTMENT_REQUIRED_MSG); return }
+    if (DEPARTMENT_REQUIRED.has(form.role) && !form.department.trim()) { setError(departmentRequiredMessage(form.role)); return }
     setSubmitting(true)
     try {
       await apiFetch('/admin/users', {
@@ -223,7 +265,7 @@ function CreateUserModal({ departments, onClose, onCreated }: { departments: str
             <label className="admin-field">
               <span className="admin-field__label">Role</span>
               <select className="admin-filter-select" value={form.role} onChange={(e) => set('role', e.target.value)}>
-                {STAFF_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+                {offeredRoles.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
               </select>
             </label>
             <DepartmentField id="admin-create-dept" role={form.role} value={form.department}
@@ -320,11 +362,12 @@ function ChangeRoleModal({ target, departments, onClose, onDone }: { target: Adm
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const ref = useFocusTrap<HTMLDivElement>(submitting ? undefined : onClose)
+  const offeredRoles = useOfferedRoles(target.role)
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     setError(null)
-    if (DEPARTMENT_REQUIRED.has(role) && !department.trim()) { setError(DEPARTMENT_REQUIRED_MSG); return }
+    if (DEPARTMENT_REQUIRED.has(role) && !department.trim()) { setError(departmentRequiredMessage(role)); return }
     setSubmitting(true)
     try {
       await apiFetch(`/admin/users/${encodeURIComponent(target.id)}`, {
@@ -347,7 +390,7 @@ function ChangeRoleModal({ target, departments, onClose, onDone }: { target: Adm
           <label className="admin-field">
             <span className="admin-field__label">Role</span>
             <select className="admin-filter-select" autoFocus value={role} onChange={(e) => setRole(e.target.value)}>
-              {STAFF_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+              {offeredRoles.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
             </select>
           </label>
           <DepartmentField id="admin-role-dept" role={role} value={department}
