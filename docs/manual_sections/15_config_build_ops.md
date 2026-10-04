@@ -173,6 +173,7 @@ to small/fast models; `prod` defaults to full-quality.
 | `ORB_DISCHARGE_ACCESS_MAX_ATTEMPTS` | `5` | Max failed login attempts before the discharge access portal locks. |
 | `ORB_DISCHARGE_ACCESS_LOCK_MINUTES` | `15` | Minutes the discharge portal stays locked after too many failed attempts. |
 | `ORB_PUBLIC_APP_BASE_URL` | `http://localhost:5173` | Base of every patient discharge link and QR code (`<this>/discharge/<token>`). Set it to the appliance's https address (install runbook, section 8.4); the `prod` profile issues no discharge link while it is unset, not https, or names this machine. |
+| `ORB_DISCHARGE_LINK_ENABLED` | `true` | Discharge links and QR codes on or off. Set `false` where no patient Wi-Fi reaches the appliance (install runbook, section 7, item 6): no link is issued in any profile and the printed summary is the handover. |
 
 #### 15.2.9 Hospital-administration module switches
 

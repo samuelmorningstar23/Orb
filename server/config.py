@@ -586,6 +586,14 @@ DISCHARGE_ACCESS_TTL_DAYS = int(os.getenv("ORB_DISCHARGE_ACCESS_TTL_DAYS", "30")
 DISCHARGE_ACCESS_MAX_ATTEMPTS = int(os.getenv("ORB_DISCHARGE_ACCESS_MAX_ATTEMPTS", "5"))
 DISCHARGE_ACCESS_LOCK_MINUTES = int(os.getenv("ORB_DISCHARGE_ACCESS_LOCK_MINUTES", "15"))
 PUBLIC_APP_BASE_URL = os.getenv("ORB_PUBLIC_APP_BASE_URL", "http://localhost:5173")
+# Ruling 2026-10-04 (option A): the appliance never answers from outside the
+# hospital, so the discharge QR opens only on a network routed to it, and the
+# patient saves a copy before leaving. A hospital with no patient Wi-Fi routed to
+# the appliance sets this false and hands over the printed summary instead. Off
+# is a decision, not a fault: no link is issued, no boot error, and the Trust
+# Center row passes. See services/discharge_access_service.public_link_base_status.
+DISCHARGE_LINK_ENABLED = os.getenv("ORB_DISCHARGE_LINK_ENABLED", "true").strip().lower() not in (
+    "0", "false", "no", "off")
 
 # ── Sage Ambient ──
 SAGE_AMBIENT_ENABLED = os.getenv("ORB_SAGE_AMBIENT", "true").lower() == "true"

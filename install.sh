@@ -148,6 +148,9 @@ ORB_PORT=8000
 # the same address staff type. Until it is set, the prod profile prints no
 # discharge link or QR code at all, and says so in the startup log.
 # ORB_PUBLIC_APP_BASE_URL=https://orb.hospital.local:8000
+# Where no patient Wi-Fi reaches the appliance, switch the link off instead and
+# hand over the printed summary:
+# ORB_DISCHARGE_LINK_ENABLED=false
 
 # ── TLS (in transit). Point these at a REAL cert in production. ──
 ORB_TLS_CERT=$CERTS_DIR/orb.crt

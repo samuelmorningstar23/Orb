@@ -631,6 +631,7 @@ All sub-values are overridable via env vars (`ORB_SCRIBE_ASR_MODEL`, `ORB_SCRIBE
 | `DISCHARGE_ACCESS_MAX_ATTEMPTS` | `ORB_DISCHARGE_ACCESS_MAX_ATTEMPTS` | `5` | Failed PIN attempts before lockout. |
 | `DISCHARGE_ACCESS_LOCK_MINUTES` | `ORB_DISCHARGE_ACCESS_LOCK_MINUTES` | `15` | Lockout duration in minutes after too many failed attempts. |
 | `PUBLIC_APP_BASE_URL` | `ORB_PUBLIC_APP_BASE_URL` | `http://localhost:5173` | The https address a patient's phone opens from the discharge link and QR code; on an appliance, the address staff type. The default is the Vite dev server: the `prod` profile issues no discharge link while it is unset, not https, or names this machine. |
+| `DISCHARGE_LINK_ENABLED` | `ORB_DISCHARGE_LINK_ENABLED` | `true` | Whether discharge links and QR codes are issued at all. The link opens only on a network routed to the appliance, never from home (ruling of 4 October 2026); set `false` where no patient Wi-Fi reaches the appliance, and the printed summary is the handover. Off logs no error and the Trust Center row passes. |
 
 **Sage ambient config**
 
@@ -7981,8 +7982,9 @@ The main discharge action function. Called after both the summary and timeline a
 
 - the patient has a usable date of birth on file, the second factor the portal checks (`discharge_access_service.second_factor_status`);
 - the address the link is built on can be opened from a patient's phone (`discharge_access_service.public_link_base_status`). In the `prod` profile it refuses an `ORB_PUBLIC_APP_BASE_URL` that is unset, not `https`, or names this machine (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`, `0.0.0.0`). The shipped default, `http://localhost:5173`, is the Vite dev server and is refused. The `dev` profile accepts it.
+- the hospital has not switched discharge links off (`ORB_DISCHARGE_LINK_ENABLED`, default true). Ruling of 4 October 2026 (option A): the link opens only on a network routed to the appliance, never from home, so the patient saves a copy before leaving. A hospital with no patient Wi-Fi routed to the appliance sets it false and hands over the printed summary; that applies in every profile.
 
-When either fails, no token, URL or QR file is produced, the response carries `secure_link_issued: false` and a `secure_link_reason` for the discharge desk (both reasons when both fail), and a `discharge_link_not_issued` audit event names the cause.
+When either fails, no token, URL or QR file is produced, the response carries `secure_link_issued: false` and a `secure_link_reason` for the discharge desk (both reasons when both fail, except that links switched off give only the paper reason, so the desk is never sent to record a date of birth for a link that will not come), and a `discharge_link_not_issued` audit event names the cause.
 
 **Security model, how the token works:**
 
@@ -8045,7 +8047,7 @@ Helper pair for the sliding-window throttle. `_is_verify_ip_throttled` cleans th
 The two checks `discharge_service.discharge_patient` makes before it issues a link. Each returns `available` plus a `reason` written for the discharge desk.
 
 - `second_factor_status`: is a date of birth on file in a shape the portal's date picker can send? `usable_dob` decides, and verification uses the same definition, so a link can never issue that verification would refuse.
-- `public_link_base_status`: can a patient's phone open links built on `config.PUBLIC_APP_BASE_URL`? `public_address_problem` names the fault (not set, not https, this machine), and only the `prod` profile refuses. `log_public_address_problem` runs once in `main.lifespan` and logs an error at boot while it refuses. The Trust Center shows the same check as the "Patient discharge link address" row, in `prod` only: green on an https network address, amber otherwise.
+- `public_link_base_status`: can a patient's phone open links built on `config.PUBLIC_APP_BASE_URL`? `public_address_problem` names the fault (not set, not https, this machine), and only the `prod` profile refuses. It returns `switched_off: true` (and `available: false`) in any profile when `config.DISCHARGE_LINK_ENABLED` is false. `log_public_address_problem` runs once in `main.lifespan` and logs an error at boot while it refuses, or one info line when links are switched off. The Trust Center shows the same check as the "Patient discharge link address" row, in `prod` only: green on an https network address or on links switched off (paper only is a decision, not a fault), amber otherwise.
 
 It checks the address's shape, not the route to it: a patient's phone still needs a network path to the appliance (install runbook, section 7, item 6).
 
@@ -11372,8 +11374,12 @@ Status is polled every 30 seconds via `setInterval`.
 
 A standalone page at `/discharge/:token` that requires **no login**. It verifies the
 patient's date of birth against the token (`verifyDischargeAccess`), then fetches and
-renders the discharge summary (`getVerifiedDischargeSummary`). Used for post-discharge
-access by the patient from a link in an SMS or email.
+renders the discharge summary (`getVerifiedDischargeSummary`). The patient reaches it
+from the QR code printed at discharge, on a network routed to the appliance; it never
+opens from home (ruling of 4 October 2026, option A). So once the summary is reviewed
+it offers **Save a copy** (`window.print()`; `print.css` keeps only the
+`.discharge-print-layout` record, so the saved PDF is the summary alone), and while
+it is a draft it tells the patient to have the ward staff finish it before leaving.
 
 ---
 
@@ -11910,6 +11916,7 @@ to small/fast models; `prod` defaults to full-quality.
 | `ORB_DISCHARGE_ACCESS_MAX_ATTEMPTS` | `5` | Max failed login attempts before the discharge access portal locks. |
 | `ORB_DISCHARGE_ACCESS_LOCK_MINUTES` | `15` | Minutes the discharge portal stays locked after too many failed attempts. |
 | `ORB_PUBLIC_APP_BASE_URL` | `http://localhost:5173` | Base of every patient discharge link and QR code (`<this>/discharge/<token>`). Set it to the appliance's https address (install runbook, section 8.4); the `prod` profile issues no discharge link while it is unset, not https, or names this machine. |
+| `ORB_DISCHARGE_LINK_ENABLED` | `true` | Discharge links and QR codes on or off. Set `false` where no patient Wi-Fi reaches the appliance (install runbook, section 7, item 6): no link is issued in any profile and the printed summary is the handover. |
 
 #### 15.2.9 Hospital-administration module switches
 

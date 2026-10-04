@@ -768,7 +768,7 @@ A single confirmed admission creates the patient record, the admission record, t
 1. Open the patient's chart and click **DISCHARGE**.
 2. The confirmation modal recaps the diagnosis, ward and bed, admission date, and current NEWS2 band, and explains what will happen: a comprehensive discharge summary with timeline is generated, the patient's status changes to discharged, and a QR code is created for records access.
 3. Click **Confirm Discharge** (the button reads "Generating Summary…" while it works; **Cancel** or Escape aborts before this point).
-4. On success, "✓ Patient discharged successfully", the modal shows the discharge summary preview, the hospital-stay timeline, and the **Discharge QR Code** ("Scan to access discharge summary").
+4. On success, "✓ Patient discharged successfully", the modal shows the discharge summary preview, the hospital-stay timeline, and the **Discharge QR Code**. Its note tells the desk what to do before the patient leaves: release the summary, then have the patient scan the code on the hospital's patient Wi-Fi, unlock it with their date of birth and save a copy, because the link does not open outside the hospital. Where no link could be issued (no date of birth on file, no patient address set, or links switched off by the hospital), the modal shows **No secure link issued** with the reason instead.
 5. Finish with **Print Summary Only**, **Print with Timeline**, or **Done**.
 
 Two things about the summary are worth knowing. First, the narrative hospital course is AI-assisted, but the **medication reconciliation is deterministic**: it is computed directly from the real charted medication record, splitting medications into continued and stopped, carrying PRN ("as needed") medications onto the discharge list rather than letting them silently vanish, and explicitly flagging any AI-extracted medication a pharmacist has not verified so it is never carried onto a discharge script unreviewed. Second, if the AI engine is unavailable, discharge still completes with a clearly-labelled offline summary, discharge never blocks on the model.
@@ -2712,7 +2712,7 @@ This chapter covers three related experiences:
 
 1. The **signed-in patient portal** (the "Orb Bridge" screen) used during an admission.
 2. The **AI question box** inside that portal, including exactly what it will and will not answer.
-3. The **post-discharge access flow**, the secure link and QR code printed at discharge that lets a patient open their discharge summary from home after verifying their date of birth.
+3. The **discharge access flow**, the secure link and QR code printed at discharge that lets a patient open their discharge summary on the hospital's patient Wi-Fi, after verifying their date of birth, and save a copy to their phone before they leave.
 
 ---
 
@@ -2894,7 +2894,11 @@ Once the care team completes a discharge, the patient's **Discharge Summary** bu
 
 #### The secure discharge link and QR code
 
-At the moment a clinician discharges a patient, Orb automatically generates a **secure discharge link** and a matching **QR code** that is printed on the discharge paperwork. This gives patients and families access to the official discharge summary from home, on any phone or computer, without needing a portal password.
+At the moment a clinician discharges a patient, Orb generates a **secure discharge link** and a matching **QR code** that is printed on the discharge paperwork. It gives the patient the official discharge summary on their own phone, without a portal password.
+
+**It opens only inside the hospital.** Orb runs on the hospital's own network and never answers from the internet, so the link works only on a network the hospital routes to Orb, usually a patient Wi-Fi. On mobile data or at home it does not open. That is deliberate: patient records stay in the building. The patient therefore opens the link and **saves a copy** before leaving (see below), or takes the printed summary home.
+
+No link is issued, and the desk is told why, when the patient has no date of birth on file, when the hospital has not set the address patients' phones open, or when the hospital has switched discharge links off because no patient network reaches Orb. In that last case the printed summary is the handover.
 
 Key properties of the link:
 
@@ -2911,9 +2915,15 @@ Scanning the QR code (or typing the link) opens a page titled **Secure Medical R
 
 A notice at the bottom of the card reminds the user: "For your privacy, this link is monitored and will expire automatically."
 
-If the date of birth matches, the page unlocks and displays the record under the header **Orb Hospital Trust, Patient Portal, Discharge Summary**, with a green **✓ Verified Identity** badge. The document shown is the formal **DISCHARGE SUMMARY**, laid out for reading or printing, including: patient details (name, age/sex, ward and bed, registration and admission numbers, dates of admission and discharge, doctor's name), final diagnosis and management, history and examination findings, the hospital course narrative, the **Discharge Medication** list (each drug with dose, route, and frequency), an optional **Hospital Course Timeline** table of dated events, the follow-up instruction ("Follow up in OPD after 1 week or earlier in emergency"), and the attending physician's signature block.
+If the date of birth matches, the page unlocks and displays the record under the hospital's configured name (or **Patient Portal** if none is set) and the title **Patient Portal: Discharge Summary**, with a green **✓ Verified Identity** badge. The document shown is the formal **DISCHARGE SUMMARY**, laid out for reading or printing, including: patient details (name, age/sex, ward and bed, registration and admission numbers, dates of admission and discharge, doctor's name), final diagnosis and management, history and examination findings, the hospital course narrative, the **Discharge Medication** list (each drug with dose, route, and frequency), an optional **Hospital Course Timeline** table of dated events, the follow-up instruction ("Follow up in OPD after 1 week or earlier in emergency"), and the attending physician's signature block.
 
 A successful verification is valid for **one hour**; after that, re-opening the record requires entering the date of birth again.
+
+#### Saving a copy before leaving
+
+Once the doctor has released the summary, a **Save a copy** button sits above the record, with the note that the page only opens on the hospital's Wi-Fi and will not open from home. It opens the phone's print screen: on Android choose **Save as PDF**, on iPhone tap **Share**, then **Save to Files**. The saved PDF holds only the discharge summary, not the page around it, and opens later with no network.
+
+While the summary is still a draft, there is nothing final to save: the page says the summary is being finalised and asks the patient to have the ward staff finish it before they leave, then scan the code again.
 
 #### Wrong answers, lockout, and throttling
 

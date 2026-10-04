@@ -632,9 +632,13 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
     address = public_link_base_status()
     issue_link = bool(factor["available"]) and bool(address["available"])
     # Both reasons when both fail: recording a date of birth alone would still
-    # leave the desk with no link.
-    withheld_reason = None if issue_link else " ".join(
-        r for r in (address["reason"], factor["reason"]) if r
+    # leave the desk with no link. Not when the hospital switched links off:
+    # there, "record the date of birth, then issue the link" sends the desk
+    # after a link that will never come.
+    withheld_reason = None if issue_link else (
+        address["reason"] if address.get("switched_off") else " ".join(
+            r for r in (address["reason"], factor["reason"]) if r
+        )
     )
 
     # Generate secure token. Only the SHA-256 hash is persisted (token_id and
@@ -738,7 +742,9 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
         # Audited as a refusal, not a silence: the discharge desk sees the reason
         # in the response, and the record shows why no link left the building.
         causes = []
-        if not address["available"]:
+        if address.get("switched_off"):
+            causes.append("discharge links switched off at this hospital (paper only)")
+        elif not address["available"]:
             causes.append(f"no patient-reachable address ({address['problem']})")
         if not factor["available"]:
             causes.append(f"no usable second factor ({SECOND_FACTOR_FIELD}) on file")

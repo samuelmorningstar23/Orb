@@ -171,6 +171,31 @@
   padding: 0 16px;
 }
 
+/* Save-a-copy block above the record (ruling 2026-10-04, option A). Theme
+   tokens like the rest of the portal chrome; print.css hides it, since it sits
+   outside .discharge-print-layout. */
+.portal-save {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 24px;
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.portal-save p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.portal-save .verify-btn {
+  align-self: flex-start;
+  padding: 12px 24px;
+}
+
 .summary-card {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);

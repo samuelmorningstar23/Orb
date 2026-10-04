@@ -158,13 +158,25 @@ def second_factor_status(patient_id: str, db=None) -> Dict[str, Any]:
 #  the install runbook (section 7) makes that a written agreement with
 #  hospital IT. The dev profile is exempt: on a dev machine localhost:5173 is
 #  where the app really is.
+#
+#  RULING 2026-10-04 (option A): patients never reach the link from home. The
+#  appliance stays closed to the internet; the patient opens the link on a
+#  patient Wi-Fi routed to it and saves a copy before leaving, or takes the
+#  printed summary. A hospital without such a Wi-Fi switches the link off
+#  (ORB_DISCHARGE_LINK_ENABLED=false). That is a decision, not a fault, so it
+#  logs no error and the Trust Center row passes.
 # ────────────────────────────────────────────────────────────────
 PUBLIC_ADDRESS_SETTING = "ORB_PUBLIC_APP_BASE_URL"
+LINK_ENABLED_SETTING = "ORB_DISCHARGE_LINK_ENABLED"
 NO_PUBLIC_ADDRESS_REASON = (
     "This appliance has no address set that a patient's phone can open, so a "
     "secure discharge link would lead nowhere. Give the patient the printed "
     "summary, and ask the person who installed Orb to set the patient address "
     f"({PUBLIC_ADDRESS_SETTING})."
+)
+LINK_SWITCHED_OFF_REASON = (
+    "This hospital hands over discharge summaries on paper, so no secure link "
+    "or QR code is issued. Give the patient the printed summary."
 )
 _THIS_MACHINE_PROBLEM = "it points at this machine, not at an address on the network"
 
@@ -209,33 +221,47 @@ def public_address_problem(base_url: Optional[str]) -> Optional[str]:
 def public_link_base_status() -> Dict[str, Any]:
     """Can a patient-facing link be built on PUBLIC_APP_BASE_URL right now?
 
-    Returns {"available": bool, "base_url": str, "problem": str|None,
-    "reason": str|None}. base_url carries no trailing slash, ready for
-    base_url + "/discharge/<token>". Only the prod profile is refused; dev
-    reports the problem but stays available. Reads config at call time.
+    Returns {"available": bool, "switched_off": bool, "base_url": str,
+    "problem": str|None, "reason": str|None}. base_url carries no trailing
+    slash, ready for base_url + "/discharge/<token>". switched_off means the
+    hospital chose paper (ORB_DISCHARGE_LINK_ENABLED=false), in any profile.
+    Otherwise only the prod profile is refused; dev reports the problem but
+    stays available. Reads config at call time.
     """
     import config
 
     base = str(getattr(config, "PUBLIC_APP_BASE_URL", "") or "").strip().rstrip("/")
+    if not getattr(config, "DISCHARGE_LINK_ENABLED", True):
+        return {"available": False, "switched_off": True, "base_url": base,
+                "problem": None, "reason": LINK_SWITCHED_OFF_REASON}
     problem = public_address_problem(base)
     prod = str(getattr(config, "DEPLOYMENT_PROFILE", "") or "").lower() == "prod"
     if problem is None or not prod:
-        return {"available": True, "base_url": base, "problem": problem, "reason": None}
-    return {"available": False, "base_url": base, "problem": problem,
-            "reason": NO_PUBLIC_ADDRESS_REASON}
+        return {"available": True, "switched_off": False, "base_url": base,
+                "problem": problem, "reason": None}
+    return {"available": False, "switched_off": False, "base_url": base,
+            "problem": problem, "reason": NO_PUBLIC_ADDRESS_REASON}
 
 
 def log_public_address_problem(log) -> Dict[str, Any]:
     """At boot (main.lifespan): log an error on `log` when no discharge link can
-    be issued, so the operator hears it before the discharge desk does.
+    be issued, so the operator hears it before the discharge desk does. A link
+    the hospital switched off is a decision: one info line, no error.
     Returns the public_link_base_status() it judged."""
     status = public_link_base_status()
-    if not status["available"]:
+    if status["switched_off"]:
+        log.info(
+            "Discharge links are switched off (%s=false): patients take the printed "
+            "summary home and no QR code is issued.", LINK_ENABLED_SETTING,
+        )
+    elif not status["available"]:
         log.error(
             "%s=%r cannot be opened from a patient's phone: %s. No discharge link "
             "or QR code will be issued until it is set to this appliance's https "
-            "address (install runbook, section 8.4).",
+            "address, or switched off with %s=false where patients' phones cannot "
+            "reach the appliance (install runbook, section 8.4).",
             PUBLIC_ADDRESS_SETTING, status["base_url"], status["problem"],
+            LINK_ENABLED_SETTING,
         )
     return status
 

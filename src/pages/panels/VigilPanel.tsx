@@ -2035,7 +2035,11 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
                     ) : (
                       <div className="modal__qr-image" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 120, color: 'var(--text-muted)', fontSize: '0.8rem' }}>Loading QR…</div>
                     )}
-                    <p className="modal__qr-hint">Scan to open the discharge summary. The patient unlocks it with their date of birth.</p>
+                    {/* Ruling 2026-10-04 (option A): the link never opens from
+                        outside the hospital, so the handover happens here. */}
+                    <p className="modal__qr-hint" data-testid="discharge-qr-hint">
+                      Before the patient leaves: release the summary to them, then have them scan this on the hospital&apos;s patient Wi-Fi, unlock it with their date of birth and save a copy. It does not open outside the hospital.
+                    </p>
                   </div>
                 ) : dischargeSummary.secure_link_issued === false ? (
                   <div className="modal__qr" data-testid="discharge-no-link">

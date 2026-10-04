@@ -190,6 +190,26 @@ describe('Discharge', () => {
     expect(JSON.parse(reviewCall![1]?.body ?? '')).toEqual({ summary_id: 41 })
   })
 
+  it('tells the desk the QR is an in-hospital handover, never a link for home', async () => {
+    // jsdom has no object URLs; the QR image loader uses them.
+    URL.createObjectURL = vi.fn(() => 'blob:qr')
+    URL.revokeObjectURL = vi.fn()
+    dischargePatient.mockResolvedValue({
+      status: 'success', summary_id: 42, review_status: 'draft', drafted_by: 'assistant',
+      summary: 'DISCHARGE SUMMARY\nAdmitted with pneumonia.', discharged_at: '2026-10-03 01:00:00', timeline: [],
+      summary_url: 'https://orb.hospital.local:8000/discharge/tok', qr_code_url: '/api/vigil/patients/P021/discharge-qr/q.png',
+      secure_link_issued: true, secure_link_reason: null,
+    })
+    await openChart('doctor')
+    fireEvent.click(screen.getByRole('button', { name: /^Discharge$/ }))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Confirm discharge/ })) })
+    const hint = await screen.findByTestId('discharge-qr-hint')
+    expect(hint).toHaveTextContent('Before the patient leaves: release the summary to them')
+    expect(hint).toHaveTextContent("patient Wi-Fi")
+    expect(hint).toHaveTextContent('save a copy')
+    expect(hint).toHaveTextContent('It does not open outside the hospital.')
+  })
+
   it('reports a failed discharge inside the modal, not through alert()', async () => {
     const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
     dischargePatient.mockRejectedValue(new Error('Patient is not currently admitted'))

@@ -1,6 +1,8 @@
 /**
  * The patient's discharge link shows the drafted summary only once a clinician
- * has reviewed it, and names the hospital only from its configuration.
+ * has reviewed it, and names the hospital only from its configuration. Ruling
+ * 2026-10-04 (option A): the page never opens from home, so a reviewed summary
+ * offers "Save a copy" and a draft tells the patient to ask before leaving.
  */
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -38,7 +40,10 @@ async function openLink() {
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Access Records/ })) })
 }
 
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  window.print = vi.fn()
+})
 
 describe('the discharge link', () => {
   it('says the summary is being finalised while it is an unreviewed draft', async () => {
@@ -74,5 +79,34 @@ describe('the discharge link', () => {
     expect(await screen.findByText('Admitted with pneumonia. Recovered.')).toBeInTheDocument()
     expect(screen.queryByTestId('discharge-pending-review')).toBeNull()
     expect(screen.getAllByText('City General Hospital').length).toBeGreaterThan(0)
+  })
+
+  it('offers to save a reviewed summary, and says the page will not open from home', async () => {
+    getVerifiedDischargeSummary.mockResolvedValue({
+      ...BASE, summary: 'Admitted with pneumonia. Recovered.', summary_status: 'reviewed',
+      reviewed_by_name: 'Dr Meera Raman', reviewed_at: '2026-10-03T02:00:00Z',
+    })
+    await openLink()
+    const save = await screen.findByTestId('discharge-save-copy')
+    expect(save).toHaveTextContent('will not open from home')
+    expect(save).toHaveTextContent('Save as PDF')
+    fireEvent.click(screen.getByRole('button', { name: 'Save a copy' }))
+    expect(window.print).toHaveBeenCalledTimes(1)
+    // Kept off the saved copy: print.css shows only .discharge-print-layout.
+    expect(save.closest('.discharge-print-layout')).toBeNull()
+    expect(screen.queryByTestId('discharge-save-later')).toBeNull()
+  })
+
+  it('offers nothing to save while the summary is a draft, and says to ask before leaving', async () => {
+    getVerifiedDischargeSummary.mockResolvedValue({
+      ...BASE, summary: null, summary_status: 'draft',
+      summary_message: 'Your discharge summary is being finalised by your doctor.',
+    })
+    await openLink()
+    const later = await screen.findByTestId('discharge-save-later')
+    expect(later).toHaveTextContent('Before you leave, ask the ward staff to finish it')
+    expect(later).toHaveTextContent("only opens on the hospital's Wi-Fi")
+    expect(screen.queryByRole('button', { name: 'Save a copy' })).toBeNull()
+    expect(screen.queryByTestId('discharge-save-copy')).toBeNull()
   })
 })

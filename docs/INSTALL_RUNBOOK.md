@@ -263,15 +263,21 @@ Agree these six things with hospital IT, in writing, before you plug in:
    it up in [Stand up the pager](#stand-up-the-pager-the-heartbeat-receiver).
    Until both ends are live, nothing pages anybody. See
    [WARM_STANDBY.md](WARM_STANDBY.md) and [Escalation](#escalation).
-6. **Which network patients' phones use to reach it.** At discharge Orb
-   prints a link and QR code for the patient's own phone, built on
-   `ORB_PUBLIC_APP_BASE_URL` (section 8.4). Given item 3, it opens only on a
-   phone that is on a network with a route to the appliance, for example a
+6. **Which network patients' phones use to reach it, or none.** At
+   discharge Orb prints a link and QR code for the patient's own phone, built
+   on `ORB_PUBLIC_APP_BASE_URL` (section 8.4). Given item 3, it opens only on
+   a phone that is on a network with a route to the appliance, for example a
    patient Wi-Fi that IT routes to port 8000. On mobile data, or at home, it
-   does not open. Write down which network that is, so the discharge desk can
-   tell the patient to open the link before they leave. The phone must also
-   trust the certificate ([Bind address and TLS](#bind-address-and-tls),
-   below): on the installer's self-signed one, it shows a certificate warning.
+   does not open, and that is deliberate (ruling of 4 October 2026: the
+   appliance never answers from outside the hospital). So the handover
+   happens before the patient leaves: the doctor releases the summary, the
+   patient scans the code on that Wi-Fi and taps **Save a copy**, which keeps
+   a PDF on their phone. Write down which network that is. If IT will not
+   route any patient network to the appliance, write that down instead and
+   switch the link off (`ORB_DISCHARGE_LINK_ENABLED=false`, section 8.4): the
+   printed summary is then the handover. The phone must also trust the
+   certificate ([Bind address and TLS](#bind-address-and-tls), below): on the
+   installer's self-signed one, it shows a certificate warning.
 
 ### Bind address and TLS
 
@@ -397,6 +403,7 @@ ORB_HOST=0.0.0.0                     # reachable from the ward
 ORB_PORT=8000
 ORB_CORS_ORIGINS=https://orb.hospital.local:8000   # the exact origin staff type
 ORB_PUBLIC_APP_BASE_URL=https://orb.hospital.local:8000   # what the patient's discharge QR opens
+# ORB_DISCHARGE_LINK_ENABLED=false   # only where no patient Wi-Fi reaches the appliance (section 7, item 6)
 # ORB_ALLOWED_HOSTS=                 # only for a name staff use that is not above (F15)
 
 ORB_LLM_MODEL=medgemma:27b
@@ -425,6 +432,12 @@ patient's phone can actually reach it is item 6 of
 [Network placement](#7-network-placement). Its host name is also one Orb
 answers to without an `ORB_ALLOWED_HOSTS` entry
 ([F15](#f15-orb-does-not-answer-to-this-address)).
+
+Where no patient network reaches the appliance, set
+`ORB_DISCHARGE_LINK_ENABLED=false` instead. Orb then issues no link or QR code
+in any profile, the discharge desk is told to hand over the printed summary,
+the startup log says so in one line without an error, and the Trust Center
+row passes, because paper only is a decision, not a fault.
 
 **The ambient tier.** `.env.example` sets `ORB_AMBIENT_LLM_MODEL` to the 27B,
 and if the variable is absent the code also defaults it to the 27B. Ambient
@@ -836,7 +849,7 @@ each line on the install record with a time and an initial.
 - [ ] Sage answers a general clinical question, with citations
 - [ ] A downtime snapshot captures and prints, and a ward pack opens ([DRILLS.md](DRILLS.md))
 - [ ] Realtime works: two browsers open the ward board, a change in one appears in the other without a refresh
-- [ ] Discharge a test patient with a date of birth on file: a QR code prints, and it opens, with no certificate warning, on a phone on the patients' network agreed in section 7 (item 6). The startup log has no `ORB_PUBLIC_APP_BASE_URL` error
+- [ ] Discharge a test patient with a date of birth on file and release the summary: a QR code prints, it opens with no certificate warning on a phone on the patients' network agreed in section 7 (item 6), and **Save a copy** leaves a PDF on that phone that opens with Wi-Fi off. The startup log has no `ORB_PUBLIC_APP_BASE_URL` error. Where the link is switched off instead, the discharge shows "No secure link issued" with the paper reason, and the Trust Center row is green
 
 **Durability**
 

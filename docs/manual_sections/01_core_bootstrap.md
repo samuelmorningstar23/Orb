@@ -166,6 +166,7 @@ All sub-values are overridable via env vars (`ORB_SCRIBE_ASR_MODEL`, `ORB_SCRIBE
 | `DISCHARGE_ACCESS_MAX_ATTEMPTS` | `ORB_DISCHARGE_ACCESS_MAX_ATTEMPTS` | `5` | Failed PIN attempts before lockout. |
 | `DISCHARGE_ACCESS_LOCK_MINUTES` | `ORB_DISCHARGE_ACCESS_LOCK_MINUTES` | `15` | Lockout duration in minutes after too many failed attempts. |
 | `PUBLIC_APP_BASE_URL` | `ORB_PUBLIC_APP_BASE_URL` | `http://localhost:5173` | The https address a patient's phone opens from the discharge link and QR code; on an appliance, the address staff type. The default is the Vite dev server: the `prod` profile issues no discharge link while it is unset, not https, or names this machine. |
+| `DISCHARGE_LINK_ENABLED` | `ORB_DISCHARGE_LINK_ENABLED` | `true` | Whether discharge links and QR codes are issued at all. The link opens only on a network routed to the appliance, never from home (ruling of 4 October 2026); set `false` where no patient Wi-Fi reaches the appliance, and the printed summary is the handover. Off logs no error and the Trust Center row passes. |
 
 **Sage ambient config**
 

@@ -484,7 +484,8 @@ def _patient_link_posture() -> dict:
     from services.discharge_access_service import public_link_base_status
 
     status = public_link_base_status()
-    return {"base_url": status["base_url"], "problem": status["problem"]}
+    return {"base_url": status["base_url"], "problem": status["problem"],
+            "switched_off": status["switched_off"]}
 
 
 def _default_credentials() -> dict:
@@ -640,9 +641,11 @@ def _build_controls(enc: dict, audit: dict, mfa: dict, rbac: dict,
     # Prod only: on a dev machine the localhost default is where the app is, and
     # a row there would only move the demo's score. Amber, not red, when unset:
     # nothing is exposed, discharge still completes, the patient just leaves
-    # without a link (discharge_service.discharge_patient withholds it).
+    # without a link (discharge_service.discharge_patient withholds it). Links
+    # the hospital switched off pass: paper only is a ruled choice (2026-10-04,
+    # option A), not a gap.
     if prod_profile:
-        link_settings = ["ORB_PUBLIC_APP_BASE_URL"]
+        link_settings = ["ORB_PUBLIC_APP_BASE_URL", "ORB_DISCHARGE_LINK_ENABLED"]
         link = _safe(_patient_link_posture, None)
         if link is None:
             add("patient_discharge_link", "Patient discharge link address", "unknown",
@@ -650,6 +653,14 @@ def _build_controls(enc: dict, audit: dict, mfa: dict, rbac: dict,
                 "links and QR codes.",
                 "Ask the person who installed Orb to check the patient address "
                 "setting.", link_settings)
+        elif link.get("switched_off"):
+            add("patient_discharge_link", "Patient discharge link address", "pass",
+                "The hospital has switched discharge links off: no link or QR code "
+                "is issued, and patients take the printed summary home.",
+                "None needed. To offer the link instead, agree with the hospital's IT "
+                "team which patient Wi-Fi reaches this appliance, then ask the person "
+                "who installed Orb to switch links on and set the patient address.",
+                link_settings)
         elif link.get("problem"):
             add("patient_discharge_link", "Patient discharge link address", "warn",
                 "Orb is issuing no discharge links or QR codes: the address it "
@@ -658,7 +669,9 @@ def _build_controls(enc: dict, audit: dict, mfa: dict, rbac: dict,
                 "leave with the printed summary only.",
                 "Ask the person who installed Orb to set the patient address to "
                 "this appliance's https address, and agree with the hospital's IT "
-                "team which network patients' phones use to reach it.",
+                "team which network patients' phones use to reach it. If no patient "
+                "network can reach it, ask them to switch discharge links off "
+                "instead, so the printed summary is the handover.",
                 link_settings)
         else:
             add("patient_discharge_link", "Patient discharge link address", "pass",

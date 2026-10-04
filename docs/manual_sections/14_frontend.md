@@ -409,8 +409,12 @@ Status is polled every 30 seconds via `setInterval`.
 
 A standalone page at `/discharge/:token` that requires **no login**. It verifies the
 patient's date of birth against the token (`verifyDischargeAccess`), then fetches and
-renders the discharge summary (`getVerifiedDischargeSummary`). Used for post-discharge
-access by the patient from a link in an SMS or email.
+renders the discharge summary (`getVerifiedDischargeSummary`). The patient reaches it
+from the QR code printed at discharge, on a network routed to the appliance; it never
+opens from home (ruling of 4 October 2026, option A). So once the summary is reviewed
+it offers **Save a copy** (`window.print()`; `print.css` keeps only the
+`.discharge-print-layout` record, so the saved PDF is the summary alone), and while
+it is a draft it tells the patient to have the ward staff finish it before leaving.
 
 ---
 

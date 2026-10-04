@@ -601,8 +601,9 @@ The main discharge action function. Called after both the summary and timeline a
 
 - the patient has a usable date of birth on file, the second factor the portal checks (`discharge_access_service.second_factor_status`);
 - the address the link is built on can be opened from a patient's phone (`discharge_access_service.public_link_base_status`). In the `prod` profile it refuses an `ORB_PUBLIC_APP_BASE_URL` that is unset, not `https`, or names this machine (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`, `0.0.0.0`). The shipped default, `http://localhost:5173`, is the Vite dev server and is refused. The `dev` profile accepts it.
+- the hospital has not switched discharge links off (`ORB_DISCHARGE_LINK_ENABLED`, default true). Ruling of 4 October 2026 (option A): the link opens only on a network routed to the appliance, never from home, so the patient saves a copy before leaving. A hospital with no patient Wi-Fi routed to the appliance sets it false and hands over the printed summary; that applies in every profile.
 
-When either fails, no token, URL or QR file is produced, the response carries `secure_link_issued: false` and a `secure_link_reason` for the discharge desk (both reasons when both fail), and a `discharge_link_not_issued` audit event names the cause.
+When either fails, no token, URL or QR file is produced, the response carries `secure_link_issued: false` and a `secure_link_reason` for the discharge desk (both reasons when both fail, except that links switched off give only the paper reason, so the desk is never sent to record a date of birth for a link that will not come), and a `discharge_link_not_issued` audit event names the cause.
 
 **Security model, how the token works:**
 
@@ -665,7 +666,7 @@ Helper pair for the sliding-window throttle. `_is_verify_ip_throttled` cleans th
 The two checks `discharge_service.discharge_patient` makes before it issues a link. Each returns `available` plus a `reason` written for the discharge desk.
 
 - `second_factor_status`: is a date of birth on file in a shape the portal's date picker can send? `usable_dob` decides, and verification uses the same definition, so a link can never issue that verification would refuse.
-- `public_link_base_status`: can a patient's phone open links built on `config.PUBLIC_APP_BASE_URL`? `public_address_problem` names the fault (not set, not https, this machine), and only the `prod` profile refuses. `log_public_address_problem` runs once in `main.lifespan` and logs an error at boot while it refuses. The Trust Center shows the same check as the "Patient discharge link address" row, in `prod` only: green on an https network address, amber otherwise.
+- `public_link_base_status`: can a patient's phone open links built on `config.PUBLIC_APP_BASE_URL`? `public_address_problem` names the fault (not set, not https, this machine), and only the `prod` profile refuses. It returns `switched_off: true` (and `available: false`) in any profile when `config.DISCHARGE_LINK_ENABLED` is false. `log_public_address_problem` runs once in `main.lifespan` and logs an error at boot while it refuses, or one info line when links are switched off. The Trust Center shows the same check as the "Patient discharge link address" row, in `prod` only: green on an https network address or on links switched off (paper only is a decision, not a fault), amber otherwise.
 
 It checks the address's shape, not the route to it: a patient's phone still needs a network path to the appliance (install runbook, section 7, item 6).
 

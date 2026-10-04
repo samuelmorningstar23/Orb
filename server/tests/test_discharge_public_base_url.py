@@ -14,10 +14,18 @@ The invariants:
      and that link opens.
   3. The dev profile is untouched: localhost:5173 is where the app really is.
   4. The operator hears it at boot, and the Trust Center shows it in prod.
+  5. Ruling 2026-10-04 (option A): a hospital with no patient Wi-Fi routed to
+     the appliance switches links off. Then no link is issued in any profile,
+     the desk is sent to the printed summary (not to a date of birth), boot
+     logs no error, and the Trust Center row passes.
 """
 import inspect
 import logging
+import os
 import re
+import subprocess
+import sys
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -27,6 +35,7 @@ from database import db_session
 from main import app
 from services import compliance_service, discharge_service
 from services.discharge_access_service import (
+    LINK_SWITCHED_OFF_REASON,
     NO_PUBLIC_ADDRESS_REASON,
     log_public_address_problem,
     public_address_problem,
@@ -45,6 +54,12 @@ def _prod(base_url):
 
 def _dev(base_url):
     return mock.patch.multiple("config", DEPLOYMENT_PROFILE="dev", PUBLIC_APP_BASE_URL=base_url)
+
+
+def _paper(profile, base_url=_APPLIANCE):
+    """The hospital switched discharge links off (ORB_DISCHARGE_LINK_ENABLED=false)."""
+    return mock.patch.multiple("config", DEPLOYMENT_PROFILE=profile, PUBLIC_APP_BASE_URL=base_url,
+                               DISCHARGE_LINK_ENABLED=False)
 
 
 def _seed_patient(patient_id: str, *, mrn: str, dob="1964-03-11") -> None:
@@ -253,7 +268,7 @@ def test_trust_center_is_amber_in_prod_on_the_default_address():
     assert control is not None, "No Trust Center row in prod"
     assert control["status"] == "warn"
     assert _DEFAULT in control["evidence"] and "this machine" in control["evidence"]
-    assert control["settings"] == ["ORB_PUBLIC_APP_BASE_URL"]
+    assert control["settings"] == ["ORB_PUBLIC_APP_BASE_URL", "ORB_DISCHARGE_LINK_ENABLED"]
     for field in ("evidence", "remediation"):
         assert not re.search(r"\bORB_[A-Z_]+", control[field]), control[field]
         assert "\u2014" not in control[field], "em dash"
@@ -277,3 +292,75 @@ def test_trust_center_says_unknown_when_the_probe_fails(monkeypatch):
 def test_trust_center_has_no_row_in_dev():
     with _dev(_DEFAULT):
         assert _link_control() is None
+
+
+# ── Links switched off: paper only (ruling 2026-10-04, option A) ─────────────
+
+@pytest.mark.parametrize("profile", ["prod", "dev"])
+def test_switched_off_issues_no_link_and_sends_the_desk_to_paper(profile):
+    _seed_patient(f"PAT-PUB-OFF-{profile}", mrn=f"MRN-PUB-OFF-{profile}")
+    qr_urls: list = []
+    with _paper(profile):
+        result = _discharge(f"PAT-PUB-OFF-{profile}", qr_urls)
+
+    assert result["status"] == "success", "The discharge itself must not be blocked"
+    assert result["secure_link_issued"] is False
+    assert not result["summary_url"] and not result["qr_code_url"] and qr_urls == []
+    assert result["secure_link_reason"] == LINK_SWITCHED_OFF_REASON
+    state = _db_state(f"PAT-PUB-OFF-{profile}")
+    assert state["tokens"] == 0 and state["status"] == "discharged"
+    assert "switched off" in (state["audit"] or ""), state["audit"]
+
+
+def test_switched_off_never_asks_the_desk_for_a_date_of_birth():
+    """With links off, recording a date of birth would not produce a link, so
+    the desk must not be told to record one 'then issue the link'."""
+    _seed_patient("PAT-PUB-OFF-NODOB", mrn="MRN-PUB-OFF-NODOB", dob=None)
+    with _paper("prod"):
+        result = _discharge("PAT-PUB-OFF-NODOB")
+    assert result["secure_link_reason"] == LINK_SWITCHED_OFF_REASON
+    assert "date of birth" not in result["secure_link_reason"].lower()
+
+
+def test_switched_off_wins_over_a_bad_address():
+    with _paper("prod", _DEFAULT):
+        status = public_link_base_status()
+    assert status["switched_off"] is True and status["available"] is False
+    assert status["reason"] == LINK_SWITCHED_OFF_REASON
+
+
+def test_boot_says_links_are_off_without_an_error(caplog):
+    log = logging.getLogger("orb.test.public_address")
+    with caplog.at_level(logging.DEBUG, logger=log.name), _paper("prod", _DEFAULT):
+        log_public_address_problem(log)
+    mine = [r for r in caplog.records if r.name == log.name]
+    assert [r.levelno for r in mine] == [logging.INFO], [r.getMessage() for r in mine]
+    assert "ORB_DISCHARGE_LINK_ENABLED" in mine[0].getMessage()
+
+
+def test_trust_center_passes_when_links_are_switched_off():
+    with _paper("prod", _DEFAULT):
+        control = _link_control()
+    assert control["status"] == "pass", control
+    assert "switched discharge links off" in control["evidence"]
+    assert "ORB_DISCHARGE_LINK_ENABLED" in control["settings"]
+    for field in ("evidence", "remediation"):
+        assert not re.search(r"\bORB_[A-Z_]+", control[field]), control[field]
+        assert "\u2014" not in control[field], "em dash"
+
+
+@pytest.mark.parametrize("value,enabled", [
+    (None, True), ("true", True), ("false", False), ("off", False), ("0", False), ("No", False),
+])
+def test_the_setting_parses_the_way_the_runbook_writes_it(value, enabled):
+    """config reads it once at import, so check it in a fresh interpreter."""
+    env = {k: v for k, v in os.environ.items() if k != "ORB_DISCHARGE_LINK_ENABLED"}
+    if value is not None:
+        env["ORB_DISCHARGE_LINK_ENABLED"] = value
+    out = subprocess.run(
+        [sys.executable, "-c", "import config; print(config.DISCHARGE_LINK_ENABLED)"],
+        cwd=Path(__file__).resolve().parent.parent, env=env,
+        capture_output=True, text=True, timeout=60,
+    )
+    assert out.returncode == 0, out.stderr[-2000:]
+    assert out.stdout.strip().splitlines()[-1] == str(enabled)

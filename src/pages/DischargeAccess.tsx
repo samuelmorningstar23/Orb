@@ -97,6 +97,34 @@ export default function DischargeAccess() {
                   {summaryData.summary_message || 'Your discharge summary is being finalised by your doctor.'}
                 </p>
               )}
+              {/* Ruling 2026-10-04 (option A): this page only opens on a network
+                  routed to the appliance, never from home. So the patient keeps
+                  a copy before leaving, and a draft is not worth keeping.
+                  Outside .discharge-print-layout, so print.css leaves it off
+                  the saved copy. */}
+              {summaryData.summary_status === 'reviewed' ? (
+                <div className="portal-save" data-testid="discharge-save-copy">
+                  <button type="button" className="verify-btn" onClick={() => window.print()}>
+                    Save a copy
+                  </button>
+                  <p>
+                    Save it to your phone now, before you leave the hospital. This page only
+                    opens on the hospital&apos;s Wi-Fi, so it will not open from home.
+                  </p>
+                  <p>
+                    The button opens your phone&apos;s print screen. On Android, choose Save as
+                    PDF. On iPhone, tap Share, then Save to Files.
+                  </p>
+                </div>
+              ) : (
+                <div className="portal-save" data-testid="discharge-save-later">
+                  <p>
+                    Your doctor has not finished this summary yet, so there is nothing final to
+                    save. Before you leave, ask the ward staff to finish it, then scan the code
+                    again. This page only opens on the hospital&apos;s Wi-Fi.
+                  </p>
+                </div>
+              )}
               <DischargePrintView
                 patient={summaryData.patient}
                 medications={summaryData.medications}
