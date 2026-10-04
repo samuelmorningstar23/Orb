@@ -283,8 +283,8 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
       } else {
         onSuccess();
       }
-    } catch (err: any) {
-      setError(err.message || 'Failed to admit patient');
+    } catch (err) {
+      setError((err instanceof Error ? err.message : '') || 'Failed to admit patient');
       setIsSubmitting(false);
     }
   };

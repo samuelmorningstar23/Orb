@@ -15,6 +15,7 @@
  */
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import type { AdministrationRecord } from '../../api/client'
 import { openPatient } from '../../lib/orbBus'
 
 type Deferred<T> = { promise: Promise<T>; resolve: (v: T) => void }
@@ -36,20 +37,25 @@ const detailFor = (id: string, name: string, bed: string, medId: number, drug: s
   trend: { trend: 'stable' },
 })
 
-const DETAIL: Record<string, any> = {
+// A deliberately partial chart: only what the chart reads on this path.
+type DetailFixture = ReturnType<typeof detailFor>
+// An eMAR row with only the fields the "Given" chip reads.
+type AdminFixture = Partial<AdministrationRecord>
+
+const DETAIL: Record<string, DetailFixture> = {
   'PAT-A': detailFor('PAT-A', 'Anita Rao', '3', 101, 'Vancomycin'),
   'PAT-B': detailFor('PAT-B', 'Rahul Menon', '7', 202, 'Ceftriaxone'),
 }
 
-const pendingDetail: Record<string, Deferred<any>> = {}
-const pendingAdmin: Record<string, Deferred<any[]>> = {}
+const pendingDetail: Record<string, Deferred<DetailFixture>> = {}
+const pendingAdmin: Record<string, Deferred<AdminFixture[]>> = {}
 
 const getPatientDetail = vi.fn((pid: string) => {
-  pendingDetail[pid] = defer<any>()
+  pendingDetail[pid] = defer<DetailFixture>()
   return pendingDetail[pid].promise
 })
 const getAdministrations = vi.fn((pid: string) => {
-  pendingAdmin[pid] = defer<any[]>()
+  pendingAdmin[pid] = defer<AdminFixture[]>()
   return pendingAdmin[pid].promise
 })
 
@@ -63,7 +69,7 @@ vi.mock('../../api/client', () => ({
   getAdministrations: (p: string) => getAdministrations(p),
   // Real semantics, mirrored: only a 'given' dose carrying a recorded
   // override reason is marked as crossing a charted allergy.
-  givenAcrossAllergy: (r: any) => Boolean(r?.status === 'given' && r?.allergy_check?.override?.reason),
+  givenAcrossAllergy: (r: AdministrationRecord | null | undefined) => Boolean(r?.status === 'given' && r?.allergy_check?.override?.reason),
   dischargePatient: vi.fn(), getPatientAnalysis: vi.fn(() => new Promise(() => {})),
   addClinicalNote: vi.fn(), addMedication: vi.fn(),
   isSafetyAckRequired: () => false,

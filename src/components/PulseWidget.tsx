@@ -10,19 +10,9 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { apiFetch } from '../api/client'
-import PulseDetail from './PulseDetail'
+import PulseDetail, { type PulseData, type PulseClinicalFlag } from './PulseDetail'
 import { activatable } from '../lib/a11y'
 import './PulseWidget.css'
-
-interface PulseData {
-  weather: any
-  air_quality: any
-  flu_surveillance: any
-  drug_recalls: any[]
-  active_alerts: any[]
-  alert_count: number
-  last_refresh: string
-}
 
 interface GeoLocation {
   lat: number
@@ -54,13 +44,13 @@ export default function PulseWidget() {
   })
   const [geoStatus, setGeoStatus] = useState<'idle' | 'requesting' | 'granted' | 'denied'>('idle')
   const [detailView, setDetailView] = useState<string | null>(null)
-  const [selectedAlert, setSelectedAlert] = useState<any>(null)
+  const [selectedAlert, setSelectedAlert] = useState<PulseClinicalFlag | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
   // Reset detail view when panel closes
   const closePanel = () => { setIsOpen(false); setDetailView(null); setSelectedAlert(null) }
   const openDetail = (view: string) => setDetailView(view)
-  const openAlertDetail = (alert: any) => { setSelectedAlert(alert); setDetailView('alert') }
+  const openAlertDetail = (alert: PulseClinicalFlag) => { setSelectedAlert(alert); setDetailView('alert') }
 
   // ── Geolocation ──
   const requestLocation = useCallback(() => {
@@ -120,8 +110,8 @@ export default function PulseWidget() {
         `/pulse/dashboard?lat=${location.lat}&lon=${location.lon}`
       )
       setPulseData(data)
-    } catch (e: any) {
-      setError(e.message || 'Failed to fetch environmental data')
+    } catch (e) {
+      setError((e as { message?: string }).message || 'Failed to fetch environmental data')
     } finally {
       setLoading(false)
     }
@@ -302,7 +292,7 @@ export default function PulseWidget() {
                       {/* 7-day forecast strip */}
                       {pulseData.weather.forecast?.length > 0 && (
                         <div className="pulse-weather__forecast">
-                          {pulseData.weather.forecast.map((day: any, i: number) => (
+                          {pulseData.weather.forecast.map((day, i: number) => (
                             <div key={i} className="pulse-forecast-day">
                               <span className="pulse-forecast-day__label">
                                 {i === 0 ? 'Today' : day.day_label?.split(' ')[0]}

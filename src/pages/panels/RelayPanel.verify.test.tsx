@@ -40,9 +40,10 @@ const msg = (id: number, channel_id: string, content: string) => ({
 
 // Every getMessages call gets its OWN deferred, queued per channel, so a test
 // can resolve the first and second load of the same channel independently.
-const queues: Record<string, Deferred<any[]>[]> = {}
+type ThreadRow = ReturnType<typeof msg>
+const queues: Record<string, Deferred<ThreadRow[]>[]> = {}
 const getMessages = vi.fn((channelId: string) => {
-  const d = defer<any[]>()
+  const d = defer<ThreadRow[]>()
   ;(queues[channelId] ||= []).push(d)
   return d.promise
 })
@@ -52,7 +53,9 @@ const sendMessage = vi.fn(async (channel_id: string, content: string) => ({
   content, message_type: 'text', timestamp: '2026-08-06T10:05:00Z',
 }))
 
-const socketHandlers: Record<string, Function[]> = {}
+// What a socket.io listener receives: one payload, or none.
+type SocketHandler = (payload?: unknown) => void
+const socketHandlers: Record<string, SocketHandler[]> = {}
 vi.mock('../../api/client', () => ({
   getChannels: vi.fn(async () => CHANNELS),
   getAlerts: vi.fn(async () => []),
@@ -68,8 +71,8 @@ vi.mock('../../api/client', () => ({
   transitionSageAction: vi.fn(async () => ({})),
   getUser: () => ({ id: 'me', name: 'Nurse Priya', role: 'nurse' }),
   socket: {
-    on: (ev: string, fn: Function) => { (socketHandlers[ev] ||= []).push(fn) },
-    off: (ev: string, fn: Function) => {
+    on: (ev: string, fn: SocketHandler) => { (socketHandlers[ev] ||= []).push(fn) },
+    off: (ev: string, fn: SocketHandler) => {
       socketHandlers[ev] = (socketHandlers[ev] || []).filter(f => f !== fn)
     },
     emit: vi.fn(),

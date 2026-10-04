@@ -90,9 +90,9 @@ export default function MfaEnrollmentModal({ onClose, enrollTicket, onEnrolled }
         if (cancelled) return
         setEnroll(data)
         setView('enroll')
-      } catch (err: any) {
+      } catch (err) {
         if (cancelled) return
-        const msg = String(err?.message || '')
+        const msg = err instanceof Error ? err.message : ''
         if (msg === 'MFA already enabled' && !enrollTicket) {
           setView('disable')
         } else if (msg === 'MFA already enabled') {
@@ -137,8 +137,8 @@ export default function MfaEnrollmentModal({ onClose, enrollTicket, onEnrolled }
       })
       setView('enrolled')
       onEnrolled?.()
-    } catch (err: any) {
-      setError(String(err?.message || 'Could not verify the code.'))
+    } catch (err) {
+      setError(String((err instanceof Error ? err.message : '') || 'Could not verify the code.'))
     } finally {
       setBusy(false)
     }
@@ -163,8 +163,8 @@ export default function MfaEnrollmentModal({ onClose, enrollTicket, onEnrolled }
         body: JSON.stringify({ password: disablePassword, totp_code: code }),
       })
       setView('disabled')
-    } catch (err: any) {
-      setError(String(err?.message || 'Could not disable MFA.'))
+    } catch (err) {
+      setError(String((err instanceof Error ? err.message : '') || 'Could not disable MFA.'))
     } finally {
       setBusy(false)
     }

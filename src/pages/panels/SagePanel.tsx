@@ -1,5 +1,5 @@
 import { Fragment, useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
-import { querySage, querySageVoice, getSageHistory, transcribeAudio, getPatients } from '../../api/client'
+import { querySage, querySageVoice, getSageHistory, transcribeAudio, getPatients, type SageHistoryMessage } from '../../api/client'
 import { getThinkingMode } from '../../api/thinkingMode'
 import { canSeeWardList } from '../../lib/roles'
 import { newId } from '../../lib/id'
@@ -7,6 +7,7 @@ import { useActivePatient } from '../../contexts/ActivePatientContext'
 import { useActiveView, buildWireViewContext } from '../../contexts/ActiveViewContext'
 import { useSageRuntime } from '../../contexts/SageRuntimeContext'
 import { useDataChanged } from '../../hooks/useDataChanged'
+import { getSpeechRecognitionCtor, type SpeechRecognition } from '../../lib/speechRecognition'
 import { onSageAsk, takePendingSageQuestion } from '../../lib/orbBus'
 import OrbLogo from '../../components/OrbLogo'
 import { SageAnswerMeta } from '../../components/SageAnswerMeta'
@@ -15,9 +16,8 @@ import InvestigationalBanner from '../../components/InvestigationalBanner'
 import { SageHistorySidebar } from '../../components/sage/SageHistorySidebar'
 import { SageEmptyState } from '../../components/sage/SageEmptyState'
 import { SageComposer } from '../../components/sage/SageComposer'
-import { SageMessage, SageStageStatus } from '../../components/sage/SageMessage'
+import { SageMessage, SageStageStatus, type SageChatMessage } from '../../components/sage/SageMessage'
 import '../../components/sage/Sage.css'
-import DOMPurify from 'dompurify'
 
 
 /* ═══════════════════════════════════════════════════
@@ -51,43 +51,6 @@ function stripMarkdown(text: string): string {
     .replace(/---+/g, '')               // horizontal rules
     .replace(/\n\s*\n/g, '\n')          // collapse duplicate newlines
     .trim()
-}
-
-/** Strip all XML tags from raw model output to produce clean display text */
-function stripXmlTags(text: string): string {
-  if (!text) return '';
-  // Strip ```xml ... ``` code-block wrappers
-  let cleaned = text.replace(/^```[a-zA-Z]*\s*\n?/g, '').replace(/\n?```\s*$/g, '');
-  // Remove all XML tags (opening, closing, self-closing)
-  cleaned = cleaned.replace(/<\/?[a-z_]+>/gi, '');
-  return cleaned.trim();
-}
-
-/** Extract concise_answer from raw XML response; falls back to clinical_assessment */
-function extractConciseAnswer(rawText: string): string {
-  if (!rawText) return '';
-  // Strip code-block wrappers first
-  const text = rawText.replace(/^```[a-zA-Z]*\s*\n?/g, '').replace(/\n?```\s*$/g, '');
-  const match = text.match(/<concise_answer>([\s\S]*?)<\/concise_answer>/);
-  if (match) return match[1].trim();
-  // Fallback: try clinical_assessment
-  const fallback = text.match(/<clinical_assessment>([\s\S]*?)<\/clinical_assessment>/);
-  if (fallback) return fallback[1].trim();
-  // Last resort: strip all XML
-  return stripXmlTags(text);
-}
-
-/** Format text for display — apply light markdown */
-function formatForDisplay(text: string): string {
-  if (!text) return '';
-  let formatted = text
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/^(\s*)[-*]\s+/gm, '$1• ')
-    .replace(/\*\*([^\n*]+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^\s\n*](?:[^\n*]*?[^\s\n*])?)\*/g, '<em>$1</em>')
-    .replace(/\n/g, '<br/>');
-  // Defense-in-depth: the formatter above only emits <strong>, <em> and <br/>.
-  return DOMPurify.sanitize(formatted, { ALLOWED_TAGS: ['strong', 'em', 'br'], ALLOWED_ATTR: [] });
 }
 
 /** Clinical spell-correction map for common Whisper ASR misspellings.
@@ -188,7 +151,7 @@ interface SagePanelProps {
 
 export default function SagePanel({ userName }: SagePanelProps) {
   // (The greeting lives in SageEmptyState; the name it uses in sage/greetingName.ts.)
-  const [messages, setMessages] = useState<{ role: string; content: string; metadata?: any }[]>([])
+  const [messages, setMessages] = useState<SageChatMessage[]>([])
   const [query, setQuery] = useState('')
   const [streaming, setStreaming] = useState(false)
   // Which long phase the current query is in: 'retrieving' (guideline search)
@@ -204,11 +167,16 @@ export default function SagePanel({ userName }: SagePanelProps) {
   const { activeTab: viewTab, selection } = useActiveView()
   const { claimMic, releaseMic, cloudSpeechAllowed } = useSageRuntime()
   const viewRef = useRef<{ pid: string | null; pname: string | null; tab: string; sel: typeof selection }>({ pid: null, pname: null, tab: '', sel: null })
-  viewRef.current = { pid: activePatientId, pname: activePatientName, tab: viewTab, sel: selection }
+  // Synced after each render rather than written during it (react-hooks/refs).
+  useEffect(() => {
+    viewRef.current = { pid: activePatientId, pname: activePatientName, tab: viewTab, sel: selection }
+  }, [activePatientId, activePatientName, viewTab, selection])
   
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesBoxRef = useRef<HTMLDivElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
+  /** The latest startVoiceRecording, for speakNext's auto-listen (set below). */
+  const startVoiceRecordingRef = useRef<() => void>(() => {})
 
   // FOLLOW-THE-STREAM. Before this, Sage scrolled to the bottom exactly twice —
   // once when a response began and once when history loaded — and never again.
@@ -245,7 +213,7 @@ export default function SagePanel({ userName }: SagePanelProps) {
   // History state — the sidebar's "Recent Conversations" list is the only view
   // onto stored conversations, so it is refreshed from the server rather than
   // inferred from local message state.
-  const [historyList, setHistoryList] = useState<{ role: string; content: string; metadata?: any }[]>([])
+  const [historyList, setHistoryList] = useState<SageHistoryMessage[]>([])
 
   /* THREAD identity. The server prepends the last six turns of THIS id to the
      prompt and nothing else. Before it existed the server keyed prompt history
@@ -268,11 +236,10 @@ export default function SagePanel({ userName }: SagePanelProps) {
   const audioChunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
   const voiceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const recognitionRef = useRef<any>(null)
+  const recognitionRef = useRef<SpeechRecognition | null>(null)
   const liveTextRef = useRef<string>('')
   const recordingStartRef = useRef<number>(0)
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const bargeInContextRef = useRef<string>('')  // previous query for barge-in append
   const [patientNamesHint, setPatientNamesHint] = useState<string>('Orb Hospital')
 
   // ─── TTS State ───
@@ -333,7 +300,6 @@ export default function SagePanel({ userName }: SagePanelProps) {
 
   // Load stored conversations on mount so "Recent Conversations" reflects the
   // server, and refresh whenever a turn is saved or a new chat is started.
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
   useEffect(() => { void refreshHistory() }, [refreshHistory])
 
   // Cleanup on unmount
@@ -341,7 +307,7 @@ export default function SagePanel({ userName }: SagePanelProps) {
     return () => {
       if (voiceTimerRef.current) clearInterval(voiceTimerRef.current)
       if (autoListenTimerRef.current) clearTimeout(autoListenTimerRef.current)
-      if (recognitionRef.current) try { recognitionRef.current.stop() } catch {}
+      if (recognitionRef.current) try { recognitionRef.current.stop() } catch { /* already stopped */ }
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') mediaRecorderRef.current.stop()
       streamRef.current?.getTracks().forEach(t => t.stop())
       speechSynthesis.cancel()
@@ -349,7 +315,9 @@ export default function SagePanel({ userName }: SagePanelProps) {
   }, [])
 
   // ─── TTS Engine ───
-  const speakNext = useCallback(() => {
+  // A named function so it can call itself: recursing through the `speakNext`
+  // const reads it before its declaration (react-hooks/immutability).
+  const speakNext = useCallback(function speakNextSentence() {
     if (ttsSpeakingRef.current) return // already speaking
     
     const nextSentence = ttsQueueRef.current.shift()
@@ -361,7 +329,7 @@ export default function SagePanel({ userName }: SagePanelProps) {
         if (remainder.length > 2) {
           ttsBufferRef.current = ''
           ttsQueueRef.current.push(remainder)
-          speakNext()
+          speakNextSentence()
           return
         }
         // All done speaking — auto-listen if in voice mode
@@ -369,7 +337,7 @@ export default function SagePanel({ userName }: SagePanelProps) {
         if (voiceModeRef.current) {
           autoListenTimerRef.current = setTimeout(() => {
             if (voiceModeRef.current) {
-              startVoiceRecording()
+              startVoiceRecordingRef.current()
             }
           }, 800) // brief pause before auto-listen
         }
@@ -388,16 +356,16 @@ export default function SagePanel({ userName }: SagePanelProps) {
 
     utterance.onend = () => {
       ttsSpeakingRef.current = false
-      speakNext() // process next in queue
+      speakNextSentence() // process next in queue
     }
 
     utterance.onerror = () => {
       ttsSpeakingRef.current = false
-      speakNext()
+      speakNextSentence()
     }
 
     speechSynthesis.speak(utterance)
-  }, []) // startVoiceRecording is defined below, referenced via closure
+  }, []) // startVoiceRecording is defined below: reached through startVoiceRecordingRef
 
   /** Feed new streamed text into TTS pipeline */
   const feedTTS = useCallback((fullResponse: string) => {
@@ -536,8 +504,8 @@ export default function SagePanel({ userName }: SagePanelProps) {
           // last rendered. This is the only caller of querySage that passes it.
         }, getThinkingMode(), conversationIdRef.current)
       }
-    } catch (e: any) {
-      if (e.name === 'AbortError') {
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') {
         setMessages(prev => {
           const updated = [...prev]
           const last = updated[updated.length - 1]
@@ -594,7 +562,9 @@ export default function SagePanel({ userName }: SagePanelProps) {
    * dependency it would re-subscribe on every render of a streaming answer.
    */
   const submitQueryRef = useRef(submitQuery)
-  submitQueryRef.current = submitQuery
+  // Synced after each render rather than written during it (react-hooks/refs);
+  // declared before the mount effect below so it runs first.
+  useEffect(() => { submitQueryRef.current = submitQuery })
   useEffect(() => {
     const pending = takePendingSageQuestion()
     if (pending) void submitQueryRef.current(pending)
@@ -626,16 +596,16 @@ export default function SagePanel({ userName }: SagePanelProps) {
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
-    } catch (err: any) {
+    } catch (err) {
       // First attempt failed — retry once after 500ms (mic might be releasing from another app)
       try {
         await new Promise(r => setTimeout(r, 500))
         setVoiceStatus('Retrying mic access…')
         stream = await navigator.mediaDevices.getUserMedia({ audio: true })
         streamRef.current = stream
-      } catch (err2: any) {
-        const errName = err2?.name || err?.name || 'Unknown'
-        const errMsg = err2?.message || err?.message || ''
+      } catch (err2) {
+        const errName = (err2 as Error)?.name || (err as Error)?.name || 'Unknown'
+        const errMsg = (err2 as Error)?.message || (err as Error)?.message || ''
         const msg = errName === 'NotAllowedError' ? 'Mic blocked: allow in browser settings.'
           : errName === 'NotReadableError' ? 'Mic busy: close other apps using mic and retry.'
           : errName === 'NotFoundError' ? 'No mic detected by browser. Check System Preferences > Sound.'
@@ -664,9 +634,7 @@ export default function SagePanel({ userName }: SagePanelProps) {
     // deployment posture permits cloud speech. The MediaRecorder→local-Whisper
     // path above is unaffected and remains the source of truth for the query.
     // When cloud speech is off we fall back to a fixed max-duration auto-stop.
-    const SR = cloudSpeechAllowed
-      ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
-      : null
+    const SR = cloudSpeechAllowed ? getSpeechRecognitionCtor() : null
     const resetSilenceTimer = () => {
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current)
       silenceTimerRef.current = setTimeout(() => {
@@ -682,7 +650,7 @@ export default function SagePanel({ userName }: SagePanelProps) {
     if (SR) {
       const recog = new SR()
       recog.continuous = true; recog.interimResults = true; recog.lang = 'en-US'
-      recog.onresult = (event: any) => {
+      recog.onresult = (event) => {
         let allFinal = '', currentInterim = ''
         for (let i = 0; i < event.results.length; i++) {
           const r = event.results[i]
@@ -695,8 +663,8 @@ export default function SagePanel({ userName }: SagePanelProps) {
         resetSilenceTimer()
       }
       recog.onerror = () => {}
-      recog.onend = () => { if (recognitionRef.current) try { recog.start() } catch {} }
-      try { recog.start(); recognitionRef.current = recog } catch {}
+      recog.onend = () => { if (recognitionRef.current) try { recog.start() } catch { /* already started */ } }
+      try { recog.start(); recognitionRef.current = recog } catch { /* live captions are optional: the recording carries on without them */ }
     }
 
     setVoiceRecording(true)
@@ -707,10 +675,15 @@ export default function SagePanel({ userName }: SagePanelProps) {
     resetSilenceTimer()
   }
 
+  // Kept current after every render. speakNext is memoised once, and it used to
+  // call the startVoiceRecording of the FIRST render, whose cloudSpeechAllowed
+  // was always false because the AI posture had not loaded yet.
+  useEffect(() => { startVoiceRecordingRef.current = () => { void startVoiceRecording() } })
+
   const stopVoiceRecording = () => {
     if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null }
     if (voiceTimerRef.current) { clearInterval(voiceTimerRef.current); voiceTimerRef.current = null }
-    if (recognitionRef.current) { const r = recognitionRef.current; recognitionRef.current = null; try { r.stop() } catch {} }
+    if (recognitionRef.current) { const r = recognitionRef.current; recognitionRef.current = null; try { r.stop() } catch { /* already stopped */ } }
     // Release mic ownership so other Sage surfaces resume (the device tracks are
     // stopped below, after the recorder finalizes).
     releaseMic('sage-panel')
@@ -785,10 +758,10 @@ export default function SagePanel({ userName }: SagePanelProps) {
     } else {
       // Leaving voice mode → force-kill ALL mic resources
       if (voiceTimerRef.current) { clearInterval(voiceTimerRef.current); voiceTimerRef.current = null }
-      if (recognitionRef.current) { const r = recognitionRef.current; recognitionRef.current = null; try { r.stop() } catch {} }
+      if (recognitionRef.current) { const r = recognitionRef.current; recognitionRef.current = null; try { r.stop() } catch { /* already stopped */ } }
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.onstop = null
-        try { mediaRecorderRef.current.stop() } catch {}
+        try { mediaRecorderRef.current.stop() } catch { /* already inactive */ }
       }
       mediaRecorderRef.current = null
       streamRef.current?.getTracks().forEach(t => t.stop())
@@ -799,28 +772,6 @@ export default function SagePanel({ userName }: SagePanelProps) {
       setVoiceElapsed(0)
       setVoiceStatus('')
     }
-  }
-
-  const handleSkipAndTalk = () => {
-    cancelTTS()
-    startVoiceRecording()
-  }
-
-  const handleStopAndRead = () => {
-    cancelTTS()
-    // Exit voice mode so user can read the text response
-    if (voiceTimerRef.current) { clearInterval(voiceTimerRef.current); voiceTimerRef.current = null }
-    if (recognitionRef.current) { const r = recognitionRef.current; recognitionRef.current = null; try { r.stop() } catch {} }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.onstop = null
-      try { mediaRecorderRef.current.stop() } catch {}
-    }
-    mediaRecorderRef.current = null
-    streamRef.current?.getTracks().forEach(t => t.stop())
-    streamRef.current = null
-    setVoiceRecording(false)
-    setVoiceMode(false)
-    setVoiceStatus('')
   }
 
   const handleQuickAction = (actionQuery: string) => {
@@ -858,16 +809,6 @@ export default function SagePanel({ userName }: SagePanelProps) {
     setTimeout(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
     }, 50)
-  }
-
-  // Determine the voice input hint text
-  const getVoiceHint = () => {
-    if (voiceStatus) return voiceStatus
-    if (voiceRecording) return 'Listening… tap to stop & send'
-    if (voiceTranscribing) return 'Transcribing with Whisper AI…'
-    if (streaming) return 'Sage is thinking…'
-    if (isSpeaking) return 'Sage is speaking…'
-    return 'Tap to speak'
   }
 
   const isLanding = messages.length === 0

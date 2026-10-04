@@ -2,7 +2,10 @@
  * Orb Surgical Suite — 3-Tier Drill-Down Panel (Dense UI-UX Pro Max)
  */
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { getSurgerySchedule, getSurgeryDetail, getSurgeryRiskAssessment, prepForSurgery, getEmergencyQueue, getSurgeryCases, alertSurgicalTeam, startSurgery, completeSurgery, socket, getUser } from '../../api/client'
+import {
+  getSurgerySchedule, getSurgeryDetail, getSurgeryRiskAssessment, prepForSurgery, getEmergencyQueue, getSurgeryCases, alertSurgicalTeam, startSurgery, completeSurgery, socket,
+  type EmergencySurgeryCase, type SurgeryCase, type SurgeryImportedContext,
+} from '../../api/client'
 import { useVisiblePolling } from '../../hooks/useVisiblePolling'
 import { formatClinicalClock, formatClinicalDayMonth } from '../../lib/datetime'
 import Icon from '../../components/common/Icon'
@@ -95,7 +98,7 @@ interface SurgeryFull {
   risk_score: number | null
   risk_drivers: string[]
   notes: string | null
-  imported_context?: any
+  imported_context?: SurgeryImportedContext
 }
 
 /* ━━━ Helpers ━━━ */
@@ -124,8 +127,8 @@ function formatDate(dateStr: string) {
 /* ━━━ Component ━━━ */
 export default function SurgicalSuitePanel() {
   const [schedule, setSchedule] = useState<DaySchedule[]>([])
-  const [emergencyQueue, setEmergencyQueue] = useState<any[]>([])
-  const [intakePopupData, setIntakePopupData] = useState<any | null>(null)
+  const [emergencyQueue, setEmergencyQueue] = useState<EmergencySurgeryCase[]>([])
+  const [intakePopupData, setIntakePopupData] = useState<{ surgeryId: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -135,7 +138,7 @@ export default function SurgicalSuitePanel() {
   // instead of the value captured at first render.
   const activeViewRef = useRef(activeView)
   useEffect(() => { activeViewRef.current = activeView }, [activeView])
-  const [activeCases, setActiveCases] = useState<any[]>([])
+  const [activeCases, setActiveCases] = useState<SurgeryCase[]>([])
   const [casesLoading, setCasesLoading] = useState(false)
   // Why the last team alert, start or completion failed, shown on that case
   // card. A browser alert() blocked the screen and the reason was then lost.
@@ -210,8 +213,8 @@ export default function SurgicalSuitePanel() {
     try {
       const data = await getSurgerySchedule(14)
       setSchedule(data)
-    } catch (e: any) {
-      setError(e.message)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
@@ -224,7 +227,7 @@ export default function SurgicalSuitePanel() {
     loadCases()
     
     // Socket-first: immediate re-fetch on emergency intake event
-    const handleEmergencyIntake = (data: any) => {
+    const handleEmergencyIntake = (data: { surgery_id: string }) => {
       loadEmergencyQueue()
       loadCases()
       setIntakePopupData({ surgeryId: data.surgery_id })
@@ -281,8 +284,9 @@ export default function SurgicalSuitePanel() {
           setRiskText(chunk)
         }
       }, signal)
-    } catch (e: any) {
-      if (e.name !== 'AbortError') {
+    } catch (e) {
+      const aborted = typeof e === 'object' && e !== null && 'name' in e && e.name === 'AbortError'
+      if (!aborted) {
         setRiskText('Assessment unavailable. The AI pre-operative risk assessment could not be generated.')
       }
     } finally {
@@ -318,8 +322,8 @@ export default function SurgicalSuitePanel() {
       const detail = await getSurgeryDetail(surgeryId)
       setSelectedSurgery(detail)
       setTier(3)
-    } catch (e: any) {
-      setError(e.message)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
       setAnimState('idle')
     } finally {
       setSurgeryLoading(false)
@@ -350,7 +354,7 @@ export default function SurgicalSuitePanel() {
       await prepForSurgery(selectedSurgery.id)
       setPrepSuccess(true)
       setTimeout(() => setPrepSuccess(false), 5000)
-    } catch (e: any) {
+    } catch (e) {
       console.error(e)
     } finally {
       setPrepLoading(false)
@@ -439,10 +443,10 @@ export default function SurgicalSuitePanel() {
               <span>No active surgical cases</span>
             </div>
           ) : (
-            activeCases.map((c: any) => {
+            activeCases.map((c) => {
               const team = c.team || [];
-              const allConfirmed = team.length > 0 && team.every((t: any) => t.status === 'confirmed');
-              const hasAlerted = team.some((t: any) => t.status === 'alerted');
+              const allConfirmed = team.length > 0 && team.every((t) => t.status === 'confirmed');
+              const hasAlerted = team.some((t) => t.status === 'alerted');
               const isEmergency = (c.status || '').startsWith('emergency');
               const isInProgress = c.status === 'in_progress';
 
@@ -501,7 +505,7 @@ export default function SurgicalSuitePanel() {
                         Team Assignments
                       </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                        {team.map((t: any, i: number) => (
+                        {team.map((t, i) => (
                           <div key={i} style={{
                             display: 'flex', alignItems: 'center', gap: '6px',
                             padding: '4px 10px', borderRadius: 6,
@@ -570,8 +574,8 @@ export default function SurgicalSuitePanel() {
                           try {
                             await startSurgery(c.id);
                             loadCases();
-                          } catch (e: any) {
-                            setCaseError({ id: c.id, message: e?.message || 'Cannot start yet, awaiting team confirmations.' });
+                          } catch (e) {
+                            setCaseError({ id: c.id, message: (e instanceof Error && e.message) || 'Cannot start yet, awaiting team confirmations.' });
                           }
                         }}
                         disabled={!allConfirmed || hasAlerted}
@@ -621,7 +625,7 @@ export default function SurgicalSuitePanel() {
                     )}
 
                     {/* Re-alert (if some declined) */}
-                    {team.some((t: any) => t.status === 'declined') && !isInProgress && (
+                    {team.some((t) => t.status === 'declined') && !isInProgress && (
                       <button
                         onClick={() => loadCases()}
                         style={{
@@ -714,7 +718,7 @@ export default function SurgicalSuitePanel() {
                   animationDelay: `${idx * 0.06}s`,
                   ...(animState === 'expanding' && selectedDayIdx !== idx ? {
                     '--dismiss-dir': idx < (selectedDayIdx ?? 0) ? '-1' : '1',
-                  } as any : {}),
+                  } as React.CSSProperties : {}),
                 }}
                 id={`suite-day-${day.date}`}
               >
@@ -936,26 +940,26 @@ export default function SurgicalSuitePanel() {
                     Clinical Handoff Context (Medicine)
                   </h4>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {selectedSurgery.imported_context.medications?.length > 0 && (
+                    {!!selectedSurgery.imported_context.medications?.length && (
                       <div className="suite__handoff-block">
                         <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: '4px' }}>Active Medications</div>
-                        {selectedSurgery.imported_context.medications.map((m: string, i: number) => (
+                        {selectedSurgery.imported_context.medications.map((m, i) => (
                           <div key={i} style={{ fontSize: '0.85rem', paddingLeft: '8px', borderLeft: '2px solid var(--accent-gold)' }}>{m}</div>
                         ))}
                       </div>
                     )}
-                    {selectedSurgery.imported_context.vitals?.length > 0 && (
+                    {!!selectedSurgery.imported_context.vitals?.length && (
                       <div className="suite__handoff-block">
                         <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: '4px' }}>Recent Vitals</div>
-                        {selectedSurgery.imported_context.vitals.map((v: string, i: number) => (
+                        {selectedSurgery.imported_context.vitals.map((v, i) => (
                           <div key={i} style={{ fontSize: '0.85rem' }}>{v}</div>
                         ))}
                       </div>
                     )}
-                    {selectedSurgery.imported_context.recent_labs?.length > 0 && (
+                    {!!selectedSurgery.imported_context.recent_labs?.length && (
                       <div className="suite__handoff-block">
                         <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: '4px' }}>Recent Labs</div>
-                        {selectedSurgery.imported_context.recent_labs.map((l: string, i: number) => (
+                        {selectedSurgery.imported_context.recent_labs.map((l, i) => (
                           <div key={i} style={{ fontSize: '0.85rem' }}>{l}</div>
                         ))}
                       </div>

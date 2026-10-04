@@ -161,10 +161,11 @@ export default function DowntimeMode({ patientId: patientIdProp }: DowntimeModeP
       const latest = await getLatestSnapshot(patientId);
       setEnv(latest);
       setLiveFailed(false);
-    } catch (e: any) {
+    } catch (e) {
       setEnv(null);
+      const message = e instanceof Error ? e.message : undefined;
       // 404 = no snapshot captured yet; treat as an empty-but-valid state.
-      if (e?.message && /no snapshot/i.test(e.message)) {
+      if (message && /no snapshot/i.test(message)) {
         setLiveFailed(false);
         setError(null);
       } else if (isUnreachable(e)) {
@@ -173,7 +174,7 @@ export default function DowntimeMode({ patientId: patientIdProp }: DowntimeModeP
         setLiveFailed(true);
       } else {
         setLiveFailed(false);
-        setError(refusalMessage(e?.message) || e?.message || 'Could not load the snapshot.');
+        setError(refusalMessage(message) || message || 'Could not load the snapshot.');
       }
     } finally {
       setLoading(false);
@@ -191,11 +192,12 @@ export default function DowntimeMode({ patientId: patientIdProp }: DowntimeModeP
       const result = await captureSnapshot(patientId);
       setEnv(result);
       setLiveFailed(false);
-    } catch (e: any) {
+    } catch (e) {
+      const message = e instanceof Error ? e.message : undefined;
       setError(
         isUnreachable(e)
           ? `Could not capture a new snapshot. ${UNREACHABLE_GUIDANCE}`
-          : refusalMessage(e?.message) || e?.message || 'Capture failed.',
+          : refusalMessage(message) || message || 'Capture failed.',
       );
     } finally {
       setCapturing(false);
@@ -213,11 +215,12 @@ export default function DowntimeMode({ patientId: patientIdProp }: DowntimeModeP
       const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
       window.open(url, '_blank', 'noopener');
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (e: any) {
+    } catch (e) {
+      const message = e instanceof Error ? e.message : undefined;
       setError(
         isUnreachable(e)
           ? `The ward pack could not be opened. ${UNREACHABLE_GUIDANCE}`
-          : refusalMessage(e?.message) || e?.message || 'Could not open the ward pack.',
+          : refusalMessage(message) || message || 'Could not open the ward pack.',
       );
     } finally {
       setOpeningPack(false);

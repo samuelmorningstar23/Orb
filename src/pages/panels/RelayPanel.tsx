@@ -52,6 +52,28 @@ function senderRoleLabel(role: string | null | undefined): string {
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
 
+// The JSON body of an `alert` or `surgical_alert` message, as the thread
+// renders it. Both producers name the surgery: surgery_service's structured
+// prep alert (is_structured plus the case fields; relay_routes stamps
+// `status` and `resolved_by` on it when it is resolved) and the surgery
+// routes' per-member surgical_alert (`text`, `role`, `target_user_id`).
+interface AlertMessagePayload {
+  surgery_id: string
+  is_structured?: boolean
+  title?: string
+  patient_name?: string
+  mrn?: string
+  procedure_name?: string
+  operating_room?: string
+  scheduled_time?: string
+  action_required?: string
+  status?: string
+  resolved_by?: string
+  text?: string
+  role?: string
+  target_user_id?: string
+}
+
 
 
 /* ═══════════════════════════════════════════════════
@@ -70,6 +92,17 @@ export default function RelayPanel() {
   // thread's own error line: this is about the message the user just tried to
   // send, and it must sit beside the box her text is still in.
   const [sendError, setSendError] = useState<string | null>(null)
+  // A refusal belongs to the message that was refused, and that message is
+  // gone the moment the reader moves to another patient's room. Carrying it
+  // across would put "your entry has not been saved" above a room where
+  // nothing was attempted. Cleared DURING the render that changes rooms
+  // (React's pattern for resetting state when a value changes), not in an
+  // effect a render later (react-hooks/set-state-in-effect).
+  const [sendErrorRoom, setSendErrorRoom] = useState(selectedChannel)
+  if (sendErrorRoom !== selectedChannel) {
+    setSendErrorRoom(selectedChannel)
+    setSendError(null)
+  }
   const [sortBy, setSortBy] = useState<'recency' | 'urgency'>('recency')
   const [searchQuery, setSearchQuery] = useState('')
   // Names of other members currently typing in the open channel (self excluded).
@@ -97,12 +130,15 @@ export default function RelayPanel() {
   // the message they were reading instead of being moved by the insert.
   const prependAnchorRef = useRef<number | null>(null)
   /* Thread-load ownership. `msgReqSeqRef` is bumped by every loadMessages call;
-     `selectedChannelRef` mirrors the open channel synchronously (state is a
-     render behind, and a response can resolve before that render lands). A
-     response is only allowed to touch state if both still agree it is wanted. */
+     `selectedChannelRef` mirrors the open channel (state is a render behind,
+     and a response can resolve before that render lands). A response is only
+     allowed to touch state if both still agree it is wanted. The mirror is
+     written in a layout effect, which runs as the render commits and before
+     any passive effect or promise callback, rather than during the render
+     itself (react-hooks/refs). */
   const msgReqSeqRef = useRef(0)
   const selectedChannelRef = useRef<string | null>(null)
-  selectedChannelRef.current = selectedChannel
+  useLayoutEffect(() => { selectedChannelRef.current = selectedChannel }, [selectedChannel])
   /* Read receipts for messages that arrive in the open room. The room used to
      be marked read only when it opened, so every message the reader watched
      arrive stayed unread and came back as a badge on the list. `shown` is the
@@ -303,12 +339,10 @@ export default function RelayPanel() {
       // Opening a channel always lands at the live end, regardless of where the
       // reader was parked in the channel they just left.
       stickToBottomRef.current = true
-      // A refusal belongs to the message that was refused, and that message is
-      // gone the moment the reader moves to another patient's room. Carrying it
-      // across would put "your entry has not been saved" above a room where
-      // nothing was attempted.
-      setSendError(null)
+      // (A send error from the previous room is cleared during the render that
+      // changed rooms: see sendErrorRoom.)
       shownChannelRef.current = null
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
       loadMessages(selectedChannel)
 
       const handleNewMsg = (msg: Message) => {
@@ -780,6 +814,7 @@ export default function RelayPanel() {
                   )}
                 </div>
               )}
+              {/* eslint-disable-next-line react-hooks/refs -- false positive, verified 2026-10-04: the only ref reads reachable from here are in loadMessages, called by handleResolveAlert and handleSurgicalResponse, which this map places in onClick props and never calls during render. The compiler cannot see that through the per-message IIFE below. */}
               {messages.map(m => {
                 const dayLabel = dayDividers.get(m.id);
                 const body = (() => {
@@ -789,7 +824,7 @@ export default function RelayPanel() {
                 let isStructuredAlert = false;
                 let isSurgicalAlert = false;
                 let alertParseFailed = false;
-                let payload: any = null;
+                let payload: AlertMessagePayload | null = null;
                 const currentUser = getUser();
 
                 // Alert content comes in two dialects: structured JSON (vigil
@@ -906,7 +941,7 @@ export default function RelayPanel() {
                         >queued</span>
                       )}
                     </div>
-                    {isStructuredAlert ? (
+                    {isStructuredAlert && payload ? (
                       <div className="relay-structured-alert">
                         <div style={{ fontWeight: 600, color: 'var(--accent-text)', marginBottom: 8 }}>{payload.title}</div>
                         <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>

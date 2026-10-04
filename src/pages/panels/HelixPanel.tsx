@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import type { KeyboardEvent } from 'react'
+import type { ComponentProps, KeyboardEvent } from 'react'
 import styles from '../../components/helix/Helix.module.css'
 import HelixDashboard from '../../components/helix/HelixDashboard'
 import HelixPatientBoard from '../../components/helix/HelixPatientBoard'
@@ -27,14 +27,29 @@ const REFRESH_MS = 30_000
  *  replaces the lists with a loading state. */
 type LoadMode = 'initial' | 'manual' | 'poll'
 
+/* The lists are typed by what the views take. GET /helix/orders sends
+   HelixOrderListRow, whose nullable columns (dosage, ward, bed,
+   prescribed_by_name, substitute_name) the views declare as plain strings and
+   render a null as blank or a fallback. Inventory and catalog have no client
+   type; these are the formulary's, which the patient board's are a subset of. */
+type QueueOrder = ComponentProps<typeof HelixDashboard>['orders'][number]
+  & ComponentProps<typeof HelixPatientBoard>['orders'][number]
+type SelectedOrder = Parameters<ComponentProps<typeof HelixDashboard>['onSelectOrder']>[0]
+type InventoryLot = ComponentProps<typeof HelixFormulary>['inventory'][number]
+type CatalogEntry = ComponentProps<typeof HelixFormulary>['catalog'][number]
+/** The review modal declares `pharmacist_notes?: string`, but the row the
+ *  dashboard hands over carries null when no note was written. The modal only
+ *  tests it for truthiness, so a null is read the same as a missing note. */
+type ReviewOrder = ComponentProps<typeof HelixOrderReviewModal>['order']
+
 export default function HelixPanel() {
   const [activeView, setActiveView] = useState<HelixView>('dashboard')
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
-  const [orders, setOrders] = useState<any[]>([])
-  const [inventory, setInventory] = useState<any[]>([])
-  const [catalog, setCatalog] = useState<any[]>([])
-  const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
+  const [orders, setOrders] = useState<QueueOrder[]>([])
+  const [inventory, setInventory] = useState<InventoryLot[]>([])
+  const [catalog, setCatalog] = useState<CatalogEntry[]>([])
+  const [selectedOrder, setSelectedOrder] = useState<SelectedOrder | null>(null)
   /* A failed load used to console.error and fall through with orders=[], so the
      pharmacist's work queue rendered EMPTY — indistinguishable from "nothing to
      verify". Orders would sit unverified with the screen saying all clear. */
@@ -53,9 +68,9 @@ export default function HelixPanel() {
     if (mode === 'manual') setRefreshing(true)
     try {
       const [ordersRes, invRes, catRes] = await Promise.all([
-        apiFetch<any>('/helix/orders'),
-        apiFetch<any>('/helix/inventory'),
-        apiFetch<any>('/helix/catalog')
+        apiFetch<{ orders: QueueOrder[] }>('/helix/orders'),
+        apiFetch<{ inventory: InventoryLot[] }>('/helix/inventory'),
+        apiFetch<{ catalog: CatalogEntry[] }>('/helix/catalog')
       ])
       if (seq !== loadSeq.current) return
       setOrders(ordersRes.orders || [])
@@ -182,7 +197,7 @@ export default function HelixPanel() {
       {/* Order Review Modal */}
       {selectedOrder && (
         <HelixOrderReviewModal
-          order={selectedOrder}
+          order={selectedOrder as ReviewOrder}
           catalog={catalog}
           onClose={() => setSelectedOrder(null)}
           onTransition={handleTransitionComplete}

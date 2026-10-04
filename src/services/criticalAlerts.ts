@@ -15,7 +15,7 @@
  * shows (patient name / MRN / reason) — no additional PHI is introduced here.
  */
 
-import { socket } from '../api/client';
+import { socket, type Message } from '../api/client';
 
 /* -------------------------------------------------------------------------- */
 /*  Sound mute flag (persisted)                                               */
@@ -53,9 +53,14 @@ export function toggleAlertSoundMuted(): boolean {
 
 let audioCtx: AudioContext | null = null;
 
+/** Safari before 14.1 exposes the constructor only under its prefixed name. */
+type WindowWithWebkitAudio = Window & typeof globalThis & {
+  webkitAudioContext?: typeof AudioContext;
+};
+
 function getAudioContext(): AudioContext | null {
-  const Ctor =
-    (window as any).AudioContext || (window as any).webkitAudioContext;
+  const w = window as WindowWithWebkitAudio;
+  const Ctor = w.AudioContext || w.webkitAudioContext;
   if (!Ctor) return null;
   if (!audioCtx) {
     try {
@@ -282,7 +287,34 @@ function fireAlert(alert: CriticalAlert): void {
 
 /* ---- per-event adapters (map raw payloads → terse clinical text) ---------- */
 
-function onEmergencyIntake(data: any): void {
+/* The raw socket payloads, as far as these adapters read them. They arrive
+   unchecked from the socket, so every field is optional and every read above
+   and below is guarded. */
+
+/** `surgery:emergency_intake` (sage_handoff_service). */
+interface EmergencyIntakePayload {
+  surgery_id?: string;
+}
+
+/** The JSON a Relay alert message carries in `content`. */
+interface RelayAlertContent {
+  patient_name?: string;
+  mrn?: string;
+  action_required?: string;
+  title?: string;
+  text?: string;
+}
+
+/** `vitals:update` (ws/realtime.vitals_update_payload and its twins). The
+ *  server sends no `patient_name` on this event; it is read in case one
+ *  ever does, and the id stands in for it until then. */
+interface VitalsAlertPayload {
+  patient_id?: string;
+  patient_name?: string;
+  risk?: { level?: string; raw_news2?: unknown } | null;
+}
+
+function onEmergencyIntake(data: EmergencyIntakePayload | null | undefined): void {
   const surgeryId = data?.surgery_id ?? '';
   fireAlert({
     title: '⚠ Emergency surgery intake',
@@ -291,13 +323,13 @@ function onEmergencyIntake(data: any): void {
   });
 }
 
-function onRelayMessage(msg: any): void {
+function onRelayMessage(msg: Partial<Message> | null | undefined): void {
   const type = msg?.message_type;
   if (type !== 'alert' && type !== 'surgical_alert') return; // only critical subset
 
-  let payload: any = null;
+  let payload: RelayAlertContent | null = null;
   try {
-    payload = msg?.content ? JSON.parse(msg.content) : null;
+    payload = msg?.content ? (JSON.parse(msg.content) as RelayAlertContent | null) : null;
   } catch {
     payload = null;
   }
@@ -327,7 +359,7 @@ function onRelayMessage(msg: any): void {
  */
 const lastLevelByPatient = new Map<string, string>();
 
-function onVitalsUpdate(vital: any): void {
+function onVitalsUpdate(vital: VitalsAlertPayload | null | undefined): void {
   const level: string | undefined = vital?.risk?.level;
   const pid: string | undefined = vital?.patient_id;
 

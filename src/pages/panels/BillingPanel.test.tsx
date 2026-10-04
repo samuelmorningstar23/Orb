@@ -20,7 +20,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const calls: { path: string; method: string; body: any }[] = []
+const calls: { path: string; method: string; body: Record<string, unknown> | null }[] = []
 let overrides: Record<string, unknown> = {}
 
 const PRICED_ITEM = {
@@ -308,8 +308,8 @@ describe('money entry', () => {
         .toBe(true)
     })
     const post = calls.find(c => c.path === '/billing/service-items' && c.method === 'POST')!
-    expect(post.body.default_rate_paise).toBe(123455)
-    expect(Number.isInteger(post.body.default_rate_paise)).toBe(true)
+    expect(post.body?.default_rate_paise).toBe(123455)
+    expect(Number.isInteger(post.body?.default_rate_paise)).toBe(true)
   })
 
   it('sends a BLANK price as null, not as zero', async () => {
@@ -325,10 +325,10 @@ describe('money entry', () => {
         .toBe(true)
     })
     const post = calls.find(c => c.path === '/billing/service-items' && c.method === 'POST')!
-    expect(post.body.default_rate_paise).toBeNull()
+    expect(post.body?.default_rate_paise).toBeNull()
     // A new item never overwrites a code already on the list (F098): the blank
     // price above used to un-price an existing code.
-    expect(post.body.create_only).toBe(true)
+    expect(post.body?.create_only).toBe(true)
   })
 
   it('refuses a sub-paise amount instead of silently rounding it', async () => {

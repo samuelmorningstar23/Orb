@@ -21,6 +21,7 @@
  */
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import type { AdministrationRecord } from '../../api/client'
 
 const WARD = 'General Medicine'
 
@@ -62,7 +63,7 @@ vi.mock('../../api/client', () => ({
   getAdministrations: vi.fn(async () => []),
   // Real semantics, mirrored: only a 'given' dose carrying a recorded
   // override reason is marked as crossing a charted allergy.
-  givenAcrossAllergy: (r: any) => Boolean(r?.status === 'given' && r?.allergy_check?.override?.reason),
+  givenAcrossAllergy: (r: AdministrationRecord | null | undefined) => Boolean(r?.status === 'given' && r?.allergy_check?.override?.reason),
   dischargePatient: vi.fn(), getPatientAnalysis: vi.fn(() => new Promise(() => {})),
   addClinicalNote: vi.fn(), addMedication: vi.fn(),
   isSafetyAckRequired: () => false,

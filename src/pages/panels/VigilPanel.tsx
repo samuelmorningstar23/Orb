@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useMemo, useCallback, memo, lazy, Suspense } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback, memo, lazy, Suspense, type ComponentProps } from 'react'
 import { createPortal } from 'react-dom'
-import { apiFetch, getPatientDetail, dischargePatient, getOpenEscalations, resolveEscalation, type EscalationChain, addClinicalNote, addMedication, getAdministrations, givenAcrossAllergy, isSafetyAckRequired, getPatientForecast, getTimelineProjection, getDischargeQrObjectUrl, prefetchSageContext, getUnseenCounts, socket, getUser, buildHeaders, type Patient, type MedicationSafety, type SafetyAck, type AdministrationRecord } from '../../api/client'
+import { apiFetch, getPatientDetail, dischargePatient, getOpenEscalations, resolveEscalation, type EscalationChain, addClinicalNote, addMedication, getAdministrations, givenAcrossAllergy, isSafetyAckRequired, getPatientForecast, getTimelineProjection, getDischargeQrObjectUrl, prefetchSageContext, getUnseenCounts, socket, getUser, buildHeaders, type Patient, type MedicationSafety, type SafetyAck, type AdministrationRecord, type PatientDetail, type ChartVitalsRow, type PatientRisk, type LensAnalysisRow, type ChartMedicationRow, type DischargeResult, type DischargeSummaryView, type TimelineProjection } from '../../api/client'
 import { ClinicalCourseTimeline } from '../../components/ClinicalCourseTimeline'
 import { useActivePatient } from '../../contexts/ActivePatientContext'
 import { useActiveView } from '../../contexts/ActiveViewContext'
@@ -110,8 +110,8 @@ function labRangeText(lab: Pick<LabTrend, 'refLow' | 'refHigh' | 'refText'>): st
 
 /** The orders the patient is on now: active and as-needed. Discontinued
  *  orders were printed as a discharge prescription before. */
-function currentMedications(meds: unknown): any[] {
-  return (Array.isArray(meds) ? meds : []).filter((m: any) => m?.status === 'active' || m?.status === 'prn')
+function currentMedications(meds: ChartMedicationRow[] | null | undefined): ChartMedicationRow[] {
+  return (Array.isArray(meds) ? meds : []).filter(m => m?.status === 'active' || m?.status === 'prn')
 }
 
 /** Notes for the printed record: charted documents (lab results are not
@@ -733,11 +733,68 @@ const TREND_CLASS: Record<string, string> = {
    "Why NEWS2 0" breakdown under it: two observations on one screen, each
    looking current. The pair is now held together and only ever replaced as a
    whole, and every reader of "the patient now" reads it.
-   The chart payload is untyped end to end (`liveData` and every row in it are
-   `any`); the pair holds those same objects, so it says so once, here. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the chart payload's own type, see above
-type ChartRow = any
-type LiveObservation = { patientId: string; vital: ChartRow; risk: ChartRow }
+   The pair holds the chart payload's own objects: a stored set (or a tick the
+   chart appended to its trend) and the score that came with it. */
+type LiveObservation = { patientId: string; vital: ChartVitalSet | null; risk: PatientRisk }
+
+/** One vitals set on the chart: a stored row from GET /vigil/patients/{id},
+ *  or a `vitals:update` tick appended to the trend. A tick from the
+ *  simulator's lane names no `source`, so it is optional here. */
+type ChartVitalSet = Omit<ChartVitalsRow, 'source'> & { source?: string | null }
+
+/** A `vitals:update` payload as the open chart reads it
+ *  (ws/realtime.vitals_update_payload, and the same keys from bot_service and
+ *  ingestion_service): one stored set and the NEWS2 that scored it. */
+interface VitalsTick extends ChartVitalSet {
+  patient_id: string
+  timestamp: string
+  consciousness: string
+  on_oxygen: boolean
+  risk: PatientRisk
+}
+
+/** A `lens_analyses` row as the chart serves it. The route sends every column
+ *  (`SELECT *`), and `source` ('simulated' for a simulator's report) is one
+ *  that LensAnalysisRow does not name. */
+type ChartLensRow = LensAnalysisRow & { source?: string | null }
+
+/** The chart as this view holds it: the GET response, with live ticks
+ *  appended to `vitals` (see onVitals). */
+type ChartData = Omit<PatientDetail, 'vitals' | 'lens_analyses'> & {
+  vitals: ChartVitalSet[]
+  lens_analyses: ChartLensRow[]
+}
+
+/** A charted document or a Scribe note, as the notes history lists both.
+ *  Each kind carries its own half of these fields. */
+interface HistoryNote {
+  created_at: string
+  doc_type?: string
+  content?: string
+  note_format?: string | null
+  structured_note?: string | null
+  raw_transcript?: string
+}
+
+/** A row in the report modals: a Lens analysis, or a lab_result document
+ *  mapped onto the same fields (allLabReports). */
+interface ChartReport {
+  created_at: string
+  image_path: string
+  image_type: string | null
+  clinical_context: string | null
+  analysis: string
+  image_url?: string | null
+  reviewed_text?: string | null
+  reviewed_at?: string | null
+  source?: string | null
+  title?: string
+  content?: string
+}
+
+/** The discharge modal's summary: the discharge result, and who released it
+ *  once the doctor has (the review route answers with DischargeSummaryView). */
+type DischargeSummaryState = DischargeResult & Partial<Pick<DischargeSummaryView, 'reviewed_by_name' | 'reviewed_at'>>
 // Which set is newer: observedAt / observedBefore in lib/vitals, shared with
 // the ward board so the two cannot disagree about which set is current.
 
@@ -796,7 +853,7 @@ function BarCellHead({ label, score }: { label: string; score: BarScore }) {
    src/lib/roles.ts treats an explicit null as "holds nothing" — a distinction
    a storage read cannot make. */
 function PatientDetailView({ patientId, role, onBack }: { patientId: string; role?: string | null; onBack: () => void }) {
-  const [liveData, setData] = useState<any>(null)
+  const [liveData, setData] = useState<ChartData | null>(null)
   const [loading, setLoading] = useState(true)
   // Why the chart is empty. A stale patient id (a reseed regenerates every
   // PAT-… id, and deep links can inject one at any time) must not leave the
@@ -856,7 +913,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
   // Offline copy of one patient's chart — vitals, notes, medications, labs.
   // `data` is the SNAPSHOT everything below reads, so a chart served from the
   // device can never render without the banner that dates it.
-  const chartOffline = useOfflineSnapshot<any>(`vigil:patient:${patientId}`, liveData, {
+  const chartOffline = useOfflineSnapshot<ChartData>(`vigil:patient:${patientId}`, liveData, {
     onReconnect: () => loadPatientData(),
   })
   const data = chartOffline.data
@@ -885,7 +942,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
 
   const [dischargeModal, setDischargeModal] = useState(false)
   const [discharging, setDischarging] = useState(false)
-  const [dischargeSummary, setDischargeSummary] = useState<any>(null)
+  const [dischargeSummary, setDischargeSummary] = useState<DischargeSummaryState | null>(null)
   const [dischargeQrSrc, setDischargeQrSrc] = useState<string | null>(null)
   // Shown inside the modal. alert() blocked the screen and lost the reason.
   const [dischargeError, setDischargeError] = useState<string | null>(null)
@@ -901,8 +958,8 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
   const [escalationReasons, setEscalationReasons] = useState<Record<string, string>>({})
   const [closingEscalation, setClosingEscalation] = useState<string | null>(null)
   const [escalationError, setEscalationError] = useState<string | null>(null)
-  const [selectedNote, setSelectedNote] = useState<any>(null)
-  const [selectedReport, setSelectedReport] = useState<any>(null)
+  const [selectedNote, setSelectedNote] = useState<HistoryNote | null>(null)
+  const [selectedReport, setSelectedReport] = useState<ChartReport | null>(null)
 
   const [addNoteModalOpen, setAddNoteModalOpen] = useState(false)
   const [addMedModalOpen, setAddMedModalOpen] = useState(false)
@@ -943,8 +1000,9 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
      diagSearchQuery / labSearchQuery. */
   const [notesSearchQuery, setNotesSearchQuery] = useState('')
   const [noteError, setNoteError] = useState<string | null>(null)
-  const [forecast, setForecast] = useState<any>(null)
-  const [projection, setProjection] = useState<any>(null)
+  // Fetched for this patient but not shown anywhere on the chart yet.
+  const [, setForecast] = useState<unknown>(null)
+  const [projection, setProjection] = useState<TimelineProjection | null>(null)
   const [projectionFailed, setProjectionFailed] = useState(false)
 
   /* 'record' is PRINT RECORD: the inpatient record, never the discharge
@@ -984,7 +1042,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
   const [labReportsModalOpen, setLabReportsModalOpen] = useState(false)
   const [medsListModalOpen, setMedsListModalOpen] = useState(false)
   const [storyOpen, setStoryOpen] = useState(false)
-  const [selectedLabForGraph, setSelectedLabForGraph] = useState<any>(null)
+  const [selectedLabForGraph, setSelectedLabForGraph] = useState<LabTrend | null>(null)
   
   const [diagSearchQuery, setDiagSearchQuery] = useState('')
   const [labSearchQuery, setLabSearchQuery] = useState('')
@@ -1066,7 +1124,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
   }, [patientId])
 
   useEffect(() => {
-    const onVitals = (newVital: any) => {
+    const onVitals = (newVital: VitalsTick) => {
       if (newVital.patient_id === patientId) {
         // A set with no score cannot be shown: the bar would have to pair it
         // with an older observation's NEWS2. Both server emitters always send
@@ -1084,7 +1142,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
         ))
 
         // Add to Trend Chart if it's been at least 5-10 seconds for smoothness
-        setData((prev: any) => {
+        setData(prev => {
           if (!prev) return prev;
           // observedAt, not new Date(): a reloaded row can carry a bare SQLite UTC
           // stamp, which new Date() reads as LOCAL time. In IST that dated the
@@ -1121,8 +1179,9 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
       } else {
         setDischargeSummary(result)
       }
-    } catch (err: any) {
-      setDischargeError(`The discharge did not complete: ${err?.message || 'the server did not say why'}.`)
+    } catch (err) {
+      const e = err as { message?: string } | null
+      setDischargeError(`The discharge did not complete: ${e?.message || 'the server did not say why'}.`)
     } finally {
       setDischarging(false)
     }
@@ -1137,18 +1196,23 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
     setDischargeError(null)
     try {
       assertOnlineForWrite('release this summary')
-      const view = await apiFetch<any>(`/vigil/patients/${patientId}/discharge-summary/review`, {
+      // discharge_service.mark_discharge_summary_reviewed answers with the
+      // summary view, or null when there is no summary to load.
+      const view = await apiFetch<DischargeSummaryView | null>(`/vigil/patients/${patientId}/discharge-summary/review`, {
         method: 'POST',
         body: JSON.stringify({ summary_id: dischargeSummary.summary_id }),
       })
-      setDischargeSummary((prev: any) => ({
+      // Nothing sets the summary back to null once a discharge returned one,
+      // so `prev` is never null here: the check only narrows the type.
+      setDischargeSummary(prev => (prev ? {
         ...prev,
         review_status: view?.review_status ?? 'reviewed',
         reviewed_by_name: view?.reviewed_by_name ?? null,
         reviewed_at: view?.reviewed_at ?? null,
-      }))
-    } catch (err: any) {
-      setDischargeError(`The summary was not released: ${err?.message || 'the server did not say why'}.`)
+      } : prev))
+    } catch (err) {
+      const e = err as { message?: string } | null
+      setDischargeError(`The summary was not released: ${e?.message || 'the server did not say why'}.`)
     } finally {
       setReviewing(false)
     }
@@ -1280,7 +1344,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
 
 
   const filteredHistoryNotes = useMemo(() => {
-    const all = [...(data?.notes||[]), ...(data?.scribe_notes||[])].sort((a,b) => parseUTC(b.created_at).getTime() - parseUTC(a.created_at).getTime())
+    const all: HistoryNote[] = [...(data?.notes||[]), ...(data?.scribe_notes||[])].sort((a,b) => parseUTC(b.created_at).getTime() - parseUTC(a.created_at).getTime())
     if (!notesSearchQuery) return all
     const q = notesSearchQuery.trim().toLowerCase()
     // A typed date is matched as a calendar day ("1 Oct 2026", "01/10/2026"),
@@ -1297,19 +1361,19 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
   const IMAGING_TYPES = ['xray', 'x-ray', 'ct', 'mri', 'ultrasound', 'ecg', 'echo']
 
   // All diagnostic reports (imaging only)
-  const allDiagnosticReports = useMemo(() => {
-    return (data?.lens_analyses || []).filter((a: any) => 
+  const allDiagnosticReports = useMemo<ChartReport[]>(() => {
+    return (data?.lens_analyses || []).filter(a =>
       IMAGING_TYPES.some(t => (a.image_type || '').toLowerCase().includes(t))
-    ).sort((a: any, b: any) => parseUTC(b.created_at).getTime() - parseUTC(a.created_at).getTime())
+    ).sort((a, b) => parseUTC(b.created_at).getTime() - parseUTC(a.created_at).getTime())
   }, [data?.lens_analyses])
 
   // All lab reports (non-imaging lens_analyses + clinical_documents with lab_result type)
-  const allLabReports = useMemo(() => {
-    const labLens = (data?.lens_analyses || []).filter((a: any) => 
+  const allLabReports = useMemo<ChartReport[]>(() => {
+    const labLens = (data?.lens_analyses || []).filter(a =>
       !IMAGING_TYPES.some(t => (a.image_type || '').toLowerCase().includes(t))
     )
     // Also gather lab_result docs from notes
-    const labDocs = (data?.notes || []).filter((n: any) => n.doc_type === 'lab_result').map((n: any) => ({
+    const labDocs = (data?.notes || []).filter(n => n.doc_type === 'lab_result').map(n => ({
       ...n,
       image_type: 'lab',
       analysis: n.content,
@@ -1317,14 +1381,14 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
       image_path: '',
     }))
     // Merge, deduplicate by content similarity, sort newest first
-    const combined = [...labLens, ...labDocs]
+    const combined: ChartReport[] = [...labLens, ...labDocs]
     const seen = new Set<string>()
-    return combined.filter((r: any) => {
+    return combined.filter(r => {
       const key = `${r.clinical_context || r.title || ''}_${(r.created_at || '').substring(0, 16)}`
       if (seen.has(key)) return false
       seen.add(key)
       return true
-    }).sort((a: any, b: any) => parseUTC(b.created_at).getTime() - parseUTC(a.created_at).getTime())
+    }).sort((a, b) => parseUTC(b.created_at).getTime() - parseUTC(a.created_at).getTime())
   }, [data?.lens_analyses, data?.notes])
 
   // Filtered diag reports
@@ -1332,7 +1396,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
     if (!diagSearchQuery) return allDiagnosticReports
     const q = diagSearchQuery.trim().toLowerCase()
     const dateMatch = parseDateSearch(diagSearchQuery)
-    return allDiagnosticReports.filter((a: any) => {
+    return allDiagnosticReports.filter(a => {
       if (dateMatch && matchesDateSearch(a.created_at, dateMatch)) return true
       return (
         (a.analysis || '').toLowerCase().includes(q) ||
@@ -1348,7 +1412,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
     if (!labSearchQuery) return allLabReports
     const q = labSearchQuery.trim().toLowerCase()
     const dateMatch = parseDateSearch(labSearchQuery)
-    return allLabReports.filter((a: any) => {
+    return allLabReports.filter(a => {
       if (dateMatch && matchesDateSearch(a.created_at, dateMatch)) return true
       return (
         (a.analysis || a.content || '').toLowerCase().includes(q) ||
@@ -1360,7 +1424,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
   }, [allLabReports, labSearchQuery])
 
 
-  const pData = data?.patient || {}
+  const pData: Partial<PatientDetail['patient']> = data?.patient || {}
 
   // Comorbidities come only from real recorded data. The previous build
   // fabricated 2-4 conditions by hashing the MRN and rendered them unlabelled —
@@ -1434,7 +1498,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
   const obs: Omit<LiveObservation, 'patientId'> = chartOffline.source === 'live' && live && live.patientId === patientId
     ? live
     : { vital: vitals[0] ?? null, risk: data.risk }
-  const latest = obs.vital ?? {}
+  const latest: Partial<ChartVitalSet> = obs.vital ?? {}
   const risk = obs.risk
   // Honesty label: the row on the bar came from the simulator. A simulator
   // push over the socket names no source, so it falls back to the chart's flag.
@@ -1706,7 +1770,10 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
 
       
       {/* Sage-deduced clinical course (replaces the calendar-day rail) */}
-      <ClinicalCourseTimeline projection={projection} failed={projectionFailed} onRetry={loadProjection} />
+      {/* The component's own Projection type has `expected_los_days?: number`,
+          while the server sends null for no estimate; it already renders null
+          as no estimate (`!= null`), so the assertion only bridges the types. */}
+      <ClinicalCourseTimeline projection={projection as ComponentProps<typeof ClinicalCourseTimeline>['projection']} failed={projectionFailed} onRetry={loadProjection} />
 
       {/* Risk Assessment & Lab Trends */}
       <div className="detail__row">
@@ -1757,7 +1824,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
             && Array.isArray(risk.breakdown) && risk.breakdown.length > 0
             && typeof risk.raw_news2 === 'number' && (
             <News2Drivers
-              view={chartDriverView(risk.breakdown, risk.raw_news2, risk.single_param_3)}
+              view={chartDriverView(risk.breakdown, risk.raw_news2, risk.single_param_3 ?? false)}
               id={`chart-${patientId}`}
             />
           )}
@@ -2012,7 +2079,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
                 {dischargeSummary.timeline?.length > 0 && (
                   <div className="modal__timeline">
                     <h3>Timeline</h3>
-                    {dischargeSummary.timeline.map((event: any, i: number) => (
+                    {dischargeSummary.timeline.map((event, i: number) => (
                       <div key={i} className="modal__timeline-event">
                         <div className={`modal__timeline-dot modal__timeline-dot--${event.type}`} />
                         <div className="modal__timeline-info">
@@ -2167,7 +2234,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
                 {!filteredHistoryNotes?.length ? (
                   <div className="detail__no-data">No clinical notes match search</div>
                 ) : (
-                  filteredHistoryNotes.map((n: any, i: number) => (
+                  filteredHistoryNotes.map((n, i: number) => (
                     /* A <button>, not a <div onClick>. These cards opened a note
                        with no cursor change, no hover and no keyboard path —
                        the only list in this stylesheet that hid the fact it was
@@ -2228,7 +2295,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
                     <span>No diagnostic reports {diagSearchQuery ? 'match your search' : 'available'}</span>
                   </div>
                 ) : (
-                  filteredDiagReports.map((a: any, i: number) => (
+                  filteredDiagReports.map((a, i: number) => (
                     /* A <button>: the card IS the only way into a report, and a
                        chevron drawn on a <div> is not a keyboard affordance. */
                     <button
@@ -2294,7 +2361,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
                     <span>No lab reports {labSearchQuery ? 'match your search' : 'available'}</span>
                   </div>
                 ) : (
-                  filteredLabReports.map((a: any, i: number) => {
+                  filteredLabReports.map((a, i: number) => {
                     const hasCritical = (a.analysis || a.content || '').includes('CRITICAL')
                     return (
                       <button
@@ -2397,7 +2464,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
                       </tr>
                     </thead>
                     <tbody>
-                      {medications.map((m: any, i: number) => {
+                      {medications.map((m, i: number) => {
                         // Newest-first history: first 'given' row for this med is the latest dose.
                         const lastGiven = administrations.find(a => a.medication_id === m.id && a.status === 'given')
                         return (
@@ -2641,7 +2708,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
         <AdministerModal
           med={administerTarget}
           patientName={patient.name}
-          patientBed={patient.bed}
+          patientBed={patient.bed ?? undefined}
           allergies={chartedAllergies}
           onClose={() => setAdministerTarget(null)}
           onRecorded={() => { setAdministerTarget(null); loadAdministrations() }}
@@ -2674,8 +2741,8 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
       {(printType === 'discharge' || printType === 'discharge-timeline') && dischargeSummary && createPortal(
         <DischargePrintView
           patient={patient}
-          medications={currentMedications(medications).filter((m: any) => !m.unverified)}
-          unverifiedMedicationCount={currentMedications(medications).filter((m: any) => m.unverified).length}
+          medications={currentMedications(medications).filter(m => !m.unverified)}
+          unverifiedMedicationCount={currentMedications(medications).filter(m => m.unverified).length}
           summary={dischargeSummary.summary}
           summaryStatus={dischargeSummary.review_status === 'reviewed' ? 'reviewed' : 'draft'}
           reviewedByName={dischargeSummary.reviewed_by_name}
@@ -2693,8 +2760,8 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
           <MedListPrintView
             patientName={patient.name}
             mrn={patient.mrn}
-            bed={patient.bed}
-            medications={(medications || []).map((m: any) => ({
+            bed={patient.bed ?? undefined}
+            medications={(medications || []).map(m => ({
               drug_name: m.drug_name,
               dosage: m.dosage,
               route: m.route,
@@ -2716,16 +2783,6 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
 
 
 /* ─── Vital Card Sub-Component ─── */
-function VitalCard({ label, value, unit, icon, warn }: { label: string; value: string; unit: string; icon: string; warn: boolean }) {
-  return (
-    <div className={`vital-card glass-card ${warn ? 'vital-card--warn' : ''}`}>
-      <span className="vital-card__icon">{icon}</span>
-      <span className="vital-card__value metric-mono">{value || '—'}</span>
-      <span className="vital-card__unit">{unit}</span>
-      <span className="vital-card__label">{label}</span>
-    </div>
-  )
-}
 
 
 /* ─── Risk Gauge ─── */

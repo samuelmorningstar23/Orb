@@ -1,3 +1,4 @@
+import type { DischargeTimelineEntry } from '../api/client';
 import { formatClinicalDate, formatClinicalDateTime } from '../lib/datetime';
 
 /* THE PRINTED DISCHARGE SUMMARY RENDERS RECORDED DATA ONLY.
@@ -61,7 +62,7 @@ interface DischargePrintViewProps {
   /** Medicines left off because a pharmacist has not verified them yet. */
   unverifiedMedicationCount?: number;
   siteName?: string | null;
-  timeline?: any[];
+  timeline?: DischargeTimelineEntry[];
 }
 
 const NOT_RECORDED = 'Not recorded';
@@ -208,7 +209,7 @@ export function DischargePrintView({
               </tr>
             </thead>
             <tbody>
-              {timeline.map((event: any, i: number) => (
+              {timeline.map((event, i) => (
                 <tr key={i}>
                   <td style={{ border: '1px solid #111', padding: '6px 10px' }}>{event.timestamp ? formatClinicalDateTime(event.timestamp) : ''}</td>
                   <td style={{ border: '1px solid #111', padding: '6px 10px' }}><strong>{event.title}</strong></td>

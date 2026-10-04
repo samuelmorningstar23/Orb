@@ -56,8 +56,8 @@ export default function WhoSurgicalChecklist({ surgeryId }: { surgeryId: string 
       ])
       setTemplate(tpl)
       setChecklist(state)
-    } catch (e: any) {
-      setLoadError(e?.message || 'Could not load the WHO checklist')
+    } catch (e) {
+      setLoadError((e instanceof Error ? e.message : '') || 'Could not load the WHO checklist')
     }
   }, [surgeryId])
 
@@ -73,11 +73,11 @@ export default function WhoSurgicalChecklist({ surgeryId }: { surgeryId: string 
     setSaveError('')
     try {
       setChecklist(await setWhoChecklistItem(surgeryId, itemId, checked))
-    } catch (e: any) {
-      setSaveError(e?.message || 'Could not record the checklist item')
+    } catch (e) {
+      setSaveError((e instanceof Error ? e.message : '') || 'Could not record the checklist item')
       // A failed write must leave the row showing the server's truth, not the
       // failed click — this is the OR's safety record, not a local form.
-      try { setChecklist(await getWhoChecklist(surgeryId)) } catch {}
+      try { setChecklist(await getWhoChecklist(surgeryId)) } catch { /* the save error above is already on screen */ }
     } finally {
       setSaving(false)
     }

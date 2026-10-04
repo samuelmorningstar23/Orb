@@ -208,8 +208,8 @@ export default function PharmacyVerifyQueue() {
         seeded[r.id] = { dosage: clean(r.dose), route: clean(r.route), frequency: clean(r.frequency) };
       }
       setEdits(seeded);
-    } catch (e: any) {
-      setError(e?.message || 'Failed to load the verification queue');
+    } catch (e) {
+      setError((e instanceof Error ? e.message : '') || 'Failed to load the verification queue');
     } finally {
       setLoading(false);
     }
@@ -218,7 +218,6 @@ export default function PharmacyVerifyQueue() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function setField(id: number, field: 'dosage' | 'route' | 'frequency', value: string) {
@@ -261,8 +260,8 @@ export default function PharmacyVerifyQueue() {
       setRows((prev) => prev.filter((r) => r.id !== row.id));
       closeAck(row.id);
       setFlash(`Verified ${row.drug_name} for ${row.patient ?? 'patient'}`);
-    } catch (e: any) {
-      setError(e?.message || 'Verification failed');
+    } catch (e) {
+      setError((e instanceof Error ? e.message : '') || 'Verification failed');
     } finally {
       setBusyId(null);
     }
@@ -292,8 +291,8 @@ export default function PharmacyVerifyQueue() {
       setRows((prev) => prev.filter((r) => r.id !== row.id));
       closeReject(row.id);
       setFlash(`Rejected ${row.drug_name} for ${row.patient ?? 'patient'}`);
-    } catch (e: any) {
-      setError(e?.message || 'Rejection failed');
+    } catch (e) {
+      setError((e instanceof Error ? e.message : '') || 'Rejection failed');
     } finally {
       setBusyId(null);
     }

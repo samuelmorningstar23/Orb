@@ -1,6 +1,15 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useAuth } from '../App'
-import { getBridgeStatus, askBridge, getBridgeReports, apiFetch } from '../api/client'
+import {
+  getBridgeStatus,
+  askBridge,
+  getBridgeReports,
+  apiFetch,
+  type BridgeDischargeView,
+  type BridgeMedication,
+  type BridgeReports,
+  type BridgeStatus,
+} from '../api/client'
 import OrbLogo from '../components/OrbLogo'
 import './PatientShell.css'
 import { CareTeamCard } from '../components/bridge/CareTeamCard'
@@ -101,11 +110,48 @@ interface PortalReport {
   title?: string
   content?: string
   type_label?: string
-  image_type?: string
-  clinical_context?: string
-  analysis?: string
+  image_type?: string | null
+  clinical_context?: string | null
+  analysis?: string | null
   /** 'simulated' for a simulator's lab result, labelled on screen. */
   source?: string | null
+}
+
+/** What the detail modal opens: a medication, a document or lab result, an
+ *  imaging report, or the discharge summary. */
+type ReportDetail =
+  | { type: 'med'; data: BridgeMedication }
+  | { type: 'doc' | 'lab'; data: PortalReport }
+  | { type: 'discharge'; data: BridgeDischargeView }
+
+/** An appointments row as /appointments/mine sends it
+ *  (appointments_routes._serialize). */
+interface PortalAppointment {
+  id: string
+  patient_id: string
+  booked_by_user_id: string | null
+  scheduled_date: string
+  scheduled_time: string
+  appointment_type: string
+  reason: string | null
+  status: string
+  created_at: string
+  /** 'patient' when the patient asked for it and nobody has agreed the slot. */
+  origin: string
+  department: string | null
+}
+
+/** POST /bridge/appointments: the row that exists after the ask, which is the
+ *  care team's own booking when the slot was already in the diary. */
+interface AppointmentRequestResult {
+  id: string
+  status: string
+  requested_date: string
+  requested_time: string
+  department: string | null
+  requested_by_patient: boolean
+  time_chosen_by_patient: boolean
+  message: string
 }
 
 /** Returns the 7 dates of the week containing `anchorDate` */
@@ -143,16 +189,16 @@ function slotHasPassed(date: Date, slot: string, now: Date): boolean {
 
 export default function PatientShell() {
   const { user, logout } = useAuth()
-  const [status, setStatus] = useState<any>(null)
+  const [status, setStatus] = useState<BridgeStatus | null>(null)
   const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState('')
   const [asking, setAsking] = useState(false)
   const [loading, setLoading] = useState(true)
 
   /* ── Reports state ── */
-  const [reports, setReports] = useState<any>(null)
+  const [reports, setReports] = useState<BridgeReports | null>(null)
   const [reportsLoading, setReportsLoading] = useState(false)
-  const [selectedReportDetail, setSelectedReportDetail] = useState<any>(null)
+  const [selectedReportDetail, setSelectedReportDetail] = useState<ReportDetail | null>(null)
   const [medsModalOpen, setMedsModalOpen] = useState(false)
   const [docsModalOpen, setDocsModalOpen] = useState(false)
   const [labsModalOpen, setLabsModalOpen] = useState(false)
@@ -177,8 +223,8 @@ export default function PatientShell() {
   const [bookingState, setBookingState] = useState<'idle' | 'confirming' | 'booked'>('idle')
   const [note, setNote] = useState('')
   const [bookError, setBookError] = useState('')
-  const [confirmedAppt, setConfirmedAppt] = useState<any>(null)
-  const [upcoming, setUpcoming] = useState<any[]>([])
+  const [confirmedAppt, setConfirmedAppt] = useState<AppointmentRequestResult | null>(null)
+  const [upcoming, setUpcoming] = useState<PortalAppointment[]>([])
 
   /* ── FHIR record download state ── */
   const [fhirError, setFhirError] = useState('')
@@ -204,7 +250,7 @@ export default function PatientShell() {
 
   const loadAppointments = useCallback(async () => {
     try {
-      const data = await apiFetch<{ appointments: any[] }>('/appointments/mine')
+      const data = await apiFetch<{ appointments: PortalAppointment[] }>('/appointments/mine')
       setUpcoming(data.appointments || [])
     } catch (err) {
       console.error('Failed to load appointments:', err)
@@ -220,7 +266,7 @@ export default function PatientShell() {
       // The patient's route, which stores an ASK. The staff booking route saved
       // this as a booking the care team had made, and the card said "Confirmed".
       // A repeat tap returns the same row (the server dedupes by slot).
-      const appt = await apiFetch<any>('/bridge/appointments', {
+      const appt = await apiFetch<AppointmentRequestResult>('/bridge/appointments', {
         method: 'POST',
         body: JSON.stringify({
           requested_date: toISODate(selectedDate as Date),
@@ -232,8 +278,8 @@ export default function PatientShell() {
       setConfirmedAppt(appt)
       setBookingState('booked')
       loadAppointments()
-    } catch (err: any) {
-      setBookError(err?.message || 'Could not send your request. Please try again.')
+    } catch (err) {
+      setBookError((err instanceof Error ? err.message : '') || 'Could not send your request. Please try again.')
       setBookingState('idle')
     }
   }
@@ -243,8 +289,8 @@ export default function PatientShell() {
     try {
       await apiFetch(`/appointments/${id}`, { method: 'DELETE' })
       setUpcoming(prev => prev.filter(a => a.id !== id))
-    } catch (err: any) {
-      setBookError(err?.message || 'Could not cancel. Please try again.')
+    } catch (err) {
+      setBookError((err instanceof Error ? err.message : '') || 'Could not cancel. Please try again.')
     } finally {
       loadAppointments() // reconcile with server truth whether or not the cancel succeeded
     }
@@ -256,7 +302,7 @@ export default function PatientShell() {
     setFhirError('')
     setFhirLoading(true)
     try {
-      const bundle = await apiFetch<any>(`/fhir/patient/${pid}/$everything`)
+      const bundle = await apiFetch<unknown>(`/fhir/patient/${pid}/$everything`)
       const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -266,8 +312,8 @@ export default function PatientShell() {
       a.click()
       a.remove()
       URL.revokeObjectURL(url)
-    } catch (err: any) {
-      setFhirError(err?.message || 'Could not download your record right now.')
+    } catch (err) {
+      setFhirError((err instanceof Error ? err.message : '') || 'Could not download your record right now.')
     } finally {
       setFhirLoading(false)
     }
@@ -275,7 +321,7 @@ export default function PatientShell() {
 
   const handleReset = () => {
     setBookingState('idle')
-    setSelectedDate(null as any)
+    setSelectedDate(null)
     setSelectedSlot(null)
     setSelectedDept(null)
     setNote('')
@@ -330,7 +376,7 @@ export default function PatientShell() {
       await askBridge(question.trim(), (partial) => {
         setAnswer(partial)
       })
-    } catch (err) {
+    } catch {
       setAnswer('Sorry, I couldn\'t connect to the assistant. Please ask your nurse or doctor directly.')
     } finally {
       setAsking(false)
@@ -357,6 +403,9 @@ export default function PatientShell() {
     const at = (item: { data: PortalReport }) => (item.data.created_at ? parseUTC(item.data.created_at).getTime() : 0)
     return items.sort((a, b) => at(b) - at(a))
   }, [reports])
+
+  // A local, so the discharge row's click handler keeps the null check.
+  const dischargeSummary = reports?.discharge_summary
 
   return (
     <div className="bridge">
@@ -708,7 +757,7 @@ export default function PatientShell() {
                 ) : (reports?.medications?.length || 0) === 0 ? (
                   <div className="detail__no-data">No medications on record</div>
                 ) : (
-                  reports.medications.map((m: any, i: number) => (
+                  reports?.medications.map((m, i) => (
                     /* Real <button>s. These rows carry cursor:pointer and a hover
                        fill but were <div onClick>, so on the patient portal every
                        medication, document, lab and discharge row was mouse-only:
@@ -753,7 +802,7 @@ export default function PatientShell() {
                 ) : (reports?.clinical_documents?.length || 0) === 0 ? (
                   <div className="detail__no-data">No documents on record</div>
                 ) : (
-                  reports.clinical_documents.map((d: any, i: number) => (
+                  reports?.clinical_documents.map((d, i) => (
                     <button
                       type="button"
                       key={`doc-${i}`}
@@ -835,22 +884,22 @@ export default function PatientShell() {
               <div className="detail__reports-list" style={{ overflowY: 'auto' }}>
                 {reportsLoading ? (
                   <div className="bridge__report-panel">{[1].map(i => <div key={i} className="bridge__report-skeleton" style={{ marginBottom: 6 }} />)}</div>
-                ) : !reports?.discharge_summary ? (
+                ) : !dischargeSummary ? (
                   <div className="detail__no-data">No discharge summary available yet.</div>
                 ) : (
                   <button
                     type="button"
                     className="detail__report bridge__report-item"
-                    onClick={() => setSelectedReportDetail({ type: 'discharge', data: reports.discharge_summary })}
+                    onClick={() => setSelectedReportDetail({ type: 'discharge', data: dischargeSummary })}
                   >
                     <span className="bridge__report-item-icon bridge__report-item-icon--discharge" aria-hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 13l4 4L19 7"/></svg></span>
                     <span className="detail__report-info bridge__report-item-body">
                       <span className="detail__report-title bridge__report-item-name">Discharge Summary</span>
-                      <span className="detail__note-date bridge__report-item-meta">{reports.discharge_summary.discharged_at ? `Discharged ${formatClinicalDate(reports.discharge_summary.discharged_at)}` : 'Available'}</span>
+                      <span className="detail__note-date bridge__report-item-meta">{dischargeSummary.discharged_at ? `Discharged ${formatClinicalDate(dischargeSummary.discharged_at)}` : 'Available'}</span>
                     </span>
                     {/* Ready only once a clinician has reviewed the drafted
                         text; until then the server withholds it. */}
-                    {reports.discharge_summary.status === 'reviewed'
+                    {dischargeSummary.status === 'reviewed'
                       ? <span className="bridge__report-item-badge bridge__report-item-badge--active">Ready</span>
                       : <span className="bridge__report-item-badge" style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}>Being finalised</span>}
                   </button>

@@ -1,6 +1,11 @@
 import { useState, useEffect } from 'react'
-import { getAdminOverview } from '../../../api/client'
-import { OutcomeBadge, SourceBadge, ParseStatusBadge } from './AdminBadges'
+import {
+  getAdminOverview,
+  type AdminAlertCounts,
+  type AdminOverviewData,
+  type AdminRecordCounts,
+} from '../../../api/client'
+import { OutcomeBadge, SourceBadge } from './AdminBadges'
 import { AdminLoadingState, AdminErrorState } from './AdminEmptyState'
 import { humaniseEnum } from '../../../lib/humanise'
 import { formatClinicalDateTime } from '../../../lib/datetime'
@@ -9,7 +14,7 @@ import { formatClinicalDateTime } from '../../../lib/datetime'
 const count = (n: number | null | undefined) => (n ?? 0).toLocaleString('en-IN')
 
 export default function AdminOverview() {
-  const [data, setData] = useState<any>(null)
+  const [data, setData] = useState<AdminOverviewData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -44,9 +49,9 @@ export default function AdminOverview() {
   // De-emphasis is colour + type scale (--text-muted), never opacity — house
   // rule; a translucent number on a governance page is a number a reviewer
   // squints at and then trusts anyway.
-  const alerts = data.alerts ?? {}
+  const alerts: Partial<AdminAlertCounts> = data.alerts ?? {}
   const alertsKnown = typeof alerts.total === 'number'
-  const records = data.records_written ?? {}
+  const records: Partial<AdminRecordCounts> = data.records_written ?? {}
   const recordsKnown = typeof records.total === 'number'
   const unknownValueStyle = { color: 'var(--text-muted)', fontSize: '1.3rem' }
 
@@ -99,7 +104,7 @@ export default function AdminOverview() {
         <div className="admin-stat-card glass-card">
           <div className="admin-stat-card__label">Alert Activity (24h)</div>
           {alertsKnown ? (
-            <div className="admin-stat-card__value" style={{ color: alerts.total > 0 ? 'var(--status-danger)' : 'var(--text-muted)' }}>
+            <div className="admin-stat-card__value" style={{ color: (alerts.total ?? 0) > 0 ? 'var(--status-danger)' : 'var(--text-muted)' }}>
               {count(alerts.total)}
             </div>
           ) : (
@@ -114,7 +119,7 @@ export default function AdminOverview() {
                   <span key={lane} className="admin-stat-chip">{humaniseEnum(lane)}: {count(cnt)}</span>
                 ))}
                 {(alerts.by_level?.critical ?? 0) > 0 && (
-                  <span className="admin-stat-chip admin-stat-chip--danger">{count(alerts.by_level.critical)} critical</span>
+                  <span className="admin-stat-chip admin-stat-chip--danger">{count(alerts.by_level?.critical)} critical</span>
                 )}
               </>
             ) : (
@@ -163,7 +168,7 @@ export default function AdminOverview() {
                 </tr>
               </thead>
               <tbody>
-                {data.recent_failures.map((f: any) => (
+                {data.recent_failures.map((f) => (
                   <tr key={f.id}>
                     {/* received_at is a bare UTC timestamp; formatClinicalDateTime
                         reads it as UTC, where new Date() read it as local. */}
@@ -184,7 +189,7 @@ export default function AdminOverview() {
         <div className="admin-section">
           <h3 className="admin-section__title">Auth Summary (24h)</h3>
           <div className="admin-auth-summary">
-            {data.auth_events.map((e: any, i: number) => (
+            {data.auth_events.map((e, i) => (
               <div key={i} className="admin-auth-chip glass-card" style={{ padding: '12px 16px' }}>
                 <span>{humaniseEnum(e.action)}</span>
                 <OutcomeBadge outcome={e.outcome} />

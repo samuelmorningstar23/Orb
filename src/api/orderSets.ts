@@ -94,6 +94,56 @@ export interface OrderSetApplication {
   [k: string]: unknown
 }
 
+/** One item of a set as the protocol file defines it. The medication fields
+ *  are null on a non-medication item. */
+export interface OrderSetItem {
+  index: number
+  order_type: string
+  description: string
+  code: string | null
+  code_system: string | null
+  priority: string
+  note: string | null
+  drug_name: string | null
+  dose: string | null
+  route: string | null
+  frequency: string | null
+}
+
+/** One set in full, as loaded and validated from the protocol file. */
+export interface OrderSetDefinition {
+  id: string
+  name: string
+  indication: string | null
+  guideline: OrderSetGuideline & { url?: string | null }
+  items: OrderSetItem[]
+  item_count: number
+  fingerprint: string
+}
+
+/** A row of the `orders` table, as a set's apply created it (a DRAFT order).
+ *  `detail_json` is the stored JSON TEXT naming the set and, for a drug, the
+ *  dose and the safety screen. */
+export interface AppliedOrder {
+  id: string
+  patient_id: string
+  order_type: 'lab' | 'imaging' | 'medication' | 'procedure' | 'nursing' | 'other'
+  code: string | null
+  code_system: string | null
+  description: string
+  priority: 'stat' | 'urgent' | 'routine'
+  status: string
+  ordered_by: string | null
+  source: string
+  detail_json: string | null
+  result_text: string | null
+  result_at: string | null
+  created_at: string
+  updated_at: string
+  order_set_application_id?: number | null
+  opd_visit_id?: string | null
+}
+
 export interface OrderSetSelection {
   index: number
   include?: boolean
@@ -112,7 +162,12 @@ export async function listOrderSets(): Promise<{
   return apiFetch('/orders/sets')
 }
 
-export async function getOrderSet(setId: string): Promise<{ set: any; unknown_codes: any[] }> {
+/** One set in full, with the codes this deployment's terminology table cannot
+ *  resolve. */
+export async function getOrderSet(setId: string): Promise<{
+  set: OrderSetDefinition
+  unknown_codes: { code: string; code_system: string }[]
+}> {
   return apiFetch(`/orders/sets/${encodeURIComponent(setId)}`)
 }
 
@@ -131,7 +186,14 @@ export async function applyOrderSet(
   setId: string,
   patientId: string,
   items?: OrderSetSelection[],
-): Promise<{ status: string; orders: any[]; [k: string]: unknown }> {
+): Promise<{
+  status: string
+  application_id: number
+  patient_id: string
+  set: { id: string; name: string; guideline: OrderSetGuideline; fingerprint: string }
+  orders: AppliedOrder[]
+  items: OrderSetVerdict[]
+}> {
   return apiFetch(`/orders/sets/${encodeURIComponent(setId)}/apply`, {
     method: 'POST',
     body: JSON.stringify(items ? { patient_id: patientId, items } : { patient_id: patientId }),

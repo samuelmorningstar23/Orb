@@ -1,11 +1,12 @@
 import React from 'react'
 import OrbLogo from '../OrbLogo'
 import { SAGE_TAGLINE } from './SageEmptyState'
+import type { SageHistoryMessage } from '../../api/client'
 
 interface HistoryItem {
   role: string
   content: string
-  metadata?: any
+  metadata?: SageHistoryMessage['metadata']
   /** The patient the conversation was about, when the server knows it. */
   patientName?: string
 }

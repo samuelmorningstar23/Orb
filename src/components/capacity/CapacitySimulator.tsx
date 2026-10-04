@@ -43,7 +43,15 @@ interface SimResult {
     projected_admissions: number
     projected_discharges: number
   }
-  assumptions: Record<string, { value: any; source: string }>
+  assumptions: Record<string, { value: number | string; source: string }>
+}
+
+/** One plotted hour, as built from the projection for the chart. */
+interface ChartPoint {
+  hour: number
+  occupancy: number
+  capacity: number
+  overflow: number | null
 }
 
 interface Knobs {
@@ -104,8 +112,8 @@ export default function CapacitySimulator() {
         setResult(res)
         setError(null)
       }
-    } catch (e: any) {
-      if (myReq === reqIdRef.current) setError(e?.message || 'Simulation failed')
+    } catch (e) {
+      if (myReq === reqIdRef.current) setError((e instanceof Error ? e.message : '') || 'Simulation failed')
     } finally {
       if (myReq === reqIdRef.current) setBusy(false)
     }
@@ -127,7 +135,7 @@ export default function CapacitySimulator() {
   const s = result?.summary
   const b = result?.baseline
 
-  const chartData = useMemo(() => (result?.projection ?? []).map(p => ({
+  const chartData = useMemo(() => (result?.projection ?? []).map((p): ChartPoint => ({
     hour: p.hour_offset,
     occupancy: p.projected_occupancy,
     capacity: p.capacity,
@@ -399,7 +407,9 @@ function Stat(props: { label: string; value: string; sub?: string; tone?: 'ok' |
   )
 }
 
-function SimTooltip({ active, payload }: any) {
+// Recharts injects these into the `content` element; each entry's `payload` is
+// the ChartPoint row under the cursor.
+function SimTooltip({ active, payload }: { active?: boolean; payload?: ReadonlyArray<{ payload: ChartPoint }> }) {
   if (!active || !payload?.length) return null
   const d = payload[0].payload
   const over = d.capacity != null && d.occupancy > d.capacity

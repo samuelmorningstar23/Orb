@@ -99,7 +99,9 @@ const sendMessageMock = vi.fn(async () => ({
 
 vi.mock('../../api/client', async () => {
   const actual = await vi.importActual<typeof import('../../api/client')>('../../api/client')
-  const socketHandlers: Record<string, Function[]> = {}
+  // What a socket.io listener receives: one payload, or none.
+  type SocketHandler = (payload?: unknown) => void
+  const socketHandlers: Record<string, SocketHandler[]> = {}
   return {
     ...actual,
     getChannels: vi.fn(async () => CHANNELS),
@@ -113,8 +115,8 @@ vi.mock('../../api/client', async () => {
     resolveRoomFit: vi.fn(async () => ({})),
     getUser: () => ({ id: 'me', name: 'Nurse Priya', role: 'nurse' }),
     socket: {
-      on: (ev: string, fn: Function) => { (socketHandlers[ev] ||= []).push(fn) },
-      off: (ev: string, fn: Function) => {
+      on: (ev: string, fn: SocketHandler) => { (socketHandlers[ev] ||= []).push(fn) },
+      off: (ev: string, fn: SocketHandler) => {
         socketHandlers[ev] = (socketHandlers[ev] || []).filter(f => f !== fn)
       },
       emit: vi.fn(),

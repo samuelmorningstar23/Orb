@@ -80,7 +80,7 @@ export default function LensPanel() {
       // Load patients for the assignment dropdown
       const pts = await getPatientsList()
       setPatients(pts)
-    } catch (err: any) { setAnalysis(`Analysis failed: ${err.message || 'Ensure Ollama is running with medgemma:27b.'}`) }
+    } catch (err) { setAnalysis(`Analysis failed: ${(err instanceof Error ? err.message : '') || 'Ensure Ollama is running with medgemma:27b.'}`) }
     finally { setAnalyzing(false) }
   }
 
@@ -102,8 +102,8 @@ export default function LensPanel() {
       const result = await assignLensToPatient(targetId, selectedPatient.id, reviewedText)
       setAssignResult(`✓ Report added to ${result.patient_name}'s Vigil record`)
       setShowAssign(false)
-    } catch (e: any) {
-      setAssignResult(`✗ Assignment failed: ${e.message}`)
+    } catch (e) {
+      setAssignResult(`✗ Assignment failed: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setAssigning(false)
     }

@@ -84,7 +84,7 @@ export default function AppointmentsPanel() {
       const appts: Appointment[] = await apiFetch('/api/forecast/appointments')
       setAppointments(Array.isArray(appts) ? appts.filter(a => a.source === 'booked') : [])
       setError('')
-    } catch (err: any) {
+    } catch (err) {
       console.error("Failed to fetch appointments:", err)
       setError("Failed to load appointments. Please check connection.")
     } finally {

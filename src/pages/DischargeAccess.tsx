@@ -1,9 +1,16 @@
 import React, { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { verifyDischargeAccess, getVerifiedDischargeSummary } from '../api/client';
+import {
+  verifyDischargeAccess,
+  getVerifiedDischargeSummary,
+  type DischargeTimelineEntry,
+  type VerifiedDischargeSummary,
+} from '../api/client';
 import { DischargePrintView, type PrintAllergy } from '../components/DischargePrintView';
 import { formatClinicalDateTime } from '../lib/datetime';
 import './DischargeAccess.css';
+
+type SummaryPatient = VerifiedDischargeSummary['patient'];
 
 /** What /discharge-access/{token}/summary returns. `summary` is null until a
  *  clinician has reviewed the drafted text; `summary_message` says why. */
@@ -14,13 +21,33 @@ interface VerifiedSummary {
   reviewed_by_name?: string | null;
   reviewed_at?: string | null;
   discharged_at?: string | null;
-  timeline: any[];
-  patient: any;
+  timeline: DischargeTimelineEntry[];
+  patient: SummaryPatient;
   allergies: PrintAllergy[] | null;
   comorbidities?: string[];
-  medications: any[];
+  medications: VerifiedDischargeSummary['medications'];
   unverified_medication_count?: number;
   site_name?: string | null;
+}
+
+/** The route sends `patient: {}` when the patient row is gone, and otherwise
+ *  the whole row, whose name (patients.name, NOT NULL) is always selected. */
+function isRecordedPatient(p: SummaryPatient | undefined): p is SummaryPatient & { name: string } {
+  return !!p && Object.keys(p).length > 0;
+}
+
+/** The `detail` of a refused request. The client throws the parsed error body
+ *  (`{detail: {status: 'error', reason, ...}}`), not an Error; a network error
+ *  carries no reason and falls through to the generic message. */
+interface AccessRefusal {
+  reason?: string;
+  locked_until?: string;
+}
+
+function refusalDetail(err: unknown): AccessRefusal {
+  const body = typeof err === 'object' && err !== null ? (err as { detail?: unknown }) : undefined;
+  const detail = body?.detail || err;
+  return typeof detail === 'object' && detail !== null ? (detail as AccessRefusal) : {};
 }
 
 export default function DischargeAccess() {
@@ -53,8 +80,8 @@ export default function DischargeAccess() {
         timeline: Array.isArray(summaryRes.timeline) ? summaryRes.timeline : [],
       });
       
-    } catch (err: any) {
-      const detail = err?.detail || err;
+    } catch (err) {
+      const detail = refusalDetail(err);
       if (detail.reason === 'invalid_dob') {
         // No attempt count: the server deliberately withholds it, and printing
         // the missing field read "You have undefined attempts remaining".
@@ -74,7 +101,7 @@ export default function DischargeAccess() {
     }
   };
 
-  if (summaryData && summaryData.patient && Object.keys(summaryData.patient).length > 0) {
+  if (summaryData && isRecordedPatient(summaryData.patient)) {
     return (
       <div className="discharge-access-success">
         <div className="patient-portal-header">

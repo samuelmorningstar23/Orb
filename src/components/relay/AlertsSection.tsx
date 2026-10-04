@@ -2,6 +2,16 @@ import { useState, useEffect } from 'react';
 import { getAlerts, type Message, type Channel } from '../../api/client';
 import './RelayComponents.css';
 
+/** The JSON body of a structured alert (surgery_service's prep alert). The
+ *  fields this list reads; a plain-text alert does not parse into one. */
+interface StructuredAlertPayload {
+  is_structured?: boolean;
+  title?: string;
+  action_required?: string;
+  patient_id?: string;
+  surgery_id?: string;
+}
+
 interface AlertsSectionProps {
   onSelectChannel: (channelId: string) => void;
   channels: Channel[];
@@ -73,7 +83,7 @@ export default function AlertsSection({ onSelectChannel, channels }: AlertsSecti
       </h2>
       <div className="relay-channel-list">
         {dedupedAlerts.map((alert) => {
-          let payload: any = null;
+          let payload: StructuredAlertPayload | null = null;
           try {
             payload = JSON.parse(alert.content);
           } catch (e) {
@@ -81,12 +91,12 @@ export default function AlertsSection({ onSelectChannel, channels }: AlertsSecti
           }
 
           const isStructured = payload && payload.is_structured;
-          const title = isStructured ? payload.title : 'Alert';
-          const desc = isStructured ? payload.action_required : alert.content;
+          const title = isStructured ? payload?.title : 'Alert';
+          const desc = isStructured ? payload?.action_required : alert.content;
           
           let targetChannelId = alert.channel_id;
-          if (isStructured && payload.patient_id) {
-            const caseRoom = channels.find(c => c.type === 'case_room' && c.patient_id === payload.patient_id);
+          if (isStructured && payload?.patient_id) {
+            const caseRoom = channels.find(c => c.type === 'case_room' && c.patient_id === payload?.patient_id);
             if (caseRoom) {
               targetChannelId = caseRoom.id;
             }

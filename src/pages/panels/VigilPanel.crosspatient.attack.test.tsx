@@ -21,6 +21,7 @@
  */
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import type { AdministrationRecord, MedicationOrderInput, SafetyAck, TimelineProjection } from '../../api/client'
 import { openPatient } from '../../lib/orbBus'
 
 type Deferred<T> = { promise: Promise<T>; resolve: (v: T) => void }
@@ -42,14 +43,19 @@ const detailFor = (id: string, name: string, bed: string) => ({
   trend: { trend: 'stable' },
 })
 
-const DETAIL: Record<string, any> = {
+// A deliberately partial chart: only what the chart reads on this path.
+type DetailFixture = ReturnType<typeof detailFor>
+// A projection with only the fields the course timeline draws.
+type ProjectionFixture = Pick<TimelineProjection, 'expected_los_days' | 'source' | 'current_phase_index' | 'phases'>
+
+const DETAIL: Record<string, DetailFixture> = {
   'PAT-A': detailFor('PAT-A', 'Anita Rao', '3'),
   'PAT-B': detailFor('PAT-B', 'Rahul Menon', '7'),
 }
 
 // Two clinically opposite courses. If A's lands under B's name, a doctor reads
 // "comfort care, 40-day stay" for a patient who is on a weaning pathway.
-const PROJECTION: Record<string, any> = {
+const PROJECTION: Record<string, ProjectionFixture> = {
   'PAT-A': {
     expected_los_days: 40, source: 'llm', current_phase_index: 0,
     phases: [{ name: 'COMFORT CARE PHASE A', focus: 'symptom control', typical_days: 'days 1-40' }],
@@ -60,19 +66,19 @@ const PROJECTION: Record<string, any> = {
   },
 }
 
-const pendingDetail: Record<string, Deferred<any>> = {}
-const pendingProjection: Record<string, Deferred<any>> = {}
+const pendingDetail: Record<string, Deferred<DetailFixture>> = {}
+const pendingProjection: Record<string, Deferred<ProjectionFixture>> = {}
 
 const getPatientDetail = vi.fn((pid: string) => {
-  pendingDetail[pid] = defer<any>()
+  pendingDetail[pid] = defer<DetailFixture>()
   return pendingDetail[pid].promise
 })
 const getTimelineProjection = vi.fn((pid: string) => {
-  pendingProjection[pid] = defer<any>()
+  pendingProjection[pid] = defer<ProjectionFixture>()
   return pendingProjection[pid].promise
 })
 const addMedication = vi.fn(
-  async (_patientId: string, _med: any, _ack?: any) => ({ safety: undefined }),
+  async (_patientId: string, _med: MedicationOrderInput, _ack?: SafetyAck) => ({ safety: undefined }),
 )
 
 vi.mock('../../api/client', () => ({
@@ -84,11 +90,11 @@ vi.mock('../../api/client', () => ({
   getAdministrations: vi.fn(async () => []),
   // Real semantics, mirrored: only a 'given' dose carrying a recorded
   // override reason is marked as crossing a charted allergy.
-  givenAcrossAllergy: (r: any) => Boolean(r?.status === 'given' && r?.allergy_check?.override?.reason),
+  givenAcrossAllergy: (r: AdministrationRecord | null | undefined) => Boolean(r?.status === 'given' && r?.allergy_check?.override?.reason),
   getTimelineProjection: (p: string) => getTimelineProjection(p),
   dischargePatient: vi.fn(), getPatientAnalysis: vi.fn(() => new Promise(() => {})),
   addClinicalNote: vi.fn(),
-  addMedication: (pid: string, med: any, ack?: any) => addMedication(pid, med, ack),
+  addMedication: (pid: string, med: MedicationOrderInput, ack?: SafetyAck) => addMedication(pid, med, ack),
   isSafetyAckRequired: () => false,
   getPatientForecast: vi.fn(() => new Promise(() => {})),
   getDischargeQrObjectUrl: vi.fn(), prefetchSageContext: vi.fn(async () => {}),
@@ -205,7 +211,7 @@ describe('Vigil chart: cross-patient bleed on a mid-flight patient switch', () =
     }
 
     // Vancomycin was typed for Anita Rao. It must never be posted for Rahul Menon.
-    expect(addMedication.mock.calls.map((c: any[]) => [c[0], c[1]?.drug_name]))
+    expect(addMedication.mock.calls.map(c => [c[0], c[1]?.drug_name]))
       .not.toContainEqual(['PAT-B', 'Vancomycin'])
 
     // And the half-typed order for A must not be sitting open over B's chart.

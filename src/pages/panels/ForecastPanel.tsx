@@ -166,8 +166,8 @@ export default function ForecastPanel() {
       setCapacity(cap)
       setPatterns(pat)
       setError('')
-    } catch (e: any) {
-      setError(e.message || 'Failed to load forecast data')
+    } catch (e) {
+      setError((e as { message?: string }).message || 'Failed to load forecast data')
     } finally {
       setLoading(false)
     }

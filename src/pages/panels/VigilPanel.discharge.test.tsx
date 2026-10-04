@@ -58,7 +58,7 @@ function detail(over: Record<string, unknown> = {}) {
 }
 
 type FetchOpts = { method?: string; body?: string }
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- the review assertion reads opts from mock.calls
+// `_opts` is unused here: the review assertion reads it from mock.calls.
 const apiFetch = vi.fn(async (path: string, _opts?: FetchOpts): Promise<unknown> => {
   if (path.includes('/allergies')) return { allergies: [{ substance: 'Penicillin', reaction: 'Rash', severity: 'moderate' }] }
   if (path.includes('/discharge-advisory')) {

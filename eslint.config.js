@@ -27,6 +27,16 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      // A name that starts with `_` is unused on purpose (a mock's argument kept
+      // for its signature), and so is the sibling a rest pattern drops
+      // (`const { [id]: _gone, ...rest } = prev` is how a key is removed without
+      // mutating). Everything else unused is still an error.
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        ignoreRestSiblings: true,
+      }],
+    },
   },
   {
     // App code only: console.log/info/debug in a clinical browser put

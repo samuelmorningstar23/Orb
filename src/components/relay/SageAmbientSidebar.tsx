@@ -12,7 +12,6 @@ interface Props {
   onClose?: () => void;
 }
 
-const CONFIDENCE_THRESHOLD_SUGGESTION = 0.75;
 const CONFIDENCE_THRESHOLD_RISK = 0.80;
 const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -75,7 +74,7 @@ export default function SageAmbientSidebar({ channelId, open = false, onClose }:
     };
   }, [channelId, fetchMemory]);
 
-  const handleTransition = async (actionId: string, state: string, version: number) => {
+  const handleTransition = async (actionId: string, state: SageAction['state'], version: number) => {
     setLoadingActionId(actionId);
     setActionError(null);
     try {
@@ -84,10 +83,10 @@ export default function SageAmbientSidebar({ channelId, open = false, onClose }:
       // socket refresh: a confirm the drug-safety screen stopped must read as
       // blocked even when the socket is down, never as a bare "confirmed".
       setActions(prev => prev.map(a => a.id === actionId
-        ? { ...a, state: state as any, version: version + 1, handoff: res.handoff ?? a.handoff }
+        ? { ...a, state, version: version + 1, handoff: res.handoff ?? a.handoff }
         : a));
-    } catch (err: any) {
-      setActionError({ id: actionId, message: err?.message || 'This action could not be updated. Try again.' });
+    } catch (err) {
+      setActionError({ id: actionId, message: (err as Error)?.message || 'This action could not be updated. Try again.' });
       getSageActions(channelId).then(setActions).catch(console.error);
     } finally {
       setLoadingActionId(null);

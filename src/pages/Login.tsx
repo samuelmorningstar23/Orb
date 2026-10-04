@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth, type User, type UserRole } from '../App'
-import { apiFetch, setUser, authenticateSocket, type LoginResponse } from '../api/client'
+import { apiFetch, setUser, authenticateSocket, type ApiPermissionError, type LoginResponse } from '../api/client'
 import { getDeviceStatus, bindDevice, pinLogin, type DeviceStatus } from '../api/deviceAuth'
 import OrbLogo from '../components/OrbLogo'
 import MfaEnrollmentModal from '../components/MfaEnrollmentModal'
@@ -116,9 +116,9 @@ export default function Login() {
       // `orb_device` cookie. That is what makes a shoulder-surfed PIN worth
       // nothing on a personal laptop.
       applyLoginResponse(await pinLogin(employeeId, code), 'pin')
-    } catch (err: any) {
+    } catch (err) {
       setPin('')
-      const msg = String(err?.message || 'Sign-in failed')
+      const msg = String((err instanceof Error ? err.message : '') || 'Sign-in failed')
       if (msg.toLowerCase().includes('not enrolled')) {
         // The tablet lost (or never had) its binding. Say so and fall back to
         // the password form rather than letting them retype a PIN that cannot
@@ -143,8 +143,8 @@ export default function Login() {
       setDeviceSecret('')
       setShowDeviceSetup(false)
       setUsePin(true)
-    } catch (err: any) {
-      setError(String(err?.message || 'That setup code was not accepted.'))
+    } catch (err) {
+      setError(String((err instanceof Error ? err.message : '') || 'That setup code was not accepted.'))
     } finally {
       setLoading(false)
     }
@@ -170,8 +170,8 @@ export default function Login() {
       setUser(data.user)
       authenticateSocket()
       applyLoginResponse(data)
-    } catch (err: any) {
-      const msg = String(err?.message || 'Login failed')
+    } catch (err) {
+      const msg = String((err instanceof Error ? err.message : '') || 'Login failed')
       if (msg === 'mfa_required') {
         // Password verified — prompt for the authenticator code and remember the
         // credentials so the next submit can replay them with the code.
@@ -186,7 +186,7 @@ export default function Login() {
         // The 403 carries a short-lived, enrol-scoped ticket — enrol in place.
         // "Contact your administrator" was a dead end on a fresh appliance,
         // where this IS the only administrator.
-        const ticket = (err as any)?.mfaEnrollTicket as string | undefined
+        const ticket = (err as ApiPermissionError | undefined)?.mfaEnrollTicket
         resetMfa()
         if (ticket) {
           setMfaCreds({ id: employeeId, pw })

@@ -24,7 +24,7 @@ const detailFor = (id: string, name: string, bed: string) => ({
   risk: { level: 'stable', score: 0.1, raw_news2: 1, drivers: [], breakdown: [], single_param_3: false },
   trend: { trend: 'stable' },
 })
-const DETAIL: Record<string, any> = {
+const DETAIL: Record<string, ReturnType<typeof detailFor>> = {
   'PAT-A': detailFor('PAT-A', 'Anita Rao', '3'),
   'PAT-B': detailFor('PAT-B', 'Rahul Menon', '7'),
 }

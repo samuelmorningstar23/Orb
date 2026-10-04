@@ -29,13 +29,16 @@ const msg = (id: number, channel_id: string, content: string) => ({
   content, message_type: 'text', timestamp: '2026-08-06T10:00:00Z',
 })
 
-const pending: Record<string, Deferred<any[]>> = {}
+type ThreadRow = ReturnType<typeof msg>
+const pending: Record<string, Deferred<ThreadRow[]>> = {}
 const getMessages = vi.fn((channelId: string) => {
-  pending[channelId] = defer<any[]>()
+  pending[channelId] = defer<ThreadRow[]>()
   return pending[channelId].promise
 })
 
-const socketHandlers: Record<string, Function[]> = {}
+// What a socket.io listener receives: one payload, or none.
+type SocketHandler = (payload?: unknown) => void
+const socketHandlers: Record<string, SocketHandler[]> = {}
 vi.mock('../../api/client', () => ({
   getChannels: vi.fn(async () => CHANNELS),
   getAlerts: vi.fn(async () => []),
@@ -48,8 +51,8 @@ vi.mock('../../api/client', () => ({
   resolveRoomFit: vi.fn(async () => ({})),
   getUser: () => ({ id: 'me', name: 'Nurse Priya', role: 'nurse' }),
   socket: {
-    on: (ev: string, fn: Function) => { (socketHandlers[ev] ||= []).push(fn) },
-    off: (ev: string, fn: Function) => {
+    on: (ev: string, fn: SocketHandler) => { (socketHandlers[ev] ||= []).push(fn) },
+    off: (ev: string, fn: SocketHandler) => {
       socketHandlers[ev] = (socketHandlers[ev] || []).filter(f => f !== fn)
     },
     emit: vi.fn(),

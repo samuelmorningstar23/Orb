@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { transcribeAudio, structureNote, querySage, getScribeNoteVerification, retryScribeNoteVerification, editScribeNoteDraft, signScribeNote, rejectScribeNote, reviseScribeNote, getScribeAsrStatus, getUser, getPatients } from '../../api/client'
-import type { Patient, ScribeAsrStatus } from '../../api/client'
+import type { Patient, ScribeAsrStatus, ScribePipelineMeta, ScribeVerification } from '../../api/client'
 import { useStreamingTranscription } from '../../hooks/useStreamingTranscription'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
 import { useSageRuntime } from '../../contexts/SageRuntimeContext'
@@ -12,17 +12,12 @@ import { humaniseSignGateReason } from '../../lib/humanise'
 import { getQuickAdmitOptions, quickAdmit } from '../../api/scribeAdmission'
 import type { QuickAdmitOptions } from '../../api/scribeAdmission'
 import { hasPermission, PATIENT_WRITE } from '../../lib/roles'
+import { getSpeechRecognitionCtor, type SpeechRecognition, type SpeechRecognitionEvent } from '../../lib/speechRecognition'
 import './ScribePanel.css'
 
 /* ═══════════════════════════════════════════════════
    SCRIBE PANEL — Hybrid: Web Speech (live) + Whisper (accuracy)
    ═══════════════════════════════════════════════════ */
-
-// Type declaration for Web Speech API
-interface SpeechRecognitionEvent extends Event {
-  results: SpeechRecognitionResultList
-  resultIndex: number
-}
 
 export default function ScribePanel() {
   const [recording, setRecording] = useState(false)
@@ -59,19 +54,18 @@ export default function ScribePanel() {
   // A patient admitted since (here or from the shell) can be linked too.
   useDataChanged(() => { getPatients().then(setPatients).catch(() => {}) })
 
-  const recognitionRef = useRef<any>(null)
+  const recognitionRef = useRef<SpeechRecognition | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const transcriptEndRef = useRef<HTMLDivElement | null>(null)
   const finalTranscriptRef = useRef<string>('')  // accumulates Web Speech final results
-  const [streamingMode, setStreamingMode] = useState(false)
 
   // Live streaming transcription hook
   const streaming = useStreamingTranscription({
     language,
-    onFinalTranscript: (text, idx) => {
+    onFinalTranscript: (text) => {
       setTranscript(prev => prev + (prev ? ' ' : '') + text)
     },
     onError: (err) => setStatus(`⚠️ Streaming error: ${err}`),
@@ -116,9 +110,7 @@ export default function ScribePanel() {
     // 2) Web Speech API for instant real-time text. Cloud ASR = PHI egress, so
     // it only runs when the deployment posture permits cloud speech; the
     // local-Whisper accuracy pass (step 1) is always the source of truth.
-    const SR = cloudSpeechAllowed
-      ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
-      : null
+    const SR = cloudSpeechAllowed ? getSpeechRecognitionCtor() : null
     if (SR) {
       const recog = new SR()
       recog.continuous = true; recog.interimResults = true; recog.lang = 'en-US'
@@ -141,8 +133,8 @@ export default function ScribePanel() {
         setInterimText(currentInterim)
       }
       recog.onerror = () => {}
-      recog.onend = () => { if (recognitionRef.current) try { recog.start() } catch {} }
-      try { recog.start(); recognitionRef.current = recog } catch {}
+      recog.onend = () => { if (recognitionRef.current) try { recog.start() } catch { /* already started */ } }
+      try { recog.start(); recognitionRef.current = recog } catch { /* live captions are optional: the recording carries on without them */ }
     }
 
     setRecording(true); setStatus('🔴 Recording, speak now…')
@@ -152,7 +144,7 @@ export default function ScribePanel() {
 
   const stopRecording = () => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
-    if (recognitionRef.current) { const r = recognitionRef.current; recognitionRef.current = null; try { r.stop() } catch {} }
+    if (recognitionRef.current) { const r = recognitionRef.current; recognitionRef.current = null; try { r.stop() } catch { /* already stopped */ } }
     releaseMic('scribe')
     setInterimText(''); setRecording(false)
 
@@ -180,14 +172,14 @@ export default function ScribePanel() {
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
-      if (recognitionRef.current) try { recognitionRef.current.stop() } catch {}
+      if (recognitionRef.current) try { recognitionRef.current.stop() } catch { /* already stopped */ }
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') mediaRecorderRef.current.stop()
       streamRef.current?.getTracks().forEach(t => t.stop())
     }
   }, [])
 
-  const [verificationData, setVerificationData] = useState<any>(null)
-  const [pipelineData, setPipelineData] = useState<any>(null)
+  const [verificationData, setVerificationData] = useState<ScribeVerification | null>(null)
+  const [pipelineData, setPipelineData] = useState<ScribePipelineMeta | null>(null)
   const [showWarnings, setShowWarnings] = useState(false)
   const [currentNoteId, setCurrentNoteId] = useState<number | null>(null)
   const [noteStatus, setNoteStatus] = useState<string>('draft')
@@ -277,7 +269,7 @@ export default function ScribePanel() {
       if (result.pipeline) setPipelineData(result.pipeline)
       setStatus('Note structured')
     }
-    catch (err: any) { setStatus(`Structuring failed: ${err.message || 'Is Ollama running?'}`) }
+    catch (err) { setStatus(`Structuring failed: ${(err as Error).message || 'Is Ollama running?'}`) }
     finally { setProcessing(false) }
   }
 
@@ -353,7 +345,7 @@ export default function ScribePanel() {
                       <option key={p.id} value={p.id}>{p.name}{p.bed ? ` · ${p.bed}` : ''}</option>
                     ))}
                   </select>
-                  <select className="scribe-format-select" data-testid="scribe-format-select" value={noteFormat} onChange={e => setNoteFormat(e.target.value as any)}>
+                  <select className="scribe-format-select" data-testid="scribe-format-select" value={noteFormat} onChange={e => setNoteFormat(e.target.value as 'soap' | 'discharge' | 'handoff')}>
                     <option value="soap">SOAP Note</option>
                     <option value="discharge">Discharge Summary</option>
                     <option value="handoff">I-PASS Handoff</option>
@@ -770,7 +762,14 @@ ${structuredNote || transcript}`;
   )
 }
 
-function StructuredNoteModal({ onClose, structuredNote, processing, verificationData, pipelineData, showWarnings, setShowWarnings, noteId, noteStatus, onRetryVerification, onSign, onReject, onRevise, onSaveEdit, onAdmit }: { onClose: () => void, structuredNote: string, processing: boolean, verificationData?: any, pipelineData?: any, showWarnings: boolean, setShowWarnings: (v: boolean) => void, noteId?: number | null, noteStatus?: string, onRetryVerification?: (noteId: number) => void, onSign?: (noteId: number, acknowledgeUnverified?: boolean) => Promise<void>, onReject?: (noteId: number, reason: string) => Promise<void>, onRevise?: (noteId: number) => Promise<void>, onSaveEdit?: (noteId: number, content: string) => Promise<void>, onAdmit?: () => void }) {
+/** What apiFetch throws for the sign gate's 428 (scribe_routes sign route):
+ *  the status, with the structured detail kept whole. */
+interface SignGateError {
+  status?: number
+  detail?: { requires?: string; reasons?: string[]; verification_status?: string }
+}
+
+function StructuredNoteModal({ onClose, structuredNote, processing, verificationData, pipelineData, showWarnings, setShowWarnings, noteId, noteStatus, onRetryVerification, onSign, onReject, onRevise, onSaveEdit, onAdmit }: { onClose: () => void, structuredNote: string, processing: boolean, verificationData?: ScribeVerification | null, pipelineData?: ScribePipelineMeta | null, showWarnings: boolean, setShowWarnings: (v: boolean) => void, noteId?: number | null, noteStatus?: string, onRetryVerification?: (noteId: number) => void, onSign?: (noteId: number, acknowledgeUnverified?: boolean) => Promise<void>, onReject?: (noteId: number, reason: string) => Promise<void>, onRevise?: (noteId: number) => Promise<void>, onSaveEdit?: (noteId: number, content: string) => Promise<void>, onAdmit?: () => void }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(structuredNote);
@@ -794,8 +793,8 @@ function StructuredNoteModal({ onClose, structuredNote, processing, verification
     setActionError('');
     try {
       await action();
-    } catch (err: any) {
-      setActionError(err?.message || 'Request failed: nothing was saved. Please try again.');
+    } catch (err) {
+      setActionError((err as Error)?.message || 'Request failed: nothing was saved. Please try again.');
     } finally {
       setBusyAction(null);
     }
@@ -811,11 +810,12 @@ function StructuredNoteModal({ onClose, structuredNote, processing, verification
     try {
       await onSign(noteId, acknowledged || undefined);
       setUnverifiedAck(null);
-    } catch (err: any) {
-      if (err?.status === 428 && err?.detail?.requires === 'acknowledge_unverified') {
+    } catch (err) {
+      const gate = err as SignGateError | null | undefined;
+      if (gate?.status === 428 && gate?.detail?.requires === 'acknowledge_unverified') {
         setUnverifiedAck({
-          reasons: Array.isArray(err.detail.reasons) ? err.detail.reasons : [],
-          status: String(err.detail.verification_status ?? ''),
+          reasons: Array.isArray(gate.detail.reasons) ? gate.detail.reasons : [],
+          status: String(gate.detail.verification_status ?? ''),
         });
         return;
       }
@@ -851,7 +851,7 @@ function StructuredNoteModal({ onClose, structuredNote, processing, verification
   const isVerifyPending = verifyStatus === 'pending';
   const isVerifyFailed = verifyStatus === 'failed';
   const isVerifyComplete = verifyStatus === 'complete' || (verificationData && !verifyStatus && verificationData.verified !== undefined);
-  const hasWarnings = isVerifyComplete && (verificationData?.warnings?.length > 0 || verificationData?.omissions?.length > 0);
+  const hasWarnings = isVerifyComplete && ((verificationData?.warnings?.length ?? 0) > 0 || (verificationData?.omissions?.length ?? 0) > 0);
 
   const badgeStyle = (bg: string, clr: string, bdr: string): React.CSSProperties => ({ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 700, letterSpacing: '0.02em', background: bg, color: clr, border: `1px solid ${bdr}` });
 
@@ -884,7 +884,7 @@ function StructuredNoteModal({ onClose, structuredNote, processing, verification
         disabled={!hasWarnings}
         aria-expanded={hasWarnings ? showWarnings : undefined}
         onClick={() => hasWarnings && setShowWarnings(!showWarnings)}
-        title={verificationData.confidence ? `Confidence: ${(verificationData.confidence * 100).toFixed(0)}%` : undefined}
+        title={verificationData?.confidence ? `Confidence: ${(verificationData.confidence * 100).toFixed(0)}%` : undefined}
         style={{
           ...badgeStyle(
             hasWarnings ? 'color-mix(in srgb, var(--status-warn) 10%, transparent)' : 'color-mix(in srgb, var(--status-ok) 10%, transparent)',
@@ -944,8 +944,8 @@ function StructuredNoteModal({ onClose, structuredNote, processing, verification
           <div style={{ marginBottom: 16, padding: '12px 16px', background: 'color-mix(in srgb, var(--status-warn) 10%, transparent)', borderLeft: '3px solid var(--status-warn)', borderRadius: '4px' }}>
             <h4 style={{ margin: '0 0 8px 0', color: 'var(--status-warn)', fontSize: '0.9rem' }}>Verification Findings</h4>
             <ul style={{ margin: 0, paddingLeft: 20, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-              {verificationData?.warnings?.map((w: any, i: number) => <li key={`w-${i}`} style={{ marginBottom: 4 }}><strong style={{ color: 'var(--text-primary)' }}>[{w.section || 'General'}]</strong> {w.text} <span style={{ opacity: 0.5, fontSize: '0.8em', marginLeft: 6 }}>({w.type})</span></li>)}
-              {verificationData?.omissions?.map((o: any, i: number) => <li key={`o-${i}`} style={{ marginBottom: 4 }}><strong style={{ color: 'var(--text-primary)' }}>[Omission]</strong> {o.text}</li>)}
+              {verificationData?.warnings?.map((w, i) => <li key={`w-${i}`} style={{ marginBottom: 4 }}><strong style={{ color: 'var(--text-primary)' }}>[{w.section || 'General'}]</strong> {w.text} <span style={{ opacity: 0.5, fontSize: '0.8em', marginLeft: 6 }}>({w.type})</span></li>)}
+              {verificationData?.omissions?.map((o, i) => <li key={`o-${i}`} style={{ marginBottom: 4 }}><strong style={{ color: 'var(--text-primary)' }}>[Omission]</strong> {o.text}</li>)}
             </ul>
           </div>
         )}

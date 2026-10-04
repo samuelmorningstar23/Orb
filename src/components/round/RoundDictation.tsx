@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { transcribeAudio } from '../../api/client'
 import { useSageRuntime } from '../../contexts/SageRuntimeContext'
+import { getSpeechRecognitionCtor } from '../../lib/speechRecognition'
 
 /** There is deliberately no 'queued' state.
  *
@@ -203,16 +204,13 @@ export default function RoundDictation({
 
     // Live "hearing…" line only. Cloud ASR is PHI egress, so it runs only when
     // the server's posture allows it, and its text never enters the note.
-    const SR = cloudSpeechAllowed
-      ? ((window as unknown as Record<string, unknown>).SpeechRecognition
-        ?? (window as unknown as Record<string, unknown>).webkitSpeechRecognition)
-      : null
+    const SR = cloudSpeechAllowed ? getSpeechRecognitionCtor() : null
     if (typeof SR === 'function') {
       try {
-        const recog = new (SR as new () => any)()
+        const recog = new SR()
         recog.continuous = true
         recog.interimResults = true
-        recog.onresult = (event: any) => {
+        recog.onresult = (event) => {
           let interim = ''
           for (let i = event.resultIndex; i < event.results.length; i++) {
             interim += event.results[i][0].transcript

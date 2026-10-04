@@ -4,9 +4,129 @@
  */
 import './PulseWidget.css'
 
+/* GET /pulse/dashboard (pulse_service.get_pulse_dashboard). A feed that failed
+   comes back as a stub with `error` set and its readings absent, which is why
+   so much below is optional. */
+
+/** One clinical flag the Pulse engine raised (weather, AQI, flu). */
+export interface PulseClinicalFlag {
+  type: string
+  severity: string
+  icon: string
+  title: string
+  message: string
+  affected_conditions: string[]
+  recommended_actions: string[]
+}
+
+/** Open-Meteo's current conditions. Each reading is null when the feed
+ *  omitted it. */
+export interface PulseCurrentWeather {
+  temperature: number | null
+  feels_like: number | null
+  humidity: number | null
+  wind_speed_kmh: number | null
+  pressure_hpa: number | null
+  weather_code: number
+  description: string
+}
+
+export interface PulseForecastDay {
+  date: string
+  day_label: string
+  temp_max: number
+  temp_min: number
+  feels_like_max: number
+  precipitation_mm: number
+  precipitation_prob: number
+  wind_max_kmh: number
+  weather_code: number
+  description: string
+}
+
+export interface PulseWeather {
+  /** `{}` when the weather feed failed. */
+  current: PulseCurrentWeather | Record<string, never>
+  forecast: PulseForecastDay[]
+  clinical_flags: PulseClinicalFlag[]
+  location?: { lat: number; lon: number }
+  last_updated?: string
+  error?: string
+}
+
+export interface PulsePollutants {
+  pm2_5: number | null
+  pm10: number | null
+  co: number | null
+  no2: number | null
+  o3: number | null
+}
+
+/** A reading carries a numeric `aqi`; a failed feed carries `aqi: null`, the
+ *  category 'Unavailable' and `error`, and nothing else. */
+export type PulseAirQuality =
+  | {
+      aqi: number
+      category: string
+      color: string
+      pollutants: PulsePollutants
+      clinical_flags: PulseClinicalFlag[]
+      last_updated: string
+      error?: undefined
+    }
+  | {
+      aqi: null
+      category: string
+      color?: undefined
+      pollutants?: undefined
+      clinical_flags: PulseClinicalFlag[]
+      last_updated?: undefined
+      error: string
+    }
+
+export interface PulseFluSurveillance {
+  source?: string
+  week?: string
+  year?: string
+  ili_percentage?: number
+  total_patients?: number
+  activity_level: string
+  clinical_flags: PulseClinicalFlag[]
+  last_updated?: string
+  error?: string
+}
+
+export interface PulseDrugRecall {
+  recall_number: string
+  product: string
+  reason: string
+  classification: string
+  status: string
+  report_date: string
+  recall_initiation_date: string
+  recalling_firm: string
+  city: string
+  state: string
+}
+
+export interface PulseData {
+  weather: PulseWeather
+  air_quality: PulseAirQuality
+  flu_surveillance: PulseFluSurveillance
+  drug_recalls: PulseDrugRecall[]
+  active_alerts: PulseClinicalFlag[]
+  alert_count: number
+  last_refresh: string
+}
+
+/** The dashboard, plus the alert the clinician opened (the 'alert' view). */
+export interface PulseDetailData extends PulseData {
+  _selectedAlert: PulseClinicalFlag | null
+}
+
 interface Props {
   view: string
-  data: any
+  data: PulseDetailData
   onBack: () => void
 }
 
@@ -48,7 +168,7 @@ const Row = ({ label, value }: { label: string; value: string | number | undefin
 export default function PulseDetail({ view, data, onBack }: Props) {
   if (view === 'weather') {
     const w = data?.weather
-    const c = w?.current || {}
+    const c: Partial<PulseCurrentWeather> = w?.current || {}
     return (
       <div className="pulse-detail">
         <div className="pulse-detail__header">
@@ -69,7 +189,7 @@ export default function PulseDetail({ view, data, onBack }: Props) {
           {w?.forecast?.length > 0 && (
             <>
               <div className="pulse-section-label" style={{ marginTop: 6 }}>7-Day Forecast</div>
-              {w.forecast.map((d: any, i: number) => (
+              {w.forecast.map((d, i: number) => (
                 <Row key={i} label={d.day_label || d.date} value={`${Math.round(d.temp_max)}° / ${Math.round(d.temp_min)}° · ${d.description}`} />
               ))}
             </>
@@ -79,7 +199,7 @@ export default function PulseDetail({ view, data, onBack }: Props) {
             <>
               <div className="pulse-section-label" style={{ marginTop: 6 }}>Clinical Recommendations</div>
               <div className="pulse-detail__actions">
-                {w.clinical_flags.flatMap((f: any) =>
+                {w.clinical_flags.flatMap(f =>
                   (f.recommended_actions || []).map((a: string, j: number) => <ActionItem key={j} text={a} />)
                 )}
               </div>
@@ -94,7 +214,7 @@ export default function PulseDetail({ view, data, onBack }: Props) {
 
   if (view === 'aqi') {
     const a = data?.air_quality || {}
-    const p = a.pollutants || {}
+    const p: Partial<PulsePollutants> = a.pollutants || {}
     return (
       <div className="pulse-detail">
         <div className="pulse-detail__header">
@@ -117,7 +237,7 @@ export default function PulseDetail({ view, data, onBack }: Props) {
             <>
               <div className="pulse-section-label" style={{ marginTop: 6 }}>Clinical Recommendations</div>
               <div className="pulse-detail__actions">
-                {a.clinical_flags.flatMap((f: any) =>
+                {a.clinical_flags.flatMap(f =>
                   (f.recommended_actions || []).map((act: string, j: number) => <ActionItem key={j} text={act} />)
                 )}
               </div>
@@ -147,13 +267,13 @@ export default function PulseDetail({ view, data, onBack }: Props) {
           <Row label="Source" value={f.source || '—'} />
           <Row label="Surveillance Week" value={f.week || '—'} />
           <Row label="Year" value={f.year || '—'} />
-          {f.total_patients > 0 && <Row label="Patients Surveyed" value={f.total_patients.toLocaleString()} />}
+          {f.total_patients != null && f.total_patients > 0 && <Row label="Patients Surveyed" value={f.total_patients.toLocaleString()} />}
 
           {f.clinical_flags?.length > 0 && (
             <>
               <div className="pulse-section-label" style={{ marginTop: 6 }}>Clinical Recommendations</div>
               <div className="pulse-detail__actions">
-                {f.clinical_flags.flatMap((fl: any) =>
+                {f.clinical_flags.flatMap(fl =>
                   (fl.recommended_actions || []).map((a: string, j: number) => <ActionItem key={j} text={a} />)
                 )}
               </div>

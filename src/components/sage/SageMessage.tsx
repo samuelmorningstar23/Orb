@@ -3,7 +3,8 @@ import OrbLogo from '../OrbLogo'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import DOMPurify from 'dompurify'
-import { describeAnswerProvenance } from '../../api/thinkingMode'
+import { describeAnswerProvenance, type SageProvenance } from '../../api/thinkingMode'
+import type { SageSourceRef, SageStreamMetadata, SageStreamTiming, SageStructuredResponse, SageVoiceTiming } from '../../api/client'
 import Icon, { type IconName } from '../common/Icon'
 import { noSourcesNote, sourcesHeading, type SageSource } from './sageSources'
 
@@ -16,12 +17,6 @@ const NOTICE_ICON: Record<'fast' | 'floor' | 'unsatisfied', IconName> = {
 }
 
 // ─── Utilities ───
-function stripXmlTags(text: string): string {
-  if (!text) return '';
-  let cleaned = text.replace(/^```[a-zA-Z]*\s*\n?/g, '').replace(/\n?```\s*$/g, '');
-  cleaned = cleaned.replace(/<\/?[a-z_]+>/gi, '');
-  return cleaned.trim();
-}
 
 // ── Fast-contract markers ──
 // Sage's fast lane opens every reply with `NOACT|`, or `ACT|{intent json}` when
@@ -79,7 +74,7 @@ function cutContractTail(text: string): string {
 
 function sanitizeAssistantContent(rawText: string): string {
   if (!rawText) return '';
-  let text = stripContractMarkers(rawText)
+  const text = stripContractMarkers(rawText)
     .replace(/^```[a-zA-Z]*\s*\n?/g, '').replace(/\n?```\s*$/g, '');
 
   // If the text does not contain typical XML tags like concise_answer or clinical_assessment,
@@ -116,20 +111,9 @@ function sanitizeAssistantContent(rawText: string): string {
   return '';
 }
 
-// The LLM sometimes emits literal HTML line breaks (<br>, <br/>) inside its answer.
-// react-markdown escapes raw HTML, so those tags would render as visible text —
-// convert them to real paragraph breaks before markdown rendering.
-function normalizeMarkdown(text: string): string {
+function formatForDisplay(text: string | undefined): string {
   if (!text) return '';
-  return text
-    .replace(/<br\s*\/?>/gi, '\n\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-function formatForDisplay(text: string): string {
-  if (!text) return '';
-  let formatted = text
+  const formatted = text
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/^(\s*)[-*]\s+/gm, '$1• ')
     .replace(/\*\*([^\n*]+?)\*\*/g, '<strong>$1</strong>')
@@ -143,7 +127,9 @@ function formatForDisplay(text: string): string {
 // Trust tiers, most trusted first: 1-2 are the hospital's own approved policy,
 // 3+ are external guidance. A clinician weighs "our SOP says" very differently
 // from "a guideline somewhere says", so the tier is shown, never averaged away.
-const TRUST_TIER_LABEL: Record<number, string> = {
+// Keyed by the server's int tier. SageSourceRef (api/client) declares the
+// field a string, so the lookup is typed to take either ("3" finds tier 3).
+const TRUST_TIER_LABEL: Record<string | number, string> = {
   1: 'Hospital policy',
   2: 'Hospital formulary',
   3: 'External guideline',
@@ -160,14 +146,18 @@ const ATTRIBUTION_LABEL: Record<string, string> = {
   context_only: 'Retrieved, not used',
 };
 
-function attributionOf(s: SageSource): string {
+/** A source row under either declaration: SageSource (sageSources.ts, the
+ *  int `trust_tier` the server sends) or the stream's SageSourceRef. */
+type SourceRow = SageSource | SageSourceRef;
+
+function attributionOf(s: SourceRow): string {
   if (s.attribution && ATTRIBUTION_LABEL[s.attribution]) return s.attribution;
   return s.cited ? 'model_cited' : 'context_only';  // a server older than `attribution`
 }
 
 const ATTRIBUTION_RANK: Record<string, number> = { model_cited: 0, system_attributed: 1, context_only: 2 };
 
-export function SageSources({ sources, citationBasis }: { sources: SageSource[]; citationBasis?: string }) {
+export function SageSources({ sources, citationBasis }: { sources?: readonly SourceRow[]; citationBasis?: string }) {
   if (!sources || sources.length === 0) return null;
 
   // Cited first, then Orb's matches, then context the answer did not use.
@@ -236,7 +226,29 @@ export function SageStageStatus({ stage, startedAt }: { stage: 'retrieving' | 'g
   );
 }
 
-function SageDetailsExpander({ sections, defaultExpanded, sources, citationBasis, citedCount, attributedCount, patientName, patientContextUsed, patientSource, queryScope }: any) {
+/** One detail section of a structured answer; `content` is absent when the
+ *  model wrote nothing for it. */
+interface DetailSection {
+  key: string;
+  icon: IconName;
+  title: string;
+  content?: string;
+}
+
+interface DetailsExpanderProps {
+  sections: DetailSection[];
+  defaultExpanded: boolean;
+  sources?: readonly SourceRow[];
+  citationBasis?: string;
+  citedCount?: number;
+  attributedCount?: number;
+  patientName?: string | null;
+  patientContextUsed?: boolean;
+  patientSource?: string | null;
+  queryScope?: string;
+}
+
+function SageDetailsExpander({ sections, defaultExpanded, sources, citationBasis, citedCount, attributedCount, patientName, patientContextUsed, patientSource, queryScope }: DetailsExpanderProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   // Sources alone are worth expanding for, even when the model produced no
@@ -273,7 +285,7 @@ function SageDetailsExpander({ sections, defaultExpanded, sources, citationBasis
 
       {expanded && (
         <div className="sage-details-panel">
-          {sections.map((s: any) => (
+          {sections.map((s) => (
             <div key={s.key} className="sage-details-section">
               <div className="sage-details-title">
                 <Icon name={s.icon} size={12} /> {s.title}
@@ -343,8 +355,34 @@ function safetyLines(safety: MedicationSafety | null): string[] {
   return lines;
 }
 
-function SageActionCard({ actionState }: { actionState: any }) {
-  const payload = actionState?.requested_payload || {};
+/** The model's action intent, parsed from its JSON. Its keys are whatever the
+ *  model wrote, which is why the order fields are coerced with String(). */
+interface SageActionPayload {
+  action_type?: string;
+  medication?: string;
+  dose?: unknown;
+  route?: unknown;
+  frequency?: unknown;
+  [key: string]: unknown;
+}
+
+/** The `action_state` on an answer that asks for a chart change. The stream
+ *  types it as an open record (SageStreamMetadata); sage_routes builds it in
+ *  three shapes (drafted, not in the formulary, unsupported) and every one
+ *  carries these fields. */
+interface SageActionState extends Record<string, unknown> {
+  action_type: string;
+  target_patient: string;
+  /** Parsed JSON, or the raw intent string when it was not JSON. */
+  requested_payload: SageActionPayload | string;
+  status_code: string;
+  safe_detail_message: string;
+}
+
+function SageActionCard({ actionState }: { actionState: SageActionState }) {
+  // A raw string intent reads as an empty payload: every field below is
+  // undefined on it, exactly as on {}.
+  const payload = (actionState?.requested_payload || {}) as SageActionPayload;
   const [localStatus, setLocalStatus] = useState(actionState?.status_code);
   const [isApproving, setIsApproving] = useState(false);
   const [fields, setFields] = useState<OrderFields>(() => ({
@@ -516,17 +554,35 @@ function SageActionCard({ actionState }: { actionState: any }) {
 }
 
 // ─── Main Message Component ───
+/** What a Sage turn carries in `metadata`: the stream's metadata event, the
+ *  parsed sections under `structured`, the voice lane's timing, `status`
+ *  'stopped' when the clinician stopped it, or the slimmer set a stored turn
+ *  reloads with (SageHistoryMessage). */
+export interface SageTurnMetadata extends Omit<SageStreamMetadata, 'timing'> {
+  timing?: SageStreamTiming | SageVoiceTiming;
+  structured?: SageStructuredResponse;
+  status?: 'stopped';
+}
+
+/** One message in a Sage thread. */
+export interface SageChatMessage {
+  role: string;
+  content: string;
+  metadata?: SageTurnMetadata;
+}
+
 interface Props {
-  message: { role: string; content: string; metadata?: any }
+  message: SageChatMessage
   isStreaming: boolean
   isSpeaking: boolean
 }
 
-export function SageMessage({ message, isStreaming, isSpeaking }: Props) {
+export function SageMessage({ message, isStreaming }: Props) {
   const isAssistant = message.role === 'assistant';
   
   const structured = message.metadata?.structured;
-  const actionState = message.metadata?.action_state;
+  // The wire type leaves action_state an open record; see SageActionState.
+  const actionState = message.metadata?.action_state as SageActionState | null | undefined;
   
   // Only sanitize if it's an assistant message. User messages pass through unmodified.
   const visibleText = isAssistant 
@@ -543,7 +599,7 @@ export function SageMessage({ message, isStreaming, isSpeaking }: Props) {
     { key: 'clinical_assessment', icon: 'stethoscope', title: 'Clinical Assessment', content: structured.clinical_assessment },
     { key: 'caveats', icon: 'alert', title: 'Caveats', content: structured.caveats },
     { key: 'escalation', icon: 'siren', title: 'Escalation', content: structured.escalation },
-  ] satisfies { key: string; icon: IconName; title: string; content: string }[]).filter(s => s.content && !['none', 'none.', 'no patient context.', 'no local policy retrieved.', 'no external guidance retrieved.'].includes(s.content.toLowerCase().trim())) : [];
+  ] satisfies DetailSection[]).filter(s => s.content && !['none', 'none.', 'no patient context.', 'no local policy retrieved.', 'no external guidance retrieved.'].includes(s.content.toLowerCase().trim())) : [];
 
   return (
     <div className={`sage-msg sage-msg--${message.role}`}>
@@ -572,9 +628,9 @@ export function SageMessage({ message, isStreaming, isSpeaking }: Props) {
                 <Icon name="search" size={12} /> Limited evidence: Verify independently
               </div>
             )}
-            {message.metadata.data_completeness?.missing?.length > 0 && message.metadata.patient_context_used && !actionState && (
+            {(message.metadata.data_completeness?.missing?.length ?? 0) > 0 && message.metadata.patient_context_used && !actionState && (
               <div className="sage-banner sage-banner--warning">
-                <Icon name="alert" size={12} /> Partial data: {message.metadata.data_completeness.missing.join(', ')}
+                <Icon name="alert" size={12} /> Partial data: {message.metadata.data_completeness?.missing?.join(', ')}
               </div>
             )}
             {/* The primary model was evicted, so this answer came from the
@@ -592,7 +648,10 @@ export function SageMessage({ message, isStreaming, isSpeaking }: Props) {
                 clinical-effort fact). Both can be true at once, and a clinician
                 needs both. Renders nothing for the ordinary careful answer. */}
             {(() => {
-              const notice = describeAnswerProvenance(message.metadata.provider);
+              // SageProviderInfo (api/client) and SageProvenance
+              // (api/thinkingMode) declare the same `provider` object; the
+              // first types preferred_model and thinking_tier more loosely.
+              const notice = describeAnswerProvenance(message.metadata.provider as SageProvenance | null | undefined);
               if (!notice) return null;
               const tone =
                 notice.kind === 'unsatisfied' ? 'sage-banner--danger'

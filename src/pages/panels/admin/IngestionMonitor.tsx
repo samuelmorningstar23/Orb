@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { getIngestionStatus } from '../../../api/client'
+import { getIngestionStatus, type IngestionEvent } from '../../../api/client'
 import { SourceBadge, ParseStatusBadge } from './AdminBadges'
 import { AdminLoadingState, AdminErrorState, AdminEmptyState } from './AdminEmptyState'
 import { formatClinicalDateTime } from '../../../lib/datetime'
+import QuarantineQueue from '../../../components/lab/QuarantineQueue'
 
 /* Where the vitals on this appliance come from, in words. The raw setting
    ("simulation", "hybrid") printed here as-is. */
@@ -17,7 +18,7 @@ const STATUS_WORD: Record<string, string> = {
 }
 
 export default function IngestionMonitor() {
-  const [events, setEvents] = useState<any[]>([])
+  const [events, setEvents] = useState<IngestionEvent[]>([])
   const [mode, setMode] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -87,7 +88,7 @@ export default function IngestionMonitor() {
               </tr>
             </thead>
             <tbody>
-              {events.map((e: any) => (
+              {events.map((e) => (
                 <tr key={e.id}>
                   <td className="admin-td--mono admin-td--small">{formatClinicalDateTime(e.received_at, { seconds: true })}</td>
                   <td><SourceBadge source={e.source_type} /></td>
@@ -103,6 +104,11 @@ export default function IngestionMonitor() {
           </table>
         </div>
       )}
+
+      {/* Results that matched no patient (lis-19), read only: counts and a list
+          with no identifiers or values. Laboratory staff decide them on the
+          Laboratory screen. Renders nothing while the queue is off and empty. */}
+      <QuarantineQueue mode="monitor" />
     </div>
   )
 }

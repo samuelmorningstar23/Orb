@@ -43,8 +43,8 @@ export default function RoomFitWarning({
     try {
       const out = await resolveRoomFit(flagId, decision)
       onResolved(out.flag)
-    } catch (err: any) {
-      setError(err?.message || 'Could not record that. Please try again.')
+    } catch (err) {
+      setError((err instanceof Error ? err.message : '') || 'Could not record that. Please try again.')
     } finally {
       setBusy(null)
     }

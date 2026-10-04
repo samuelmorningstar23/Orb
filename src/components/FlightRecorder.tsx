@@ -32,6 +32,12 @@ interface TimelineEvent {
   correlation_id: string | null
 }
 
+/** GET /flight-recorder/event/{source}/{id}: the raw row behind one entry. */
+interface EventDetail {
+  source: EventSource
+  event: Record<string, unknown>
+}
+
 interface VerifyResult {
   ok: boolean
   broken_at: number | null
@@ -61,7 +67,7 @@ export default function FlightRecorder() {
   const [patientFilter, setPatientFilter] = useState('')
   const [selectedIdx, setSelectedIdx] = useState(0)
   const [playing, setPlaying] = useState(false)
-  const [detail, setDetail] = useState<any | null>(null)
+  const [detail, setDetail] = useState<EventDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const timerRef = useRef<number | null>(null)
   const debounceRef = useRef<number | null>(null)
@@ -125,7 +131,7 @@ export default function FlightRecorder() {
     if (!selected) { setDetail(null); return }
     let alive = true
     setDetailLoading(true)
-    apiFetch<any>(`/flight-recorder/event/${selected.source}/${encodeURIComponent(String(selected.id))}`)
+    apiFetch<EventDetail>(`/flight-recorder/event/${selected.source}/${encodeURIComponent(String(selected.id))}`)
       .then((d) => { if (alive) setDetail(d) })
       .catch(() => { if (alive) setDetail(null) })
       .finally(() => { if (alive) setDetailLoading(false) })

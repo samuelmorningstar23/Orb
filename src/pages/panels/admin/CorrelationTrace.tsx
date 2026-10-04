@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { getAuditLogs, type AuditLog } from '../../../api/client'
-import { OutcomeBadge, ActionIcon } from './AdminBadges'
+import { OutcomeBadge } from './AdminBadges'
 import { AdminLoadingState, AdminErrorState, AdminEmptyState } from './AdminEmptyState'
 
 interface Props {
@@ -8,21 +8,6 @@ interface Props {
 }
 
 /* Pipeline step ordering for visual flow */
-const PIPELINE_ORDER = [
-  'ingestion_request_received',
-  'ingestion_parse_success',
-  'ingestion_parse_failure',
-  'vital_inserted',
-  'observation_inserted',
-  'news2_recomputed',
-  'vigil_alert_generated',
-  'relay_alert_generated',
-]
-
-function stepIndex(action: string): number {
-  const idx = PIPELINE_ORDER.indexOf(action)
-  return idx >= 0 ? idx : 99
-}
 
 export default function CorrelationTrace({ correlationId }: Props) {
   const [events, setEvents] = useState<AuditLog[]>([])
@@ -51,7 +36,7 @@ export default function CorrelationTrace({ correlationId }: Props) {
 
   const formatTime = (ts: string) => {
     const d = new Date(ts)
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 } as any)
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 })
   }
 
   const getNodeColor = (outcome: string) => {

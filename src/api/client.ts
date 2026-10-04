@@ -4,7 +4,7 @@
  */
 
 import { io } from 'socket.io-client';
-import type { News2 } from './nurse';
+import type { News2, ObsSchedule } from './nurse';
 import { newId } from '../lib/id';
 import { RELAY_PAGE_SIZE } from '../lib/relayPaging';
 
@@ -59,7 +59,7 @@ if (getToken() || getCsrfToken()) socket.connect();
 /** Re-attach the current token and (re)connect the socket after login. */
 export function authenticateSocket(): void {
   // Refresh the handshake auth so a freshly stored token is used on (re)connect.
-  (socket.auth as any) = { token: getToken() };
+  socket.auth = { token: getToken() };
   if (socket.connected) {
     socket.disconnect();
   }
@@ -69,7 +69,7 @@ export function authenticateSocket(): void {
 /** Disconnect the socket and drop its auth on logout, so the previous user's
  *  authenticated realtime session is not silently kept open. */
 export function deauthenticateSocket(): void {
-  (socket.auth as any) = { token: null };
+  socket.auth = { token: null };
   if (socket.connected) {
     socket.disconnect();
   }
@@ -335,6 +335,27 @@ export function errorDetailMessage(detail: unknown, status: number): string {
   return unreadableReply(status)
 }
 
+/** The structured body of a 403. The RBAC layer sends `permission_denied`
+ *  with the permissions involved; other refusals (`mfa_enrollment_required`,
+ *  `allergy_override_not_permitted`, ...) carry their own fields. A plain
+ *  string detail arrives here as `{ message }`. */
+export interface ApiPermissionDetail {
+  error?: string;
+  message?: string;
+  required?: string[];
+  missing?: string[];
+  [key: string]: unknown;
+}
+
+/** Thrown by apiFetch and handleResponseError on a 403. */
+export interface ApiPermissionError extends Error {
+  status: 403;
+  permissions: ApiPermissionDetail;
+  /** The MFA self-enrolment ticket, when the server issued one in the
+   *  MFA_ENROLL_TICKET_HEADER response header (apiFetch only). */
+  mfaEnrollTicket?: string;
+}
+
 /** Generic fetch wrapper with error handling */
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   // Headers are (re)built per attempt: a refresh rotates the CSRF cookie, so a
@@ -366,9 +387,9 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     // Structured 403 from RBAC layer
     if (response.status === 403) {
       const detail = typeof error.detail === 'object' ? error.detail : { message: error.detail };
-      const permError = new Error(detail.message || 'Insufficient permissions');
-      (permError as any).status = 403;
-      (permError as any).permissions = detail;
+      const permError = new Error(detail.message || 'Insufficient permissions') as ApiPermissionError;
+      permError.status = 403;
+      permError.permissions = detail;
       // MFA self-enrolment ticket. When a role in ORB_MFA_REQUIRED_ROLES signs in
       // with the right password but has no TOTP factor yet, the server answers
       // 403 mfa_enrollment_required AND issues a 10-minute, enrol-scoped JWT in
@@ -377,7 +398,7 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
       // was unreachable from the UI — which hard-locked the first (and only)
       // admin out of a fresh appliance, with no second admin to "contact".
       const ticket = response.headers.get(MFA_ENROLL_TICKET_HEADER);
-      if (ticket) (permError as any).mfaEnrollTicket = ticket;
+      if (ticket) permError.mfaEnrollTicket = ticket;
       throw permError;
     }
 
@@ -438,9 +459,9 @@ export async function handleResponseError(response: Response): Promise<never> {
 
   if (response.status === 403) {
     const detail = typeof error.detail === 'object' ? error.detail : { message: error.detail };
-    const permError = new Error(detail.message || 'Insufficient permissions');
-    (permError as any).status = 403;
-    (permError as any).permissions = detail;
+    const permError = new Error(detail.message || 'Insufficient permissions') as ApiPermissionError;
+    permError.status = 403;
+    permError.permissions = detail;
     throw permError;
   }
 
@@ -491,7 +512,9 @@ export interface OfflineRequest {
   id: string;
   url: string;
   method: string;
-  body: any;
+  /** The request body as the caller passed it (replayed verbatim if a
+   *  string, JSON-encoded otherwise). */
+  body: unknown;
   timestamp: number;
   /** Idempotency-Key sent with the replay so the server can dedupe a request it
    *  already processed (e.g. the response was lost in transit and we retry). */
@@ -549,7 +572,7 @@ export function clearForeignOfflineQueue(userId: string | null): OfflineRequest[
   return foreign;
 }
 
-function queueRequest(path: string, method: string, body: any, idempotencyKey?: string) {
+function queueRequest(path: string, method: string, body: unknown, idempotencyKey?: string) {
   const queue = getOfflineQueue();
   queue.push({
     id: newId(),
@@ -780,7 +803,183 @@ export async function getPatients(): Promise<Patient[]> {
   return apiFetch('/vigil/patients');
 }
 
-export async function getPatientDetail(patientId: string): Promise<any> {
+/** One stored vitals row as the chart and the sparkline receive it. `source`
+ *  is the row's provenance ('simulated' for the simulator), null on a
+ *  database that predates the column. */
+export interface ChartVitalsRow {
+  timestamp: string;
+  heart_rate: number | null;
+  systolic_bp: number | null;
+  diastolic_bp: number | null;
+  spo2: number | null;
+  temperature: number | null;
+  respiratory_rate: number | null;
+  source: string | null;
+}
+
+/** NEWS2 of the chart's newest vitals row (vigil_service.risk_for_row): the
+ *  full score, or the no-vitals stub (score 0, stable, no breakdown) when
+ *  nothing is recorded. The CfC overlay adds the `cfc` fields when a trained
+ *  checkpoint is loaded. */
+export type PatientRisk = Pick<News2, 'score' | 'level' | 'drivers' | 'scoring_model'>
+  & Partial<Omit<News2, 'score' | 'level' | 'drivers' | 'scoring_model'>>
+  & {
+    cfc?: Record<string, { risk_by_horizon: unknown; peak_risk: number }>;
+    cfc_primary_risk?: number;
+    cfc_seq_len?: number;
+  };
+
+/** Recent-vs-earlier vitals direction (vigil_service.get_vitals_trend). */
+export interface VitalsTrend {
+  trend: 'deteriorating' | 'improving' | 'stable' | 'insufficient_data';
+  /** Why there is no trend, on 'insufficient_data' only. */
+  reason?: string;
+  hr_delta?: number | null;
+  sbp_delta?: number | null;
+  spo2_delta?: number | null;
+}
+
+/** A `patients` row as the chart serves it, plus what the route joins on.
+ *  Every column of the row is sent (`p.*`), so columns added by later
+ *  migrations arrive too; the named ones are what the chart reads. */
+export interface ChartPatientRecord {
+  id: string;
+  name: string;
+  mrn: string;
+  bed: string | null;
+  ward: string | null;
+  admission_date: string | null;
+  diagnosis: string | null;
+  status: string;
+  age: number | null;
+  date_of_birth?: string | null;
+  sex: string | null;
+  attending_doctor_id: string | null;
+  attending_doctor_name: string | null;
+  on_scale_2?: number | null;
+  comorbidities: string[];
+  /** The admission this chart belongs to: the active one, else the newest. */
+  admission_id: string | null;
+  [column: string]: unknown;
+}
+
+/** A `clinical_documents` row (a note, a ward round, a lab report). */
+export interface ClinicalDocumentRow {
+  id: number;
+  patient_id: string;
+  doc_type: string;
+  title: string;
+  content: string;
+  author_id: string | null;
+  created_at: string;
+  /** 'simulated' for a simulator's result. */
+  source?: string | null;
+  idempotency_key?: string | null;
+}
+
+/** A `scribe_notes` row. The JSON columns arrive as stored TEXT here; the
+ *  verification route is the one that parses them. */
+export interface ScribeNoteRow {
+  id: number;
+  patient_id: string | null;
+  author_id: string;
+  raw_transcript: string;
+  structured_note: string | null;
+  note_format: 'soap' | 'discharge' | 'handoff' | 'raw' | null;
+  audio_path: string | null;
+  verification_json: string | null;
+  pipeline_meta_json: string | null;
+  created_at: string;
+  status?: string;
+  version?: number;
+  supersedes_note_id?: number | null;
+  signed_by?: string | null;
+  signed_at?: string | null;
+  finalized_at?: string | null;
+  rejected_by?: string | null;
+  rejected_at?: string | null;
+  rejection_reason?: string | null;
+  last_edited_by?: string | null;
+  last_edited_at?: string | null;
+  ai_generated?: number;
+  unverified_ack_by?: string | null;
+  unverified_ack_at?: string | null;
+}
+
+/** A `lens_analyses` row, with `image_url` (the authenticated /uploads path
+ *  the screen loads; `image_path` is a location on the appliance's disk). */
+export interface LensAnalysisRow {
+  id: number;
+  patient_id: string | null;
+  author_id: string;
+  image_path: string;
+  image_url: string | null;
+  image_type: string | null;
+  clinical_context: string | null;
+  /** The model's raw read. */
+  analysis: string;
+  findings_json: string | null;
+  created_at: string;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  reviewed_text?: string | null;
+}
+
+/** A `medications` row on the chart. `unverified` is true for an
+ *  AI-extracted or agentic order no pharmacist has verified yet. */
+export interface ChartMedicationRow {
+  id: number;
+  patient_id: string;
+  drug_name: string;
+  dosage: string;
+  route: string;
+  frequency: string;
+  status: 'active' | 'discontinued' | 'prn';
+  prescribed_by: string | null;
+  notes: string | null;
+  started_at: string;
+  source?: string | null;
+  verified_by?: string | null;
+  verified_at?: string | null;
+  unverified: boolean;
+}
+
+/** One structured lab result (services/lab_observations.chart_lab_rows),
+ *  oldest first. */
+export interface ChartLabObservation {
+  id: number;
+  observation_name: string;
+  value_numeric: number | null;
+  unit: string | null;
+  reference_range: string | null;
+  abnormal_flag: string | null;
+  status: string | null;
+  source: string | null;
+  observed_at: string;
+  lab_result_id: number | null;
+}
+
+/** GET /vigil/patients/{id}: the whole chart in one read. */
+export interface PatientDetail {
+  patient: ChartPatientRecord;
+  risk: PatientRisk;
+  trend: VitalsTrend;
+  obs_schedule: ObsSchedule;
+  lab_observations: ChartLabObservation[];
+  problems: { problem: string; icd10_code: string | null; onset_date: string | null; source: string }[];
+  site_name: string | null;
+  /** Newest first: vitals[0] is the set the command bar shows. */
+  vitals: ChartVitalsRow[];
+  /** True when vitals[0] came from the simulator. */
+  simulated_vitals: boolean;
+  notes: ClinicalDocumentRow[];
+  scribe_notes: ScribeNoteRow[];
+  risk_history: { score: number; level: string; drivers: string[]; timestamp: string }[];
+  lens_analyses: LensAnalysisRow[];
+  medications: ChartMedicationRow[];
+}
+
+export async function getPatientDetail(patientId: string): Promise<PatientDetail> {
   return apiFetch(`/vigil/patients/${patientId}`);
 }
 
@@ -791,13 +990,54 @@ export async function getVitalsFeed(): Promise<{ mode: string; simulated: boolea
   return apiFetch('/vigil/vitals-feed');
 }
 
+/** One care phase of a projected clinical course. */
+export interface TimelinePhase {
+  name: string;
+  focus: string;
+  /** Free text, e.g. "Day 1-3". */
+  typical_days: string;
+}
+
+/** GET /vigil/patients/{id}/timeline-projection (services/timeline_service). */
+export interface TimelineProjection {
+  patient_name: string;
+  diagnosis: string;
+  age: number | null;
+  sex: string | null;
+  comorbidities: string[];
+  expected_los_days: number | null;
+  phases: TimelinePhase[];
+  discharge_criteria: string[];
+  rationale: string;
+  /** Derived from the patient's live risk level, not from the calendar. */
+  current_phase_index: number;
+  /** 'llm' or 'heuristic' (or the cached row's own source). */
+  source: string;
+  /** The Ollama model that generated it; null for a heuristic projection. */
+  engine: string | null;
+}
+
 /** Sage-deduced expected clinical course (phases + expected LOS), cached server-side per patient. */
-export async function getTimelineProjection(patientId: string, refresh = false): Promise<any> {
+export async function getTimelineProjection(patientId: string, refresh = false): Promise<TimelineProjection> {
   return apiFetch(`/vigil/patients/${patientId}/timeline-projection${refresh ? '?refresh=true' : ''}`);
 }
 
-export async function getPatientVitals(patientId: string, hours: number = 6): Promise<any[]> {
+export async function getPatientVitals(patientId: string, hours: number = 6): Promise<ChartVitalsRow[]> {
   return apiFetch(`/vigil/patients/${patientId}/vitals?hours=${hours}`);
+}
+
+/** GET /forecast/patient/{id} (forecast_service.predict_patient_los). The
+ *  heuristic fallback says so in `prediction_source`, and `model_trained` is
+ *  false while the network has no trained checkpoint. */
+export interface PatientForecast {
+  predicted_los_days: number;
+  discharge_probability: number;
+  acuity_trajectory: string;
+  confidence: number;
+  /** YYYY-MM-DD. */
+  estimated_discharge_date: string;
+  prediction_source?: 'lstm' | 'heuristic';
+  model_trained?: boolean;
 }
 
 /**
@@ -807,7 +1047,7 @@ export async function getPatientVitals(patientId: string, hours: number = 6): Pr
  * and swallowing all errors, bypassing session-expiry handling).
  * Returns null when no forecast is available rather than throwing.
  */
-export async function getPatientForecast(patientId: string): Promise<any | null> {
+export async function getPatientForecast(patientId: string): Promise<PatientForecast | null> {
   try {
     return await apiFetch(`/forecast/patient/${patientId}`);
   } catch (e) {
@@ -816,7 +1056,73 @@ export async function getPatientForecast(patientId: string): Promise<any | null>
   }
 }
 
-export async function admitPatient(data: any): Promise<any> {
+/** First observations taken at the admission desk. ACVPU and oxygen are null
+ *  when not assessed, never a guess: NEWS2 then reports the set incomplete. */
+export interface AdmissionVitals {
+  hr?: number;
+  bp_sys?: number;
+  bp_dia?: number;
+  spo2?: number;
+  temperature?: number;
+  rr?: number;
+  consciousness?: string | null;
+  on_oxygen?: boolean | null;
+}
+
+/** POST /admissions/admit body (admission_routes.AdmissionRequest). */
+export interface AdmissionRequest {
+  name: string;
+  age?: number | null;
+  /** Optional, but it is the second factor on the discharge link. */
+  date_of_birth?: string | null;
+  sex?: string | null;
+  phone?: string | null;
+  emergency_contact_name?: string | null;
+  emergency_contact_phone?: string | null;
+  address?: string | null;
+  mrn?: string | null;
+  admission_source: string;
+  admission_type: string;
+  department: string;
+  ward: string;
+  bed: string;
+  attending_doctor_id: string;
+  referring_clinician?: string | null;
+  chief_complaint: string;
+  initial_diagnosis?: string | null;
+  triage_severity?: number | null;
+  comorbidities?: string[];
+  past_medical_history?: string | null;
+  past_surgical_history?: string | null;
+  allergies?: string[];
+  current_medications?: string[];
+  family_history?: string | null;
+  social_history?: string | null;
+  vitals?: AdmissionVitals | null;
+  admitting_notes?: string | null;
+  nursing_notes?: string | null;
+  isolation_precautions?: string[];
+  code_status?: string | null;
+}
+
+/** What a successful admission returns (admission_service.admit_patient). */
+export interface AdmissionResult {
+  success: boolean;
+  patient_id: string;
+  admission_id: string;
+  channel_id: string;
+  mrn: string;
+  /** The patient's Bridge login and one-time password. Returned exactly once:
+   *  only the hash is stored, so it can never be retrieved again. */
+  patient_login_id: string;
+  temporary_password: string;
+  /** False when no date of birth was recorded, so no discharge link can open. */
+  date_of_birth_recorded: boolean;
+  /** Null, or the sentence saying this bed was already held. */
+  bed_warning: string | null;
+}
+
+export async function admitPatient(data: AdmissionRequest): Promise<AdmissionResult> {
   return apiFetch('/admissions/admit', {
     method: 'POST',
     body: JSON.stringify(data),
@@ -974,7 +1280,9 @@ export async function getAlerts(): Promise<Message[]> {
   return apiFetch('/relay/alerts');
 }
 
-export async function resolveAlert(messageId: number, action: 'confirm' | 'escalate'): Promise<any> {
+/** Resolve or escalate an alert. `status` is the alert's new status; the
+ *  full updated message arrives on the socket as `message:update`. */
+export async function resolveAlert(messageId: number, action: 'confirm' | 'escalate'): Promise<{ status: string }> {
   return apiFetch(`/relay/alerts/${messageId}/resolve`, {
     method: 'POST',
     body: JSON.stringify({ action })
@@ -1088,6 +1396,84 @@ export async function sendMessage(channelId: string, content: string): Promise<M
 }
 
 // ─── Sage ───
+/** One retrieved guideline document on a Sage answer. `cited` means the
+ *  model named it; `attribution` says how it came to be shown. */
+export interface SageSourceRef {
+  document_id?: string;
+  title?: string;
+  source?: string;
+  source_type?: string;
+  trust_tier?: string;
+  is_synthetic?: boolean;
+  category?: string;
+  fusion_score?: number;
+  cited?: boolean;
+  attribution?: 'model_cited' | 'system_attributed' | 'context_only';
+}
+
+/** The model route a Sage turn took (`route_info` on the server). The
+ *  provider layer adds keys over time, so only the read ones are named. */
+export interface SageProviderInfo {
+  lane?: string;
+  provider?: string;
+  model?: string;
+  preferred_model?: string | null;
+  downgraded?: boolean;
+  thinking_tier?: string | null;
+  thinking_requested?: boolean;
+  [key: string]: unknown;
+}
+
+/** Timing on a Sage answer, in ms. Null means not measured. */
+export interface SageStreamTiming {
+  retrieval_ms?: number;
+  ttft_ms?: number | null;
+  first_content_ms?: number | null;
+  total_ms?: number | null;
+}
+
+/** The parsed sections of a full Sage answer (the `structured_response`
+ *  event). Every section is the model's text, sanitised server-side. */
+export interface SageStructuredResponse {
+  concise_answer?: string;
+  patient_facts_summary?: string;
+  local_policy_guidance?: string;
+  external_guidance?: string;
+  clinical_assessment?: string;
+  caveats?: string;
+  escalation?: string;
+  display_mode?: string;
+  action_intent?: string;
+  cited_sources?: string[];
+}
+
+/** What `querySage` hands its `onMetadata` callback: the stream's `metadata`
+ *  event, or (as a separate call) the `structured_response` event wrapped in
+ *  `_structured_response`. Fields are optional because the refusal and
+ *  out-of-scope paths send a shorter event. */
+export interface SageStreamMetadata {
+  action_state?: Record<string, unknown> | null;
+  sources?: SageSourceRef[];
+  citation_basis?: string;
+  cited_count?: number;
+  attributed_count?: number;
+  attributed_sources?: string[];
+  confidence?: string;
+  confidence_basis?: string;
+  escalation?: boolean;
+  display_mode?: string;
+  query_scope?: string;
+  patient_context_used?: boolean;
+  patient_id?: string | null;
+  patient_name?: string | null;
+  patient_source?: string | null;
+  data_completeness?: { missing?: string[]; [key: string]: unknown } | null;
+  local_policy_found?: boolean;
+  provider?: SageProviderInfo | null;
+  timing?: SageStreamTiming;
+  _structured_response?: SageStructuredResponse;
+}
+
 /** `viewContext` is the wire-format description of what the clinician is
  *  looking at (built by buildWireViewContext in contexts/ActiveViewContext:
  *  { tab, patient_id, patient_name, selection }), sent with every Sage turn so
@@ -1098,7 +1484,7 @@ export async function querySage(
   patientId?: string,
   onChunk?: (chunk: string) => void,
   signal?: AbortSignal,
-  onMetadata?: (metadata: any) => void,
+  onMetadata?: (metadata: SageStreamMetadata) => void,
   viewContext?: Record<string, unknown>,
   onStage?: (stage: 'retrieving' | 'generating', retrievalMs?: number) => void,
   /** THINKING MODE, per request. `true`/omitted = the careful model.
@@ -1162,7 +1548,10 @@ export async function querySage(
       if (data.structured_response !== undefined) {
         onMetadata?.({ _structured_response: data.structured_response });
       }
-    } catch {}
+    } catch {
+      // Not JSON (an SSE framing artifact): skip the event. A throw from one
+      // of the callbacks above is swallowed here too.
+    }
   }
 
   return fullResponse;
@@ -1191,7 +1580,10 @@ export async function getSageAiPosture(): Promise<SageAiPosture> {
 
 /** Speculative context prefetch: call when a clinician OPENS a patient so
  *  retrieval leaves Sage's time-to-first-token critical path. */
-export async function prefetchSageContext(patientId: string, hint?: string): Promise<any> {
+export async function prefetchSageContext(
+  patientId: string,
+  hint?: string,
+): Promise<{ status?: 'warmed' | 'skipped'; patient_id?: string; error?: string }> {
   return apiFetch('/sage/prefetch', {
     method: 'POST',
     body: JSON.stringify({ patient_id: patientId, hint }),
@@ -1221,7 +1613,23 @@ export async function getWardBrief(): Promise<WardBrief> {
   return apiFetch('/sage/ward-brief');
 }
 
-export async function getSageHistory(): Promise<any> {
+/** One stored Sage turn. `metadata` carries only what a reloaded thread
+ *  needs (the speed footer and the patient label), and is absent on a turn
+ *  stored before timing was recorded or whose timing was never measured. */
+export interface SageHistoryMessage {
+  role: string;
+  content: string;
+  conversation_id: string | null;
+  timestamp: string;
+  metadata?: {
+    timing?: SageVoiceTiming;
+    provider?: { thinking_tier: string };
+    patient_name?: string;
+  };
+}
+
+/** This user's recent turns across threads, oldest first. */
+export async function getSageHistory(): Promise<{ messages: SageHistoryMessage[] }> {
   return apiFetch('/sage/history');
 }
 
@@ -1230,6 +1638,22 @@ export async function clearSageHistory(): Promise<void> {
 }
 
 // ─── Sage Voice Agent ───
+/** Timing on a voice answer (sage_routes._answer_timing). Null means not
+ *  measured: the refusal paths never ran the model. */
+export interface SageVoiceTiming {
+  ttft_ms: number | null;
+  total_ms: number | null;
+  tokens: number | null;
+}
+
+/** One event on the voice stream. */
+interface SageVoiceEvent {
+  token?: string;
+  done?: boolean;
+  timing?: SageVoiceTiming;
+  error?: string;
+}
+
 export async function querySageVoice(
   query: string,
   patientId?: string,
@@ -1237,7 +1661,7 @@ export async function querySageVoice(
   signal?: AbortSignal,
   conversationHistory?: Array<{ query: string; response: string }>,
   viewContext?: Record<string, unknown>,
-): Promise<{ fullResponse: string; timing?: { ttft_ms: number; total_ms: number; tokens: number } }> {
+): Promise<{ fullResponse: string; timing?: SageVoiceTiming }> {
   const body: Record<string, unknown> = { query, patient_id: patientId };
   if (conversationHistory && conversationHistory.length > 0) {
     body.conversation_history = conversationHistory;
@@ -1254,13 +1678,13 @@ export async function querySageVoice(
   if (!response.ok) await handleResponseError(response);
 
   let fullResponse = '';
-  let timing: any = undefined;
+  let timing: SageVoiceTiming | undefined = undefined;
 
   for await (const event of readSSEEvents(response)) {
     // The error check must sit OUTSIDE the parse try/catch — a catch that also
     // covers the throw swallows it, and the call then resolves as a successful
     // but empty answer.
-    let data: any;
+    let data: SageVoiceEvent | null;
     try {
       data = JSON.parse(parseSSEData(event));
     } catch {
@@ -1332,6 +1756,53 @@ export async function transcribeChunk(audioBlob: Blob, chunkIndex: number, hints
   return response.json();
 }
 
+/** One issue the verifier found: a claim the transcript does not support. */
+export interface ScribeVerificationWarning {
+  type?: string;
+  section?: string;
+  text: string;
+  severity?: 'low' | 'medium' | 'high' | string;
+}
+
+/** The note verifier's report (scribe_routes._run_verification_async).
+ *  `status` is 'not_requested', 'pending', 'complete' or 'failed'; the
+ *  findings are present once it is complete, `error` once it failed. */
+export interface ScribeVerification {
+  status?: string;
+  verified?: boolean;
+  confidence?: number;
+  /** 'unverifiable' when the verifier ran but could not reach a verdict. */
+  verification_status?: string;
+  warnings?: ScribeVerificationWarning[];
+  omissions?: { text: string; severity?: string }[];
+  sections_verified?: string[];
+  error?: string;
+  started_at?: string;
+  completed_at?: string;
+  failed_at?: string;
+  elapsed_s?: number;
+}
+
+/** Stage timings and models behind a note (scribe_service.build_pipeline_meta). */
+export interface ScribePipelineMeta {
+  /** Seconds per stage, keyed by stage name. */
+  timings?: Record<string, number>;
+  models?: { asr?: string; correction?: string | null; draft?: string; verify?: string | null };
+  stages_enabled?: { correction?: boolean; verify?: boolean };
+}
+
+/** One event on the /scribe/structure stream. */
+interface ScribeStructureEvent {
+  content?: string;
+  done?: boolean;
+  id?: number;
+  format?: string;
+  status?: string;
+  pipeline?: ScribePipelineMeta;
+  verification?: ScribeVerification;
+  error?: string;
+}
+
 export async function structureNote(
   transcript: string,
   format: string,
@@ -1339,7 +1810,15 @@ export async function structureNote(
   audioPath?: string,
   verify?: boolean,
   onChunk?: (chunk: string) => void,
-): Promise<{ id: number; structured_note: string; format: string; verification?: any; pipeline?: any; status?: string }> {
+): Promise<{
+  id: number;
+  structured_note: string;
+  format: string;
+  verification?: ScribeVerification;
+  pipeline?: ScribePipelineMeta;
+  /** Declared but never set: the done event's `status` is not passed on. */
+  status?: string;
+}> {
   const response = await fetch(`${API_BASE}/scribe/structure`, {
     method: 'POST',
     credentials: 'include',
@@ -1358,7 +1837,7 @@ export async function structureNote(
     // Parse failures are skipped, but a real stream error must escape the loop —
     // it must not be thrown from inside a try whose catch swallows it, or the
     // caller gets { id: 0, structured_note: <truncated> } and reports it complete.
-    let data: any;
+    let data: ScribeStructureEvent | null;
     try {
       data = JSON.parse(parseSSEData(event));
     } catch {
@@ -1382,20 +1861,34 @@ export async function structureNote(
   return { id: noteId, structured_note: fullResponse, format, verification: verificationData, pipeline: pipelineData };
 }
 
-export async function getScribeConfig(): Promise<any> {
+/** The active Scribe pipeline (admin only): models and enabled stages. */
+export interface ScribeConfig {
+  asr: { model: string; provider: string; batch_size: number };
+  correction: { enabled: boolean; model: string; provider: string };
+  draft: { model: string; provider: string };
+  verify: { enabled: boolean; model: string; provider: string };
+}
+
+export async function getScribeConfig(): Promise<ScribeConfig> {
   return apiFetch(`/scribe/config`);
 }
 
-export async function getScribeNotes(patientId?: string): Promise<any[]> {
+/** Notes for a patient, or with no patient the caller's own notes. Newest
+ *  first, at most 50. */
+export async function getScribeNotes(patientId?: string): Promise<ScribeNoteRow[]> {
   const query = patientId ? `?patient_id=${patientId}` : '';
   return apiFetch(`/scribe/notes${query}`);
 }
 
-export async function getScribeNoteVerification(noteId: number): Promise<{ note_id: number; verification: any; pipeline: any }> {
+export async function getScribeNoteVerification(noteId: number): Promise<{
+  note_id: number;
+  verification: ScribeVerification | null;
+  pipeline: ScribePipelineMeta | null;
+}> {
   return apiFetch(`/scribe/notes/${noteId}/verification`);
 }
 
-export async function retryScribeNoteVerification(noteId: number): Promise<{ note_id: number; verification: any }> {
+export async function retryScribeNoteVerification(noteId: number): Promise<{ note_id: number; verification: ScribeVerification }> {
   return apiFetch(`/scribe/notes/${noteId}/verify`, { method: 'POST' });
 }
 
@@ -1443,23 +1936,108 @@ export async function reviseScribeNote(noteId: number): Promise<{ ok: boolean; n
 }
 
 // ─── Bridge ───
-export async function getBridgeStatus(): Promise<any> {
+/** The patient's status in plain words (bridge_service.get_patient_status_simple).
+ *  A login with no patient record gets only `status: 'unknown'` and a
+ *  `message`. Vitals are charted text ("72 bpm"), never raw numbers. */
+export interface BridgeStatus {
+  status: string;
+  message?: string;
+  patient_name?: string;
+  bed?: string | null;
+  ward?: string | null;
+  diagnosis_simple?: string;
+  status_message?: string;
+  vitals?: {
+    heart_rate: string | null;
+    blood_pressure: string | null;
+    oxygen: string | null;
+    temperature: string | null;
+  } | null;
+  attending_doctor?: string | null;
+}
+
+/** A medication as the patient portal lists it. */
+export interface BridgeMedication {
+  drug_name: string;
+  dosage: string;
+  route: string;
+  frequency: string;
+  status: string;
+  started_at: string;
+}
+
+/** A clinical document as the portal shows it. `type_label` is the type in
+ *  the patient's words; `source` is 'simulated' for a simulator's result. */
+export interface BridgeDocument {
+  doc_type: string;
+  title: string;
+  content: string;
+  created_at: string;
+  source?: string | null;
+  type_label: string;
+}
+
+/** A discharge summary as the patient may see it: `summary` stays null until
+ *  a clinician has reviewed the draft, and `message` says why. */
+export interface BridgeDischargeView {
+  summary: string | null;
+  status: string;
+  message: string | null;
+  discharged_at: string;
+}
+
+/** GET /bridge/reports: everything on record for the signed-in patient. */
+export interface BridgeReports {
+  patient_id: string;
+  medications: BridgeMedication[];
+  clinical_documents: BridgeDocument[];
+  labs: BridgeDocument[];
+  discharge_summary: BridgeDischargeView | null;
+  /** Clinician-reviewed reads only; `analysis` is the reviewed text. */
+  imaging_reports: {
+    image_type: string | null;
+    clinical_context: string | null;
+    analysis: string | null;
+    reviewed_at: string | null;
+    created_at: string;
+  }[];
+}
+
+/** One entry on a discharge timeline (discharge_service.build_patient_timeline). */
+export interface DischargeTimelineEntry {
+  timestamp: string | null;
+  type: string;
+  title: string;
+  detail: string;
+}
+
+export async function getBridgeStatus(): Promise<BridgeStatus> {
   return apiFetch('/bridge/status');
 }
 
-export async function getBridgeReports(): Promise<any> {
+export async function getBridgeReports(): Promise<BridgeReports> {
   return apiFetch('/bridge/reports');
 }
 
-export async function getBridgeMedications(): Promise<any> {
+export async function getBridgeMedications(): Promise<{ medications: BridgeMedication[] }> {
   return apiFetch('/bridge/medications');
 }
 
-export async function getBridgeDischarge(): Promise<any> {
+/** The patient's discharge summary. `discharge_summary` is the text, null
+ *  until reviewed (or when there is none; `message` says which). */
+export async function getBridgeDischarge(): Promise<{
+  discharge_summary: string | null;
+  status?: string;
+  message: string | null;
+  timeline?: DischargeTimelineEntry[] | null;
+  discharged_at?: string;
+}> {
   return apiFetch('/bridge/discharge');
 }
 
-export async function getBridgeDocuments(): Promise<any> {
+export async function getBridgeDocuments(): Promise<{
+  documents: { doc_type: string; title: string; content: string; created_at: string }[];
+}> {
   return apiFetch('/bridge/documents');
 }
 
@@ -1485,7 +2063,10 @@ export async function askBridge(
         fullResponse += data.content;
         onChunk?.(fullResponse);
       }
-    } catch {}
+    } catch {
+      // Not JSON (an SSE framing artifact): skip the event. A throw from
+      // onChunk is swallowed here too.
+    }
   }
 
   return fullResponse;
@@ -1539,14 +2120,21 @@ export function isSafetyAckRequired(err: unknown): err is SafetyAckRequiredError
 }
 
 // ─── Enhanced Vigil ───
-export async function getPatientNotes(patientId: string): Promise<any[]> {
+export async function getPatientNotes(patientId: string): Promise<ClinicalDocumentRow[]> {
   return apiFetch(`/vigil/patients/${patientId}/notes`);
 }
 
-export async function addClinicalNote(patientId: string, content: string, docType: string = 'Progress Note'): Promise<any> {
+/** What addClinicalNote resolves to: the server's `{status, id}` when online,
+ *  or, when the note was queued offline, the note itself under an `offline-`
+ *  id. */
+export type AddClinicalNoteResult =
+  | { status: string; id: number }
+  | { id: string; patient_id: string; content: string; doc_type: string; title: string; created_at: string };
+
+export async function addClinicalNote(patientId: string, content: string, docType: string = 'Progress Note'): Promise<AddClinicalNoteResult> {
   // Free-text notes carry no safety gate, so they are safe to queue offline and
   // sync on reconnect; the server dedupes the replay by Idempotency-Key.
-  return offlineMutate(
+  return offlineMutate<AddClinicalNoteResult>(
     `/vigil/patients/${patientId}/notes`,
     { content, doc_type: docType, title: 'Manual Entry' },
     () => ({
@@ -1556,7 +2144,22 @@ export async function addClinicalNote(patientId: string, content: string, docTyp
   );
 }
 
-export async function addMedication(patientId: string, medData: any, safetyAck?: SafetyAck): Promise<any> {
+/** A medication order from the chart (POST /vigil/patients/{id}/medications).
+ *  The server defaults `route` to 'Oral' and `status` to 'active'; the table
+ *  accepts 'active', 'discontinued' or 'prn'. */
+export interface MedicationOrderInput {
+  drug_name: string;
+  dosage: string;
+  route?: string;
+  frequency: string;
+  status?: string;
+}
+
+export async function addMedication(
+  patientId: string,
+  medData: MedicationOrderInput,
+  safetyAck?: SafetyAck,
+): Promise<{ status: string; id: number; safety: MedicationSafety }> {
   // Medication orders are ONLINE-REQUIRED, unlike notes: the order-time drug-safety
   // gate (allergy + interaction screen) runs server-side and a severe interaction
   // returns a 428 the clinician must acknowledge. That acknowledgement can't happen
@@ -1873,11 +2476,47 @@ export async function getUnseenCounts(): Promise<Record<string, number>> {
 }
 
 // ─── Discharge ───
-export async function dischargePatient(patientId: string): Promise<any> {
+/** A completed discharge. The drafted summary comes back for the discharging
+ *  doctor to read; the patient sees it only once it is marked reviewed. */
+export interface DischargeResult {
+  status: 'success';
+  summary_id: number;
+  discharged_at: string;
+  review_status: string;
+  /** The secure patient link; null when no link was issued. */
+  summary_url: string | null;
+  /** The authenticated API path of the QR image, or null when none was made. */
+  qr_code_url: string | null;
+  secure_link_issued: boolean;
+  /** Why no link was issued, when one was not. */
+  secure_link_reason: string | null;
+  summary: string;
+  /** 'unavailable' when the drafting assistant was down and only the recorded
+   *  facts were stored. */
+  drafted_by: 'assistant' | 'unavailable';
+  timeline: DischargeTimelineEntry[];
+}
+
+export async function dischargePatient(
+  patientId: string,
+): Promise<DischargeResult | { status: 'already_discharged'; patient_id: string }> {
   return apiFetch(`/vigil/patients/${patientId}/discharge`, { method: 'POST' });
 }
 
-export async function getDischargeSummary(patientId: string): Promise<any> {
+/** The latest discharge summary, clinician-facing, so a draft is returned
+ *  too (discharge_service.load_discharge_summary_view). */
+export interface DischargeSummaryView {
+  summary_id: number;
+  summary: string;
+  review_status: string;
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
+  timeline: DischargeTimelineEntry[];
+  qr_code_url: string | null;
+  discharged_at: string;
+}
+
+export async function getDischargeSummary(patientId: string): Promise<DischargeSummaryView> {
   return apiFetch(`/vigil/patients/${patientId}/discharge-summary`);
 }
 
@@ -1933,7 +2572,26 @@ export async function getDischargeQrObjectUrl(qrUrl: string): Promise<string> {
   return URL.createObjectURL(blob);
 }
 
-export async function getDischargedPatients(): Promise<any[]> {
+/** One row of the discharged-patient list (ward-scoped, paginated). */
+export interface DischargedPatient {
+  id: string;
+  name: string;
+  mrn: string;
+  bed: string | null;
+  ward: string | null;
+  diagnosis: string | null;
+  age: number | null;
+  sex: string | null;
+  admission_date: string | null;
+  discharged_at: string | null;
+  summary: string | null;
+  /** The latest stay, which a final bill is raised against. */
+  admission_id: string | null;
+  final_bill_raised: boolean;
+  has_pending_charges: boolean;
+}
+
+export async function getDischargedPatients(): Promise<DischargedPatient[]> {
   return apiFetch('/vigil/discharged');
 }
 
@@ -1989,7 +2647,7 @@ export async function analyzeLensImage(
   return { text: fullResponse, analysisId };
 }
 
-export async function getLensAnalyses(patientId?: string): Promise<any[]> {
+export async function getLensAnalyses(patientId?: string): Promise<LensAnalysisRow[]> {
   const query = patientId ? `?patient_id=${patientId}` : '';
   return apiFetch(`/lens/analyses${query}`);
 }
@@ -2016,20 +2674,153 @@ export async function getPatientsList(): Promise<{ id: string; name: string; bed
 }
 
 // ─── Surgery ───
-export async function getSurgerySchedule(days: number = 7): Promise<any[]> {
+/** The `surgeries` columns every surgical list sends (`s.*`), plus the
+ *  patient fields the lists join on. JSON columns arrive as stored TEXT here;
+ *  only the detail route parses them. */
+export interface SurgeryRow {
+  id: string;
+  patient_id: string;
+  surgeon_id: string;
+  procedure_name: string;
+  diagnosis: string;
+  /** YYYY-MM-DD, the hospital's local calendar day. */
+  scheduled_date: string;
+  scheduled_time: string;
+  estimated_duration_min: number;
+  operating_room: string;
+  status: string;
+  co_morbidities: string | null;
+  surgical_checklist: string | null;
+  instruments_required: string | null;
+  staff_required: string | null;
+  risk_assessment: string | null;
+  possible_complications: string | null;
+  /** A FRACTION (0-1), not a percentage. */
+  success_probability: number | null;
+  notes: string | null;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  patient_name: string;
+  mrn: string;
+  age: number;
+  sex: string;
+}
+
+/** A case on the week view, with the patient's latest risk band. */
+export interface SurgeryScheduleCase extends SurgeryRow {
+  surgeon_name: string | null;
+  /** 'stable' when the patient has no risk row. */
+  risk_level: string;
+  risk_score: number | null;
+}
+
+/** One day of the week view. `is_today` is decided in the hospital's
+ *  timezone. */
+export interface SurgeryScheduleDay {
+  date: string;
+  /** The weekday name. */
+  day_label: string;
+  is_today: boolean;
+  surgeries: SurgeryScheduleCase[];
+}
+
+export async function getSurgerySchedule(days: number = 7): Promise<SurgeryScheduleDay[]> {
   return apiFetch(`/surgery/schedule?days=${days}`);
 }
 
-export async function getSurgeryDetail(surgeryId: string): Promise<any> {
+/** Context imported with an emergency case (`notes.imported_context`). */
+export interface SurgeryImportedContext {
+  medications?: string[];
+  vitals?: string[];
+  recent_labs?: string[];
+  scribe_notes?: string;
+  [key: string]: unknown;
+}
+
+/** GET /surgery/{id}: one case in full, with its JSON columns parsed.
+ *
+ *  Three fields are declared as the Surgical Suite reads them, NOT as the
+ *  route sends them: `bed`, `ward` and `admission_date` are never selected
+ *  (the query joins no p.bed, p.ward or p.admission_date), and `risk_drivers`
+ *  is the risk row's drivers column as stored JSON TEXT (or null), not a
+ *  parsed list. `surgical_checklist` is always a list of prep steps: the WHO
+ *  checklist has its own column since migration 76 (it used to be stored here
+ *  as an object, which crashed the panel), and the route sends [] for anything
+ *  that is not a list. */
+export interface SurgeryDetail {
+  id: string;
+  patient_id: string;
+  surgeon_id: string;
+  surgeon_name: string | null;
+  patient_name: string;
+  age: number;
+  sex: string;
+  mrn: string;
+  bed: string;
+  ward: string;
+  patient_diagnosis: string;
+  admission_date: string;
+  procedure_name: string;
+  diagnosis: string;
+  scheduled_date: string;
+  scheduled_time: string;
+  estimated_duration_min: number;
+  operating_room: string;
+  status: string;
+  co_morbidities: string[];
+  /** The raw patient_profiles column the route falls back to. */
+  comorbidities: string | null;
+  allergies: string[];
+  surgical_checklist: string[];
+  instruments_required: string[];
+  staff_required: { role: string; name: string }[];
+  risk_assessment: string | null;
+  possible_complications: string[];
+  success_probability: number | null;
+  /** 'stable' when the patient has no risk row. */
+  risk_level: string;
+  risk_score: number | null;
+  risk_drivers: string[];
+  notes: string | null;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  /** Minutes from start to completion; null when not measured. */
+  turnaround_min: number | null;
+  imported_context?: SurgeryImportedContext;
+}
+
+export async function getSurgeryDetail(surgeryId: string): Promise<SurgeryDetail> {
   return apiFetch(`/surgery/${surgeryId}`);
 }
 
 // ─── WHO Surgical Safety Checklist ───
-export async function getWhoChecklistTemplate(): Promise<any> {
+/** The static WHO 2009 checklist: three phases of items. */
+export interface WhoChecklistTemplate {
+  version: string;
+  phases: {
+    id: string;
+    label: string;
+    when: string;
+    items: { id: string; text: string }[];
+  }[];
+}
+
+/** A case's checklist: who attested each ticked item, and when. Unticking
+ *  deletes the item's key. */
+export interface WhoChecklistState {
+  version: string;
+  state: Record<string, { checked: boolean; by: string; at: string }>;
+  progress: { checked: number; total: number };
+  completed: boolean;
+}
+
+export async function getWhoChecklistTemplate(): Promise<WhoChecklistTemplate> {
   return apiFetch('/surgery/checklist/template');
 }
 
-export async function getWhoChecklist(surgeryId: string): Promise<any> {
+export async function getWhoChecklist(surgeryId: string): Promise<WhoChecklistState> {
   return apiFetch(`/surgery/${surgeryId}/checklist`);
 }
 
@@ -2037,7 +2828,7 @@ export async function setWhoChecklistItem(
   surgeryId: string,
   itemId: string,
   checked: boolean,
-): Promise<any> {
+): Promise<WhoChecklistState> {
   return apiFetch(`/surgery/${surgeryId}/checklist`, {
     method: 'POST',
     body: JSON.stringify({ item_id: itemId, checked }),
@@ -2070,7 +2861,10 @@ export async function getSurgeryRiskAssessment(
         fullResponse += data.content;
         onChunk?.(fullResponse);
       }
-    } catch {}
+    } catch {
+      // Not JSON (an SSE framing artifact): skip the event. A throw from
+      // onChunk is swallowed here too.
+    }
   }
 
   return fullResponse;
@@ -2080,7 +2874,13 @@ export async function prepForSurgery(surgeryId: string): Promise<void> {
   await apiFetch(`/surgery/${surgeryId}/prep`, { method: 'POST' })
 }
 
-export async function getEmergencyQueue(): Promise<any[]> {
+/** An emergency case awaiting the theatre team. */
+export interface EmergencySurgeryCase extends SurgeryRow {
+  bed: string | null;
+  surgeon_name: string | null;
+}
+
+export async function getEmergencyQueue(): Promise<EmergencySurgeryCase[]> {
   return apiFetch(`/surgery/emergency-queue`)
 }
 
@@ -2089,34 +2889,65 @@ export async function acknowledgeEmergency(surgeryId: string): Promise<void> {
 }
 
 // ─── Surgery Cases ───
-export async function getSurgeryCases(): Promise<any[]> {
+/** A `surgery_team_assignments` row. */
+export interface SurgeryTeamAssignment {
+  id: number;
+  surgery_id: string;
+  user_id: string;
+  role_name: string;
+  status: 'pending' | 'alerted' | 'confirmed' | 'declined';
+  updated_at: string;
+}
+
+/** An active (not completed, not cancelled) case with its team. */
+export interface SurgeryCase extends SurgeryRow {
+  team: SurgeryTeamAssignment[];
+}
+
+export async function getSurgeryCases(): Promise<SurgeryCase[]> {
   return apiFetch('/surgery/cases')
 }
 
-export async function alertSurgicalTeam(surgeryId: string, team: { user_id: string; role: string }[]): Promise<any> {
+export async function alertSurgicalTeam(surgeryId: string, team: { user_id: string; role: string }[]): Promise<{ status: string }> {
   return apiFetch(`/surgery/${surgeryId}/alert-team`, {
     method: 'POST',
     body: JSON.stringify({ team }),
   })
 }
 
-export async function surgicalTeamResponse(surgeryId: string, action: 'confirm' | 'decline'): Promise<any> {
+export async function surgicalTeamResponse(surgeryId: string, action: 'confirm' | 'decline'): Promise<{ status: string }> {
   return apiFetch(`/surgery/${surgeryId}/team-response`, {
     method: 'POST',
     body: JSON.stringify({ action }),
   })
 }
 
-export async function startSurgery(surgeryId: string): Promise<any> {
+/** 'already_in_progress' (with `surgery_id`) when the case had started. */
+export async function startSurgery(
+  surgeryId: string,
+): Promise<{ status: 'success'; started_at: string } | { status: 'already_in_progress'; surgery_id: string }> {
   return apiFetch(`/surgery/${surgeryId}/start`, { method: 'POST' })
 }
 
-export async function completeSurgery(surgeryId: string): Promise<any> {
+/** 'already_completed' (with `surgery_id`) when the case had been completed. */
+export async function completeSurgery(surgeryId: string): Promise<
+  | {
+      status: 'success';
+      /** The operation note filed to the chart. */
+      note_id: number;
+      started_at: string | null;
+      completed_at: string;
+      turnaround_min: number | null;
+    }
+  | { status: 'already_completed'; surgery_id: string }
+> {
   return apiFetch(`/surgery/${surgeryId}/complete`, { method: 'POST' })
 }
 
 // ─── Patient Creation ───
-export async function createPatient(data: any): Promise<any> {
+/** RETIRED: POST /vigil/patients answers 410 Gone and writes nothing, so this
+ *  always throws. Admit through admitPatient. No caller remains. */
+export async function createPatient(data: Record<string, unknown>): Promise<unknown> {
   return apiFetch('/vigil/patients', {
     method: 'POST',
     body: JSON.stringify(data),
@@ -2162,11 +2993,87 @@ export interface AuditLogsResponse {
   offset: number;
 }
 
-export async function getAdminOverview(): Promise<any> {
+/** Alerts fired in the last 24 h, from the shadow event log. `total: null`
+ *  means UNKNOWN (the instrument is off or unreadable) and must never be
+ *  shown as 0; `unknown_reason` says why. */
+export interface AdminAlertCounts {
+  total: number | null;
+  known: boolean;
+  unknown_reason: string | null;
+  by_lane: Record<string, number>;
+  by_level: Record<string, number>;
+  source: string;
+  /** The ingest lane's own audit rows, which are not a hospital-wide count. */
+  audit_trail: { vigil: number; relay: number; lane: string; note: string };
+}
+
+/** Clinical rows written in the last 24 h. `total: null` means the figure is
+ *  not known; `counted` is then a floor, rendered as "at least N". */
+export interface AdminRecordCounts {
+  total: number | null;
+  counted: number;
+  vitals_counted: number;
+  observations_counted: number;
+  by_source: Record<string, number>;
+  complete: boolean;
+  incomplete_reason: string | null;
+  source: string;
+}
+
+/** GET /admin/overview: the governance snapshot. Counts are for 24 hours. */
+export interface AdminOverviewData {
+  ingestion_mode: string;
+  audit_simulation_enabled: boolean;
+  audit_total_24h: number;
+  audit_categories: Record<string, number>;
+  audit_outcomes: Record<string, number>;
+  ingestion: {
+    total: number;
+    parsed: number;
+    failed: number;
+    duplicates: number;
+    total_vitals: number;
+    total_observations: number;
+  };
+  source_mix: Record<string, number>;
+  alerts: AdminAlertCounts;
+  records_written: AdminRecordCounts;
+  recent_failures: {
+    id: number;
+    received_at: string;
+    source_type: string;
+    parse_error: string | null;
+    correlation_id: string | null;
+  }[];
+  auth_events: { action: string; outcome: string; count: number }[];
+}
+
+export async function getAdminOverview(): Promise<AdminOverviewData> {
   return apiFetch('/admin/overview');
 }
 
-export async function getModelRegistry(): Promise<{ models: any[] }> {
+/** One `model_registry` row with its description. Integer flags are 0/1.
+ *  `task`, `training_data` and `notes` are nullable columns, typed as the
+ *  Model Governance screen reads them. */
+export interface ModelRegistryEntry {
+  id: number;
+  model_key: string;
+  version: string;
+  task: string;
+  training_data: string;
+  validated: number;
+  validation_metrics: Record<string, unknown> | string | null;
+  calibration_stats: Record<string, unknown> | string | null;
+  is_active: number;
+  checkpoint_present: number;
+  notes: string;
+  registered_at: string;
+  display_name?: string;
+  role?: string | null;
+  impacts?: string[];
+}
+
+export async function getModelRegistry(): Promise<{ models: ModelRegistryEntry[] }> {
   return apiFetch('/admin/models');
 }
 
@@ -2185,7 +3092,24 @@ export async function getAuditLogs(filters: AuditFilters = {}): Promise<AuditLog
   return apiFetch(`/audit/logs${qs ? '?' + qs : ''}`);
 }
 
-export async function getIngestionStatus(limit: number = 20, status?: string): Promise<any> {
+/** One ingested payload as the Ingestion Monitor lists it. */
+export interface IngestionEvent {
+  id: number;
+  received_at: string;
+  source_type: string;
+  source_name: string | null;
+  parse_status: 'received' | 'parsed' | 'partially_parsed' | 'failed' | 'duplicate';
+  parse_error: string | null;
+  correlation_id: string | null;
+  vitals_inserted: number | null;
+  observations_inserted: number | null;
+  processed_at: string | null;
+}
+
+export async function getIngestionStatus(
+  limit: number = 20,
+  status?: string,
+): Promise<{ events: IngestionEvent[]; count: number; ingestion_mode: string }> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (status) params.set('status', status);
   return apiFetch(`/ingest/status?${params.toString()}`);
@@ -2193,7 +3117,58 @@ export async function getIngestionStatus(limit: number = 20, status?: string): P
 
 
 // ─── Discharge Access (Patient) ───
-export async function verifyDischargeAccess(token: string, dob: string): Promise<any> {
+// Both calls THROW the parsed error body on failure (`{detail: {status:
+// 'error', reason, ...}}`), not an Error, so the page can read `reason`.
+
+/** A short-lived grant to read one discharge summary. */
+export interface DischargeAccessGrant {
+  status: 'success';
+  access_grant: string;
+  patient_id: string;
+}
+
+/** The discharge summary as the patient reads it through the secure link.
+ *  `summary` is null until a clinician has reviewed the draft. */
+export interface VerifiedDischargeSummary {
+  status: 'success';
+  summary: string | null;
+  summary_status: 'draft' | 'reviewed';
+  summary_message: string | null;
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
+  discharged_at: string;
+  timeline: DischargeTimelineEntry[];
+  /** Empty when the patient row is gone. */
+  patient: {
+    mrn?: string;
+    name?: string;
+    age?: number | null;
+    sex?: string | null;
+    ward?: string | null;
+    bed?: string | null;
+    diagnosis?: string | null;
+    admission_date?: string | null;
+    attending_doctor_name?: string | null;
+    admission_id?: string | null;
+  };
+  /** Null when the allergy list could not be read, which is not "none". */
+  allergies: { substance: string; reaction: string | null; severity: string | null }[] | null;
+  comorbidities: string[];
+  /** The reconciled continued list, excluding orders still needing a
+   *  pharmacist's verification. */
+  medications: {
+    name: string;
+    drug_name: string;
+    dosage: string;
+    route: string;
+    frequency: string;
+    status: 'active' | 'prn';
+  }[];
+  unverified_medication_count: number;
+  site_name: string | null;
+}
+
+export async function verifyDischargeAccess(token: string, dob: string): Promise<DischargeAccessGrant> {
   const response = await fetch(`${API_BASE}/discharge-access/verify`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -2206,7 +3181,7 @@ export async function verifyDischargeAccess(token: string, dob: string): Promise
   return data;
 }
 
-export async function getVerifiedDischargeSummary(token: string, accessGrant: string): Promise<any> {
+export async function getVerifiedDischargeSummary(token: string, accessGrant: string): Promise<VerifiedDischargeSummary> {
   const response = await fetch(`${API_BASE}/discharge-access/${token}/summary`, {
     headers: { 'Authorization': `Bearer ${accessGrant}` },
   });
@@ -2217,14 +3192,74 @@ export async function getVerifiedDischargeSummary(token: string, accessGrant: st
   return data;
 }
 // ─── Helix Pharmacy ───
-export async function approveHelixOrder(payload: { patient_name: string; medication: string; dose?: string; route?: string; frequency?: string }): Promise<any> {
+/** A `helix_patient_med_orders` row as stored. */
+export interface HelixOrderRow {
+  id: string;
+  patient_id: string | null;
+  medication_id: string | null;
+  status: 'pending' | 'reviewing' | 'verified' | 'rejected' | 'substitute_suggested' | 'scheduled' | 'dispensed' | 'delivered';
+  prescribed_by: string | null;
+  dosage: string | null;
+  frequency: string | null;
+  route: string | null;
+  substitute_medication_id: string | null;
+  pharmacist_notes: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  scheduled_at: string | null;
+  last_transition_id: string | null;
+  /** Set only by the ward, through receiveHelixOrder. */
+  received_by: string | null;
+  received_at: string | null;
+  created_at: string;
+}
+
+/** A Helix order as the pharmacy lists it: the row plus the names it shows. */
+export interface HelixOrderListRow extends HelixOrderRow {
+  medication_name: string;
+  patient_name: string;
+  prescribed_by_name: string | null;
+  ward: string | null;
+  bed: string | null;
+  substitute_name: string | null;
+}
+
+/** One step in an order's history (`helix_transitions`). `payload` is the
+ *  stored JSON TEXT. */
+export interface HelixTransition {
+  id: string;
+  order_id: string;
+  from_status: string;
+  to_status: string;
+  idempotency_key: string | null;
+  actor_id: string | null;
+  payload: string | null;
+  created_at: string;
+}
+
+/** A transition or receipt that was applied, or (`already_applied`) one whose
+ *  idempotency key had been used, returned as first recorded. `order` is the
+ *  stored row, empty if it has since gone. */
+export interface HelixTransitionResult {
+  ok: true;
+  order: Partial<HelixOrderRow>;
+  transition: HelixTransition;
+  already_applied: boolean;
+}
+
+export async function approveHelixOrder(payload: { patient_name: string; medication: string; dose?: string; route?: string; frequency?: string }): Promise<{
+  status: string;
+  order: HelixOrderRow;
+  /** The drug-safety screen that ran on the order. */
+  safety: MedicationSafety;
+}> {
   return apiFetch('/helix/orders/approve', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
-export async function getHelixOrders(): Promise<any> {
+export async function getHelixOrders(): Promise<{ orders: HelixOrderListRow[] }> {
   return apiFetch('/helix/orders');
 }
 
@@ -2239,7 +3274,7 @@ export async function transitionHelixOrder(orderId: string, payload: {
   substitute_medication_id?: string;
   scheduled_at?: string;
   safety_ack?: SafetyAck;
-}): Promise<any> {
+}): Promise<HelixTransitionResult & { safety?: MedicationSafety }> {
   return apiFetch(`/helix/orders/${orderId}/transition`, {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -2292,17 +3327,46 @@ export async function getOrdersAwaitingReceipt(): Promise<{ orders: AwaitingRece
   return apiFetch('/helix/orders/awaiting-receipt');
 }
 
-export async function receiveHelixOrder(orderId: string, idempotencyKey?: string): Promise<any> {
+export async function receiveHelixOrder(orderId: string, idempotencyKey?: string): Promise<HelixTransitionResult> {
   return apiFetch(`/helix/orders/${orderId}/receive`, {
     method: 'POST',
     body: JSON.stringify({ idempotency_key: idempotencyKey }),
   });
 }
 
-export async function getHelixStockMovements(): Promise<any> {
+/** A `helix_stock_movements` ledger row, newest first. The columns from
+ *  `movement_type` on were added by the pharmacy store (migration 54) and are
+ *  null on older rows. */
+export interface HelixStockMovement {
+  id: string;
+  lot_id: string | null;
+  medication_id: string | null;
+  order_id: string | null;
+  quantity_change: number | null;
+  reason: string | null;
+  timestamp: string;
+  movement_type: string | null;
+  store_id: number | null;
+  balance_after_units: number | null;
+  unit_cost_paise: number | null;
+  reference_type: string | null;
+  reference_id: string | null;
+  actor_id: string | null;
+  remarks: string | null;
+  idempotency_key: string | null;
+  occurred_at: string | null;
+  seq: number | null;
+  medication_name: string | null;
+  lot_number: string | null;
+}
+
+export async function getHelixStockMovements(): Promise<{ movements: HelixStockMovement[] }> {
   return apiFetch('/helix/stock-movements');
 }
 
-export async function getHelixOrderTransitions(orderId: string): Promise<any> {
+/** An order's history, oldest first, with who made each step. */
+export async function getHelixOrderTransitions(
+  orderId: string,
+): Promise<{ transitions: (HelixTransition & { actor_name: string | null })[] }> {
   return apiFetch(`/helix/orders/${orderId}/transitions`);
 }

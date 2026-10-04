@@ -30,7 +30,6 @@ export function SageComposer({
   voiceRecording,
   startVoiceRecording,
   stopVoiceRecording,
-  isSpeaking
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 

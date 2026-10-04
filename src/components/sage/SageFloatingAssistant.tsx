@@ -5,10 +5,14 @@ import { useSageRuntime } from '../../contexts/SageRuntimeContext'
 import { useSageHotword } from '../../hooks/useSageHotword'
 import { querySageVoice } from '../../api/client'
 import { SageAnswerMeta, type SageAnswerTiming } from '../SageAnswerMeta'
+import { getSpeechRecognitionCtor, type SpeechRecognition } from '../../lib/speechRecognition'
 import InvestigationalBanner from '../InvestigationalBanner'
 import './SageFloatingAssistant.css'
 
 type SageState = 'dormant' | 'listening' | 'processing' | 'speaking'
+
+/** Older Safari ships the Web Audio context only under its webkit name. */
+type WebkitAudioWindow = Window & { webkitAudioContext?: typeof AudioContext }
 
 interface SageFloatingAssistantProps {
   activeTab?: string
@@ -78,7 +82,7 @@ export default function SageFloatingAssistant({ activeTab }: SageFloatingAssista
   // ASR Refs. Declared before the callbacks that use them: the TTS callbacks
   // below write captureStartIndexRef, and a ref the compiler meets before its
   // declaration is treated as a frozen hook argument (react-hooks/immutability).
-  const recognitionRef = useRef<any>(null)
+  const recognitionRef = useRef<SpeechRecognition | null>(null)
   const resultsCountRef = useRef(0)
   const captureStartIndexRef = useRef(0)
   const submittedResultsCountRef = useRef(0)
@@ -127,7 +131,7 @@ export default function SageFloatingAssistant({ activeTab }: SageFloatingAssista
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       microphoneStreamRef.current = stream
       
-      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)()
+      const audioCtx = new (window.AudioContext || (window as WebkitAudioWindow).webkitAudioContext)()
       audioContextRef.current = audioCtx
       
       const analyser = audioCtx.createAnalyser()
@@ -404,8 +408,8 @@ export default function SageFloatingAssistant({ activeTab }: SageFloatingAssista
           { query: text, response: currentResponseRef.current },
         ].slice(-10)
       }
-    } catch (e: any) {
-      if (e.name !== 'AbortError') {
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') {
         const errorText = 'Sorry, I encountered an error. Please try again.'
         setResponseText(errorText)
         setStateAndRef('speaking')
@@ -566,7 +570,7 @@ export default function SageFloatingAssistant({ activeTab }: SageFloatingAssista
 
   // ── Unified Continuous Speech Recognition Effect ──
   useEffect(() => {
-    const SpeechRecognitionClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    const SpeechRecognitionClass = getSpeechRecognitionCtor()
     if (!SpeechRecognitionClass) return
 
     const startRecog = () => {
@@ -587,7 +591,7 @@ export default function SageFloatingAssistant({ activeTab }: SageFloatingAssista
         isRecognitionActiveRef.current = true
       }
 
-      recog.onresult = (event: any) => {
+      recog.onresult = (event) => {
         resultsCountRef.current = event.results.length
         const currentState = stateRef.current
 
@@ -712,7 +716,7 @@ export default function SageFloatingAssistant({ activeTab }: SageFloatingAssista
         }
       }
 
-      recog.onerror = (e: any) => {
+      recog.onerror = (e) => {
         // Mic permission denied/blocked: stop permanently and log once — otherwise the
         // restart loop spams the console (and burns CPU) on every render.
         if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
@@ -760,7 +764,7 @@ export default function SageFloatingAssistant({ activeTab }: SageFloatingAssista
       startRecog()
     } else {
       if (recognitionRef.current) {
-        try { recognitionRef.current.abort() } catch {}
+        try { recognitionRef.current.abort() } catch { /* already stopped */ }
         // DO NOT null out recognitionRef.current here. Let onend handle the teardown.
       }
     }
@@ -768,7 +772,7 @@ export default function SageFloatingAssistant({ activeTab }: SageFloatingAssista
     return () => {
       if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current)
       if (recognitionRef.current) {
-        try { recognitionRef.current.abort() } catch {}
+        try { recognitionRef.current.abort() } catch { /* already stopped */ }
       }
       isRecognitionActiveRef.current = false
     }
