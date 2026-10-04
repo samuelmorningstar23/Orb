@@ -2574,6 +2574,18 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
             classification.query_class = "patient_scoped"
             classification.reasons.append(
                 "retrieval attached a chart (sticky patient anchoring)")
+        # The same truth for patient ROWS with no chart (2026-10-04): DISAMBIGUATE
+        # hands the model each matching patient's name, bed and ward, and BROAD a
+        # census row per patient, both with patient_context_dict None. Probed: a
+        # misspelt name that fuzzily matched two patients ("thiruvengadem") put
+        # both names in the prompt under `general_knowledge`, and the thinking
+        # floor's context markers do not see a disambiguation list either.
+        _rows_class = {"DISAMBIGUATE": "patient_scoped", "BROAD": "census_broad"}.get(query_scope)
+        if _rows_class and not classification.contains_phi:
+            classification.contains_phi = True
+            classification.query_class = _rows_class
+            classification.reasons.append(
+                f"retrieval put patient rows in the prompt ({query_scope})")
 
         # ── Cross-department reach: answered DETERMINISTICALLY, no model ──
         # Retrieval refused to assemble a chart outside this clinician's

@@ -9,9 +9,11 @@ can make two calls on one chat turn. Same family as the Sage name matcher
 half applies: the question's whole words are read once, and each distinct
 ward/bed label is tested once.
 
-Pinned here: the same answers as the old loop (frozen below), including the
-known over-labelling the squashed-substring test makes, and a 512 KB question
-classified in well under the old time.
+Pinned here: the same answers as the old loop (frozen below) for names and
+beds, and a 512 KB question classified in well under the old time. Wards
+changed the same day, on purpose: they read services.ward_reference, the rule
+Sage retrieval reads, so ward "OR" is no longer found inside "for"
+(tests/test_ward_reference.py).
 """
 import random
 import re
@@ -21,6 +23,7 @@ import pytest
 
 import database
 import services.ai_governance as gov
+from services.ward_reference import ward_named_in
 
 #: Seconds, per call and per classify. Measured around a tenth of that on the
 #: development Mac; the slack is for a loaded machine.
@@ -105,10 +108,18 @@ QUERIES = [
 ]
 
 
+def _expected(rows, query_lower, include_ward):
+    """The old loop for names and beds; wards by the shared rule."""
+    if _old_match(rows, query_lower, include_ward=False):
+        return True
+    return include_ward and any(r["ward"] and ward_named_in(r["ward"], query_lower) for r in rows)
+
+
 def test_the_scan_gives_the_old_answers():
     """Every query against every single row and against the whole table, with
     and without wards. The answer is any-of, so the single-row runs are what
-    would expose a per-row difference the whole-table run hides."""
+    would expose a per-row difference the whole-table run hides. Names and
+    beds answer exactly as the old loop did; wards follow the shared rule."""
     mismatches, answers = [], {True: 0, False: 0}
     rng = random.Random(4)
     queries = list(QUERIES) + [
@@ -118,7 +129,7 @@ def test_the_scan_gives_the_old_answers():
         ql = gov._fold_homoglyphs(q.lower())
         for rows in [[r] for r in ROWS] + [ROWS]:
             for include_ward in (False, True):
-                old = _old_match(rows, ql, include_ward)
+                old = _expected(rows, ql, include_ward)
                 new = _new_match(rows, ql, include_ward)
                 answers[old] += 1
                 if old != new:
@@ -138,15 +149,15 @@ def _new_match(rows, query_lower, include_ward):
         database.get_db = original
 
 
-def test_known_over_labelling_is_unchanged(table):
-    """Ward "OR" squashed is "or", which sits inside "for": a question naming
-    nobody reads as ward-scoped PHI. That errs toward keeping the turn local
-    and is a ruling, not part of this change, so it is pinned as it was."""
+def test_or_inside_for_is_no_longer_a_ward(table):
+    """Ward "OR" squashed is "or", which sits inside "for": the old loop read a
+    question naming nobody as ward-scoped PHI. Fixed 2026-10-04 by the shared
+    ward rule; the old answer is kept here so the change stays visible."""
     table([_row("Nobody Here", "OR", "Z-1")])
     q = "is it okay for her"
-    assert gov._match_patient_identifiers(q, include_ward=True) is True
     assert _old_match([_row("Nobody Here", "OR", "Z-1")], q, include_ward=True) is True
-    assert gov._match_patient_identifiers(q, include_ward=False) is False
+    assert gov._match_patient_identifiers(q, include_ward=True) is False
+    assert gov._match_patient_identifiers(q, include_ward=True, query="back from OR?") is True
 
 
 def _hospital(rng, n):

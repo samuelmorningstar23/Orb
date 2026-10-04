@@ -44,6 +44,8 @@ import re
 import uuid
 from dataclasses import dataclass, field
 
+from services.ward_reference import ward_named_in
+
 logger = logging.getLogger("orb.ai_governance")
 
 
@@ -131,7 +133,8 @@ class QueryClassification:
     reasons: list[str] = field(default_factory=list)
 
 
-def _match_patient_identifiers(query_lower: str, include_ward: bool = True) -> bool:
+def _match_patient_identifiers(query_lower: str, include_ward: bool = True,
+                               query: str | None = None) -> bool:
     """LOCAL DB check: does the query mention an admitted/discharged patient's
     name or bed (and optionally ward)? Best-effort — any failure classifies as
     no-match, but the other signals still apply and routing defaults local.
@@ -147,11 +150,16 @@ def _match_patient_identifiers(query_lower: str, include_ward: bool = True) -> b
     status), and a 512 KB question that named nobody took 13 s per call with
     2,000 rows; classify_query_sensitivity can make two calls. A name part is
     a-z only, so `\\bpart\\b` finds it exactly when it is one of the question's
-    whole a-z words, and each distinct ward/bed label needs testing only once.
-    Same answers, pinned against the old loop in
-    tests/test_ai_governance_identifier_scan.py; that includes the known
-    over-labelling (the squashed-substring test reads ward "OR" inside "for"),
-    which errs toward PHI and is left as it was."""
+    whole a-z words, and each distinct bed label needs testing only once.
+    Pinned against the old loop in tests/test_ai_governance_identifier_scan.py.
+
+    WARDS read through services.ward_reference (2026-10-04), the SAME rule Sage
+    retrieval's ward match reads: the squashed-substring test found ward "OR"
+    inside "for" and CCU inside "occur", and labelled general questions PHI.
+    That rule needs the question AS TYPED for its capitals half ("back from
+    OR"); pass it as `query`. Without it the lower-cased text is used, which
+    still finds every other ward and "ward or". Beds keep the substring test:
+    bed references are ruling R026's work, in retrieval and here alike."""
     try:
         from database import get_db
         db = get_db()
@@ -166,9 +174,10 @@ def _match_patient_identifiers(query_lower: str, include_ward: bool = True) -> b
     # Fold confusable homoglyphs so a Cyrillic/Greek look-alike surname can't
     # slip past the match.
     query_lower = _fold_homoglyphs(query_lower)
+    typed = _fold_homoglyphs(query) if query is not None else query_lower
     norm_query = re.sub(r"[^a-z0-9]", "", query_lower)
     words = frozenset(re.findall(r"\b[a-z]+\b", query_lower))
-    tested_locs = set()
+    tested_beds = set()
     for r in rows:
         name = str(r["name"] or "").lower()
         name_parts = [p for p in re.split(r"[^a-zA-Z]", name)
@@ -176,13 +185,13 @@ def _match_patient_identifiers(query_lower: str, include_ward: bool = True) -> b
         for part in name_parts:
             if len(part) > 2 and part in words:
                 return True
-        locs = (r["ward"], r["bed"]) if include_ward else (r["bed"],)
-        for loc in locs:
-            norm_loc = re.sub(r"[^a-z0-9]", "", str(loc or "").lower())
-            if norm_loc and norm_loc not in tested_locs:
-                tested_locs.add(norm_loc)
-                if norm_loc in norm_query:
-                    return True
+        norm_bed = re.sub(r"[^a-z0-9]", "", str(r["bed"] or "").lower())
+        if norm_bed and norm_bed not in tested_beds:
+            tested_beds.add(norm_bed)
+            if norm_bed in norm_query:
+                return True
+        if include_ward and r["ward"] and ward_named_in(r["ward"], typed):
+            return True
     return False
 
 
@@ -271,7 +280,9 @@ def classify_query_sensitivity(
     # Soft ward match: a ward reference in a NON-aggregate turn (we already
     # returned above for genuine aggregate ward questions) may be scoping to that
     # ward's patients → treat as PHI.
-    if not hard_patient_signal and _match_patient_identifiers(q, include_ward=True) and not census_hit:
+    if (not hard_patient_signal
+            and _match_patient_identifiers(q, include_ward=True, query=query or "")
+            and not census_hit):
         reasons.append("query references a ward on record")
 
     if reasons:

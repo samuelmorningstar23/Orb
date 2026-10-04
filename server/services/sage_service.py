@@ -20,6 +20,7 @@ from permissions import department_scope
 from services.audit_service import log_audit_event
 from services.vital_charting import charted_text
 from services.news2_text import INCOMPLETE as _NEWS2_INCOMPLETE, news2_description
+from services.ward_reference import ward_named_in
 
 logger = logging.getLogger("orb.sage")
 
@@ -2455,7 +2456,8 @@ def _full_name_match(p_name: str, query_lower: str) -> bool:
     return all(x in whole_words for x in parts)
 
 
-def _match_patients(patients, discharged_patients, query_lower, query_words, norm_query) -> list:
+def _match_patients(patients, discharged_patients, query_lower, query_words, norm_query,
+                    *, query: str) -> list:
     """Which of these patients did the clinician name (or locate by bed/ward)?
 
     ONE matcher, called by BOTH lanes — the census/broad lane and the
@@ -2465,17 +2467,22 @@ def _match_patients(patients, discharged_patients, query_lower, query_words, nor
     every ward was in context and becomes a wrong answer the moment scoping
     exists, because the clinician gets a census they did not ask for instead of
     being told the patient is not theirs.
+
+    `query` is the text AS TYPED, for the ward rule (2026-10-04,
+    services/ward_reference.py, the same rule the PHI classifier reads). The
+    squashed-substring ward test found CCU inside "occur" and "accuracy", so a
+    CCU doctor's general question came back as "which patient did you mean?"
+    with every CCU patient named in the prompt. Beds still use the substring
+    test: that is ruling R026's work.
     """
     matched = []
     for p in patients:
         p_name = str(p['name']).lower()
-        p_ward = str(p['ward']).lower() if p['ward'] else ""
         p_bed = str(p['bed']).lower() if p['bed'] else ""
 
         norm_bed = re.sub(r'[^a-zA-Z0-9]', '', p_bed) if p_bed else ""
-        norm_ward = re.sub(r'[^a-zA-Z0-9]', '', p_ward) if p_ward else ""
         bed_match = norm_bed and (norm_bed in norm_query)
-        ward_match = norm_ward and (norm_ward in norm_query)
+        ward_match = bool(p['ward']) and ward_named_in(p['ward'], query)
 
         if (_whole_name_in_query(p_name, query_lower)
                 or _name_match(p_name, query_lower, query_words)
@@ -3395,6 +3402,7 @@ def _anchor_patient_from_history(patients, discharged_patients, history) -> str 
             patients, discharged_patients, text_lower,
             _name_tokens(text_lower),
             re.sub(r'[^a-zA-Z0-9]', '', text_lower),
+            query=text,
         )
         if len(hits) == 1:
             return hits[0]['data']['id']
@@ -3487,7 +3495,7 @@ def get_relevant_context(query: str, user: dict, patient_id: str = None, history
     # clinician got a census instead of an answer about the person they asked
     # about — or, for another ward's patient, an implicit "never heard of them".
     matched_patients = _match_patients(
-        patients, discharged_patients, query_lower, query_words, norm_query)
+        patients, discharged_patients, query_lower, query_words, norm_query, query=query)
 
     # ── OUT-OF-SCOPE NAMED PATIENT ──
     # Nothing in this clinician's department matched. Before ANY lane runs,
