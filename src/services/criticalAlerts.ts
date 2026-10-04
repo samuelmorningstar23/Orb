@@ -305,9 +305,10 @@ interface RelayAlertContent {
   text?: string;
 }
 
-/** `vitals:update` (ws/realtime.vitals_update_payload and its twins). The
- *  server sends no `patient_name` on this event; it is read in case one
- *  ever does, and the id stands in for it until then. */
+/** `vitals:update` (ws/realtime.vitals_update_payload and its twins).
+ *  `patient_name` is added by ws/realtime.emit_patient_vitals for every lane
+ *  (since 4 October 2026; before that the alert read the raw id). It is absent
+ *  only when the server cannot find the patient, and the id stands in then. */
 interface VitalsAlertPayload {
   patient_id?: string;
   patient_name?: string;

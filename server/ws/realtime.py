@@ -374,10 +374,66 @@ async def _department_for_emit(patient_id: str) -> str | None:
     return await run_db(_patient_department, patient_id)
 
 
+# ── The patient's name on a vitals update ─────────────────────────────────────
+# A deterioration alert (src/services/criticalAlerts.ts) names the patient from
+# `vital.patient_name`, and no lane ever sent one, so the notification read the
+# raw patient id. The name is added once, in emit_patient_vitals, for every
+# lane. The same TTL cache pattern as the department: a name changes only on a
+# registration correction, and a minute of the old spelling is harmless. The
+# rooms are not widened: they mirror the REST board's scope, so everyone who
+# receives the update can already see this patient's name there.
+_patient_name_cache: dict[str, tuple[str | None, float]] = {}
+
+
+def _cached_name(patient_id: str):
+    """Pure in-memory cache probe, as `_cached_department`."""
+    if not patient_id:
+        return None
+    cached = _patient_name_cache.get(patient_id)
+    if cached and cached[1] > _time.monotonic():
+        return cached[0]
+    return _CACHE_MISS
+
+
+def _patient_name(patient_id: str) -> str | None:
+    """The patient's name (cached), or None if unknown. BLOCKING on a cache
+    miss: coroutines go through `_name_for_emit()`."""
+    if not patient_id:
+        return None
+    cached = _cached_name(patient_id)
+    if cached is not _CACHE_MISS:
+        return cached
+    name = None
+    try:
+        with db_session() as db:
+            row = db.execute("SELECT name FROM patients WHERE id = ?", (patient_id,)).fetchone()
+            if row:
+                name = (row["name"] or "").strip() or None
+    except Exception as e:
+        logger.warning("vitals emit: name lookup failed for %s: %s", patient_id, e)
+    _patient_name_cache[patient_id] = (name, _time.monotonic() + _PATIENT_DEPT_TTL)
+    return name
+
+
+async def _name_for_emit(patient_id: str) -> str | None:
+    """Loop-safe name lookup for the emit path, as `_department_for_emit`."""
+    cached = _cached_name(patient_id)
+    if cached is not _CACHE_MISS:
+        return cached
+    return await run_db(_patient_name, patient_id)
+
+
 async def emit_patient_vitals(event: str, payload: dict) -> None:
     """Emit a per-patient vitals/status event scoped to its department room
-    (+ __all__ for no-department viewers). Replaces the global sio.emit."""
+    (+ __all__ for no-department viewers). Replaces the global sio.emit.
+
+    A `vitals:update` also gets the patient's `patient_name` (see above), unless
+    the lane already set it; an unknown patient gets none rather than a guess."""
     dept = await _department_for_emit(payload.get("patient_id"))
+    if event == "vitals:update" and not payload.get("patient_name"):
+        name = await _name_for_emit(payload.get("patient_id"))
+        if name:
+            payload = {**payload, "patient_name": name}
     # __all__ always: no-department clinicians (whole-census board) must still see it.
     await sio.emit(event, payload, room="dept:__all__")
     if dept:
