@@ -68,6 +68,41 @@ WARD_TABLE = [
     ("ER", "came up via ER last night", True),
     ("IN", "who is in the ward", False),
     ("IN", "who is in ward in", True),
+    ("OR", "Should I give A, Or B?", True),      # a capital mid-sentence
+    ("OR", "OR ward handover", True),
+    ("OR", "who is in or ward", False),         # a short English word before "ward"
+    # one-word codes that are ordinary words: a capital, mid-sentence capital,
+    # or "ward" beside them (ruled 2026-10-04)
+    ("Surgery", "Is surgery indicated for appendicitis?", False),
+    ("Surgery", "Pain after cardiac surgery, what analgesia?", False),
+    ("Surgery", "Surgery is indicated when pain persists", False),
+    ("Surgery", "Any beds free on Surgery?", True),
+    ("Surgery", "who is on the surgery ward", True),
+    ("Surgery", "ward surgery handover please", True),
+    ("Surgery", "SURGERY census", True),
+    ("Recovery", "Recovery after MI takes weeks", False),
+    ("Recovery", "how is recovery going after the op", False),
+    ("Recovery", "Is she stable? Recovery says yes.", False),
+    ("Recovery", "anyone still in Recovery?", True),
+    ("OBS", "repeat obs in an hour", False),
+    ("OBS", "who is on OBS tonight", True),
+    ("Male", "male, 45, chest pain", False),
+    ("Male", "Male, 45, chest pain", False),
+    ("Male", "any beds on male ward", True),
+    ("Maternity", "maternity leave policy", False),
+    ("Maternity", "any deliveries on Maternity tonight", True),
+    ("Lotus", "Is Lotus full tonight?", True),
+    ("East", "the east side of the building", False),
+    ("East", "any beds on East", True),
+    # digits only: beside "ward"
+    ("6", "give 6 units of insulin", False),
+    ("6", "who is on ward 6", True),
+    ("06", "who is on ward 6", True),
+    ("6", "the 6 ward round is late", True),
+    # abbreviations stay case-blind, generic use included (a known residual)
+    ("ICU", "icu census", True),
+    ("ICU", "what are the ICU admission criteria", True),
+    ("NICU", "nicu handover", True),
     # nothing names an empty label
     ("", "anything at all", False),
     (None, "anything at all", False),
@@ -80,11 +115,15 @@ def test_ward_rule_table(label, text, expected):
 
 
 def test_lower_cased_text_still_finds_every_ward_but_capitals():
-    """A caller holding only the lower-cased question still finds every ward,
-    and "ward or"; only the capitals half needs the text as typed."""
+    """A caller holding only the lower-cased question still finds every
+    abbreviation and multi-part code, and a word code beside "ward"; only the
+    capital signs need the text as typed."""
     assert ward_named_in("CCU", "ccu census") is True
+    assert ward_named_in("GM-1", "how is gm-1") is True
     assert ward_named_in("OR", "who is on ward or today") is True
+    assert ward_named_in("Surgery", "who is on the surgery ward") is True
     assert ward_named_in("OR", "patient back from or") is False
+    assert ward_named_in("Surgery", "any beds free on surgery") is False
 
 
 # ── the classifier ───────────────────────────────────────────────────────────
@@ -210,6 +249,32 @@ def test_or_ward_general_question_attaches_no_chart():
         *_, pctx, qscope = get_relevant_context(
             "Is the patient back from OR stable?", user, history=[])
         assert pctx is not None and pctx["patient_id"] == pid, qscope
+    finally:
+        _retire(pid)
+
+
+@pytest.mark.parametrize("ward,general,reference", [
+    ("Surgery", "Pain after cardiac surgery, what analgesia is best?",
+     "Who is on Surgery tonight?"),
+    ("Recovery", "How long is recovery after a hip replacement?",
+     "Anyone still in Recovery?"),
+    ("6", "Should I give 6 units of insulin for a glucose of 18?",
+     "Who is on ward 6 tonight?"),
+])
+def test_a_word_coded_ward_needs_a_sign(ward, general, reference):
+    """Ward codes are free text in the bed master. A hospital that codes a ward
+    "Surgery" used to get that ward's patient for any question about surgery."""
+    dept = f"Ward Rule Word {uuid.uuid4().hex[:4]}"
+    name = "Kulasekarapandian Muthuswamy"
+    pid = _patient(name, ward, f"WW-{uuid.uuid4().hex[:3]}", dept)
+    user = _user(dept)
+    try:
+        context, *_rest, pctx, qscope = get_relevant_context(general, user, history=[])
+        assert pctx is None or pctx["patient_id"] != pid, qscope
+        assert name not in context, qscope
+        context, *_rest, pctx, qscope = get_relevant_context(reference, user, history=[])
+        assert name in context, qscope
+        assert pctx is None or pctx["patient_id"] == pid, qscope
     finally:
         _retire(pid)
 
