@@ -41,11 +41,33 @@ def test_tamper_detection(monkeypatch):
 
 
 def test_plaintext_passthrough_when_disabled(monkeypatch):
+    # An explicit opt-out: the prod profile now requires encryption by default
+    # (F111), so passthrough is only what an operator asks for.
+    monkeypatch.setenv("ORB_REQUIRE_UPLOAD_ENCRYPTION", "0")
     cs = _reload_with_key(monkeypatch, None)
     assert cs.is_encryption_enabled() is False
     data = b"not encrypted"
     assert cs.encrypt_bytes(data) == data
     assert cs.decrypt_bytes(data) == data
+
+
+def test_prod_profile_refuses_cleartext_without_a_key(monkeypatch):
+    # F111: a hospital appliance missing its upload key used to store scans and
+    # voice recordings in the clear. In the prod profile that is now an error.
+    import config
+    monkeypatch.delenv("ORB_REQUIRE_UPLOAD_ENCRYPTION", raising=False)
+    monkeypatch.setattr(config, "DEPLOYMENT_PROFILE", "prod", raising=False)
+    cs = _reload_with_key(monkeypatch, None)
+    with pytest.raises(RuntimeError, match="Upload encryption is required"):
+        cs.encrypt_bytes(b"PHI that must not be written in the clear")
+
+
+def test_dev_profile_still_passes_through_without_a_key(monkeypatch):
+    import config
+    monkeypatch.delenv("ORB_REQUIRE_UPLOAD_ENCRYPTION", raising=False)
+    monkeypatch.setattr(config, "DEPLOYMENT_PROFILE", "dev", raising=False)
+    cs = _reload_with_key(monkeypatch, None)
+    assert cs.encrypt_bytes(b"laptop data") == b"laptop data"
 
 
 def test_decrypt_passes_through_legacy_plaintext(monkeypatch):
