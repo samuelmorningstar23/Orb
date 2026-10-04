@@ -11,6 +11,8 @@ import re
 import time
 import bisect
 import difflib
+import functools
+from collections import Counter
 from datetime import datetime, timezone
 from functools import lru_cache
 from typing import AsyncGenerator, NamedTuple
@@ -2073,6 +2075,151 @@ def _audit_out_of_scope(user: dict, dept: str | None, query: str, reason: str,
 _POSSESSIVE_SUFFIX_RE = re.compile(r"(?<=[a-z0-9])['’]s(?![a-z0-9])")
 
 
+# ── Bounding the name matchers on long text (4 October 2026) ─────────────────
+# MEASURED: a 50,000-character question that named a bed ("bed 7 bed 7 ...")
+# held a worker thread for 7.4 s, 22.8 of 22.9 s under the profiler inside
+# difflib. Every matcher below ran once per patient (admitted and discharged,
+# in and out of the department, and again per history turn for the anchor),
+# and each one re-read the whole question: SequenceMatcher over every window,
+# a regex per name part, and the possessive strip redone for every patient.
+# Nothing caps a Sage question below main.py's 512 KB body limit.
+#
+# Two kinds of fix, kept apart on purpose:
+#   * EXACT. What the matchers read from a text is computed once per text (the
+#     helpers and _NameTokens below). Same answers as before, pinned against a
+#     frozen copy of the old matchers in tests/test_sage_name_match_bounds.py.
+#   * THE CAP. Fuzzy windows come only from the first _FUZZY_MAX_TOKENS name
+#     tokens. Exact matching still reads the whole text.
+
+#: Fuzzy (0.70) windows are taken from the first this-many name tokens of a
+#: text. The fuzzy neighbourhood is for ASR garbles in a SPOKEN question, and 64
+#: words is about 25 s of speech. Over a long pasted note it mostly finds
+#: ordinary words ("frames are" is 0.73 of Ramesh Reddy, "and relay" 0.70 of
+#: Anand Reddy): measured on documentation prose against 340 names, 1 false
+#: name at 500 characters, 8 at 10,000 and 18 at 50,000; 1 at every length with
+#: this cap. Past it a garbled name is matched only if typed exactly; a miss
+#: names nobody, which is the safe failure, where a wrong chart is not.
+_FUZZY_MAX_TOKENS = 64
+
+#: What _whole_name_in_query's boundary rule counts as part of a word.
+_NAME_WORD_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
+
+#: Texts the cached readers below keep. A turn reads at most four (the question
+#: and three earlier user turns for the anchor), and one at a time; a 512 KB
+#: text of distinct words holds about 10 MB here, so this stays small.
+_NAME_TEXT_CACHE = 4
+
+
+@functools.lru_cache(maxsize=_NAME_TEXT_CACHE)
+def _whole_words(text: str) -> frozenset:
+    """Every whole word of `text` made only of a-z.
+
+    A name part is a-z only, so `\\bpart\\b` finds it exactly when it is in this
+    set. The part tests used to run that regex over the whole question once per
+    part per patient: 6 ms each on a 512 KB question.
+    """
+    return frozenset(re.findall(r'\b[a-z]+\b', text or ""))
+
+
+@functools.lru_cache(maxsize=_NAME_TEXT_CACHE)
+def _word_char_runs(text: str) -> frozenset:
+    """Every maximal run of a-z0-9 in `text`.
+
+    A name bounded by _whole_name_in_query's rule has every one of its own
+    a-z0-9 runs as a whole run of the text, so a name with a run missing from
+    this set cannot be in the text in full, and is ruled out without reading it.
+    """
+    return frozenset(re.findall(r'[a-z0-9]+', text or ""))
+
+
+class _NameTokens(list):
+    """What _name_tokens returns: the token list every caller already passes as
+    `query_words`, plus the per-text work _name_match would otherwise redo for
+    every patient, built on first use.
+
+    One instance per text per turn, so the cache lives exactly as long as the
+    list the caller already holds, and nothing outlives the census refresh at
+    the start of the turn. It compares, slices and serialises as a plain list.
+    """
+
+    def __init__(self, tokens=()):
+        super().__init__(tokens)
+        self._exact = {}
+        self._fuzzy = {}
+        self._verdicts = {}
+
+    def exact_windows(self, size: int) -> frozenset:
+        """Every run of `size` consecutive tokens, joined by single spaces. All
+        of the text: exact matching is not capped."""
+        got = self._exact.get(size)
+        if got is None:
+            got = self._exact[size] = frozenset(
+                " ".join(self[i:i + size]) for i in range(len(self) - size + 1))
+        return got
+
+    def fuzzy_match(self, name: str) -> bool:
+        """Does `name` (its parts joined by single spaces) match a window of the
+        first _FUZZY_MAX_TOKENS tokens at 0.70, or a window anywhere exactly?
+        One verdict per distinct name: names repeat on a roster."""
+        hit = self._verdicts.get(name)
+        if hit is None:
+            hit = self._verdicts[name] = self._scan(name)
+        return hit
+
+    def _fuzzy_windows(self, size: int) -> list:
+        """(window, length, character counts) for each DISTINCT window of the
+        capped head that is not made only of words the ward already owns
+        (_is_clinical_vocabulary): such a window is never a name."""
+        got = self._fuzzy.get(size)
+        if got is None:
+            head = self[:_FUZZY_MAX_TOKENS]
+            seen = set()
+            got = []
+            for i in range(len(head) - size + 1):
+                tokens = head[i:i + size]
+                window = " ".join(tokens)
+                if window in seen:
+                    continue
+                seen.add(window)
+                if all(_is_clinical_vocabulary(t) for t in tokens):
+                    continue
+                got.append((window, len(window), Counter(window)))
+            self._fuzzy[size] = got
+        return got
+
+    def _scan(self, name: str) -> bool:
+        parts = name.split(" ")
+        # Typed exactly, a name is found anywhere in the text: the cap is on the
+        # NEIGHBOURHOOD. Same rule as a window inside the head, which matches at
+        # ratio 1.0 unless every token is ward vocabulary.
+        if (name in self.exact_windows(len(parts))
+                and not all(_is_clinical_vocabulary(t) for t in parts)):
+            return True
+        la = len(name)
+        name_counts = Counter(name)
+        for window, lb, counts in self._fuzzy_windows(len(parts)):
+            total = la + lb
+            # Two upper bounds on SequenceMatcher.ratio(), cheapest first: it
+            # can match at most the shorter string, and at most as many of each
+            # character as both strings hold. Below 0.70 on either, difflib
+            # cannot reach 0.70 either, so it is not run.
+            if 2.0 * min(la, lb) / total < 0.70:
+                continue
+            # By hand: Counter's `&` builds a new Counter per window and made
+            # this bound cost twice what it saved on a 30,000-name roster.
+            common = 0
+            for ch, n in counts.items():
+                m = name_counts.get(ch)
+                if m:
+                    common += n if n < m else m
+            if 2.0 * common / total < 0.70:
+                continue
+            if difflib.SequenceMatcher(None, name, window).ratio() >= 0.70:
+                return True
+        return False
+
+
+@functools.lru_cache(maxsize=_NAME_TEXT_CACHE)
 def _name_matching_text(query_lower: str) -> str:
     """The lower-cased query as the name matchers read it: possessives gone.
 
@@ -2083,6 +2230,9 @@ def _name_matching_text(query_lower: str) -> str:
     the turn was denied as OUT_OF_SCOPE. The residual of the word-boundary
     rule in _whole_name_in_query, closed 2026-09-05 together with the
     two-letter floor there and in _name_match.
+
+    Cached: _whole_name_in_query reads it once per patient, and on a 512 KB
+    question each uncached read cost 10 ms.
     """
     return _POSSESSIVE_SUFFIX_RE.sub("", query_lower or "")
 
@@ -2094,8 +2244,11 @@ def _name_tokens(query_lower: str) -> list:
     anchor both call it, so a possessive cannot reach a window from either
     lane; a second inline `re.findall` would be the next place the rule is
     missing from.
+
+    Returns a _NameTokens: the same list, carrying the per-text cache that
+    _name_match fills on first use.
     """
-    return re.findall(r'\b[a-z]+\b', _name_matching_text(query_lower))
+    return _NameTokens(re.findall(r'\b[a-z]+\b', _name_matching_text(query_lower)))
 
 
 def _name_letters(p_name: str) -> int:
@@ -2135,27 +2288,46 @@ def _whole_name_in_query(p_name: str, query_lower: str) -> bool:
     is the only full-name test the lanes have. And the query is read through
     _name_matching_text, so "Meenakshi's" is "meenakshi" here and never a
     standalone "s".
+
+    Same rule, cheaper reading, 2026-10-04: the lookaround regex could not use
+    a fast literal scan and cost 6 ms per patient on a 512 KB question. A set
+    lookup (_word_char_runs) now rules out a name that cannot be there, and a
+    survivor is found with str.find and the same two boundary checks.
     """
     p_name = (p_name or "").strip()
     if not p_name or _name_letters(p_name) < 2:
         return False
-    return re.search(
-        rf"(?<![a-z0-9]){re.escape(p_name)}(?![a-z0-9])",
-        _name_matching_text(query_lower),
-    ) is not None
+    text = _name_matching_text(query_lower)
+    runs = _word_char_runs(text)
+    if not all(run in runs for run in re.findall(r'[a-z0-9]+', p_name)):
+        return False
+    start = text.find(p_name)
+    while start != -1:
+        end = start + len(p_name)
+        if ((start == 0 or text[start - 1] not in _NAME_WORD_CHARS)
+                and (end == len(text) or text[end] not in _NAME_WORD_CHARS)):
+            return True
+        start = text.find(p_name, start + 1)
+    return False
 
 
 def _name_match(p_name: str, query_lower: str, query_words: list) -> bool:
     """Tokenized + fuzzy patient-name match. ONE matcher, used by the in-scope
     admitted scan, the in-scope discharged scan and the out-of-scope locator
     scan — a second copy would drift, and a matcher that drifts between the
-    'show it' path and the 'deny it' path is a hole."""
+    'show it' path and the 'deny it' path is a hole.
+
+    `query_words` is _name_tokens(query_lower), whose cache this fills. A plain
+    list still works and gets a cache for this one call. The fuzzy window reads
+    only the first _FUZZY_MAX_TOKENS tokens; every exact test reads the whole
+    text."""
     name_parts = [
         part for part in re.split(r'[^a-zA-Z]', p_name)
         if part and part not in ('mr', 'mrs', 'ms', 'dr', 'prof')
     ]
+    whole_words = _whole_words(query_lower)
     for part in name_parts:
-        if len(part) > 2 and re.search(rf'\b{re.escape(part)}\b', query_lower):
+        if len(part) > 2 and part in whole_words:
             return True
     # Fuzzy (catches ASR mis-transcriptions like "stress ready" -> "suresh reddy")
     # Floor, 2026-09-05: a name with fewer than two letters has no fuzzy
@@ -2180,20 +2352,11 @@ def _name_match(p_name: str, query_lower: str, query_words: list) -> bool:
     if not name_parts or letters < 2:
         return False
     full_clean_name = " ".join(name_parts)
-    window_size = len(name_parts)
-    fuzzy = letters >= _FUZZY_MIN_LETTERS
-    for i in range(len(query_words) - window_size + 1):
-        tokens = query_words[i:i + window_size]
-        window = " ".join(tokens)
-        if not fuzzy:
-            if window == full_clean_name:
-                return True
-            continue
-        if all(_is_clinical_vocabulary(t) for t in tokens):
-            continue
-        if difflib.SequenceMatcher(None, full_clean_name, window).ratio() >= 0.70:
-            return True
-    return False
+    if not isinstance(query_words, _NameTokens):
+        query_words = _NameTokens(query_words)
+    if letters < _FUZZY_MIN_LETTERS:
+        return full_clean_name in query_words.exact_windows(len(name_parts))
+    return query_words.fuzzy_match(full_clean_name)
 
 
 #: Below this many letters a name is matched exactly or not at all.
@@ -2308,7 +2471,8 @@ def _full_name_match(p_name: str, query_lower: str) -> bool:
              if x and x not in ('mr', 'mrs', 'ms', 'dr', 'prof') and len(x) > 2]
     if not parts:
         return False
-    return all(re.search(rf'\b{re.escape(x)}\b', query_lower) for x in parts)
+    whole_words = _whole_words(query_lower)
+    return all(x in whole_words for x in parts)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
