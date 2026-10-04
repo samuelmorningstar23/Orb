@@ -426,6 +426,13 @@ def get_surgery_detail(surgery_id: str, request: Request,
                 result[field] = json.loads(result.get(field)) if result.get(field) else []
             except:
                 result[field] = []
+        # The prep steps the Surgical Suite maps over must be a list. The WHO
+        # checklist used to be stored in this column as an object, and the
+        # panel crashed on it; it has its own column now (migration 76), and
+        # nothing it holds belongs in this payload.
+        if not isinstance(result["surgical_checklist"], list):
+            result["surgical_checklist"] = []
+        result.pop("who_checklist", None)
                 
         # Also parse notes for imported_context if it's a JSON package
         try:
@@ -845,8 +852,8 @@ def complete_surgery(surgery_id: str, request: Request,
             # Evaluated from the row THIS transaction already holds — no second
             # session, and no window in which an item could be un-ticked between
             # the check and the UPDATE.
-            from services.who_checklist import summarize_state
-            checklist = summarize_state(surgery["surgical_checklist"])
+            from services.who_checklist import summarize_state, who_raw
+            checklist = summarize_state(who_raw(surgery))
             progress = checklist["progress"]
             if checklist_required and not checklist["completed"]:
                 raise _CompletionRefused(

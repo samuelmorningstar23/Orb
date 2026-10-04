@@ -217,7 +217,7 @@ def test_closing_a_case_never_files_an_invented_operative_account(doctor, patien
         now = datetime.now(timezone.utc).isoformat()
         state = {item["id"]: {"checked": True, "by": doctor, "at": now}
                  for phase in WHO_CHECKLIST["phases"] for item in phase["items"]}
-        db.execute("UPDATE surgeries SET surgical_checklist = ? WHERE id = ?",
+        db.execute("UPDATE surgeries SET who_checklist = ? WHERE id = ?",
                    (json.dumps({"template": TEMPLATE_VERSION, "state": state}), sid))
 
     headers = {"Authorization": f"Bearer {create_token(doctor, 'doctor')}"}

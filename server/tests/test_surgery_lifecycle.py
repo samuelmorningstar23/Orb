@@ -151,7 +151,7 @@ def _tick_all(surgery_id, actor_id, omit=()):
     }
     with db_session() as db:
         db.execute(
-            "UPDATE surgeries SET surgical_checklist = ? WHERE id = ?",
+            "UPDATE surgeries SET who_checklist = ? WHERE id = ?",
             (json.dumps({"template": TEMPLATE_VERSION, "state": state}), surgery_id),
         )
 

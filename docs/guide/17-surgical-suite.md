@@ -267,26 +267,26 @@ Background you must define once: the **WHO Surgical Safety Checklist (2009)** is
 #### get_template: `server/services/who_checklist.py:78`
 **Signature:** `() -> dict`, returns `WHO_CHECKLIST`. Served verbatim by `GET /api/surgery/checklist/template`.
 
-#### get_checklist_state: `server/services/who_checklist.py:87`
+#### get_checklist_state: `server/services/who_checklist.py:156`
 **Signature:** `(surgery_id: str) -> dict`
 **Does:** Returns persisted completion for a surgery: `{version, state:{item_id:{checked,by,at}}, progress:{checked,total}, completed}`.
-**How it works:** Reads `surgeries.surgical_checklist`; if it parses to a dict whose `template == TEMPLATE_VERSION`, uses its `state`, else treats it as empty (legacy/non-WHO data is ignored, not destroyed) (`:100`). Counts checked items vs `len(_ALL_ITEM_IDS)`.
+**How it works:** Reads `surgeries.who_checklist` through `who_raw` (`:102`), which falls back to a WHO payload still left in `surgical_checklist` by code from before migration 76. `summarize_state` (`:112`) uses its `state` when it parses to a dict whose `template == TEMPLATE_VERSION`, else treats it as empty. Counts checked items vs `len(_ALL_ITEM_IDS)`.
 **Data in/out:** Out includes `completed = (checked == total)` and returns `{"error":"not_found"}` if the surgery row is missing.
 **Talks to:** Reads `surgeries`. Called by `set_item` (to return fresh state) and the `GET /{id}/checklist` route.
-**Gotchas:** `total` is the count of *all* items across all phases (19), so `completed` requires every phase ticked. A legacy plain-list checklist (older code stored `surgical_checklist` as a plain array of strings) reports `progress: {checked:0, total:19}`, it is not migrated, just shown as empty.
+**Gotchas:** `total` is the count of *all* items across all phases (19), so `completed` requires every phase ticked. Until migration 76 (4 October 2026) the WHO state shared `surgical_checklist` with the AI prep package's LIST of prep steps: GET /surgery/{id} then returned the WHO object where the Surgical Suite expected a list and the panel crashed after the first tick, and a prep package landing after a tick wiped the WHO record. Each now has its own column (`server/tests/test_surgery_checklist_storage.py`).
 
-#### set_item: `server/services/who_checklist.py:119`
+#### set_item: `server/services/who_checklist.py:167`
 **Signature:** `(surgery_id, item_id, checked: bool, actor_id) -> dict`
 **Does:** Checks/unchecks one WHO item and persists it, concurrency-safely; returns the fresh state.
 **How it works:**
 1. Rejects unknown `item_id` with `ValueError` (`:132`).
 2. Opens a **raw connection** (`get_db()`), disables autocommit (`isolation_level = None`), and runs `BEGIN IMMEDIATE` so the read-modify-write is serialized against other writers (`:138`).
-3. Reads current `surgical_checklist`; builds `payload={template, state}`, preserving any prior WHO payload or carrying legacy non-WHO data under `payload['legacy']` (`:148`).
+3. Reads `who_checklist` and `surgical_checklist`; builds `payload={template, state}` from the current WHO state (`who_raw`). It writes `who_checklist` only, so the prep steps are never touched. A WHO payload still in the prep column (the old shape) is split on this write, and the prep list it carried under `legacy` goes back into `surgical_checklist`.
 4. If `checked`, writes `state[item_id]={checked:True, by:actor_id, at:_now()}`; if unchecked, pops the key (`:160`).
 5. `UPDATE` and `COMMIT`; on any error, `ROLLBACK`; always `conn.close()` (`:164`).
 **Why it exists:** The previous version read on one connection and wrote on another, so two team members ticking different items concurrently lost one update. `BEGIN IMMEDIATE` acquires the write lock at transaction start, preventing the lost-update race.
 **Data in/out:** In: item id + bool + actor. Out: the same shape as `get_checklist_state`.
-**Talks to:** Reads/writes `surgeries.surgical_checklist`. Called by `POST /{id}/checklist`.
+**Talks to:** Reads/writes `surgeries.who_checklist` (and, once, splits an old-shape `surgical_checklist`). Called by `POST /{id}/checklist`.
 **Change guide:** To record a free-text note per tick, extend the `{checked, by, at}` object at `:161`; `get_checklist_state` passes `state` through untouched so the extra field survives. Worked example: to enforce phase order (no Time Out ticks before Sign In complete), add a guard here that inspects `payload['state']` before allowing the write.
 **Gotchas:** It uses `_now()` = UTC ISO8601, consistent with the rest of the file. The manual transaction bypasses the `db_session()` helper, so if you add triggers/hooks to `db_session`, they won't fire here. `unchecked` removes the record entirely (no "unchecked by" audit), only *positive* checks are audited.
 
@@ -512,7 +512,7 @@ row is inserted by hand. See Discrepancies.
 - **Produces** `message:new` to the case-room channel and `user:{target_user_id}` rooms from `alert-team` (`server/routes/surgery_routes.py:398`, `:400`) and from `team-response` (surgical_alert messages).
 
 ### DB tables (guide 04-database-schema)
-- **`surgeries`** (owner), `server/database.py:297`. Status enum includes `scheduled, in_progress, completed, cancelled, emergency_pending, emergency_context_generating, emergency_ready, emergency_acknowledged, emergency_staged`. JSON-in-TEXT columns: `co_morbidities, surgical_checklist, instruments_required, staff_required, possible_complications, notes`.
+- **`surgeries`** (owner), `server/database.py:297`. Status enum includes `scheduled, in_progress, completed, cancelled, emergency_pending, emergency_context_generating, emergency_ready, emergency_acknowledged, emergency_staged`. JSON-in-TEXT columns: `co_morbidities, surgical_checklist, instruments_required, staff_required, possible_complications, notes`, and `who_checklist` (migration 76: the WHO Surgical Safety Checklist state, `{template, state}`, NULL until the first tick). `surgical_checklist` holds only the prep package's list of steps.
 - **`surgery_team_assignments`** (owner), `server/database.py:320`. Status `pending|alerted|confirmed|declined`.
 - **`surgery_prep_requests`** (owner), `server/database.py:344`. State `drafted|resolved`, `idempotency_key UNIQUE`.
 - Reads: `patients`, `patient_profiles`, `risk_scores`, `users`, `channels`, `messages`.

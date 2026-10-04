@@ -7,10 +7,17 @@ a hard requirement for any credible surgical module. It has three phases:
   2. Time Out     — before skin incision
   3. Sign Out     — before the patient leaves the OR
 
-Completion state is persisted as JSON on ``surgeries.surgical_checklist`` — a map
+Completion state is persisted as JSON on ``surgeries.who_checklist``: a map
 of item id -> {checked: bool, by: user_id, at: iso8601}. The canonical template is
 version-stamped so a completed checklist records which template it was filled
 against.
+
+It has its own column since migration 76. It used to share
+``surgeries.surgical_checklist`` with the AI prep package, which writes a LIST of
+prep steps there: the Surgical Suite crashed on the object this module wrote, and
+a prep package landing after a tick wiped the WHO record. A row still holding the
+old shape (written in the moment between the migration and this code, or brought
+back by an old backup) is read here as WHO state and split on its next write.
 """
 from __future__ import annotations
 
@@ -84,9 +91,27 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _is_who_payload(raw) -> bool:
+    try:
+        parsed = json.loads(raw) if raw else None
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return isinstance(parsed, dict) and parsed.get("template") == TEMPLATE_VERSION
+
+
+def who_raw(row) -> str | None:
+    """The persisted WHO blob for a surgeries row holding ``who_checklist`` and
+    ``surgical_checklist``: the WHO column, or, while it is still empty, a WHO
+    payload left in the prep column by code from before migration 76."""
+    if row["who_checklist"]:
+        return row["who_checklist"]
+    legacy = row["surgical_checklist"]
+    return legacy if _is_who_payload(legacy) else None
+
+
 def summarize_state(raw: str | None) -> dict:
-    """PURE: turn a persisted ``surgeries.surgical_checklist`` blob into the
-    checklist state. No database, no I/O.
+    """PURE: turn a persisted ``surgeries.who_checklist`` blob (see ``who_raw``)
+    into the checklist state. No database, no I/O.
 
     Shape: {version, state: {item_id: {checked, by, at}}, completed, progress}.
     Legacy rows may hold a non-WHO checklist (a plain list from older code) —
@@ -132,11 +157,11 @@ def get_checklist_state(surgery_id: str) -> dict:
     """Return the persisted completion state for a surgery. Opens a session."""
     with db_session() as db:
         row = db.execute(
-            "SELECT surgical_checklist FROM surgeries WHERE id = ?", (surgery_id,)
+            "SELECT who_checklist, surgical_checklist FROM surgeries WHERE id = ?", (surgery_id,)
         ).fetchone()
     if not row:
         return {"error": "not_found"}
-    return summarize_state(row["surgical_checklist"])
+    return summarize_state(who_raw(row))
 
 
 def set_item(surgery_id: str, item_id: str, checked: bool, actor_id: str) -> dict:
@@ -147,10 +172,10 @@ def set_item(surgery_id: str, item_id: str, checked: bool, actor_id: str) -> dic
     not clobber each other (the previous implementation read on one connection
     and wrote on another, losing the first writer's update).
 
-    Legacy-preserving: if the row already holds a NON-WHO checklist (e.g. an older
-    plain-list format), that data is carried forward under payload['legacy']
-    instead of being overwritten, honouring the "additive, never destructive"
-    contract.
+    Writes ``surgeries.who_checklist`` only, so the prep steps in
+    ``surgical_checklist`` are never touched. A WHO payload still sitting in the
+    prep column (see the module note) is moved out on this write, and the prep
+    list it carried under 'legacy' is put back where it belongs.
     """
     if item_id not in _ALL_ITEM_IDS:
         raise ValueError(f"Unknown WHO checklist item: {item_id}")
@@ -163,31 +188,36 @@ def set_item(surgery_id: str, item_id: str, checked: bool, actor_id: str) -> dic
     try:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
-            "SELECT surgical_checklist FROM surgeries WHERE id = ?", (surgery_id,)
+            "SELECT who_checklist, surgical_checklist FROM surgeries WHERE id = ?", (surgery_id,)
         ).fetchone()
         if not row:
             conn.execute("ROLLBACK")
             raise ValueError("Surgery not found")
-        payload = {"template": TEMPLATE_VERSION, "state": {}}
-        raw = row["surgical_checklist"]
-        if raw:
-            try:
-                existing = json.loads(raw)
-            except (json.JSONDecodeError, TypeError):
-                existing = None
-            if isinstance(existing, dict) and existing.get("template") == TEMPLATE_VERSION:
-                payload = existing
-            elif existing is not None:
-                # Preserve prior non-WHO checklist data rather than discarding it.
-                payload["legacy"] = existing
+        raw = who_raw(row)
+        try:
+            existing = json.loads(raw) if raw else {}
+        except (json.JSONDecodeError, TypeError):
+            existing = {}
+        if not isinstance(existing, dict):
+            existing = {}
+        state = existing.get("state")
+        payload = {"template": TEMPLATE_VERSION, "state": state if isinstance(state, dict) else {}}
         if checked:
-            payload.setdefault("state", {})[item_id] = {"checked": True, "by": actor_id, "at": _now()}
+            payload["state"][item_id] = {"checked": True, "by": actor_id, "at": _now()}
         else:
-            payload.setdefault("state", {}).pop(item_id, None)
-        conn.execute(
-            "UPDATE surgeries SET surgical_checklist = ? WHERE id = ?",
-            (json.dumps(payload), surgery_id),
-        )
+            payload["state"].pop(item_id, None)
+        if not row["who_checklist"] and raw:
+            # The old shape, still in the prep column: split it here.
+            legacy = existing.get("legacy")
+            conn.execute(
+                "UPDATE surgeries SET who_checklist = ?, surgical_checklist = ? WHERE id = ?",
+                (json.dumps(payload), json.dumps(legacy) if legacy is not None else None, surgery_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE surgeries SET who_checklist = ? WHERE id = ?",
+                (json.dumps(payload), surgery_id),
+            )
         conn.execute("COMMIT")
     except Exception:
         try:

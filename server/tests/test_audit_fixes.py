@@ -237,10 +237,12 @@ def test_who_checklist_preserves_legacy():
                     json.dumps([{"item": "consent", "done": True}])))
     who_checklist.set_item(sid, "si_identity", True, "AUD-SG")
     with db_session() as db:
-        raw = db.execute("SELECT surgical_checklist FROM surgeries WHERE id=?", (sid,)).fetchone()[0]
-    payload = json.loads(raw)
-    assert payload["state"]["si_identity"]["checked"] is True
-    assert payload.get("legacy") == [{"item": "consent", "done": True}]
+        row = db.execute("SELECT surgical_checklist, who_checklist FROM surgeries WHERE id=?",
+                         (sid,)).fetchone()
+    # The WHO state has its own column (migration 76); the prior checklist in
+    # surgical_checklist is left exactly as it was, not carried or rewritten.
+    assert json.loads(row["who_checklist"])["state"]["si_identity"]["checked"] is True
+    assert json.loads(row["surgical_checklist"]) == [{"item": "consent", "done": True}]
 
 
 # ── RELAY-PROV: send_message tags bot, and the columns exist for automated paths ──
