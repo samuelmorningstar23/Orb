@@ -75,10 +75,10 @@ interface SurgeryFull {
   age: number
   sex: string
   mrn: string
-  bed: string
-  ward: string
+  bed: string | null
+  ward: string | null
   patient_diagnosis: string
-  admission_date: string
+  admission_date: string | null
   procedure_name: string
   diagnosis: string
   scheduled_date: string
@@ -689,7 +689,7 @@ export default function SurgicalSuitePanel() {
                       </div>
                       <span className="suite__surgery-diagnosis">{s.diagnosis}</span>
                       <div className="suite__surgery-meta">
-                        <span className="suite__surgery-patient">{s.patient_name} · Bed {s.bed}</span>
+                        <span className="suite__surgery-patient">{s.patient_name}{s.bed ? ` · Bed ${s.bed}` : ''}</span>
                         <span className="suite__surgery-risk" style={{ color: 'var(--status-danger)' }}>EMERGENCY</span>
                       </div>
                     </div>
@@ -878,7 +878,7 @@ export default function SurgicalSuitePanel() {
               <div className="suite__detail-patient-info">
                 <div className="suite__patient-name-wrap">
                   <span className="suite__detail-patient-name">{selectedSurgery.patient_name}</span>
-                  <span className="suite__detail-patient-sub">{selectedSurgery.age}y · {selectedSurgery.sex} · MRN: {selectedSurgery.mrn} · Bed {selectedSurgery.bed}</span>
+                  <span className="suite__detail-patient-sub">{selectedSurgery.age}y · {selectedSurgery.sex} · MRN: {selectedSurgery.mrn}{selectedSurgery.bed ? ` · Bed ${selectedSurgery.bed}` : ''}</span>
                 </div>
                 {/* Comorbidities + allergies integrated into patient header */}
                 <div className="suite__pills suite__pills--dense">

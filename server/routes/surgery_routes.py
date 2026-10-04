@@ -364,6 +364,7 @@ def get_surgery_detail(surgery_id: str, request: Request,
     with db_session() as db:
         row = db.execute(
             f"""SELECT s.*, p.name as patient_name, p.mrn, p.age, p.sex, u.name as surgeon_name,
+                      p.bed, p.ward, p.admission_date,
                       p.diagnosis as patient_diagnosis, pp.comorbidities, pp.allergies,
                       rs.level as risk_level, rs.score as risk_score, rs.drivers as risk_drivers
                FROM surgeries s
@@ -384,6 +385,14 @@ def get_surgery_detail(surgery_id: str, request: Request,
 
         result = dict(row)
         result["risk_level"] = result.get("risk_level") or "stable"
+        # Stored as JSON text; the case view expects the list. The bed, ward and
+        # admission date above were never selected, so the case header read
+        # "Bed undefined" on every case.
+        try:
+            drivers = json.loads(result["risk_drivers"]) if result.get("risk_drivers") else []
+        except (TypeError, ValueError):
+            drivers = []
+        result["risk_drivers"] = drivers if isinstance(drivers, list) else []
         # `s.*` already carries started_at/completed_at (migration 27); the
         # derived figure is added here so no consumer has to re-implement the
         # subtraction — and so "not measured" is an explicit null rather than a

@@ -535,13 +535,12 @@ nothing at all**: the catch is `console.error(e)` (`:328`), so the button simply
 **Data from:** the detail payload from `GET /api/surgery/{id}`.
 **Server:** `server/routes/surgery_routes.py:161-229` (`get_surgery_detail`, requires
 `surgery.read`).
-**Change this →** the avatar is a 44 px clay-tinted disc (`SurgicalSuitePanel.css:600-613`). **The
-bed number is always blank here.** The detail query selects `p.name, p.mrn, p.age, p.sex` and
-`p.diagnosis` (`server/routes/surgery_routes.py:166-167`) but **not** `p.bed`, and `surgeries` has
-no bed column (`server/database.py:297-317`), so `selectedSurgery.bed` is `undefined` and the line
-ends with a dangling "· Bed". The same is true of `ward` and `admission_date`, which are declared on
-the `SurgeryFull` interface (`:42-43`, `:47`) but neither returned nor rendered. Adding `p.bed` to
-that SELECT is the whole fix.
+**Change this →** the avatar is a 44 px clay-tinted disc (`SurgicalSuitePanel.css:600-613`). The
+sub-line is at `src/pages/panels/SurgicalSuitePanel.tsx:881`; it shows "· Bed …" only when the patient
+has a bed, and leaves it out when the route sends null. Until 4 October 2026 the detail query
+(`server/routes/surgery_routes.py:350`) selected no `p.bed`, so every case ended with "Bed undefined";
+it now selects `p.bed`, `p.ward` and `p.admission_date`, and parses `risk_drivers` into a list
+(`server/tests/test_surgery_detail_location.py`).
 
 ### Co-morbidity pills (red)
 **Where:** A wrapping row under the patient name.

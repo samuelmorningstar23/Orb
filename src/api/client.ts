@@ -2740,11 +2740,10 @@ export interface SurgeryImportedContext {
 
 /** GET /surgery/{id}: one case in full, with its JSON columns parsed.
  *
- *  Three fields are declared as the Surgical Suite reads them, NOT as the
- *  route sends them: `bed`, `ward` and `admission_date` are never selected
- *  (the query joins no p.bed, p.ward or p.admission_date), and `risk_drivers`
- *  is the risk row's drivers column as stored JSON TEXT (or null), not a
- *  parsed list. `surgical_checklist` is always a list of prep steps: the WHO
+ *  `bed`, `ward` and `admission_date` are the patient's, null when not
+ *  recorded (the route did not select them at all until 4 October 2026, so the
+ *  case header read "Bed undefined"); `risk_drivers` is the latest risk row's
+ *  drivers, parsed. `surgical_checklist` is always a list of prep steps: the WHO
  *  checklist has its own column since migration 76 (it used to be stored here
  *  as an object, which crashed the panel), and the route sends [] for anything
  *  that is not a list. */
@@ -2757,10 +2756,10 @@ export interface SurgeryDetail {
   age: number;
   sex: string;
   mrn: string;
-  bed: string;
-  ward: string;
+  bed: string | null;
+  ward: string | null;
   patient_diagnosis: string;
-  admission_date: string;
+  admission_date: string | null;
   procedure_name: string;
   diagnosis: string;
   scheduled_date: string;

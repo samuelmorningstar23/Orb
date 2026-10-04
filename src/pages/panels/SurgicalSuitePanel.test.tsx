@@ -207,3 +207,33 @@ describe('week view Today badge', () => {
     expect(container.querySelectorAll('.suite__today-badge')).toHaveLength(0)
   })
 })
+
+describe('case header bed', () => {
+  // GET /surgery/{id} used to select no bed at all, so every header read
+  // "Bed undefined". The route sends it now; a patient with no bed sends null,
+  // and the header then leaves the bed out rather than printing an empty one.
+  async function openCase() {
+    getEmergencyQueue.mockResolvedValue([EMERGENCY])
+    render(<SurgicalSuitePanel />)
+    const card = await screen.findByText('Exploratory Laparotomy')
+    await act(async () => { card.closest('button')!.click() })
+    return screen.findByText(/MRN: MRN-1/)
+  }
+
+  it('shows the bed the route sends', async () => {
+    const sub = await openCase()
+    expect(sub.textContent).toBe('54y · M · MRN: MRN-1 · Bed 12')
+  })
+
+  it('leaves the bed out when the patient has none', async () => {
+    getSurgeryDetail.mockResolvedValue({ ...DETAIL, bed: null })
+    const sub = await openCase()
+    expect(sub.textContent).toBe('54y · M · MRN: MRN-1')
+  })
+
+  it('leaves the bed out of an emergency row with no bed', async () => {
+    getEmergencyQueue.mockResolvedValue([{ ...EMERGENCY, bed: null }])
+    render(<SurgicalSuitePanel />)
+    expect(await screen.findByText('Ravi Sharma')).toBeInTheDocument()
+  })
+})
