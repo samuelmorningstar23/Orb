@@ -337,7 +337,7 @@ function Provenance({ card }: { card: Scorecard }) {
         <div>
           <dt>Source</dt>
           {/* i.source is the database view's name, for machines. */}
-          <dd>Orb&apos;s pilot evidence log</dd>
+          <dd>Orb&apos;s shadow evidence log</dd>
         </div>
         <div>
           <dt>Record</dt>
@@ -598,11 +598,11 @@ export default function ScorecardView() {
       {/* ── Header ── */}
       <header className="sc-head">
         <div className="sc-head__text">
-          <h2 className="sc-head__title">Shadow-mode scorecard</h2>
+          <h2 className="sc-head__title">Evaluation scorecard</h2>
           <p className="sc-head__sub">
-            What Orb saw, what it said, and what the ward actually did, accumulated silently, one
-            appended row per observation. Every figure below carries its denominator and its dates;
-            where there is not enough data to report one, it says so instead of showing a zero.
+            What Orb saw, what it said and what the ward did, one appended row per observation.
+            Every figure below carries its denominator and its dates; where there is not enough
+            data to report one, it says so instead of showing a zero.
           </p>
         </div>
         <div className="sc-head__controls">

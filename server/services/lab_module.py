@@ -34,8 +34,11 @@ stays on the free-text result path for good.
 
 STARTUP, while ORB_LAB is on, also loads the starter catalogue into an empty
 catalogue and registers the orderable codes in terminology
-(services/lab_master_service.py). With ORB_LAB off neither happens: the
-catalogue tables stay empty and terminology is unchanged.
+(services/lab_master_service.py), then runs the order intake sweep once
+(services/lab_order_service.ensure_intake, lis-6) for any laboratory order
+activated since the cutover that the post-commit hook missed. With ORB_LAB
+off none of this happens: the catalogue tables stay empty, terminology is
+unchanged and no order is taken in.
 
 Every database step tolerates the laboratory tables being absent, so this
 runs on a database that has not had migration 55 yet, and a failing step logs
@@ -81,7 +84,8 @@ _tasks: list[asyncio.Task] = []
 #: increment's module can call register_loop() at import. A later increment
 #: adds its own dotted path here (for example "services.lab_critical_service").
 #: A module that fails to import is logged and skipped; boot continues.
-_LOOP_MODULES: tuple[str, ...] = ()
+#: lis-6: the order intake sweep (services/lab_order_service.py), 'on' only.
+_LOOP_MODULES: tuple[str, ...] = ("services.lab_order_service",)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -341,6 +345,15 @@ def _startup_sync() -> dict:
             summary["catalogue"] = load_starter_catalogue()
         except Exception:
             logger.error("Laboratory starter catalogue could not be loaded", exc_info=True)
+        # lis-6: the intake backstop, once at boot, for any laboratory order
+        # activated since the cutover that the post-commit hook missed (the
+        # process stopped between the order's commit and the hook). Never
+        # raises; a background loop repeats it while the module is on.
+        try:
+            from services.lab_order_service import ensure_intake
+            summary["intake"] = ensure_intake()
+        except Exception:
+            logger.error("Laboratory order intake sweep could not run at startup", exc_info=True)
     summary["open"] = refresh_drain_state()
     return summary
 

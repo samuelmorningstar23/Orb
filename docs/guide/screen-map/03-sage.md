@@ -818,9 +818,9 @@ silently (`:676-681`). If Whisper fails, the live transcript is used instead and
 `:592` (`Mic error [<name>]: <message>` for anything else),
 `:702` ("No speech detected."), `:712` ("Transcription failed.").
 **Data from:** `claimMic('sage-panel')` (`SagePanel.tsx:566`) from
-`src/contexts/SageRuntimeContext.tsx:62`, the shared mic lock across the floating orb, this
+`src/contexts/SageRuntimeProvider.tsx:18`, the shared mic lock across the floating orb, this
 panel and Scribe. `cloudSpeechAllowed` comes from the AI posture at
-`SageRuntimeContext.tsx:79` (`posture?.cloud_speech_allowed === true`).
+`SageRuntimeProvider.tsx:35` (`posture?.cloud_speech_allowed === true`).
 **Change this →** each of these self-clears on a timer: 2.5s for the contention message
 (`:568`), 5s for mic errors (`:594`), 2s for the no-speech/failure messages (`:703`, `:713`).
 Note the first `getUserMedia` failure is retried once after 500ms with the status "Retrying mic

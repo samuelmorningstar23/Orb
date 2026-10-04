@@ -150,7 +150,7 @@ MIN_N: dict[str, int] = {
 }
 
 PHASE_LABELS = {
-    "A": "Phase A: silent (no clinician sees Orb output)",
+    "A": "Phase A: Orb output not shown to clinicians",
     "B": "Phase B: champion-only",
     "C": "Phase C: phased clinician access",
 }

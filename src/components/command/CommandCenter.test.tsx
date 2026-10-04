@@ -43,7 +43,7 @@ describe('command center deteriorations card', () => {
 
     expect(await screen.findByText('Cardiology only')).toBeTruthy()
     expect(screen.getByText('0 of 7 house-wide')).toBeTruthy()
-    expect(screen.getByText('No active deteriorations in Cardiology.')).toBeTruthy()
+    expect(screen.getByText('No elevated or critical NEWS2 scores in Cardiology.')).toBeTruthy()
     expect(screen.queryByText(/House is stable/)).toBeNull()
   })
 
@@ -51,7 +51,7 @@ describe('command center deteriorations card', () => {
     apiFetch.mockResolvedValue(SNAPSHOT)
     render(<CommandCenter />)
 
-    expect(await screen.findByText('No active deteriorations. House is stable.')).toBeTruthy()
+    expect(await screen.findByText('No elevated or critical NEWS2 scores. House is stable.')).toBeTruthy()
     expect(screen.queryByText(/ only$/)).toBeNull()
   })
 })

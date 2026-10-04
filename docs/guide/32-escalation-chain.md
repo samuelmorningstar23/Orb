@@ -373,19 +373,19 @@ The section header comment (`:952-975`) states two rules worth keeping. **Every 
 
 And the permission model: reading is `alert.read`; acknowledging and resolving require `alert.read` **and** `vitals.write`, which resolves to `{doctor, clinician, nurse}`. An administrator can see an unanswered deterioration and cannot silently clear it. The header is honest that this combination stands in for a dedicated `escalation.acknowledge` permission that does not exist yet.
 
-#### `EscalationAcknowledgeIn`: `vigil_routes.py:1031`
+#### `EscalationAcknowledgeIn`: `vigil_routes.py:1095`
 **Signature:** `class EscalationAcknowledgeIn(BaseModel)`, one optional field, `note: str | None`
 **Does:** The acknowledge request body.
 **On screen:** would be a free-text "note" box in an acknowledge dialog.
 **Why it exists:** It deliberately carries **no patient id**. The chain names the patient; letting a request name one is the caller-named-scope hole `server/tests/test_caller_named_patient_scope.py` exists to catch.
 **Breaks if you add a `patient_id`:** you have reintroduced a class of bug the test suite specifically hunts.
 
-#### `EscalationResolveIn`: `vigil_routes.py:1038`
+#### `EscalationResolveIn`: `vigil_routes.py:1102`
 **Signature:** `class EscalationResolveIn(BaseModel)`, `reason: str` (required), `category: str | None`
 **Does:** The resolve request body. `reason` being required at the Pydantic layer means a missing reason is a 422 before the handler runs; a *blank* reason is a 400 from the service.
 **Breaks if you make `reason` optional:** the dismiss button returns.
 
-#### `_escalation_or_404`: `vigil_routes.py:1043`
+#### `_escalation_or_404`: `vigil_routes.py:1107`
 **Signature:** `(escalation_id, user, include_events=True) -> dict`
 **Does:** Loads a chain and proves the caller's ward owns its patient.
 **On screen:** the difference between a detail drawer opening and a "not found" state.

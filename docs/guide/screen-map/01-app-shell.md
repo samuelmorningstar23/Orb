@@ -6,7 +6,7 @@ overlays that float above all of it (Sage orb, command palette, shortcut sheet,
 the two shell modals).
 
 **Entry point:** `src/pages/ClinicianShell.tsx` (830 lines). It is mounted by
-`src/App.tsx:189` for the route `/dashboard/*`, and only when
+`src/AppRoot.tsx:182` for the route `/dashboard/*`, and only when
 `user && user.role !== 'patient'`, a patient is redirected to `/bridge`
 (`PatientShell`), which is a different frame entirely and is not covered here.
 
@@ -188,7 +188,7 @@ aria-orientation="vertical">` mapping `visibleTabs`.
 **Data from:** `visibleTabs` (`:309`) ← `TABS` (`:25-180`) filtered by
 `accessibleTabs` (`:308`) ← `getAccessibleTabs(user?.role, user?.department)`;
 `user` comes from `useAuth()` (`:306`), which reads `AuthContext` in
-`src/App.tsx:51-57`, restored from localStorage on boot (`App.tsx:70-73`).
+`src/App.tsx:32-38`, restored from localStorage on boot (`AppRoot.tsx:53-56`).
 **API:** none, the rail is computed entirely client-side from the stored user.
 **Server:** none directly. The user object was minted at login and the role
 inside it is what the server also enforces against.
@@ -311,7 +311,7 @@ card at ≤768px (`css:809-811`).
 **Rendered by:** `src/pages/ClinicianShell.tsx:584`, 
 `<span className="shell__user-name">{user?.name}</span>`.
 **Data from:** `user.name` from `AuthContext` ← localStorage via
-`getUser()` (`src/App.tsx:70-73`, `src/api/client.ts`).
+`getUser()` (`src/AppRoot.tsx:53-56`, `src/api/client.ts`).
 **API:** none at render time; the value was set at login.
 **Server:** the login route that minted the user object (out of scope here).
 **Change this →** Truncates with an ellipsis rather than wrapping
@@ -366,12 +366,12 @@ deliberate to hold 4.5:1 contrast). The button survives the ≤1024px collapse
 **Rendered by:** `src/pages/ClinicianShell.tsx:599-606`, `<button
 className="shell__logout" onClick={logout} id="btn-logout">` with a
 door/arrow SVG and `<span>{t('shell.signOut')}</span>`.
-**Data from:** `logout` from `useAuth()` → `src/App.tsx:135-157`.
+**Data from:** `logout` from `useAuth()` → `src/AppRoot.tsx:81-109`.
 **API:** none directly; `logout` calls `clearToken()`, `deauthenticateSocket()`,
 `clearNurseDrafts()`, `clearOfflineCache()` and `clearOfflineQueue()`.
 **Server:** none synchronously, the session cookie is simply no longer sent.
 **Change this →** Pressing it wipes four client-side stores in one go, then
-`user` becomes null and `App.tsx:189` redirects to `/login/staff`, so the whole
+`user` becomes null and `AppRoot.tsx:182` redirects to `/login/staff`, so the whole
 shell unmounts. Visible side effects beyond the redirect: any queued offline
 writes are discarded (see the sync badges below, a pending count is destroyed,
 not flushed), and any half-typed nurse observation draft is gone. Hover turns
@@ -457,7 +457,7 @@ original endpoints.
 **Change this →** Chart something while offline and this number ticks up within
 2 seconds. Change `CHECK` interval at `:524` and the number lags accordingly.
 Sign out and the count vanishes because `logout` calls `clearOfflineQueue`
-(`App.tsx:156` → `client.ts:365-369`), the writes are destroyed, not sent.
+(`AppRoot.tsx:108` → `client.ts:365-369`), the writes are destroyed, not sent.
 
 ### Syncing badge: "Syncing · N pending"
 
@@ -929,7 +929,7 @@ speaking`; `viewTab` from `ActiveViewContext`; `micOwner` and
 **API:** on submit, `POST /api/sage/voice` (SSE) via
 `querySageVoice` (`src/api/client.ts:1032-1053`); the governance posture comes
 from `GET /api/sage/ai-posture` (`client.ts:992-994`) fetched once by
-`SageRuntimeProvider` (`src/contexts/SageRuntimeContext.tsx:54-60`).
+`SageRuntimeProvider` (`src/contexts/SageRuntimeProvider.tsx:10-16`).
 **Server:** `server/routes/sage_routes.py:2506-2526` `sage_voice_query`
 (`require_permission("sage.query")`), and
 `server/routes/sage_routes.py:2782-2788` `get_ai_posture` →
@@ -942,7 +942,7 @@ listening; clicking while speaking cancels TTS and returns to dormant
 (`:450-521`). **If the deployment has not approved cloud speech, clicking does
 not open the mic at all**, it shows an explanatory card instead (`:455-472`),
 because `cloud_speech_allowed` is false until the server says otherwise and the
-default is fail-closed (`SageRuntimeContext.tsx:79`). The orb also greys and
+default is fail-closed (`SageRuntimeProvider.tsx:35`). The orb also greys and
 suspends when another surface owns the mic (`:84-85`), which is the visible
 consequence of SagePanel voice mode or Scribe dictation being active.
 
@@ -1211,15 +1211,15 @@ you are on and includes it in `view_context` on `/api/sage/voice`.
    (`AiStatusChip.tsx:109`), so "no chip" and "never loaded" look identical.
 7. **The Pulse badge cannot appear before the panel is opened once**, the
    dashboard is only fetched while `isOpen` (`PulseWidget.tsx:130-134`).
-8. **Two theme storage keys exist.** `App.tsx:60` boots from the legacy
-   `orb_theme`; the shell reads `orb-theme` first, migrates, then **deletes**
-   `orb_theme` (`:371`, `:420-421`). After one theme press, the App-level
-   system-preference listener at `App.tsx:118` (which checks `orb_theme`) starts
-   overriding on system changes because its key is now absent.
+8. **Two theme storage keys exist (fixed).** Boot and the App-level
+   system-preference listener used to read the legacy `orb_theme` alone, which
+   the shell deletes after its first theme press, so the listener overrode an
+   explicit choice. Both now read through `storedTheme()` (`theme.ts:27`), which
+   reads `orb-theme` and falls back to `orb_theme` (`AppRoot.tsx:46`, `:143`).
 9. **The offline queue is polled, not evented** (`:524`, 2 s) because
    `client.ts` mutates localStorage in the same tab and the `storage` event only
    fires for other tabs. Counts can lag reality by up to two seconds.
-10. **Sign-out destroys queued offline writes** (`App.tsx:156`), and the count in
+10. **Sign-out destroys queued offline writes** (`AppRoot.tsx:108`), and the count in
     the header disappears without ever syncing.
 
 ---

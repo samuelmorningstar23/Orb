@@ -217,7 +217,7 @@ afterEach(() => {
 describe('Today — the four sections compose from data that already exists', () => {
   it('lists the deteriorating patients, sickest first, with their NEWS2', async () => {
     await home()
-    const block = section(/^Deteriorating/)
+    const block = section(/^Highest NEWS2 scores/)
     const rows = within(block).getAllByRole('button')
 
     // Only the patients scoring above threshold, in band-then-score order —
@@ -235,7 +235,7 @@ describe('Today — the four sections compose from data that already exists', ()
 
     // The count chip carries the number and a screen-reader unit; the LABEL
     // never takes a status colour.
-    expect(within(block).getByRole('heading', { level: 2 })).toHaveTextContent('Deteriorating3 patients')
+    expect(within(block).getByRole('heading', { level: 2 })).toHaveTextContent('Highest NEWS2 scores3 patients')
   })
 
   it('lists what is waiting on this doctor: signatures, alerts, an unfinished round', async () => {
@@ -274,7 +274,7 @@ describe('Today — the four sections compose from data that already exists', ()
 describe('deep links land where the row says they will', () => {
   it('opens the patient chart from a deteriorating row', async () => {
     await home()
-    fireEvent.click(within(section(/^Deteriorating/)).getAllByRole('button')[0])
+    fireEvent.click(within(section(/^Highest NEWS2 scores/)).getAllByRole('button')[0])
     expect(bus).toEqual([
       { type: 'orb:goto-tab', detail: { tab: 'vigil' } },
       { type: 'orb:open-patient', detail: { patientId: 'P-04', name: 'Anita Rao' } },
@@ -462,7 +462,7 @@ describe('every state is designed, and failure never looks like calm', () => {
 
     const loading = await screen.findAllByRole('status', { busy: true })
     expect(loading.length).toBeGreaterThan(0)
-    expect(screen.getByText('Loading deteriorating patients')).toBeTruthy()
+    expect(screen.getByText('Loading the highest NEWS2 scores')).toBeTruthy()
     // Skeleton rows ARE .orb-row, so the loading and loaded geometries cannot
     // drift apart and nothing jumps when the data lands.
     expect(loading[0].querySelectorAll('li.orb-row').length).toBe(3)
@@ -503,7 +503,7 @@ describe('every state is designed, and failure never looks like calm', () => {
     // The section that failed does not also claim there is nothing to see.
     expect(within(block).queryByText('No new results since you last looked.')).toBeNull()
     // …and the sections that succeeded are untouched. States are per section.
-    expect(within(section(/^Deteriorating/)).getByText('GM-04 · Anita Rao')).toBeTruthy()
+    expect(within(section(/^Highest NEWS2 scores/)).getByText('GM-04 · Anita Rao')).toBeTruthy()
   })
 
   it('a runtime 403 on a permitted read is an error, not silence', async () => {

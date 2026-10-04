@@ -405,7 +405,7 @@ export default function VigilPanel({ role }: { role?: string | null }) {
         </div>
         <div className="orb-metric-card glass-card">
           <span className="orb-metric-value orb-metric-value--warn metric-mono">{metric(elevated)}</span>
-          <span className="orb-metric-label">Elevated Risk</span>
+          <span className="orb-metric-label">Elevated</span>
         </div>
         <div className="orb-metric-card glass-card">
           <span className="orb-metric-value orb-metric-value--danger metric-mono">{metric(critical)}</span>
@@ -469,7 +469,7 @@ export default function VigilPanel({ role }: { role?: string | null }) {
               <button
                 className={`sort-btn ${sortBy === 'stability' ? 'sort-btn--active' : ''}`}
                 onClick={() => setSortBy('stability')}
-                title="Sort by Risk Stability"
+                title="Sort by NEWS2 band"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                 Stability
@@ -1612,7 +1612,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
           <span className="command-bar__bed-label">BED {patient.bed}</span>
           {/* The title carries what the visible text cannot: the Scale 2 and
               single-parameter-3 notes, in the badge's one shared sentence. */}
-          <span className="command-bar__risk-pct" title={`${news2Description(risk)}. NEWS2 aggregate (RCP early-warning table), not a validated probability`}>
+          <span className="command-bar__risk-pct" title={`${news2Description(risk)}. NEWS2 aggregate (RCP NEWS2 chart), not a validated probability`}>
             {typeof risk.raw_news2 === 'number' ? `NEWS2 ${risk.raw_news2} · ` : ''}{risk.level.toUpperCase()}
           </span>
         </div>
@@ -1772,7 +1772,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
       {/* Risk Assessment & Lab Trends */}
       <div className="detail__row">
         <div className="detail__risk-panel glass-card">
-          <h3 className="detail__section-title">Orb Risk Assessment</h3>
+          <h3 className="detail__section-title">Why this score</h3>
           <div className="detail__risk-top-section" style={{ display: 'flex', gap: '16px', alignItems: 'center', marginBottom: '8px', marginTop: '8px' }}>
             <div className="detail__risk-gauge" style={{ margin: 0, flexShrink: 0 }}>
               <RiskGauge score={risk.score} level={risk.level} rawNews2={risk.raw_news2} />
@@ -2829,7 +2829,7 @@ function RiskGauge({ score, level, rawNews2 }: { score: number; level: string; r
   const hasNews2 = typeof rawNews2 === 'number'
 
   return (
-    <div className="risk-gauge" title="NEWS2 aggregate score (RCP early-warning table). Not a validated probability.">
+    <div className="risk-gauge" title="NEWS2 aggregate score (RCP NEWS2 chart). Not a validated probability.">
       <svg width="100%" height="100%" viewBox="0 0 100 100">
         <circle cx="50" cy="50" r="40" fill="none" stroke="var(--border-glass)" strokeWidth="6" />
         <circle

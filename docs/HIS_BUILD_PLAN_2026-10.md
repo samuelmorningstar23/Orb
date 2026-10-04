@@ -317,6 +317,8 @@ Two-facility go-live drill: the create gate passes through the product only when
 
 ## Migrations
 
+**Numbers claimed outside this plan:** 76, surgery_who_checklist_column (server/migrations_his/m0076_surgery_who_checklist_column.py), claimed on 4 October by the agentic-confirm session: a plain ADD COLUMN surgeries.who_checklist, no rebuild, no FK. Any later HIS number (for example medorders-17 when its ruling is released) starts at 77; re-read server/migrations_his/ before taking one.
+
 **Current state (verified in code)**
 - The highest migration is 47, vitals_carried_from, registered at server/migrations.py:5494.
 - The runner applies every version missing from schema_migrations, in ascending order (migrations.py:5496-5513). It checks membership, not MAX(version).

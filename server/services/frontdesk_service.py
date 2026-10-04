@@ -78,8 +78,9 @@ import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
+import config
 import migrations  # noqa: F401  (loads migrations_his in version order first)
 from database import db_session
 from migrations_his.m0050_registration_opd_foundation import (
@@ -115,6 +116,23 @@ __all__ = [
 
 class FrontDeskError(ValueError):
     """A front-desk request that cannot be honoured (bad ward, bad state)."""
+
+
+class OpdReplayConflict(FrontDeskError):
+    """OPD mode only: an idempotency key that already names a visit for a
+    DIFFERENT patient or clinic than the request names.
+
+    Raised by register_opd_visit(on_replay=...) before that visit is serialized,
+    so nothing about it reaches the caller. The message carries no patient
+    detail (a caller that does not know this subclass maps it to a plain 422);
+    `visit_id` is for the route's audit row only, never for the response.
+    """
+
+    def __init__(self, visit_id: str):
+        super().__init__(
+            "This registration key already belongs to a different registration."
+        )
+        self.visit_id = visit_id
 
 
 #: The service item a consultation is charged against. This module REGISTERS
@@ -445,6 +463,10 @@ class ConsultationCharge:
     total_paise: int
     gst_treatment: str
     source: str
+    # True when THIS call inserted the encounter_charges row, False when the
+    # idempotency key found an earlier one. Kept out of as_dict so the response
+    # is unchanged; the OPD audit row reads it.
+    newly_raised: bool = False
 
     def as_dict(self) -> dict:
         from services.money import format_inr_or_unset
@@ -477,6 +499,23 @@ def _patient_has_admission(db, patient_id: str) -> bool:
     ).fetchone() is not None
 
 
+def _patient_has_active_admission(db, patient_id: str) -> bool:
+    return db.execute(
+        "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
+        (patient_id,),
+    ).fetchone() is not None
+
+
+def opd_mode() -> bool:
+    """Is the 'opd' feature on right now (ORB_OPD with its prerequisites)?
+
+    Read at call time. Everything this module does differently for outpatients
+    under that feature is behind this one question; with it off the front desk
+    behaves exactly as it did before 3 October 2026.
+    """
+    return config.feature_enabled("opd")
+
+
 def opd_registration_allowed(db, patient_id: str, dept: Optional[str]) -> bool:
     """May a caller scoped to `dept` register THIS patient into an OPD clinic?
 
@@ -493,12 +532,23 @@ def opd_registration_allowed(db, patient_id: str, dept: Optional[str]) -> bool:
         them, `patient_in_scope` fail-closes them out of EVERY department, and
         refusing here would make it impossible to register a walk-in. Allowed,
         and the visit row itself becomes the record of which clinic saw them.
+
+    IN OPD MODE (opd-7, the 'opd' feature on) the line moves from "any
+    admission ever" to "an ACTIVE admission": a patient discharged from
+    Cardiology may be registered into the Ortho clinic, which the rule above
+    refuses because their last admission still names Cardiology. A patient with
+    an active admission anywhere keeps the ordinary ward boundary, so the desk
+    still cannot launder an inpatient of another ward, and the OPD record view
+    (permissions.patient_in_opd_scope) closes for anyone actively admitted.
     """
     if dept is None:
         return True
     if not patient_id:
         return False
-    if not _patient_has_admission(db, patient_id):
+    if opd_mode():
+        if not _patient_has_active_admission(db, patient_id):
+            return True
+    elif not _patient_has_admission(db, patient_id):
         return True
     from permissions import patient_in_scope
     return patient_in_scope(db, patient_id, dept)
@@ -634,6 +684,7 @@ def _raise_consultation_charge(
         total_paise=line.total_paise,
         gst_treatment=line.gst_treatment,
         source=resolution.source,
+        newly_raised=not existing,
     )
 
 
@@ -649,6 +700,9 @@ def register_opd_visit(
     registered_by: Optional[str] = None,
     idempotency_key: Optional[str] = None,
     visit_date: Optional[str] = None,
+    self_registered: bool = False,
+    on_registered: Optional[Callable[[Any, dict], None]] = None,
+    on_replay: Optional[Callable[[Any, dict, dict], None]] = None,
 ) -> dict:
     """Register an outpatient visit and put it in the queue.
 
@@ -658,6 +712,25 @@ def register_opd_visit(
     the CALLER is allowed to register into this department (the route does that,
     against `permissions.department_scope`) — this function validates that the
     department is real.
+
+    Three keywords used only in OPD mode (opd-7), all inert by default:
+      * `self_registered` stamps opd_visits.scope_self_registered = 1: the
+        registrant holds opd.consult, so this visit opens the OPD record view
+        to the person who registered it (ruling OPD-N2: it counts, flagged).
+      * `on_registered(db, visit)` runs INSIDE this function's immediate
+        transaction, after the visit row is written and before it commits. The
+        route writes its audit rows there, so a fail-closed audit that cannot
+        be written raises and the visit is rolled back with it. It is not
+        called for an idempotent replay.
+      * `on_replay(db, visit, facts)` handles an idempotent replay. When given,
+        the replay is BOUND to this request: the earlier visit must be for the
+        same patient and the same clinic, or OpdReplayConflict is raised before
+        that visit is serialized (the idempotency key is global, so without
+        this a key reused across clinics returned another clinic's patient).
+        A matching replay calls on_replay inside the transaction with facts
+        {"replay": True}, so the route audits the disclosure exactly as the
+        flag-off path audits every call. Without it, a replay returns the
+        earlier visit as it always did.
     """
     ensure_frontdesk_schema()
     patient_id = (patient_id or "").strip()
@@ -688,7 +761,18 @@ def register_opd_visit(
                 "SELECT * FROM opd_visits WHERE idempotency_key = ?", (idem,)
             ).fetchone()
             if prior:
-                return _serialize_visit(db, prior)
+                if on_replay is None:
+                    return _serialize_visit(db, prior)
+                same_patient = (prior["patient_id"] or "").strip() == patient_id
+                same_clinic = (
+                    (prior["department"] or "").strip().casefold()
+                    == canonical_dept.casefold()
+                )
+                if not (same_patient and same_clinic):
+                    raise OpdReplayConflict(str(prior["id"]))
+                visit = _serialize_visit(db, prior)
+                on_replay(db, visit, {"replay": True})
+                return visit
 
         patient = _patient_row(db, patient_id)
         if patient is None:
@@ -734,8 +818,18 @@ def register_opd_visit(
                 registered_by, now, note, idem,
             ),
         )
+        if self_registered:
+            # Migration 50's column; set only in OPD mode, so the insert above
+            # is the one the front desk always ran.
+            db.execute(
+                "UPDATE opd_visits SET scope_self_registered = 1 WHERE id = ?",
+                (visit_id,),
+            )
         row = db.execute("SELECT * FROM opd_visits WHERE id = ?", (visit_id,)).fetchone()
-        return _serialize_visit(db, row)
+        visit = _serialize_visit(db, row)
+        if on_registered is not None:
+            on_registered(db, visit)
+        return visit
 
 
 def _serialize_visit(db, row, *, now: Optional[datetime] = None) -> dict:
@@ -885,15 +979,29 @@ def get_opd_visit(visit_id: str) -> Optional[dict]:
         return _serialize_visit(db, row)
 
 
-def start_opd_consultation(visit_id: str, *, called_by: Optional[str] = None) -> dict:
-    """Call the next patient in — 'waiting' → 'in_consultation'. Idempotent."""
+def start_opd_consultation(
+    visit_id: str,
+    *,
+    called_by: Optional[str] = None,
+    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
+) -> dict:
+    """Call the next patient in: 'waiting' to 'in_consultation'. Idempotent.
+
+    `on_done(db, visit, facts)` (OPD mode only) runs inside the transaction on
+    EVERY successful call, so the route's audit row commits with the change.
+    A double tap is called too, with facts {"replay": True}: the flag-off path
+    audits every call, and OPD mode must never write fewer rows than it.
+    """
     ensure_frontdesk_schema()
     with db_session(immediate=True) as db:
         row = db.execute("SELECT * FROM opd_visits WHERE id = ?", (visit_id,)).fetchone()
         if row is None:
             raise FrontDeskError(f"No such OPD visit: {visit_id}")
         if row["status"] == "in_consultation":
-            return _serialize_visit(db, row)
+            visit = _serialize_visit(db, row)
+            if on_done is not None:
+                on_done(db, visit, {"replay": True})
+            return visit
         if row["status"] != "waiting":
             raise FrontDeskError(
                 f"Visit {visit_id} is {row['status']} and cannot be called in"
@@ -906,7 +1014,10 @@ def start_opd_consultation(visit_id: str, *, called_by: Optional[str] = None) ->
             "SELECT * FROM opd_visits WHERE id = ?", (visit_id,)
         ).fetchone()
         logger.info("OPD visit %s called in by %s", visit_id, called_by)
-        return _serialize_visit(db, updated)
+        visit = _serialize_visit(db, updated)
+        if on_done is not None:
+            on_done(db, visit, {"replay": False})
+        return visit
 
 
 def complete_opd_visit(
@@ -916,6 +1027,7 @@ def complete_opd_visit(
     service_code: Optional[str] = None,
     raise_charge: bool = True,
     notes: Optional[str] = None,
+    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
 ) -> dict:
     """Finish the consultation and raise the consultation charge.
 
@@ -923,6 +1035,16 @@ def complete_opd_visit(
     registers and leaves before being seen has not been consulted. Idempotent on
     both halves: a replay returns the completed visit and does not double-charge
     (the `encounter_charges` idempotency key is derived from the visit id).
+
+    `on_done(db, visit, facts)` (OPD mode only) runs inside the transaction on
+    EVERY successful call, with `consultation_charge` already on the dict, so
+    the route's audit row commits with the completion and its charge. A replay
+    is called too, because a replay is not always a no-op: completing with
+    raise_charge false and then again with raise_charge true inserts the charge
+    on the second call, and that billing write must have a domain audit row
+    naming it (the flag-off path audits every call). `facts` says which:
+      * "replay": the visit was already completed before this call;
+      * "charge_raised_now": this call inserted the encounter_charges row.
     """
     ensure_frontdesk_schema()
     with db_session(immediate=True) as db:
@@ -971,15 +1093,31 @@ def complete_opd_visit(
             "SELECT * FROM opd_visits WHERE id = ?", (visit_id,)
         ).fetchone()
         result = _serialize_visit(db, updated)
+        if on_done is not None:
+            result["consultation_charge"] = charge.as_dict() if charge else None
+            on_done(db, result, {
+                "replay": already_complete,
+                "charge_raised_now": bool(charge and charge.newly_raised),
+            })
 
     result["consultation_charge"] = charge.as_dict() if charge else None
     return result
 
 
 def cancel_opd_visit(
-    visit_id: str, *, reason: str, cancelled_by: Optional[str] = None
+    visit_id: str,
+    *,
+    reason: str,
+    cancelled_by: Optional[str] = None,
+    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
 ) -> dict:
-    """Cancel a visit (no-show, left without being seen). Soft — the row stays."""
+    """Cancel a visit (no-show, left without being seen). Soft: the row stays.
+
+    `on_done(db, visit, facts)` (OPD mode only) runs inside the transaction on
+    EVERY successful call, so the route's audit row commits with the cancel. A
+    repeat cancel of an already cancelled visit is called too, with facts
+    {"replay": True}: the flag-off path audits every call.
+    """
     ensure_frontdesk_schema()
     clean_reason = _clean(reason, _MAX_REASON_LEN)
     if not clean_reason:
@@ -989,7 +1127,10 @@ def cancel_opd_visit(
         if row is None:
             raise FrontDeskError(f"No such OPD visit: {visit_id}")
         if row["status"] == "cancelled":
-            return _serialize_visit(db, row)
+            visit = _serialize_visit(db, row)
+            if on_done is not None:
+                on_done(db, visit, {"replay": True})
+            return visit
         if row["status"] == "completed":
             # The consultation happened. Cancelling it would erase a clinical
             # event and orphan its charge.
@@ -1005,7 +1146,10 @@ def cancel_opd_visit(
             "SELECT * FROM opd_visits WHERE id = ?", (visit_id,)
         ).fetchone()
         logger.info("OPD visit %s cancelled by %s: %s", visit_id, cancelled_by, clean_reason)
-        return _serialize_visit(db, updated)
+        visit = _serialize_visit(db, updated)
+        if on_done is not None:
+            on_done(db, visit, {"replay": False})
+        return visit
 
 
 # ═════════════════════════════════════════════════════════════════════════════

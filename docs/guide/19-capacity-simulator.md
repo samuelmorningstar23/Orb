@@ -239,7 +239,7 @@ Callers may also **override** the baseline for hermetic testing or manual planni
 
 ### `CapacitySimulator.tsx`
 
-### `CapacitySimulator` (default export component): `src/components/capacity/CapacitySimulator.tsx:86`
+### `CapacitySimulator` (default export component): `src/components/capacity/CapacitySimulator.tsx:94`
 **Signature:** `() -> JSX.Element`
 **Does:** the whole panel, holds knob state, debounces re-simulation, and renders controls + results.
 **How it works:**
@@ -259,7 +259,7 @@ Callers may also **override** the baseline for hermetic testing or manual planni
 - `apiFetch` is called with path `/capacity-sim/` (trailing slash), it prepends `/api`, giving `/api/capacity-sim/`, which matches the `@router.post("/")` registration. Dropping the slash would hit `@router.post("")`, both exist, so either is fine here.
 - The knob sliders clamp to narrower ranges than the backend (e.g. `discharge_boost` UI max 1.0 vs backend floor −0.99, `los_multiplier` UI 0.5–2 vs backend floor 0.05); the backend clamps are the real safety net for any non-UI caller.
 
-### `Knob` (sub-component): `src/components/capacity/CapacitySimulator.tsx:366`
+### `Knob` (sub-component): `src/components/capacity/CapacitySimulator.tsx:374`
 **Signature:** `({label, hint, value, display, min, max, step, onChange}) -> JSX.Element`
 **Does:** renders one labeled range slider with a live value pill.
 **How it works:** a header row (label + hint + formatted `display` value) over an `<input type="range">`; `onChange` converts the string event value to a `Number` before calling back (`:372-386`).
@@ -268,7 +268,7 @@ Callers may also **override** the baseline for hermetic testing or manual planni
 **Talks to:** rendered six times by `CapacitySimulator`; each `onChange` calls `setKnob`.
 **Gotchas:** `display` is passed pre-formatted (e.g. `+20`, `1:4`, `1.50×`), the component does no formatting itself, so the caller owns units.
 
-### `Stat` (sub-component): `src/components/capacity/CapacitySimulator.tsx:391`
+### `Stat` (sub-component): `src/components/capacity/CapacitySimulator.tsx:399`
 **Signature:** `({label, value, sub?, tone?}) -> JSX.Element`
 **Does:** renders one summary tile with a colored left edge keyed to `tone` (`ok`/`warn`/`danger`/`neutral`).
 **How it works:** appends a `capsim__stat--<tone>` modifier class unless the tone is `neutral`/absent (`:392-398`); the CSS colors the `::before` accent bar (`src/components/capacity/CapacitySimulator.css:228-237`) and the value text (`:253-255`) accordingly.
@@ -277,7 +277,7 @@ Callers may also **override** the baseline for hermetic testing or manual planni
 **Talks to:** rendered five times; `tone` is computed by `peakTone` and inline ternaries at `:242-271`.
 **Gotchas:** none noteworthy.
 
-### `SimTooltip` (sub-component): `src/components/capacity/CapacitySimulator.tsx:402`
+### `SimTooltip` (sub-component): `src/components/capacity/CapacitySimulator.tsx:412`
 **Signature:** `({active, payload}: any) -> JSX.Element | null`
 **Does:** the custom Recharts hover tooltip showing occupancy, capacity, and overflow at a given hour.
 **How it works:** bails to `null` if not active or no payload; else reads `payload[0].payload`, computes whether occupancy exceeds capacity, and renders the rows, adding a red "Overflow +X" row only when over (`:402-417`).
@@ -286,7 +286,7 @@ Callers may also **override** the baseline for hermetic testing or manual planni
 **Talks to:** passed to `<Tooltip content={<SimTooltip />}/>` at `:306`.
 **Gotchas:** typed `any`, no compile-time guarantee the payload shape matches; it defensively guards `payload?.length`.
 
-### `peakTone` (helper): `src/components/capacity/CapacitySimulator.tsx:420`
+### `peakTone` (helper): `src/components/capacity/CapacitySimulator.tsx:430`
 **Signature:** `(pct: number | null | undefined) -> 'ok' | 'warn' | 'danger' | 'neutral'`
 **Does:** maps peak-occupancy percentage to a severity tone.
 **How it works:** `null` → `neutral`; `≥100%` → `danger`; `≥85%` → `warn`; else `ok` (`:420-425`).

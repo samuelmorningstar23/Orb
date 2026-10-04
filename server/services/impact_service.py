@@ -78,7 +78,7 @@ DEFAULT_ASSUMPTIONS: dict[str, dict] = {
     "deterioration_icu_avoidance_rate": {
         "value": 0.15,
         "unit": "fraction",
-        "citation": "Fraction of early-warning (NEWS2) escalations / Sepsis-Six bundles "
+        "citation": "Fraction of NEWS2 escalations / Sepsis Six bundles "
                     "that avert an ICU day. Conservative estimate from rapid-response-team "
                     "and Surviving-Sepsis 1-hour-bundle outcome literature.",
     },

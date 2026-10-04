@@ -17,15 +17,20 @@ Built in adt-1 (W2-B):
   PATCH /master/bed-classes/{code}           bed.master  change a bed class
   POST  /master/import-site-config           bed.master  wards from the site configuration
 
-Still to come (adt-3 in W3-B, adt-4b in W5-B):
-  POST  /master/beds/{bed_id}/retire, POST /master/wards/{ward_id}/register-complete,
-  GET   /master/reconciliation, POST /master/reconciliation/link
+Built in adt-3 (W3-B):
+  POST  /master/beds/{bed_id}/retire              bed.master  retire a bed nobody occupies
+  POST  /master/wards/{ward_id}/register-complete bed.master  the ward's register is complete
+  GET   /master/reconciliation                    bed.master  active admissions against the master
+  POST  /master/reconciliation/link               bed.master  link matched admissions to their beds
 
 Every handler is a plain def (FastAPI threadpools it). Master edits are
 audited as category 'facilities' inside the write's own transaction, with a
 bed_master_events row beside each; a ward code, room code or bed label is
-immutable once anything refers to it. A permission refusal is a 403 with the
-denial audited by permissions.require_permission.
+immutable once anything refers to it. The reconciliation names admission and
+patient ids (no name, no MRN): reading it is a fail-closed phi_access audit,
+and each link is a fail-closed patient_movement audit written by the single
+location writer (services.adt.core.locate_admission_on). A permission refusal
+is a 403 with the denial audited by permissions.require_permission.
 """
 from __future__ import annotations
 
@@ -36,6 +41,7 @@ from pydantic import BaseModel
 
 from permissions import ADT_READ, BED_MASTER, require_permission
 from services import bed_master_service as bm
+from services.adt.core import AdtError, http_detail
 
 router = APIRouter()
 
@@ -131,6 +137,24 @@ class BedClassPatch(BaseModel):
     reason: Optional[str] = None
 
 
+class ReasonIn(BaseModel):
+    reason: Optional[str] = None
+
+
+class LinkIn(BaseModel):
+    #: Only admissions on this ward.
+    ward_id: Optional[str] = None
+    #: Only these admissions; every matched admission in scope when omitted.
+    admission_ids: Optional[list[str]] = None
+    #: The bed manager has read that host-ward nurses will not open a
+    #: boarder's chart (ruling ADT-S6 is not applied).
+    boarder_acknowledged: bool = False
+    #: Typed reason for linking a patient already lying in a bed housekeeping
+    #: records out of service.
+    out_of_service_reason: Optional[str] = None
+    reason: Optional[str] = None
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _meta(request: Request) -> dict:
@@ -153,6 +177,8 @@ def _run(fn, *args, **kwargs):
         return fn(*args, **kwargs)
     except bm.BedMasterError as err:
         raise _refused(err)
+    except AdtError as err:
+        raise HTTPException(status_code=err.http_status, detail=http_detail(err))
 
 
 # ── Read ─────────────────────────────────────────────────────────────────────
@@ -236,3 +262,37 @@ def patch_bed_class(code: str, body: BedClassPatch, request: Request,
 def post_import_site_config(request: Request,
                             user: dict = Depends(require_permission(BED_MASTER))):
     return _run(bm.import_site_config_wards, actor=user, request_meta=_meta(request))
+
+
+# ── Retire, reconciliation and register complete (adt-3) ─────────────────────
+
+@router.post("/master/beds/{bed_id}/retire")
+def post_retire_bed(bed_id: str, request: Request, body: Optional[ReasonIn] = None,
+                    user: dict = Depends(require_permission(BED_MASTER))):
+    """Retire a bed. Refused while a patient is in it or it is reserved."""
+    return _run(bm.retire_bed, bed_id, (body.model_dump() if body else {}), actor=user,
+                request_meta=_meta(request))
+
+
+@router.post("/master/wards/{ward_id}/register-complete")
+def post_register_complete(ward_id: str, request: Request, body: Optional[ReasonIn] = None,
+                           user: dict = Depends(require_permission(BED_MASTER))):
+    """Mark the ward's bed register complete (stamps ledger_complete_from).
+    Refused while an admission on the ward is unlinked or a bed is doubled."""
+    return _run(bm.mark_register_complete, ward_id, (body.model_dump() if body else {}),
+                actor=user, request_meta=_meta(request))
+
+
+@router.get("/master/reconciliation")
+def get_reconciliation(request: Request, ward_id: Optional[str] = Query(None),
+                       user: dict = Depends(require_permission(BED_MASTER))):
+    """Active admissions sorted against the master. Audited as phi_access."""
+    return _run(bm.reconciliation_report, actor=user, ward_id=ward_id,
+                request_meta=_meta(request))
+
+
+@router.post("/master/reconciliation/link")
+def post_reconciliation_link(body: LinkIn, request: Request,
+                             user: dict = Depends(require_permission(BED_MASTER))):
+    """Link matched admissions to their master beds. Never a doubled bed."""
+    return _run(bm.link_admissions, body.model_dump(), actor=user, request_meta=_meta(request))

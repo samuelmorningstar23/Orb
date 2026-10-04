@@ -142,7 +142,7 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 **On screen:** these four constants are what the clinician sees as the buttons on each order card in the Orders tab, the `→ active` / `→ in progress` / `→ completed` forward button, the `+ Result` button (only for `lab`/`imaging`), and the `Cancel` button (hidden once the order is terminal). The card is rendered at `src/components/orders/OrdersPanel.tsx:306-377`.
 **Gotchas:** The DB `CHECK (status IN (...))` is a *second* source of truth for the allowed status *values* (not transitions). The two can drift; keep them aligned.
 
-#### `_now`: `server/services/orders_service.py:57`
+#### `_now`: `server/services/orders_service.py:67`
 **Signature:** `() -> str`
 **Does:** Returns the current UTC time as an ISO-8601 string.
 **How it works:** `datetime.now(timezone.utc).isoformat()`.
@@ -151,7 +151,7 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 **Talks to:** used by `_record_event`, `create_order`, `transition_order`, `add_result`.
 **Gotchas:** These Python-side ISO strings are written into `created_at`/`updated_at`/`result_at`, but the DB columns also have `DEFAULT CURRENT_TIMESTAMP` (`server/database.py:819-820`) which SQLite renders as `"YYYY-MM-DD HH:MM:SS"` (space, no `+00:00`). So `order_events.created_at` (always set by `_now`) and any DB-defaulted column can differ in *format*. Not a bug today, but do not assume a single timestamp format across all order columns.
 
-#### `_is_legal_transition`: `server/services/orders_service.py:61`
+#### `_is_legal_transition`: `server/services/orders_service.py:71`
 **Signature:** `(from_status, to_status) -> bool`
 **Does:** True iff `to_status` is in the allowed-exit list for `from_status`.
 **How it works:** `to_status in LEGAL_TRANSITIONS.get(from_status, [])`, unknown `from_status` yields `[]`, so it safely returns False.
@@ -159,7 +159,7 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 **Talks to:** `LEGAL_TRANSITIONS`.
 **Gotchas:** none noteworthy.
 
-#### `_record_event`: `server/services/orders_service.py:65`
+#### `_record_event`: `server/services/orders_service.py:75`
 **Signature:** `(conn, order_id, prior_status, new_status, actor_id, reason) -> None`
 **Does:** Inserts one audit row into `order_events`.
 **How it works:** Parameterised `INSERT` (`?` placeholders, no string interpolation, so no SQL injection) with `_now()` as the timestamp.
@@ -168,7 +168,7 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 **Talks to:** called by `create_order` (with `prior_status=None`), `transition_order`, `add_result`. Reuses the *caller's* `conn` so the event and the state change commit atomically in one `db_session()`.
 **Gotchas:** It takes the open `conn` rather than opening its own, critical, because if it opened a second connection the event could commit while the status update rolled back. Do not "refactor" it to open its own session.
 
-#### `create_order`: `server/services/orders_service.py:77`
+#### `create_order`: `server/services/orders_service.py:103`
 **Signature:** `(patient_id, order_type, description, *, code=None, code_system=None, priority="routine", ordered_by=None, source="clinician", detail=None, status="draft", pre_persist_gate=None) -> dict`
 **Does:** Validates and inserts a new order plus its first `order_events` row, returning the stored row as a dict.
 **How it works:**
@@ -184,7 +184,7 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 **Change guide:** *Worked example, add a `medication` free-text option:* today `medication` is not in `CODELESS_ORDER_TYPES`, so a med order always needs a code. To allow free-text meds, add `"medication"` to `CODELESS_ORDER_TYPES` (`:46`); knock-on: the panel's `CODELESS` set (`src/components/orders/OrdersPanel.tsx:65`) must match or the form will still demand a code; watch out that you have now removed the safety guarantee that every med is coded. *Worked example, default new orders to `active`:* pass `status="active"` from the route, or change the default at `:88`; knock-on: the `order_events` "order created" row will record `new_status="active"` and the panel's first forward button will target `in_progress`.
 **Gotchas:** `code_system` is stored uppercased (`:146`) but `code` is stored verbatim, LOINC codes like `2524-7` are case-neutral, but if you ever add a case-sensitive local code system, lookups will be case-sensitive on `code`. The `ValueError`s are caught by the route and turned into HTTP 400; nothing here logs, so a rejected create is silent server-side.
 
-#### `transition_order`: `server/services/orders_service.py:158`
+#### `transition_order`: `server/services/orders_service.py:186`
 **Signature:** `(order_id, to_status, actor_id=None, detail=None) -> dict`
 **Does:** Performs one guarded, idempotent status change and records the event.
 **How it works:**
@@ -201,7 +201,7 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 **Change guide:** To make cancellation require a reason, thread `detail` through as mandatory here and in `TransitionRequest` (`server/routes/orders_routes.py:38`); knock-on: the panel already collects an optional reason in the inline cancel-confirm row (`src/components/orders/OrdersPanel.tsx:339-365`) and passes it as `detail` via `confirmCancel` (`:162-167`), but it sends `undefined` when the field is left blank, so a mandatory `detail` would start rejecting blank-reason cancels.
 **Gotchas:** The whole read-check-write sequence runs inside one `db_session()` (`:168`), but there is no `SELECT … FOR UPDATE` (SQLite doesn't support it), two concurrent transitions on the same order could interleave. In practice SQLite's connection-level locking serialises writers, but do not assume this generalises if the store is swapped.
 
-#### `add_result`: `server/services/orders_service.py:206`
+#### `add_result`: `server/services/orders_service.py:237`
 **Signature:** `(order_id, result_text, actor_id=None) -> dict`
 **Does:** Attaches result text to a lab/imaging order and moves it to `resulted`. A result is written **once**.
 **How it works:**
@@ -217,7 +217,7 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 **Talks to:** `db_session`, `_is_legal_transition`, `_record_event`. Called by `orders_routes.add_result`, which maps `OrderAlreadyResulted` to **409**.
 **Gotchas:** `OrderAlreadyResulted` subclasses `ValueError`, so a caller that only catches `ValueError` still refuses (with 400 instead of 409). Orb has no amended-result workflow yet.
 
-#### `list_orders`: `server/services/orders_service.py:264`
+#### `list_orders`: `server/services/orders_service.py:295`
 **Signature:** `(patient_id, status=None) -> list[dict]`
 **Does:** Returns a patient's orders newest-first, optionally filtered by status.
 **How it works:** Two parameterised `SELECT … ORDER BY created_at DESC` branches (with/without a `status` filter).
@@ -226,13 +226,13 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 **Talks to:** `db_session`. Called by `orders_routes.list_patient_orders`.
 **Gotchas:** Ordering by `created_at DESC` relies on those timestamps being comparable strings; ISO-8601 UTC sorts lexicographically correctly, so this is fine as long as the format stays consistent.
 
-#### `get_order`: `server/services/orders_service.py:280`
+#### `get_order`: `server/services/orders_service.py:311`
 **Signature:** `(order_id) -> dict | None`
 **Does:** Fetch one order or `None`.
 **Talks to:** `db_session`. Called by `get_order`, `get_order_events` routes (as an existence check).
 **Gotchas:** none noteworthy.
 
-#### `get_order_events`: `server/services/orders_service.py:286`
+#### `get_order_events`: `server/services/orders_service.py:317`
 **Signature:** `(order_id) -> list[dict]`
 **Does:** Returns the order's audit trail oldest-first (`ORDER BY id ASC`).
 **Why it exists:** Powers the events route and is read by guide 30-flight-recorder for the audit scrub.

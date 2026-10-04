@@ -20,7 +20,7 @@ A ward tablet loses wi-fi in a corridor, a lift lobby, a side room with thick wa
 
 **And the one that matters most: THE CACHE MUST CLEAR ON LOGOUT AND ON USER SWITCH.** A shared ward tablet that keeps the previous nurse's patients hands one clinician another clinician's PHI, names, diagnoses, NEWS2 scores, the whole drug chart. That is a leak wearing a performance feature's clothes. It is enforced in three independent places, because there are three different ways a device changes hands and only one of them runs a clean sign-out:
 
-1. **Sign-out**, `App.logout` clears synchronously (`src/App.tsx:163`).
+1. **Sign-out**, `App.logout` clears synchronously (`src/AppRoot.tsx:104`).
 2. **User switch and sign-out again**, `useOfflineSession` watches the user ID, not the call site (`src/hooks/useOfflineSession.ts:78-81`).
 3. **Crash recovery**, the battery died mid-round and no logout ever ran; the next mount asks whether anything on the device belongs to the person now holding it (`useOfflineSession.ts:59-61`).
 
@@ -63,7 +63,7 @@ graph TD
   GUARD -->|online| API[api/client mutation]
 ```
 
-**Neighbors:** guide 28-offline-pwa-downtime (the service worker, the app shell, downtime procedure), guide 02-api-client (`apiFetch`, `getUser`, `offlineMutate` and the write queue), guide 01-app-shell (`ClinicianShell`'s pending/sync-failed chips), guide 33-pin-on-device-identity (why a shared tablet signs *out* on idle rather than locking, `src/App.tsx:93-98`), guide 07-vigil (the board and chart that consume the snapshot), guide 22-handoff-ipass (the handover write that refuses), guide 27-design-system (`OfflineBanner.css`).
+**Neighbors:** guide 28-offline-pwa-downtime (the service worker, the app shell, downtime procedure), guide 02-api-client (`apiFetch`, `getUser`, `offlineMutate` and the write queue), guide 01-app-shell (`ClinicianShell`'s pending/sync-failed chips), guide 33-pin-on-device-identity (why a shared tablet signs *out* on idle rather than locking, `src/AppRoot.tsx:113-120`), guide 07-vigil (the board and chart that consume the snapshot), guide 22-handoff-ipass (the handover write that refuses), guide 27-design-system (`OfflineBanner.css`).
 
 ![Nurse shift board](../screenshots/nurse-01-mypatients-dark.png)
 
@@ -244,7 +244,7 @@ sequenceDiagram
 **Does:** Removes every entry this module owns. Nothing else.
 **On screen:** nothing visible, which is the point. The next thing the arriving nurse sees is her own empty state, not somebody else's ward.
 **Why it exists:** the docstring is unambiguous, *"MUST be called on logout and on user switch, that is the difference between a shared tablet and a PHI leak"* (`:178-181`).
-**Called from:** `App.logout` (`src/App.tsx:163`), `useOfflineSession` on switch/sign-out (`useOfflineSession.ts:79`), `useOfflineSession` on a crash boot (`:60`), and `readCache` itself on a foreign entry (`phiCache.ts:163`). **Four call sites, three of them proactive and one reactive**, because a single call site is a single thing to forget.
+**Called from:** `App.logout` (`src/AppRoot.tsx:104`), `useOfflineSession` on switch/sign-out (`useOfflineSession.ts:79`), `useOfflineSession` on a crash boot (`:60`), and `readCache` itself on a foreign entry (`phiCache.ts:163`). **Four call sites, three of them proactive and one reactive**, because a single call site is a single thing to forget.
 **Breaks if you change it:** widening the key filter takes the nurse's obs draft and the theme with it (`phiCache.test.ts:110-123` fails). Narrowing it, or adding a "keep the current user's entries" optimisation, reintroduces the leak the whole hook exists to close, because on a switch the "current user" at the moment of the call is ambiguous by definition.
 
 #### `cacheEntryCount` / `cacheBytes`: `phiCache.ts:192` / `:196`
@@ -385,7 +385,7 @@ sequenceDiagram
 **Signature:** `(userId: string | null | undefined) -> void`
 **Does:** Ties **both** on-device PHI stores, the read cache and the write queue, to one clinician's session.
 **On screen:** **nothing, ever.** It is invisible by design. Its entire output is the absence of the previous nurse's patients on the next nurse's screen.
-**Mounted at:** `src/App.tsx:105`, once, with `user?.id ?? null`.
+**Mounted at:** `src/AppRoot.tsx:125`, once, with `user?.id ?? null`.
 **How it works:** a `previous` ref (`:43`) distinguishes three cases.
 - **First run** (`prior === undefined`, `:50`), a mount, which is **also every page refresh and every cold boot after a crash**. There is no previous ID in memory to compare against, so it asks the *cache* instead: `cacheEntryCount() > 0 && (!current || newestCachedAt(current) === null)` → wipe (`:59-61`). Entries present but none of them this user's fresh data means the device is carrying somebody else's PHI, or expired PHI. Either way it goes.
 - Then `clearForeignOfflineQueue(current)` (`:68`), the queue carries its own author per entry, so it is judged **exactly** rather than all-or-nothing: this user's pending writes survive a page refresh mid-shift, anybody else's do not survive the boot.
@@ -440,23 +440,23 @@ sequenceDiagram
 
 This is not part of the read cache, but `useOfflineSession` imports two functions from it and the chapter is dishonest without it. `api/client` keeps an **offline write queue** in localStorage under `orb_offline_queue`: free clinical text, patient ids, dose payloads.
 
-#### `clearOfflineQueue`: `src/api/client.ts:526`
+#### `clearOfflineQueue`: `src/api/client.ts:549`
 **Signature:** `() -> number`
 **Does:** Drops every queued write.
-**Called from:** `App.logout` (`src/App.tsx:167`) and `useOfflineSession` on switch/sign-out (`useOfflineSession.ts:80`).
+**Called from:** `App.logout` (`src/AppRoot.tsx:108`) and `useOfflineSession` on switch/sign-out (`useOfflineSession.ts:80`).
 **On screen:** the pending-count chip in the shell (`src/pages/ClinicianShell.tsx:463`, `:469`) drops to zero on its next two-second poll (`:342`).
 
-#### `clearForeignOfflineQueue`: `src/api/client.ts:543`
+#### `clearForeignOfflineQueue`: `src/api/client.ts:566`
 **Signature:** `(userId: string | null) -> OfflineRequest[]`
 **Does:** Drops queued writes that do **not** belong to `userId`; `null` drops all. Returns them, so the caller decides whether anyone needs telling.
 **Why:** a replay is sent on the **current** session's cookie, so a write queued by the last nurse would be filed against this one, *her name on another clinician's note or dose, with nothing on screen to reveal it* (`src/api/client.ts:631-635`). Same rule `phiCache` applies to reads: **a queued write is replayed for its author or not at all.**
 **On screen:** when called from `processOfflineQueue` (`:650`) it dispatches `orb:offline-sync-failed` (`:654`), which the shell renders as a `role="alert"` badge, "N queued action(s) failed to sync. Please re-enter" (`src/pages/ClinicianShell.tsx:445-449`). When called from `useOfflineSession` on a boot it is silent, deliberately.
 
-#### `offlineMutate`: `src/api/client.ts:588`
+#### `offlineMutate`: `src/api/client.ts:611`
 **Signature:** `(path, body, offlineResult, method, key?) -> Promise<T>`
-**Does:** With no connection, **queues the request and returns the caller's optimistic result** (`:596-599`). It is a module-private `async function`, not exported.
+**Does:** With no connection, **queues the request and returns the caller's optimistic result** (`:619-622`). It is a module-private `async function`, not exported.
 **On screen:** nothing today, every one of its three callers is now guarded by `assertOnlineForWrite` at the UI layer, so offline it is never reached. It remains the mechanism the guards exist to keep unreachable. **See Discrepancies; this is the largest open tension in the subsystem.**
-**Its three callers:** `sendMessage` (`:1067`), `addClinicalNote` (`:1546`), `administerMedication` (`:1734`).
+**Its three callers:** `sendMessage` (`:1378`), `addClinicalNote` (`:2144`), `administerMedication` (`:2347`).
 
 ---
 
@@ -467,11 +467,11 @@ This is not part of the read cache, but `useOfflineSession` imports two function
 | `OfflineSnapshot` shape | `useOfflineSnapshot.ts:45` | `OfflineBanner.tsx:65`, `MedRoundSheet.tsx:39`, `ObsEntrySheet.tsx:67` | a renamed `source` value silently stops the banner rendering; the cached view then looks live |
 | `orb:offline:` key prefix | `phiCache.ts:25` | `clearOfflineCache` (`:184`), and every other localStorage user in Orb | widen it and sign-out deletes the nurse's in-progress obs draft |
 | Envelope `userId` stamp | `writeCache` (`phiCache.ts:106`) | `readCache` (`phiCache.ts:162`), `newestCachedAt` (`phiCache.ts:213`), `useOfflineSession.ts:59` | stop stamping and all three ownership checks fail open at once |
-| `getUser()?.id` | `src/api/client.ts:159` | `useOfflineSnapshot.ts:74`, `OfflineBanner.tsx:87`, `src/App.tsx:105` | a user object without a stable `id` makes every entry unreadable on the next mount |
+| `getUser()?.id` | `src/api/client.ts:159` | `useOfflineSnapshot.ts:74`, `OfflineBanner.tsx:87`, `src/AppRoot.tsx:125` | a user object without a stable `id` makes every entry unreadable on the next mount |
 | `orb_offline_queue` + `userId` per entry | `queueRequest` (`src/api/client.ts:552`) | `clearForeignOfflineQueue` (`:543`), `useOfflineSession.ts:68`, `readOfflineQueueCount` (`src/pages/ClinicianShell.tsx:40`) | an unstamped entry is dropped rather than misattributed |
 | `orb:offline-sync-failed` event | `src/api/client.ts:654`, `:719` | `src/pages/ClinicianShell.tsx:339` | rename it and a permanently-failed replay stops being reported to anyone |
 | `navigator.onLine` semantics | the browser | `writeGuard.ts:80`, `useOfflineStatus.ts:32`, `src/api/client.ts:596` | three independent readers; a change in interpretation must land in all three |
-| `SHARED_DEVICE_IDLE_MS` sign-out | `src/App.tsx:46`, `:93-98` (guide 33) | the whole queue-lifetime argument | lengthen it and "the queue dies before the wi-fi returns" stops being true, but the refusals are still correct |
+| `SHARED_DEVICE_IDLE_MS` sign-out | `src/AppRoot.tsx:40`, `:113-120` (guide 33) | the whole queue-lifetime argument | lengthen it and "the queue dies before the wi-fi returns" stops being true, but the refusals are still correct |
 
 ---
 
@@ -512,6 +512,6 @@ This is not part of the read cache, but `useOfflineSession` imports two function
 
 9. **The cache is not encrypted.** Stated plainly in the module docstring (`phiCache.ts:19-20`): localStorage is chosen for being synchronous, so a render can decide what to show without a loading flash, and universally available, and *"it is NOT encrypted, which is exactly why the age and wipe rules above are tight"*. Anything with filesystem access to the tablet can read the cached PHI. The mitigations are device-level (kiosk mode, full-disk encryption, MDM), not application-level, and they are not in this repo.
 
-10. **`useOfflineSnapshot`'s docstring claims a monopoly it no longer has.** *"The one consumer of lib/offline/phiCache"* (`useOfflineSnapshot.ts:7`) was true when written; there are now four importers, `useOfflineSnapshot.ts:2`, `useOfflineSession.ts:2`, `OfflineBanner.tsx:3`, `App.tsx:6`. The *spirit* still holds (it is the only place that reads or writes a cached **value**; the other three only clear or query metadata), but the sentence as written would mislead someone auditing where PHI can leave the cache.
+10. **`useOfflineSnapshot`'s docstring claims a monopoly it no longer has.** *"The one consumer of lib/offline/phiCache"* (`useOfflineSnapshot.ts:7`) was true when written; there are now four importers, `useOfflineSnapshot.ts:2`, `useOfflineSession.ts:2`, `OfflineBanner.tsx:3`, `AppRoot.tsx:6`. The *spirit* still holds (it is the only place that reads or writes a cached **value**; the other three only clear or query metadata), but the sentence as written would mislead someone auditing where PHI can leave the cache.
 
 11. **A cached view offers no way to see *which* fields are stale.** The banner dates the whole snapshot. A board where one patient's vitals were fetched 20 minutes ago and another's 2 minutes ago is labelled with a single age, the oldest honest one, since `savedAt` is the timestamp of the whole payload. That is the safe direction, but it means the label can overstate staleness for part of the view, and a nurse who notices that will trust the label less.

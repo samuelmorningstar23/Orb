@@ -269,6 +269,15 @@ MODULE_TABLES: dict[str, tuple[str, ...]] = {
     "clinic schedule": (
         "clinic_sessions", "clinic_session_exceptions",
     ),
+    # ── migration 60 (server/migrations_his/m0060_result_quarantine.py) ──
+    # Interfaced results that matched no patient, held for laboratory staff to
+    # attach to the right patient or discard with a reason, and every decision
+    # taken on them. Empty until a site switches ORB_RESULT_QUARANTINE on. A
+    # restore that came back without it would lose results nobody has matched
+    # yet, and the record of which patient each attached result was given to.
+    "result quarantine": (
+        "result_quarantine",
+    ),
 }
 
 ALL_MIGRATED_TABLES: tuple[str, ...] = tuple(

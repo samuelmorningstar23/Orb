@@ -93,6 +93,8 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from database import db_session
+from services.adt.core import AdtError, adt_on
+from services.adt.end_stay import end_stay_on
 from services.clinical_records_service import allergy_entries, record_allergies_on
 
 # The pilot hospital is in India. A roster gives a DATE ("28/07/2026"); the
@@ -1494,7 +1496,19 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
 
     Idempotent: a second run over an unchanged file creates and updates nothing,
     and never opens a second admission for a patient who already has one.
+
+    ORB_ADT ON (adt-8a): a close is an end of stay like any other, through
+    services/adt/end_stay.end_stay_on in this same transaction (which then runs
+    as an immediate session): it asks discharge_preconditions, keeps the file's
+    status ('transferred' stays 'transferred', with discharge type
+    'transferred_out'), writes the 'discharge' movement, closes the patient's
+    open care bundles and writes the NABH disposition. A file that says only
+    'discharged' does not say how the stay ended, so no type is guessed and no
+    disposition is written (a guessed 'routine' would understate mortality).
+    A close an end-of-stay check refuses is left open and reported under
+    admissions.close_refused, never half-written. Off: unchanged.
     """
+    adt = adt_on()
     result = plan(content, mapping, date_order=date_order,
                   update_existing=update_existing, header_line=header_line,
                   default_department=default_department)
@@ -1506,9 +1520,14 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
     admissions_created: list[str] = []
     admissions_updated: list[str] = []
     admissions_closed: list[str] = []
+    close_refused: list[str] = []
     allergies_charted = 0
 
-    with db_session() as db:
+    with db_session(immediate=adt) as db:
+        actor_role = None
+        if adt:
+            role_row = db.execute("SELECT role FROM users WHERE id = ?", (actor_user_id,)).fetchone()
+            actor_role = role_row["role"] if role_row else None
         for row in result["rows"]:
             if row["action"] == "create":
                 patient_id = f"PAT-{uuid.uuid4().hex[:8].upper()}"
@@ -1594,6 +1613,28 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
                     )
                     admissions_updated.append(adm["admission_id"])
 
+            elif adm.get("action") == "close" and adt:
+                # ORB_ADT on: the same end of stay every other door records.
+                try:
+                    ended = end_stay_on(
+                        db, admission_id=adm["admission_id"],
+                        end_type="transferred_out" if adm["to_status"] == "transferred" else None,
+                        actor={"id": actor_user_id, "role": actor_role},
+                        require_read_back=False, admission_status=adm["to_status"],
+                        door="roster_import",
+                        reason=f"Closed by roster import {run_id}"
+                               + (f" from '{source_filename}'" if source_filename else ""),
+                    )
+                except AdtError as exc:
+                    # Refused before anything was written for this row (a
+                    # precondition, or a stay already ended): left as it is.
+                    adm["action"] = "close_refused"
+                    adm["refusal"] = {"code": exc.code, "message": str(exc)}
+                    close_refused.append(adm["admission_id"])
+                    continue
+                adm["movement_id"] = ended["movement_id"]
+                admissions_closed.append(adm["admission_id"])
+
             elif adm.get("action") == "close":
                 db.execute(
                     "UPDATE admissions SET status = ? WHERE id = ? AND status = 'active'",
@@ -1614,6 +1655,8 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
             "updated": len(admissions_updated),
             "closed": len(admissions_closed),
         }
+        if adt:
+            admissions["close_refused"] = len(close_refused)
         db.execute(
             """INSERT INTO roster_import_runs
                    (id, actor_user_id, source_filename, mapping_json, date_order,

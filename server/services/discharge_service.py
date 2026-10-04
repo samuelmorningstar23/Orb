@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from config import LLM_MODEL, UPLOAD_DIR, DISCHARGE_ACCESS_TTL_DAYS, OLLAMA_KEEP_ALIVE
 from database import get_db, db_session
+from services.adt import end_stay as adt_end
+from services.adt.core import AdtConflict, adt_on, current_admission_on
 from services.audit_service import log_audit_event
 from services.vital_charting import charted_text
 import httpx
@@ -24,8 +26,10 @@ REVIEW_DRAFT = "draft"
 REVIEW_REVIEWED = "reviewed"
 PENDING_REVIEW_MESSAGE = "Your discharge summary is being finalised by your doctor."
 
-#: Why discharge_patient cancels a still-active care bundle (audited).
-DISCHARGE_BUNDLE_REASON = "patient discharged"
+#: Why discharge_patient cancels a still-active care bundle (audited). The
+#: closure itself moved to services/adt/end_stay.close_admission_on (adt-8a),
+#: which owns the string; this name is kept for callers and tests.
+DISCHARGE_BUNDLE_REASON = adt_end.DISCHARGE_BUNDLE_REASON
 
 
 def is_reviewed(row) -> bool:
@@ -604,8 +608,25 @@ def generate_qr_code(patient_id: str, summary_url: str) -> str:
     return qr_path
 
 
-def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: list) -> dict:
+def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: list, *,
+                      discharge_type: Optional[str] = None, confirm_mrn: Optional[str] = None,
+                      reason: Optional[str] = None, request_meta: Optional[dict] = None) -> dict:
     """Discharge a patient: update status, save summary, generate secure QR token.
+
+    BEDS AND ADMISSIONS (adt-8a). The status flips and the bundle closure live
+    in services/adt/end_stay.close_admission_on, and every discharge asks
+    discharge_preconditions first (empty until held ruling R009 lands). With
+    ORB_ADT off that is all, and the rows written are exactly what they always
+    were; the keyword arguments are ignored. With ORB_ADT on the discharge
+    also records how the stay ended (routine when `discharge_type` is not
+    given; referred_out, transferred_out or dama; LAMA, absconded and death go
+    to POST /api/adt/admissions/{id}/end), with the typed MRN read-back and a
+    reason for a DAMA, and writes, in this same immediate transaction, the
+    admission's discharged_at, discharge_type and discharged_by, the
+    'discharge' movement carrying this summary's id, the de-duplicated NABH
+    disposition and a clinical_access audit. The response then carries an
+    'end_of_stay' block listing the open escalation chains (never closed) and
+    the bundles it closed.
 
     THE LINK IS CONDITIONAL, THE DISCHARGE IS NOT. A secure link is only printed
     when the patient has a second factor the portal can actually check — see
@@ -627,6 +648,11 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
     from services.discharge_access_service import (
         SECOND_FACTOR_FIELD, public_link_base_status, second_factor_status,
     )
+
+    # Beds and admissions (ORB_ADT, default off). Off: nothing below changes.
+    # On: the end type is checked before anything is written or drafted.
+    adt = adt_on()
+    end_type = adt_end.discharge_route_type(discharge_type) if adt else None
 
     factor = second_factor_status(patient_id)
     address = public_link_base_status()
@@ -658,49 +684,40 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
         # PNG in the uploads directory.
         qr_path = generate_qr_code(patient_id, summary_url)
 
-    with db_session() as db:
-        # Atomicity / idempotency: claim the discharge first. If the patient was not
-        # 'admitted' (already discharged), bail before writing duplicate summaries/tokens.
-        claim = db.execute(
-            "UPDATE patients SET status = 'discharged' WHERE id = ? AND status = 'admitted'",
-            (patient_id,),
-        )
-        if claim.rowcount == 0:
+    end_record = None
+    # Immediate only with ORB_ADT on, where the read-back and the end-of-stay
+    # rows must see the same state as the write; off, the session is the one
+    # this function always used.
+    with db_session(immediate=adt) as db:
+        admission = patient_row = None
+        escalations: list = []
+        if adt:
+            # Captured BEFORE the close below flips it: its place is the
+            # discharge movement's 'from', and its stay start dates the death.
+            admission = current_admission_on(db, patient_id)
+            found = db.execute("SELECT * FROM patients WHERE id = ?", (patient_id,)).fetchone()
+            patient_row = dict(found) if found is not None else None
+            if admission is not None and (patient_row or {}).get("status") == "admitted":
+                if end_type in adt_end.READ_BACK_ON_DISCHARGE_ROUTE:
+                    adt_end.check_read_back(patient_row, confirm_mrn)
+                reason = adt_end.require_reason(end_type, reason)
+            escalations = adt_end.open_escalations_on(db, patient_id)
+
+        # Every end-of-stay door asks this; held ruling R009 lands there. It
+        # returns [] today, so no discharge is refused here.
+        problems = adt_end.discharge_preconditions(db, patient_id, end_type or "routine")
+        if problems:
+            raise AdtConflict("This stay cannot end yet", code="discharge_preconditions",
+                              preconditions=problems)
+
+        # Atomicity / idempotency: claim the discharge first. If the patient was
+        # not 'admitted' (already discharged), bail before writing duplicate
+        # summaries/tokens. close_admission_on makes the claim, closes every
+        # active admission and cancels the open care bundles with an audit row
+        # each (F050), exactly as this function did inline before adt-8a.
+        closed = adt_end.close_admission_on(db, patient_id, actor_user_id=author_id)
+        if closed is None:
             return {"status": "already_discharged", "patient_id": patient_id}
-
-        # Close the encounter too. patients.status alone is not enough: consumers
-        # that key off admissions.status = 'active' (admin erase_patient's 409
-        # guard, sage_handoff_service's transfer resolution) otherwise treat every
-        # ever-admitted patient as a live inpatient forever — which makes GDPR
-        # erasure permanently unreachable for anyone discharged through this path.
-        db.execute(
-            "UPDATE admissions SET status = 'discharged' WHERE patient_id = ? AND status = 'active'",
-            (patient_id,),
-        )
-
-        # Close the patient's open care bundles in the same transaction. A
-        # Sepsis Six left 'active' after discharge kept ticking on the Command
-        # Center and counted against compliance forever. Each cancellation is
-        # audited with the reason, as the bundle route's own cancel is.
-        open_bundles = db.execute(
-            "SELECT id, bundle_type FROM care_bundles WHERE patient_id = ? AND status = 'active'",
-            (patient_id,),
-        ).fetchall()
-        for bundle in open_bundles:
-            closed = db.execute(
-                "UPDATE care_bundles SET status = 'cancelled' WHERE id = ? AND status = 'active'",
-                (bundle["id"],),
-            )
-            if closed.rowcount:
-                log_audit_event(
-                    correlation_id=f"bundle-cancel-{bundle['id']}", event_category="care_bundle",
-                    action_type="bundle_cancelled", outcome="success", db=db,
-                    summary_message=f"Bundle {bundle['id']} cancelled: {DISCHARGE_BUNDLE_REASON}",
-                    actor_user_id=author_id, patient_id=patient_id,
-                    target_type="care_bundle", target_id=str(bundle["id"]),
-                    metadata={"reason": DISCHARGE_BUNDLE_REASON,
-                              "bundle_type": bundle["bundle_type"]},
-                )
 
         # Save discharge summary. Always a DRAFT: whatever produced the text (the
         # drafting model, the offline fallback, a Relay action), no clinician
@@ -727,6 +744,19 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
             )
 
         # (patient status already claimed atomically at the top of this block)
+
+        # ORB_ADT on: how the stay ended, in this same transaction (an
+        # unwritable clinical_access audit rolls the whole discharge back).
+        if adt and admission is not None:
+            actor_row = db.execute("SELECT role FROM users WHERE id = ?", (author_id,)).fetchone()
+            end_record = adt_end.record_end_on(
+                db, admission=admission, patient=patient_row, end_type=end_type,
+                occurred=datetime.now(timezone.utc),
+                actor={"id": author_id, "role": actor_row["role"] if actor_row else None},
+                reason=reason, summary_id=summary_id, door="discharge",
+                request_meta=request_meta, bundles_cancelled=closed["bundles_cancelled"],
+                open_escalations=escalations,
+            )
 
     if issue_link:
         log_audit_event(
@@ -758,7 +788,7 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
             actor_user_id=author_id,
         )
 
-    return {
+    result = {
         "status": "success",
         "summary_id": summary_id,
         "discharged_at": discharged_at,
@@ -771,6 +801,9 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
         "secure_link_issued": issue_link,
         "secure_link_reason": withheld_reason,
     }
+    if end_record is not None:
+        result["end_of_stay"] = end_record
+    return result
 
 
 class DischargeSummaryNotFound(LookupError):

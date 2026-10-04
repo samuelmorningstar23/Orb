@@ -7,7 +7,7 @@ Orb's frontend is a single-page application (SPA), one HTML page whose content i
 Every feature in Orb, Vigil patient monitoring, Relay messaging, Sage AI assistant, Scribe dictation, and the rest, renders *inside* a frame this subsystem provides. The shell solves four problems that would otherwise be re-solved by every feature:
 
 1. **Getting pixels on screen at all**: loading fonts, global CSS, translations, and mounting React exactly once (`src/main.tsx`).
-2. **Deciding who sees what**: a URL-to-screen map with role-based guards, so a patient can never land in the clinician dashboard and vice versa (`src/App.tsx:80-89`).
+2. **Deciding who sees what**: a URL-to-screen map with role-based guards, so a patient can never land in the clinician dashboard and vice versa (`src/AppRoot.tsx:178-193`).
 3. **Failing safely**: error boundaries at two levels so a crash in one panel never blanks the whole clinical UI mid-shift (`src/main.tsx:26`, `src/pages/ClinicianShell.tsx:177`).
 4. **Shared chrome and cross-cutting state**: the sidebar, header, clock, logo, theme and language toggles, the currently selected patient, and modal focus management.
 
@@ -59,10 +59,10 @@ Neighbors: the HTTP/WebSocket client this shell calls into is owned by the API-c
 
 1. The browser requests `/` from the Vite dev server (or the production static host). It gets `index.html`, which contains an empty `<div id="root">` and a module script tag for `/src/main.tsx` (`index.html:31-32`). Before anything else, an inline script installs `window.addEventListener('error')` and `('unhandledrejection')` handlers that paint a full-screen dark-red overlay with the stack trace if anything blows up (`index.html:11-16`), a last-resort debug net that works even if React itself failed to load. It is **dev-only**: the whole block is wrapped in a port check for `5173`/`5174` (`index.html:10`), so in the built app the React error boundaries own failures and no raw overlay can paint over the clinical UI.
 2. `src/main.tsx` runs. Its imports execute in order: three self-hosted variable fonts (Inter for UI text, Fraunces for display moments, JetBrains Mono for data/IDs, bundled woff2 files, no CDN, so an offline hospital deployment renders identically, `src/main.tsx:9-11`), then `index.css` (design tokens), `print.css`, and `./i18n`, importing the i18n module runs its `init()` side effect, so translations are ready before the first render (`src/main.tsx:12-14`, `src/i18n/index.ts:33`).
-3. Importing `./App.tsx` runs a module-level theme block *before React renders anything*: it reads `localStorage['orb_theme']`, falls back to the OS preference via `window.matchMedia('(prefers-color-scheme: light)')`, and stamps `data-theme="dark|light"` on `<html>` (`src/App.tsx:59-66`). Doing this at import time avoids a flash of wrong theme. Note the key: `orb_theme` with an underscore. The shell's toggle writes `orb-theme` with a hyphen, see Discrepancies.
+3. Importing `./AppRoot.tsx` (the root component's home since `App.tsx` was split; `App.tsx` now holds only the auth context, `useAuth` and the user types) runs a module-level theme block *before React renders anything*: it stamps `data-theme` on `<html>` from `bootTheme()` (`src/AppRoot.tsx:42-49`), which returns the saved choice (`localStorage['orb-theme']`, else the legacy `orb_theme`) or, failing that, the OS preference via `window.matchMedia('(prefers-color-scheme: light)')` (`src/lib/theme.ts:39-45`). Doing this at import time avoids a flash of wrong theme.
 4. `main.tsx` grabs `#root`, reuses (or creates and caches) a React root on `window.__orbRoot`, and renders `<StrictMode><RootErrorBoundary><App /></RootErrorBoundary></StrictMode>` (`src/main.tsx:101-110`). *StrictMode* is a React development aid that double-invokes render functions and effects to surface unsafe side effects; it renders nothing itself.
-5. `App` initializes its `user` state from the cached user via `getUser()` (`src/App.tsx:70-73`), so a page refresh keeps you logged in. It then renders the router.
-6. The router matches the URL. Anonymous users at `/` are redirected to `/login/staff`; a stored staff user goes to `/dashboard`, a stored patient to `/bridge` (`src/App.tsx:81`).
+5. `App` initializes its `user` state from the cached user via `getUser()` (`src/AppRoot.tsx:53-56`), so a page refresh keeps you logged in. It then renders the router.
+6. The router matches the URL. Anonymous users at `/` are redirected to `/login/staff`; a stored staff user goes to `/dashboard`, a stored patient to `/bridge` (`src/AppRoot.tsx:180`).
 
 ### Flow 2: the route map
 
@@ -70,14 +70,15 @@ Neighbors: the HTTP/WebSocket client this shell calls into is owned by the API-c
 
 | URL pattern | Guard | Renders | Cite |
 |---|---|---|---|
-| `/` | n/a | Redirect: patient → `/bridge`, staff → `/dashboard`, anonymous → `/login/staff` | `src/App.tsx:81` |
-| `/login/:mode` | Logged-in users bounced to their home | `Login` (`:mode` = `staff` or `patient` picks the form variant) | `src/App.tsx:82` |
-| `/dashboard/*` | `user && user.role !== 'patient'` else → `/login/staff` | `ClinicianShell` | `src/App.tsx:83` |
-| `/bridge/*` | `user && user.role === 'patient'` else → `/login/patient` | `PatientShell` (patient-facing "Bridge" portal, own guide) | `src/App.tsx:84` |
-| `/discharge/:token` | none, public | `DischargeAccess` (DOB-verified discharge summary, no login) | `src/App.tsx:85` |
-| `/downtime/:patientId` | staff only | `DowntimeMode` (read-only local snapshot, guide 28-offline-pwa-downtime) | `src/App.tsx:86` |
-| `/handoff/:patientId` | staff only | `HandoffPage` (I-PASS handoff wrapper) | `src/App.tsx:87` |
-| `*` | n/a | Redirect to `/` | `src/App.tsx:88` |
+| `/` | n/a | Redirect: patient → `/bridge`, staff → `/dashboard`, anonymous → `/login/staff` | `src/AppRoot.tsx:180` |
+| `/login/:mode` | Logged-in users bounced to their home | `Login` (`:mode` = `staff` or `patient` picks the form variant) | `src/AppRoot.tsx:181` |
+| `/dashboard/*` | `user && user.role !== 'patient'` else → `/login/staff` | `ClinicianShell` | `src/AppRoot.tsx:182` |
+| `/bridge/*` | `user && user.role === 'patient'` else → `/login/patient` | `PatientShell` (patient-facing "Bridge" portal, own guide) | `src/AppRoot.tsx:183` |
+| `/discharge/:token` | none, public | `DischargeAccess` (DOB-verified discharge summary, no login) | `src/AppRoot.tsx:184` |
+| `/downtime/:patientId` | staff only | `DowntimeMode` (read-only local snapshot, guide 28-offline-pwa-downtime) | `src/AppRoot.tsx:185` |
+| `/handoff/:patientId` | staff only | `HandoffPage` (I-PASS handoff wrapper) | `src/AppRoot.tsx:186` |
+| `/display/opd` | none, public kiosk device | `OpdTokenBoard` (waiting-room token board, no patient data) | `src/AppRoot.tsx:190` |
+| `*` | n/a | Redirect to `/` | `src/AppRoot.tsx:191` |
 
 This is how **role-based navigation** works in the shell: the guards are inline ternaries on the `user` object from `AuthContext`. Note the split-brain-avoidance design: there is exactly one role fork (`patient` vs everyone else) at routing level; finer-grained role behavior (which tabs a nurse vs a pharmacist sees) is handled *inside* `ClinicianShell` by `getAccessibleTabs` (`src/pages/ClinicianShell.tsx:182`), and true enforcement is server-side RBAC (*role-based access control*, authorizing actions by the user's role; see guide 03-auth-rbac). The client-side guards are UX, not security.
 
@@ -130,11 +131,11 @@ A second saving is mount-on-first-view: `shouldRenderPanel` (`src/pages/Clinicia
 
 Theme is a `data-theme="dark|light|night"` attribute on `<html>`; all CSS tokens in `src/index.css` key off it. Three actors touch it:
 
-1. Boot: module-level block in `App.tsx` (Flow 1 step 3). Boot only ever picks `dark` or `light`, it never restores `night`.
-2. OS changes: an effect in `App` listens to the `prefers-color-scheme` media query and follows the OS *only if the user has no saved choice*, dispatching a `theme-changed` window event so canvas-based components can react (`src/App.tsx:115-125`).
+1. Boot: module-level block in `AppRoot.tsx` (Flow 1 step 3). A saved choice, `night` included, is restored at boot; with none saved it picks `dark` or `light` from the OS.
+2. OS changes: an effect in `App` listens to the `prefers-color-scheme` media query and follows the OS *only if the user has no saved choice*, dispatching a `theme-changed` window event so canvas-based components can react (`src/AppRoot.tsx:137-150`).
 3. The user: `ClinicianShell`'s theme button cycles `dark → light → night` (`src/pages/ClinicianShell.tsx:427`), and an effect writes `data-theme`, persists `localStorage['orb-theme']`, deletes the legacy `orb_theme` key, and dispatches `theme-changed` (`src/pages/ClinicianShell.tsx:415-424`). The effect brackets the attribute swap with an `orb-theme-switching` class and a forced reflow (`void root.offsetHeight`, `src/pages/ClinicianShell.tsx:418`) so transitions are suppressed across the flip, without it, every element whose `transition` list includes `background` stays pinned to the *previous* theme's colour (the long comment at `:378-412` records the measurement: 12 of 34 painted elements frozen on a light → night flip).
 
-These three do not agree, and the disagreement is a live bug: the shell writes `orb-theme` (hyphen) and **deletes** `orb_theme` (`src/pages/ClinicianShell.tsx:420-421`), while both `App.tsx` call sites read `orb_theme` (underscore) (`src/App.tsx:60`, `:118`). After the very first toggle the saved preference is invisible to boot. See Discrepancies.
+The boot block and the OS listener read the saved choice through one helper, `storedTheme()` (`src/lib/theme.ts:27`), which reads `orb-theme` and falls back to the legacy `orb_theme` (boot at `src/AppRoot.tsx:46`, listener at `src/AppRoot.tsx:143`). The old key mismatch is recorded in Discrepancies.
 
 ## Function-by-function
 
@@ -215,45 +216,47 @@ These three do not agree, and the disagreement is a live bug: the shell writes `
 2. The created root is cached on `window.__orbRoot`; re-evaluation of the module (HMR, double evaluation) reuses it instead of calling `createRoot()` twice, which would throw "container has already been passed to createRoot()" and double-mount the app (comment at `src/main.tsx:97-100`, cache at `:102-103`).
 3. `root.render(<StrictMode><RootErrorBoundary><App/></RootErrorBoundary></StrictMode>)` (`src/main.tsx:104-110`).
 **Why it exists:** React 19's `createRoot` API plus a pragmatic HMR guard.
-**Talks to:** renders `App` (`src/App.tsx:68`).
+**Talks to:** renders `App` (`src/AppRoot.tsx:51`).
 **Gotchas:** `StrictMode` double-invokes effects in dev; components with non-idempotent effects (e.g. `Aurora`'s WebGL setup) must clean up correctly or you get two animation loops.
 
 ### src/App.tsx
 
-#### AuthContext / useAuth: `src/App.tsx:51`
-**Signature:** `createContext<AuthContextType>` where `AuthContextType = {user: User | null, login(user, token?), logout()}`; `useAuth() → AuthContextType` (`src/App.tsx:57`)
+#### AuthContext / useAuth: `src/App.tsx:32`
+**Signature:** `createContext<AuthContextType>` where `AuthContextType = {user: User | null, login(user, token?), logout()}`; `useAuth() → AuthContextType` (`src/App.tsx:38`)
 **Does:** makes the logged-in user and the login/logout actions available to any component without prop drilling.
-**How it works:** A React **context** is a value published high in the component tree that any descendant can read with `useContext`, skipping the components in between; the component that publishes it is the **provider**. `AuthContext` is created with no-op defaults (`src/App.tsx:51-55`) so components rendered outside a provider (mostly tests) don't crash; `useAuth` is a one-line convenience **hook** (a function whose name starts with `use` that taps into React state/lifecycle) wrapping `useContext(AuthContext)`.
-**Data in/out:** `User = {id, name, role: UserRole, department?, registrationNumber?, authMethod?}` with `UserRole = 'doctor' | 'nurse' | 'admin' | 'patient' | 'pharmacist' | null` (`src/App.tsx:17-27`). `authMethod` is `'password' | 'pin'` and marks a session signed in with a PIN on a shared ward tablet (`src/App.tsx:25-26`), that is what drives the shorter shared-device idle timeout.
+**How it works:** A React **context** is a value published high in the component tree that any descendant can read with `useContext`, skipping the components in between; the component that publishes it is the **provider**. `AuthContext` is created with no-op defaults (`src/App.tsx:32-36`) so components rendered outside a provider (mostly tests) don't crash; `useAuth` is a one-line convenience **hook** (a function whose name starts with `use` that taps into React state/lifecycle) wrapping `useContext(AuthContext)`.
+**Data in/out:** `User = {id, name, role: UserRole, department?, registrationNumber?, authMethod?}` with `UserRole` = the storable roles of `server/roles.py` (doctor, nurse, admin, patient, pharmacist, cashier and the five HIS roles) or `null` (`src/App.tsx:11-24`). `authMethod` is `'password' | 'pin'` and marks a session signed in with a PIN on a shared ward tablet (`src/App.tsx:22-23`), that is what drives the shorter shared-device idle timeout.
 **Talks to:** consumed by `ClinicianShell` (`src/pages/ClinicianShell.tsx:306`), `Login` (`src/pages/Login.tsx:14`), `PatientShell` (`src/pages/PatientShell.tsx:106`), and `AdmitPatientModal`.
-**Change guide (worked example):** to add a role (say `'radiologist'`), extend the `UserRole` union (`src/App.tsx:17`), add a `case 'radiologist'` to `getAccessibleTabs` (`src/pages/ClinicianShell.tsx:184-203`), add a `role.radiologist` label to both locale bundles (and to the `roleKey` allow-list at `src/pages/ClinicianShell.tsx:432`, or the label falls back to "Staff"), and confirm the backend emits that role string from `/api/auth/login`. Watch out: an unknown role silently falls to the two-tab default (`src/pages/ClinicianShell.tsx:203`).
-**Gotchas:** the provider value `{user, login, logout}` is a fresh object literal every render of `App` (`src/App.tsx:160`), so all consumers re-render when `App` does, acceptable here since `App` renders rarely.
+**Change guide (worked example):** to add a role (say `'radiologist'`), extend the `UserRole` union (`src/App.tsx:11`), add a `case 'radiologist'` to `getAccessibleTabs` (`src/pages/ClinicianShell.tsx:184-203`), add a `role.radiologist` label to both locale bundles (and to the `roleKey` allow-list at `src/pages/ClinicianShell.tsx:432`, or the label falls back to "Staff"), and confirm the backend emits that role string from `/api/auth/login`. Watch out: an unknown role silently falls to the two-tab default (`src/pages/ClinicianShell.tsx:203`).
+**Gotchas:** the provider value `{user, login, logout}` is a fresh object literal every render of `App` (`src/AppRoot.tsx:153`), so all consumers re-render when `App` does, acceptable here since `App` renders rarely.
 
-#### module-level theme init: `src/App.tsx:59`
+### src/AppRoot.tsx
+
+#### module-level theme init: `src/AppRoot.tsx:42`
 **Signature:** side effect at import time
 **Does:** stamps the initial `data-theme` on `<html>` before first paint.
-**How it works:** 1. Try `localStorage['orb_theme']` (`src/App.tsx:60`). 2. Else use the OS light/dark preference (`:61`). 3. `document.documentElement.setAttribute('data-theme', ...)` (`:63`). Wrapped in try/catch because `localStorage` can throw in private browsing (`src/App.tsx:64-66`).
+**How it works:** 1. `bootTheme()` returns the saved choice from `storedTheme()`, which reads `orb-theme` and falls back to the legacy `orb_theme` (`src/lib/theme.ts:39-41`). 2. Else the OS light/dark preference (`src/lib/theme.ts:42-44`). 3. `document.documentElement.setAttribute('data-theme', ...)` (`src/AppRoot.tsx:46`). Wrapped in try/catch so a failure only logs (`src/AppRoot.tsx:47-49`); `storedTheme` has its own try/catch because `localStorage` can throw in private browsing (`src/lib/theme.ts:28-33`).
 **Why it exists:** doing this in a `useEffect` would flash the default theme for a frame.
-**Gotchas:** it reads key `orb_theme` (underscore), but the shell's toggle persists `orb-theme` (hyphen) and explicitly deletes `orb_theme` on every write (`src/pages/ClinicianShell.tsx:420-421`). So the saved preference is never seen here after the user's first toggle, and boot always falls back to the OS preference. It also only knows `dark`/`light`, a user sitting on the `night` theme boots into `dark` or `light` until `ClinicianShell` mounts and re-applies. See Discrepancies.
+**Gotchas:** it used to read `orb_theme` alone, a key the shell's toggle deletes, and it knew only `dark` and `light`. Reading through `storedTheme` fixed both; see Discrepancies 1 and 2.
 
-#### App: `src/App.tsx:68`
+#### App: `src/AppRoot.tsx:51`
 **Signature:** `() → JSX` (the root component)
 **Does:** owns auth state, the OS-theme listener, and the full route map.
 **How it works:**
-1. `user` state lazily initialized from `getUser()` (localStorage `orb_user`) so refresh keeps the session (`src/App.tsx:70-73`).
-2. An effect subscribes to the `(prefers-color-scheme: light)` media query; on change, *only if no `orb_theme` key is saved*, it re-stamps `data-theme` and dispatches a `theme-changed` `CustomEvent` on `window` (`src/App.tsx:114-125`). `Aurora` is the only listener for that event (`src/components/Aurora.tsx:310`) and nothing currently renders `Aurora`, see Discrepancies.
-3. `login(user)` sets state and persists the user via `storeUser`, it does **not** persist a JWT: the session lives in the HttpOnly cookie the server sets at login, which closes the localStorage XSS-exfiltration hole (`src/App.tsx:127-133`). `logout()` clears state, wipes `orb_token`/`orb_user` via `clearToken()`, calls `deauthenticateSocket()` so the previous user's realtime session is not silently kept open, and then clears three shared-tablet leaks: nurse drafts, the offline read cache, and the offline write queue (`src/App.tsx:135-157`; socket behavior in `src/api/client.ts:68-74`, guide 06-realtime).
-4. Two blocking modals sit above the router: `SessionExpiredModal` when the API client reports a 401, and the idle-lock modal underneath it, a real 401 outranks an idle lock (`src/App.tsx:161-184`).
-5. Renders `AuthContext.Provider` → `BrowserRouter` → the eight routes in the table above (`src/App.tsx:185-196`).
+1. `user` state lazily initialized from `getUser()` (localStorage `orb_user`) so refresh keeps the session (`src/AppRoot.tsx:53-56`).
+2. An effect subscribes to the `(prefers-color-scheme: light)` media query; on change, *only if `storedTheme()` finds no saved choice*, it re-stamps `data-theme` and dispatches a `theme-changed` `CustomEvent` on `window` (`src/AppRoot.tsx:137-150`). `Aurora` is the only listener for that event (`src/components/Aurora.tsx:310`) and nothing currently renders `Aurora`, see Discrepancies.
+3. `login(user)` sets state and persists the user via `storeUser`, it does **not** persist a JWT: the session lives in the HttpOnly cookie the server sets at login, which closes the localStorage XSS-exfiltration hole (`src/AppRoot.tsx:73-79`). `logout()` first revokes the session on the server through `logoutSession()` (not awaited), then clears state, wipes `orb_token`/`orb_user` via `clearToken()`, calls `deauthenticateSocket()` so the previous user's realtime session is not silently kept open, and then clears three shared-tablet leaks: nurse drafts, the offline read cache, and the offline write queue (`src/AppRoot.tsx:81-109`; socket behavior in `src/api/client.ts:68-74`, guide 06-realtime).
+4. Two blocking modals sit above the router: `SessionExpiredModal` when the API client reports a 401, and the idle-lock modal underneath it, a real 401 outranks an idle lock (`src/AppRoot.tsx:154-177`).
+5. Renders `AuthContext.Provider` → `BrowserRouter` → the nine routes in the table above (`src/AppRoot.tsx:178-193`).
 **Data in/out:** `User | null` state; route elements.
 **Talks to:** `src/api/client.ts` storage helpers; all page components.
-**Change guide (worked example):** to add a printable staff-only page at `/report/:patientId`, add `<Route path="/report/:patientId" element={user && user.role !== 'patient' ? <ReportPage/> : <Navigate to="/login/staff"/>} />` next to `src/App.tsx:193`; inside the page read the param with `useParams` (pattern at `src/pages/HandoffPage.tsx:6`). Knock-on: none, unless the path collides with a proxied backend prefix (`/api`, `/uploads`, `/socket.io`).
+**Change guide (worked example):** to add a printable staff-only page at `/report/:patientId`, add `<Route path="/report/:patientId" element={user && user.role !== 'patient' ? <ReportPage/> : <Navigate to="/login/staff"/>} />` next to `src/AppRoot.tsx:186`; inside the page read the param with `useParams` (pattern at `src/pages/HandoffPage.tsx:6`). Knock-on: none, unless the path collides with a proxied backend prefix (`/api`, `/uploads`, `/socket.io`).
 **Gotchas:** guards run only at render time from localStorage-backed state; an expired session still shows the shell until the first API call 401s. The client no longer force-reloads on a 401, it dispatches an `orb:session-expired` `CustomEvent` on `window` (`src/api/client.ts:113-125`) that `App` listens for and answers with the re-auth modal, so in-progress clinical text survives the expiry.
 
 ### src/App.css
 
 #### placeholder: `src/App.css:1`
-A single comment line; imported at `src/App.tsx:15` but contributes nothing. Kept, presumably, as the conventional slot for app-level styles.
+A single comment line; imported at `src/AppRoot.tsx:18` but contributes nothing. Kept, presumably, as the conventional slot for app-level styles.
 
 ### src/constants.ts
 
@@ -284,8 +287,8 @@ A single comment line; imported at `src/App.tsx:15` but contributes nothing. Kep
 5. `handleSubmit` (`src/pages/Login.tsx:210-252`) dispatches in priority order: tablet enrolment → PIN → MFA second step → patient → staff password. For patients it *requires* a non-empty credential, the comment records that a hardcoded default `'patient123'` used to be auto-filled, which was a PHI (protected health information) auth bypass (`src/pages/Login.tsx:241-248`).
 **Why it exists:** the single entry point for all audiences keeps one form component with a `mode` switch instead of several near-identical pages.
 **Data in/out:** in: form fields; out: `POST /api/auth/login` body `{employee_id, password, totp_code?}`, response `LoginResponse`; plus `getDeviceStatus` / `bindDevice` / `pinLogin` from `src/api/deviceAuth.ts` (`src/pages/Login.tsx:6`).
-**Talks to:** `useAuth` (`src/App.tsx:57`), `apiFetch` and `authenticateSocket` (`src/api/client.ts:195`, `:57`), `useNavigate`/`useParams` (react-router), `Aurora`, `OrbLogo`, `MfaEnrollmentModal`, i18n `t()`.
-**Change guide:** to change the post-login destination per role, edit the ternary at `src/pages/Login.tsx:103` *and* the redirects in `src/App.tsx:187-188`, or logged-in users revisiting `/` will land somewhere different.
+**Talks to:** `useAuth` (`src/App.tsx:38`), `apiFetch` and `authenticateSocket` (`src/api/client.ts:195`, `:57`), `useNavigate`/`useParams` (react-router), `Aurora`, `OrbLogo`, `MfaEnrollmentModal`, i18n `t()`.
+**Change guide:** to change the post-login destination per role, edit the ternary at `src/pages/Login.tsx:103` *and* the redirects in `src/AppRoot.tsx:180-181`, or logged-in users revisiting `/` will land somewhere different.
 **Gotchas:** the patient password lives in a state variable named `dob` with input id `input-dob` (`src/pages/Login.tsx:20,355-358`), a fossil from a date-of-birth flow; it is a password now. Patient IDs also go through the same `employee_id` field of the login endpoint. The device-enrolment secret is held in component state only and never persisted (`src/pages/Login.tsx:33-37`).
 
 ### src/pages/Login.css
@@ -351,20 +354,20 @@ Seventeen `lazy(() => import(...))` declarations (`src/pages/ClinicianShell.tsx:
 
 ### src/contexts/ActivePatientContext.tsx
 
-#### ActivePatientContext: `src/contexts/ActivePatientContext.tsx:9`
+#### ActivePatientContext: `src/contexts/ActivePatientContext.tsx:11`
 **Signature:** `createContext<{activePatientId: string | null, activePatientName: string | null, setActivePatient(id, name?)}>`
 **Does:** publishes "which patient is the clinician looking at right now" to the whole shell.
 **Why it exists:** several features need the current patient without being ancestors/descendants of each other, e.g. `VigilPanel` sets it when a patient card is opened and `SageFloatingAssistant` reads it so AI questions are asked *about that patient*. A context avoids threading the id through every intermediate component. Defaults are no-ops so unwrapped components don't crash.
 
-#### useActivePatient: `src/contexts/ActivePatientContext.tsx:15`
+#### useActivePatient: `src/contexts/ActivePatientContext.tsx:17`
 **Signature:** `() → ActivePatientContextType`
 **Does:** convenience hook over `useContext(ActivePatientContext)`.
 **Talks to:** consumers found by grep: `src/pages/panels/VigilPanel.tsx`, `src/components/sage/SageFloatingAssistant.tsx`.
 
-#### ActivePatientProvider: `src/contexts/ActivePatientContext.tsx:17`
+#### ActivePatientProvider: `src/contexts/ActivePatientProvider.tsx:4`
 **Signature:** `{children: ReactNode} → JSX`
 **Does:** holds `activePatientId`/`activePatientName` state and a stable `setActivePatient` setter.
-**How it works:** two `useState` slots; `setActivePatient` is wrapped in `useCallback` with empty deps so its identity never changes (`src/contexts/ActivePatientContext.tsx:21-24`), consumers that depend on it in effect arrays don't re-run spuriously. `name` defaults to `null` when omitted.
+**How it works:** two `useState` slots; `setActivePatient` is wrapped in `useCallback` with empty deps so its identity never changes (`src/contexts/ActivePatientProvider.tsx:8-11`), consumers that depend on it in effect arrays don't re-run spuriously. `name` defaults to `null` when omitted.
 **Talks to:** mounted once, wrapping the entire clinician frame (`src/pages/ClinicianShell.tsx:536`). Not mounted in `PatientShell` (a patient *is* the patient).
 **Change guide:** to persist selection across reloads, initialize state from `sessionStorage` and mirror it in `setActivePatient`; knock-on: `VigilPanel` may assume a null initial value on mount.
 **Gotchas:** the provider value object is recreated each render; fine at this scale, but memoize it if consumers multiply.
@@ -448,7 +451,7 @@ Standard WebGL boilerplate: compile a shader (`:201-211`) and link the vertex+fr
 **Signature:** `() → JSX` (two fixed, full-viewport, pointer-events-none canvases)
 **Does:** the login page's living background: WebGL aurora (z-index 0) under an interactive 2D dot grid (z-index 1).
 **How it works:**
-1. WebGL effect (`src/components/Aurora.tsx:234-330`): reads `data-theme` to seed the light-mode uniform (`:235`); gets a `webgl` context; compiles/links the shaders; uploads a two-triangle full-screen quad (`:255-258`); renders in a `requestAnimationFrame` loop that eases `currentLightMode` toward `targetLightMode`. The canvas backing store is *half* the window resolution, stretched by CSS (`src/components/Aurora.tsx:269-275`), the glow is blurry anyway, so this quarters fragment-shader work. Theme changes arrive via the `theme-changed` window event (`src/components/Aurora.tsx:301-310`, dispatched at `src/App.tsx:120` and `src/pages/ClinicianShell.tsx:424`). It honors `prefers-reduced-motion`: under `reduce` it draws one static frame and stops the loop, redrawing only on theme change or resize (`:263-267,311-316`). Cleanup removes all three listeners and cancels the frame loop (`:324-329`).
+1. WebGL effect (`src/components/Aurora.tsx:234-330`): reads `data-theme` to seed the light-mode uniform (`:235`); gets a `webgl` context; compiles/links the shaders; uploads a two-triangle full-screen quad (`:255-258`); renders in a `requestAnimationFrame` loop that eases `currentLightMode` toward `targetLightMode`. The canvas backing store is *half* the window resolution, stretched by CSS (`src/components/Aurora.tsx:269-275`), the glow is blurry anyway, so this quarters fragment-shader work. Theme changes arrive via the `theme-changed` window event (`src/components/Aurora.tsx:301-310`, dispatched at `src/AppRoot.tsx:145` and `src/pages/ClinicianShell.tsx:424`). It honors `prefers-reduced-motion`: under `reduce` it draws one static frame and stops the loop, redrawing only on theme change or resize (`:263-267,311-316`). Cleanup removes all three listeners and cancels the frame loop (`:324-329`).
 2. Dot-grid effect (`src/components/Aurora.tsx:333-423`): builds a centered grid of dots at device-pixel-ratio resolution; each frame, every dot drifts by `cheapNoise` and is pushed radially away from the mouse with a cubic falloff, then eased back (`LERP_BACK = 0.04`, `src/components/Aurora.tsx:21,389-390`); opacity rises near the cursor. It re-reads `data-theme` per frame (`src/components/Aurora.tsx:363,397`) so it needs no theme event.
 **Why it exists:** it was the login screen's first impression; the comment block (`src/components/Aurora.tsx:3-14`) says it replicates a "Stitch" raymarched nebula look with a cheaper SDF + FBM approach.
 **Data in/out:** mouse position, window size, `data-theme` → pixels.
@@ -462,7 +465,7 @@ Standard WebGL boilerplate: compile a shader (`:201-211`) and link the vertex+fr
 
 | Export | From | Consumers (grep-verified) |
 |---|---|---|
-| `AuthContext`, `useAuth`, `User`, `UserRole` | `src/App.tsx:17-57` | `ClinicianShell`, `Login`, `PatientShell`, `AdmitPatientModal` |
+| `AuthContext`, `useAuth`, `User`, `UserRole` | `src/App.tsx:11-38` | `ClinicianShell`, `Login`, `PatientShell`, `AdmitPatientModal` |
 | `useActivePatient`, `ActivePatientProvider` | `src/contexts/ActivePatientContext.tsx:15,17` | `VigilPanel`, `SageFloatingAssistant`, `ClinicianShell` |
 | `useFocusTrap` | `src/hooks/useFocusTrap.ts:54` | 12 modal call sites, `AdmitPatientModal`, `MfaEnrollmentModal`, `SessionExpiredModal`, `KeyboardShortcuts`, `HelixOrderReviewModal`, `PatientStory`, `AdministerModal`, `SafetyAlertModal`, `MedRoundSheet`, `UsersPanel` (×2), `PatientShell` |
 | `DOCTORS` | `src/constants.ts:2` | `ScribePanel` |
@@ -470,11 +473,11 @@ Standard WebGL boilerplate: compile a shader (`:201-211`) and link the vertex+fr
 
 **REST endpoints invoked (not owned) by this subsystem:** `POST /api/auth/login` with `{employee_id, password, totp_code?}` → `Set-Cookie: orb_session` plus `{token, user}` (`src/api/client.ts:581`; server prefix verified at `server/routes/auth_routes.py:25,361`, mounted `server/main.py:681`; owned by guide 03-auth-rbac).
 
-**Socket contract:** the shell never emits or subscribes to named events; on logout it calls `deauthenticateSocket()` (`src/App.tsx:138`) which nulls the handshake token and disconnects the shared socket (`src/api/client.ts:68-74`); the client's `login()` re-handshakes via `authenticateSocket()` (`src/api/client.ts:592`). The socket is created with `withCredentials: true` so the HttpOnly session cookie authenticates the handshake (`src/api/client.ts:42-50`). See guide 06-realtime.
+**Socket contract:** the shell never emits or subscribes to named events; on logout it calls `deauthenticateSocket()` (`src/AppRoot.tsx:90`) which nulls the handshake token and disconnects the shared socket (`src/api/client.ts:68-74`); the client's `login()` re-handshakes via `authenticateSocket()` (`src/api/client.ts:592`). The socket is created with `withCredentials: true` so the HttpOnly session cookie authenticates the handshake (`src/api/client.ts:42-50`). See guide 06-realtime.
 
-**localStorage keys the shell reads/writes:** `orb_user`, `orb_token` (via client helpers), `orb-theme` (canonical, written `src/pages/ClinicianShell.tsx:420`), `orb_theme` (legacy, read once as a fallback at `src/pages/ClinicianShell.tsx:371`, then deleted at `:421`; still the key `src/App.tsx:60,118` boots from, see Discrepancies), `orb_lang` (via i18n, `src/i18n/index.ts:17`), `orb_offline_queue` (read-only poll, `src/pages/ClinicianShell.tsx:482`).
+**localStorage keys the shell reads/writes:** `orb_user`, `orb_token` (via client helpers), `orb-theme` (canonical, written `src/pages/ClinicianShell.tsx:420`), `orb_theme` (legacy, read once as a fallback at `src/pages/ClinicianShell.tsx:371`, then deleted at `:421`; `storedTheme` still reads it as a fallback, `src/lib/theme.ts:29`, see Discrepancies), `orb_lang` (via i18n, `src/i18n/index.ts:17`), `orb_offline_queue` (read-only poll, `src/pages/ClinicianShell.tsx:482`).
 
-**DOM/window contracts:** `data-theme` attribute on `<html>` (every themed stylesheet keys off it); `orb-theme-switching` class stamped across a theme flip to suppress transitions (`src/pages/ClinicianShell.tsx:415-419`); `theme-changed` CustomEvent on `window` (dispatched `src/App.tsx:120` and `src/pages/ClinicianShell.tsx:424`, consumed `src/components/Aurora.tsx:310`); `orb:session-expired` CustomEvent (dispatched `src/api/client.ts:123`, consumed `src/App.tsx:110`); `orb:offline-sync-failed` CustomEvent (consumed `src/pages/ClinicianShell.tsx:520`); `orb:goto-tab` navigation bus (`src/pages/ClinicianShell.tsx:456`); `#root` div (`index.html:31`); `window.__orbRoot` root cache (`src/main.tsx:102-103`); `orb:chunk-reload-at` in `sessionStorage`, shared by `src/main.tsx:25` and `src/pages/ClinicianShell.tsx:221`.
+**DOM/window contracts:** `data-theme` attribute on `<html>` (every themed stylesheet keys off it); `orb-theme-switching` class stamped across a theme flip to suppress transitions (`src/pages/ClinicianShell.tsx:415-419`); `theme-changed` CustomEvent on `window` (dispatched `src/AppRoot.tsx:145` and `src/pages/ClinicianShell.tsx:424`, consumed `src/components/Aurora.tsx:310`); `orb:session-expired` CustomEvent (dispatched `src/api/client.ts:123`, consumed `src/AppRoot.tsx:133`); `orb:offline-sync-failed` CustomEvent (consumed `src/pages/ClinicianShell.tsx:520`); `orb:goto-tab` navigation bus (`src/pages/ClinicianShell.tsx:456`); `#root` div (`index.html:31`); `window.__orbRoot` root cache (`src/main.tsx:102-103`); `orb:chunk-reload-at` in `sessionStorage`, shared by `src/main.tsx:25` and `src/pages/ClinicianShell.tsx:221`.
 
 **Dev-server contract:** `/api`, `/uploads`, `/socket.io` must reach the backend on the same origin (`vite.config.ts:30-44`); the API client assumes this everywhere (`src/api/client.ts:9-10`), so production deployments must reproduce the mapping.
 
@@ -497,14 +500,14 @@ Standard WebGL boilerplate: compile a shader (`:201-211`) and link the vertex+fr
 
 ## Discrepancies and open questions
 
-1. **Theme key mismatch (bug, still live, but the direction is the opposite of what earlier editions said):** `ClinicianShell` is the writer and its canonical key is `orb-theme` with a hyphen; the effect also **deletes** `orb_theme` on every write (`src/pages/ClinicianShell.tsx:420-421`). `App.tsx` is the boot-time reader and it reads `orb_theme` with an underscore, both in the module-level block and in the system-theme listener (`src/App.tsx:60,118`). Consequences: after a user's very first theme toggle the underscore key is gone, so the boot block never sees the saved preference (the login page always follows the OS theme), and the "only if the user has no saved choice" guard in the listener always passes. The mismatch is *partly* mitigated, the shell reads `orb-theme` first and falls back to `orb_theme` (`:371`), and it falls back to the current `data-theme` rather than a hardcoded `'dark'` (`:373-374`), so once the shell mounts the right theme is restored. The visible symptom is confined to the pre-shell frames. Fix by pointing `src/App.tsx:60,118` at `orb-theme`.
-2. **Boot only knows two of the three themes.** `App.tsx`'s module block picks `dark` or `light` from the OS media query and has no `night` branch (`src/App.tsx:60-63`), so a user sitting on Night Shift boots into dark or light until `ClinicianShell` mounts and re-applies. Cosmetic, but it is a visible flash on every reload for exactly the night-shift users the theme exists for.
-3. **`'surgeon'` is not in the `UserRole` union** (`src/App.tsx:17`) yet is handled as a raw role in `getAccessibleTabs` (`src/pages/ClinicianShell.tsx:188`) and compared via a cast at `src/pages/ClinicianShell.tsx:431`. `Login` normalizes it away (`src/pages/Login.tsx:88-92`), but a `surgeon` role stored pre-normalization (the "direct/refresh path" the comments mention) bypasses the type system.
+1. **Theme key mismatch (fixed; kept as a record of the bug):** both readers now go through `storedTheme()` (`src/lib/theme.ts:27`), which reads `orb-theme` and falls back to `orb_theme` (boot at `src/AppRoot.tsx:46`, listener at `src/AppRoot.tsx:143`). As it was: `ClinicianShell` is the writer and its canonical key is `orb-theme` with a hyphen; the effect also **deletes** `orb_theme` on every write (`src/pages/ClinicianShell.tsx:420-421`). `App.tsx` was the boot-time reader and it read `orb_theme` with an underscore, both in the module-level block and in the system-theme listener. Consequences: after a user's very first theme toggle the underscore key is gone, so the boot block never sees the saved preference (the login page always follows the OS theme), and the "only if the user has no saved choice" guard in the listener always passes. The mismatch is *partly* mitigated, the shell reads `orb-theme` first and falls back to `orb_theme` (`:371`), and it falls back to the current `data-theme` rather than a hardcoded `'dark'` (`:373-374`), so once the shell mounts the right theme is restored. The visible symptom is confined to the pre-shell frames. The fix was one reader for both keys.
+2. **Boot only knew two of the three themes (fixed).** The module block used to pick `dark` or `light` from the OS media query with no `night` branch, so a Night Shift user booted into dark or light until `ClinicianShell` re-applied. `bootTheme()` now returns a saved `night` too (`src/lib/theme.ts:39-45`).
+3. **`'surgeon'` is not in the `UserRole` union** (`src/App.tsx:11`) yet is handled as a raw role in `getAccessibleTabs` (`src/pages/ClinicianShell.tsx:188`) and compared via a cast at `src/pages/ClinicianShell.tsx:431`. `Login` normalizes it away (`src/pages/Login.tsx:88-92`), but a `surgeon` role stored pre-normalization (the "direct/refresh path" the comments mention) bypasses the type system.
 4. **Patient password stored in a variable named `dob`** with input id `input-dob` (`src/pages/Login.tsx:20,355-358`), a leftover from a date-of-birth flow; misleading for maintainers. The former hardcoded `'patient123'` default is gone, and the field now rejects an empty credential (`src/pages/Login.tsx:243-248`).
 5. **`Aurora` is dead code.** 452 lines of WebGL shader, dot-grid physics and reduced-motion handling that nothing imports (grep-verified across `src/`). It is the only consumer of the `theme-changed` event, which means that event currently has a dispatcher on both `App.tsx` and `ClinicianShell` and no listener at all. Either remount it or delete it; leaving it makes the theme-event contract look load-bearing when it is not.
 6. **`index.html` error-catcher, narrowed but not neutralised:** the overlay now only registers on the Vite dev ports (`index.html:10`), so it no longer ships stack traces to end users. It still injects raw error text via `innerHTML +=` and destroys existing DOM listeners by re-parsing `body` on every append (`index.html:12,15`), a developer running it against production data is still exposed.
 7. **`ClockWidget` is hardcoded `en-US`** (`src/components/ClockWidget.tsx:29-30`) despite the Hindi language toggle, so the date does not translate. (The old `'Fira Code'` font complaint is resolved: the file now asks for `var(--font-mono)` at `src/components/ClockWidget.css:12`, which resolves to the bundled JetBrains Mono, `src/index.css:130`.)
 8. **The JWT in the login response is unused by the browser.** `client.login()` deliberately does not persist `data.token`, the session is the HttpOnly `orb_session` cookie (`src/api/client.ts:586-589`), yet `LoginResponse` still declares `token` (`src/api/client.ts:570-579`) and `getToken()` still reads a `orb_token` key (`src/api/client.ts:24`) that nothing on the browser login path writes. Harmless, but it invites a future contributor to "restore" the localStorage write this design removed on purpose.
-9. **Dead CSS:** `.login__back` (`src/pages/Login.css:20-41`) styles a button `Login.tsx` no longer renders; `src/App.css` is an empty placeholder still imported (`src/App.tsx:15`).
+9. **Dead CSS:** `.login__back` (`src/pages/Login.css:20-41`) styles a button `Login.tsx` no longer renders; `src/App.css` is an empty placeholder still imported (`src/AppRoot.tsx:18`).
 10. **`Aurora`'s dead-looking null guard:** `getContext('webgl', ...)!` followed by `if (!gl)` (`src/components/Aurora.tsx:240-241`), the non-null assertion contradicts the guard; the guard is the correct half.
 11. **`ClinicianShell.css` boundary self-violation:** the file forbids module-specific styles (`src/pages/ClinicianShell.css:13-17`) yet styles `.pulse-trigger svg` from PulseWidget (`src/pages/ClinicianShell.css:661`).

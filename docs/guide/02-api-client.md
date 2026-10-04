@@ -75,7 +75,7 @@ sequenceDiagram
 
 1. `login()` POSTs credentials to `/auth/login`, then persists `token` → `orb_token` and `user` → `orb_user` (`src/api/client.ts:278-288`).
 2. It calls `authenticateSocket()` (`src/api/client.ts:592`, defined at `:57`), which re-points the socket.io handshake auth at the fresh token and forces a disconnect/reconnect (`src/api/client.ts:57-64`). The socket itself is a module-level singleton created on first import with `auth` as a *callback* that re-reads the token on every connection attempt (`src/api/client.ts:42-49`), but with `autoConnect: false` (`:43`), so it opens only once a token or session cookie exists (`:54`); the server's `connect` handler verifies the handshake before accepting (`server/ws/realtime.py:247`, guide 06-realtime).
-3. On logout, `App.tsx:74` calls `deauthenticateSocket()` (`src/api/client.ts:60-65`) and clears storage via `clearToken()` (`src/api/client.ts:73-76`), so neither REST nor realtime keeps the old identity.
+3. On logout, `AppRoot.tsx:90` calls `deauthenticateSocket()` (`src/api/client.ts:60-65`) and clears storage via `clearToken()` (`src/api/client.ts:73-76`), so neither REST nor realtime keeps the old identity.
 4. Any 401 from any endpoint at any time repeats the logout effect automatically (Flow 1, step 5).
 
 ### Flow 3: streaming AI responses over SSE
@@ -162,7 +162,7 @@ graph TD
 **How it works:** Sets `socket.auth = { token: null }` (`:61`), then disconnects (`:62-64`). Deliberately does *not* reconnect.
 **Why it exists:** Without it, logging out would clear the REST token but leave an authenticated WebSocket streaming patient data (`:58-59`).
 **Data in/out:** none → disconnected socket.
-**Talks to:** called by `App.tsx:74` in the logout handler.
+**Talks to:** called by `AppRoot.tsx:90` in the logout handler.
 **Change guide:** If you add a "switch user" feature, call this then `authenticateSocket()` after the new login; watch out for listeners registered by unmounted components firing during the gap.
 **Gotchas:** none noteworthy.
 
@@ -800,7 +800,7 @@ Purpose (header `:1-8`): the closed loop for AI-charted medications, list meds w
 |---|---|
 | `apiFetch` | 10+ components call it directly (HelixPanel, ImpactDashboard, TrustCenter, ProvenanceChip, PulseWidget, RevenueIntegrityPanel, CapacitySimulator, CommandCenter, FlightRecorder, OrdersPanel) |
 | `socket` | VigilPanel, RelayPanel, SurgicalSuitePanel, SageAmbientSidebar, SageInsightsFeed, `useStreamingTranscription` |
-| `getUser` / `setUser` / `setToken` / `clearToken` / `deauthenticateSocket` | `App.tsx:3` (session restore + logout) |
+| `getUser` / `setUser` / `setToken` / `clearToken` / `deauthenticateSocket` | `AppRoot.tsx:3` (session restore + logout) |
 | Types `Patient`, `Channel`, `Message`, `SageInsight`, `AuditLog`, `AuditFilters`, `SageAmbientMemory`, `SageAction` | panels and admin components |
 | Domain modules' functions/types | CareBundleTimer, DowntimeMode, IpassHandoffView, PharmacyVerifyQueue |
 

@@ -54,7 +54,7 @@ graph LR
 
 1. A patient opens Orb. `App.tsx` has no stored user, so the router sends them to `/login/staff`; from there the patient login route (`/login/patient`) shows the patient sign-in form (owned by guide 01/Login).
 2. They enter their **patient ID** and password. The frontend POSTs to `/api/auth/login`, the *same* endpoint clinicians use (`server/routes/auth_routes.py:97`). The backend looks a user up by `id` (employee ID for staff, patient ID for patients, `auth_routes.py:121-124`), verifies the password, and issues a JWT carrying `id` and `role` (`create_token(user["id"], user["role"], ...)`, `auth_routes.py:199`).
-3. The JWT and user object land in `localStorage`; `App.login()` sets `user` in the auth context (`src/App.tsx:65-69`). Because `user.role === 'patient'`, the router now renders `PatientShell` at `/bridge/*` (`src/App.tsx:84`). Any non-patient hitting `/bridge/*` is bounced to `/login/patient`; a patient hitting `/dashboard/*` is bounced away (`src/App.tsx:83`).
+3. The JWT and user object land in `localStorage`; `App.login()` sets `user` in the auth context (`src/AppRoot.tsx:73-79`). Because `user.role === 'patient'`, the router now renders `PatientShell` at `/bridge/*` (`src/AppRoot.tsx:183`). Any non-patient hitting `/bridge/*` is bounced to `/login/patient`; a patient hitting `/dashboard/*` is bounced away (`src/AppRoot.tsx:182`).
 4. `PatientShell` mounts, and its `useEffect` fires `loadStatus()` and `loadReports()` (`src/pages/PatientShell.tsx:99-104`).
 5. `loadStatus()` → `getBridgeStatus()` → `GET /api/bridge/status`. The route's `require_patient_self` dependency verifies the JWT is a `patient` and hands the handler the user dict; the handler calls `get_patient_status_simple(user["id"])`, which resolves the patient record *from the logged-in user's id* and returns lay-language status + simplified vitals.
 6. `loadReports()` → `getBridgeReports()` → `GET /api/bridge/reports`, which aggregates medications, clinical documents, discharge summary, and imaging reports, all scoped to this patient.
@@ -310,7 +310,7 @@ One default-exported component plus one module helper. It imports `useAuth` from
 
 **Why it exists:** it is the single-page patient app. Everything a patient may see is here and nowhere else; there is no route inside `/bridge/*` that exposes another patient.
 **Data in/out:** consumes the `/api/bridge/status`, `/api/bridge/reports`, and `/api/bridge/ask` shapes. The `reports` modals read `reports.medications`, `reports.clinical_documents`, `reports.imaging_reports`, `reports.discharge_summary`.
-**Talks to:** `useAuth` (guide 01), `getBridgeStatus`/`getBridgeReports`/`askBridge` (guide 02), `OrbLogo`. Mounted by `App.tsx:84`.
+**Talks to:** `useAuth` (guide 01), `getBridgeStatus`/`getBridgeReports`/`askBridge` (guide 02), `OrbLogo`. Mounted by `AppRoot.tsx:183`.
 
 ##### handleBook / handleReset: `PatientShell.tsx:84` and `:89`
 **Does:** "book" (mock) and reset the appointment form.

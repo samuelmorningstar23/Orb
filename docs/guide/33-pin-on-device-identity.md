@@ -42,7 +42,7 @@ graph TD
   PINPAD --> PINLOGIN[POST /api/auth/pin-login<br/>auth_routes.py:1228]
   PINLOGIN --> SESSION[15-min session, JWT claim did=dev_...]
   SESSION --> RECHECK[get_current_user re-checks the device<br/>auth.py:416, check at :465]
-  SESSION --> IDLE[2-min idle sign-out<br/>src/App.tsx:91]
+  SESSION --> IDLE[2-min idle sign-out<br/>src/AppRoot.tsx:114]
 ```
 
 **Neighbors:** guide 03-auth-rbac (`create_token`, `get_current_user`, the login limiter, MFA), guide 05-audit-chain (every route here writes an `authentication` audit row), guide 25-admin-panel (where the device inventory screen *would* live), guide 39-offline-read-cache (`clearOfflineCache` on the same logout that ends a PIN session), guide 42-nurse-mode (the nurse is the user this whole feature is for).
@@ -94,7 +94,7 @@ graph TD
 Three independent mechanisms, none of which relies on the other:
 
 - **Server expiry.** 15 minutes, baked into the token. `/api/auth/refresh` cannot launder it longer.
-- **Client idle sign-out.** `src/App.tsx:100` runs `useIdleTimer` at `SHARED_DEVICE_IDLE_MS` = **2 minutes** when `user.authMethod === 'pin'`, and calls `logout()`, a full sign-out, not a lock modal.
+- **Client idle sign-out.** `src/AppRoot.tsx:114` runs `useIdleTimer` at `SHARED_DEVICE_IDLE_MS` = **2 minutes** when `user.authMethod === 'pin'`, and calls `logout()`, a full sign-out, not a lock modal.
 - **Admin revocation.** `POST /api/auth/devices/{id}/revoke` marks the row. `get_current_user` (`server/auth.py:457`) re-reads the device on **every** request and 401s a session whose tablet is no longer enrolled, the check is at `server/auth.py:505-511`, and note it fires on either a missing device row or a non-null `revoked_at`, so deleting the row revokes just as effectively as marking it.
 
 ```mermaid
@@ -188,7 +188,7 @@ sequenceDiagram
 **Why it exists:** two reasons, both load-bearing. (1) It is module level rather than a closure inside `get_current_user`, because this runs on every authenticated request and rebuilding the function object per call is pure waste on the hottest path in the process. (2) **One session, deliberately**, `get_current_user` makes four decisions off this snapshot (exists / is_active / token_version / device-still-enrolled) and they must all be judged against the same one. Splitting the reads would put an `await` between them, letting an admin deactivation, a logout-driven `token_version` bump, or a device revocation land in the gap.
 **Breaks if you change it:** splitting into two `run_db()` hops validates a request against a half-old, half-new picture. A missing `enrolled_devices` table is caught and returns `device = None`, which fails **closed**, because a token claiming a device we cannot verify is not honoured.
 
-#### `get_current_user` device branch: `server/auth.py:457` (branch at `:505-514`)
+#### `get_current_user` device branch: `server/auth.py:465` (branch at `:505-514`)
 **Signature:** inside `async def get_current_user(request) -> dict`
 **Does:** If the token carries `did`, requires the device to still exist and be un-revoked; 401 otherwise. Carries `user["device_id"]` and `user["auth_method"]` for audit metadata.
 **On screen:** a revoked tablet's next request 401s, which the SPA's global interceptor turns into the session-expired modal (`src/components/SessionExpiredModal.tsx`, wired at `src/App.tsx`).
@@ -233,7 +233,7 @@ The section header at `server/routes/auth_routes.py:988-1014` states the safety 
 **Why it exists:** so an ordinary fat-finger never creeps toward a lock across a twelve-hour shift.
 **Breaks if you change it:** remove it and failures accumulate across a whole shift until a nurse who typed four wrong PINs over ten hours is locked out on her fifth typo.
 
-#### `_device_public`: `auth_routes.py:1016`
+#### `_device_public`: `auth_routes.py:1038`
 **Signature:** `(row) -> dict` → `{device_id, label, department, enrolled_by, enrolled_at, last_seen_at, revoked_at, active, pin_locked}`
 **Does:** The admin-visible view of an enrolled device.
 **On screen:** would be one row of a device inventory table. **No such screen exists**, see *Discrepancies*.
@@ -301,7 +301,7 @@ The section header at `server/routes/auth_routes.py:988-1014` states the safety 
 **Why the MFA gate:** a PIN must not become the back door around a TOTP mandate. Device + PIN is genuinely two factors, but it is not the factor the hospital mandated for that role, and silently accepting a weaker one is how a policy stops being a policy. Patients never use ward tablets, so they are excluded outright.
 **Breaks if you change it:** move step 4 after step 5 and you have restored the timing oracle. Make step 2's error message identical to step 6's and a tablet that lost its cookie looks exactly like a mistyped PIN, so nobody ever re-enrols it. Set `actor_user_id` to the device and the audit trail becomes the shared-login trail this feature exists to replace.
 
-#### `_write_device_pin`: `auth_routes.py:1500`
+#### `_write_device_pin`: `auth_routes.py:1522`
 **Signature:** `(user_id: str, pin: str) -> None`
 **Does:** Writes `device_pin_hash` (bcrypt via `pin_security.hash_pin`), stamps `device_pin_set_at`, and **clears the lockout**.
 **On screen:** nothing.
@@ -467,32 +467,32 @@ This file predates the tablet feature and is used by it only for hashing. Everyt
 
 ---
 
-### File: `src/App.tsx`: the shared-device session rules
+### Files: `src/App.tsx` and `src/AppRoot.tsx`: the shared-device session rules
 
-#### `User.authMethod`: `App.tsx:35`
+#### `User.authMethod`: `App.tsx:23`
 **Signature:** `authMethod?: 'password' | 'pin'`
 **Does:** Records how this session was created. `'pin'` means a shared, enrolled ward tablet.
 **On screen:** invisible, but it is the switch for every rule below.
-**Breaks if you change it:** it is stored in `localStorage` with the rest of the user object (`storeUser`, `App.tsx:130`). A tampered value only affects the *client* timeout, the server's 15-minute expiry is the real control.
+**Breaks if you change it:** it is stored in `localStorage` with the rest of the user object (`storeUser`, `AppRoot.tsx:75`). A tampered value only affects the *client* timeout, the server's 15-minute expiry is the real control.
 
-#### `IDLE_LOCK_MS` / `SHARED_DEVICE_IDLE_MS`: `App.tsx:51` / `:43`
+#### `IDLE_LOCK_MS` / `SHARED_DEVICE_IDLE_MS`: `AppRoot.tsx:39` / `:40`
 **Signature:** `15 * 60_000` / `2 * 60_000`
 **Does:** Two inactivity budgets.
 **On screen:** at 15 minutes a personal workstation shows the idle-lock modal; at 2 minutes a PIN tablet returns to the login screen.
 **Why two:** a personal workstation locks and the **same** person re-authenticates. A shared ward tablet sits on a trolley in a corridor and the next person to pick it up is usually somebody else. **Signing out rather than locking matters:** a lock modal would ask the NEXT nurse to re-authenticate as the PREVIOUS one, which is precisely the shared-identity habit this feature exists to break. Two minutes is tolerable only because signing back in is four digits.
 **Breaks if you change it:** raising `SHARED_DEVICE_IDLE_MS` to 15 minutes leaves a named nurse's session live on a corridor trolley for a quarter of an hour. Turning the shared branch into a lock modal reintroduces the shared identity.
 
-#### The idle branch: `App.tsx:90-96`
+#### The idle branch: `AppRoot.tsx:111-120`
 **Signature:** `const isSharedDevice = user?.authMethod === 'pin'` then `useIdleTimer(ms, cb, enabled)`
 **Does:** Picks the budget and the action: `logout()` for a shared device, `setIdleLocked(true)` otherwise.
 **On screen:** the PIN pad reappears, or the lock modal appears.
-**Gotchas:** the comment at `App.tsx:38-41` is explicit, **this is the comfort layer, not the control.** The server mints PIN sessions with a short expiry of their own, so a tampered client cannot hold one open.
+**Gotchas:** the comment at `AppRoot.tsx:37-38` is explicit, **this is the comfort layer, not the control.** The server mints PIN sessions with a short expiry of their own, so a tampered client cannot hold one open.
 
-#### `logout`: `App.tsx:146`
+#### `logout`: `AppRoot.tsx:81`
 **Signature:** `() -> void`
 **Does:** Clears the app user, the token, the socket, **the nurse drafts** (`clearNurseDrafts`), **the offline PHI cache** (`clearOfflineCache`) and **the offline write queue** (`clearOfflineQueue`).
 **On screen:** returns the tablet to the login card with nothing of the previous nurse left on it.
-**Why it exists:** the three clears are the shared-tablet privacy story, and each has its own reason spelled out in the comments at `:139-157`. Drafts: the next nurse could otherwise read the previous nurse's half-entered observation for a named patient. Cache: it holds the whole bay, names, diagnoses, NEWS2, drug charts. Queue: anything queued offline is this nurse's clinical text and would replay on the **next** nurse's session, putting her name on somebody else's note.
+**Why it exists:** the three clears are the shared-tablet privacy story, and each has its own reason spelled out in the comments at `:91-108`. Drafts: the next nurse could otherwise read the previous nurse's half-entered observation for a named patient. Cache: it holds the whole bay, names, diagnoses, NEWS2, drug charts. Queue: anything queued offline is this nurse's clinical text and would replay on the **next** nurse's session, putting her name on somebody else's note.
 **Breaks if you change it:** removing any one of the three clears leaks the previous user's data or identity to the next one on the same tablet. See guide 39 for the offline half.
 
 ---
@@ -504,7 +504,7 @@ This file predates the tablet feature and is used by it only for hashing. Everyt
 | `orb_device` HttpOnly cookie | `set_device_cookie` (`server/auth.py:288`) | `extract_device_token` (`:270`) on every device route | rename the cookie and every enrolled tablet must be re-enrolled by hand |
 | JWT `did` / `amr` claims | `create_token` (`server/auth.py:360-366`) | `get_current_user` (`:464`), audit metadata | drop `did` and revocation stops severing sessions |
 | `DeviceStatus.enrolled` | `GET /api/auth/device` (`auth_routes.py:1199`) | `src/pages/Login.tsx:45` → `pinMode` (`:71`) | any change to this shape silently reverts the tablet to the password form |
-| `authMethod: 'pin'` | `applyLoginResponse` (`src/pages/Login.tsx:81`) | `src/App.tsx:90` idle branch | forget to pass it and a shared tablet gets the 15-minute timeout |
+| `authMethod: 'pin'` | `applyLoginResponse` (`src/pages/Login.tsx:81`) | `src/AppRoot.tsx:113` idle branch | forget to pass it and a shared tablet gets the 15-minute timeout |
 | `users.device_pin_hash` ≠ `users.pin_hash` | migration 12 (`migrations.py:761`) vs `database.py` | `verify_device_pin_ct` vs `pin_security.verify_pin` | merging them lets a shoulder-surfed tablet PIN countersign a medication order |
 | Constant-work ordering | `verify_device_pin_ct` docstring (`server/auth.py:235-236`) | `pin_login` step 4 (`auth_routes.py:1306-1309`) | any early return before it re-opens the account-enumeration oracle |
 | Audit actor = person | `pin_login` (`auth_routes.py:1401-1425`) | guide 05's audit chain, the Admin Audit tab | naming the device as actor rebuilds the shared-login trail |

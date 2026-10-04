@@ -57,10 +57,33 @@ movement history are NOT on it and keep the rules above. A receptionist
 therefore cannot move a patient (a transfer moves who can read the chart) and
 cannot finish a consultation (that raises the charge and, with the OPD feature,
 belongs to opd.consult).
+
+── OPD MODE (opd-7, the 'opd' feature on) ──────────────────────────────────
+Registering a visit can now open the patient's OUTPATIENT record view to the
+clinic for ORB_OPD_SCOPE_DAYS days (permissions.patient_in_opd_scope; never the
+inpatient chart). So in OPD mode:
+  * a patient with no ACTIVE admission may be registered into the caller's
+    clinic (frontdesk_service.opd_registration_allowed), so a patient
+    discharged from Cardiology can be seen in the Ortho clinic;
+  * the register, call-in, complete and cancel audit rows are written INSIDE
+    the visit's own transaction instead of after its commit;
+  * a visit for a patient with no active admission also writes
+    'opd_scope_opened' (clinical_access, fail-closed) in that transaction,
+    flagged self_registered when the registrant holds opd.consult (ruling
+    OPD-N2: such visits count, flagged and audited). If that row cannot be
+    written the visit is rolled back and the desk gets a 503;
+  * an idempotent replay of a registration is bound to the request: the key
+    must name a visit for the same patient in the same clinic, or the desk
+    gets a 409 that says nothing about the other visit (and the refusal is
+    audited). A matching replay writes its own 'opd_visit_registered' row
+    (replay true) in its transaction, as the flag-off path writes one per
+    call; it opens no new scope, so it writes no 'opd_scope_opened'.
+With the feature off every route here behaves exactly as before.
 """
 from __future__ import annotations
 
 import uuid
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -69,19 +92,22 @@ import config
 from database import db_session
 from permissions import (
     FRONTDESK_WRITE,
+    OPD_CONSULT,
     PATIENT_READ_ALL,
     PATIENT_WRITE,
     department_scope,
     enforce_patient_scope,
     has_permission,
     log_phi_read,
+    opd_scope_window,
     require_patient_access,
     require_permission,
     require_registration_desk,
 )
-from services.audit_service import log_audit_event
+from services.audit_service import AuditWriteError, log_audit_event
 from services.frontdesk_service import (
     FrontDeskError,
+    OpdReplayConflict,
     cancel_opd_visit,
     complete_opd_visit,
     get_opd_visit,
@@ -89,6 +115,7 @@ from services.frontdesk_service import (
     list_opd_queue,
     list_patient_movements,
     list_transfer_destinations,
+    opd_mode,
     opd_registration_allowed,
     register_opd_visit,
     start_opd_consultation,
@@ -258,6 +285,215 @@ def _visit_or_404(visit_id: str, user: dict) -> dict:
     return visit
 
 
+# ── OPD mode: audit rows inside the visit's own transaction (opd-7) ─────────
+#
+# Each helper returns the callback frontdesk_service runs INSIDE its immediate
+# transaction, after the visit row changes and before it commits. A fail-closed
+# row that cannot be written raises AuditWriteError there, the transaction rolls
+# back, and the route answers 503: the change and its record land together or
+# not at all. Used only while the 'opd' feature is on.
+
+def _audit_unavailable() -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail={
+            "error": "audit_unavailable",
+            "message": ("The visit could not be recorded because the audit trail "
+                        "is not available. Nothing was saved. Try again in a moment."),
+        },
+    )
+
+
+def _request_audit_fields(request: Request, user: dict) -> dict:
+    return {
+        "actor_user_id": user.get("id"),
+        "actor_role": user.get("role"),
+        "request_path": request.url.path,
+        "http_method": request.method,
+        "ip_address": request.client.host if request.client else None,
+    }
+
+
+def _registration_audit(request: Request, user: dict, *, patient_id: str,
+                        dept: str | None, self_registered: bool):
+    """The register callback: re-check the registration rule under the write
+    lock, write 'opd_visit_registered', and for a patient with no active
+    admission write 'opd_scope_opened' (clinical_access, fail-closed)."""
+
+    def _write(db, visit: dict) -> None:
+        # The rule was checked before the transaction began; an admission that
+        # landed in between must not leave a visit that skipped it.
+        if not opd_registration_allowed(db, patient_id, dept):
+            raise HTTPException(status_code=404, detail="Patient not found")
+        visit_id = str(visit["id"])
+        fields = _request_audit_fields(request, user)
+        correlation = f"opd-register-{visit_id}"
+        log_audit_event(
+            correlation_id=correlation,
+            event_category="clinical_record",
+            action_type="opd_visit_registered",
+            outcome="success",
+            db=db,
+            summary_message=(
+                f"OPD visit {visit_id} registered for {patient_id} in "
+                f"{visit['department']} (token {visit['token_number']})"
+            ),
+            patient_id=patient_id,
+            target_type="opd_visit",
+            target_id=visit_id,
+            metadata={
+                "department": visit["department"],
+                "token_number": visit["token_number"],
+                "doctor_id": visit.get("doctor_id"),
+                "self_registered": self_registered,
+                "replay": False,
+                "written": "in_transaction",
+            },
+            **fields,
+        )
+
+        active = db.execute(
+            "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
+            (patient_id,),
+        ).fetchone()
+        if active is not None:
+            # An inpatient's visit opens nothing: the OPD arm is closed for
+            # anyone actively admitted (permissions.patient_in_opd_scope).
+            return
+
+        days = max(0, int(config.OPD_SCOPE_DAYS or 0))
+        until = (date.fromisoformat(visit["visit_date"]) + timedelta(days=days)).isoformat()
+        first_day, last_day = opd_scope_window()
+        clinic = (visit["department"] or "").strip().casefold()
+        earlier = db.execute(
+            "SELECT department FROM opd_visits WHERE patient_id = ? AND id != ? "
+            "AND status != 'cancelled' AND visit_date >= ? AND visit_date <= ?",
+            (patient_id, visit_id, first_day, last_day),
+        ).fetchall()
+        extends = any((r["department"] or "").strip().casefold() == clinic for r in earlier)
+        log_audit_event(
+            correlation_id=correlation,
+            event_category="clinical_access",
+            action_type="opd_scope_opened",
+            outcome="success",
+            db=db,
+            summary_message=(
+                f"OPD visit {visit_id} opens the outpatient record of {patient_id} "
+                f"to {visit['department']} until {until}"
+                + ("; registered by a clinician who holds opd.consult"
+                   if self_registered else "")
+            ),
+            patient_id=patient_id,
+            target_type="opd_visit",
+            target_id=visit_id,
+            metadata={
+                "department": visit["department"],
+                "visit_date": visit["visit_date"],
+                "scope_days": days,
+                "scope_until": until,
+                "self_registered": self_registered,
+                "extends_open_window": extends,
+                "registrant_role": user.get("role"),
+            },
+            **fields,
+        )
+
+    return _write
+
+
+def _visit_event_audit(request: Request, user: dict, *, correlation_prefix: str,
+                       action_type: str, summary, metadata=None):
+    """A start, complete or cancel callback writing its clinical_record row in
+    the visit's transaction. `summary(visit)` and `metadata(visit)` build the
+    same words and fields the post-commit row always carried.
+
+    The service calls it on EVERY successful call, a repeat included, exactly
+    as the flag-off path writes a row per call. `facts` from the service (for
+    example {"replay": True, "charge_raised_now": True}) go into the metadata,
+    so a repeat that changed nothing reads as one and a repeat that raised a
+    charge names it."""
+
+    def _write(db, visit: dict, facts: dict | None = None) -> None:
+        visit_id = str(visit["id"])
+        extra = {**(metadata(visit) if metadata else {}), **(facts or {})}
+        log_audit_event(
+            correlation_id=f"{correlation_prefix}-{visit_id}",
+            event_category="clinical_record",
+            action_type=action_type,
+            outcome="success",
+            db=db,
+            summary_message=summary(visit),
+            patient_id=visit.get("patient_id"),
+            target_type="opd_visit",
+            target_id=visit_id,
+            metadata={**extra, "written": "in_transaction"},
+            **_request_audit_fields(request, user),
+        )
+
+    return _write
+
+
+def _registration_replay_audit(request: Request, user: dict):
+    """The replay callback for a registration whose idempotency key names a
+    visit for the SAME patient in the SAME clinic (the service checks that
+    before it calls this). The response carries the patient's name and MRN
+    again, so the repeat gets its own 'opd_visit_registered' row, replay true,
+    in the transaction: the flag-off path writes one per call and OPD mode
+    must never write fewer. The first call opened the scope; a repeat opens
+    nothing, so it writes no 'opd_scope_opened'."""
+    return _visit_event_audit(
+        request, user, correlation_prefix="opd-register",
+        action_type="opd_visit_registered",
+        summary=lambda v: (
+            f"OPD visit {v['id']} registration repeated for {v.get('patient_id')} in "
+            f"{v['department']} (token {v['token_number']}); nothing new was saved"
+        ),
+        metadata=lambda v: {
+            "department": v["department"],
+            "token_number": v["token_number"],
+            "doctor_id": v.get("doctor_id"),
+        },
+    )
+
+
+def _audit_replay_refused(request: Request, user: dict, *, patient_id: str,
+                          department: str, err: OpdReplayConflict) -> None:
+    """Record a registration refused because its idempotency key already names
+    a visit for a different patient or clinic. Written after the rollback (the
+    refusal saved nothing), on the same 'authorization' / denied footing as a
+    patient_scope_denied row, so a key replayed across clinics is visible in
+    the trail even though the caller learns nothing about the other visit."""
+    log_audit_event(
+        correlation_id=str(uuid.uuid4()),
+        event_category="authorization",
+        action_type="opd_visit_replay_refused",
+        outcome="denied",
+        summary_message=(
+            f"OPD registration for {patient_id} in {department} refused: its "
+            f"idempotency key already names OPD visit {err.visit_id}, which is "
+            "for a different patient or clinic"
+        ),
+        patient_id=patient_id,
+        target_type="opd_visit",
+        target_id=err.visit_id,
+        metadata={"requested_department": department,
+                  "reason": "idempotency_key_names_another_visit"},
+        **_request_audit_fields(request, user),
+    )
+
+
+def _replay_conflict() -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "error": "registration_key_conflict",
+            "message": ("This registration was already submitted for a different "
+                        "patient or clinic. Nothing was saved. Start the "
+                        "registration again."),
+        },
+    )
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  OPD
 # ═════════════════════════════════════════════════════════════════════════════
@@ -359,6 +595,38 @@ def create_opd_visit(
             # 404, not 403 — the caller must not learn that this patient exists.
             raise HTTPException(status_code=404, detail="Patient not found")
 
+    if opd_mode():
+        # OPD mode (opd-7): the audit rows commit with the visit, and the visit
+        # that opens the outpatient record view says so on the fail-closed chain.
+        # A replay is bound to this patient and clinic and audited too.
+        self_registered = has_permission(user.get("role", ""), OPD_CONSULT)
+        try:
+            return register_opd_visit(
+                patient_id=patient_id,
+                department=department,
+                doctor_id=data.doctor_id,
+                visit_type=(data.visit_type or "new"),
+                chief_complaint=data.chief_complaint,
+                appointment_id=data.appointment_id,
+                notes=data.notes,
+                registered_by=user.get("id"),
+                idempotency_key=data.idempotency_key,
+                self_registered=self_registered,
+                on_registered=_registration_audit(
+                    request, user, patient_id=patient_id, dept=dept,
+                    self_registered=self_registered,
+                ),
+                on_replay=_registration_replay_audit(request, user),
+            )
+        except OpdReplayConflict as err:
+            _audit_replay_refused(request, user, patient_id=patient_id,
+                                  department=department, err=err)
+            raise _replay_conflict()
+        except FrontDeskError as err:
+            raise _bad_request(err)
+        except AuditWriteError:
+            raise _audit_unavailable()
+
     try:
         visit = register_opd_visit(
             patient_id=patient_id,
@@ -427,6 +695,20 @@ def start_visit(
 ):
     """Call the patient in — 'waiting' → 'in_consultation'."""
     _visit_or_404(visit_id, user)
+    if opd_mode():
+        try:
+            return start_opd_consultation(
+                visit_id, called_by=user.get("id"),
+                on_done=_visit_event_audit(
+                    request, user, correlation_prefix="opd-start",
+                    action_type="opd_consultation_started",
+                    summary=lambda v: f"OPD visit {v['id']} called in",
+                ),
+            )
+        except FrontDeskError as err:
+            raise _bad_request(err)
+        except AuditWriteError:
+            raise _audit_unavailable()
     try:
         visit = start_opd_consultation(visit_id, called_by=user.get("id"))
     except FrontDeskError as err:
@@ -467,6 +749,37 @@ def complete_visit(
     """
     body = data or CompleteVisitIn()
     _visit_or_404(visit_id, user)
+    if opd_mode():
+        def _charge_summary(v: dict) -> str:
+            c = v.get("consultation_charge") or {}
+            return (f"OPD visit {v['id']} completed; consultation charge "
+                    f"{c.get('charge_id') or 'not raised'}")
+
+        def _charge_fields(v: dict) -> dict:
+            c = v.get("consultation_charge") or {}
+            return {
+                "charge_id": c.get("charge_id"),
+                "rate_is_configured": c.get("rate_is_configured"),
+                "total_paise": c.get("total_paise"),
+            }
+
+        try:
+            return complete_opd_visit(
+                visit_id,
+                completed_by=user.get("id"),
+                service_code=body.service_code,
+                raise_charge=bool(body.raise_charge),
+                notes=body.notes,
+                on_done=_visit_event_audit(
+                    request, user, correlation_prefix="opd-complete",
+                    action_type="opd_visit_completed",
+                    summary=_charge_summary, metadata=_charge_fields,
+                ),
+            )
+        except FrontDeskError as err:
+            raise _bad_request(err)
+        except AuditWriteError:
+            raise _audit_unavailable()
     try:
         visit = complete_opd_visit(
             visit_id,
@@ -517,6 +830,20 @@ def cancel_visit(
     reason = (data.reason or "").strip()
     if not reason:
         raise HTTPException(status_code=422, detail="A cancellation reason is required")
+    if opd_mode():
+        try:
+            return cancel_opd_visit(
+                visit_id, reason=reason, cancelled_by=user.get("id"),
+                on_done=_visit_event_audit(
+                    request, user, correlation_prefix="opd-cancel",
+                    action_type="opd_visit_cancelled",
+                    summary=lambda v: f"OPD visit {v['id']} cancelled: {reason}",
+                ),
+            )
+        except FrontDeskError as err:
+            raise _bad_request(err)
+        except AuditWriteError:
+            raise _audit_unavailable()
     try:
         visit = cancel_opd_visit(visit_id, reason=reason, cancelled_by=user.get("id"))
     except FrontDeskError as err:

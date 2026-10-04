@@ -361,7 +361,7 @@ Scoped, BEM-style styling for the modal. The backdrop uses a 16px `backdrop-filt
 5. Else, if verified but the patient payload is empty, show "Record Unavailable" (`:85-96`); otherwise render the DOB verification form, disabled while loading or locked (`:98-139`).
 **Why it exists:** It is the entire patient-facing surface, deliberately a standalone route with no app shell and its own light theme, because the person using it is a patient on their phone, not a clinician.
 **Data in/out:** In: URL token + typed DOB. Out: rendered summary.
-**Talks to:** `verifyDischargeAccess`, `getVerifiedDischargeSummary` (`client.ts`), `DischargePrintView`. Routed at `App.tsx:85` (`/discharge/:token`) with **no auth guard**.
+**Talks to:** `verifyDischargeAccess`, `getVerifiedDischargeSummary` (`client.ts`), `DischargePrintView`. Routed at `AppRoot.tsx:184` (`/discharge/:token`) with **no auth guard**.
 **Gotchas:** The `invalid_dob` branch renders `detail.attempts_remaining` (`:38`), but the server deliberately stopped returning that field (`discharge_access_service.py:164-166`), so the message reads "You have undefined attempts remaining" (see Discrepancies). `verifyDischargeAccess` throws the *parsed body* (`{detail: {...}}`) on non-OK, which is why the handler reads `err?.detail`.
 
 ### DischargeAccess.css: `src/pages/DischargeAccess.css:1`

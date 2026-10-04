@@ -209,16 +209,20 @@ def get_connection():
     return conn
 
 def clean_db():
-    """Clear old medications and orders to start fresh."""
+    """Clear old medications, orders, lots and their stock ledger to start fresh.
+
+    The formulary rows are KEPT (grn-4, as seed_helix does): a pharmacist's own
+    entries on a drug (pack size, GST, classification, storage, reorder levels)
+    survive, and main() only adds drugs it does not already have. The ledger
+    is cleared before the lots it describes."""
     print("Clearing existing medications and Helix tables for sync...")
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("PRAGMA foreign_keys = OFF")
     cursor.execute("DELETE FROM medications")
     cursor.execute("DELETE FROM helix_patient_med_orders")
-    cursor.execute("DELETE FROM helix_medication_master")
-    cursor.execute("DELETE FROM helix_inventory_lots")
     cursor.execute("DELETE FROM helix_stock_movements")
+    cursor.execute("DELETE FROM helix_inventory_lots")
     cursor.execute("DELETE FROM helix_transitions")
     cursor.execute("PRAGMA foreign_keys = ON")
     conn.commit()
@@ -228,6 +232,8 @@ def main():
     print(f"Connecting to database: {DB_PATH}")
     clean_db()
     
+    from services import pharmacy_stock_service as stock
+
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -284,9 +290,16 @@ def main():
             lot_number = "LOT" + med_id[4:].replace("-", "")[:8]
             existing_lot = cursor.execute("SELECT id FROM helix_inventory_lots WHERE id = ?", (lot_id,)).fetchone()
             if not existing_lot:
-                cursor.execute(
-                    "INSERT INTO helix_inventory_lots (id, medication_id, lot_number, quantity, expiration_date) VALUES (?, ?, ?, ?, '2030-12-31')",
-                    (lot_id, med_id, lot_number, 100) # give 100 units stock
+                # Through the one stock writer (grn-4): the lot opens at zero
+                # and its 100 units arrive as an 'opening' movement. The
+                # service writes only inside its caller's transaction, so one
+                # is opened here if no earlier write of this run has opened it.
+                if not conn.in_transaction:
+                    cursor.execute("BEGIN IMMEDIATE")
+                stock.open_or_merge_lot(
+                    conn, lot_id=lot_id, medication_id=med_id, lot_number=lot_number,
+                    expiration_date="2030-12-31", units=100, actor_id="system",
+                    movement_type="opening", remarks="Opening stock written by the seed",
                 )
             
             # 3. Create a Helix patient medication order

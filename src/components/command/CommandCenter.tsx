@@ -245,7 +245,7 @@ export default function CommandCenter() {
         <section className="cmd-card cmd-card--deteriorations">
           <header className="cmd-card__head">
             <div className="cmd-legend" style={{ alignItems: 'baseline', gap: '0.5rem' }}>
-              <h2>Active Deteriorations</h2>
+              <h2>Highest NEWS2 scores</h2>
               {scope && <span>{scope} only</span>}
             </div>
             <span className="cmd-count">
@@ -257,7 +257,7 @@ export default function CommandCenter() {
           <div className="cmd-detlist">
             {deteriorations.length === 0 ? (
               <div className="cmd-empty">
-                {scope ? `No active deteriorations in ${scope}.` : 'No active deteriorations. House is stable.'}
+                {scope ? `No elevated or critical NEWS2 scores in ${scope}.` : 'No elevated or critical NEWS2 scores. House is stable.'}
               </div>
             ) : (
               deteriorations.map(d => (

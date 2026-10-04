@@ -513,7 +513,7 @@ The module header states why the store exists at all: the toggle lives in the co
 
 ### File: `src/api/client.ts`: putting the flag on the wire
 
-#### `querySage`'s `thinking` parameter: `src/api/client.ts:1096`, parameter at `:1104-1112`, body at `:1127-1131`
+#### `querySage`'s `thinking` parameter: `src/api/client.ts:1482`, parameter at `:1104-1112`, body at `:1127-1131`
 **Signature:** `thinking?: boolean`; body sends `thinking: thinking ?? true`
 **Does:** Sends the flag explicitly on every Sage request.
 **On screen:** nothing directly.

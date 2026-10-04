@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
@@ -56,13 +57,16 @@ class IngestionResult:
     duplicates: int = 0
     errors: list[str] = None             # type: ignore
     backfill: bool = False               # stored, but not treated as current state
+    # Results that matched no patient and went to the unmatched results queue
+    # (ORB_RESULT_QUARANTINE, lis-19). Stored, so a success for the sender.
+    quarantined: int = 0
 
     def __post_init__(self):
         if self.errors is None:
             self.errors = []
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "event_id": self.event_id,
             "correlation_id": self.correlation_id,
             "parse_status": self.parse_status,
@@ -73,6 +77,11 @@ class IngestionResult:
             "backfill": self.backfill,
             "errors": self.errors,
         }
+        # Only when the queue took something, so the answer is unchanged with
+        # the queue switched off.
+        if self.quarantined:
+            out["quarantined"] = self.quarantined
+        return out
 
 
 # ════════════════════════════════════════════
@@ -309,18 +318,31 @@ def _insert_observations_batch(events, event_id, source_label, correlation_id):
     db_session and its own try/except, so a single malformed OBX still fails
     alone and the rest of the panel lands — the same fail-soft behaviour the
     per-item await loop had. The only thing that changed is the number of
-    executor hops. Returns (inserted_count, errors) rather than raising, because
-    the caller reports partial success.
+    executor hops. Returns (inserted_count, errors, quarantined_count) rather
+    than raising, because the caller reports partial success. A result the
+    unmatched results queue took is counted as quarantined, not inserted.
+
+    The whole message is known here, so a correction that shares its test,
+    OBX-4 sub-id, sender and order with another result in the same message is
+    marked before anything is written: it supersedes nothing (lis-20,
+    supersede_corrected_in_txn), whichever of the two is written first.
     """
     inserted = 0
+    quarantined = 0
     errors: list[str] = []
+    correcting = _corrections_on()
     for evt in events:
         try:
-            _insert_observation(evt, event_id, source_label, correlation_id)
-            inserted += 1
+            sibling = (correcting and is_external_correction(evt)
+                       and message_has_sibling_result(evt, events))
+            if _insert_observation(evt, event_id, source_label, correlation_id,
+                                   sibling_in_message=sibling) == "quarantined":
+                quarantined += 1
+            else:
+                inserted += 1
         except Exception as e:
             errors.append(f"Observation insert error: {e}")
-    return inserted, errors
+    return inserted, errors, quarantined
 
 
 def _persist_risk_score(patient_id, risk):
@@ -587,17 +609,21 @@ async def ingest_payload(
         evt.source_type = adapter.source_type
 
     # ── Step 7: Route into tables ──
-    vitals_count, obs_count, route_errors = await _route_events(
+    vitals_count, obs_count, route_errors, quarantined_count = await _route_events(
         canonical_events, event_id, adapter.source_type, sio, correlation_id,
         source_label=source_label, backfill=backfill,
     )
 
     result.inserted_vitals = vitals_count
     result.inserted_observations = obs_count
+    result.quarantined = quarantined_count
     result.errors.extend(route_errors)
 
     # ── Step 8: Update event status ──
-    if route_errors and (vitals_count + obs_count) > 0:
+    # A result held in the unmatched results queue was stored, so it counts as
+    # landed: the sender must not retry it, and a retry of a failed event is
+    # not deduplicated.
+    if route_errors and (vitals_count + obs_count + quarantined_count) > 0:
         final_status = "partially_parsed"
         audit_action = "ingestion_parse_partial_success"
         audit_outcome = "partial_success"
@@ -627,7 +653,10 @@ async def ingest_payload(
         outcome=audit_outcome,
         source_type=adapter.source_type,
         source_event_id=event_id,
-        summary_message=f"Parsed {result.received} events. Inserted {vitals_count} vitals, {obs_count} observations.",
+        summary_message=(
+            f"Parsed {result.received} events. Inserted {vitals_count} vitals, {obs_count} observations."
+            + (f" Held {quarantined_count} unmatched result(s) for review." if quarantined_count else "")
+        ),
         metadata={"route_errors": route_errors} if route_errors else None
     )
 
@@ -720,10 +749,11 @@ async def _route_events(
     correlation_id: str = None,
     source_label: Optional[str] = None,
     backfill: bool = False,
-) -> tuple[int, int, list[str]]:
+) -> tuple[int, int, list[str], int]:
     """Route canonical events into vitals / observations tables.
 
-    Returns (vitals_inserted, observations_inserted, errors).
+    Returns (vitals_inserted, observations_inserted, errors, quarantined): the
+    last counts results the unmatched results queue took (lis-19).
     """
     vitals_inserted = 0
     obs_inserted = 0
@@ -760,15 +790,16 @@ async def _route_events(
     # 2026-07-30 stall, so the per-item version was both slower and a direct
     # contributor to it. Per-observation transactions and per-observation error
     # capture are preserved inside the batch (see _insert_observations_batch).
+    quarantined = 0
     if non_vital_events:
-        batch_inserted, batch_errors = await run_db(
+        batch_inserted, batch_errors, quarantined = await run_db(
             _insert_observations_batch,
             non_vital_events, event_id, source_label, correlation_id,
         )
         obs_inserted += batch_inserted
         errors.extend(batch_errors)
 
-    return vitals_inserted, obs_inserted, errors
+    return vitals_inserted, obs_inserted, errors, quarantined
 
 
 async def _insert_vitals(
@@ -1185,54 +1216,69 @@ def _insert_observation(
     event_id: int,
     source_label: str,
     correlation_id: str = None,
-):
-    """Insert a non-vital observation into the observations table."""
-    with db_session() as db:
+    *,
+    sibling_in_message: bool = False,
+) -> str:
+    """Insert a non-vital observation into the observations table.
+
+    Returns 'inserted', or 'quarantined' when no patient matched and the
+    unmatched results queue is on (ORB_RESULT_QUARANTINE, lis-19): the result
+    then waits in result_quarantine for laboratory staff instead of being
+    stored with no patient. With ORB_RESULT_CORRECTIONS on, an HL7 OBX-11 'C'
+    supersedes the earlier final result it corrects on the same transaction
+    (lis-20, see write_observation_in_txn).
+    """
+    # A correction reads the results it may supersede and then writes; take
+    # the write lock first so nothing lands in between (database.db_session).
+    correcting = _corrections_on() and is_external_correction(evt)
+    quarantine_id = None
+    obs_id = None
+    with db_session(immediate=correcting) as db:
         # Try to resolve patient
         patient_id = _resolve_patient_id(db, evt.patient_identifier) if evt.patient_identifier else None
 
-        if patient_id is None:
-            # PHI-bearing observation that couldn't be linked to a known patient.
-            # It is still persisted (with NULL patient_id) so nothing is dropped,
-            # but it is now logged so unlinked clinical data is observable rather
-            # than silently orphaned.
-            # DEFERRED (cross-cluster — needs a new quarantine table/schema):
-            # route unresolved-patient observations into an explicit review queue
-            # instead of inserting NULL-patient rows that may never be reviewed.
-            logger.warning(
-                "Observation '%s' could not be resolved to a patient (raw id=%r); "
-                "inserting unlinked — needs review queue.",
-                evt.observation_name, evt.patient_identifier,
-            )
+        if patient_id is None and _quarantine_on() and _queue_takes(evt, source_label):
+            # Held for laboratory staff to attach to the right patient or
+            # discard (services/result_quarantine_service.py). Never stored
+            # with no patient, where no chart or review would ever see it.
+            # Only results from a result feed: a bedside monitor's MAP, ST or
+            # PVC count is a device metric and keeps the branch below.
+            from services import result_quarantine_service
+            quarantine_id = result_quarantine_service.enqueue_in_txn(
+                db, evt, event_id=event_id, source_label=source_label)
+        else:
+            if patient_id is None:
+                # PHI-bearing observation that couldn't be linked to a known patient.
+                # It is still persisted (with NULL patient_id) so nothing is dropped,
+                # but it is now logged so unlinked clinical data is observable rather
+                # than silently orphaned. With ORB_RESULT_QUARANTINE on, the branch
+                # above sends a result to the unmatched results queue instead
+                # (lis-19); a device lane's metrics stay here.
+                logger.warning(
+                    "Observation '%s' could not be resolved to a patient (raw id=%r); "
+                    "inserting unlinked (no review queue: ORB_RESULT_QUARANTINE is off, "
+                    "or this is a device lane's metric, lane %r).",
+                    evt.observation_name, evt.patient_identifier, source_label,
+                )
+            obs_id, _superseded = write_observation_in_txn(
+                db, evt, patient_id, event_id, source_label, correlation_id=correlation_id,
+                sibling_in_message=sibling_in_message)
 
-        cursor = db.execute(
-            """INSERT INTO observations
-               (patient_id, encounter_id, source, source_event_id,
-                observation_code, observation_code_system, observation_name,
-                value_text, value_numeric, unit, reference_range, abnormal_flag,
-                status, observed_at, panel_name, obr_group_id, raw_segment_ref)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                patient_id,
-                evt.encounter_identifier,
-                source_label,
-                event_id,
-                evt.observation_code,
-                evt.observation_code_system,
-                evt.observation_name,
-                evt.value if evt.value_numeric is None else None,
-                evt.value_numeric,
-                evt.unit,
-                evt.reference_range,
-                evt.abnormal_flag,
-                evt.status,
-                evt.observed_at,
-                evt.panel_name,
-                evt.obr_group_id,
-                evt.raw_segment_ref,
-            ),
+    if quarantine_id is not None:
+        # Fail-soft 'ingestion' category after commit, as below.
+        log_audit_event(
+            correlation_id=correlation_id,
+            event_category="ingestion",
+            action_type="observation_quarantined",
+            outcome="success",
+            encounter_id=evt.encounter_identifier,
+            source_type=source_label,
+            source_event_id=event_id,
+            target_type="result_quarantine",
+            target_id=str(quarantine_id),
+            summary_message=f"Held unmatched result for review: {evt.observation_name}"
         )
-        obs_id = cursor.lastrowid
+        return "quarantined"
 
     # Audit AFTER the transaction commits. The standalone audit path opens its
     # own connection and runs BEGIN IMMEDIATE, which would block on the WAL
@@ -1253,3 +1299,524 @@ def _insert_observation(
         target_id=str(obs_id),
         summary_message=f"Inserted observation: {evt.observation_name}"
     )
+    return "inserted"
+
+
+# ════════════════════════════════════════════
+#  Observation Writer (shared with the unmatched results queue)
+# ════════════════════════════════════════════
+# One writer for an interfaced result, so a result attached from the unmatched
+# results queue lands exactly as it would have at receipt, correction rule
+# included. Every function here takes the caller's open transaction and never
+# commits.
+
+def _quarantine_on() -> bool:
+    import config
+    return bool(config.feature_enabled("result_quarantine"))
+
+
+def _corrections_on() -> bool:
+    import config
+    return bool(config.feature_enabled("result_corrections"))
+
+
+def _queue_takes(evt: CanonicalEvent, source_label: str) -> bool:
+    """Whether the unmatched results queue takes this unmatched observation:
+    a result from a result feed, not a device lane's metric (lis-19)."""
+    from services import result_quarantine_service
+    return result_quarantine_service.takes_result(source_label, evt.observation_code_system)
+
+
+def is_external_correction(evt: CanonicalEvent) -> bool:
+    """An HL7 OBX-11 'C': this result corrects an earlier final one."""
+    return str(evt.status or "").strip().upper() == "C"
+
+
+def correction_order(placer: Optional[str], filler: Optional[str],
+                     other_placer: Optional[str], other_filler: Optional[str]) -> Optional[str]:
+    """'filler' or 'placer' when two results belong to the same order, else None.
+
+    The same OBR-3 filler number; or, when either side has no filler number,
+    the same OBR-2 placer number the sender supplied. Two different filler
+    numbers are two different orders, whatever the placer says. A result with
+    neither number belongs to no order a correction can name.
+    """
+    filler, other_filler = (filler or "").strip(), (other_filler or "").strip()
+    placer, other_placer = (placer or "").strip(), (other_placer or "").strip()
+    if filler and other_filler:
+        return "filler" if filler == other_filler else None
+    if placer and other_placer and placer == other_placer:
+        return "placer"
+    return None
+
+
+def _result_identity(evt: CanonicalEvent) -> tuple:
+    """(code, OBX-4 sub-id, sender, placer, filler) of one parsed result. The
+    placer is None when the adapter invented the group id."""
+    placer = None if evt.group_id_generated else evt.obr_placer
+    return ((evt.observation_code or "").strip(), (evt.obx_sub_id or "").strip(),
+            (evt.hl7_sender or "").strip(), placer, evt.obr_filler)
+
+
+def message_has_sibling_result(evt: CanonicalEvent, message_events) -> bool:
+    """Whether another result in the same message has the same test code,
+    OBX-4 sub-id, sender and order as `evt`, whatever its status.
+
+    Two such results (two isolates under one culture code, say) mean the test
+    and order do not name one result, so a correction among them cannot be
+    pinned to one earlier result and supersedes nothing (lis-20).
+    """
+    code, sub_id, sender, placer, filler = _result_identity(evt)
+    if not code:
+        return False
+    for other in message_events:
+        if other is evt:
+            continue
+        o_code, o_sub_id, o_sender, o_placer, o_filler = _result_identity(other)
+        if (o_code, o_sub_id, o_sender) != (code, sub_id, sender):
+            continue
+        if correction_order(placer, filler, o_placer, o_filler):
+            return True
+    return False
+
+
+def write_observation_in_txn(
+    db,
+    evt: CanonicalEvent,
+    patient_id: Optional[str],
+    event_id: Optional[int],
+    source_label: str,
+    *,
+    correlation_id: Optional[str] = None,
+    actor: Optional[dict] = None,
+    sibling_in_message: bool = False,
+    later_correction: Optional[dict] = None,
+) -> tuple[int, list[int]]:
+    """INSERT one observations row on the caller's transaction.
+
+    Returns (observation id, ids it superseded). The order identity columns
+    (migration 60) are always written: obr_placer only when the sender sent
+    OBR-2, never the random group id. With ORB_RESULT_CORRECTIONS on and a
+    patient known, an OBX-11 'C' then supersedes the prior final it corrects,
+    when exactly one matches. `sibling_in_message` says the caller knows the
+    same message holds another result for the same test and order (one not
+    written yet): the correction then supersedes nothing.
+
+    `later_correction` is the unmatched results queue's answer from
+    later_correction_for_attach: with outcome 'supersede' the row is stored
+    already superseded by the correction that was sent after it, and replaces
+    nothing itself.
+    """
+    placer = None if evt.group_id_generated else evt.obr_placer
+    cursor = db.execute(
+        """INSERT INTO observations
+           (patient_id, encounter_id, source, source_event_id,
+            observation_code, observation_code_system, observation_name,
+            value_text, value_numeric, unit, reference_range, abnormal_flag,
+            status, observed_at, panel_name, obr_group_id, raw_segment_ref,
+            obr_placer, obr_filler, obx_sub_id, hl7_sender)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            patient_id,
+            evt.encounter_identifier,
+            source_label,
+            event_id,
+            evt.observation_code,
+            evt.observation_code_system,
+            evt.observation_name,
+            evt.value if evt.value_numeric is None else None,
+            evt.value_numeric,
+            evt.unit,
+            evt.reference_range,
+            evt.abnormal_flag,
+            evt.status,
+            evt.observed_at,
+            evt.panel_name,
+            evt.obr_group_id,
+            evt.raw_segment_ref,
+            placer,
+            evt.obr_filler,
+            evt.obx_sub_id,
+            evt.hl7_sender,
+        ),
+    )
+    obs_id = int(cursor.lastrowid)
+    superseded: list[int] = []
+    if patient_id and later_correction and later_correction.get("outcome") == "supersede":
+        _store_superseded_on_attach_in_txn(
+            db, observation_id=obs_id, decision=later_correction, patient_id=patient_id,
+            source=source_label, previous_status=evt.status, code=evt.observation_code,
+            correlation_id=correlation_id, actor=actor)
+        return obs_id, superseded
+    if patient_id and _corrections_on() and is_external_correction(evt):
+        superseded = supersede_corrected_in_txn(
+            db, new_id=obs_id, patient_id=patient_id, code=evt.observation_code,
+            sub_id=evt.obx_sub_id, placer=placer, filler=evt.obr_filler,
+            sender=evt.hl7_sender, source=source_label, event_id=event_id,
+            sibling_in_message=sibling_in_message,
+            correlation_id=correlation_id, actor=actor)
+    return obs_id, superseded
+
+
+def supersede_corrected_in_txn(
+    db,
+    *,
+    new_id: int,
+    patient_id: str,
+    code: Optional[str],
+    sub_id: Optional[str],
+    placer: Optional[str],
+    filler: Optional[str],
+    sender: Optional[str],
+    source: Optional[str],
+    event_id: Optional[int] = None,
+    sibling_in_message: bool = False,
+    correlation_id: Optional[str] = None,
+    actor: Optional[dict] = None,
+) -> list[int]:
+    """Mark the ONE live final result a correction replaces as superseded (lis-20).
+
+    A prior result is a candidate only when it is the SAME patient, the same
+    test code, the same OBX-4 sub-id, the same sender (MSH-3 and MSH-4) and the
+    same lane, is live and final (or an earlier correction), was not released
+    by the laboratory module (that lane amends its own results), arrived in an
+    earlier message than the correction (never its own, `event_id`), and
+    belongs to the same order (correction_order): the same OBR-3 filler
+    number, or, when either side has no filler number, the same OBR-2 placer
+    number the sender supplied. The random group id the adapter invents for a
+    missing OBR-2 is never stored as a placer, so it can never match.
+
+    Strictest rule (held for Samuel to confirm before go-live): a correction
+    supersedes a result only when exactly one candidate matches AND its own
+    message holds no other result for the same test and order (two isolates
+    under one culture code, say). Otherwise the test and order do not name one
+    result, and hiding the wrong one would take a valid result off the chart,
+    the ward pack and Tier 1. So:
+      * no candidate: nothing changes, the correction is stored beside, as
+        before;
+      * more than one candidate, or a sibling in the same message (already
+        written, or `sibling_in_message` from a caller that knows the whole
+        message): nothing is superseded, the correction is stored beside the
+        others, and a fail-closed clinical_access row
+        (observation_correction_not_applied) records why;
+      * exactly one: that row gets status 'superseded' and superseded_by,
+        which every reader in services/lab_observations.py leaves out, and a
+        fail-closed clinical_access audit row on this transaction.
+    If an audit row cannot be written, the correction is rolled back with it.
+    """
+    from services import lab_observations
+    code = (code or "").strip()
+    placer = (placer or "").strip()
+    filler = (filler or "").strip()
+    if not patient_id or not code or not (placer or filler):
+        return []
+    rows = lab_observations.correction_candidates(
+        db, patient_id=patient_id, code=code, sub_id=sub_id, sender=sender,
+        source=source, exclude_id=int(new_id))
+    matched: list[tuple] = []
+    for row in rows:
+        if (event_id is not None and row["source_event_id"] is not None
+                and int(row["source_event_id"]) == int(event_id)):
+            continue  # never a result from the correction's own message
+        matched_on = correction_order(placer, filler, row["obr_placer"], row["obr_filler"])
+        if matched_on:
+            matched.append((row, matched_on))
+    if not matched:
+        return []
+    siblings = [
+        r["id"] for r in lab_observations.same_message_results(
+            db, event_id=event_id, code=code, sub_id=sub_id, sender=sender,
+            source=source, exclude_id=int(new_id))
+        if correction_order(placer, filler, r["obr_placer"], r["obr_filler"])
+    ]
+    actor = actor or {}
+    if len(matched) > 1 or siblings or sibling_in_message:
+        why = ("several_earlier_results" if len(matched) > 1
+               else "several_results_in_message")
+        logger.warning(
+            "Corrected result %s supersedes nothing: %s for test %s on this order (%d "
+            "earlier, %d more in its message); stored beside them.",
+            new_id, why, code, len(matched), len(siblings) + int(bool(sibling_in_message)))
+        log_audit_event(
+            correlation_id=correlation_id or str(uuid.uuid4()),
+            event_category="clinical_access",
+            action_type="observation_correction_not_applied",
+            outcome="success",
+            db=db,
+            actor_user_id=actor.get("user_id"),
+            actor_role=actor.get("role"),
+            patient_id=patient_id,
+            source_type=source,
+            source_event_id=event_id,
+            target_type="observations",
+            target_id=str(new_id),
+            summary_message=(f"Corrected result {new_id} stored beside the earlier results: "
+                             "the test and order do not name exactly one result"),
+            metadata={"reason": why, "candidates": [row["id"] for row, _ in matched],
+                      "same_message": siblings,
+                      "sibling_in_message": bool(sibling_in_message),
+                      "observation_code": code},
+        )
+        return []
+    row, matched_on = matched[0]
+    cur = db.execute(
+        "UPDATE observations SET status = 'superseded', superseded_by = ? "
+        "WHERE id = ? AND superseded_by IS NULL",
+        (int(new_id), row["id"]),
+    )
+    if cur.rowcount != 1:  # pragma: no cover - the caller holds the write lock
+        return []
+    log_audit_event(
+        correlation_id=correlation_id or str(uuid.uuid4()),
+        event_category="clinical_access",
+        action_type="observation_superseded",
+        outcome="success",
+        db=db,
+        actor_user_id=actor.get("user_id"),
+        actor_role=actor.get("role"),
+        patient_id=patient_id,
+        source_type=source,
+        target_type="observations",
+        target_id=str(row["id"]),
+        summary_message=f"Result {row['id']} superseded by corrected result {new_id}",
+        metadata={"superseded_by": int(new_id), "matched_on": matched_on,
+                  "previous_status": row["status"], "observation_code": code},
+    )
+    return [row["id"]]
+
+
+def attach_unlinked_observation_in_txn(
+    db,
+    observation_id: int,
+    patient_id: str,
+    *,
+    correlation_id: Optional[str] = None,
+    actor: Optional[dict] = None,
+    sibling_in_message: bool = False,
+    later_correction: Optional[dict] = None,
+) -> tuple[int, list[int]]:
+    """Give a result stored with no patient its patient (an attach from the
+    unmatched results queue of a row the sweep copied). The row keeps its id
+    and everything else. Returns (observation id, ids it superseded). A
+    correction supersedes exactly as at receipt (supersede_corrected_in_txn),
+    its own message being the raw message the row came from.
+    `later_correction` as for write_observation_in_txn."""
+    from services import lab_observations
+    row = lab_observations.unlinked_result(db, int(observation_id))
+    if row is None:
+        raise LookupError(f"observation {observation_id} is not a result with no patient")
+    cur = db.execute(
+        "UPDATE observations SET patient_id = ? WHERE id = ? AND patient_id IS NULL",
+        (patient_id, int(observation_id)),
+    )
+    if cur.rowcount != 1:  # pragma: no cover - checked just above on this transaction
+        raise LookupError(f"observation {observation_id} already has a patient")
+    superseded: list[int] = []
+    if later_correction and later_correction.get("outcome") == "supersede":
+        _store_superseded_on_attach_in_txn(
+            db, observation_id=int(observation_id), decision=later_correction,
+            patient_id=patient_id, source=row["source"], previous_status=row["status"],
+            code=row["observation_code"], correlation_id=correlation_id, actor=actor)
+        return int(observation_id), superseded
+    if _corrections_on() and str(row["status"] or "").strip().upper() == "C":
+        superseded = supersede_corrected_in_txn(
+            db, new_id=int(observation_id), patient_id=patient_id,
+            code=row["observation_code"], sub_id=row["obx_sub_id"], placer=row["obr_placer"],
+            filler=row["obr_filler"], sender=row["hl7_sender"], source=row["source"],
+            event_id=row["source_event_id"], sibling_in_message=sibling_in_message,
+            correlation_id=correlation_id, actor=actor)
+    return int(observation_id), superseded
+
+
+# ── A result attached late, after a correction of it ────────────────────────
+# The unmatched results queue can attach a result long after the laboratory
+# sent a correction of it: the final waited in the queue while its correction
+# was attached first, or reached the chart at receipt. Written as it stands,
+# the stale final would be the newest row (the same observed time, a higher
+# id), so the ward pack would show only the stale value and Tier 1 would read
+# it first. later_correction_for_attach says what to do before anything is
+# written.
+
+#: Why a late attach is refused, as later_correction_for_attach reports it.
+LATE_ORDER_UNKNOWN = "message_order_unknown"
+LATE_CORRECTIONS_OFF = "corrections_switched_off"
+LATE_SEVERAL_CORRECTIONS = "several_later_corrections"
+LATE_NOT_A_FINAL = "not_a_final_result"
+LATE_CORRECTION_REPLACED_ANOTHER = "correction_already_replaced_a_result"
+LATE_OTHER_RESULTS = "other_results_on_this_order"
+LATE_SIBLINGS = "several_results_in_message"
+
+
+def later_correction_for_attach(
+    db,
+    *,
+    patient_id: str,
+    code: Optional[str],
+    sub_id: Optional[str],
+    placer: Optional[str],
+    filler: Optional[str],
+    sender: Optional[str],
+    source: Optional[str],
+    status: Optional[str],
+    event_id: Optional[int],
+    own_id: Optional[int] = None,
+    sibling_in_message: bool = False,
+) -> dict:
+    """Whether a correction sent AFTER this result already stands on the
+    patient's chart, for a result the unmatched results queue is about to
+    attach (lis-19 with lis-20). Reads only; the caller decides and writes.
+
+    A correction counts when it is live, an external OBX-11 'C' not released
+    by the laboratory module, for the same patient, test code, OBX-4 sub-id,
+    sender, lane and order (correction_order) as this result, and came in a
+    LATER message (a higher ingestion event id) than this one. Returns:
+      {"outcome": "none"} when there is no such correction: attach as usual;
+      {"outcome": "supersede", "correction_id", "matched_on"} when the picture
+        is exactly what receipt in order would have made of it: one such
+        correction, ORB_RESULT_CORRECTIONS on, this result a final (or an
+        earlier correction), the correction replacing nothing yet, no other
+        final on the chart for this test and order, and nothing else under
+        this test and order in this result's own message. The result is then
+        stored already superseded by it;
+      {"outcome": "refuse", "reason", "candidates"} otherwise (strictest
+        option, held for Samuel): the result would land in front of a later
+        correction and Orb cannot say which result that correction replaces,
+        or which message came first. Nothing is written; the queue says why,
+        and laboratory staff discard it or ask the laboratory.
+    """
+    from services import lab_observations
+    code = (code or "").strip()
+    if not patient_id or not code or not ((placer or "").strip() or (filler or "").strip()):
+        return {"outcome": "none"}
+    rows = lab_observations.live_results_for_test(
+        db, patient_id=patient_id, code=code, sub_id=sub_id, sender=sender, source=source,
+        exclude_id=own_id)
+    same_order = []
+    for row in rows:
+        matched_on = correction_order(placer, filler, row["obr_placer"], row["obr_filler"])
+        if matched_on:
+            same_order.append((row, matched_on))
+    corrections = [(r, m) for r, m in same_order
+                   if r["is_correction"] and r["lab_result_id"] is None]
+    if not corrections:
+        return {"outcome": "none"}
+    ids = [int(r["id"]) for r, _ in corrections]
+    if event_id is None or any(r["source_event_id"] is None for r, _ in corrections):
+        return {"outcome": "refuse", "reason": LATE_ORDER_UNKNOWN, "candidates": ids}
+    later = [(r, m) for r, m in corrections if int(r["source_event_id"]) > int(event_id)]
+    if not later:
+        return {"outcome": "none"}
+    later_ids = [int(r["id"]) for r, _ in later]
+
+    def refuse(reason: str) -> dict:
+        return {"outcome": "refuse", "reason": reason, "candidates": later_ids}
+
+    if not _corrections_on():
+        return refuse(LATE_CORRECTIONS_OFF)
+    if len(later) > 1:
+        return refuse(LATE_SEVERAL_CORRECTIONS)
+    if str(status or "final").strip().lower() not in lab_observations.CORRECTABLE_STATUSES:
+        return refuse(LATE_NOT_A_FINAL)
+    correction, matched_on = later[0]
+    if correction["replaced_another"]:
+        return refuse(LATE_CORRECTION_REPLACED_ANOTHER)
+    others = [r for r, _ in same_order if int(r["id"]) != int(correction["id"])
+              and str(r["status"] or "final").strip().lower()
+              in lab_observations.CORRECTABLE_STATUSES]
+    if others:
+        return refuse(LATE_OTHER_RESULTS)
+    siblings = [
+        r for r in lab_observations.same_message_results(
+            db, event_id=event_id, code=code, sub_id=sub_id, sender=sender, source=source,
+            exclude_id=-1 if own_id is None else int(own_id))
+        if correction_order(placer, filler, r["obr_placer"], r["obr_filler"])
+    ]
+    if sibling_in_message or siblings:
+        return refuse(LATE_SIBLINGS)
+    return {"outcome": "supersede", "correction_id": int(correction["id"]),
+            "matched_on": matched_on}
+
+
+def later_correction_for_event(db, evt: CanonicalEvent, patient_id: str, *,
+                               event_id: Optional[int], source_label: str,
+                               sibling_in_message: bool = False) -> dict:
+    """later_correction_for_attach for a parsed result not written yet."""
+    placer = None if evt.group_id_generated else evt.obr_placer
+    return later_correction_for_attach(
+        db, patient_id=patient_id, code=evt.observation_code, sub_id=evt.obx_sub_id,
+        placer=placer, filler=evt.obr_filler, sender=evt.hl7_sender, source=source_label,
+        status=evt.status, event_id=event_id, sibling_in_message=sibling_in_message)
+
+
+def later_correction_for_unlinked(db, observation_id: int, patient_id: str, *,
+                                  sibling_in_message: bool = False) -> dict:
+    """later_correction_for_attach for a result stored with no patient (a row
+    the sweep copied). {"outcome": "none"} when the id names no such row;
+    the attach itself then refuses it."""
+    from services import lab_observations
+    row = lab_observations.unlinked_result(db, int(observation_id))
+    if row is None:
+        return {"outcome": "none"}
+    return later_correction_for_attach(
+        db, patient_id=patient_id, code=row["observation_code"], sub_id=row["obx_sub_id"],
+        placer=row["obr_placer"], filler=row["obr_filler"], sender=row["hl7_sender"],
+        source=row["source"], status=row["status"], event_id=row["source_event_id"],
+        own_id=int(row["id"]), sibling_in_message=sibling_in_message)
+
+
+def _store_superseded_on_attach_in_txn(
+    db,
+    *,
+    observation_id: int,
+    decision: dict,
+    patient_id: str,
+    source: Optional[str],
+    previous_status: Optional[str],
+    code: Optional[str],
+    correlation_id: Optional[str],
+    actor: Optional[dict],
+) -> None:
+    """Mark a result just attached from the unmatched results queue as
+    superseded by the correction that was sent after it, with a fail-closed
+    clinical_access audit row on the caller's transaction: if the row cannot
+    be written, the attach rolls back with it."""
+    correction_id = int(decision["correction_id"])
+    cur = db.execute(
+        "UPDATE observations SET status = 'superseded', superseded_by = ? "
+        "WHERE id = ? AND superseded_by IS NULL",
+        (correction_id, int(observation_id)),
+    )
+    if cur.rowcount != 1:  # pragma: no cover - the row was written on this transaction
+        raise LookupError(f"observation {observation_id} could not be marked superseded")
+    actor = actor or {}
+    log_audit_event(
+        correlation_id=correlation_id or str(uuid.uuid4()),
+        event_category="clinical_access",
+        action_type="observation_superseded",
+        outcome="success",
+        db=db,
+        actor_user_id=actor.get("user_id"),
+        actor_role=actor.get("role"),
+        patient_id=patient_id,
+        source_type=source,
+        target_type="observations",
+        target_id=str(observation_id),
+        summary_message=(f"Result {observation_id} attached from the unmatched results queue "
+                         f"already superseded by corrected result {correction_id}, which the "
+                         "laboratory sent after it"),
+        metadata={"superseded_by": correction_id, "matched_on": decision.get("matched_on"),
+                  "previous_status": previous_status, "observation_code": code,
+                  "attached_after_correction": True},
+    )
+
+
+def unlinked_observations_not_queued(db, *, limit: int = 500, exclude_sources=(),
+                                     exclude_code_systems=()) -> list:
+    """Results stored with no patient that the unmatched results queue does
+    not hold yet, oldest first: the queue's one-time sweep (lis-19). Read
+    through services/lab_observations.py like every other read. The two
+    exclusions leave out device lanes' metrics, which the queue never takes."""
+    from services import lab_observations
+    return lab_observations.unlinked_results_not_queued(
+        db, limit=limit, exclude_sources=exclude_sources,
+        exclude_code_systems=exclude_code_systems)

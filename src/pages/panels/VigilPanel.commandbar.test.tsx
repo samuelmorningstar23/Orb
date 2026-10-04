@@ -579,7 +579,7 @@ describe('the bed badge', () => {
     expect(badge.textContent).toBe('NEWS2 5 · ELEVATED')
     expect(badge.getAttribute('title')).toBe(
       'NEWS2 5 (elevated) · a single parameter scores 3 · SpO₂ Scale 2. '
-      + 'NEWS2 aggregate (RCP early-warning table), not a validated probability',
+      + 'NEWS2 aggregate (RCP NEWS2 chart), not a validated probability',
     )
   })
 })

@@ -893,6 +893,56 @@ def void_incident(incident_id: int, *, actor_user_id: str, reason: str,
 # DISCHARGE DISPOSITION
 # ═════════════════════════════════════════════════════════════════════════════
 
+def _adt_disposition_on(conn, patient_id: str, admission_id: Optional[str],
+                        when: datetime) -> Optional[dict]:
+    """The live disposition the end of stay (source 'adt', adt-8a) wrote for
+    the stay the desk is keying, or None.
+
+    With an admission named, only that admission's row. Without one, the row
+    whose stay window holds `when`: from the stay start (the recorded arrival,
+    else when the admission was written) to 24 hours after the recorded end,
+    nearest the end. The same window the end of stay uses to find a row the
+    desk keyed first, so either order gives one row. The window never reaches
+    into a later stay of the same patient: a readmission inside the 24 hours
+    is its own stay, and its disposition must not overwrite this one. None on
+    a database without migration 59's columns."""
+    cols = {r[1] for r in conn.execute(
+        "PRAGMA table_info(nabh_discharge_dispositions)").fetchall()}
+    if not {"source", "voided_at", "needs_reconciliation"} <= cols:
+        return None
+    rows = [dict(r) for r in conn.execute(
+        "SELECT d.id, d.admission_id, d.occurred_at, "
+        "COALESCE(a.admitted_at, a.created_at) AS stay_start "
+        "FROM nabh_discharge_dispositions d LEFT JOIN admissions a ON a.id = d.admission_id "
+        "WHERE d.patient_id = ? AND d.source = 'adt' AND d.voided_at IS NULL "
+        "ORDER BY d.id DESC",
+        (patient_id,),
+    ).fetchall()]
+    if admission_id:
+        return next((r for r in rows if r["admission_id"] == admission_id), None)
+    if not rows:
+        return None
+    stay_starts = [t for t in (_dt(r[0]) for r in conn.execute(
+        "SELECT COALESCE(admitted_at, created_at) FROM admissions WHERE patient_id = ?",
+        (patient_id,),
+    ).fetchall()) if t is not None]
+    best: Optional[tuple[float, dict]] = None
+    for row in rows:
+        end = _dt(row["occurred_at"])
+        if end is None:
+            continue
+        start = _dt(row.get("stay_start")) or end - timedelta(hours=24)
+        upper = end + timedelta(hours=24)
+        later = [t for t in stay_starts if t > start and end <= t <= upper]
+        if later:
+            upper = min(upper, min(later) - timedelta(seconds=1))
+        if start <= when <= upper:
+            gap = abs((when - end).total_seconds())
+            if best is None or gap < best[0]:
+                best = (gap, row)
+    return best[1] if best else None
+
+
 def record_disposition(
     *, patient_id: str, disposition: str, occurred_at: Optional[str] = None,
     admission_id: Optional[str] = None, recorded_by: Optional[str] = None,
@@ -918,6 +968,28 @@ def record_disposition(
         raise NabhError("future_disposition", "occurred_at is in the future")
 
     def _work(conn) -> dict:
+        # Beds and admissions (adt-8a): the end of stay may already have
+        # written this stay's disposition (source 'adt'). The desk keying the
+        # same stay at another instant would add a second row and double the
+        # mortality numerator, so that row is corrected in place instead: the
+        # desk's value is kept, as any desk correction is, and a value that
+        # differs from what the end of stay recorded is flagged for a person.
+        # Only rows the module wrote are matched, so a site that never turned
+        # ORB_ADT on writes exactly what it always wrote.
+        recorded = _adt_disposition_on(conn, patient_id, admission_id, when)
+        if recorded is not None:
+            conn.execute(
+                "UPDATE nabh_discharge_dispositions SET disposition = ?, "
+                "admission_id = COALESCE(admission_id, ?), "
+                "recorded_by = COALESCE(?, recorded_by), notes = COALESCE(?, notes), "
+                "needs_reconciliation = CASE WHEN disposition <> ? THEN 1 "
+                "ELSE needs_reconciliation END, updated_at = ? WHERE id = ?",
+                (disposition, (admission_id or None), (recorded_by or None), (notes or None),
+                 disposition, _iso(_now()), recorded["id"]),
+            )
+            return dict(conn.execute(
+                "SELECT * FROM nabh_discharge_dispositions WHERE id = ?", (recorded["id"],)
+            ).fetchone())
         conn.execute(
             "INSERT INTO nabh_discharge_dispositions (patient_id, admission_id, "
             "disposition, occurred_at, recorded_by, notes, created_at, updated_at) "
@@ -943,13 +1015,18 @@ def record_disposition(
 
 def list_dispositions(*, period_start: Optional[str] = None,
                       period_end: Optional[str] = None,
-                      limit: int = 500, db: Any = None) -> dict:
+                      limit: int = 500, db: Any = None,
+                      include_voided: bool = False) -> dict:
+    """The dispositions recorded in the period. A disposition voided because
+    the stay it described was reopened (migration 59, adt-8b) is left out
+    unless `include_voided`: it is kept as evidence, never counted."""
     start, end = resolve_period(period_start, period_end, default_days=90)
 
     def _work(conn) -> dict:
         rows = [dict(r) for r in conn.execute(
             "SELECT * FROM nabh_discharge_dispositions WHERE "
             + _in_window("occurred_at")
+            + ("" if include_voided else " AND voided_at IS NULL")
             + " ORDER BY occurred_at DESC LIMIT ?",
             (_iso(start), _iso(end), max(1, min(int(limit), 2000))),
         ).fetchall()]
@@ -1298,6 +1375,125 @@ def _overlap_hours(a_start: datetime, a_end: datetime,
     return max(0.0, (hi - lo).total_seconds() / 3600.0)
 
 
+def _per_stay_counting_on(db) -> bool:
+    """True when the beds and admissions module is not off AND at least one
+    admission carries what only it writes (an arrival time or an end type,
+    migration 58). Then each stay is visible and inpatient days count per
+    stay. With the module off nothing changes, whatever the data says."""
+    import config
+
+    if config.module_state("adt") == "off":
+        return False
+    cols = {r[1] for r in db.execute("PRAGMA table_info(admissions)").fetchall()}
+    if not {"admitted_at", "discharge_type", "discharged_at"} <= cols:
+        return False
+    return db.execute(
+        "SELECT 1 FROM admissions WHERE discharge_type IS NOT NULL OR admitted_at IS NOT NULL LIMIT 1"
+    ).fetchone() is not None
+
+
+def _inpatient_days_per_stay(db, start: datetime, horizon: datetime,
+                             ward: Optional[str]) -> dict:
+    """Inpatient-days inside [start, horizon), one stay at a time (adt-8a).
+
+    Each admission counts from its start (the recorded arrival time, else when
+    the admission was written) to its end: the end of stay the module recorded
+    (admissions.discharged_at), else, for a stay still active, the end of the
+    window, else the first discharge summary at or after its start, else the
+    patient's last vital signs after its start. A ward filter takes the ward
+    each stay was recorded on. A patient with no admission row at all (records
+    written before admissions existed) is counted from patients.admission_date
+    as the older method did, so nobody counted before drops out."""
+    stays = [dict(r) for r in db.execute(
+        "SELECT a.id, a.patient_id, a.ward, a.status, a.admitted_at, a.created_at, "
+        "a.discharged_at FROM admissions a"
+    ).fetchall()]
+    with_stays = {s["patient_id"] for s in stays}
+    stays = _ward_filter(stays, ward)
+
+    summaries: dict[str, list[datetime]] = {}
+    for row in db.execute("SELECT patient_id, discharged_at FROM discharge_summaries").fetchall():
+        when = _dt(row["discharged_at"])
+        if when:
+            summaries.setdefault(row["patient_id"], []).append(when)
+    for times in summaries.values():
+        times.sort()
+    last_vital: dict[str, datetime] = {}
+    for row in db.execute(
+        "SELECT patient_id, MAX(timestamp) AS t FROM vitals GROUP BY patient_id"
+    ).fetchall():
+        when = _dt(row["t"])
+        if when:
+            last_vital[row["patient_id"]] = when
+
+    hours = 0.0
+    counted: set[str] = set()
+    open_stays = assumed_ends = stay_count = 0
+    for stay in stays:
+        stay_start = _dt(stay.get("admitted_at")) or _dt(stay.get("created_at"))
+        if stay_start is None:
+            continue
+        stay_end = _dt(stay.get("discharged_at"))
+        if stay_end is None or stay_end < stay_start:
+            if (stay.get("status") or "active") == "active":
+                stay_end = horizon
+                open_stays += 1
+            else:
+                later = [t for t in summaries.get(stay["patient_id"], []) if t >= stay_start]
+                if later:
+                    stay_end = later[0]
+                else:
+                    vital = last_vital.get(stay["patient_id"])
+                    stay_end = vital if vital and vital >= stay_start else stay_start
+                    assumed_ends += 1
+        overlap = _overlap_hours(stay_start, stay_end, start, horizon)
+        if overlap > 0:
+            hours += overlap
+            counted.add(stay["patient_id"])
+            stay_count += 1
+
+    # Patients with no admission row: the older, per-patient method.
+    legacy = [dict(r) for r in db.execute(
+        "SELECT id, ward, admission_date, status FROM patients "
+        "WHERE COALESCE(status, 'admitted') <> 'registered'"
+    ).fetchall()]
+    legacy = _ward_filter([p for p in legacy if p["id"] not in with_stays], ward)
+    for patient in legacy:
+        stay_start = _dt(patient.get("admission_date"))
+        if stay_start is None:
+            continue
+        times = summaries.get(patient["id"], [])
+        stay_end = times[-1] if times else None
+        if stay_end is None or stay_end <= stay_start:
+            if (patient.get("status") or "admitted").strip() == "admitted":
+                stay_end = horizon
+                open_stays += 1
+            else:
+                stay_end = last_vital.get(patient["id"]) or stay_start
+                assumed_ends += 1
+        overlap = _overlap_hours(stay_start, stay_end, start, horizon)
+        if overlap > 0:
+            hours += overlap
+            counted.add(patient["id"])
+            stay_count += 1
+
+    return {
+        "inpatient_days": round(hours / 24.0, 1),
+        "patients": len(counted),
+        "stays": stay_count,
+        "open_stays": open_stays,
+        "assumed_ends": assumed_ends,
+        "method": (
+            "Counted per stay: each admission from its start (the recorded arrival "
+            "time, else when the admission was recorded) to its recorded end of stay, "
+            "within the period and up to now. A stay still open counts to the end of "
+            "the period; an ended stay with no recorded end is closed at the first "
+            "discharge summary after it began, else at the patient's last recorded "
+            "vital signs. Repeat stays inside the period are each counted. A patient "
+            "with no admission record is counted from their admission date."),
+    }
+
+
 def _inpatient_days(db, start: datetime, end: datetime, ward: Optional[str]) -> dict:
     """Inpatient-days inside [start, end), and an honest account of how.
 
@@ -1317,6 +1513,11 @@ def _inpatient_days(db, start: datetime, end: datetime, ward: Optional[str]) -> 
     if horizon <= start:
         return {"inpatient_days": 0.0, "patients": 0, "open_stays": 0,
                 "assumed_ends": 0, "method": "window has not started"}
+
+    # Beds and admissions (adt-8a): once the module is on and has recorded
+    # stays, count every stay, not only each patient's current one.
+    if _per_stay_counting_on(db):
+        return _inpatient_days_per_stay(db, start, horizon, ward)
 
     # A 'registered' row (migration 52) is a person on the patient index who
     # has never been admitted: they have no stay, so they add no inpatient-day.
@@ -1641,12 +1842,17 @@ def _escalation_ack_compliance(db, start: datetime, end: datetime,
 
 
 def _disposition_base(db, start: datetime, end: datetime, ward: Optional[str]) -> dict:
-    """The shared, coverage-gated denominator for mortality and LAMA."""
+    """The shared, coverage-gated denominator for mortality and LAMA.
+
+    Voided dispositions (migration 59: a stay reopened as recorded in error)
+    are never counted. The end of stay (adt-8a) writes at most one live row
+    per admission, so an automatic row and a records-desk row for one death
+    are one row here, not two."""
     ward_join = " JOIN patients p ON p.id = d.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
     ward_params: list[Any] = [_ward_key(ward)] if ward else []
     rows = [dict(r) for r in db.execute(
         "SELECT d.disposition AS disposition FROM nabh_discharge_dispositions d" + ward_join
-        + " WHERE " + _in_window("d.occurred_at"),
+        + " WHERE " + _in_window("d.occurred_at") + " AND d.voided_at IS NULL",
         (*ward_params, _iso(start), _iso(end)),
     ).fetchall()]
 

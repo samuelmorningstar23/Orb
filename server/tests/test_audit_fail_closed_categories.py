@@ -87,7 +87,8 @@ def emitted_categories(root: Path = SERVER_ROOT) -> dict[str, list[str]]:
 # shipped is the dead-guard failure this file exists for, so check it then.
 _PRE_REGISTERED = {
     "patient_identity": "opd-4 registration_service (W4-A)",
-    "patient_movement": "adt-3 adt_service (W3-B)",
+    # patient_movement left this list with its writer: services/adt/core.py
+    # (adt-3, W3-B, 4 October 2026).
 }
 
 

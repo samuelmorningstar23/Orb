@@ -1,0 +1,416 @@
+/* QuarantineQueue.css: Orb "Quiet Clinical" (flat).
+ *
+ * The unmatched results queue, on the Laboratory screen and read only on the
+ * administrator's monitor.
+ *
+ *  - No `opacity` for state anywhere; a disabled button takes the flat
+ *    disabled pair.
+ *  - Status is a border on an ordinary surface. Small status text uses the
+ *    --status-*-text tokens; everything else stays in the body tokens.
+ *  - Tap targets are at least 24px, and 44px under `pointer: coarse`.
+ *  - Wide content scrolls inside its own frame, never the page.
+ */
+
+.rq {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+}
+
+/* On the administrator's monitor it sits below the feed table as its own card. */
+.rq--monitor {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.rq-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rq-title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.rq-sub,
+.rq-status,
+.rq-empty {
+  margin: 0;
+  max-width: 72ch;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+/* Notes: switched off, done, could not load */
+
+.rq-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-info);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.rq-note--done {
+  border-left-color: var(--status-ok);
+}
+
+.rq-note--error {
+  border-left-color: var(--status-danger);
+}
+
+.rq-note__body {
+  margin: 0;
+}
+
+/* Counts and the filter */
+
+.rq-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.rq-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.rq-counts strong {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.rq-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.rq-filter {
+  min-height: 28px;
+  padding: 5px 12px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-full);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.rq-filter:hover {
+  background: var(--bg-glass-hover);
+  color: var(--text-primary);
+}
+
+.rq-filter--on {
+  border-color: var(--accent-deep);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* The administrator's read-only table */
+
+.rq-table-wrap {
+  min-width: 0;
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.rq-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.rq-table th,
+.rq-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.rq-table th {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* The laboratory's list */
+
+.rq-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rq-item {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-warn);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.rq-item--attached {
+  border-left-color: var(--status-ok);
+}
+
+.rq-item--discarded {
+  border-left-color: var(--border-glass);
+}
+
+.rq-item__main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rq-item__title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.rq-item__value {
+  font-variant-numeric: tabular-nums;
+}
+
+.rq-item__meta,
+.rq-item__note,
+.rq-item__decision {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.rq-item__decision {
+  color: var(--text-primary);
+}
+
+/* Final, corrected or preliminary: the reconciler needs it to tell a stale
+   final from its correction, so it reads in the body colour, not muted. */
+.rq-item__result-status {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.rq-identity {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 6px 16px;
+  margin: 0;
+}
+
+.rq-identity div {
+  min-width: 0;
+}
+
+.rq-identity dt {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.rq-identity dd {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.rq-item__actions,
+.rq-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* The attach and discard forms */
+
+.rq-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.rq-form__help,
+.rq-form__error,
+.rq-checks,
+.rq-form__actions,
+.rq-field--wide {
+  grid-column: 1 / -1;
+}
+
+.rq-form__help {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.rq-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.rq-field input,
+.rq-field textarea {
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+}
+
+.rq-field input:focus-visible,
+.rq-field textarea:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.rq-form__error {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--status-danger-text);
+}
+
+.rq-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rq-check {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.rq-check--match {
+  border-left-color: var(--status-ok);
+}
+
+.rq-check--no_match,
+.rq-check--names_another_patient,
+.rq-check--shared_with_another_patient {
+  border-left-color: var(--status-danger);
+}
+
+.rq-check__kind {
+  min-width: 120px;
+  font-weight: 600;
+}
+
+/* Buttons */
+
+.rq-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 7px 14px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 550;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rq-btn:hover {
+  background: var(--bg-glass-hover);
+}
+
+.rq-btn--primary {
+  border-color: var(--accent-deep);
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+}
+
+.rq-btn--primary:hover {
+  background: var(--accent-deep);
+  border-color: var(--border-focus);
+}
+
+.rq-btn--danger {
+  border-color: var(--status-danger);
+}
+
+.rq-btn:disabled,
+.rq-btn--primary:disabled {
+  border-color: var(--btn-disabled-border);
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  cursor: not-allowed;
+}
+
+.rq-btn:focus-visible,
+.rq-filter:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .rq-btn,
+  .rq-filter,
+  .rq-field input,
+  .rq-field textarea { min-height: 44px; }
+}

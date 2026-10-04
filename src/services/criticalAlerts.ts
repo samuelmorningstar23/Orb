@@ -319,7 +319,7 @@ function onEmergencyIntake(data: EmergencyIntakePayload | null | undefined): voi
   const surgeryId = data?.surgery_id ?? '';
   fireAlert({
     title: '⚠ Emergency surgery intake',
-    body: 'A new emergency case requires triage in the Surgical Suite.',
+    body: 'A new emergency case is waiting in the Surgical Suite.',
     tag: surgeryId ? `orb-surgery-${surgeryId}` : 'orb-surgery-emergency',
   });
 }

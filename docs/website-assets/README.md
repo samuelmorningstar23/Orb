@@ -66,7 +66,10 @@ orbsuite.com embeds the real front end with no backend: `vite build --config vit
 The website shows scripted workflows rather than the whole product: `demo/scripts.ts` holds one script per workflow (the steps the demo performs and the caption for each), `?script=<id>` locks the app to it (no sidebar, no palette) and the site steps through it. Each workflow also gets its own small recording, `fixtures/flow-<id>.json`, which is all a scripted demo loads; the persona file is only the fallback for a request outside the workflow. Every recording carries `recorded_at`, and the demo pins its clock to the end of the recording, so the ages on screen read as they did on the day it was recorded.
 
 ```bash
+# backend started with ORB_MFA_REQUIRED_ROLES= and ORB_EXTRACT_TIMEOUT_SECONDS=420 (the note extraction that fills the pharmacist queue can take over two minutes on a busy GPU)
 ORB_THEMES=dark ORB_SHOTS_DIR=/tmp/rec-shots ORB_FRAMES_DIR=/tmp/rec-frames ORB_VIDEO_DIR=/tmp/rec-video node docs/website-assets/capture.cjs --record
+# one flow again, appended to the persona's existing recording:
+node docs/website-assets/capture.cjs --record --merge --only scribe
 ```
 
 Known cosmetic quirk in the seeded data: the Bridge follow-up calendar labels a week that straddles two months by the earlier month (the week of 30 Aug to 5 Sep reads Aug 2026). Screens that look sparse on seed data and would benefit from richer seeding: Front Desk (no OPD queue), Pharmacy overview and patient board (no pharmacy orders), Forecast admission patterns (no admission history), Admin ingestion (no ingestion events).

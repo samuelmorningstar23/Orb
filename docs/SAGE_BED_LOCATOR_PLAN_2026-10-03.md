@@ -1,6 +1,6 @@
 # Sage bed lookup: build plan, 3 October 2026
 
-Status: RULED (R026 (a), D2 to D4, Q1 to Q3, A to F, G, H). Attempts 2 to 6 failed review and were backed out; main is dd5203b. Attempt 7 (attempt 6 plus the fixes below) was built on 4 October, failed review against ruling G and was backed out (see the findings doc, "Attempt 7 review"). Next step: Samuel's call.
+Status: RULED (R026 (a), D2 to D4, Q1 to Q3, A to F, G, H). Attempts 2 to 6 failed review and were backed out; main is dd5203b. Attempt 7 (attempt 6 plus the fixes below) was built on 4 October, failed review against ruling G and was backed out (see the findings doc, "Attempt 7 review"). Attempt 8 was MEASURED (prototype in the scratchpad only, never on main), see "Attempt 8"; build awaits Samuel.
 Reads with: docs/SAGE_BED_LOCATOR_FINDINGS_2026-10-03.md (the defect and why the first fix was backed out).
 
 ## The idea in one paragraph
@@ -221,3 +221,28 @@ As built (4 October), with these details settled during the build:
 - The history memo keeps the census list it was read against, so an id() reuse can never serve another list's reading.
 Tests: tests/test_sage_bed_locator.py, 633 tests (with test_sage_name_match_bounds.py, 652 pass); 472 fail on the code before this work. The attempt 6 reviewer's probe sets re-run: 0 wrong charts in every realistic set (old code 77), no regressions, 3 labelled misses the old code also got wrong ("ICU-02 hr 140", "SX-17 potassium?" with no reach verb; "bed 45 2 vomits", since fixed). Code, patches and probe output: docs/archive/bed-locator-attempt7-2026-10-04/; pre-change copies: docs/archive/pre-bed-locator-a7-2026-10-04/.
 
+## Attempt 8 (4 October, measured, not built): the closed list moves to the certain side
+
+Samuel chose to measure this before any build. Attempts 3 to 7 listed what makes a bed word NOT a bed, so every unlisted word stayed a certain bed and a wrong chart. Attempt 8 lists what makes it CERTAIN; every other shape is unsure, which means Sage asks when that bed is occupied and reads it as text when it is not.
+
+A bed written with a bed word is certain only when:
+- a recognised lead-in comes right before the bed word: "how is", "summarise", "update on", "who is in", "the patient in", "of", "for", "about", "compare", "is", an order verb ("give", "start", "hold"...), or a measure or drug word with "in / on / at" ("her potassium in bed 15"); or
+- it starts the message, a line or a sentence (or follows "and", "to", "from", "ok", a plain comma...), AND a recognised continuation follows the label: the end of the clause, a list, a measure ("HR 140", "day 3" with its number), a drug, an order verb ("bed 12 start ceftriaxone"), a handover word ("h/o", "k/c/o", "d/c", "post-op", "today", "is", "has"...), or a number;
+- or it sits inside a label of OUR ward written whole ("ICU Bed 3" where that is our bed), or beside a ward of ours ("ward 6 bed 12", "GM-1 bed 2").
+Anything else is unsure: another unit's name before "bed" ("transferred from ICU bed 12"), a posture ("flat in bed 12 hr"), a pronoun ("her bed 10 metres from the station"), an unknown continuation ("bed 12 noon onwards"), "beds" with a single number ("total no. of beds 30"). Units that double as measures ("hr", "day", "o") continue a reference only with a number after them. One-letter codes of ours ("K4") follow the same rule, and a decimal after one ("K3.2") is a value. A spelled number needs a plain space after the bed word ("pillows in bed: two" is text).
+
+Measured in the scratchpad against every reviewer's question set (911 rows, OLD = the committed code):
+
+| | Attempt 7 | Attempt 8 prototype | Old code |
+|---|---|---|---|
+| Wrong charts, realistic sets (numbered ward + GM naming) | 2 (unlabelled) | 0 | 91 |
+| R or U rows across ALL probe sets, attack sets included | 66 (B1, B2, B3, census, U-same) | 0 | n/a |
+| Ask rate, realistic sets | 0 to 20%; orders 10% | the same: 0 to 20%; orders 10% | 25 to 75% (mostly wrong) |
+| Labelled misses (L) | 11 | 11 | n/a |
+| False no-match or lost chart (F) | 7 | 6 | n/a |
+
+What it costs, phrasings that were a certain bed in attempt 7 and now ask (the bed is still named in the question): "bed 12 drops sats when flat", "bed 12 feet are cold", "she was in bed 12 last night, how is she now?", "bed 12 A potassium?", "bed 12 a bit better today?". What it fixes: all 30 B1 phrasings and the 3 census ones now ask (numbered ward) or keep the open chart labelled (GM ward, where attempt 7 said no match); all 24 B2 phrasings and the 3 B3 ones ask or keep the chart. The L rows are labelled open-chart answers the old code also gave: spelled beds followed by words ("bed twelve potassium?"), another department's code with no reach verb ("SX-17 potassium?"), "bed 45 2 days post op".
+
+Open ruling before a build: "Bed 12, 56, k/c/o DM" (age first, no sex) is no match under D3, because 56 reads as a second bed. Options: (a) keep D3 (safe, the clinician retypes); (b) after a singular "bed", a comma item is a bed only with its own bed word ("bed 12, bed 45"), so case presentations work, but "bed 12, 45 potassium?" then answers bed 12 alone.
+
+Build checklist if approved: start from main with the ward-matcher work's services/ward_reference.py (wards through ward_named_in with the text as typed; keep tests/test_ward_reference.py green); attempt 7's code plus the prototype diff (docs/archive/bed-locator-attempt8-measure-2026-10-04/a7_to_a8_prototype.diff); fix the quadratic whitespace patterns the attempt 7 review found (no `\s*-?\s*`); put the label on reloaded order turns (/history shows the stored safe answer); tests for every attempt 7 review row; then the guard suite and a fresh review against ruling G.

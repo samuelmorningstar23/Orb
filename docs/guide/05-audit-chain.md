@@ -122,7 +122,7 @@ sequenceDiagram
 
 ### `server/services/audit_service.py`
 
-### `_HASH_FIELDS`: `server/services/audit_service.py:154`
+### `_HASH_FIELDS`: `server/services/audit_service.py:207`
 **Signature:** module constant: `tuple[str, ...]` (20 field names)
 **Does:** Defines exactly which columns, in which order, participate in every row's hash.
 **How it works:** A frozen tuple consumed by `compute_audit_row_hash`; order and membership are declared "part of the chain contract, do NOT reorder without a schema bump" (`audit_service.py:39-40`).
@@ -416,7 +416,7 @@ The router: `APIRouter(prefix="/api/flight-recorder", tags=["flight-recorder"])`
 
 ### `src/components/FlightRecorder.tsx`
 
-### `SOURCE_META`: `src/components/FlightRecorder.tsx:39`
+### `SOURCE_META`: `src/components/FlightRecorder.tsx:47`
 **Signature:** `Record<EventSource, {label, color}>`
 **Does:** Maps the three sources to display labels and marker colors (audit blue `#0a84ff`, event purple `#bf5af2`, order orange `#ff9f0a`).
 **Gotchas:** Hard-coded hex, not theme tokens, identical in light and dark themes.
@@ -477,24 +477,22 @@ The router: `APIRouter(prefix="/api/flight-recorder", tags=["flight-recorder"])`
 
 ### `src/pages/panels/admin/CorrelationTrace.tsx`
 
-### `PIPELINE_ORDER` / `stepIndex`: `src/pages/panels/admin/CorrelationTrace.tsx:11,22`
-**Signature:** `string[]` and `(action: string) → number`
-**Does:** Define a canonical ingestion-pipeline ordering (request received → parse → vital inserted → NEWS2 recomputed → alerts) with unknown actions ranked last.
-**Gotchas:** **Dead code**, `stepIndex` is never called anywhere in the file; the rendered order is purely timestamp sort (`CorrelationTrace.tsx:39`). See Discrepancies.
+### Removed: the unused pipeline ordering
+**Was:** `PIPELINE_ORDER` (`string[]`) and `stepIndex` (`(action: string) → number`), a canonical ingestion-pipeline ordering (request received → parse → vital inserted → NEWS2 recomputed → alerts) that nothing called. The frontend lint pass deleted both as dead code; only the comment at `src/pages/panels/admin/CorrelationTrace.tsx:10` remains. The rendered order is purely a timestamp sort (`CorrelationTrace.tsx:24`). See Discrepancies.
 
-### `CorrelationTrace({ correlationId })`: `src/pages/panels/admin/CorrelationTrace.tsx:27`
+### `CorrelationTrace({ correlationId })`: `src/pages/panels/admin/CorrelationTrace.tsx:12`
 **Signature:** `({ correlationId: string | null }) → JSX`
 **Does:** Renders every audit event sharing one correlation ID as a vertical animated pipeline (dots, connectors, per-step outcome badges).
 **How it works:**
-1. `fetchTrace(id?)` queries `getAuditLogs({correlation_id, limit: 100})` and sorts ascending by timestamp (`CorrelationTrace.tsx:33-42`).
-2. A `useEffect` on the `correlationId` prop auto-populates the search box and fetches when the user arrives via `AuditLogTable`'s trace link (`CorrelationTrace.tsx:44-49`).
-3. `formatTime` shows `HH:MM:SS.mmm` (millisecond precision matters when pipeline steps are milliseconds apart, `CorrelationTrace.tsx:51-54`); `getNodeColor` maps outcome → status CSS variables (`CorrelationTrace.tsx:56-64`).
-4. Render: search bar; empty/error states; else one node per event, connector line (red when that step failed), colored dot, action title, `OutcomeBadge`, time, summary, and patient/target/actor meta, with a staggered 60 ms animation delay per node (`CorrelationTrace.tsx:101-143`).
+1. `fetchTrace(id?)` queries `getAuditLogs({correlation_id, limit: 100})` and sorts ascending by timestamp (`CorrelationTrace.tsx:18-27`).
+2. A `useEffect` on the `correlationId` prop auto-populates the search box and fetches when the user arrives via `AuditLogTable`'s trace link (`CorrelationTrace.tsx:29-35`).
+3. `formatTime` shows `HH:MM:SS.mmm` (millisecond precision matters when pipeline steps are milliseconds apart, `CorrelationTrace.tsx:37-40`); `getNodeColor` maps outcome → status CSS variables (`CorrelationTrace.tsx:42-50`).
+4. Render: search bar; empty/error states; else one node per event, connector line (red when that step failed), colored dot, action title, `OutcomeBadge`, time, summary, and patient/target/actor meta, with a staggered 60 ms animation delay per node (`CorrelationTrace.tsx:52-132`).
 **Why it exists:** A correlation ID is only useful if you can *see* the causal story; this is the "what happened after that HL7 message arrived" view.
 **Data in/out:** `AuditLog[]` from `GET /api/audit/logs?correlation_id=...`.
 **Talks to:** mounted as the `trace` tab, fed by `AuditLogTable.onTraceClick` (`AdminPanel.tsx:89, 63-66`).
 **Change guide:** To trace beyond audit rows (event bus entries share `correlation_id`, `database.py:562`), fetch `/api/flight-recorder/timeline` filtered client-side by correlation, the timeline shape already includes `correlation_id`.
-**Gotchas:** `fetchTrace` is used inside the effect but not memoized and not in the dependency array (`CorrelationTrace.tsx:44-49`), works because it only reads state setters and the passed id, but a lint pass will flag it.
+**Gotchas:** `fetchTrace` is used inside the effect but not memoized and not in the dependency array (`CorrelationTrace.tsx:29-35`), works because it only reads state setters and the passed id.
 
 ### The four test files: invariants pinned down
 
@@ -563,7 +561,7 @@ Invariants: the timeline merges all three sources, is non-decreasing by `_parse_
 2. **Split correlation IDs per request.** The middleware mints/uses its own correlation ID (`audit_middleware.py:58`) but does not propagate it (e.g. via `request.state`) to route handlers, and routes like ingestion generate their own per-payload IDs (`ingestion_service.py:123-148`). One HTTP request therefore produces audit rows under two different correlation IDs, and `CorrelationTrace` shows only half the story for either ID.
 3. **The middleware safety net is fail-soft.** `api_mutation` is not in `_FAIL_CLOSED_CATEGORIES` (`audit_service.py:31`) and the middleware additionally swallows every audit exception at `logger.debug` level (`audit_middleware.py:87-88`), so if the audit DB is unavailable, mutations proceed unlogged with almost no operational signal. Whether the "no mutation goes unlogged" guarantee (`audit_middleware.py:8-9`) should be best-effort is a policy question worth revisiting.
 4. **Deleting the newest audit row is undetectable by the chain.** A hash chain proves nothing about its own tail: the last row has no successor whose `prev_hash` would break. The DB triggers block in-app deletion, and the Trust Center remediation text suggests exporting chain checkpoints to a WORM store (`compliance_service.py:303-304`), but no checkpoint-export mechanism exists in the codebase.
-5. **Dead code in `CorrelationTrace.tsx`.** `PIPELINE_ORDER` and `stepIndex` (`CorrelationTrace.tsx:11-25`) are defined but never used; the "pipeline step ordering for visual flow" comment describes behavior that does not exist, rendering is timestamp-sorted only (`CorrelationTrace.tsx:39`).
+5. *(resolved since: the frontend lint pass deleted `PIPELINE_ORDER` and `stepIndex`.)* **Dead code in `CorrelationTrace.tsx`.** The two were defined but never used. The "pipeline step ordering for visual flow" comment (`CorrelationTrace.tsx:10`) still describes behaviour that does not exist; rendering is timestamp-sorted only (`CorrelationTrace.tsx:24`).
 6. **Per-keystroke refetch in both admin UIs.** `FlightRecorder.tsx:62-80` (via `load`'s `[patientId]` dependency) and `AuditLogTable.tsx:36-48` re-issue API requests on every keystroke in their text filters, making the Enter-to-search handlers and Reload buttons redundant; no debounce exists.
 7. **Duplicate `id` column in the reseal query.** `reseal_audit_chain.py:47` runs `SELECT id, {_AUDIT_SELECT}` but `_AUDIT_SELECT` already begins with `id` (`flight_recorder_service.py:39`); `dict(row)` collapses the duplicates so it is harmless, just sloppy.
 8. **Dropdown drift in `AuditLogTable`.** `ACTION_TYPES` (`AuditLogTable.tsx:10-17`) omits actions the backend demonstrably emits, e.g. `ingestion_duplicate_detected` (`test_audit.py:147`); the lists are hand-maintained with no backend source of truth.

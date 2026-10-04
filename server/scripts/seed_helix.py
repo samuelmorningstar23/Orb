@@ -8,7 +8,7 @@ SERVER_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SERVER_DIR))
 
 from config import DB_PATH
-from database import _open_raw_connection
+from database import _open_raw_connection, _row_factory_for
 
 DRUGS = [
     # High-Risk Medications
@@ -67,11 +67,21 @@ INVENTORY = [
 ]
 
 def seed_helix():
+    """Seed the formulary and its opening stock.
+
+    THE MASTER IS UPSERTED, NOT WIPED (grn-4). A pharmacist's own entries on a
+    drug (pack size, GST, schedule and NDPS class, storage, reorder levels)
+    survive a reseed: only the seeded identity columns (name, generic name,
+    form, strength) are rewritten. Lots and their ledger ARE replaced, and the
+    new lots are opened through pharmacy_stock_service, the only writer of drug
+    stock, so each lot's quantity equals its ledger from the first row and
+    reconcile() is clean after a reseed. No NDPS stock is seeded (GRN-R14)."""
     print(f"═══ Connecting to DB for Helix Seeding: {DB_PATH} ═══")
     # The Helix tables are created by the server at boot, not by init_db(), so a
     # reseed of a database the server has never opened found no tables and
     # seeded no formulary. Same call main.py makes; it is additive.
     from services.helix_db import init_helix_db
+    from services import pharmacy_stock_service as stock
     init_helix_db()
     # Codec-aware open: once orb.db is SQLCipher-encrypted at rest the stdlib
     # sqlite3 driver cannot read it at all ("file is not a database"), so the
@@ -79,32 +89,46 @@ def seed_helix():
     # statement and degrades to plaintext sqlite3 when no key is configured.
     # _open_raw_connection() (rather than _build_connection()) keeps the raw
     # connection defaults this seeder relies on: foreign_keys stays OFF, so the
-    # catalog/lot wipe below does not trip constraints from dependent tables.
+    # lot wipe below does not trip constraints from dependent tables. The row
+    # class comes from the same driver, for the stock service's named reads.
     conn = _open_raw_connection()
+    conn.row_factory = _row_factory_for(conn)
     cursor = conn.cursor()
-    
+
     try:
-        # Clear existing tables first
+        # One write transaction for the whole seed, taken before the first
+        # read: the stock service writes only inside its caller's transaction.
+        cursor.execute("BEGIN IMMEDIATE")
+        # The ledger first, then the lots it describes. A reseed has already
+        # wiped the movements (they are children of the wiped orders); a
+        # standalone run must not leave rows pointing at deleted lots.
+        cursor.execute("DELETE FROM helix_stock_movements")
         cursor.execute("DELETE FROM helix_inventory_lots")
-        cursor.execute("DELETE FROM helix_medication_master")
-        print("  Cleared old Helix medications and inventory.")
-        
-        # Seed medication catalog
+        print("  Cleared old Helix inventory and its stock ledger.")
+
+        # Seed medication catalog: upsert on id, identity columns only.
         cursor.executemany(
             """INSERT INTO helix_medication_master (id, name, generic_name, form, strength)
-               VALUES (?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   name = excluded.name,
+                   generic_name = excluded.generic_name,
+                   form = excluded.form,
+                   strength = excluded.strength""",
             DRUGS
         )
-        print(f"  Inserted {len(DRUGS)} drugs into helix_medication_master.")
-        
-        # Seed inventory lots
-        cursor.executemany(
-            """INSERT INTO helix_inventory_lots (id, medication_id, lot_number, quantity, expiration_date)
-               VALUES (?, ?, ?, ?, ?)""",
-            INVENTORY
-        )
-        print(f"  Inserted {len(INVENTORY)} lots into helix_inventory_lots.")
-        
+        print(f"  Upserted {len(DRUGS)} drugs into helix_medication_master.")
+
+        # Seed inventory lots through the one stock writer: each lot opens at
+        # zero and its units arrive as an 'opening' movement.
+        for lot_id, medication_id, lot_number, quantity, expiry in INVENTORY:
+            stock.open_or_merge_lot(
+                conn, lot_id=lot_id, medication_id=medication_id, lot_number=lot_number,
+                expiration_date=expiry, units=quantity, actor_id="system",
+                movement_type="opening", remarks="Opening stock written by the seed",
+            )
+        print(f"  Opened {len(INVENTORY)} lots through the stock ledger.")
+
         conn.commit()
         print("═══ Helix Seeding Complete! ═══\n")
     except Exception as e:

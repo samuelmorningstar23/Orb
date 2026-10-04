@@ -116,10 +116,15 @@ describe('LabPanel', () => {
     expect(screen.getByText(/stay on the Orders screen/)).toBeInTheDocument()
   })
 
-  it('the real build mounts with no props and no installed views', async () => {
+  it('the real build mounts with no props and finds its views in ./lab/', async () => {
+    // Amended in lis-4 (wave 3): views now ship in ./lab/, so the real build is
+    // no longer empty. With no signed-in role nothing is held, so every gated
+    // view stays hidden and the panel says so; with none installed it would
+    // say that instead. Either way it renders, and never a blank frame.
     getMeta.mockResolvedValue({ module: 'lab', state: 'on' })
     render(<LabPanel />)
-    expect(await screen.findByText('No laboratory screens yet')).toBeInTheDocument()
+    expect(await screen.findByText(/Nothing here for your role|No laboratory screens yet/))
+      .toBeInTheDocument()
   })
 
   it('shows the views in their declared order and hides a view the role cannot use', async () => {

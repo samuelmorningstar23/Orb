@@ -166,3 +166,69 @@ export function approveLabCriticalLimit(body: CriticalLimitApproval): Promise<La
 export function retireLabCriticalLimit(limitId: number, reason: string): Promise<LabCriticalLimit> {
   return labPost(`/master/critical-limits/${limitId}/retire`, { reason })
 }
+
+// ── The setup screen's other lists (lis-4) ──────────────────────────────────
+// A save answers with the stored row, whose flags may come back as 0 or 1
+// rather than false or true; read them with Boolean().
+
+export interface LabSpecimenType {
+  code: string
+  display: string
+  container: string | null
+  container_colour_name: string | null
+  min_volume_ul: number | null
+  stability_minutes: number | null
+  handling_note: string | null
+  active: boolean | number
+}
+
+export interface LabSection {
+  id: string
+  name: string
+  site_id: string | null
+  active: boolean | number
+  sort_order: number
+}
+
+export interface LabRejectionReason {
+  code: string
+  display: string
+  incident_prompt: boolean | number
+  active: boolean | number
+}
+
+export type LabSpecimenTypeBody = Omit<LabSpecimenType, 'code' | 'active'> & { active: boolean }
+export type LabSectionBody = { name: string; sort_order: number; active: boolean }
+export type LabRejectionReasonBody = { display: string; incident_prompt: boolean; active: boolean }
+
+export function listLabPanels(): Promise<{ panels: LabTest[] }> {
+  return labGet('/master/panels')
+}
+
+export function listLabSpecimenTypes(params: { include_inactive?: boolean } = {}):
+  Promise<{ specimen_types: LabSpecimenType[] }> {
+  return labGet('/master/specimen-types', params)
+}
+
+export function saveLabSpecimenType(code: string, body: LabSpecimenTypeBody): Promise<LabSpecimenType> {
+  return labPut(`/master/specimen-types/${encodeURIComponent(code)}`, body)
+}
+
+export function listLabSections(params: { include_inactive?: boolean } = {}):
+  Promise<{ sections: LabSection[] }> {
+  return labGet('/master/sections', params)
+}
+
+export function saveLabSection(sectionId: string, body: LabSectionBody): Promise<LabSection> {
+  return labPut(`/master/sections/${encodeURIComponent(sectionId)}`, body)
+}
+
+export function listLabRejectionReasons(params: { include_inactive?: boolean } = {}):
+  Promise<{ rejection_reasons: LabRejectionReason[] }> {
+  return labGet('/master/rejection-reasons', params)
+}
+
+export function saveLabRejectionReason(code: string, body: LabRejectionReasonBody):
+  Promise<LabRejectionReason> {
+  return labPut(`/master/rejection-reasons/${encodeURIComponent(code)}`, body)
+}

@@ -102,9 +102,9 @@ def _default_models() -> list[dict]:
     models = [
         {
             "model_key": "vigil_news2",
-            "display_name": "NEWS2 early-warning score",
+            "display_name": "NEWS2 score",
             "version": "rcp-news2-2017",
-            "task": "Early-warning score (NEWS2, including Scale 2 for COPD)",
+            "task": "NEWS2 score (including Scale 2 for COPD)",
             "training_data": "Rule-based (Royal College of Physicians NEWS2), no training",
             "validated": 1,  # NEWS2 is a published, validated clinical standard
             "validation_metrics": json.dumps({"source": "Royal College of Physicians NEWS2"}),

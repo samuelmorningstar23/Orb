@@ -14,7 +14,7 @@ has already told it:
 On top of any of those, an **authenticator-code step** can take over the form,
 and a full-screen **MFA enrolment modal** can cover the whole page.
 
-**Route:** `/login/:mode`, `src/App.tsx:188`. If a user is already in context the
+**Route:** `/login/:mode`, `src/AppRoot.tsx:181`. If a user is already in context the
 route redirects instead of rendering (same line), so a signed-in person can never
 see this screen.
 **Component:** `src/pages/Login.tsx` (whole file is one default-exported
@@ -820,11 +820,11 @@ exactly what to do, and the password link is right there.
 `surgeon` becomes `doctor` with department defaulted to `Surgery` (`:88-92`), so
 an unmapped role cannot fall through to a stripped-down tab set in
 `ClinicianShell`. It then calls `login(user)` from `AuthContext`
-(`src/App.tsx:127-133`) and navigates to `/bridge` for patients, `/dashboard` for
+(`src/AppRoot.tsx:73-79`) and navigates to `/bridge` for patients, `/dashboard` for
 everyone else (`Login.tsx:103`). The screen unmounts.
 `authMethod: 'pin'` (`:83`, `:113`) is the flag that shortens the idle timer from
 15 minutes to 2 and makes a tablet **sign out** rather than lock
-(`src/App.tsx:42-43`, `:90-97`), asserted by
+(`src/AppRoot.tsx:39-40`, `:111-120`), asserted by
 `src/pages/Login.pin.test.tsx:104-125`.
 
 ### Dead style worth knowing about

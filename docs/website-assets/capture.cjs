@@ -288,7 +288,7 @@ const GALLERY = [
       await page.waitForSelector('#panel-today, #panel-vigil').catch(() => {})
       await shot(page, 'today-doctor-home', 'Orb Today: the doctor\'s home screen')
       await nav(page, 'vigil', '.patient-row')
-      await shot(page, 'vigil-patient-board', 'Vigil: live patient board with NEWS2 risk ordering')
+      await shot(page, 'vigil-patient-board', 'Vigil: the ward ordered by NEWS2 score')
       await page.locator('.patient-row', { hasText: 'Rajesh Iyer' }).first().click()
       await page.waitForSelector('.command-bar, .patient-detail'); await settle(page, 900)
       await shot(page, 'vigil-patient-chart', 'Vigil: patient chart with live vitals and NEWS2 band')
@@ -519,8 +519,8 @@ const FLOWS = [
     id: 'ward-is-alive', user: 'doctor', title: 'The ward watches itself',
     subtitle: 'Live vitals, NEWS2 ordering, and a chart that explains its own score',
     steps: [
-      { caption: 'Sign in as a doctor. Orb Today lists what needs you first: deteriorating patients, new results, pending signatures.', act: async p => { await p.waitForSelector('#panel-today, #panel-vigil'); await settle(p, 800) } },
-      { caption: 'Patients: the ward ordered by risk. Vitals move because a monitor feed is running; the order is NEWS2-derived, not hand-placed.', act: async p => { await nav(p, 'vigil', '.patient-row'); await settle(p, 800) } },
+      { caption: 'Sign in as a doctor. Orb Today lists the highest NEWS2 scores by name, new results and pending signatures.', act: async p => { await p.waitForSelector('#panel-today, #panel-vigil'); await settle(p, 800) } },
+      { caption: 'Patients: the ward ordered by NEWS2 score. The vitals are simulated demo data, and the order comes from the score, not from a hand.', act: async p => { await nav(p, 'vigil', '.patient-row'); await settle(p, 800) } },
       { caption: 'Open a chart. The NEWS2 band is computed by Orb\'s deterministic engine, never by a model.', act: async p => { await p.locator('.patient-row', { hasText: 'Rajesh Iyer' }).first().click(); await p.waitForSelector('.command-bar, .patient-detail'); await settle(p, 900) } },
       { caption: 'Why this score? Every parameter\'s contribution is shown. Orb will not give you a number without showing where it came from.', act: async p => { const t = p.locator('.news2-drivers').first(); if (await t.count()) await t.scrollIntoViewIfNeeded().catch(() => {}); await settle(p, 600) } },
       { caption: 'Patient Story: alerts, notes, doses given, handovers and bundles in one scrollable narrative, with a bookmark for what is new since you last looked.', act: async p => { await p.click('#btn-story'); await p.waitForSelector('.story-modal'); await settle(p, 900) }, hold: 4200 },
@@ -551,7 +551,7 @@ const FLOWS = [
   },
   {
     id: 'wrong-room-warning', user: 'doctor', title: 'The wrong-room warning',
-    subtitle: 'Wrong patient, right ward: the most common serious error, caught without a modal',
+    subtitle: 'Wrong patient, right ward: the most common serious error, flagged without a modal',
     steps: [
       { caption: 'Messages: every patient has a case room. Open Suresh Reddy\'s.', act: async p => { await nav(p, 'relay', '.relay-channel-item'); await p.locator('.relay-channel-item', { hasText: /Suresh Reddy/ }).first().click(); await p.waitForSelector('.relay-chat__header'); await settle(p, 800) } },
       { caption: 'Type an order about a different patient into this room: "Give Rajesh Iyer 40mg prednisolone now."', act: async p => { await p.fill('input[placeholder="Type a message…"], textarea[placeholder="Type a message…"]', 'Give Rajesh Iyer 40mg prednisolone now.'); await settle(p, 400) } },
@@ -603,8 +603,8 @@ const FLOWS = [
     steps: [
       { caption: 'Trust Center: compliance posture aggregated from the running system, not a PDF. Amber is amber; an all-green screen should be trusted less.', act: async p => { await nav(p, 'admin', '#panel-admin'); await p.click('#admin-tab-trust').catch(() => {}); await settle(p, 1200) } },
       { caption: 'Flight Recorder: a SHA-256 hash chain over every audit row. Alter or delete one and the chain breaks. Every question Sage was asked is in there, and every refusal.', act: async p => { await p.click('#admin-tab-flight').catch(() => {}); await settle(p, 1200) } },
-      { caption: 'Model Governance: each model, its version, and whether it has been validated. The forecast model says "untrained". The validated one is the deterministic score that drives escalation.', act: async p => { await p.click('#admin-tab-models').catch(() => {}); await settle(p, 1000) }, hold: 5000 },
-      { caption: 'Pilot Scorecard: how the pilot will be measured. Shadow-mode episodes, adjudication, outcomes, denominators included.', act: async p => { const t = p.locator('[id^="admin-tab-"]', { hasText: /Scorecard|Pilot/i }).first(); if (await t.count()) await t.click(); await settle(p, 1200) }, hold: 4500 },
+      { caption: 'Model Governance: each model, its version, and whether it has been validated. The forecast model says "untrained". The validated one is the NEWS2 table.', act: async p => { await p.click('#admin-tab-models').catch(() => {}); await settle(p, 1000) }, hold: 5000 },
+      { caption: 'Evaluation scorecard: how a ward would be measured. Shadow-mode episodes, adjudication and outcomes, with denominators. The figures are seeded demo data.', act: async p => { const t = p.locator('[id^="admin-tab-"]', { hasText: /Scorecard|Pilot/i }).first(); if (await t.count()) await t.click(); await settle(p, 1200) }, hold: 4500 },
     ],
   },
   {

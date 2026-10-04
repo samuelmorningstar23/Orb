@@ -46,7 +46,7 @@ Two files outside this scope are referenced repeatedly because they *drive* the 
 
 1. `index.html` ships a bare `<div id="root">` and loads `/src/main.tsx` as an ES module (`index.html:23-24`).
 2. `main.tsx` imports the three variable fonts, then `index.css`, then `print.css`, fonts first so `@font-face` is registered before the cascade needs them (`src/main.tsx:6-10`).
-3. **Before React renders**, a top-level `try` block in `App.tsx` reads `localStorage['orb-theme']`, falls back to the OS preference via `matchMedia('(prefers-color-scheme: light)')`, and stamps `data-theme` on `<html>` (`src/App.tsx:36-43`). Doing this at module-evaluation time, not inside a component effect, avoids a "flash of wrong theme" on first paint.
+3. **Before React renders**, a top-level `try` block in `AppRoot.tsx` stamps `data-theme` on `<html>` from `bootTheme()`, which reads `localStorage['orb-theme']` (falling back to the legacy `orb_theme`), else the OS preference via `matchMedia('(prefers-color-scheme: light)')` (`src/AppRoot.tsx:42-49`, `src/lib/theme.ts:39-45`). Doing this at module-evaluation time, not inside a component effect, avoids a "flash of wrong theme" on first paint.
 4. The cascade resolves. `:root` supplies the dark values; if `data-theme="light"` is present, the `[data-theme="light"]` block (`src/index.css:299`) overrides the subset of variables that differ.
 
 ### Flow 2: Toggling the theme at runtime
@@ -56,7 +56,7 @@ Two files outside this scope are referenced repeatedly because they *drive* the 
 3. A `useEffect` writes the new value to `data-theme` on `<html>` and persists it to `localStorage['orb_theme']` (`src/pages/ClinicianShell.tsx:228-231`).
 4. The browser instantly re-resolves every `var(--…)`; no component re-render is needed for the colour change, only the button's own state updated.
 
-> **Two storage keys, one system.** App boot reads `orb-theme` (hyphen, `src/App.tsx:37`); the shell toggle writes `orb_theme` (underscore, `src/pages/ClinicianShell.tsx:230`). They do not agree. See **Discrepancies**.
+> **Two storage keys, one reader.** `storedTheme()` reads `orb-theme` and falls back to the legacy `orb_theme` (`src/lib/theme.ts:27-34`); boot and the OS listener both go through it (`src/AppRoot.tsx:46`, `:143`). See **Discrepancies**.
 
 ### Flow 3: Aurora reacts to the theme (login only)
 
@@ -192,7 +192,7 @@ The complete catalogue, grouped by category, dark value (`:root`) and light valu
 3. It then *directly* re-skins the glass classes for light backgrounds, `.glass`, `.glass-card`, `.glass-card:hover` get new fills/borders/blur because translucent-white-on-dark maths does not read the same on white (`src/index.css:345-363`), and re-tints the scrollbar (`365-370`).
 **Why it exists:** hospitals run on bright ward monitors by day and dim rooms at night; a real light theme (not an inverted hack) is a usability requirement.
 **Data in/out:** input is the single DOM attribute `data-theme ∈ {light, dark|absent}`; output is the resolved value of every `var(--…)`.
-**Talks to:** the attribute is written by `App.tsx:40,57` (boot + OS-follow) and `ClinicianShell.tsx:229` (toggle); read by every stylesheet and by `Aurora.tsx:235,294,360`.
+**Talks to:** the attribute is written by `AppRoot.tsx:46,144` (boot + OS-follow) and `ClinicianShell.tsx:229` (toggle); read by every stylesheet and by `Aurora.tsx:235,294,360`.
 
 > ### THE LOAD-BEARING RULE, accent-coloured *text* must use `--accent-deep` in light mode
 > **Where it is stated.** The rule is written down in the rebuild plan and master doc (`docs/REBUILD_PLAN.md:211`, `docs/ORB_MASTER.md:428`) and is *enforced by the token values themselves* in `src/index.css`.
@@ -267,7 +267,7 @@ The complete catalogue, grouped by category, dark value (`:root`) and light valu
 ---
 
 ### App.css: `src/App.css:1`
-**Does:** nothing. It is a single comment (`/* App-level styles */`), imported by `src/App.tsx:10` as a reserved seam for future app-level rules. No units.
+**Does:** nothing. It is a single comment (`/* App-level styles */`), imported by `src/AppRoot.tsx:18` as a reserved seam for future app-level rules. No units.
 
 ---
 
@@ -325,7 +325,7 @@ This file is the one substantial piece of imperative rendering in the design sys
 3. **Dot-grid effect** (`:311-372`): a 2-D canvas of dots on a 24 px grid; each frame applies `cheapNoise` drift plus a cubic mouse-repulsion falloff within a 600 px radius, LERPs each dot toward its target, and fades opacity near the cursor. Dot colour is read from `data-theme` per frame (Sierra Blue tint in light, grey in dark, `:360-361`).
 **Why it exists:** gives the unauthenticated login screen a living, brand-defining backdrop.
 **Data in/out:** no props; reads the DOM `data-theme` and mouse events; writes pixels.
-**Talks to:** rendered only by `src/pages/Login.tsx:90`; listens for `App.tsx`'s `theme-changed` event (`src/App.tsx:58`).
+**Talks to:** rendered only by `src/pages/Login.tsx:90`; listens for `AppRoot.tsx`'s `theme-changed` event (`src/AppRoot.tsx:145`).
 **Change guide (worked example 4, slow the aurora down):** the shader multiplies time by `0.6` at `src/components/Aurora.tsx:87` (commented "~8× faster base time"); lower it to slow every arc. Knock-on: all four arcs share this `t`, so they slow together. Footgun: the half-res render at `:264-265` is a perf lever, not a motion lever, changing it rescales sharpness, not speed.
 **Gotchas:** the WebGL effect re-reads theme only on the `theme-changed` event, and the shell toggle **does not fire that event** (`ClinicianShell.tsx:233` omits it). This is latent because Aurora only mounts on Login where the shell toggle is absent, but mounting Aurora inside the shell would leave it stuck on the boot theme. See Discrepancies.
 
@@ -404,8 +404,8 @@ This subsystem exposes **no REST routes and no socket events**, it is pure prese
 
 | Contract | Where defined | Consumed by |
 |----------|---------------|-------------|
-| `data-theme` attribute on `<html>` (`"light"` \| `"dark"`/absent) | written `src/App.tsx:40,57`, `src/pages/ClinicianShell.tsx:229` | every `[data-theme="light"]` rule in `index.css` + component CSS; read by `Aurora.tsx:235,294,360` |
-| `theme-changed` `CustomEvent` on `window` | dispatched `src/App.tsx:58` | `Aurora.tsx:297` |
+| `data-theme` attribute on `<html>` (`"light"` \| `"dark"`/absent) | written `src/AppRoot.tsx:46,144`, `src/pages/ClinicianShell.tsx:229` | every `[data-theme="light"]` rule in `index.css` + component CSS; read by `Aurora.tsx:235,294,360` |
+| `theme-changed` `CustomEvent` on `window` | dispatched `src/AppRoot.tsx:145` | `Aurora.tsx:297` |
 | CSS custom properties `--bg-*`, `--text-*`, `--accent-*`, `--status-*`, `--border-*`, `--radius-*`, `--blur-*`, `--font-*`, `--text-{xs..2xl}`, `--space-{1..6}`, `--transition-*`, `--shadow-*`, `--elev-*`, `--glass-*` | `src/index.css:4-102`, light overrides `299-337` | all stylesheets and inline `style` props app-wide |
 | Utility classes `.glass`, `.glass-card`, `.glass-strong`, `.animate-fade-in`, `.animate-slide-up`, `.stagger-1..5`, `.tabular-nums` | `src/index.css:189-262` | any component |
 | Generic primitives `.orb-panel`, `.orb-panel-grid`, `.orb-metric-card`, `.orb-metric-value(--warn/--danger)`, `.orb-section` | `src/pages/ClinicianShell.css:393-458` | feature panels |
@@ -442,8 +442,8 @@ This subsystem exposes **no REST routes and no socket events**, it is pure prese
 
 ## Discrepancies and open questions
 
-1. **Two theme storage keys.** Boot reads `localStorage['orb-theme']` (hyphen, `src/App.tsx:37,56`); the shell toggle writes `localStorage['orb_theme']` (underscore, `src/pages/ClinicianShell.tsx:225,230`). A user's manual toggle is therefore **not** honoured on next boot, `App.tsx` won't find `orb-theme`, falls back to OS preference, and the OS-follow listener also keys off the hyphen version so it may override the user's choice. Likely a bug; the two keys should be unified.
-2. **`theme-changed` never fires on manual toggle.** Only the OS-preference listener dispatches it (`src/App.tsx:58`); `toggleTheme` (`src/pages/ClinicianShell.tsx:233`) does not. Aurora's WebGL layer only re-reads the theme on that event (`src/components/Aurora.tsx:293-297`). Latent today (Aurora and the shell toggle never co-exist), but a trap if Aurora is ever mounted inside the shell.
+1. *(resolved since: one reader, `storedTheme()` at `src/lib/theme.ts:27`, reads `orb-theme` and falls back to `orb_theme`, and boot and the OS listener both use it. The rest of this entry records how it was.)* **Two theme storage keys.** Boot read `localStorage['orb-theme']` (hyphen); the shell toggle writes `localStorage['orb_theme']` (underscore, `src/pages/ClinicianShell.tsx:225,230`). A user's manual toggle is therefore **not** honoured on next boot, `App.tsx` won't find `orb-theme`, falls back to OS preference, and the OS-follow listener also keys off the hyphen version so it may override the user's choice. Likely a bug; the two keys should be unified.
+2. **`theme-changed` never fires on manual toggle.** Only the OS-preference listener dispatches it (`src/AppRoot.tsx:145`); `toggleTheme` (`src/pages/ClinicianShell.tsx:233`) does not. Aurora's WebGL layer only re-reads the theme on that event (`src/components/Aurora.tsx:293-297`). Latent today (Aurora and the shell toggle never co-exist), but a trap if Aurora is ever mounted inside the shell.
 3. **Light-mode section comment is stale.** `src/index.css:297` labels the light theme "Warm white with **violet-purple** accent", but the actual tokens are **Sierra Blue** (`#7AA5C7`/`#2C465E`, `:311-323`). The comment predates a re-theme.
 4. **Leftover violet in a light-mode override.** `src/pages/panels/SurgicalSuitePanel.css:1226-1228` styles the light-mode "today" card with `rgba(124,58,237,…)` (violet), a remnant of the old violet-purple accent that no longer matches the Sierra Blue token system.
 5. **Aurora hard-codes brand RGB.** The shader's gold/blue colours are literal `vec3(…)` values (`src/components/Aurora.tsx:110-172`), decoupled from the `--accent-*` tokens; a token-level re-brand silently leaves Aurora on the old palette.

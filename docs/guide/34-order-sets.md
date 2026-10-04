@@ -423,24 +423,24 @@ The module docstring records why it exists: the backend had been complete and sa
 **Gotchas:** `medication_safety` is typed (`MedicationSafety`, `:71`) because the panel reads its alerts, `interaction_screened` and `coverage_note` to build the caution chips. `dose_check` is still `unknown` (`:72`); the panel casts it to a local `DoseCheck` shape (`OrderSetsPanel.tsx:73-78`), so a renamed dose-guard key is not caught by the compiler.
 **Breaks if you change it:** `blocked` is the whole point of `OrderSetVerdict`; the comment at `:32` says so.
 
-#### `listOrderSets`: `orderSets.ts:108`
+#### `listOrderSets`: `orderSets.ts:158`
 **Signature:** `() -> Promise<{sets, config}>` → `GET /orders/sets`
 **On screen:** the protocol card list and the provenance line.
 
-#### `getOrderSet`: `orderSets.ts:115`
+#### `getOrderSet`: `orderSets.ts:167`
 **Signature:** `(setId) -> Promise<{set, unknown_codes}>`
 **On screen:** **nothing, no component calls this.**
 
-#### `previewOrderSet`: `orderSets.ts:119`
+#### `previewOrderSet`: `orderSets.ts:174`
 **Signature:** `(setId, patientId, items?) -> Promise<OrderSetPreview>`
 **On screen:** everything in the detail pane.
 **Gotchas:** the panel always calls it **without** `items`, so per-item edits never reach the server today.
 
-#### `applyOrderSet`: `orderSets.ts:130`
+#### `applyOrderSet`: `orderSets.ts:185`
 **Signature:** `(setId, patientId, items?) -> Promise<{status, orders, ...}>`
 **On screen:** the Apply button. A 428/422 surfaces as a thrown error carrying `detail`.
 
-#### `listOrderSetApplications`: `orderSets.ts:141`
+#### `listOrderSetApplications`: `orderSets.ts:203`
 **Signature:** `(patientId) -> Promise<{applications}>`
 **On screen:** the "Already applied to this patient" list.
 

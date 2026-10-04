@@ -596,7 +596,149 @@ def patient_in_scope_blocking(patient_id: str, dept: str | None) -> bool:
         return patient_in_scope(db, patient_id, dept)
 
 
-def enforce_patient_scope(user: dict, patient_id: str | None) -> None:
+# ════════════════════════════════════════════════════════════════
+#  The OPD arm (opd-7, W3-A): an OPT-IN second scope predicate
+# ════════════════════════════════════════════════════════════════
+# An outpatient has no admission, so patient_in_scope above fail-closes them
+# out of every department, and that is right for every chart route. The OPD
+# record view needs one more answer: "this clinic saw the patient recently".
+#
+# That answer is a SEPARATE predicate, deliberately not a widening of
+# patient_in_scope, scope_patient_ids_sql or PATIENT_DEPARTMENT_SQL:
+#
+#   * require_patient_access is one guard for reads AND writes. Widening the
+#     shared predicate would have opened medication add, nurse obs, allergy and
+#     problem writes, bundles, discharge, the Vigil chart and FHIR export to
+#     anyone whose clinic registered a visit (the design critique's blocker).
+#   * Sage keeps a pinned duplicate of patient_in_scope
+#     (tests/test_patient_scope_routes.py::test_the_route_scope_and_the_sage_scope_agree)
+#     and its provenance lane reads scope_patient_ids_sql. Both stay untouched.
+#
+# patient_in_opd_scope is reached ONLY through require_patient_access(...,
+# opd_arm=True) or enforce_patient_scope(..., opd_arm=True), on the whitelist
+# that tests/test_opd_scope_drift.py pins with a reason per route. Nothing else
+# may call it; the same test fails a direct call from any other module.
+#
+# The rule (ruling OPD-N2, applied 3 October 2026: 7 days, extent ii,
+# self-registered visits count and are flagged and audited):
+#   the ordinary scope (patient_in_scope), OR
+#   the 'opd' feature is on (checked at call time), AND the patient has no
+#   ACTIVE admission anywhere, AND a non-cancelled opd_visits row in the
+#   caller's department (compared case-folded) is dated within the last
+#   ORB_OPD_SCOPE_DAYS days of the hospital's calendar, today included.
+#
+# Two strict edges, chosen here and listed for Samuel:
+#   * a visit dated in the FUTURE (a booking) opens nothing until its day;
+#   * an active admission anywhere closes the arm completely, so a visit can
+#     never launder an inpatient of another ward onto a clinic's record view.
+
+def opd_scope_window(today=None) -> tuple[str, str]:
+    """(first_day, last_day) of the OPD scope window, hospital-local YYYY-MM-DD.
+
+    Read at call time from config.OPD_SCOPE_DAYS, so a test (and an operator's
+    restart) sees the current setting. 0 means the visit's own day only.
+    """
+    from datetime import timedelta
+    from services.hospital_time import hospital_today
+
+    last = today or hospital_today()
+    days = max(0, int(getattr(config, "OPD_SCOPE_DAYS", 7) or 0))
+    return (last - timedelta(days=days)).isoformat(), last.isoformat()
+
+
+def opd_scope_open() -> bool:
+    """Is the OPD arm switched on right now (the 'opd' feature, prerequisites
+    included)? Off means the arm answers exactly what patient_in_scope does."""
+    return config.feature_enabled("opd")
+
+
+def _patient_has_active_admission(db, patient_id: str) -> bool:
+    return db.execute(
+        "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
+        (patient_id,),
+    ).fetchone() is not None
+
+
+def _opd_scope_visit(db, patient_id: str, dept: str) -> dict | None:
+    """The newest visit that opens the OPD arm for `dept`, or None.
+
+    Only called when the feature is on and the patient has no active admission.
+    The department is compared in Python with casefold() (SQLite's lower() folds
+    ASCII only); a patient has a handful of visits, read through
+    idx_opd_patient (patient_id, visit_date DESC).
+    """
+    first_day, last_day = opd_scope_window()
+    rows = db.execute(
+        "SELECT id, department, visit_date, scope_self_registered FROM opd_visits "
+        " WHERE patient_id = ? AND status != 'cancelled' "
+        "   AND visit_date >= ? AND visit_date <= ? "
+        " ORDER BY visit_date DESC, registered_at DESC, id DESC",
+        (patient_id, first_day, last_day),
+    ).fetchall()
+    wanted = dept.strip().casefold()
+    for row in rows:
+        if (row["department"] or "").strip().casefold() == wanted:
+            return {
+                "visit_id": str(row["id"]),
+                "visit_date": row["visit_date"],
+                "self_registered": bool(row["scope_self_registered"]),
+            }
+    return None
+
+
+def opd_scope_decision(db, patient_id: str, dept: str | None) -> dict | None:
+    """Which arm lets a caller scoped to `dept` read this patient, or None.
+
+    Returns {"arm": "hospital_wide"} for an unscoped account, {"arm":
+    "admission"} when the ordinary scope holds, or {"arm": "opd_visit",
+    "visit_id", "visit_date", "self_registered", "scope_until"} when only an
+    OPD visit does. The arm is recorded on the read's audit row.
+    """
+    if dept is None:
+        return {"arm": "hospital_wide"}
+    if not patient_id:
+        return None
+    if patient_in_scope(db, patient_id, dept):
+        return {"arm": "admission"}
+    if not opd_scope_open():
+        return None
+    if _patient_has_active_admission(db, patient_id):
+        return None
+    visit = _opd_scope_visit(db, patient_id, dept)
+    if visit is None:
+        return None
+    from datetime import date, timedelta
+    days = max(0, int(getattr(config, "OPD_SCOPE_DAYS", 7) or 0))
+    until = date.fromisoformat(visit["visit_date"]) + timedelta(days=days)
+    return {"arm": "opd_visit", **visit, "scope_until": until.isoformat()}
+
+
+def patient_in_opd_scope(db, patient_id: str, dept: str | None) -> bool:
+    """patient_in_scope, OR the OPD arm (see the block comment above).
+
+    With the 'opd' feature off this answers exactly what patient_in_scope
+    answers, for every patient and every department.
+    """
+    return opd_scope_decision(db, patient_id, dept) is not None
+
+
+def patient_in_opd_scope_blocking(patient_id: str, dept: str | None) -> bool:
+    """patient_in_opd_scope on its own connection, for run_db()."""
+    if dept is None:
+        return True
+    with db_session() as db:
+        return patient_in_opd_scope(db, patient_id, dept)
+
+
+def opd_scope_decision_blocking(patient_id: str, dept: str | None) -> dict | None:
+    """opd_scope_decision on its own connection, for run_db()."""
+    if dept is None:
+        return {"arm": "hospital_wide"}
+    with db_session() as db:
+        return opd_scope_decision(db, patient_id, dept)
+
+
+def enforce_patient_scope(user: dict, patient_id: str | None, *, opd_arm: bool = False) -> None:
     """404 unless `patient_id` is inside the caller's department. BLOCKING.
 
     The dependency form of this check, require_patient_access(), resolves the id
@@ -614,12 +756,18 @@ def enforce_patient_scope(user: dict, patient_id: str | None) -> None:
 
     404, never 403 — a 403 confirms the patient exists, which is itself a
     disclosure. Same rule as require_patient_access.
+
+    `opd_arm=True` asks patient_in_opd_scope instead (opd-7). Only a route on
+    the whitelist in tests/test_opd_scope_drift.py may pass it, and never a
+    chart route: the arm opens the OPD record view, not the inpatient chart.
     """
     dept = department_scope(user)
     if dept is None or not patient_id:
         return
     with db_session() as db:
-        if not patient_in_scope(db, patient_id, dept):
+        allowed = (patient_in_opd_scope(db, patient_id, dept) if opd_arm
+                   else patient_in_scope(db, patient_id, dept))
+        if not allowed:
             raise HTTPException(status_code=404, detail="Patient not found")
 
 
@@ -678,7 +826,8 @@ def log_phi_read(
 
 
 def _log_patient_read_blocking(*, request: Request, user: dict,
-                               action_type: str, patient_id: str | None) -> None:
+                               action_type: str, patient_id: str | None,
+                               metadata: dict | None = None) -> None:
     """require_patient_access's read audit, written only once the patient is known.
 
     Writing "success" before the handler had looked the patient up put a
@@ -686,6 +835,9 @@ def _log_patient_read_blocking(*, request: Request, user: dict,
     the opposite of what an investigator reading the trail needs. A missing
     patient is still recorded (a probe for ids is worth seeing), as a failure.
     Both steps run in one worker call, so the route pays one thread hop as before.
+
+    `metadata` is added to the row (the OPD arm records which arm let the
+    reader in); None leaves the row exactly as it always was.
     """
     if patient_id:
         with db_session() as db:
@@ -696,7 +848,7 @@ def _log_patient_read_blocking(*, request: Request, user: dict,
                 request=request, user=user, action_type=action_type,
                 summary_message=f"{action_type} for patient {patient_id}: no such patient",
                 patient_id=patient_id, outcome="failure",
-                metadata={"reason": "not_found"},
+                metadata={"reason": "not_found", **(metadata or {})},
             )
             return
     log_phi_read(
@@ -704,6 +856,7 @@ def _log_patient_read_blocking(*, request: Request, user: dict,
         summary_message=(f"{action_type} for patient {patient_id}"
                          if patient_id else action_type),
         patient_id=patient_id,
+        metadata=metadata,
     )
 
 
@@ -780,7 +933,8 @@ def require_permission(*permissions: str):
 #  FastAPI Dependency: require_patient_access
 # ════════════════════════════════════════════════════════════════
 
-def require_patient_access(*permissions: str, audit_action: str | None = None):
+def require_patient_access(*permissions: str, audit_action: str | None = None,
+                           opd_arm: bool = False):
     """require_permission + "…and this patient is on your ward" + a read audit.
 
     ONE guard hung off every ``/{patient_id}`` route rather than N copies of the
@@ -802,6 +956,14 @@ def require_patient_access(*permissions: str, audit_action: str | None = None):
 
     Both DB touches go through run_db(): this dependency runs on the event loop
     even when the route it guards is a sync def.
+
+    `opd_arm=True` (opd-7) asks patient_in_opd_scope instead of
+    patient_in_scope, records which arm let the reader in on the audit row
+    (metadata scope_arm, plus the visit for the OPD arm), and leaves the
+    decision on request.state.orb_patient_scope for the handler to show. ONLY a
+    route on the whitelist in tests/test_opd_scope_drift.py may pass it; every
+    chart route, read or write, keeps the default and stays admission-only.
+    The returned dependency carries `orb_opd_arm` so that test can find it.
     """
     permission_checker = require_permission(*permissions)
 
@@ -811,8 +973,49 @@ def require_patient_access(*permissions: str, audit_action: str | None = None):
     ) -> dict:
         patient_id = request.path_params.get("patient_id")
         dept = department_scope(user)
+        read_metadata: dict | None = None
 
-        if dept is not None and patient_id:
+        if opd_arm:
+            if dept is None:
+                decision = {"arm": "hospital_wide"}
+            elif not patient_id:
+                # Fail closed: the arm only ever scopes a patient named in the
+                # path, so a scoped caller with no patient id gets nothing.
+                decision = None
+            else:
+                decision = await run_db(opd_scope_decision_blocking, patient_id, dept)
+            if decision is None:
+                await run_db(
+                    log_audit_event,
+                    correlation_id=str(uuid.uuid4()),
+                    event_category="authorization",
+                    action_type="patient_scope_denied",
+                    outcome="denied",
+                    summary_message=(
+                        f"Patient {patient_id} is outside the caller's department "
+                        f"({dept}), outpatient visits included"
+                    ),
+                    actor_user_id=user.get("id"),
+                    actor_role=user.get("role"),
+                    patient_id=patient_id,
+                    request_path=request.url.path,
+                    http_method=request.method,
+                    ip_address=request.client.host if request.client else None,
+                    user_agent=request.headers.get("user-agent"),
+                    metadata={"department": dept, "scope_source": "authenticated_user",
+                              "opd_arm": True},
+                )
+                raise HTTPException(status_code=404, detail="Patient not found")
+            request.state.orb_patient_scope = dict(decision)
+            read_metadata = {"scope_arm": decision.get("arm"), "opd_arm": True}
+            if decision.get("arm") == "opd_visit":
+                read_metadata.update({
+                    "opd_visit_id": decision.get("visit_id"),
+                    "opd_visit_date": decision.get("visit_date"),
+                    "opd_scope_until": decision.get("scope_until"),
+                    "self_registered": bool(decision.get("self_registered")),
+                })
+        elif dept is not None and patient_id:
             in_scope = await run_db(patient_in_scope_blocking, patient_id, dept)
             if not in_scope:
                 # The attempt is the interesting event — record it before the
@@ -839,16 +1042,29 @@ def require_patient_access(*permissions: str, audit_action: str | None = None):
                 raise HTTPException(status_code=404, detail="Patient not found")
 
         if audit_action:
-            await run_db(
-                _log_patient_read_blocking,
-                request=request,
-                user=user,
-                action_type=audit_action,
-                patient_id=patient_id,
-            )
+            if read_metadata is None:
+                await run_db(
+                    _log_patient_read_blocking,
+                    request=request,
+                    user=user,
+                    action_type=audit_action,
+                    patient_id=patient_id,
+                )
+            else:
+                await run_db(
+                    _log_patient_read_blocking,
+                    request=request,
+                    user=user,
+                    action_type=audit_action,
+                    patient_id=patient_id,
+                    metadata=read_metadata,
+                )
 
         return user
 
+    # Read by tests/test_opd_scope_drift.py, which walks every route's
+    # dependency tree for this mark and pins each route that carries it.
+    _checker.orb_opd_arm = bool(opd_arm)
     return _checker
 
 

@@ -778,19 +778,19 @@ pass is always the local Whisper endpoint (module comment `:11-16`).
 **Rendered by:** `RoundDictation.tsx:297-305`, shown only when not recording, not transcribing and
 the draft is empty.
 **Data from:** `localAsrAvailable` from `useSageRuntime()` (`:57`,
-`src/contexts/SageRuntimeContext.tsx:80`).
+`src/contexts/SageRuntimeProvider.tsx:36`).
 
 ### "Local speech recognition is not installed on this appliance: type the plan below."
 **Rendered by:** the same slot, `RoundDictation.tsx:302`, when `localAsrAvailable === false`.
 **Data from:** `SageAiPosture.local_asr_available`.
 **API:** `GET /api/sage/ai-posture` (`src/api/client.ts:992-994`), fetched once by the provider
-(`SageRuntimeContext.tsx:54-60`).
+(`SageRuntimeProvider.tsx:10-16`).
 **Server:** `server/routes/sage_routes.py:2782-2788` → `services/ai_governance.ai_posture`
 (`:342-364`), whose `local_asr_available()` (`:367-393`) reports **configuration**: the voice
 daemon flag must be on and a `whisper*` checkpoint must exist under `server/models`.
 **Change this →** it is said *before* the doctor speaks, on purpose (comment at
 `RoundDictation.tsx:300-301`). If the posture request fails, `localAsrAvailable` stays `null`
-(`SageRuntimeContext.tsx:80`) and this line does **not** appear, the generic hint shows instead.
+(`SageRuntimeProvider.tsx:36`) and this line does **not** appear, the generic hint shows instead.
 
 ### The "Hearing …" live line
 **Where:** a tinted italic strip under the controls, only while recording.
@@ -800,7 +800,7 @@ daemon flag must be on and a `whisper*` checkpoint must exist under `server/mode
 **API:** **none of Orb's.** This is the browser's cloud recogniser and it runs **only** when
 `cloudSpeechAllowed` is true (`:204-207`).
 **Server:** `sage_routes.py:2782` → `ai_governance.ai_posture:353` → `config.CLOUD_SPEECH_ALLOWED`.
-Until the posture arrives the context reports `false` (`SageRuntimeContext.tsx:79`), fail-closed.
+Until the posture arrives the context reports `false` (`SageRuntimeProvider.tsx:35`), fail-closed.
 **Change this →** this text is **never written into the note** (`:204-206` and the module comment
 at `:12-16`); only the local Whisper transcript is appended. Turn the posture off and this strip
 never appears, while dictation still works. Style `Round.css:844-860`.
@@ -810,7 +810,7 @@ never appears, while dictation still works. Style `Round.css:844-860`.
 **Rendered by:** `RoundDictation.tsx:315-328`, `role="alert"`.
 **Data from:** `micError` (`:62`). Set from **seven** distinct places, each with its own sentence:
 - `:147-151` local ASR not installed, *"Dictation is unavailable on this appliance… Type the plan below, it saves to the chart exactly the same way."*
-- `:156`, *"The microphone is in use by Sage. Stop it before dictating."* (`claimMic('round')` returned false; registry at `SageRuntimeContext.tsx:62-67`)
+- `:156`, *"The microphone is in use by Sage. Stop it before dictating."* (`claimMic('round')` returned false; registry at `SageRuntimeProvider.tsx:18-23`)
 - `:161-164`, no `navigator.mediaDevices` (insecure context)
 - `:173`, permission denied
 - `:191-194`, the browser could not start a `MediaRecorder`

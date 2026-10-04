@@ -4,9 +4,10 @@ Strict state machine, idempotent transitions, and atomic inventory operations.
 """
 import uuid
 import json
-from datetime import date, datetime
+from datetime import datetime
 from typing import Optional
 from database import db_session
+from services import pharmacy_stock_service as stock
 from services.clinical_time import to_utc_iso
 
 # ═══════════════════════════════════════════════════════════════════
@@ -124,18 +125,29 @@ def get_medication_catalog():
         return [dict(row) for row in rows]
 
 def get_inventory():
-    """Retrieve inventory lots across all medications.
+    """The lots on the dispensing shelf, across all medications.
 
-    `in_date` is the dispense rule's own verdict on each lot (see
-    `_IN_DATE_LOT_SQL`), so a screen that sums "available" stock counts exactly
-    what a dispense could take and never re-derives expiry on its own clock.
+    `in_date` is the dispense rule's own date verdict on each lot (a recorded
+    expiry on or after the hospital's date, pharmacy_stock_service.site_today),
+    so a screen that sums "available" stock counts exactly what a dispense
+    could take and never re-derives expiry on its own clock. An empty lot keeps
+    its date verdict, so it reads as empty, not as expired.
+
+    Only shelf lots are listed (pharmacy_stock_service.shelf_lot_sql): legacy
+    lots, the dispensing store's, and an NDPS vault's for a narcotic or
+    psychotropic, each with status available. A quarantined lot, or one in a
+    sub-store or returns quarantine, is not stock this screen may count, and
+    listing it here would have the formulary call it expired. With the
+    pharmacy store module off every lot is a legacy lot, so the list is the
+    whole inventory exactly as before.
     """
     with db_session() as conn:
-        rows = conn.execute("""
+        rows = conn.execute(f"""
             SELECT l.*, m.name, m.strength,
                    CASE WHEN date(l.expiration_date) >= ? THEN 1 ELSE 0 END AS in_date
             FROM helix_inventory_lots l
             JOIN helix_medication_master m ON l.medication_id = m.id
+            WHERE {stock.shelf_lot_sql('l')}
         """, (_expiry_cutoff(),)).fetchall()
         return [dict(row) for row in rows]
 
@@ -269,12 +281,24 @@ def transition_order_status(
     
     Returns: {"ok": True, "order": {...}, "transition": {...}, "already_applied": bool}
     Raises: ValueError for illegal transitions or insufficient stock.
+
+    ONE IMMEDIATE TRANSACTION (grn-4). The session takes the write lock before
+    its first read, so the status it checked and the lot it chose cannot change
+    under it, and the stock decrement, the order update, the transition row, the
+    case-room message and the dispense audit commit together or not at all. Two
+    pharmacists dispensing the last unit are serialised: the second finds no
+    stock. The session commits on exit; nothing here commits on its own (an
+    in-body commit would leave the session's COMMIT with no transaction).
+
+    EVERY DISPENSE IS AUDITED in that transaction (clinical_access,
+    helix_dispense_recorded, fail-closed). If the audit row cannot be written
+    the dispense rolls back: no movement, status unchanged.
     """
     # Generate idempotency key if not provided
     if not idempotency_key:
         idempotency_key = f"{order_id}:{target_status}:{uuid.uuid4().hex[:8]}"
 
-    with db_session() as conn:
+    with db_session(immediate=True) as conn:
         # ── Idempotency Check ──
         existing = conn.execute(
             "SELECT * FROM helix_transitions WHERE idempotency_key = ?",
@@ -394,7 +418,10 @@ def transition_order_status(
             INSERT INTO helix_transitions (id, order_id, from_status, to_status, idempotency_key, actor_id, payload)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (transition_id, order_id, current_status, target_status, idempotency_key, actor_id, payload_json))
-        
+
+        if stock_movement_id:
+            _audit_dispense(conn, order, transition_id, stock_movement_id, actor_id)
+
         # ── Close the loop in Relay: tell the case room what pharmacy decided ──
         # Verified, rejected and a suggested substitute each change what the
         # patient will get, so the prescriber hears about all three. Only the
@@ -431,8 +458,7 @@ def transition_order_status(
                     (channel["id"], sys_msg_content)
                 )
 
-        conn.commit()
-
+        # Read back inside the block, before the session commits on exit.
         updated_order = conn.execute("SELECT * FROM helix_patient_med_orders WHERE id = ?", (order_id,)).fetchone()
         transition_record = conn.execute("SELECT * FROM helix_transitions WHERE id = ?", (transition_id,)).fetchone()
 
@@ -704,58 +730,42 @@ def receive_order(order_id: str, actor_id: str, idempotency_key: str | None = No
 
 def _expiry_cutoff() -> str:
     """Today's date where the hospital is (YYYY-MM-DD): the first date a lot
-    must still be good on to count as stock.
-
-    The site's configured timezone when there is one, else the appliance's
-    local clock. Never the UTC date on its own: in India that is still
-    yesterday until 05:30, which would keep a lot that expired yesterday
-    dispensable for the first hours of the day."""
-    try:
-        from services.site_config_service import current_site_config
-        tz = current_site_config().timezone
-        if tz:
-            from zoneinfo import ZoneInfo
-            return datetime.now(ZoneInfo(tz)).date().isoformat()
-    except Exception:
-        pass
-    return date.today().isoformat()
-
-
-# A lot counts as stock only when it has units AND a recorded expiry on or after
-# today. No expiry recorded means the lot cannot be shown to be in date, so it
-# is refused rather than sorted anywhere. date() also yields NULL for a value
-# that is not a date, which fails the same way.
-_IN_DATE_LOT_SQL = "quantity > 0 AND date(expiration_date) >= ?"
+    must still be good on to count as stock. The rule now lives in
+    pharmacy_stock_service.site_today (grn-4), the one stock ledger's clock;
+    this name stays because callers and tests know it."""
+    return stock.site_today()
 
 
 def _in_date_stock(conn, medication_id: str) -> int:
-    row = conn.execute(
-        f"SELECT SUM(quantity) AS total FROM helix_inventory_lots "
-        f"WHERE medication_id = ? AND {_IN_DATE_LOT_SQL}",
-        (medication_id, _expiry_cutoff()),
-    ).fetchone()
-    return row["total"] if row and row["total"] is not None else 0
+    """Units of a drug a dispense could take today: the shared dispensable
+    predicate (pharmacy_stock_service.dispensable_lot_sql), so pre-flight, the
+    formulary and the dispense can never disagree about what is on the shelf."""
+    return stock.dispensable_units(conn, medication_id, today=_expiry_cutoff())
 
 
 def _atomic_dispense(conn, order_id: str, medication_id: str, actor_id: str) -> str:
     """
-    Atomically decrement inventory for a dispense event.
-    Uses FIFO (earliest expiry first) lot selection over IN-DATE lots only.
-    Must run inside an existing transaction.
-    
+    Take one unit for a dispense, earliest expiry first, from a dispensable lot
+    only (in date, available, on the dispensing shelf). Runs inside the
+    caller's transaction and writes through pharmacy_stock_service, the only
+    writer of drug stock: a relative, guarded decrement plus its ledger row.
+
     Returns: stock_movement_id
-    Raises: ValueError if there is no in-date stock.
+    Raises: ValueError if there is no dispensable stock.
     """
+    # The transition calls this inside its immediate session. A caller holding
+    # a plain legacy-mode connection with no transaction open yet gets one here,
+    # taken before the lot is chosen, so the pick and the decrement share one
+    # write lock. An autocommit connection is refused by the stock service.
+    if not getattr(conn, "in_transaction", False) and conn.isolation_level is not None:
+        conn.execute("BEGIN IMMEDIATE")
+
     # Earliest-expiring lot that is still in date. This used to pick the
     # earliest expiry with no date filter at all, so an expired lot was always
     # the FIRST one dispensed, and a lot with no expiry (NULL sorts first in
     # SQLite) went ahead of everything.
-    lot = conn.execute(f"""
-        SELECT * FROM helix_inventory_lots
-        WHERE medication_id = ? AND {_IN_DATE_LOT_SQL}
-        ORDER BY date(expiration_date) ASC
-        LIMIT 1
-    """, (medication_id, _expiry_cutoff())).fetchone()
+    today = _expiry_cutoff()
+    lot = stock.pick_fefo_lot(conn, medication_id, 1, today=today)
 
     if not lot:
         # Say why when there are units on the shelf that cannot be used, so the
@@ -763,13 +773,8 @@ def _atomic_dispense(conn, order_id: str, medication_id: str, actor_id: str) -> 
         # Named by drug, never by row id, and pointing at the two ways on that
         # exist from here (Orb has no restock step to send them to).
         drug = _drug_name(conn, medication_id)
-        unusable = conn.execute(
-            "SELECT SUM(quantity) AS total FROM helix_inventory_lots "
-            "WHERE medication_id = ? AND quantity > 0",
-            (medication_id,),
-        ).fetchone()
-        if unusable and unusable["total"]:
-            units = unusable["total"]
+        units = stock.undispensable_shelf_units(conn, medication_id, today=today)
+        if units:
             on_hand = ("1 unit on hand is expired or has" if units == 1
                        else f"{units} units on hand are expired or have")
             raise ValueError(
@@ -779,30 +784,73 @@ def _atomic_dispense(conn, order_id: str, medication_id: str, actor_id: str) -> 
             )
         raise ValueError(f"No stock of {drug}. Return to review to substitute, or reject.")
 
-    # Decrement by 1 unit (single dispense event)
-    new_qty = lot["quantity"] - 1
-    conn.execute(
-        "UPDATE helix_inventory_lots SET quantity = ? WHERE id = ?",
-        (new_qty, lot["id"])
+    # One unit, a real decrement against a real lot, recorded as a dispense
+    # movement. The key makes a second dispense of the same order write
+    # nothing: an order leaves the shelf once.
+    try:
+        movement = stock.post_movement(
+            conn, lot_id=lot["id"], movement_type="dispense", quantity_change=-1,
+            actor_id=actor_id, order_id=order_id, reference_type="helix_order",
+            reference_id=order_id, idempotency_key=f"helix_order:{order_id}:dispense",
+        )
+    except stock.InsufficientStock:
+        # Unreachable under the immediate session (the pick and the decrement
+        # hold one write lock); kept so a caller without it still gets words.
+        raise ValueError(f"No stock of {_drug_name(conn, medication_id)}. "
+                         f"Return to review to substitute, or reject.") from None
+    return movement["id"]
+
+
+def _audit_dispense(conn, order, transition_id: str, movement_id: str, actor_id: str) -> None:
+    """The dispense's own audit row, in the dispense's transaction (grn-4).
+
+    clinical_access is fail-closed: if this row cannot be written,
+    log_audit_event raises and the whole dispense rolls back, so no drug leaves
+    the shelf unrecorded. Every id is written as a string (an int target_id is
+    hashed as a number but stored as TEXT, which breaks the audit chain)."""
+    from services.audit_service import log_audit_event
+
+    movement = conn.execute(
+        "SELECT m.lot_id, m.medication_id, m.quantity_change, m.store_id, l.lot_number "
+        "FROM helix_stock_movements m LEFT JOIN helix_inventory_lots l ON l.id = m.lot_id "
+        "WHERE m.id = ?", (movement_id,)).fetchone()
+    units = -int(movement["quantity_change"]) if movement else 1
+    effective = order["substitute_medication_id"] or order["medication_id"]
+    log_audit_event(
+        correlation_id=str(transition_id),
+        event_category="clinical_access",
+        action_type="helix_dispense_recorded",
+        outcome="success",
+        db=conn,
+        summary_message=(f"Dispensed {units} unit{'' if units == 1 else 's'} of "
+                         f"{_drug_name(conn, effective)} from batch "
+                         f"{(movement['lot_number'] if movement else None) or 'not recorded'}"),
+        actor_user_id=str(actor_id) if actor_id is not None else None,
+        target_type="helix_order",
+        target_id=str(order["id"]),
+        patient_id=str(order["patient_id"]) if order["patient_id"] is not None else None,
+        metadata={
+            "order_id": str(order["id"]),
+            "transition_id": str(transition_id),
+            "movement_id": str(movement_id),
+            "lot_id": str(movement["lot_id"]) if movement else None,
+            "medication_id": str(effective),
+            "prescribed_medication_id": str(order["medication_id"]),
+            "substituted": bool(order["substitute_medication_id"]
+                                and order["substitute_medication_id"] != order["medication_id"]),
+            "quantity_units": units,
+            "store_id": (str(movement["store_id"])
+                         if movement and movement["store_id"] is not None else None),
+        },
     )
 
-    # Record stock movement. This is a real decrement against a real lot, chosen
-    # FIFO by expiry, so it is recorded as one — the reason string used to read
-    # "mock_dispense" and the row flagged itself is_mock=1, which described the
-    # demonstration script it was written for and not what the code does.
-    movement_id = str(uuid.uuid4())
-    conn.execute("""
-        INSERT INTO helix_stock_movements (id, lot_id, medication_id, order_id, quantity_change, reason)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (movement_id, lot["id"], medication_id, order_id, -1, "dispense"))
-
-    return movement_id
 
 def pre_flight_inventory_check(medication_id: str) -> dict:
     """Checks lot stock levels synchronously for a medication.
 
-    Counts in-date lots only, the same rule `_atomic_dispense` applies, so a
-    pre-flight never promises stock the dispense would then refuse.
+    Counts dispensable lots only (in date, available, on the dispensing shelf),
+    the same rule `_atomic_dispense` applies, so a pre-flight never promises
+    stock the dispense would then refuse.
 
     Returns {"medication_id": str, "in_stock": bool, "total_quantity": int}
     """

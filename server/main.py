@@ -883,7 +883,7 @@ async def lifespan(app: FastAPI):
 # ── Create FastAPI app ──
 app = FastAPI(
     title="Orb Hospital OS",
-    description="Local-first hospital operating system API",
+    description="Local-first hospital software API",
     version="0.1.0",
     lifespan=lifespan,
 )

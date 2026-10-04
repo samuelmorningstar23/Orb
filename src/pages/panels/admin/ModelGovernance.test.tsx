@@ -19,8 +19,8 @@ vi.mock('../../../api/client', () => ({
         notes: 'The safety floor sends patient and dosing questions to the careful model.',
       },
       {
-        model_key: 'vigil_news2', display_name: 'NEWS2 early-warning score', version: 'rcp-news2-2017',
-        task: 'Early-warning score', training_data: 'Rule-based', validated: 1, is_active: 1,
+        model_key: 'vigil_news2', display_name: 'NEWS2 score', version: 'rcp-news2-2017',
+        task: 'NEWS2 score', training_data: 'Rule-based', validated: 1, is_active: 1,
         checkpoint_present: 1, role: 'The deterioration score on every board', impacts: [], notes: '',
       },
     ],
@@ -40,7 +40,7 @@ describe('model governance', () => {
     expect(fast.textContent).toContain('medgemma:4b')
     expect(within(fast).getByText('Not validated')).toBeTruthy()
     expect(screen.queryByText('sage_llm_fast')).toBeNull()
-    expect(within(screen.getByText('NEWS2 early-warning score').closest('tr')!)
+    expect(within(screen.getByText('NEWS2 score').closest('tr')!)
       .getByText('Validated')).toBeTruthy()
   })
 })

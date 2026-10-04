@@ -17,13 +17,23 @@ State machine
 Terminal statuses: completed, resulted, cancelled.
 Every transition writes an `order_events` row. Transitioning to the current
 status is an idempotent no-op success.
+
+Laboratory intake (lis-6). When a LAB order becomes 'active' (created active,
+or moved draft to active), and only while the laboratory module (ORB_LAB) is
+on, the order is handed to services/lab_order_service AFTER the commit that
+activated it. The hand-off never raises and never changes what these
+functions return: a laboratory failure cannot undo or delay the order. With
+ORB_LAB off nothing is imported and nothing else happens.
 """
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 
 from database import db_session
 from services import terminology_service
+
+logger = logging.getLogger("orb.orders")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -68,6 +78,22 @@ def _record_event(conn, order_id, prior_status, new_status, actor_id, reason):
            VALUES (?, ?, ?, ?, ?, ?)""",
         (order_id, prior_status, new_status, actor_id, reason, _now()),
     )
+
+
+def _after_lab_activation(order: dict, actor_id: str | None) -> None:
+    """Post-commit: hand a newly active laboratory order to the laboratory
+    (lis-6). Off unless ORB_LAB is on; never raises."""
+    if order.get("order_type") != "lab" or order.get("status") != "active":
+        return
+    import config
+    if config.LAB_ENABLED is not True:
+        return
+    try:
+        from services import lab_order_service
+        lab_order_service.intake_after_activation(order["id"], actor_id=actor_id)
+    except Exception:
+        logger.exception("Laboratory intake hook failed for order %s; the laboratory's "
+                         "sweep will pick it up", order.get("id"))
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -148,7 +174,9 @@ def create_order(
         )
         _record_event(conn, order_id, None, status, ordered_by, "order created")
         row = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
-    return dict(row)
+    created = dict(row)
+    _after_lab_activation(created, ordered_by)
+    return created
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -196,7 +224,10 @@ def transition_order(order_id: str, to_status: str, actor_id: str | None = None,
         )
         _record_event(conn, order_id, current, to_status, actor_id, detail)
         row = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
-    return dict(row)
+    moved = dict(row)
+    if to_status == "active":
+        _after_lab_activation(moved, actor_id)
+    return moved
 
 
 # ══════════════════════════════════════════════════════════════════════════

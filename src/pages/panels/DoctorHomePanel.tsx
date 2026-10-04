@@ -586,11 +586,11 @@ export default function DoctorHomePanel() {
 
   const deterioratingBody = () => {
     if (boardError && !board) {
-      return <ErrorState title="Couldn't load deteriorating patients" detail={boardError}
+      return <ErrorState title="Couldn't load the NEWS2 board" detail={boardError}
         onRetry={() => { void loadLive() }} />
     }
     if (!board) {
-      return <SkeletonRows rows={skeletonRows.deteriorating} lead label="Loading deteriorating patients" />
+      return <SkeletonRows rows={skeletonRows.deteriorating} lead label="Loading the highest NEWS2 scores" />
     }
     if (shown.length === 0) {
       return (
@@ -926,7 +926,7 @@ export default function DoctorHomePanel() {
       <div className="today-grid">
         <div className="today-main">
           <Section>
-            <SectionHeader id="today-deteriorating" label="Deteriorating" unit={plural(deteriorating.length, 'patient')}
+            <SectionHeader id="today-deteriorating" label="Highest NEWS2 scores" unit={plural(deteriorating.length, 'patient')}
               count={deteriorating.length} tone="danger" />
             {deterioratingBody()}
           </Section>

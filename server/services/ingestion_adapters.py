@@ -73,9 +73,44 @@ class CanonicalEvent:
     obr_group_id: Optional[str] = None
     # Internal mapping result
     mapped_vital_key: Optional[str] = None           # HR, SBP, DBP, RR, Temp, SpO2
+    # ── Identity the sender put in the message (lis-19). Only the unmatched
+    #    results queue uses these: laboratory staff see them, and attaching a
+    #    result to a patient checks two of them against the patient's record.
+    patient_identifiers: Optional[list] = None       # every PID-3 repetition's ID
+    patient_name: Optional[str] = None               # PID-5 family, given, middle
+    patient_dob: Optional[str] = None                # PID-7 as YYYY-MM-DD
+    patient_sex: Optional[str] = None                # PID-8 as sent
+    # ── Which order a result belongs to (lis-20). obr_group_id above keeps
+    #    what it always held: OBR-2, or a random id when OBR-2 is empty.
+    #    obr_placer is OBR-2 ONLY when the sender sent it, so the random
+    #    fallback can never be matched by a correction.
+    obr_placer: Optional[str] = None                 # OBR-2, sender-supplied only
+    obr_filler: Optional[str] = None                 # OBR-3
+    group_id_generated: bool = False                 # obr_group_id was invented here
+    obx_sub_id: Optional[str] = None                 # OBX-4
+    hl7_sender: Optional[str] = None                 # MSH-3^MSH-4, the number's namespace
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+def canonical_event_from_dict(data: dict) -> CanonicalEvent:
+    """Rebuild a CanonicalEvent from its to_dict() form, as the unmatched
+    results queue stores it (payload_json). Keys this version does not know
+    are ignored, and the two enum fields are read back from their values."""
+    from dataclasses import fields as _fields
+    known = {f.name for f in _fields(CanonicalEvent)}
+    kwargs = {k: v for k, v in (data or {}).items() if k in known}
+    for key, enum in (("observation_type", ObservationType), ("value_type", ValueType)):
+        if key in kwargs and kwargs[key] is not None and not isinstance(kwargs[key], enum):
+            try:
+                kwargs[key] = enum(kwargs[key])
+            except ValueError:
+                kwargs.pop(key)
+    kwargs.setdefault("patient_identifier", "")
+    kwargs.setdefault("observation_name", "Unknown")
+    kwargs.setdefault("value", "")
+    return CanonicalEvent(**kwargs)
 
 
 # ════════════════════════════════════════════
@@ -224,6 +259,37 @@ def parse_hl7_timestamp(ts: str, *, default_timezone=None) -> Optional[str]:
     return parse_timestamp(ts, default_tz=default_timezone)
 
 
+def hl7_patient_identity(pid) -> dict:
+    """The patient identity a PID segment states, for the unmatched results
+    queue (lis-19): every PID-3 repetition's ID, the PID-5 name (family, given
+    and middle only, never a prefix, suffix or degree), the PID-7 date of
+    birth as YYYY-MM-DD when it is a real date, and PID-8 as sent. Missing
+    parts are None (identifiers an empty list); nothing here raises."""
+    out: dict = {"identifiers": [], "name": None, "dob": None, "sex": None}
+    if pid is None:
+        return out
+    try:
+        for rep in range(len(pid.repeats(3))):
+            value = pid.field(3, repeat=rep, component=1)
+            if value and value not in out["identifiers"]:
+                out["identifiers"].append(value)
+        family = pid.field(5, component=1)
+        given = " ".join(p for p in (pid.field(5, component=2),
+                                     pid.field(5, component=3)) if p)
+        out["name"] = ", ".join(p for p in (family, given) if p) or None
+        match = re.match(r"^(\d{4})(\d{2})(\d{2})", pid.field(7) or "")
+        if match:
+            try:
+                out["dob"] = datetime(int(match.group(1)), int(match.group(2)),
+                                      int(match.group(3))).strftime("%Y-%m-%d")
+            except ValueError:
+                out["dob"] = None
+        out["sex"] = pid.field(8) or None
+    except Exception:  # pragma: no cover - a malformed PID keeps what it had
+        pass
+    return out
+
+
 # ════════════════════════════════════════════
 #  Adapter Interface
 # ════════════════════════════════════════════
@@ -321,6 +387,9 @@ class HL7Adapter(IngestionAdapter):
         patient_id = pid.field(3, component=1) if pid else ""
         if not patient_id:
             raise ParseError("No patient identifier found in PID segment")
+        identity = hl7_patient_identity(pid)
+        sender = "^".join(p for p in (message.sending_application,
+                                      message.sending_facility) if p) or None
 
         pv1 = message.first("PV1")
         encounter_id = (pv1.field(19, component=1) or None) if pv1 else None
@@ -331,11 +400,15 @@ class HL7Adapter(IngestionAdapter):
 
         for seg in message.segments:
             if seg.name == "OBR":
+                placer = seg.field(2) or None
                 current_obr = {
                     "panel_name": seg.field(4, component=2) or seg.field(4, component=1),
                     "observed_at": parse_hl7_timestamp(
                         seg.field(7), default_timezone=self.default_timezone),
-                    "group_id": seg.field(2) or str(uuid.uuid4())[:8],
+                    "group_id": placer or str(uuid.uuid4())[:8],
+                    "placer": placer,
+                    "filler": seg.field(3) or None,
+                    "generated": placer is None,
                     "obx_segments": [],
                 }
                 obr_groups.append(current_obr)
@@ -347,6 +420,9 @@ class HL7Adapter(IngestionAdapter):
                         "panel_name": "Unspecified",
                         "observed_at": msg_timestamp,
                         "group_id": str(uuid.uuid4())[:8],
+                        "placer": None,
+                        "filler": None,
+                        "generated": True,
                         "obx_segments": [],
                     }
                     obr_groups.append(current_obr)
@@ -366,6 +442,17 @@ class HL7Adapter(IngestionAdapter):
                         correlation_id=correlation_id,
                         msg_timestamp=msg_timestamp,
                     )
+                    # Identity and order numbers ride on every result of the
+                    # message (lis-19, lis-20); nothing above reads them.
+                    event.patient_identifiers = list(identity["identifiers"])
+                    event.patient_name = identity["name"]
+                    event.patient_dob = identity["dob"]
+                    event.patient_sex = identity["sex"]
+                    event.obr_placer = obr["placer"]
+                    event.obr_filler = obr["filler"]
+                    event.group_id_generated = obr["generated"]
+                    event.obx_sub_id = obx.field(4) or None
+                    event.hl7_sender = sender
                     events.append(event)
                 except Exception as e:
                     # One bad OBX must never cost the rest of the panel — a
@@ -513,6 +600,17 @@ class JSONAdapter(IngestionAdapter):
         src_name = data.get("source_name") or source_name
         observed_at = data.get("observed_at")
         now_iso = datetime.now(timezone.utc).isoformat()
+        # Optional identity for the unmatched results queue (lis-19). A date of
+        # birth is kept only when it is a real YYYY-MM-DD date.
+        stated_name = data.get("patient_name")
+        stated_name = (str(stated_name).strip() or None) if stated_name is not None else None
+        stated_dob = None
+        raw_dob = data.get("date_of_birth")
+        if isinstance(raw_dob, str) and re.match(r"^\d{4}-\d{2}-\d{2}$", raw_dob.strip()):
+            try:
+                stated_dob = datetime.strptime(raw_dob.strip(), "%Y-%m-%d").strftime("%Y-%m-%d")
+            except ValueError:
+                stated_dob = None
 
         observations = data.get("observations")
         if not observations or not isinstance(observations, list):
@@ -575,6 +673,9 @@ class JSONAdapter(IngestionAdapter):
                 raw_segment_ref=None,
                 correlation_id=correlation_id,
                 mapped_vital_key=vital_key,
+                patient_identifiers=[str(patient_id)],
+                patient_name=stated_name,
+                patient_dob=stated_dob,
             ))
 
         if not events:

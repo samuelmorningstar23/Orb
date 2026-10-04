@@ -24,16 +24,19 @@ Rules for every endpoint added here (design: docs/his_design/opd.json):
   * plain `def` handlers; patient_id in the path or a typed body; target_id
     always a string in audit rows.
 
-Planned endpoints: GET /my-queue; GET /patients/{patient_id}/record and
-/consultations; GET and PUT /visits/{visit_id}/consultation, POST .../sign and
-.../addenda; POST /visits/{visit_id}/allergy-review, /complete, /orders,
-/prescriptions; GET /terminology/search.
+Built: GET /patients/{patient_id}/record (opd-7, W3-A).
+
+Planned endpoints: GET /my-queue; GET /patients/{patient_id}/consultations;
+GET and PUT /visits/{visit_id}/consultation, POST .../sign and .../addenda;
+POST /visits/{visit_id}/allergy-review, /complete, /orders, /prescriptions;
+GET /terminology/search.
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 import config
-from permissions import OPD_CONSULT, require_permission
+from permissions import OPD_CONSULT, department_scope, require_patient_access, require_permission
 from routes.opt_in_gates import require_opd_feature
+from services.opd_service import get_opd_record
 
 router = APIRouter(
     prefix="/api/opd",
@@ -53,3 +56,29 @@ def opd_meta(user: dict = Depends(require_permission(OPD_CONSULT))):
             "charge_at": config.OPD_CHARGE_AT,
         },
     }
+
+
+@router.get("/patients/{patient_id}/record")
+def opd_record(
+    patient_id: str,
+    request: Request,
+    # The OPD scope arm (opd-7). The ordinary scope, OR (the 'opd' feature on,
+    # no active admission anywhere, and a non-cancelled visit in the caller's
+    # clinic within ORB_OPD_SCOPE_DAYS). On the whitelist in
+    # tests/test_opd_scope_drift.py. Every read writes a fail-closed phi_access
+    # row that names the arm (admission, opd_visit or hospital_wide).
+    user: dict = Depends(
+        require_patient_access(OPD_CONSULT, opd_arm=True, audit_action="opd_record_viewed")
+    ),
+):
+    """The outpatient record view: identity, allergies, problems, OPD-linked
+    results and signed OPD consultations of every clinic (ruling OPD-N2,
+    extent ii). Never the inpatient chart, vitals, a score or AI advice."""
+    record = get_opd_record(
+        patient_id,
+        viewer_department=department_scope(user),
+        access=getattr(request.state, "orb_patient_scope", None),
+    )
+    if record is None:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    return record

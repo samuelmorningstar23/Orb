@@ -28,9 +28,23 @@ THE RULES IT HOLDS
     Neither may contain '/'.
   * A ward code, a room code and a bed label are immutable once anything
     refers to them (beds, rooms, admissions, patients, movements, the cleaning
-    record). Change the display name instead, or set up a new one. The full
-    rename and retire guards over admissions.ward_id and bed_id arrive with
-    adt-3; until then the text mirrors are what is checked.
+    record). Change the display name instead, or set up a new one. Since
+    migration 58 (adt-3) the guards count admissions.ward_id and bed_id and
+    the movement ledger's ward and bed ids as well as the text mirrors.
+  * A bed is retired, never deleted, and never while an active admission
+    holds it (by bed_id, or by typed ward and bed text that names it) or a
+    reservation holds it. A retired bed keeps its label, so a recreated bed
+    takes a new one.
+
+RECONCILIATION (adt-3). Admissions written before ORB_ADT carry typed ward and
+bed text and no ids. reconciliation_report sorts the active admissions into
+linked, matched (typed text names exactly one master bed nobody else claims),
+doubled (two or more admissions claim one bed), unlinked (text that names no
+master ward or bed) and awaiting a bed. link_admissions links the matched ones
+through services.adt.core.locate_admission_on, the single location writer, and
+never a doubled bed. mark_register_complete stamps wards.ledger_complete_from,
+from which the ward's ADT figures count, and is refused while the ward has an
+unlinked admission or a doubled bed.
   * A ward's department must be one a doctor or nurse covers, or one the site
     configuration declares. A declared department nobody covers is saved and
     flagged 'Admissions refused until a doctor or nurse covers <department>'.
@@ -48,10 +62,13 @@ THE RULES IT HOLDS
     unless the bed manager asks to adopt them, which links the existing row and
     keeps its cleaning state, ledger and open tasks.
 
-NO PATIENT DATA. Nothing here reads or returns a patient. Reference checks
-count admissions and patients by ward and bed text and return counts only.
-Master edits are audited as category 'facilities' (design section 9) inside
-the same transaction, with a bed_master_events row beside each.
+PATIENT DATA. The master edits read no patient: reference checks count
+admissions and patients by ward and bed text and return counts only. Master
+edits are audited as category 'facilities' (design section 9) inside the same
+transaction, with a bed_master_events row beside each. The reconciliation is
+the exception: it lists admission and patient ids against typed places (no
+name, no MRN), so reading it writes a fail-closed phi_access audit naming the
+patient ids, and each link writes a fail-closed patient_movement audit.
 
 Every function is plain sync and opens its own sessions; routes call it from
 plain def handlers.
@@ -86,6 +103,10 @@ __all__ = [
     "update_bed",
     "save_bed_class",
     "import_site_config_wards",
+    "retire_bed",
+    "reconciliation_report",
+    "link_admissions",
+    "mark_register_complete",
 ]
 
 #: One registration call registers at most this many beds. A ward is rarely
@@ -1274,3 +1295,357 @@ def import_site_config_wards(*, actor: dict, request_meta: dict | None = None) -
                                 "up. Nothing was saved.", code="duplicate_code") from exc
     return {"created": created, "existing": existing, "conflicts": conflicts,
             "skipped": skipped, "file_present": bool(cfg.present), "message": None}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Retire a bed (adt-3)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _typed_occupants(db, ward_code: str, label: str) -> list[str]:
+    """Active admissions with no bed_id whose typed ward and bed text name this
+    bed. They lie in it as far as every screen that prints the text knows."""
+    return [r["id"] for r in db.execute(
+        """SELECT id FROM admissions
+            WHERE status = 'active' AND bed_id IS NULL
+              AND LOWER(TRIM(COALESCE(ward, ''))) = LOWER(TRIM(?))
+              AND LOWER(TRIM(COALESCE(bed, ''))) = LOWER(TRIM(?))""",
+        (ward_code, label),
+    ).fetchall()]
+
+
+def _bed_reserved(db, bed_id: str) -> bool:
+    """An active reservation holds the bed. bed_reservations arrives with
+    adt-12; until then nothing can be reserved."""
+    if not _table_columns(db, "bed_reservations"):
+        return False
+    return db.execute(
+        "SELECT 1 FROM bed_reservations WHERE bed_id = ? AND status = 'active' LIMIT 1", (bed_id,)
+    ).fetchone() is not None
+
+
+def retire_bed(bed_id: str, data: dict | None = None, *, actor: dict,
+               request_meta: dict | None = None) -> dict:
+    """Retire a master bed: it leaves the board and every picker, keeps its
+    cleaning record, its label and its history, and is never deleted.
+
+    Refused while an active admission holds the bed (by bed_id, or by typed
+    ward and bed text naming it), while a reservation holds it, and when it is
+    already retired. A retired label stays taken on the ward: set up a bed
+    with a new label instead."""
+    data = dict(data or {})
+    reason = data.pop("reason", None)
+    hk.ensure_housekeeping_schema()
+    now = utc_iso_now()
+    with db_session(immediate=True) as db:
+        row = db.execute("SELECT * FROM housekeeping_units WHERE id = ? AND ward_id IS NOT NULL",
+                         (bed_id,)).fetchone()
+        if row is None:
+            raise BedMasterNotFound("No bed with that id is set up", code="bed_not_found")
+        unit = dict(row)
+        if unit.get("retired_at"):
+            raise BedMasterConflict(f"Bed {unit['unit_code']} is already retired", code="bed_retired")
+        ward = _ward_row(db, unit["ward_id"])
+        held = [r["id"] for r in db.execute(
+            "SELECT id FROM admissions WHERE bed_id = ? AND status = 'active'", (bed_id,)).fetchall()]
+        held += _typed_occupants(db, ward["code"], unit.get("bed_label") or "")
+        if held:
+            raise BedMasterConflict(
+                f"Bed {unit['bed_label']} on {ward['code']} has a patient in it, so it cannot be "
+                "retired. Move the patient first.",
+                code="bed_occupied", admissions=len(held))
+        if _bed_reserved(db, bed_id):
+            raise BedMasterConflict(
+                f"Bed {unit['bed_label']} on {ward['code']} is reserved, so it cannot be retired. "
+                "Release the reservation first.", code="bed_reserved")
+        db.execute(
+            "UPDATE housekeeping_units SET retired_at = ?, is_active = 0, updated_at = ? WHERE id = ?",
+            (now, now, bed_id),
+        )
+        detail = {"unit_code": unit["unit_code"], "ward_id": ward["id"], "ward_code": ward["code"],
+                  "label": unit.get("bed_label"), "state": unit.get("state")}
+        _event(db, "bed", bed_id, "retired", detail, actor, now, reason)
+        _audit(db, actor, "bed_master_bed_retired", f"Bed {unit['unit_code']} retired",
+               target_type="bed", target_id=bed_id, request_meta=request_meta, metadata=detail)
+        after = db.execute("SELECT * FROM housekeeping_units WHERE id = ?", (bed_id,)).fetchone()
+    return _bed_out(after)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Reconciliation, link and register complete (adt-3)
+# ═════════════════════════════════════════════════════════════════════════════
+
+_LINK_REASON = "Linked to the bed master by reconciliation"
+
+
+def _entry(adm: dict, *, ward: dict | None = None, bed: dict | None = None,
+           reason: str | None = None) -> dict:
+    return {
+        "admission_id": adm["id"],
+        "patient_id": adm["patient_id"],
+        "department": adm.get("department"),
+        "ward": adm.get("ward"),
+        "bed": adm.get("bed"),
+        "ward_id": adm.get("ward_id"),
+        "bed_id": adm.get("bed_id"),
+        "master_ward_id": ward["id"] if ward else None,
+        "master_ward_code": ward["code"] if ward else None,
+        "master_bed_id": bed["id"] if bed else None,
+        "master_bed_label": bed["bed_label"] if bed else None,
+        "master_unit_code": bed["unit_code"] if bed else None,
+        "reason": reason,
+    }
+
+
+def _reconcile_on(db, *, ward_id: str | None, dept: str | None) -> dict:
+    """Sort every active admission (inside `dept`, and on `ward_id` when
+    given) against the master. Pure read on the caller's connection."""
+    from permissions import scope_patient_ids_sql
+    from services.adt.core import match_location_on
+
+    ward_filter = _ward_row(db, ward_id) if ward_id else None
+    scope_sql, scope_params = scope_patient_ids_sql(dept)
+    rows = [dict(r) for r in db.execute(
+        f"""SELECT id, patient_id, department, ward, bed, ward_id, bed_id, created_at
+              FROM admissions
+             WHERE status = 'active' AND patient_id IN ({scope_sql})
+             ORDER BY created_at, rowid""",
+        scope_params,
+    ).fetchall()]
+
+    linked: list[dict] = []
+    candidates: list[dict] = []
+    unlinked: list[dict] = []
+    awaiting: list[dict] = []
+    mismatches: list[dict] = []
+    claims: dict[str, list[dict]] = {}
+    beds: dict[str, dict] = {}
+    for adm in rows:
+        if adm.get("bed_id"):
+            bed = db.execute("SELECT * FROM housekeeping_units WHERE id = ?",
+                             (adm["bed_id"],)).fetchone()
+            bed = dict(bed) if bed else None
+            ward = _ward_row(db, bed["ward_id"]) if bed and bed.get("ward_id") else None
+            if ward_filter and (ward is None or ward["id"] != ward_filter["id"]):
+                continue
+            entry = _entry(adm, ward=ward, bed=bed)
+            linked.append(entry)
+            if bed is not None:
+                beds[bed["id"]] = bed
+                claims.setdefault(bed["id"], []).append(entry)
+                if adm.get("ward") != ward["code"] or adm.get("bed") != bed["bed_label"]:
+                    mismatches.append(entry)
+            continue
+        match = match_location_on(db, adm.get("ward"), adm.get("bed"))
+        ward, bed = match["ward"], match["bed"]
+        on_ward = (ward is not None and ward_filter is not None and ward["id"] == ward_filter["id"]) \
+            or (ward_filter is not None and adm.get("ward_id") == ward_filter["id"])
+        if ward_filter and not on_ward:
+            continue
+        if not match["bed_text"]:
+            awaiting.append(_entry(adm, ward=ward, reason="awaiting_bed"))
+        elif ward is None:
+            unlinked.append(_entry(adm, reason="ward_not_in_setup"))
+        elif bed is None:
+            unlinked.append(_entry(adm, ward=ward, reason="bed_not_in_setup"))
+        elif bed.get("retired_at") or not bed.get("is_active"):
+            unlinked.append(_entry(adm, ward=ward, bed=bed, reason="bed_retired"))
+        else:
+            entry = _entry(adm, ward=ward, bed=bed)
+            candidates.append(entry)
+            beds[bed["id"]] = bed
+            claims.setdefault(bed["id"], []).append(entry)
+
+    doubled_ids = {bid for bid, who in claims.items() if len(who) > 1}
+    matched = [e for e in candidates if e["master_bed_id"] not in doubled_ids]
+    doubled = [{
+        "bed_id": bid,
+        "unit_code": beds[bid].get("unit_code"),
+        "bed_label": beds[bid].get("bed_label"),
+        "ward_id": beds[bid].get("ward_id"),
+        "admissions": [dict(e, reason="doubled_bed") for e in claims[bid]],
+    } for bid in sorted(doubled_ids)]
+    return {
+        "ward_id": ward_filter["id"] if ward_filter else None,
+        "ward_code": ward_filter["code"] if ward_filter else None,
+        "linked": linked,
+        "matched": matched,
+        "doubled": doubled,
+        "unlinked": unlinked,
+        "awaiting": awaiting,
+        "mirror_mismatches": mismatches,
+        "counts": {
+            "active_admissions": len(linked) + len(candidates) + len(unlinked) + len(awaiting),
+            "linked": len(linked), "matched": len(matched), "doubled_beds": len(doubled),
+            "unlinked": len(unlinked), "awaiting": len(awaiting),
+            "mirror_mismatches": len(mismatches),
+        },
+    }
+
+
+def _patient_ids(report: dict) -> list[str]:
+    seen: list[str] = []
+    for key in ("linked", "matched", "unlinked", "awaiting"):
+        for e in report[key]:
+            if e["patient_id"] not in seen:
+                seen.append(e["patient_id"])
+    for d in report["doubled"]:
+        for e in d["admissions"]:
+            if e["patient_id"] not in seen:
+                seen.append(e["patient_id"])
+    return seen
+
+
+def reconciliation_report(*, actor: dict, ward_id: str | None = None,
+                          request_meta: dict | None = None) -> dict:
+    """The active admissions sorted against the master: linked, matched,
+    doubled, unlinked and awaiting a bed, with counts. Lists admission and
+    patient ids against typed places (no name, no MRN), so the read is
+    audited as phi_access with the patient ids, inside the read's session
+    (fail-closed: no audit, no report)."""
+    from permissions import department_scope
+
+    dept = department_scope(actor)
+    hk.ensure_housekeeping_schema()
+    with db_session() as db:
+        report = _reconcile_on(db, ward_id=ward_id, dept=dept)
+        patient_ids = _patient_ids(report)
+        if patient_ids:
+            meta = request_meta or {}
+            log_audit_event(
+                correlation_id=str(uuid.uuid4()),
+                event_category="phi_access",
+                action_type="bed_reconciliation_viewed",
+                outcome="success",
+                db=db,
+                summary_message=(f"Bed reconciliation viewed: {len(patient_ids)} patients"
+                                 + (f" on {report['ward_code']}" if report["ward_code"] else "")),
+                actor_user_id=(actor or {}).get("id"),
+                actor_role=(actor or {}).get("role"),
+                target_type="ward" if ward_id else "bed_master",
+                target_id=str(ward_id) if ward_id else "all",
+                request_path=meta.get("request_path"),
+                http_method=meta.get("http_method"),
+                ip_address=meta.get("ip_address"),
+                user_agent=meta.get("user_agent"),
+                metadata={"patient_ids": patient_ids[:300], "patient_count": len(patient_ids),
+                          "department": dept},
+            )
+    return report
+
+
+def link_admissions(data: dict, *, actor: dict, request_meta: dict | None = None) -> dict:
+    """Link matched admissions to their master beds, confirmed by the bed
+    manager, in ONE immediate session.
+
+    data: ward_id (only that ward), admission_ids (only these; default every
+    matched one in scope), boarder_acknowledged, out_of_service_reason, reason.
+    The match is recomputed inside the session, so what is linked is what the
+    master says now. A doubled bed is never linked; an admission that is not
+    matched is reported, not linked. A placement that needs words (a boarder,
+    an out-of-service bed) without them is skipped with the words. Each link
+    is one 'location_linked' movement and one patient_movement audit written
+    by services.adt.core.locate_admission_on; an unwritable audit rolls every
+    link back."""
+    from permissions import department_scope
+    from services.adt.core import AdtError, locate_admission_on
+
+    data = dict(data or {})
+    reason = _clean(data.get("reason"), _MAX_NOTE) or _LINK_REASON
+    wanted = data.get("admission_ids")
+    if wanted is not None and not isinstance(wanted, (list, tuple)):
+        raise BedMasterError("admission_ids must be a list", code="bad_admission_ids")
+    wanted_set = {str(x) for x in wanted} if wanted else None
+    dept = department_scope(actor)
+    hk.ensure_housekeeping_schema()
+    linked: list[dict] = []
+    skipped: list[dict] = []
+    with db_session(immediate=True) as db:
+        report = _reconcile_on(db, ward_id=data.get("ward_id"), dept=dept)
+        targets = [e for e in report["matched"]
+                   if wanted_set is None or e["admission_id"] in wanted_set]
+        if wanted_set is not None:
+            classes = {"linked": "already_linked", "unlinked": "not_matched",
+                       "awaiting": "awaiting_bed"}
+            for key, why in classes.items():
+                for e in report[key]:
+                    if e["admission_id"] in wanted_set:
+                        skipped.append({"admission_id": e["admission_id"], "code": why,
+                                        "message": None})
+            for d in report["doubled"]:
+                for e in d["admissions"]:
+                    if e["admission_id"] in wanted_set and e.get("bed_id") is None:
+                        skipped.append({"admission_id": e["admission_id"], "code": "doubled_bed",
+                                        "message": f"{d['unit_code']} is claimed by more than one "
+                                                   "admission. Settle where each patient lies on "
+                                                   "the ward first."})
+            known = {e["admission_id"] for e in targets} | {s["admission_id"] for s in skipped}
+            for missing in sorted(wanted_set - known):
+                skipped.append({"admission_id": missing, "code": "not_found", "message": None})
+        for e in targets:
+            try:
+                placed = locate_admission_on(
+                    db, admission_id=e["admission_id"], actor=actor,
+                    movement_type="location_linked", reason=reason,
+                    ward_id=e["master_ward_id"], bed_id=e["master_bed_id"],
+                    expected_bed_id=None,
+                    out_of_service_reason=data.get("out_of_service_reason"),
+                    boarder_acknowledged=bool(data.get("boarder_acknowledged")),
+                    request_meta=request_meta,
+                )
+            except AdtError as exc:
+                skipped.append({"admission_id": e["admission_id"], "code": exc.code,
+                                "message": str(exc)})
+                continue
+            linked.append({"admission_id": e["admission_id"], "patient_id": e["patient_id"],
+                           "bed_id": placed["bed_id"], "ward_id": placed["ward_id"],
+                           "ward": placed["ward"], "bed": placed["bed"],
+                           "movement_id": placed["movement"]["id"], "boarder": placed["boarder"]})
+    return {"linked": linked, "skipped": skipped, "count": len(linked)}
+
+
+def mark_register_complete(ward_id: str, data: dict | None = None, *, actor: dict,
+                           request_meta: dict | None = None) -> dict:
+    """Say this ward's bed register is complete. From then on the ward's ADT
+    figures count from wards.ledger_complete_from; earlier days read
+    'insufficient data', never zero.
+
+    Refused, with the admissions and beds named by id, while any active
+    admission on the ward is unlinked (typed bed text with no master bed) or
+    any bed is claimed by more than one admission. Hospital-wide on purpose:
+    a ward is complete for everyone or for no one. Marking a complete ward
+    again changes nothing."""
+    data = dict(data or {})
+    reason = data.pop("reason", None)
+    hk.ensure_housekeeping_schema()
+    covering, _declared = _department_lists()
+    now = utc_iso_now()
+    with db_session(immediate=True) as db:
+        ward = _ward_row(db, ward_id)
+        if ward.get("register_complete"):
+            return _ward_out(ward, covering)
+        report = _reconcile_on(db, ward_id=ward_id, dept=None)
+        if report["unlinked"] or report["doubled"]:
+            raise BedMasterConflict(
+                f"{ward['code']} cannot be marked complete: {len(report['unlinked'])} admissions "
+                f"are not linked to a bed in setup and {len(report['doubled'])} beds are claimed "
+                "by more than one admission. Link or correct them first.",
+                code="register_incomplete",
+                unlinked=[e["admission_id"] for e in report["unlinked"]],
+                doubled=[d["bed_id"] for d in report["doubled"]],
+            )
+        db.execute(
+            """UPDATE wards SET register_complete = 1, register_complete_at = ?,
+                      register_complete_by = ?, ledger_complete_from = COALESCE(ledger_complete_from, ?),
+                      updated_at = ?
+                WHERE id = ?""",
+            (now, (actor or {}).get("id"), now, now, ward_id),
+        )
+        detail = {"code": ward["code"], "ledger_complete_from": now,
+                  "linked_admissions": report["counts"]["linked"],
+                  "awaiting_bed": report["counts"]["awaiting"]}
+        _event(db, "ward", ward_id, "register_completed", detail, actor, now, reason)
+        _audit(db, actor, "bed_master_register_completed",
+               f"Ward {ward['code']} bed register marked complete",
+               target_type="ward", target_id=ward_id, request_meta=request_meta, metadata=detail)
+        row = db.execute("SELECT * FROM wards WHERE id = ?", (ward_id,)).fetchone()
+    return _ward_out(row, covering)

@@ -1093,6 +1093,12 @@ def _lab_drain_control() -> dict | None:
     return compliance_control()
 
 
+def _result_quarantine_control() -> dict | None:
+    """The unmatched results queue (services/result_quarantine_service)."""
+    from services.result_quarantine_service import compliance_control
+    return compliance_control()
+
+
 def _overall_score(controls: list[dict]) -> int:
     """Derive a 0–100 posture score as the weighted mean of control statuses."""
     if not controls:
@@ -1157,6 +1163,15 @@ def compliance_report() -> dict:
     lab_drain = _safe(_lab_drain_control, None)
     if lab_drain:
         controls.append(lab_drain)
+
+    # The unmatched results queue (ORB_RESULT_QUARANTINE, lis-19): failing
+    # while it is on with no active account able to attach or discard (only
+    # laboratory staff hold ingest.reconcile, ruling LIS-R17), amber while a
+    # result has waited over a day or the switch is off with results left in
+    # it. Absent while it is off and empty.
+    quarantine = _safe(_result_quarantine_control, None)
+    if quarantine:
+        controls.append(quarantine)
 
     # Reflect an unknown audit probe honestly in the control status.
     if audit.get("unknown"):

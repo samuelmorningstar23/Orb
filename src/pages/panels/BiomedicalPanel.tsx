@@ -65,7 +65,7 @@ const PURPOSE_NOTE =
   'Orb reads numbers off these machines. A monitor or pump that has drifted is '
   + 'not broken: it keeps working and it reports the wrong figure, which every '
   + 'layer above it will faithfully record and alert on. The calibration register '
-  + 'is the only thing that catches that.'
+  + 'is the only thing that shows it.'
 
 type View = 'overview' | 'due' | 'register' | 'calls' | 'contracts'
 

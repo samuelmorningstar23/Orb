@@ -767,9 +767,33 @@ async def medication_reconciliation_route(
     return await run_db(build_medication_reconciliation, patient_id)
 
 
+class DischargeIn(BaseModel):
+    """How the stay ended (adt-8a). Read only while ORB_ADT is on; with the
+    module off the body is ignored and the discharge is exactly what it was."""
+    #: routine (when omitted), referred_out, transferred_out or dama. LAMA,
+    #: absconded and death are refused with the End of stay route.
+    discharge_type: str | None = None
+    #: The patient's MRN typed back: required for a DAMA.
+    confirm_mrn: str | None = None
+    #: Required for a DAMA.
+    reason: str | None = None
+
+
+def _active_admission_id(patient_id: str):
+    with db_session() as db:
+        row = db.execute(
+            "SELECT id FROM admissions WHERE patient_id = ? AND status = 'active' "
+            "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            (patient_id,),
+        ).fetchone()
+    return row["id"] if row else None
+
+
 @router.post("/patients/{patient_id}/discharge")
 async def discharge_patient_route(
     patient_id: str,
+    request: Request,
+    body: DischargeIn | None = None,
     # Ward-scoped like its siblings. This was a bare require_permission, so a
     # General Surgery doctor could discharge a General Medicine patient whose
     # chart they are 404'd from reading, and receive the portal link for it.
@@ -783,7 +807,14 @@ async def discharge_patient_route(
     The summary is stored as a DRAFT and returned to the discharging doctor to
     read; the patient sees it only after a prescriber marks it reviewed
     (POST .../discharge-summary/review).
+
+    With ORB_ADT on (adt-8a) the optional body says how the stay ended:
+    routine, referred out, transferred out or DAMA (a DAMA needs the MRN typed
+    back and a reason). LAMA, absconded and death are 409 'use_end_of_stay'
+    naming POST /api/adt/admissions/{id}/end, before any summary is drafted.
     """
+    from services.adt import end_stay as adt_end
+    from services.adt.core import AdtError, adt_on, http_detail
     from services.discharge_service import (
         build_patient_timeline,
         generate_discharge_summary,
@@ -802,6 +833,35 @@ async def discharge_patient_route(
     if patient["status"] != "admitted":
         raise HTTPException(status_code=400, detail="Patient is not currently admitted")
 
+    # ORB_ADT on: refuse a wrong end type or a failed read-back BEFORE the
+    # summary is drafted. discharge_patient checks both again inside its
+    # transaction, which is the authority.
+    adt_kwargs: dict = {}
+    if adt_on():
+        try:
+            end_type = adt_end.discharge_route_type(body.discharge_type if body else None)
+            if end_type in adt_end.READ_BACK_ON_DISCHARGE_ROUTE:
+                adt_end.check_read_back(dict(patient), body.confirm_mrn if body else None)
+                adt_end.require_reason(end_type, body.reason if body else None)
+        except AdtError as err:
+            detail = http_detail(err)
+            if err.code == "use_end_of_stay":
+                admission_id = await run_db(_active_admission_id, patient_id)
+                detail["end_of_stay_route"] = (
+                    f"/api/adt/admissions/{admission_id}/end" if admission_id else None)
+            raise HTTPException(status_code=err.http_status, detail=detail)
+        adt_kwargs = {
+            "discharge_type": end_type,
+            "confirm_mrn": body.confirm_mrn if body else None,
+            "reason": body.reason if body else None,
+            "request_meta": {
+                "request_path": request.url.path,
+                "http_method": request.method,
+                "ip_address": request.client.host if request.client else None,
+                "user_agent": request.headers.get("user-agent"),
+            },
+        }
+
     # Generate timeline and summary. Both builders open their own SQLite
     # connections, so they run off the event loop.
     timeline = await run_db(build_patient_timeline, patient_id)
@@ -818,7 +878,11 @@ async def discharge_patient_route(
         summary = await run_db(offline_discharge_summary, patient_id)
         drafted_by = "unavailable"
 
-    result = await run_db(discharge_patient, patient_id, user["id"], summary, timeline)
+    try:
+        result = await run_db(discharge_patient, patient_id, user["id"], summary, timeline,
+                              **adt_kwargs)
+    except AdtError as err:
+        raise HTTPException(status_code=err.http_status, detail=http_detail(err))
     if result.get("status") != "success":
         return result
     # The discharging doctor reads the draft from this response, labelled as

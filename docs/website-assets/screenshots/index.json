@@ -25,7 +25,7 @@
   },
   {
     "name": "vigil-patient-board",
-    "title": "Vigil: live patient board with NEWS2 risk ordering",
+    "title": "Vigil: the ward ordered by NEWS2 score",
     "theme": "dark",
     "user": "doctor",
     "file": "screenshots/dark/vigil-patient-board.png",
@@ -377,7 +377,7 @@
   },
   {
     "name": "admin-scorecard",
-    "title": "Admin: Pilot Scorecard",
+    "title": "Admin: Evaluation scorecard",
     "theme": "dark",
     "user": "admin",
     "file": "screenshots/dark/admin-scorecard.png",
@@ -697,7 +697,7 @@
   },
   {
     "name": "vigil-patient-board",
-    "title": "Vigil: live patient board with NEWS2 risk ordering",
+    "title": "Vigil: the ward ordered by NEWS2 score",
     "theme": "light",
     "user": "doctor",
     "file": "screenshots/light/vigil-patient-board.png",
@@ -1049,7 +1049,7 @@
   },
   {
     "name": "admin-scorecard",
-    "title": "Admin: Pilot Scorecard",
+    "title": "Admin: Evaluation scorecard",
     "theme": "light",
     "user": "admin",
     "file": "screenshots/light/admin-scorecard.png",

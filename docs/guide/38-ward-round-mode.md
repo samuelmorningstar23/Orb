@@ -491,7 +491,7 @@ The docstring (`:1-21`) states the PHI posture: the accuracy pass is **always** 
 **Signature:** `useCallback(() => void)`
 **Does:** Stops the timer, stops the cloud recogniser, stops every media track, and **releases the shared microphone claim**.
 **On screen:** the recording indicator and the "Hearing…" line disappear; the tablet's OS microphone indicator goes out.
-**Why `releaseMic('round')` matters:** the microphone is a single shared resource arbitrated by `SageRuntimeContext` (`claimMic` at `src/contexts/SageRuntimeContext.tsx:62`). Failing to release it means Sage's voice input is dead for the rest of the session with no error anyone can act on.
+**Why `releaseMic('round')` matters:** the microphone is a single shared resource arbitrated by `SageRuntimeContext` (`claimMic` at `src/contexts/SageRuntimeProvider.tsx:18`). Failing to release it means Sage's voice input is dead for the rest of the session with no error anyone can act on.
 **Breaks if you change it:** drop the track stop and the browser keeps the mic open, a hot microphone on a ward, carried from bed to bed.
 
 #### `appendToDraft`: `RoundDictation.tsx:88`
@@ -522,7 +522,7 @@ The docstring (`:1-21`) states the PHI posture: the accuracy pass is **always** 
 **On screen:** the button turns red and becomes "Stop · 0:00"; "Recording" with a pulsing dot appears; if cloud speech is permitted, a "Hearing …" line streams under it.
 **The rule the comment at `:135-142` states:** **every exit from this function must leave a message on screen.** Before it, three separate paths could end a click with nothing at all, `navigator.mediaDevices` absent, the second `new MediaRecorder(stream)` throwing outside any `try`, and `recorder.start()` throwing. All three rejected an async callback nobody awaited, so "Dictate the plan" produced no UI change, no error and no network request. **A control that looks broken because it says nothing is worse than one that admits what it cannot do.** The five guarded exits now are: local ASR not installed (`:146`), mic held by Sage (`:155`), no secure context (`:160`), permission denied (`:170`), recorder unstartable (`:190`).
 **Why the mimeType fallback (`:182-187`):** Safari and some tablet browsers reject the explicit `audio/webm`, so a bare `new MediaRecorder(stream)` is tried second.
-**Why cloud speech is gated (`:204-207`):** `cloudSpeechAllowed` comes from the server's posture (`SageRuntimeContext.tsx:79`). If the posture is unknown the runtime reports not-allowed, so it stays off, PHI does not leave the appliance by default.
+**Why cloud speech is gated (`:204-207`):** `cloudSpeechAllowed` comes from the server's posture (`SageRuntimeProvider.tsx:35`). If the posture is unknown the runtime reports not-allowed, so it stays off, PHI does not leave the appliance by default.
 **Breaks if you change it:** let any of those five paths return silently and the mic button becomes a control that does nothing, which a doctor will press three times and then abandon. Feed the Web Speech interim text into `appendToDraft` and cloud-recognised PHI lands in the chart.
 
 #### The unmount / patient-change effect: `RoundDictation.tsx:237`
@@ -735,7 +735,7 @@ The docstring (`:1-21`) states the PHI posture: the accuracy pass is **always** 
 | `SageInsight.state` + `severity` | `src/api/client.ts:1038` (guide 09) | `CLOSED_INSIGHT_STATES` (`src/components/round/roundSummary.ts:33`), `SEVERITY_CLASS` | a new closed state Orb does not know keeps resolved insights on the round forever |
 | `StoryEvent.timestamp` as bare UTC | `src/api/client.ts:1811` | `changesSince` via `parseUTC` (`src/lib/datetime.ts:17`) | parsing as local time shifts every overnight event by the offset |
 | `transcribeAudio(blob, hints, skipCorrection)` | `src/api/client.ts:1287` (guide 11) | `runTranscription` (`RoundDictation.tsx:99`) | a changed signature could silently skip the accuracy pass |
-| `claimMic` / `releaseMic` / `cloudSpeechAllowed` / `localAsrAvailable` | `src/contexts/SageRuntimeContext.tsx:62`, `:69`, `:79`, `:80` (guide 10) | `startRecording` (`RoundDictation.tsx:155`), `teardownCapture` (`RoundDictation.tsx:85`) | a lost release leaves Sage's voice input dead for the session |
+| `claimMic` / `releaseMic` / `cloudSpeechAllowed` / `localAsrAvailable` | `src/contexts/SageRuntimeProvider.tsx:18`, `:25`, `:35`, `:36` (guide 10) | `startRecording` (`RoundDictation.tsx:155`), `teardownCapture` (`RoundDictation.tsx:85`) | a lost release leaves Sage's voice input dead for the session |
 | `assertOnlineForWrite` throwing `OfflineWriteRefusedError` | `src/lib/offline/writeGuard.ts:57`, `:17` (guide 28) | `savePlan` (`src/pages/panels/RoundPanel.tsx:381`) | a guard that stops throwing re-enables the silent queue |
 | `addClinicalNote(patient, text, 'Ward Round')` | `src/api/client.ts:1546` | `savePlan` (`src/pages/panels/RoundPanel.tsx:382`) | the doc type is the only thing marking a plan as a round plan in the chart |
 | `--tap-min: 44px` | `src/index.css:119` (guide 27) | every `.round-btn` / `.round-mic` / `.round-rail__item` / `.round-handoff__row` | `RoundPanel.test.tsx:335` reads the stylesheet and fails the build if any control declares less |

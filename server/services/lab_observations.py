@@ -45,7 +45,7 @@ count union counts its own placeholders).
 from __future__ import annotations
 
 import re
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 #: Statuses that mean "not a result to act on". HL7 OBX-11 X (cannot be
 #: obtained), D (deleted) and W (wrong patient or withdrawn), the FHIR and
@@ -250,6 +250,155 @@ def previous_result(db, patient_id: str, code: str, before_iso: str, *,
             LIMIT 1""",
         (patient_id, code, str(before_iso)),
     ).fetchone()
+
+
+# ── Reads the interfaced-result writer needs (lis-19, lis-20) ───────────────
+# services/ingestion_service.py writes observations and is not exempt from the
+# guard, so the four reads behind an external correction and the unmatched
+# results queue live here with the rest.
+
+#: Statuses of a live result an external OBX-11 'C' may replace: HL7 F and C
+#: and the adapters' spellings. A preliminary result is never replaced.
+CORRECTABLE_STATUSES: tuple[str, ...] = ("f", "final", "c", "corrected")
+for _word in CORRECTABLE_STATUSES:
+    if not _LITERAL_RE.match(_word):  # pragma: no cover - a constant typo
+        raise ValueError(f"lab_observations constant is not a plain word: {_word!r}")
+
+
+def correction_candidates(db, *, patient_id: str, code: str, sub_id: Optional[str],
+                          sender: Optional[str], source: Optional[str],
+                          exclude_id: int) -> list:
+    """Live final results an external correction could replace: the same
+    patient, test code, OBX-4 sub-id, sender (MSH-3 and MSH-4) and lane, not
+    released by the laboratory module, and carrying an order number (OBR-3 or
+    a sender-supplied OBR-2, migration 60). Oldest first. The caller decides
+    which of them belong to the same order, and leaves out any that arrived
+    in the correction's own message (source_event_id)."""
+    statuses = ", ".join(f"'{s}'" for s in CORRECTABLE_STATUSES)
+    return db.execute(
+        f"""SELECT id, status, obr_placer, obr_filler, source_event_id
+            FROM observations
+            WHERE patient_id = ? AND observation_code = ? AND id != ?
+              AND COALESCE(obx_sub_id, '') = ? AND COALESCE(hl7_sender, '') = ?
+              AND COALESCE(source, '') = ?
+              AND lab_result_id IS NULL
+              AND {live_observations_sql()}
+              AND LOWER(TRIM(COALESCE(status, 'final'))) IN ({statuses})
+              AND (obr_filler IS NOT NULL OR obr_placer IS NOT NULL)
+            ORDER BY id""",
+        (patient_id, code, int(exclude_id), (sub_id or "").strip(),
+         (sender or "").strip(), source or ""),
+    ).fetchall()
+
+
+def same_message_results(db, *, event_id: Optional[int], code: str,
+                         sub_id: Optional[str], sender: Optional[str],
+                         source: Optional[str], exclude_id: int) -> list:
+    """Every other result the same raw message (source_event_id) carried for
+    the same test code, OBX-4 sub-id, sender and lane, whatever its status or
+    patient, superseded and voided rows included. A correction whose own
+    message holds another result under the same test and order cannot be
+    pinned to one earlier result, so the caller supersedes nothing. Empty
+    when the message is not known."""
+    if event_id is None:
+        return []
+    return db.execute(
+        """SELECT id, status, obr_placer, obr_filler
+           FROM observations
+           WHERE source_event_id = ? AND observation_code = ? AND id != ?
+             AND COALESCE(obx_sub_id, '') = ? AND COALESCE(hl7_sender, '') = ?
+             AND COALESCE(source, '') = ?
+           ORDER BY id""",
+        (int(event_id), code, int(exclude_id), (sub_id or "").strip(),
+         (sender or "").strip(), source or ""),
+    ).fetchall()
+
+
+def unlinked_result(db, observation_id: int) -> Optional[Any]:
+    """One result stored with no patient, with what a correction needs, or
+    None when the id names no such row (it may have a patient already)."""
+    return db.execute(
+        """SELECT id, patient_id, status, observation_code, obx_sub_id, obr_placer,
+                  obr_filler, hl7_sender, source, source_event_id
+           FROM observations WHERE id = ? AND patient_id IS NULL""",
+        (int(observation_id),),
+    ).fetchone()
+
+
+def unlinked_results_not_queued(db, *, limit: int, exclude_sources: Iterable[str] = (),
+                                exclude_code_systems: Iterable[str] = ()) -> list:
+    """Results stored with no patient that the unmatched results queue does
+    not hold yet, oldest first, for the queue's one-time sweep.
+
+    `exclude_sources` (lane labels, compared ignoring case) and
+    `exclude_code_systems` (OBX-3.3, compared ignoring case) leave out what
+    the queue never takes: a bedside monitor's and Orb's other device lanes'
+    rows, and anything coded in a monitor's own nomenclature. They are left
+    out here, not after the read, so a batch of device rows can never end
+    the sweep before the results behind it."""
+    sources = sorted({str(s).strip().lower() for s in exclude_sources if str(s).strip()})
+    systems = sorted({str(s).strip().upper() for s in exclude_code_systems if str(s).strip()})
+    where = ""
+    if sources:
+        where += (" AND LOWER(TRIM(COALESCE(ob.source, ''))) NOT IN ("
+                  + ", ".join("?" for _ in sources) + ")")
+    if systems:
+        where += (" AND UPPER(TRIM(COALESCE(ob.observation_code_system, ''))) NOT IN ("
+                  + ", ".join("?" for _ in systems) + ")")
+    return db.execute(
+        f"""SELECT ob.id, ob.source, ob.source_event_id, ob.observation_code,
+                  ob.observation_code_system, ob.observation_name, ob.value_text,
+                  ob.value_numeric, ob.unit, ob.reference_range, ob.abnormal_flag,
+                  ob.status, ob.observed_at, ob.panel_name, ob.obr_group_id
+           FROM observations ob
+           WHERE ob.patient_id IS NULL
+             AND NOT EXISTS (SELECT 1 FROM result_quarantine q
+                             WHERE q.source_observation_id = ob.id){where}
+           ORDER BY ob.id
+           LIMIT ?""",
+        (*sources, *systems, int(limit)),
+    ).fetchall()
+
+
+#: Statuses of an external correction: HL7 OBX-11 C and the adapters' word.
+CORRECTION_STATUSES: tuple[str, ...] = ("c", "corrected")
+for _word in CORRECTION_STATUSES:
+    if not _LITERAL_RE.match(_word):  # pragma: no cover - a constant typo
+        raise ValueError(f"lab_observations constant is not a plain word: {_word!r}")
+
+
+def live_results_for_test(db, *, patient_id: str, code: str, sub_id: Optional[str],
+                          sender: Optional[str], source: Optional[str],
+                          exclude_id: Optional[int] = None) -> list:
+    """Every live result on a patient's chart for the same test code, OBX-4
+    sub-id, sender (MSH-3 and MSH-4) and lane that carries an order number,
+    whatever its status, oldest first. Each row says whether it is an external
+    correction (is_correction), whether a result was superseded by it
+    (replaced_another), its message (source_event_id) and whether the
+    laboratory module released it (lab_result_id).
+
+    The unmatched results queue reads this before it attaches a result late,
+    so an older result never lands in front of a correction that was sent
+    after it (lis-19 with lis-20). The caller decides which rows belong to
+    the same order."""
+    statuses = ", ".join(f"'{s}'" for s in CORRECTION_STATUSES)
+    return db.execute(
+        f"""SELECT ob.id, ob.status, ob.obr_placer, ob.obr_filler, ob.source_event_id,
+                  ob.lab_result_id,
+                  CASE WHEN LOWER(TRIM(COALESCE(ob.status, ''))) IN ({statuses})
+                       THEN 1 ELSE 0 END AS is_correction,
+                  EXISTS (SELECT 1 FROM observations prior
+                          WHERE prior.superseded_by = ob.id) AS replaced_another
+            FROM observations ob
+            WHERE ob.patient_id = ? AND ob.observation_code = ? AND ob.id != ?
+              AND COALESCE(ob.obx_sub_id, '') = ? AND COALESCE(ob.hl7_sender, '') = ?
+              AND COALESCE(ob.source, '') = ?
+              AND {live_observations_sql('ob')}
+              AND (ob.obr_filler IS NOT NULL OR ob.obr_placer IS NOT NULL)
+            ORDER BY ob.id""",
+        (patient_id, code, -1 if exclude_id is None else int(exclude_id),
+         (sub_id or "").strip(), (sender or "").strip(), source or ""),
+    ).fetchall()
 
 
 # ── The opt-in lab module seam ───────────────────────────────────────────────

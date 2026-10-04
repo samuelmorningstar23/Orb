@@ -102,7 +102,7 @@ with a cached board the handover list is built from a copy that the banner above
 
 The full-page sheet at `/handoff/:patientId` is reached from a **different** screen: the `HANDOFF`
 button on the Vigil patient command bar (`src/pages/panels/VigilPanel.tsx:1254`, 
-`window.open('/handoff/' + patientId, '_blank')`). The route is registered at `src/App.tsx:193` and
+`window.open('/handoff/' + patientId, '_blank')`). The route is registered at `src/AppRoot.tsx:186` and
 is open to every signed-in non-patient role. **Nothing in Nurse Mode links to it.**
 
 **Layout in one sentence.** The Handover tab is a header row (title + hint on the left, a pill
@@ -596,7 +596,7 @@ card's left edge turns green, the header pill increments, and the button's resti
 # B. The full-page I-PASS sheet: `/handoff/:patientId`
 
 Reached from Vigil's `HANDOFF` button (`src/pages/panels/VigilPanel.tsx:1254`), which opens a **new
-browser tab**. The route is `src/App.tsx:193`, gated only on "signed in and not a patient";
+browser tab**. The route is `src/AppRoot.tsx:186`, gated only on "signed in and not a patient";
 `src/pages/HandoffPage.tsx:5-9` pulls `patientId` from the URL and renders
 `<IpassHandoffView patientId={patientId} />`, or the bare text **"No patient specified."** (`:7`) if
 the param is missing. This page is **outside `ClinicianShell`**, no sidebar, no top bar, no theme
