@@ -358,3 +358,49 @@ def init_test_db():
             os.unlink(db_file)
     except OSError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# The real knowledge worker pool must never be spawned by a test. Each spawn is
+# a ~1.8 GB model child, and a pytest run that is SIGKILLed mid-session leaves
+# that child to its own parent-watchdog. The suite default above
+# (ORB_KNOWLEDGE_INPROCESS=1) keeps callers on the in-process path, but tests
+# that drop the variable to exercise the bridge (test_knowledge_worker's
+# `isolated` fixture) can still reach knowledge_worker._submit, and an
+# inherited ORB_KNOWLEDGE_INPROCESS=0 in the shell flips every retrieval onto
+# it. So the pool factory is stubbed: those paths take the documented degraded
+# route (KnowledgeWorkerError -> lexical fallback) instead of a spawn. A test
+# that genuinely needs the real pool opts in with
+# @pytest.mark.real_knowledge_pool, and the session finalizer reaps whatever
+# such a test started so a normal exit never waits on a model load.
+# ---------------------------------------------------------------------------
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "real_knowledge_pool: the test may spawn the real knowledge worker pool "
+        "(skips the autouse stub on knowledge_worker._ensure_pool).",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _no_real_knowledge_pool(request, monkeypatch):
+    if request.node.get_closest_marker("real_knowledge_pool"):
+        yield
+        return
+    from services import knowledge_worker as kw
+
+    def _refuse():
+        raise kw.KnowledgeWorkerError(
+            "the knowledge worker pool is stubbed out in the test suite; mark the "
+            "test @pytest.mark.real_knowledge_pool to spawn the real worker"
+        )
+
+    monkeypatch.setattr(kw, "_ensure_pool", _refuse)
+    yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _reap_knowledge_pool():
+    yield
+    from services import knowledge_worker as kw
+    kw._shutdown_pool()

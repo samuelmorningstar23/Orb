@@ -28,6 +28,10 @@ Contract:
     PARENT process never loads the heavy models.
   * ``ORB_KNOWLEDGE_INPROCESS=1`` disables isolation (tests, constrained envs);
     clinical_knowledge.py then uses its legacy in-process path.
+  * The worker never outlives the process that owns the pool: it exits on
+    its own within seconds of the owner's death, however the owner died
+    (``_start_parent_watchdog``), and ``_shutdown_pool`` reaps it on an
+    orderly shutdown (lifespan teardown, atexit).
 
 The module top stays import-light: the spawn child imports this module, and
 anything imported here runs in both processes.
@@ -38,6 +42,7 @@ import atexit
 import logging
 import os
 import threading
+import time
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 
@@ -66,14 +71,98 @@ _w_embedder = None
 _w_reranker = None  # callable(pairs) -> list[float], or the sentinel False when unavailable
 
 
+_WATCHDOG_POLL_S = 1.0
+
+
+def _start_parent_watchdog() -> None:
+    """Exit the worker as soon as the process that owns the pool is gone.
+
+    Why this exists: this child holds 2-4 GB of models, and the executor's
+    shutdown sentinel never reaches a child that is still bootstrapping or
+    mid-model-load. On 2026-10-04 thirty-five orphaned workers (PPID 1) held
+    62 GB and exhausted swap. Every one of them had been orphaned while still
+    importing the app: the dev server reloads on any file change, so its
+    worker's parent often dies 1-5 s after spawning it.
+
+    Two signals, neither of which trusts anything sampled in this process:
+
+    * ``parent_process().sentinel``: the read end of the spawn pipe. Its
+      write end lives ONLY in the owner, so it reads EOF the instant the
+      owner exits, by any route including SIGKILL. (The call/result queue
+      pipes are useless for this: the child inherits their write ends too,
+      so a read on them never sees EOF.)
+    * ``os.getppid() != parent_process().pid``: the kernel reparents an
+      orphan. The comparison is against the pid the OWNER recorded at spawn
+      time. The previous watchdog compared against ``os.getppid()`` sampled
+      in the initializer, and a child orphaned during its own bootstrap had
+      already been reparented, so it locked in ppid 1 as "normal" and could
+      never fire. That is the whole orphan class.
+
+    The check runs once synchronously (a child orphaned during bootstrap
+    exits here, before it loads a model for nobody) and then on a daemon
+    thread. The thread needs the GIL to act, so a worker inside one long
+    native call exits when that call returns; measured on the real reranker
+    load this is seconds, not minutes.
+    """
+    import multiprocessing as mp
+
+    parent = mp.parent_process()
+    if parent is None:
+        return  # not a multiprocessing child (direct call in tests)
+    parent_pid = parent.pid
+    try:
+        sentinel = parent.sentinel
+    except ValueError:
+        sentinel = None
+
+    def _owner_gone(timeout: float) -> bool:
+        nonlocal sentinel
+        if sentinel is not None:
+            try:
+                from multiprocessing.connection import wait
+                if wait([sentinel], timeout=timeout):
+                    return True
+            except Exception:
+                sentinel = None  # fall back to ppid polling
+                time.sleep(timeout)
+        else:
+            time.sleep(timeout)
+        return parent_pid is not None and os.getppid() != parent_pid
+
+    def _exit_now() -> None:
+        try:
+            os.write(2, (
+                f"knowledge worker {os.getpid()}: pool owner {parent_pid} is gone, "
+                "exiting\n"
+            ).encode())
+        except Exception:
+            pass
+        os._exit(0)
+
+    if _owner_gone(0.0):
+        _exit_now()
+
+    def _watch() -> None:
+        while not _owner_gone(_WATCHDOG_POLL_S):
+            pass
+        _exit_now()
+
+    threading.Thread(target=_watch, daemon=True, name="parent-watchdog").start()
+
+
 def _worker_init() -> None:
-    """Child-process initializer: mark the process and bound native threading.
+    """Child-process initializer: parent watchdog first, then thread caps.
+
+    The watchdog goes before anything slow (the torch import, and the model
+    loads the first job triggers) so a child whose owner is already gone
+    exits before it costs anything.
 
     The thread caps matter: torch + OpenMP default to one thread per core,
     and on an appliance already running Ollama that oversubscribes the box.
     Four threads keep encode latency reasonable without a core-count blowup.
     """
     os.environ["ORB_KNOWLEDGE_WORKER"] = "1"
+    _start_parent_watchdog()
     os.environ.setdefault("OMP_NUM_THREADS", "4")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     try:
@@ -81,21 +170,6 @@ def _worker_init() -> None:
         torch.set_num_threads(int(os.environ["OMP_NUM_THREADS"]))
     except Exception:
         pass
-
-    # Parent-death watchdog: this child holds 2-4 GB of models, and executor
-    # shutdown sentinels are unreliable when the parent is dying (SIGTERM on
-    # dev reload, SIGKILL on a hard recycle). An orphaned model process
-    # silently holding gigabytes is exactly the "orphaned worker" ops hazard
-    # this repo has been bitten by before — if our parent goes away
-    # (ppid becomes 1/launchd), exit immediately.
-    def _watch_parent(original_ppid: int = os.getppid()) -> None:
-        import time as _time
-        while True:
-            if os.getppid() != original_ppid:
-                os._exit(0)
-            _time.sleep(2.0)
-
-    threading.Thread(target=_watch_parent, daemon=True, name="parent-watchdog").start()
 
 
 def _local_snapshot_or_name(model_name: str) -> str:
@@ -210,24 +284,52 @@ def _ensure_pool() -> ProcessPoolExecutor:
     return _pool
 
 
+_SHUTDOWN_GRACE_S = 3.0
+
+
+def _terminate_workers(workers: list) -> None:
+    """SIGTERM the worker(s), then SIGKILL any still alive after a short grace.
+
+    SIGTERM's default disposition ends a worker wherever it is, even inside a
+    native model load; the grace only covers a child that has not finished
+    exec'ing yet. Liveness comes from each worker's sentinel (readable once
+    it exits), never from waitpid: the executor's manager thread reaps these
+    pids and a second waitpid would race it.
+    """
+    from multiprocessing.connection import wait
+
+    for proc in workers:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+    deadline = time.monotonic() + _SHUTDOWN_GRACE_S
+    for proc in workers:
+        try:
+            if not wait([proc.sentinel], timeout=max(0.0, deadline - time.monotonic())):
+                proc.kill()
+        except Exception:
+            pass
+
+
 def _shutdown_pool() -> None:
     global _pool
     with _pool_lock:
-        if _pool is not None:
-            # cancel_futures: a wedged/backed-up queue must not stall shutdown —
-            # pending retrievals are best-effort prefetches.
-            _pool.shutdown(wait=False, cancel_futures=True)
-            # Belt-and-braces with the child's parent-watchdog: shutdown
-            # sentinels don't reach a child that is mid-model-load, and a
-            # 2-4 GB orphan must never outlive us. _processes is private API
-            # but the alternative is leaking gigabytes on every dev reload.
-            try:
-                for proc in list(getattr(_pool, "_processes", {}).values()):
-                    proc.terminate()
-            except Exception:
-                pass
-            _pool = None
-            logger.info("knowledge worker pool shut down")
+        pool, _pool = _pool, None
+    if pool is None:
+        return
+    # Snapshot the workers BEFORE shutdown(): ProcessPoolExecutor.shutdown()
+    # sets _processes to None, so the terminate loop that used to run after
+    # it raised AttributeError into a bare except and never terminated
+    # anything. Every dev reload's "pool shut down" line was logged over a
+    # worker that lived on. _processes is private API, but the alternative
+    # is leaking gigabytes per reload.
+    workers = list((getattr(pool, "_processes", None) or {}).values())
+    # cancel_futures: a wedged/backed-up queue must not stall shutdown;
+    # pending retrievals are best-effort prefetches.
+    pool.shutdown(wait=False, cancel_futures=True)
+    _terminate_workers(workers)
+    logger.info("knowledge worker pool shut down (%d worker(s) reaped)", len(workers))
 
 
 atexit.register(_shutdown_pool)
