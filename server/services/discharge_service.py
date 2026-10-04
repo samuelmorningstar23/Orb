@@ -8,7 +8,7 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from config import LLM_MODEL, UPLOAD_DIR, PUBLIC_APP_BASE_URL, DISCHARGE_ACCESS_TTL_DAYS, OLLAMA_KEEP_ALIVE
+from config import LLM_MODEL, UPLOAD_DIR, DISCHARGE_ACCESS_TTL_DAYS, OLLAMA_KEEP_ALIVE
 from database import get_db, db_session
 from services.audit_service import log_audit_event
 from services.vital_charting import charted_text
@@ -618,11 +618,24 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
     dry run, 2026-08-14). Handing a patient a code that only ever answers
     "Incorrect Date of Birth" is worse than handing them nothing, because they
     leave believing they have their record.
+
+    The same holds for the address the link is built on: in the prod profile
+    no link is issued while ORB_PUBLIC_APP_BASE_URL is unset, not https, or
+    points at the appliance itself (see
+    discharge_access_service.public_link_base_status).
     """
-    from services.discharge_access_service import SECOND_FACTOR_FIELD, second_factor_status
+    from services.discharge_access_service import (
+        SECOND_FACTOR_FIELD, public_link_base_status, second_factor_status,
+    )
 
     factor = second_factor_status(patient_id)
-    issue_link = bool(factor["available"])
+    address = public_link_base_status()
+    issue_link = bool(factor["available"]) and bool(address["available"])
+    # Both reasons when both fail: recording a date of birth alone would still
+    # leave the desk with no link.
+    withheld_reason = None if issue_link else " ".join(
+        r for r in (address["reason"], factor["reason"]) if r
+    )
 
     # Generate secure token. Only the SHA-256 hash is persisted (token_id and
     # token_hash both hold the hash); the raw token exists solely in the
@@ -636,7 +649,7 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
         raw_token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
         token_id = token_hash
-        summary_url = f"{PUBLIC_APP_BASE_URL}/discharge/{raw_token}"
+        summary_url = f"{address['base_url']}/discharge/{raw_token}"
         # Written only on the issuing path, so a refused link leaves no orphan
         # PNG in the uploads directory.
         qr_path = generate_qr_code(patient_id, summary_url)
@@ -724,15 +737,17 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
     else:
         # Audited as a refusal, not a silence: the discharge desk sees the reason
         # in the response, and the record shows why no link left the building.
+        causes = []
+        if not address["available"]:
+            causes.append(f"no patient-reachable address ({address['problem']})")
+        if not factor["available"]:
+            causes.append(f"no usable second factor ({SECOND_FACTOR_FIELD}) on file")
         log_audit_event(
             correlation_id=f"discharge-link-withheld-{patient_id}-{summary_id}",
             event_category="security",
             action_type="discharge_link_not_issued",
             outcome="success",
-            summary_message=(
-                "No secure discharge link issued, no usable second factor "
-                f"({SECOND_FACTOR_FIELD}) on file"
-            ),
+            summary_message="No secure discharge link issued, " + "; ".join(causes),
             patient_id=patient_id,
             actor_user_id=author_id,
         )
@@ -748,7 +763,7 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
         # qr_code_url and so never showed the code at all.
         "qr_code_url": qr_code_url_for(patient_id, qr_path),
         "secure_link_issued": issue_link,
-        "secure_link_reason": None if issue_link else factor["reason"],
+        "secure_link_reason": withheld_reason,
     }
 
 

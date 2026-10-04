@@ -143,6 +143,103 @@ def second_factor_status(patient_id: str, db=None) -> Dict[str, Any]:
     return {"available": False, "factor": None, "reason": NO_SECOND_FACTOR_REASON}
 
 
+# ────────────────────────────────────────────────────────────────
+#  THE ADDRESS IN THE LINK  (finding: 3 October 2026)
+#
+#  The link and its QR are PUBLIC_APP_BASE_URL + "/discharge/<token>". That
+#  setting defaults to the Vite dev server (http://localhost:5173),
+#  .env.example writes the same value, and the install runbook never set it.
+#  So on an appliance installed by the book, every QR a patient scanned pointed
+#  at their own phone. Same rule as the second factor: in the prod profile a
+#  link that cannot open is not issued, and the desk is told why.
+#
+#  What this can check is the shape: https, and a host that is not this
+#  machine. It cannot check that a patient's phone has a route to that host;
+#  the install runbook (section 7) makes that a written agreement with
+#  hospital IT. The dev profile is exempt: on a dev machine localhost:5173 is
+#  where the app really is.
+# ────────────────────────────────────────────────────────────────
+PUBLIC_ADDRESS_SETTING = "ORB_PUBLIC_APP_BASE_URL"
+NO_PUBLIC_ADDRESS_REASON = (
+    "This appliance has no address set that a patient's phone can open, so a "
+    "secure discharge link would lead nowhere. Give the patient the printed "
+    "summary, and ask the person who installed Orb to set the patient address "
+    f"({PUBLIC_ADDRESS_SETTING})."
+)
+_THIS_MACHINE_PROBLEM = "it points at this machine, not at an address on the network"
+
+
+def public_address_problem(base_url: Optional[str]) -> Optional[str]:
+    """Why a patient's phone could not open links built on base_url, or None.
+
+    The answer is a short phrase for the startup log and the Trust Center.
+    Pure (no config read) and never raises.
+    """
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    text = (base_url or "").strip()
+    if not text:
+        return "it is not set"
+    try:
+        parts = urlsplit(text)
+        scheme = parts.scheme.lower()
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        return "it is not a web address"
+    if scheme not in ("http", "https"):
+        return "it is not a web address"
+    if not host:
+        return "it names no host"
+    # This machine before https: for the shipped default (http://localhost:5173)
+    # the host is the real fault, and https://localhost would be no better.
+    if host in ("localhost", "localhost.localdomain") or host.endswith(".localhost"):
+        return _THIS_MACHINE_PROBLEM
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        ip = None
+    if ip is not None and (ip.is_loopback or ip.is_unspecified):
+        return _THIS_MACHINE_PROBLEM
+    if scheme != "https":
+        return "it is not an https address"
+    return None
+
+
+def public_link_base_status() -> Dict[str, Any]:
+    """Can a patient-facing link be built on PUBLIC_APP_BASE_URL right now?
+
+    Returns {"available": bool, "base_url": str, "problem": str|None,
+    "reason": str|None}. base_url carries no trailing slash, ready for
+    base_url + "/discharge/<token>". Only the prod profile is refused; dev
+    reports the problem but stays available. Reads config at call time.
+    """
+    import config
+
+    base = str(getattr(config, "PUBLIC_APP_BASE_URL", "") or "").strip().rstrip("/")
+    problem = public_address_problem(base)
+    prod = str(getattr(config, "DEPLOYMENT_PROFILE", "") or "").lower() == "prod"
+    if problem is None or not prod:
+        return {"available": True, "base_url": base, "problem": problem, "reason": None}
+    return {"available": False, "base_url": base, "problem": problem,
+            "reason": NO_PUBLIC_ADDRESS_REASON}
+
+
+def log_public_address_problem(log) -> Dict[str, Any]:
+    """At boot (main.lifespan): log an error on `log` when no discharge link can
+    be issued, so the operator hears it before the discharge desk does.
+    Returns the public_link_base_status() it judged."""
+    status = public_link_base_status()
+    if not status["available"]:
+        log.error(
+            "%s=%r cannot be opened from a patient's phone: %s. No discharge link "
+            "or QR code will be issued until it is set to this appliance's https "
+            "address (install runbook, section 8.4).",
+            PUBLIC_ADDRESS_SETTING, status["base_url"], status["problem"],
+        )
+    return status
+
+
 def hash_token(raw_token: str) -> str:
     """SHA-256 hex digest of a presented raw discharge token.
 

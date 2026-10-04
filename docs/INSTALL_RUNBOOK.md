@@ -238,7 +238,7 @@ directories and outside iCloud, and the installer's preflight must pass.
 **The appliance answers only on the ward's clinical network. Nothing from the
 internet reaches it.**
 
-Agree these five things with hospital IT, in writing, before you plug in:
+Agree these six things with hospital IT, in writing, before you plug in:
 
 1. **A static IP or a DHCP reservation.** The ward's tablets and station
    desktops will be pointed at it by address. It cannot move.
@@ -262,6 +262,15 @@ Agree these five things with hospital IT, in writing, before you plug in:
    it up in [Stand up the pager](#stand-up-the-pager-the-heartbeat-receiver).
    Until both ends are live, nothing pages anybody. See
    [WARM_STANDBY.md](WARM_STANDBY.md) and [Escalation](#escalation).
+6. **Which network patients' phones use to reach it.** At discharge Orb
+   prints a link and QR code for the patient's own phone, built on
+   `ORB_PUBLIC_APP_BASE_URL` (section 8.4). Given item 3, it opens only on a
+   phone that is on a network with a route to the appliance, for example a
+   patient Wi-Fi that IT routes to port 8000. On mobile data, or at home, it
+   does not open. Write down which network that is, so the discharge desk can
+   tell the patient to open the link before they leave. The phone must also
+   trust the certificate ([Bind address and TLS](#bind-address-and-tls),
+   below): on the installer's self-signed one, it shows a certificate warning.
 
 ### Bind address and TLS
 
@@ -378,6 +387,7 @@ ORB_DEPLOYMENT_PROFILE=prod          # fail-closed secret checks; no auto-reload
 ORB_HOST=0.0.0.0                     # reachable from the ward
 ORB_PORT=8000
 ORB_CORS_ORIGINS=https://orb.hospital.local:8000   # the exact origin staff type
+ORB_PUBLIC_APP_BASE_URL=https://orb.hospital.local:8000   # what the patient's discharge QR opens
 
 ORB_LLM_MODEL=medgemma:27b
 ORB_AMBIENT_LLM_MODEL=medgemma:4b    # see the note below; the template defaults this to the 27B
@@ -388,6 +398,21 @@ ORB_DB_POOL=1                        # the code default; written so it is visibl
 ORB_REQUIRE_UPLOAD_ENCRYPTION=1      # uploads fail closed rather than silently storing cleartext
 ORB_MFA_REQUIRED_ROLES=admin         # see section 10
 ```
+
+**The patient address.** `ORB_PUBLIC_APP_BASE_URL` is the start of every
+discharge link and QR code: Orb prints
+`ORB_PUBLIC_APP_BASE_URL/discharge/<token>`. Set it to the same https address
+staff type, because Orb serves the patient page itself. The code default, and
+the value in `.env.example`, is `http://localhost:5173`, my laptop's
+development server. On a patient's phone that points at the phone itself.
+In the `prod` profile Orb refuses to use such an address: while the value is
+unset, not `https`, or names this machine (`localhost`, `127.0.0.1`,
+`0.0.0.0`), the discharge still completes but no link or QR code is printed,
+the discharge desk is told why, the startup log carries an error naming the
+setting, and the Trust Center's "Patient discharge link address" row is
+amber. Orb can check the shape of the address, not the route to it: whether a
+patient's phone can actually reach it is item 6 of
+[Network placement](#7-network-placement).
 
 **The ambient tier.** `.env.example` sets `ORB_AMBIENT_LLM_MODEL` to the 27B,
 and if the variable is absent the code also defaults it to the 27B. Ambient
@@ -799,6 +824,7 @@ each line on the install record with a time and an initial.
 - [ ] Sage answers a general clinical question, with citations
 - [ ] A downtime snapshot captures and prints, and a ward pack opens ([DRILLS.md](DRILLS.md))
 - [ ] Realtime works: two browsers open the ward board, a change in one appears in the other without a refresh
+- [ ] Discharge a test patient with a date of birth on file: a QR code prints, and it opens, with no certificate warning, on a phone on the patients' network agreed in section 7 (item 6). The startup log has no `ORB_PUBLIC_APP_BASE_URL` error
 
 **Durability**
 

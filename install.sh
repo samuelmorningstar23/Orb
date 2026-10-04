@@ -143,6 +143,12 @@ ORB_REQUIRE_UPLOAD_ENCRYPTION=1
 ORB_HOST=127.0.0.1
 ORB_PORT=8000
 
+# ── Patient discharge link (install runbook, sections 7 and 8.4) ──
+# The https address a patient's phone opens from the discharge QR code, usually
+# the same address staff type. Until it is set, the prod profile prints no
+# discharge link or QR code at all, and says so in the startup log.
+# ORB_PUBLIC_APP_BASE_URL=https://orb.hospital.local:8000
+
 # ── TLS (in transit). Point these at a REAL cert in production. ──
 ORB_TLS_CERT=$CERTS_DIR/orb.crt
 ORB_TLS_KEY=$CERTS_DIR/orb.key
@@ -243,6 +249,9 @@ cat <<EOF
 
   1. Review secrets and settings:
        \$EDITOR $ENV_FILE
+     For the ward, set ORB_HOST, ORB_CORS_ORIGINS and ORB_PUBLIC_APP_BASE_URL
+     (docs/INSTALL_RUNBOOK.md, section 8.4). Without the last one no patient
+     gets a discharge link or QR code.
 
   2. Ensure Ollama is running and models are pulled (for Sage/Lens/Scribe):
        ollama pull medgemma:27b

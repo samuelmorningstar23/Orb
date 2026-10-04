@@ -328,6 +328,18 @@ def models_to_warm(configured, resident=frozenset()) -> list[str]:
 async def lifespan(app: FastAPI):
     """App startup / shutdown."""
     logger.info("═══ Orb Hospital OS — Starting (profile=%s) ═══", DEPLOYMENT_PROFILE)
+
+    # The patient discharge link is built on ORB_PUBLIC_APP_BASE_URL. In prod a
+    # value a patient's phone cannot open (unset, not https, or this machine)
+    # means no discharge link is issued at all, so say it once, loudly, at boot
+    # rather than first at the discharge desk. Log, never refuse to start: the
+    # wards must run whether or not the patient portal is reachable.
+    try:
+        from services.discharge_access_service import log_public_address_problem
+        log_public_address_problem(logger)
+    except Exception as e:
+        logger.warning("Discharge link address check failed: %s", e)
+
     init_db()
 
     # Reconcile the AI model registry with what Orb actually ships, once per boot.

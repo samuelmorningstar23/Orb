@@ -472,6 +472,15 @@ def _tls_posture() -> dict:
     return out
 
 
+def _patient_link_posture() -> dict:
+    """The address Orb puts in patient discharge links and QR codes, and why a
+    patient's phone could not open it (problem None when it can)."""
+    from services.discharge_access_service import public_link_base_status
+
+    status = public_link_base_status()
+    return {"base_url": status["base_url"], "problem": status["problem"]}
+
+
 def _default_credentials() -> dict:
     """Accounts that can still sign in with a password published in Orb's own
     seed scripts. bootstrap_service scans for them once at boot; it re-reads the
@@ -620,6 +629,39 @@ def _build_controls(enc: dict, audit: dict, mfa: dict, rbac: dict,
             "Ask the person who installed Orb to give it a certificate, or to put "
             "it behind a proxy that serves HTTPS, before any patient data is "
             "entered.", tls_settings)
+
+    # ── Patient discharge link address ──
+    # Prod only: on a dev machine the localhost default is where the app is, and
+    # a row there would only move the demo's score. Amber, not red, when unset:
+    # nothing is exposed, discharge still completes, the patient just leaves
+    # without a link (discharge_service.discharge_patient withholds it).
+    if prod_profile:
+        link_settings = ["ORB_PUBLIC_APP_BASE_URL"]
+        link = _safe(_patient_link_posture, None)
+        if link is None:
+            add("patient_discharge_link", "Patient discharge link address", "unknown",
+                "Orb could not check the address it puts in patients' discharge "
+                "links and QR codes.",
+                "Ask the person who installed Orb to check the patient address "
+                "setting.", link_settings)
+        elif link.get("problem"):
+            add("patient_discharge_link", "Patient discharge link address", "warn",
+                "Orb is issuing no discharge links or QR codes: the address it "
+                f"would put in them, {link.get('base_url') or '(none)'}, cannot be "
+                f"opened from a patient's phone because {link['problem']}. Patients "
+                "leave with the printed summary only.",
+                "Ask the person who installed Orb to set the patient address to "
+                "this appliance's https address, and agree with the hospital's IT "
+                "team which network patients' phones use to reach it.",
+                link_settings)
+        else:
+            add("patient_discharge_link", "Patient discharge link address", "pass",
+                f"Discharge links and QR codes point at {link['base_url']}, an https "
+                "address that is not this machine.",
+                "Orb cannot see the network from here. Keep the hospital IT team's "
+                "written confirmation that patients' phones can reach this address "
+                "without a certificate warning with the site file.",
+                link_settings)
 
     # ── Encryption at rest: DB ──
     db_settings = ["ORB_DB_ENCRYPTION_KEY"]

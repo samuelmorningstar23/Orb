@@ -164,7 +164,7 @@ All sub-values are overridable via env vars (`ORB_SCRIBE_ASR_MODEL`, `ORB_SCRIBE
 | `DISCHARGE_ACCESS_TTL_DAYS` | `ORB_DISCHARGE_ACCESS_TTL_DAYS` | `30` | How many days a discharge summary access link remains valid. |
 | `DISCHARGE_ACCESS_MAX_ATTEMPTS` | `ORB_DISCHARGE_ACCESS_MAX_ATTEMPTS` | `5` | Failed PIN attempts before lockout. |
 | `DISCHARGE_ACCESS_LOCK_MINUTES` | `ORB_DISCHARGE_ACCESS_LOCK_MINUTES` | `15` | Lockout duration in minutes after too many failed attempts. |
-| `PUBLIC_APP_BASE_URL` | `ORB_PUBLIC_APP_BASE_URL` | `http://localhost:5173` | The publicly reachable URL of the frontend app, used to generate patient-facing discharge links. |
+| `PUBLIC_APP_BASE_URL` | `ORB_PUBLIC_APP_BASE_URL` | `http://localhost:5173` | The https address a patient's phone opens from the discharge link and QR code; on an appliance, the address staff type. The default is the Vite dev server: the `prod` profile issues no discharge link while it is unset, not https, or names this machine. |
 
 **Sage ambient config**
 

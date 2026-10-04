@@ -171,7 +171,7 @@ to small/fast models; `prod` defaults to full-quality.
 | `ORB_DISCHARGE_ACCESS_TTL_DAYS` | `30` | How many days a discharge-access token remains valid. |
 | `ORB_DISCHARGE_ACCESS_MAX_ATTEMPTS` | `5` | Max failed login attempts before the discharge access portal locks. |
 | `ORB_DISCHARGE_ACCESS_LOCK_MINUTES` | `15` | Minutes the discharge portal stays locked after too many failed attempts. |
-| `ORB_PUBLIC_APP_BASE_URL` | `http://localhost:5173` | Base URL the server uses when generating patient portal links (sent in discharge summary emails or QR codes). Set to the public HTTPS URL in production. |
+| `ORB_PUBLIC_APP_BASE_URL` | `http://localhost:5173` | Base of every patient discharge link and QR code (`<this>/discharge/<token>`). Set it to the appliance's https address (install runbook, section 8.4); the `prod` profile issues no discharge link while it is unset, not https, or names this machine. |
 
 #### 15.2.9 Hospital-administration module switches
 

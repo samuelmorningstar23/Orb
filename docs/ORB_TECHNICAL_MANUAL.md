@@ -629,7 +629,7 @@ All sub-values are overridable via env vars (`ORB_SCRIBE_ASR_MODEL`, `ORB_SCRIBE
 | `DISCHARGE_ACCESS_TTL_DAYS` | `ORB_DISCHARGE_ACCESS_TTL_DAYS` | `30` | How many days a discharge summary access link remains valid. |
 | `DISCHARGE_ACCESS_MAX_ATTEMPTS` | `ORB_DISCHARGE_ACCESS_MAX_ATTEMPTS` | `5` | Failed PIN attempts before lockout. |
 | `DISCHARGE_ACCESS_LOCK_MINUTES` | `ORB_DISCHARGE_ACCESS_LOCK_MINUTES` | `15` | Lockout duration in minutes after too many failed attempts. |
-| `PUBLIC_APP_BASE_URL` | `ORB_PUBLIC_APP_BASE_URL` | `http://localhost:5173` | The publicly reachable URL of the frontend app, used to generate patient-facing discharge links. |
+| `PUBLIC_APP_BASE_URL` | `ORB_PUBLIC_APP_BASE_URL` | `http://localhost:5173` | The https address a patient's phone opens from the discharge link and QR code; on an appliance, the address staff type. The default is the Vite dev server: the `prod` profile issues no discharge link while it is unset, not https, or names this machine. |
 
 **Sage ambient config**
 
@@ -7929,7 +7929,7 @@ Discharge has two services and one route file. The split is deliberate: `dischar
 - `qrcode` / `qrcode.image.pure.PyPNGImage`, Optional dependency; absent if not installed (checked via `HAS_QR`).
 - `httpx`, Calls Ollama for summary generation (non-streaming; waits for the full response).
 - `config.DISCHARGE_ACCESS_TTL_DAYS`, Controls how long the patient's link remains valid.
-- `config.PUBLIC_APP_BASE_URL`, The hospital's public-facing URL, embedded in the QR code.
+- `services.discharge_access_service.public_link_base_status`, Reads `config.PUBLIC_APP_BASE_URL` (env `ORB_PUBLIC_APP_BASE_URL`, the address a patient's phone opens) at discharge time and decides whether a link may be built on it.
 - `services.audit_service.log_audit_event`, Records the discharge event in the audit ledger.
 
 ---
@@ -7976,20 +7976,27 @@ Generates a PNG QR code image pointing to the patient's discharge summary URL. S
 
 The main discharge action function. Called after both the summary and timeline are ready.
 
+**The link is conditional, the discharge is not.** The discharge always completes (patient status, summary, timeline, the active admission and any open care bundles closed). A link and QR code are issued only when both of these hold:
+
+- the patient has a usable date of birth on file, the second factor the portal checks (`discharge_access_service.second_factor_status`);
+- the address the link is built on can be opened from a patient's phone (`discharge_access_service.public_link_base_status`). In the `prod` profile it refuses an `ORB_PUBLIC_APP_BASE_URL` that is unset, not `https`, or names this machine (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`, `0.0.0.0`). The shipped default, `http://localhost:5173`, is the Vite dev server and is refused. The `dev` profile accepts it.
+
+When either fails, no token, URL or QR file is produced, the response carries `secure_link_issued: false` and a `secure_link_reason` for the discharge desk (both reasons when both fail), and a `discharge_link_not_issued` audit event names the cause.
+
 **Security model, how the token works:**
 
 1. `secrets.token_urlsafe(32)` generates a 256-bit cryptographically random token (the raw token). This is what goes into the URL and the QR code.
-2. `hashlib.sha256(token_id.encode()).hexdigest()` produces a hash of the raw token. **Only this hash is stored in the database.** This means that even if someone reads the `discharge_access_tokens` table, they cannot reconstruct valid URLs.
-3. The summary URL is `{PUBLIC_APP_BASE_URL}/discharge/{raw_token}`.
+2. `hashlib.sha256(raw_token.encode()).hexdigest()` produces a hash of the raw token. **Only this hash is stored in the database** (in both `token_id` and `token_hash`). This means that even if someone reads the `discharge_access_tokens` table, they cannot reconstruct valid URLs.
+3. The summary URL is `{ORB_PUBLIC_APP_BASE_URL}/discharge/{raw_token}`, with any trailing slash on the setting dropped.
 4. The QR code is generated from this URL.
-5. The raw token, its hash, patient ID, and expiry time are written to `discharge_access_tokens`.
-6. The discharge summary and timeline are written to `discharge_summaries`.
+5. The token hash, patient ID, expiry time and issuing user are written to `discharge_access_tokens`.
+6. The discharge summary and timeline are written to `discharge_summaries` as a draft; the patient sees the text only after a clinician has reviewed it.
 7. `patients.status` is set to `'discharged'`.
 8. An audit event `discharge_link_created` is logged.
 
 **Expiry:** Controlled by `DISCHARGE_ACCESS_TTL_DAYS` from config. Default behavior is that the link expires after this many days and becomes permanently inaccessible.
 
-Returns `{status: "success", summary_url, qr_path}`.
+Returns `{status, summary_id, discharged_at, review_status, summary_url, qr_code_url, secure_link_issued, secure_link_reason}`. `summary_url` and `qr_code_url` are null when no link was issued; `qr_code_url` is an API path, never the PNG's location on disk.
 
 ⚠️ **If you change this:** Never store the raw token, only the hash. If you add multi-use token support (the link can be opened more than once), keep this function the same and only change `discharge_access_service.py`. If you change the URL pattern from `/discharge/{token}` to anything else, update the frontend DischargeAccess page route to match.
 
@@ -8029,6 +8036,17 @@ This is a **global, in-memory, sliding-window per-IP rate limiter** across ALL d
 ##### `_is_verify_ip_throttled(ip) -> bool` and `_record_verify_ip_attempt(ip)`
 
 Helper pair for the sliding-window throttle. `_is_verify_ip_throttled` cleans the bucket (drops timestamps older than the window), then checks whether the count of remaining timestamps meets or exceeds `_VERIFY_IP_MAX_ATTEMPTS`. `_record_verify_ip_attempt` adds the current timestamp to the bucket. Both are protected by `_VERIFY_IP_LOCK`.
+
+---
+
+##### `second_factor_status(patient_id)` and `public_link_base_status()`
+
+The two checks `discharge_service.discharge_patient` makes before it issues a link. Each returns `available` plus a `reason` written for the discharge desk.
+
+- `second_factor_status`: is a date of birth on file in a shape the portal's date picker can send? `usable_dob` decides, and verification uses the same definition, so a link can never issue that verification would refuse.
+- `public_link_base_status`: can a patient's phone open links built on `config.PUBLIC_APP_BASE_URL`? `public_address_problem` names the fault (not set, not https, this machine), and only the `prod` profile refuses. `log_public_address_problem` runs once in `main.lifespan` and logs an error at boot while it refuses. The Trust Center shows the same check as the "Patient discharge link address" row, in `prod` only: green on an https network address, amber otherwise.
+
+It checks the address's shape, not the route to it: a patient's phone still needs a network path to the appliance (install runbook, section 7, item 6).
 
 ---
 
@@ -8157,9 +8175,11 @@ Maps error reasons to HTTP status codes:
 1. Doctor triggers discharge (via ambient action or directly via API).
    → discharge_service.generate_discharge_summary() → LLM generates document
    → discharge_service.discharge_patient()
+       ├── no date of birth on file, or (prod) no patient-reachable ORB_PUBLIC_APP_BASE_URL
+       │     → discharge completes, no token, URL or QR; secure_link_reason for the desk
        ├── secrets.token_urlsafe(32) → raw_token
        ├── sha256(raw_token) → token_hash (only this is stored in DB)
-       ├── summary URL = PUBLIC_APP_BASE_URL/discharge/{raw_token}
+       ├── summary URL = ORB_PUBLIC_APP_BASE_URL/discharge/{raw_token}
        ├── QR code PNG generated, saved to UPLOAD_DIR
        ├── discharge_access_tokens row inserted (token_hash, patient_id, expires_at)
        ├── discharge_summaries row inserted (summary, timeline JSON)
@@ -11887,7 +11907,7 @@ to small/fast models; `prod` defaults to full-quality.
 | `ORB_DISCHARGE_ACCESS_TTL_DAYS` | `30` | How many days a discharge-access token remains valid. |
 | `ORB_DISCHARGE_ACCESS_MAX_ATTEMPTS` | `5` | Max failed login attempts before the discharge access portal locks. |
 | `ORB_DISCHARGE_ACCESS_LOCK_MINUTES` | `15` | Minutes the discharge portal stays locked after too many failed attempts. |
-| `ORB_PUBLIC_APP_BASE_URL` | `http://localhost:5173` | Base URL the server uses when generating patient portal links (sent in discharge summary emails or QR codes). Set to the public HTTPS URL in production. |
+| `ORB_PUBLIC_APP_BASE_URL` | `http://localhost:5173` | Base of every patient discharge link and QR code (`<this>/discharge/<token>`). Set it to the appliance's https address (install runbook, section 8.4); the `prod` profile issues no discharge link while it is unset, not https, or names this machine. |
 
 #### 15.2.9 Hospital-administration module switches
 
