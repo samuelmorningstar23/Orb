@@ -27,8 +27,19 @@
  *  * Modals portal to document.body.
  *  * Money renders with tabular-lining figures, and an unpriced item renders
  *    "Not configured" — never ₹0.00.
+ *
+ * ── MORE DESK SECTIONS, WITH THE REGISTRATION FEATURE (opd-15) ──────────────
+ * While the server's 'registration' feature is on, the desk also offers every
+ * section found in ./frontdesk/*View.tsx (clinic timings first; the register,
+ * appointments, day summary and display board views arrive the same way), each
+ * as its own file under the contract in ./frontdesk/viewRegistry.ts. With the
+ * feature off this screen is exactly the OPD queue and Transfers it always was.
+ *
+ * A desk-only account (the receptionist: registration.* and no chart) sees no
+ * Transfers and is not offered Call in or Complete, which the server refuses
+ * it; it reads the queue and the roster and marks no-shows.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { apiFetch } from '../../api/client'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
@@ -54,8 +65,26 @@ import {
 } from '../../api/frontdesk'
 import './FrontDeskPanel.css'
 import { formatClinicalDateTime } from '../../lib/datetime'
+import { PATIENT_READ_ALL, hasPermission, type Permission } from '../../lib/roles'
+import { currentFeatureFlags, subscribeModuleFlags } from '../../shellConfig'
+import {
+  discoverFrontDeskViews,
+  visibleFrontDeskViews,
+  type FrontDeskViewEntry,
+} from './frontdesk/viewRegistry'
 
-type View = 'opd' | 'transfers'
+/** 'opd', 'transfers', or the id of a discovered desk view. */
+type View = string
+
+/** Every installed desk view, read once at module load (the glob is compile-time). */
+const INSTALLED_DESK_VIEWS: readonly FrontDeskViewEntry[] = discoverFrontDeskViews(
+  import.meta.glob('./frontdesk/*View.tsx', { eager: true }),
+)
+
+/** The client permission mirror; a permission it does not list reads as not held. */
+function roleHolds(permission: string): boolean {
+  return hasPermission(permission as Permission)
+}
 
 /** A patient on the caller's own ward, from the clinical board. The server
  *  scopes this list; the panel never asks for a department. */
@@ -283,9 +312,13 @@ function RegisterVisitForm({
 function OpdQueue({
   queue,
   onAction,
+  canRunConsultation = true,
 }: {
   queue: OpdQueueResponse
   onAction: () => void
+  /** False for a desk-only account: the server refuses it Call in and Complete,
+   *  so they are not offered. No-show stays. */
+  canRunConsultation?: boolean
 }) {
   const [busyId, setBusyId] = useState('')
   const [error, setError] = useState('')
@@ -386,7 +419,7 @@ function OpdQueue({
                     <td><StatusChip status={v.status} /></td>
                     <td className="fd-actions-cell">
                       <div className="fd-actions">
-                        {v.status === 'waiting' && (
+                        {canRunConsultation && v.status === 'waiting' && (
                           <button
                             type="button"
                             className="fd-btn"
@@ -396,7 +429,7 @@ function OpdQueue({
                             Call in
                           </button>
                         )}
-                        {v.status === 'in_consultation' && (
+                        {canRunConsultation && v.status === 'in_consultation' && (
                           <button
                             type="button"
                             className="fd-btn fd-btn--primary"
@@ -701,7 +734,18 @@ function TransfersView({
 
 // ── Panel ────────────────────────────────────────────────────────────────────
 
-export default function FrontDeskPanel() {
+interface FrontDeskPanelProps {
+  /** Tests only: the desk views to offer. The shell mounts the panel without
+   *  props, which means every view found in ./frontdesk/. */
+  views?: readonly FrontDeskViewEntry[]
+  /** Tests only: whether the signed-in user holds a permission. */
+  holds?: (permission: string) => boolean
+}
+
+export default function FrontDeskPanel({
+  views = INSTALLED_DESK_VIEWS,
+  holds = roleHolds,
+}: FrontDeskPanelProps = {}) {
   const [view, setView] = useState<View>('opd')
   const [queue, setQueue] = useState<OpdQueueResponse | null>(null)
   const [patients, setPatients] = useState<WardPatient[]>([])
@@ -711,6 +755,33 @@ export default function FrontDeskPanel() {
   const [error, setError] = useState('')
   const mounted = useRef(true)
 
+  /* The registration feature, as the shell's health probe last read it. A
+     view that meets `feature_disabled` later sets `featureGone`, and the desk
+     drops back to its two built-in sections without a reload. */
+  const features = useSyncExternalStore(subscribeModuleFlags, currentFeatureFlags)
+  const [featureGone, setFeatureGone] = useState(false)
+  const registrationOn = features.registration === true && !featureGone
+  /* A desk-only account (registration.* and no chart): the clinical board and
+     the transfer list would refuse it, so they are not asked for. With the
+     feature off nobody is desk-only, and the desk loads what it always did. */
+  const deskOnly = registrationOn && !holds(PATIENT_READ_ALL)
+  const deskViews = useMemo(
+    () => (registrationOn ? visibleFrontDeskViews(views, holds) : []),
+    [registrationOn, views, holds],
+  )
+  const activeDeskView = deskViews.find(v => v.id === view) ?? null
+  /* The section on screen. A desk view that went away (the feature switched
+     off) or Transfers for a desk-only account falls back to the OPD queue. */
+  const current: View = activeDeskView
+    ? activeDeskView.id
+    : view === 'transfers' && !deskOnly ? 'transfers' : 'opd'
+  const openView = useCallback((id: string) => {
+    if (id === 'opd' || (id === 'transfers' && !deskOnly) || deskViews.some(v => v.id === id)) {
+      setView(id)
+    }
+  }, [deskOnly, deskViews])
+  const featureOff = useCallback(() => setFeatureGone(true), [])
+
   useEffect(() => {
     mounted.current = true
     return () => { mounted.current = false }
@@ -719,6 +790,15 @@ export default function FrontDeskPanel() {
   const load = useCallback(async () => {
     setError('')
     try {
+      if (deskOnly) {
+        const [q, r] = await Promise.all([fetchOpdQueue(), fetchConsultingDoctors()])
+        if (!mounted.current) return
+        setQueue(q)
+        setPatients([])
+        setDestinations([])
+        setRoster(Array.isArray(r.doctors) ? r.doctors : [])
+        return
+      }
       const [q, p, d, r] = await Promise.all([
         fetchOpdQueue(),
         apiFetch<WardPatient[]>('/vigil/patients?limit=200'),
@@ -736,7 +816,7 @@ export default function FrontDeskPanel() {
     } finally {
       if (mounted.current) setLoading(false)
     }
-  }, [])
+  }, [deskOnly])
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
   useEffect(() => { load() }, [load])
@@ -777,7 +857,7 @@ export default function FrontDeskPanel() {
         <div>
           <h2 className="fd-title">Front Desk</h2>
           <p className="fd-subtitle">
-            Outpatient registration and ward transfers
+            {deskOnly ? 'Outpatient registration' : 'Outpatient registration and ward transfers'}
             {queue?.department ? ` (${queue.department})` : ''}
           </p>
         </div>
@@ -785,46 +865,74 @@ export default function FrontDeskPanel() {
           <button
             type="button"
             role="tab"
-            aria-selected={view === 'opd'}
-            className={`fd-tab ${view === 'opd' ? 'fd-tab--active' : ''}`}
+            aria-selected={current === 'opd'}
+            className={`fd-tab ${current === 'opd' ? 'fd-tab--active' : ''}`}
             onClick={() => setView('opd')}
           >
             OPD queue
           </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={view === 'transfers'}
-            className={`fd-tab ${view === 'transfers' ? 'fd-tab--active' : ''}`}
-            onClick={() => setView('transfers')}
-          >
-            Transfers
-          </button>
+          {!deskOnly && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={current === 'transfers'}
+              className={`fd-tab ${current === 'transfers' ? 'fd-tab--active' : ''}`}
+              onClick={() => setView('transfers')}
+            >
+              Transfers
+            </button>
+          )}
+          {deskViews.map(v => (
+            <button
+              key={v.id}
+              type="button"
+              role="tab"
+              aria-selected={current === v.id}
+              className={`fd-tab ${current === v.id ? 'fd-tab--active' : ''}`}
+              onClick={() => setView(v.id)}
+            >
+              {v.label}
+            </button>
+          ))}
         </div>
       </header>
 
       {error && <p className="fd-error" role="alert">{error}</p>}
 
-      {view === 'opd' ? (
-        <div className="fd-opd">
-          <RegisterVisitForm
-            patients={patients}
-            doctors={doctors}
-            clinics={destinations.map(d => d.department)}
-            /* The SERVER's answer about the caller, not the signed-in user
-               object: `queue.department` is what `department_scope` derived, so
-               the field appears exactly when the server would demand it. */
-            scopedDepartment={queue?.department ?? null}
-            onRegistered={load}
-          />
-          {queue && <OpdQueue queue={queue} onAction={load} />}
-        </div>
-      ) : (
+      {activeDeskView ? (
+        <activeDeskView.Component
+          scopedDepartment={queue?.department ?? null}
+          openView={openView}
+          onFeatureOff={featureOff}
+        />
+      ) : current === 'transfers' ? (
         <TransfersView
           patients={patients}
           destinations={destinations}
           onTransferred={load}
         />
+      ) : (
+        <div className="fd-opd">
+          {deskOnly ? (
+            <p className="fd-empty">
+              Patient search for registering a visit is not on this screen yet, so for now a
+              clinician or the administrator registers the visit. The queue below is yours to
+              follow, and you can mark a patient who left as a no-show.
+            </p>
+          ) : (
+            <RegisterVisitForm
+              patients={patients}
+              doctors={doctors}
+              clinics={destinations.map(d => d.department)}
+              /* The SERVER's answer about the caller, not the signed-in user
+                 object: `queue.department` is what `department_scope` derived, so
+                 the field appears exactly when the server would demand it. */
+              scopedDepartment={queue?.department ?? null}
+              onRegistered={load}
+            />
+          )}
+          {queue && <OpdQueue queue={queue} onAction={load} canRunConsultation={!deskOnly} />}
+        </div>
       )}
     </div>
   )

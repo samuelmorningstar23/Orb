@@ -1,6 +1,6 @@
 # Sage bed lookup: build plan, 3 October 2026
 
-Status: RULED 3 October 2026, 20:55 (R026 (a), D2, D3, D4 as recommended). Attempt 2 was built to this plan, FAILED independent review at 23:30 and was backed out (sage_service.py byte-identical to before). The design below the line "Attempt 3" replaces sections 1 to 4. Waiting on Samuel for Q1 to Q3.
+Status: RULED (R026 (a), D2 to D4, Q1 to Q3). Attempts 2 and 3 failed review and were backed out. 4 October: Samuel ruled A (a) the server writes the which-patient question, B (a) keep asking with the extra filters, C build attempt 4. Build in progress.
 Reads with: docs/SAGE_BED_LOCATOR_FINDINGS_2026-10-03.md (the defect and why the first fix was backed out).
 
 ## The idea in one paragraph
@@ -141,4 +141,28 @@ All 83 attempt-2 tests, and every reviewer probe as a regression test (W1 to W8,
 - **Q1, bare numbers.** "how is 12?" or "12's potassium?" on a ward with a bed 12, written without "bed". (a) Sage asks "did you mean the patient in bed 12?". (b) It answers from bed 12, as the old code did. Recommend (a). (b) is right for "how is 12?" but answers from the wrong chart whenever an incidental number slips past the discard guards. The cost of (a) is an occasional extra question on wards with numbered beds.
 - **Q2, a bare bed number another department has.** "bed 12" when your ward has no bed 12 but Surgery does. (a) NO MATCHING, because bed numbers repeat across wards. Lettered codes that belong to one ward (CCU-01) still get the out-of-department answer. (b) Out-of-department, as today, which also files a security audit event against the doctor. Recommend (a).
 - **Q3, "bay".** (a) A bay is a room of several beds, not a bed, so "bay 2" makes Sage ask if there is a bed 2. (b) Treat "bay" like "bed". Recommend (a).
+
+---
+
+## Attempt 4: what would change (proposed 4 October)
+
+Attempt 3's design stays: find beds from the labels on the ward, ask when unsure, no-match for a bed nobody is in. The fixes for its review, all contained:
+
+1. A unit-like word after a bed word never drops the reference. "bed 12 HR 140" is bed 12. Only a plural duration, degrees, a percent or a decimal after a bed word ("bed 2 days ago", "head of bed 30 degrees") turns it into an UNSURE reference (ask if someone is in that bed, otherwise text).
+2. Bed references are read before ward mentions, and "N ward" never claims a number that follows a bed word. "bed 12 ward 6" narrows to ward 6.
+3. A destination needs a movement verb (shift, move, transfer, send, put, admit ... to). "ABG from bed 45", "what happened to bed 45", "compare bed 12 to bed 45" are ordinary references.
+4. A turn Sage only asked about stops the history walk.
+5. Bed-word spellings: nos, nr, n°, nº, "=", "(", ",", newline, ordinals ("bed 45th"), common misspellings, fullwidth digits, thin and zero-width spaces; a number too long to be a bed after a bed word is no-match.
+6. "the patient at/on N" is not a certain bed (time, count); it is a bare number, so Sage asks if bed N exists.
+7. A list never continues into "65/M", "140/90", "4/5" or "N <letter>".
+8. Another department's code counts only written as a code ("ICU-01", "icu01") or after a bed word, never "ICU 1 bed free".
+9. Ward mentions windowed by position like the bed hits, so every pass is linear.
+10. More "plainly not a bed" families, from the reviewer's ask list: 12-lead, a number right after a drug name or before a route or frequency ("metoprolol 25 bd", "ondansetron 4 iv"), counts ("2 sets", "3 episodes", "2 pints", "1 more dose"), times ("at 5", "on 3 Oct"), more lab and score words.
+11. The cache key of the bed-word reader includes the ward vocabulary.
+
+### Decisions needed
+
+- **A. How Sage asks.** (a) The server writes the question itself, without the model, the way the out-of-department answer already works: "Which patient do you mean? Bed 12: <name>, ward 5. If you meant the patient whose chart is open, say so." Applies to every "which patient" turn, including today's name ambiguity. (b) Keep the model and add an explicit instruction to ask. Recommend (a): the reviewer's replay showed the model answering generically with invented citations when it was not told to ask.
+- **B. The ask rate on numbered wards.** With item 10 the 61% should fall a long way, but it will not reach zero on a ward numbered 1 to 30. (a) Keep Q1: an unsure number asks. (b) Revisit Q1. Recommend (a): the alternative answers "how is 12?" from the open chart, and the old code put a different bed's chart in front of the model on 28 of the same 54 questions.
+- **C. Build attempt 4 now, or pause.** Same process: tests first and shown failing, guard suites, a fresh reviewer with both earlier reviewers' probes.
 

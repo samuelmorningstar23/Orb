@@ -124,3 +124,88 @@ describe('pharmacy store API base', () => {
     expect(err.isModuleDisabled).toBe(true)
   })
 })
+
+/**
+ * The download is a raw fetch, so it carries apiFetch's session contract
+ * itself: a 401 gets one single-flight refresh and one retry, and a dead
+ * session raises the re-auth modal (orb:session-expired) instead of surfacing
+ * as a plain error. Modelled on src/api/sessionRefresh.test.ts.
+ */
+describe('pharmacy store download and an expired session', () => {
+  const expired: string[] = []
+  const onExpired = () => expired.push('expired')
+
+  beforeEach(() => {
+    expired.length = 0
+    window.addEventListener('orb:session-expired', onExpired)
+  })
+
+  afterEach(() => {
+    window.removeEventListener('orb:session-expired', onExpired)
+  })
+
+  const json = (body: unknown, status: number) =>
+    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+
+  /** API calls 401 until /auth/refresh has succeeded (and repaired the
+   *  session), then the CSV comes back. */
+  function stubLapsedSession({ refreshStatus = 200, repairSession = true, refreshDelayMs = 0 } = {}) {
+    let sessionValid = false
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) => {
+      const path = String(url)
+      calls.push(path)
+      if (path.endsWith('/auth/refresh')) {
+        if (refreshDelayMs) await new Promise((r) => setTimeout(r, refreshDelayMs))
+        if (refreshStatus === 200 && repairSession) sessionValid = true
+        return json(refreshStatus === 200 ? { ok: true } : { detail: 'Token expired' }, refreshStatus)
+      }
+      if (!sessionValid) return json({ detail: 'Token expired' }, 401)
+      return new Response('drug,qty\nmorphine,4\n', { status: 200 })
+    }))
+    return calls
+  }
+
+  const refreshes = (calls: string[]) => calls.filter((c) => c.endsWith('/auth/refresh')).length
+
+  it('refreshes once and retries the download', async () => {
+    const calls = stubLapsedSession()
+    const blob = await pharmacyStoreDownload('/ndps/export.csv')
+    expect(await blob.text()).toBe('drug,qty\nmorphine,4\n')
+    expect(calls).toHaveLength(3)
+    expect(refreshes(calls)).toBe(1)
+    expect(expired).toHaveLength(0)
+  })
+
+  it('raises the re-auth modal when the refresh fails, with no blind retry', async () => {
+    const calls = stubLapsedSession({ refreshStatus: 401 })
+    const err = (await pharmacyStoreDownload('/ndps/export.csv')
+      .catch((e: unknown) => e)) as PharmacyStoreApiError
+    expect(err).toBeInstanceOf(PharmacyStoreApiError)
+    expect(err).toMatchObject({ status: 401, message: 'Session expired' })
+    expect(expired).toEqual(['expired'])
+    expect(calls).toHaveLength(2)
+  })
+
+  it('treats a 401 on the retry as a hard expiry, never a second refresh', async () => {
+    const calls = stubLapsedSession({ repairSession: false })
+    const err = (await pharmacyStoreDownload('/ndps/export.csv')
+      .catch((e: unknown) => e)) as PharmacyStoreApiError
+    expect(err).toMatchObject({ status: 401 })
+    expect(expired).toEqual(['expired'])
+    expect(calls).toHaveLength(3)
+    expect(refreshes(calls)).toBe(1)
+  })
+
+  it('shares one refresh with other requests that 401 at the same moment', async () => {
+    const calls = stubLapsedSession({ refreshDelayMs: 20 })
+    const [a, b] = await Promise.all([
+      pharmacyStoreDownload('/ndps/export.csv'),
+      pharmacyStoreDownload('/stock/export.csv'),
+    ])
+    expect(await a.text()).toContain('morphine')
+    expect(await b.text()).toContain('morphine')
+    expect(refreshes(calls)).toBe(1)
+    expect(expired).toHaveLength(0)
+  })
+})

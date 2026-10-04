@@ -80,7 +80,16 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+import migrations  # noqa: F401  (loads migrations_his in version order first)
 from database import db_session
+from migrations_his.m0050_registration_opd_foundation import (
+    OPD_VISITS_ADDED_COLUMNS,
+    ensure_opd_visits_on,
+)
+from migrations_his.m0051_adt_movement_ledger import (
+    ADDED_COLUMNS as _LEDGER_ADDED_COLUMNS,
+)
+from migrations_his.m0051_adt_movement_ledger import ensure_ledger_on
 from services.billing_masters import resolve_patient_payer, resolve_rate
 from services.hospital_time import hospital_timezone, hospital_today
 from services.money import compute_line
@@ -135,103 +144,26 @@ _COVERING_ROLES = ("doctor", "clinician", "nurse")
 # ═════════════════════════════════════════════════════════════════════════════
 #  Schema
 # ═════════════════════════════════════════════════════════════════════════════
-# NOTE ON PLACEMENT (deliberate, and a followup): the house rule is that schema
-# lives in a numbered migration in server/migrations.py. These two tables are
-# created here instead because migration 20 (the hospital-admin spine) was
-# authored as ONE migration for five modules built in parallel, explicitly so
-# that no module agent picks a migration version — two agents choosing version 21
-# in the same night produces a duplicate PRIMARY KEY in `schema_migrations` and a
-# server that will not boot. `CREATE TABLE IF NOT EXISTS` cannot collide. Folding
-# these into a numbered migration once the spine's version numbers are settled is
-# a mechanical change and is recorded as a followup.
+# Both tables now live in numbered migrations: opd_visits in migration 50
+# (server/migrations_his/m0050_registration_opd_foundation.py) and
+# patient_movements in migration 51 (m0051_adt_movement_ledger.py). Each file
+# holds the frozen DDL and indexes; this module imports them, so the lazy path
+# below and the migration runner build one shape. They were created here, not
+# in a migration, because migration 20 was authored as one migration for five
+# modules built in parallel; that followup is now done.
 #
 # Same rules as migration 20: additive, ZERO foreign keys (an FK from a front-desk
 # row to `patients` would make a patient row undeletable and could fail a clinical
 # table rebuild), no REAL columns, money in `_paise`.
 
-_FRONTDESK_TABLES: list[str] = [
-    """CREATE TABLE IF NOT EXISTS opd_visits (
-        id TEXT PRIMARY KEY,
-        patient_id TEXT NOT NULL,
-        -- The CLINIC this visit belongs to. This is the scope key for the queue:
-        -- an outpatient has no admission, so permissions.PATIENT_DEPARTMENT_SQL
-        -- cannot derive a department for them. It is compared against
-        -- permissions.department_scope(user) — the same authenticated-user
-        -- derivation, never a department named by the request.
-        department TEXT NOT NULL,
-        doctor_id TEXT,
-        -- Display snapshot of the consulting doctor's name at registration.
-        -- NEVER a scope source; the id is the identity.
-        doctor_name TEXT,
-        visit_date TEXT NOT NULL,           -- YYYY-MM-DD, hospital-local
-        token_number INTEGER NOT NULL,
-        visit_type TEXT NOT NULL DEFAULT 'new' CHECK (visit_type IN (
-            'new','follow_up','review','procedure')),
-        chief_complaint TEXT,
-        status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN (
-            'waiting','in_consultation','completed','cancelled')),
-        appointment_id TEXT,
-        registered_by TEXT,
-        registered_at TIMESTAMP NOT NULL,
-        called_at TIMESTAMP,
-        completed_at TIMESTAMP,
-        cancelled_at TIMESTAMP,
-        cancel_reason TEXT,
-        -- encounter_charges.id of the consultation charge, once raised.
-        consultation_charge_id INTEGER,
-        notes TEXT,
-        idempotency_key TEXT
-    )""",
-
-    """CREATE TABLE IF NOT EXISTS patient_movements (
-        id TEXT PRIMARY KEY,
-        patient_id TEXT NOT NULL,
-        -- The admission the patient STAYS on. A transfer never opens a new one:
-        -- clinical continuity (orders, eMAR, vitals, the case room) hangs off
-        -- this id.
-        admission_id TEXT,
-        movement_type TEXT NOT NULL DEFAULT 'transfer' CHECK (movement_type IN (
-            'transfer','admission','discharge')),
-        from_department TEXT,
-        from_ward TEXT,
-        from_bed TEXT,
-        to_department TEXT,
-        to_ward TEXT,
-        to_bed TEXT,
-        reason TEXT NOT NULL,
-        moved_at TIMESTAMP NOT NULL,
-        moved_by TEXT,
-        moved_by_name TEXT,
-        notes TEXT,
-        idempotency_key TEXT
-    )""",
-]
-
-_FRONTDESK_INDEXES: list[str] = [
-    "CREATE INDEX IF NOT EXISTS idx_opd_queue ON opd_visits("
-    "visit_date, department, status, token_number)",
-    "CREATE INDEX IF NOT EXISTS idx_opd_doctor_day ON opd_visits("
-    "doctor_id, visit_date, token_number)",
-    "CREATE INDEX IF NOT EXISTS idx_opd_patient ON opd_visits(patient_id, visit_date DESC)",
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_opd_idempotency ON opd_visits(idempotency_key) "
-    "WHERE idempotency_key IS NOT NULL",
-    # One token number per doctor per day. A partial index over live rows only:
-    # a cancelled visit must not hold its token hostage.
-    #
-    # KNOWN GAP, stated rather than papered over: SQLite treats NULLs as DISTINCT
-    # in a unique index, so this does not constrain the "Unassigned doctor" queue
-    # (doctor_id IS NULL). What actually serialises token allocation is
-    # `db_session(immediate=True)` in register_opd_visit — the index is the
-    # second line of defence, and it covers every named doctor.
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_opd_token_unique ON opd_visits("
-    "visit_date, department, doctor_id, token_number) WHERE status != 'cancelled'",
-    "CREATE INDEX IF NOT EXISTS idx_movements_patient ON patient_movements("
-    "patient_id, moved_at DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_movements_admission ON patient_movements("
-    "admission_id, moved_at DESC)",
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_movements_idempotency ON patient_movements("
-    "idempotency_key) WHERE idempotency_key IS NOT NULL",
-]
+#: The columns migrations 50 and 51 added. The front desk's API leaves them out
+#: of every visit and movement it returns, so those migrations change no
+#: existing screen; the increments that write them extend the API under their
+#: own feature switches.
+_VISIT_COLUMNS_NOT_IN_API: frozenset[str] = frozenset(
+    name for name, _ in OPD_VISITS_ADDED_COLUMNS
+)
+_MOVEMENT_COLUMNS_NOT_IN_API: frozenset[str] = frozenset(_LEDGER_ADDED_COLUMNS)
 
 _schema_ready = False
 _schema_lock = threading.Lock()
@@ -241,6 +173,11 @@ def ensure_frontdesk_schema(force: bool = False) -> None:
     """Create the two front-desk tables if absent, and register this module's
     consultation service item on the billing price list (unpriced, never
     overwriting a row the site has touched). Idempotent, cached, thread-safe.
+
+    An idempotent FALLBACK: init_db's migrations 50 and 51 create both tables
+    at boot, so on a migrated database this only ensures they are there. It
+    shares their DDL, and it never rebuilds an old-shape movement ledger (only
+    migration 51 does that, inside the runner's transaction).
 
     Lazy rather than at import: `DB_PATH` is bound at import time from config and
     the test harness rewrites it before `database` is first imported — opening a
@@ -254,10 +191,8 @@ def ensure_frontdesk_schema(force: bool = False) -> None:
         if _schema_ready and not force:
             return
         with db_session() as db:
-            for statement in _FRONTDESK_TABLES:
-                db.execute(statement)
-            for statement in _FRONTDESK_INDEXES:
-                db.execute(statement)
+            ensure_opd_visits_on(db)
+            ensure_ledger_on(db, rebuild=False)
             # Register the code this module charges against as a PRICE-LIST row,
             # unpriced. Without this row the contract is invisible: the billing
             # counter cannot price a code it has never seen, so the site prices
@@ -333,6 +268,20 @@ def _clean(value: object, limit: int) -> Optional[str]:
 
 def _row_to_dict(row) -> dict:
     return dict(row) if row is not None else {}
+
+
+def _visit_api_dict(row) -> dict:
+    """A visit row as the API has always returned it: the migration 50 columns
+    left out, every other key in its original order."""
+    return {k: v for k, v in _row_to_dict(row).items()
+            if k not in _VISIT_COLUMNS_NOT_IN_API}
+
+
+def _movement_api_dict(row) -> dict:
+    """A movement row as the API has always returned it: the migration 51
+    columns left out, every other key in its original order."""
+    return {k: v for k, v in _row_to_dict(row).items()
+            if k not in _MOVEMENT_COLUMNS_NOT_IN_API}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -793,7 +742,7 @@ def _serialize_visit(db, row, *, now: Optional[datetime] = None) -> dict:
     """API shape for one visit, including its live waiting time."""
     if row is None:
         return {}
-    data = _row_to_dict(row)
+    data = _visit_api_dict(row)
     patient = _patient_row(db, data.get("patient_id") or "")
     data["patient_name"] = patient["name"] if patient else None
     data["patient_mrn"] = patient["mrn"] if patient else None
@@ -890,7 +839,7 @@ def list_opd_queue(
 
     visits: list[dict] = []
     for r in rows:
-        data = _row_to_dict(r)
+        data = _visit_api_dict(r)
         data["waiting_minutes"] = _waiting_minutes(data, now=now)
         data["consultation_minutes"] = _consultation_minutes(data, now=now)
         visits.append(data)
@@ -1134,7 +1083,7 @@ def transfer_patient(
                 "SELECT * FROM patient_movements WHERE idempotency_key = ?", (idem,)
             ).fetchone()
             if prior:
-                return _transfer_result(db, patient_id, _row_to_dict(prior))
+                return _transfer_result(db, patient_id, _movement_api_dict(prior))
 
         patient = _patient_row(db, patient_id)
         if patient is None:
@@ -1207,7 +1156,7 @@ def transfer_patient(
         movement = db.execute(
             "SELECT * FROM patient_movements WHERE id = ?", (movement_id,)
         ).fetchone()
-        return _transfer_result(db, patient_id, _row_to_dict(movement))
+        return _transfer_result(db, patient_id, _movement_api_dict(movement))
 
 
 def _transfer_result(db, patient_id: str, movement: dict) -> dict:
@@ -1245,4 +1194,4 @@ def list_patient_movements(patient_id: str, *, limit: int = 50) -> list[dict]:
                 LIMIT ?""",
             (patient_id, limit),
         ).fetchall()
-    return [_row_to_dict(r) for r in rows]
+    return [_movement_api_dict(r) for r in rows]

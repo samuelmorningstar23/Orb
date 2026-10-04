@@ -4,7 +4,6 @@ import logging
 import sqlite3
 from db_backend import DBIntegrityError
 from database import get_db, db_session
-from roles import ROLE_FEATURE
 
 logger = logging.getLogger("orb.relay")
 
@@ -27,22 +26,26 @@ def get_channels_for_user(user_id: str, user_role: str) -> list:
       * direct     — explicit rows in `channel_members` (migration 8). Nothing
                      is inferred, and there is no admin bypass.
     """
-    # A ROLE FROM AN OPT-IN PART OF ORB WITHOUT relay.read GETS NO CHANNEL
-    # (W1-A, 4 October 2026). The roles in roles.ROLE_FEATURE (receptionist,
-    # ward clerk and the three lab roles) were ruled out of Relay (OPD-N3,
-    # adt-17, LIS-R12) and hold no relay.read. The REST routes refuse them on
-    # that permission, but the websocket's join_channel authorises only by
-    # asking this function, and the case-room branch below hands every case
-    # room in the hospital to an account with no department, which a lab role
-    # always is. A ward clerk would also get its own ward's staff room. So the
-    # rule sits here, at the one boundary every lane shares. If permissions.py
-    # ever grants one of these roles relay.read, it passes with no second edit.
+    # A ROLE WITHOUT relay.read GETS NO CHANNEL (W1-A for the five hospital-
+    # system roles, 4 October 2026; widened to every role in wave 2). The REST
+    # routes refuse such a role on the permission, but the websocket's
+    # join_channel authorises only by asking this function, and the case-room
+    # branch below hands every case room in the hospital to an account with no
+    # department. A cashier or a pharmacist is department-less with no
+    # relay.read, so before this a cashier could join any patient's case room
+    # over the websocket and read the clinical thread. A ward clerk would also
+    # get its own ward's staff room. So the rule sits here, at the one boundary
+    # every lane shares, keyed on the PERMISSION: granting a role relay.read in
+    # permissions.py opens Relay for it with no second edit, with the usual
+    # department and case-room scoping below.
     #
-    # Limited to ROLE_FEATURE roles on purpose, so every older role answers
-    # exactly as before. cashier and pharmacist are also department-less with
-    # no relay.read and still see case rooms here: closing that is a ruling
-    # for Samuel, not a side effect of this change.
-    if user_role in ROLE_FEATURE and not _relay_capable(user_role):
+    # The pharmacist was checked before closing it: no pharmacist screen uses
+    # Relay (the rail is helix, verify queue, pharmacy store and Sage), every
+    # Relay REST route already needs relay.read, Sage reads case-room text only
+    # for relay.read holders (services/sage_relay_context.py), and Helix posts
+    # nothing to Relay. Only doctor, clinician, nurse and admin hold relay.read,
+    # and they answer exactly as before. patient and any unknown role get [].
+    if not _relay_capable(user_role):
         return []
     with db_session() as db:
         # Get user department

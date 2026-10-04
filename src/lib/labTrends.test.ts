@@ -75,3 +75,81 @@ describe('structured results carry their provenance', () => {
     expect(trend.simulated).toBe(false)
   })
 })
+
+/* lis-5 (part b): a result Orb's own laboratory released (lab_result_id set,
+   migration 56) takes its status from the laboratory's flag only. The range
+   heuristic that calls a value past 1.5x the upper limit critical is never
+   applied to it. Interfaced rows are unchanged. */
+describe('a released laboratory result shows the laboratory\'s own flag', () => {
+  const lis = (over: Record<string, unknown> = {}) => obs({ source: 'lis_manual', lab_result_id: 41, ...over })
+
+  it('reads a potassium of 7.0 flagged HH as critical', () => {
+    const [trend] = buildLabTrends([], [lis({ value_numeric: 7.0, abnormal_flag: 'HH' })])
+    expect(trend.status).toBe('critical')
+  })
+
+  it('reads a creatinine of 2.0 flagged H as high, not critical', () => {
+    const [trend] = buildLabTrends([], [lis({
+      observation_name: 'Creatinine', unit: 'mg/dL', value_numeric: 2.0,
+      reference_range: '0.6-1.2', abnormal_flag: 'H',
+    })])
+    expect(trend.status).toBe('high')
+  })
+
+  it('leaves an interfaced creatinine of 2.0 to the range heuristic, as before', () => {
+    const [trend] = buildLabTrends([], [obs({
+      observation_name: 'Creatinine', unit: 'mg/dL', value_numeric: 2.0,
+      reference_range: '0.6-1.2', abnormal_flag: 'H',
+    })])
+    expect(trend.status).toBe('critical')
+  })
+
+  it('reads L, LL and A as the laboratory said', () => {
+    expect(buildLabTrends([], [lis({ value_numeric: 3.0, abnormal_flag: 'L' })])[0].status).toBe('low')
+    expect(buildLabTrends([], [lis({ value_numeric: 2.0, abnormal_flag: 'LL' })])[0].status).toBe('critical')
+    expect(buildLabTrends([], [lis({ value_numeric: 4.0, abnormal_flag: 'A' })])[0].status).toBe('abnormal')
+  })
+
+  it('reads a blank flag as normal only when the laboratory had a range', () => {
+    expect(buildLabTrends([], [lis({ value_numeric: 4.0, abnormal_flag: '' })])[0].status).toBe('normal')
+    expect(buildLabTrends([], [lis({ value_numeric: 9.9, abnormal_flag: '', reference_range: null })])[0].status)
+      .toBe('unranged')
+    expect(buildLabTrends([], [lis({
+      value_numeric: 9.9, abnormal_flag: '', reference_range: 'Reference range not configured',
+    })])[0].status).toBe('unranged')
+  })
+
+  it('never lets the value outrank the flag: a value past the range with no flag is not high', () => {
+    // The laboratory compared at its reporting precision against its own
+    // approved range and raised nothing; the card does not second-guess it.
+    expect(buildLabTrends([], [lis({ value_numeric: 5.15, abnormal_flag: '' })])[0].status).toBe('normal')
+  })
+
+  it('shows an unknown flag as abnormal, never as normal', () => {
+    expect(buildLabTrends([], [lis({ value_numeric: 4.0, abnormal_flag: 'Q' })])[0].status).toBe('abnormal')
+  })
+
+  it('takes the status from the newest point, whichever lane it came from', () => {
+    const [afterInterfaced] = buildLabTrends([], [
+      obs({ id: 1, value_numeric: 9.0, abnormal_flag: 'H', observed_at: '2026-10-03 06:00:00' }),
+      lis({ id: 2, value_numeric: 7.0, abnormal_flag: 'H', observed_at: '2026-10-03 09:00:00' }),
+    ])
+    expect(afterInterfaced.status).toBe('high')
+    const [afterLis] = buildLabTrends([], [
+      lis({ id: 1, value_numeric: 5.0, abnormal_flag: '', observed_at: '2026-10-03 06:00:00' }),
+      obs({ id: 2, value_numeric: 9.0, abnormal_flag: 'H', observed_at: '2026-10-03 09:00:00' }),
+    ])
+    expect(afterLis.status).toBe('critical')
+  })
+
+  it('still labels a simulated laboratory row as simulated', () => {
+    const [trend] = buildLabTrends([], [lis({ source: 'simulated', abnormal_flag: 'H' })])
+    expect(trend.simulated).toBe(true)
+    expect(trend.status).toBe('high')
+  })
+
+  it('treats a null lab_result_id as an interfaced row', () => {
+    const [trend] = buildLabTrends([], [obs({ lab_result_id: null, value_numeric: 9.0, abnormal_flag: 'H' })])
+    expect(trend.status).toBe('critical')
+  })
+})

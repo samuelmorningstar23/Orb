@@ -10,8 +10,9 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     // demo/ holds the website demo's local copies of server rules (NEWS2), which
-    // are tested against the same literal tables as the server's.
-    include: ['src/**/*.{test,spec}.{ts,tsx}', 'demo/**/*.{test,spec}.{ts,tsx}'],
+    // are tested against the same literal tables as the server's. vite.hosts is
+    // the dev server's Host check (vite.config.ts).
+    include: ['src/**/*.{test,spec}.{ts,tsx}', 'demo/**/*.{test,spec}.{ts,tsx}', 'vite.hosts.test.ts'],
     css: false,
   },
 })

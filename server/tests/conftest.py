@@ -86,6 +86,39 @@ def _isolate_session_cookies():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_discharge_verify_throttle():
+    """Give every test a full per-IP budget on /api/discharge-access/verify.
+
+    THE FAILURE (found 2026-10-04). services/discharge_access_service keeps an
+    in-process sliding-window throttle: _VERIFY_IP_MAX_ATTEMPTS (15) verify
+    calls per IP per window, recorded on EVERY call. Every TestClient request
+    comes from the one address 'testclient' and nothing reset the dict, so the
+    whole session shared a single budget. test_discharge_access.py spends 14
+    and test_discharge_review.py needs 1, so one extra verify call anywhere in
+    between got the review test throttled (KeyError: 'access_grant'). The suite
+    passed only because it sat exactly on the edge.
+
+    Cleared before AND after each test, under the service's own lock. A test
+    still meets the real throttle and can exhaust it on its own (proved by
+    test_discharge_access.py::test_the_per_ip_budget_throttles_verify_within_one_test),
+    but nothing it spends reaches the next test. Production behaviour is
+    untouched: this only forgets what the shared test address spent.
+
+    Looked up in sys.modules, not imported: a test that never loads the
+    discharge service has no budget to leak, and importing it here would pull
+    database and the app's services into tests that deliberately avoid them."""
+    def _clear():
+        das = sys.modules.get("services.discharge_access_service")
+        if das is not None:
+            with das._VERIFY_IP_LOCK:
+                das._VERIFY_IP_ATTEMPTS.clear()
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_async_singletons():
     """Reset lazily-bound asyncio singletons before EVERY test.
 

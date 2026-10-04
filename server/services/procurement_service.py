@@ -118,6 +118,12 @@ __all__ = [
     "GRN_TRANSITIONS",
     "RECEIVABLE_PO_STATUSES",
     "assert_transition",
+    # domains (grn-20 part b)
+    "STORES_DOMAIN",
+    "PHARMACY_DOMAIN",
+    "DOMAINS",
+    "PHARMACY_STORE_KINDS",
+    "INDENT_KINDS",
     # quantities
     "assert_quantity_milli",
     "units_to_milli",
@@ -279,6 +285,145 @@ def assert_transition(kind: str, current: str, target: str) -> None:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  Domains: one set of document tables, two purchasing desks (grn-20 part b)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Migration 54 gave indents, purchase orders and goods receipts a `domain`
+# column ('stores' or 'pharmacy') and the store master a `pharmacy_kind`. The
+# pharmacy store reuses this module's documents, state machines, GST maths and
+# numbering through the connection-taking cores below, with domain='pharmacy'.
+# What keeps the two desks apart:
+#
+#   * EVERY CORE THAT LOADS A DOCUMENT BY ID REFUSES THE OTHER DESK'S DOCUMENT
+#     with code not_found, worded exactly as a document that does not exist.
+#     The stores routes call the stores wrappers, so a pharmacy id is a 404 on
+#     /api/procurement whatever the caller's tier.
+#   * A GOODS RECEIPT TAKES ITS DOMAIN FROM ITS PURCHASE ORDER, never from the
+#     request, so a stores receipt can never be raised against a pharmacy order.
+#   * THE STORE MASTER IS PARTITIONED. A row with pharmacy_kind is a pharmacy
+#     store: the stores desk cannot list it, read it, edit it, raise a document
+#     against it or move stock through it, and the pharmacy desk sees only
+#     those rows. Neither desk can take over the other's store code.
+#   * THE PHARMACY BRANCH OF A RECEIPT POST NEVER TOUCHES stock_movements OR
+#     inventory_items. Drug stock has one ledger, Helix's, written only by
+#     pharmacy_stock_service; a second one is the failure this module's header
+#     exists to prevent.
+#   * Lists, reports and the overview of the stores desk count stores documents
+#     and stores stores only.
+#
+# Every core takes `domain` keyword-only, defaulting to 'stores', so the public
+# wrappers and every existing caller behave exactly as before. A pharmacy caller
+# passes domain='pharmacy' explicitly; forgetting it fails closed (its own
+# documents read as not found).
+
+STORES_DOMAIN = "stores"
+PHARMACY_DOMAIN = "pharmacy"
+DOMAINS = (STORES_DOMAIN, PHARMACY_DOMAIN)
+
+#: stores.pharmacy_kind (migration 54). A store with a kind belongs to the
+#: pharmacy desk; NULL is a stores store.
+PHARMACY_STORE_KINDS = ("dispensing", "sub_store", "ndps_vault", "returns_quarantine",
+                        "ward_imprest", "crash_cart")
+
+#: Kinds that hold drugs on a ward. Refused until ORB_PHARMACY_WARD_STOCK is on,
+#: which a site turns on only after ruling GRN-RS5 (which drugs a ward may hold).
+WARD_PHARMACY_STORE_KINDS = frozenset({"ward_imprest", "crash_cart"})
+
+#: indents.indent_kind (migration 54). A purchase indent asks for something to
+#: be bought (every stores indent); an issue indent asks another store for stock.
+INDENT_KINDS = ("purchase", "issue")
+
+#: The column on purchase_order_lines, goods_receipt_lines and indent_lines
+#: (migration 54) that names the Helix drug a pharmacy line is for. It is an id
+#: stored on a procurement row; no SQL in this module reads or writes a Helix
+#: table, and test_procurement.py's structural guard enforces that by refusing
+#: the text "helix_" in any SQL string here, so the column name is interpolated
+#: from this constant rather than spelled inside the SQL.
+_DRUG_ID_COLUMN = "helix_medication_id"
+
+
+def _assert_domain(domain: str) -> str:
+    if domain not in DOMAINS:
+        raise ProcurementError(
+            f"unknown purchasing domain {domain!r}; expected one of {list(DOMAINS)}",
+            code="unknown_domain",
+        )
+    return domain
+
+
+def _store_partition_sql(domain: str, alias: str = "") -> str:
+    """The condition that keeps a store row in its own desk's half of the
+    master. `alias` is a table alias from this module, never caller input."""
+    column = f"{alias}.pharmacy_kind" if alias else "pharmacy_kind"
+    return f"{column} IS NOT NULL" if domain == PHARMACY_DOMAIN else f"{column} IS NULL"
+
+
+def _store_row(db, code_or_id: str | int, domain: str):
+    """The store with this code (or id), if it belongs to `domain`; else None.
+
+    A store of the other desk is answered exactly as a store that does not
+    exist, so each caller's existing "no store with code ..." refusal covers
+    it."""
+    _assert_domain(domain)
+    where = _store_partition_sql(domain)
+    if isinstance(code_or_id, int):
+        return db.execute(f"SELECT * FROM stores WHERE id = ? AND {where}",
+                          (code_or_id,)).fetchone()
+    return db.execute(f"SELECT * FROM stores WHERE code = ? AND {where}",
+                      (str(code_or_id).upper(),)).fetchone()
+
+
+def _document_in_domain(db, table: str, doc_id: int, domain: str, noun: str):
+    """The document row this desk may act on, else ProcurementError not_found.
+
+    `table` and `noun` are literals from this module. A document of the other
+    desk raises the same error, with the same words, as one that does not
+    exist: the stores desk must not learn a pharmacy document's status from a
+    refusal."""
+    _assert_domain(domain)
+    row = db.execute(f"SELECT * FROM {table} WHERE id = ?", (doc_id,)).fetchone()
+    if not row or row["domain"] != domain:
+        raise ProcurementError(f"no {noun} {doc_id}", code="not_found")
+    return row
+
+
+def _pharmacy_line_item(db, item_code: str, resolve_line) -> dict:
+    """A pharmacy document line's drug, through the caller's resolver.
+
+    Procurement holds no drug SQL, so the pharmacy service passes
+    `resolve_line(db, item_code) -> dict | None`, answering with: code, name,
+    helix_medication_id (required); uom, hsn_sac, gst_treatment, gst_rate_bp
+    and units_per_pack (optional, None when not configured). None means no such
+    drug, refused as unknown_item."""
+    if resolve_line is None:
+        raise ProcurementError(
+            "a pharmacy document line needs the pharmacy catalogue to resolve it",
+            code="pharmacy_lines_unresolved",
+        )
+    found = resolve_line(db, item_code)
+    if not found:
+        raise ProcurementError(
+            f"no drug with code {item_code!r} in the pharmacy catalogue",
+            code="unknown_item",
+        )
+    item = dict(found)
+    for key in ("code", "name", _DRUG_ID_COLUMN):
+        if not item.get(key):
+            raise ProcurementError(
+                f"the pharmacy catalogue answered {item_code!r} without a {key}",
+                code="pharmacy_lines_unresolved",
+            )
+    units = item.get("units_per_pack")
+    if units is not None and (isinstance(units, bool) or not isinstance(units, int) or units < 1):
+        raise ProcurementError(
+            f"{item['code']}: units per pack must be a whole number of at least 1",
+            code="bad_pack_size",
+        )
+    item["id"] = None  # pharmacy lines never name an inventory_items row
+    return item
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  Quantities
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -391,10 +536,20 @@ def _calendar_today(today: date | datetime | str) -> date:
     Required, never defaulted: which clock decides "today" is the CALLER's
     decision (the stores wrappers pass `date.today()`; a site-timezone caller
     passes its own date), and a silent fallback to the server clock is exactly
-    the defect this parameter exists to remove. A datetime is cut to its date.
-    Anything else is a programming error and fails loudly.
+    the defect this parameter exists to remove. Anything else is a programming
+    error and fails loudly.
+
+    A timezone-aware datetime is an INSTANT, so its calendar date is the one on
+    the hospital's wall clock (services.hospital_time.hospital_timezone, the
+    one resolver for "which day is it here"), never its UTC date: at 20:00 UTC
+    it is already tomorrow in an IST hospital, and a lot expiring today would
+    otherwise still be received tonight. A naive datetime is already a wall
+    clock reading and is cut to its own date.
     """
     if isinstance(today, datetime):
+        if today.tzinfo is not None and today.utcoffset() is not None:
+            from services.hospital_time import hospital_timezone  # lazy: a leaf helper
+            return today.astimezone(hospital_timezone()).date()
         return today.date()
     if isinstance(today, date):
         return today
@@ -426,10 +581,23 @@ def _as_date_str(value: Optional[date | datetime | str], field_name: str) -> Opt
 #: Document series stamped by this module. Table and column are LITERALS from
 #: this constant and never come from a caller — they are interpolated into SQL,
 #: which is safe only because of that.
+#:
+#: The fourth element is the domain a row must be in to take a number from
+#: that series (None for a table with no domain column). The pharmacy desk
+#: numbers its documents from its own series (GRN-R11, migration 54 seeds them
+#: with is_configured = 0), and a stores number is never stamped on a pharmacy
+#: document or the reverse.
 _DOC_SERIES = {
-    "indent": ("indents", "indent_number", "IND"),
-    "purchase_order": ("purchase_orders", "po_number", "PO"),
-    "goods_receipt": ("goods_receipts", "grn_number", "GRN"),
+    "indent": ("indents", "indent_number", "IND", STORES_DOMAIN),
+    "purchase_order": ("purchase_orders", "po_number", "PO", STORES_DOMAIN),
+    "goods_receipt": ("goods_receipts", "grn_number", "GRN", STORES_DOMAIN),
+    "pharmacy_indent": ("indents", "indent_number", "PHIND", PHARMACY_DOMAIN),
+    "pharmacy_purchase_order": ("purchase_orders", "po_number", "PHPO", PHARMACY_DOMAIN),
+    "pharmacy_goods_receipt": ("goods_receipts", "grn_number", "PHGRN", PHARMACY_DOMAIN),
+    "pharmacy_transfer": ("pharmacy_transfers", "transfer_number", "PHTRF", None),
+    "pharmacy_vendor_return": ("pharmacy_vendor_returns", "return_number", "PHVR", None),
+    "pharmacy_ward_return": ("pharmacy_ward_returns", "return_number", "PHRET", None),
+    "pharmacy_stock_count": ("pharmacy_stock_counts", "count_number", "PHCNT", None),
 }
 
 
@@ -458,12 +626,21 @@ def _stamp_document_number(kind: str, doc_id: int) -> Optional[str]:
 
     Idempotent: a row that already has a number is left alone and no number is
     drawn from the series.
+
+    A row of the other desk's domain (a stores kind asked to number a pharmacy
+    document, or the reverse) draws nothing and is logged at ERROR: a number
+    from the wrong series cannot be taken back.
     """
-    table, column, series = _DOC_SERIES[kind]
+    table, column, series, domain = _DOC_SERIES[kind]
+    domain_col = ", domain" if domain else ""
     with db_session() as db:
-        row = db.execute(f"SELECT {column} AS n FROM {table} WHERE id = ?",
+        row = db.execute(f"SELECT {column} AS n{domain_col} FROM {table} WHERE id = ?",
                          (doc_id,)).fetchone()
     if row is None:
+        return None
+    if domain and row["domain"] != domain:
+        logger.error("refused to number %s %s from the %s series: it is a %s document",
+                     table, doc_id, series, row["domain"])
         return None
     if row["n"]:
         return str(row["n"])
@@ -616,11 +793,20 @@ def _upsert_vendor_core(
     notes: Optional[str] = None,
     created_by: Optional[str] = None,
     create_only: bool = False,
+    drug_licence_numbers: Optional[str] = None,
+    drug_licence_valid_to: Optional[date | str] = None,
+    ndps_licence_number: Optional[str] = None,
 ) -> dict:
     """`upsert_vendor` on the caller's connection: validate, write, read back.
 
     The vendors table is shared by every purchasing desk, so this is the one
-    place a vendor row is written; see `upsert_vendor` for the rules."""
+    place a vendor row is written; see `upsert_vendor` for the rules.
+
+    The three licence fields (migration 54) are the pharmacy desk's: its
+    Masters view passes them, the stores wrapper never does. Like every other
+    optional field, a blank on an update keeps what is on file. Whether a
+    licence is valid enough to buy from (GRN-R10) is the pharmacy service's
+    rule, not this one's."""
     code = _clean(code, field_name="vendor code", required=True).upper()
     name = _clean(name, field_name="vendor name", required=True)
     vendor_type = (vendor_type or "supplier").strip().lower()
@@ -640,6 +826,9 @@ def _upsert_vendor_core(
         account_last4 = digits
     if rating is not None and not (0 <= int(rating) <= 5):
         raise ProcurementError("vendor rating must be 0–5", code="bad_rating")
+    licence_to = _as_date_str(drug_licence_valid_to, "drug_licence_valid_to")
+    licence_numbers = _clean(drug_licence_numbers, field_name="drug licence numbers")
+    ndps_licence = _clean(ndps_licence_number, field_name="NDPS licence number")
 
     if create_only:
         _refuse_existing(db, "vendors", code, "vendor")
@@ -647,8 +836,9 @@ def _upsert_vendor_core(
         """INSERT INTO vendors (code, name, vendor_type, gstin, pan, msme_number,
                state_code, address, contact_name, contact_phone, contact_email,
                payment_terms_days, bank_name, account_last4, ifsc, rating,
-               is_active, notes, created_by)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               is_active, notes, created_by, drug_licence_numbers,
+               drug_licence_valid_to, ndps_licence_number)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
            ON CONFLICT(code) DO UPDATE SET
                name = excluded.name,
                vendor_type = excluded.vendor_type,
@@ -667,13 +857,20 @@ def _upsert_vendor_core(
                rating = COALESCE(excluded.rating, rating),
                is_active = excluded.is_active,
                notes = COALESCE(excluded.notes, notes),
+               drug_licence_numbers = COALESCE(excluded.drug_licence_numbers,
+                                               drug_licence_numbers),
+               drug_licence_valid_to = COALESCE(excluded.drug_licence_valid_to,
+                                                drug_licence_valid_to),
+               ndps_licence_number = COALESCE(excluded.ndps_licence_number,
+                                              ndps_licence_number),
                updated_at = CURRENT_TIMESTAMP""",
         (code, name, vendor_type, gstin, pan, msme_number, state_code, address,
          contact_name, contact_phone, contact_email,
          int(payment_terms_days) if payment_terms_days is not None else None,
          bank_name, account_last4, ifsc,
          int(rating) if rating is not None else None,
-         1 if is_active else 0, notes, created_by),
+         1 if is_active else 0, notes, created_by, licence_numbers, licence_to,
+         ndps_licence),
     )
     row = db.execute("SELECT * FROM vendors WHERE code = ?", (code,)).fetchone()
     return _row(row)
@@ -716,21 +913,29 @@ def _set_vendor_blacklist_core(
 STORE_TYPES = ("central", "sub_store", "ot", "ward", "housekeeping", "biomedical", "linen")
 
 
-def list_stores(*, active_only: bool = True) -> list[dict]:
-    sql = "SELECT * FROM stores"
+def list_stores(*, active_only: bool = True, domain: str = STORES_DOMAIN) -> list[dict]:
+    """The stores of one desk's half of the master (see the Domains note)."""
+    _assert_domain(domain)
+    sql = f"SELECT * FROM stores WHERE {_store_partition_sql(domain)}"
     if active_only:
-        sql += " WHERE is_active = 1"
+        sql += " AND is_active = 1"
     sql += " ORDER BY store_type, name"
     with db_session() as db:
         return [_row(r) for r in db.execute(sql).fetchall()]
 
 
-def get_store(code_or_id: str | int) -> Optional[dict]:
+def get_store(code_or_id: str | int, *, domain: str = STORES_DOMAIN) -> Optional[dict]:
+    """One store of this desk's half of the master, else None. The stores
+    lookup is by exact code, as it always was."""
+    _assert_domain(domain)
+    where = _store_partition_sql(domain)
     with db_session() as db:
         if isinstance(code_or_id, int):
-            row = db.execute("SELECT * FROM stores WHERE id = ?", (code_or_id,)).fetchone()
+            row = db.execute(f"SELECT * FROM stores WHERE id = ? AND {where}",
+                             (code_or_id,)).fetchone()
         else:
-            row = db.execute("SELECT * FROM stores WHERE code = ?", (code_or_id,)).fetchone()
+            row = db.execute(f"SELECT * FROM stores WHERE code = ? AND {where}",
+                             (code_or_id,)).fetchone()
     return _row(row) if row else None
 
 
@@ -764,8 +969,21 @@ def _upsert_store_core(
     incharge_user_id: Optional[str] = None,
     is_active: bool = True,
     create_only: bool = False,
+    domain: str = STORES_DOMAIN,
+    pharmacy_kind: Optional[str] = None,
 ) -> dict:
-    """`upsert_store` on the caller's connection: validate, write, read back."""
+    """`upsert_store` on the caller's connection: validate, write, read back.
+
+    The store master is partitioned by desk (see the Domains note). A stores
+    upsert of a code a pharmacy store holds is refused, so the stores desk
+    can neither rename nor deactivate a pharmacy store; the pharmacy desk
+    cannot take over a stores store's code either. A pharmacy store names its
+    `pharmacy_kind` when it is created and keeps it: the kind decides whether
+    its stock can be dispensed, so a store does not change kind, it is retired
+    and another created. Ward kinds are refused while ORB_PHARMACY_WARD_STOCK
+    is off (ruling GRN-RS5), and a second active dispensing store is refused
+    (GRN-R17, enforced by migration 54's partial unique index)."""
+    _assert_domain(domain)
     code = _clean(code, field_name="store code", required=True).upper()
     name = _clean(name, field_name="store name", required=True)
     store_type = (store_type or "sub_store").strip().lower()
@@ -774,22 +992,67 @@ def _upsert_store_core(
             f"unknown store type {store_type!r}; expected one of {list(STORE_TYPES)}",
             code="bad_store_type",
         )
+    kind = (pharmacy_kind or "").strip().lower() or None
+    if domain == STORES_DOMAIN and kind is not None:
+        raise ProcurementError(
+            "a stores store has no pharmacy kind; pharmacy stores are created from "
+            "the pharmacy store desk", code="bad_store_kind")
+    if domain == PHARMACY_DOMAIN:
+        if kind not in PHARMACY_STORE_KINDS:
+            raise ProcurementError(
+                f"unknown pharmacy store kind {pharmacy_kind!r}; expected one of "
+                f"{list(PHARMACY_STORE_KINDS)}", code="bad_store_kind")
+        if kind in WARD_PHARMACY_STORE_KINDS:
+            import config  # lazy: read at call time, as tests patch it
+            if not config.feature_enabled("pharmacy_ward_stock"):
+                raise ProcurementError(
+                    "ward and crash-cart drug stores are switched off on this site "
+                    "(ORB_PHARMACY_WARD_STOCK). Nothing was changed.",
+                    code="ward_stock_off")
+
+    existing = db.execute("SELECT name, pharmacy_kind FROM stores WHERE code = ?",
+                          (code,)).fetchone()
+    if existing is not None:
+        held_by_pharmacy = existing["pharmacy_kind"] is not None
+        if domain == STORES_DOMAIN and held_by_pharmacy:
+            raise ProcurementError(
+                f"{code} is a pharmacy store ({existing['name']}). It is managed from "
+                "the pharmacy store desk, not from Procurement. Nothing was changed.",
+                code="already_exists")
+        if domain == PHARMACY_DOMAIN and not held_by_pharmacy:
+            raise ProcurementError(
+                f"{code} already exists as the stores store {existing['name']}. Nothing "
+                "was changed. Use a different code for the pharmacy store.",
+                code="already_exists")
+        if domain == PHARMACY_DOMAIN and existing["pharmacy_kind"] != kind:
+            raise ProcurementError(
+                f"{code} is a {existing['pharmacy_kind'].replace('_', ' ')} store and stays "
+                "one. Retire it and create a new store instead. Nothing was changed.",
+                code="store_kind_fixed")
     if create_only:
         _refuse_existing(db, "stores", code, "store")
-    db.execute(
-        """INSERT INTO stores (code, name, store_type, department, ward,
-               incharge_user_id, is_active)
-           VALUES (?,?,?,?,?,?,?)
-           ON CONFLICT(code) DO UPDATE SET
-               name = excluded.name,
-               store_type = excluded.store_type,
-               department = COALESCE(excluded.department, department),
-               ward = COALESCE(excluded.ward, ward),
-               incharge_user_id = COALESCE(excluded.incharge_user_id, incharge_user_id),
-               is_active = excluded.is_active""",
-        (code, name, store_type, department, ward, incharge_user_id,
-         1 if is_active else 0),
-    )
+    try:
+        db.execute(
+            """INSERT INTO stores (code, name, store_type, department, ward,
+                   incharge_user_id, is_active, pharmacy_kind)
+               VALUES (?,?,?,?,?,?,?,?)
+               ON CONFLICT(code) DO UPDATE SET
+                   name = excluded.name,
+                   store_type = excluded.store_type,
+                   department = COALESCE(excluded.department, department),
+                   ward = COALESCE(excluded.ward, ward),
+                   incharge_user_id = COALESCE(excluded.incharge_user_id, incharge_user_id),
+                   is_active = excluded.is_active""",
+            (code, name, store_type, department, ward, incharge_user_id,
+             1 if is_active else 0, kind),
+        )
+    except DBIntegrityError as exc:
+        if kind == "dispensing" and "pharmacy_kind" in str(exc).lower():
+            raise ProcurementError(
+                "this site already has an active dispensing store. Deactivate it "
+                "first; one dispensing pharmacy per site. Nothing was changed.",
+                code="dispensing_store_exists") from exc
+        raise
     row = db.execute("SELECT * FROM stores WHERE code = ?", (code,)).fetchone()
     return _row(row)
 
@@ -1207,30 +1470,60 @@ def _create_indent_core(
     requested_by: Optional[str] = None,
     remarks: Optional[str] = None,
     submit: bool = False,
+    domain: str = STORES_DOMAIN,
+    indent_kind: str = "purchase",
+    issuing_store_code: Optional[str] = None,
+    resolve_line=None,
 ) -> int:
     """`create_indent` on the caller's connection. Returns the new indent id.
 
     It draws no number: a caller that passes `submit=True` stamps the indent
-    number after its transaction commits, as `create_indent` does."""
+    number after its transaction commits, as `create_indent` does.
+
+    domain='pharmacy' (see the Domains note) resolves each line through the
+    caller's `resolve_line` and needs pharmacy stores. An issue indent (asking
+    another store to hand stock over) is a pharmacy document only and names
+    the pharmacy store it asks, `issuing_store_code`; the stores desk raises
+    purchase indents, as it always has."""
+    _assert_domain(domain)
     if priority not in ("routine", "urgent", "emergency"):
         raise ProcurementError(f"unknown priority {priority!r}", code="bad_priority")
+    if indent_kind not in INDENT_KINDS:
+        raise ProcurementError(f"unknown indent kind {indent_kind!r}", code="bad_indent_kind")
+    if domain == STORES_DOMAIN and (indent_kind != "purchase" or issuing_store_code):
+        raise ProcurementError(
+            "an issue indent is a pharmacy store document; a stores indent asks for "
+            "a purchase", code="bad_indent_kind")
     parsed = _coerce_indent_lines(lines)
     required = _as_date_str(required_by, "required_by")
 
     store_id = None
     if store_code:
-        store = db.execute(
-            "SELECT id FROM stores WHERE code = ?", (store_code.upper(),)
-        ).fetchone()
+        store = _store_row(db, store_code, domain)
         if not store:
             raise ProcurementError(f"no store with code {store_code!r}",
                                    code="not_found")
         store_id = store["id"]
 
+    issuing_store_id = None
+    if indent_kind == "issue":
+        issuing = _store_row(db, issuing_store_code, domain) if issuing_store_code else None
+        if not issuing:
+            raise ProcurementError(
+                "an issue indent must name the pharmacy store it asks for stock",
+                code="not_found")
+        if issuing["id"] == store_id:
+            raise ProcurementError("a store cannot raise an issue indent on itself",
+                                   code="bad_indent_kind")
+        issuing_store_id = issuing["id"]
+
     resolved: list[tuple[IndentLineInput, dict]] = []
     for line in parsed:
         assert_positive_quantity_milli(line.quantity_milli, "line quantity_milli")
-        item = _resolve_item(db, line.item_code)
+        if domain == PHARMACY_DOMAIN:
+            item = _pharmacy_line_item(db, line.item_code, resolve_line)
+        else:
+            item = _resolve_item(db, line.item_code)
         if not item:
             raise ProcurementError(
                 f"no non-pharmacy item with code {line.item_code!r}. If it is "
@@ -1242,19 +1535,23 @@ def _create_indent_core(
     status = "submitted" if submit else "draft"
     cur = db.execute(
         """INSERT INTO indents (indent_number, store_id, department, ward,
-               priority, status, required_by, requested_by, remarks)
-           VALUES (NULL,?,?,?,?,?,?,?,?)""",
-        (store_id, department, ward, priority, status, required, requested_by, remarks),
+               priority, status, required_by, requested_by, remarks, domain,
+               indent_kind, issuing_store_id)
+           VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?)""",
+        (store_id, department, ward, priority, status, required, requested_by, remarks,
+         domain, indent_kind, issuing_store_id),
     )
     indent_id = cur.lastrowid
     for line_no, (line, item) in enumerate(resolved, start=1):
         db.execute(
-            """INSERT INTO indent_lines (indent_id, line_no, inventory_item_id,
-                   item_code, description, uom, quantity_milli, status, remarks)
-               VALUES (?,?,?,?,?,?,?, 'pending', ?)""",
+            f"""INSERT INTO indent_lines (indent_id, line_no, inventory_item_id,
+                   item_code, description, uom, quantity_milli, status, remarks,
+                   {_DRUG_ID_COLUMN}, units_per_pack)
+               VALUES (?,?,?,?,?,?,?, 'pending', ?, ?, ?)""",
             (indent_id, line_no, item["id"], item["code"],
-             line.description or item["name"], line.uom or item["uom"],
-             line.quantity_milli, line.remarks),
+             line.description or item["name"], line.uom or item.get("uom"),
+             line.quantity_milli, line.remarks, item.get(_DRUG_ID_COLUMN),
+             item.get("units_per_pack")),
         )
     return int(indent_id)
 
@@ -1266,12 +1563,11 @@ def submit_indent(indent_id: int, *, actor: Optional[str] = None) -> dict:
     return get_indent(indent_id) or {}
 
 
-def _submit_indent_core(db, indent_id: int, *, actor: Optional[str] = None) -> None:
+def _submit_indent_core(db, indent_id: int, *, actor: Optional[str] = None,
+                        domain: str = STORES_DOMAIN) -> None:
     """`submit_indent` on the caller's connection. The caller stamps the number
-    after commit."""
-    row = db.execute("SELECT * FROM indents WHERE id = ?", (indent_id,)).fetchone()
-    if not row:
-        raise ProcurementError(f"no indent {indent_id}", code="not_found")
+    after commit. Another desk's indent is not found."""
+    row = _document_in_domain(db, "indents", indent_id, domain, "indent")
     assert_transition("indent", row["status"], "submitted")
     db.execute(
         "UPDATE indents SET status = 'submitted', requested_by = COALESCE(?, requested_by), "
@@ -1317,6 +1613,7 @@ def _decide_indent_core(
     reject: bool = False,
     reason: Optional[str] = None,
     actor: Optional[str] = None,
+    domain: str = STORES_DOMAIN,
 ) -> None:
     """`decide_indent` on the caller's connection; see it for the rules.
 
@@ -1324,10 +1621,9 @@ def _decide_indent_core(
     the immediate transaction. That nested read is gone from the core: the
     wrapper re-reads after the commit, which is the same document on a pooled
     connection and, on an unpooled one, the committed rejection rather than the
-    pre-rejection row a second connection could see."""
-    row = db.execute("SELECT * FROM indents WHERE id = ?", (indent_id,)).fetchone()
-    if not row:
-        raise ProcurementError(f"no indent {indent_id}", code="not_found")
+    pre-rejection row a second connection could see. Another desk's indent is
+    not found."""
+    row = _document_in_domain(db, "indents", indent_id, domain, "indent")
     lines = db.execute(
         "SELECT * FROM indent_lines WHERE indent_id = ? ORDER BY line_no",
         (indent_id,),
@@ -1397,11 +1693,11 @@ def cancel_indent(indent_id: int, *, reason: Optional[str] = None,
     return get_indent(indent_id) or {}
 
 
-def _cancel_indent_core(db, indent_id: int, *, reason: Optional[str] = None) -> None:
-    """`cancel_indent` on the caller's connection."""
-    row = db.execute("SELECT status FROM indents WHERE id = ?", (indent_id,)).fetchone()
-    if not row:
-        raise ProcurementError(f"no indent {indent_id}", code="not_found")
+def _cancel_indent_core(db, indent_id: int, *, reason: Optional[str] = None,
+                        domain: str = STORES_DOMAIN) -> None:
+    """`cancel_indent` on the caller's connection. Another desk's indent is
+    not found."""
+    row = _document_in_domain(db, "indents", indent_id, domain, "indent")
     assert_transition("indent", row["status"], "cancelled")
     db.execute(
         "UPDATE indents SET status = 'cancelled', rejected_reason = COALESCE(?, rejected_reason) "
@@ -1418,13 +1714,14 @@ def get_indent(indent_id: int) -> Optional[dict]:
         return _get_indent_core(db, indent_id)
 
 
-def _get_indent_core(db, indent_id: int) -> Optional[dict]:
+def _get_indent_core(db, indent_id: int, *, domain: str = STORES_DOMAIN) -> Optional[dict]:
     """`get_indent` on the caller's connection, so a caller can answer with the
-    document from inside its own transaction."""
+    document from inside its own transaction. None for another desk's indent."""
+    _assert_domain(domain)
     row = db.execute(
         """SELECT i.*, s.code AS store_code, s.name AS store_name
              FROM indents i LEFT JOIN stores s ON s.id = i.store_id
-            WHERE i.id = ?""", (indent_id,),
+            WHERE i.id = ? AND i.domain = ?""", (indent_id, domain),
     ).fetchone()
     if not row:
         return None
@@ -1449,12 +1746,14 @@ def _get_indent_core(db, indent_id: int) -> Optional[dict]:
 
 def list_indents(
     *, status: Optional[str] = None, store_code: Optional[str] = None,
-    department: Optional[str] = None, limit: int = 100,
+    department: Optional[str] = None, limit: int = 100, domain: str = STORES_DOMAIN,
 ) -> list[dict]:
+    """One desk's indents (the stores desk's unless `domain` says otherwise)."""
+    _assert_domain(domain)
     sql = ("SELECT i.*, s.code AS store_code, s.name AS store_name, "
            "(SELECT COUNT(*) FROM indent_lines l WHERE l.indent_id = i.id) AS line_count "
-           "FROM indents i LEFT JOIN stores s ON s.id = i.store_id WHERE 1=1")
-    params: list[Any] = []
+           "FROM indents i LEFT JOIN stores s ON s.id = i.store_id WHERE i.domain = ?")
+    params: list[Any] = [domain]
     if status:
         sql += " AND i.status = ?"
         params.append(status)
@@ -1567,11 +1866,21 @@ def _create_purchase_order_core(
     remarks: Optional[str] = None,
     created_by: Optional[str] = None,
     today: date | datetime | str,
+    domain: str = STORES_DOMAIN,
+    resolve_line=None,
 ) -> int:
     """`create_purchase_order` on the caller's connection. Returns the new PO id.
 
     `today` is the order date used when the caller gives none; it is required
-    so the caller decides which clock that is (see `_calendar_today`)."""
+    so the caller decides which clock that is (see `_calendar_today`).
+
+    domain='pharmacy' (see the Domains note) resolves each line through the
+    caller's `resolve_line`, snapshots the drug's units per pack on the line,
+    needs a pharmacy store and a pharmacy purchase indent, and refuses a line
+    whose GST rate is not configured rather than taxing it at 0 per cent. The
+    vendor's drug licence and the drug's classification (GRN-R10, GRN-R18) are
+    the pharmacy service's checks, made before it calls this."""
+    _assert_domain(domain)
     default_order_date = _calendar_today(today).isoformat()
     parsed = _coerce_po_lines(lines)
     vendor = db.execute(
@@ -1590,22 +1899,23 @@ def _create_purchase_order_core(
 
     store_id = None
     if store_code:
-        store = db.execute("SELECT id FROM stores WHERE code = ?",
-                           (store_code.upper(),)).fetchone()
+        store = _store_row(db, store_code, domain)
         if not store:
             raise ProcurementError(f"no store with code {store_code!r}", code="not_found")
         store_id = store["id"]
 
     if indent_id is not None:
-        indent = db.execute("SELECT * FROM indents WHERE id = ?", (indent_id,)).fetchone()
-        if not indent:
-            raise ProcurementError(f"no indent {indent_id}", code="not_found")
+        indent = _document_in_domain(db, "indents", indent_id, domain, "indent")
         if indent["status"] not in ("approved", "partially_approved", "converted"):
             raise ProcurementError(
                 f"indent {indent_id} is {indent['status']!r}; a purchase order may "
                 "only be raised against an APPROVED indent",
                 code="indent_not_approved",
             )
+        if indent["indent_kind"] != "purchase":
+            raise ProcurementError(
+                f"indent {indent_id} asks another store for stock; it is filled by a "
+                "transfer, not a purchase order", code="indent_is_issue")
 
     computed: list[tuple[POLineInput, dict, Any]] = []
     for line in parsed:
@@ -1614,12 +1924,20 @@ def _create_purchase_order_core(
         if rate < 0:
             raise ProcurementError(
                 "a purchase order line rate must not be negative", code="bad_rate")
-        item = _resolve_item(db, line.item_code)
+        if domain == PHARMACY_DOMAIN:
+            item = _pharmacy_line_item(db, line.item_code, resolve_line)
+            if line.gst_rate_bp is None and item.get("gst_rate_bp") is None:
+                raise ProcurementError(
+                    f"{item['code']} has no GST rate configured. Set it on the drug "
+                    "before ordering; an unset rate is not 0 per cent.",
+                    code="gst_not_configured")
+        else:
+            item = _resolve_item(db, line.item_code)
         if not item:
             raise ProcurementError(
                 f"no non-pharmacy item with code {line.item_code!r}",
                 code="unknown_item")
-        treatment = _gst_treatment(line.gst_treatment or item["gst_treatment"])
+        treatment = _gst_treatment(line.gst_treatment or item.get("gst_treatment"))
         rate_bp = int(line.gst_rate_bp if line.gst_rate_bp is not None
                       else item["gst_rate_bp"] or 0)
         totals = compute_line(
@@ -1653,33 +1971,36 @@ def _create_purchase_order_core(
                status, order_date, expected_date, place_of_supply, is_interstate,
                subtotal_paise, discount_paise, taxable_value_paise, cgst_paise,
                sgst_paise, igst_paise, tax_paise, other_charges_paise,
-               rounding_adjustment_paise, total_paise, terms, created_by, remarks)
-           VALUES (NULL,?,?,?, 'draft', ?,?,?,?, ?,?,?,?,?,?,?,?,?,?, ?,?,?)""",
+               rounding_adjustment_paise, total_paise, terms, created_by, remarks,
+               domain)
+           VALUES (NULL,?,?,?, 'draft', ?,?,?,?, ?,?,?,?,?,?,?,?,?,?, ?,?,?, ?)""",
         (vendor["id"], indent_id, store_id,
          _as_date_str(order_date, "order_date") or default_order_date,
          _as_date_str(expected_date, "expected_date"),
          place_of_supply or vendor["state_code"], 1 if is_interstate else 0,
          foot.subtotal_paise, foot.discount_paise, foot.taxable_value_paise,
          foot.cgst_paise, foot.sgst_paise, foot.igst_paise, foot.tax_paise,
-         other, rounding_adjustment, payable, terms, created_by, remarks),
+         other, rounding_adjustment, payable, terms, created_by, remarks, domain),
     )
     po_id = cur.lastrowid
     for line_no, (line, item, totals) in enumerate(computed, start=1):
         db.execute(
-            """INSERT INTO purchase_order_lines (purchase_order_id, line_no,
+            f"""INSERT INTO purchase_order_lines (purchase_order_id, line_no,
                    indent_line_id, inventory_item_id, item_code, description,
                    hsn_sac, uom, quantity_milli, received_quantity_milli,
                    unit_rate_paise, gross_paise, discount_paise, gst_treatment,
                    gst_rate_bp, taxable_value_paise, cgst_paise, sgst_paise,
-                   igst_paise, tax_paise, total_paise, status, remarks)
-               VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?, 'open', ?)""",
+                   igst_paise, tax_paise, total_paise, status, remarks,
+                   {_DRUG_ID_COLUMN}, units_per_pack)
+               VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?, 'open', ?, ?, ?)""",
             (po_id, line_no, line.indent_line_id, item["id"], item["code"],
-             line.description or item["name"], item["hsn_sac"],
-             line.uom or item["uom"], line.quantity_milli,
+             line.description or item["name"], item.get("hsn_sac"),
+             line.uom or item.get("uom"), line.quantity_milli,
              line.unit_rate_paise, totals.gross_paise, totals.discount_paise,
              totals.gst_treatment, totals.gst_rate_bp, totals.taxable_value_paise,
              totals.cgst_paise, totals.sgst_paise, totals.igst_paise,
-             totals.tax_paise, totals.total_paise, line.remarks),
+             totals.tax_paise, totals.total_paise, line.remarks,
+             item.get(_DRUG_ID_COLUMN), item.get("units_per_pack")),
         )
     if indent_id is not None:
         db.execute(
@@ -1708,12 +2029,11 @@ def _move_po(po_id: int, target: str, *, actor: Optional[str] = None,
 
 
 def _move_po_core(db, po_id: int, target: str, *, actor: Optional[str] = None,
-                  reason: Optional[str] = None) -> None:
+                  reason: Optional[str] = None, domain: str = STORES_DOMAIN) -> None:
     """`_move_po` on the caller's connection. It draws no number: a caller that
-    issues a PO stamps the PO number after its transaction commits."""
-    row = db.execute("SELECT * FROM purchase_orders WHERE id = ?", (po_id,)).fetchone()
-    if not row:
-        raise ProcurementError(f"no purchase order {po_id}", code="not_found")
+    issues a PO stamps the PO number after its transaction commits. Another
+    desk's purchase order is not found."""
+    row = _document_in_domain(db, "purchase_orders", po_id, domain, "purchase order")
     assert_transition("purchase_order", row["status"], target)
 
     if target == "cancelled":
@@ -1772,28 +2092,32 @@ def cancel_purchase_order(po_id: int, *, reason: str, actor: Optional[str] = Non
     return _move_po(po_id, "cancelled", actor=actor, reason=reason)
 
 
-def _submit_purchase_order_core(db, po_id: int, *, actor: Optional[str] = None) -> None:
+def _submit_purchase_order_core(db, po_id: int, *, actor: Optional[str] = None,
+                                domain: str = STORES_DOMAIN) -> None:
     """`submit_purchase_order` on the caller's connection."""
-    _move_po_core(db, po_id, "pending_approval", actor=actor)
+    _move_po_core(db, po_id, "pending_approval", actor=actor, domain=domain)
 
 
-def _approve_purchase_order_core(db, po_id: int, *, actor: Optional[str] = None) -> None:
+def _approve_purchase_order_core(db, po_id: int, *, actor: Optional[str] = None,
+                                 domain: str = STORES_DOMAIN) -> None:
     """`approve_purchase_order` on the caller's connection. Like the wrapper it
     records the approver and does not compare it with the creator; a caller
     that needs separation of duties checks it before calling."""
-    _move_po_core(db, po_id, "approved", actor=actor)
+    _move_po_core(db, po_id, "approved", actor=actor, domain=domain)
 
 
-def _issue_purchase_order_core(db, po_id: int, *, actor: Optional[str] = None) -> None:
+def _issue_purchase_order_core(db, po_id: int, *, actor: Optional[str] = None,
+                               domain: str = STORES_DOMAIN) -> None:
     """`issue_purchase_order` on the caller's connection. The caller stamps the
     PO number after its transaction commits."""
-    _move_po_core(db, po_id, "issued", actor=actor)
+    _move_po_core(db, po_id, "issued", actor=actor, domain=domain)
 
 
 def _cancel_purchase_order_core(db, po_id: int, *, reason: str,
-                                actor: Optional[str] = None) -> None:
+                                actor: Optional[str] = None,
+                                domain: str = STORES_DOMAIN) -> None:
     """`cancel_purchase_order` on the caller's connection."""
-    _move_po_core(db, po_id, "cancelled", actor=actor, reason=reason)
+    _move_po_core(db, po_id, "cancelled", actor=actor, reason=reason, domain=domain)
 
 
 def get_purchase_order(po_id: int) -> Optional[dict]:
@@ -1801,8 +2125,11 @@ def get_purchase_order(po_id: int) -> Optional[dict]:
         return _get_purchase_order_core(db, po_id)
 
 
-def _get_purchase_order_core(db, po_id: int) -> Optional[dict]:
-    """`get_purchase_order` on the caller's connection."""
+def _get_purchase_order_core(db, po_id: int, *,
+                             domain: str = STORES_DOMAIN) -> Optional[dict]:
+    """`get_purchase_order` on the caller's connection. None for another
+    desk's purchase order."""
+    _assert_domain(domain)
     row = db.execute(
         """SELECT p.*, v.code AS vendor_code, v.name AS vendor_name,
                   v.gstin AS vendor_gstin, v.state_code AS vendor_state_code,
@@ -1810,7 +2137,7 @@ def _get_purchase_order_core(db, po_id: int) -> Optional[dict]:
              FROM purchase_orders p
              LEFT JOIN vendors v ON v.id = p.vendor_id
              LEFT JOIN stores s ON s.id = p.store_id
-            WHERE p.id = ?""", (po_id,),
+            WHERE p.id = ? AND p.domain = ?""", (po_id, domain),
     ).fetchone()
     if not row:
         return None
@@ -1838,13 +2165,16 @@ def _get_purchase_order_core(db, po_id: int) -> Optional[dict]:
 
 def list_purchase_orders(
     *, status: Optional[str] = None, vendor_code: Optional[str] = None,
-    open_only: bool = False, limit: int = 100,
+    open_only: bool = False, limit: int = 100, domain: str = STORES_DOMAIN,
 ) -> list[dict]:
+    """One desk's purchase orders (the stores desk's unless `domain` says
+    otherwise)."""
+    _assert_domain(domain)
     sql = ("SELECT p.*, v.code AS vendor_code, v.name AS vendor_name, "
            "s.code AS store_code "
            "FROM purchase_orders p LEFT JOIN vendors v ON v.id = p.vendor_id "
-           "LEFT JOIN stores s ON s.id = p.store_id WHERE 1=1")
-    params: list[Any] = []
+           "LEFT JOIN stores s ON s.id = p.store_id WHERE p.domain = ?")
+    params: list[Any] = [domain]
     if status:
         sql += " AND p.status = ?"
         params.append(status)
@@ -1876,6 +2206,11 @@ class GRNLineInput:
     uom: Optional[str] = None
     description: Optional[str] = None
     remarks: Optional[str] = None
+    # Pharmacy receipts only (migration 54). A stores receipt that sends any of
+    # them is refused rather than having them dropped in silence.
+    free_quantity_milli: int = 0
+    mrp_pack_paise: Optional[int] = None
+    mfg_date: Optional[date | str] = None
 
 
 def _coerce_grn_lines(lines: Sequence[Any]) -> list[GRNLineInput]:
@@ -1899,6 +2234,9 @@ def _coerce_grn_lines(lines: Sequence[Any]) -> list[GRNLineInput]:
             uom=raw.get("uom"),
             description=raw.get("description"),
             remarks=raw.get("remarks"),
+            free_quantity_milli=raw.get("free_quantity_milli") or 0,
+            mrp_pack_paise=raw.get("mrp_pack_paise"),
+            mfg_date=raw.get("mfg_date"),
         ))
     if not out:
         raise ProcurementError("a goods receipt needs at least one line",
@@ -1969,12 +2307,22 @@ def create_goods_receipt(
     return get_goods_receipt(grn_id) or {}
 
 
-def _goods_receipt_id_for_key(db, idempotency_key: str) -> Optional[int]:
-    """The receipt already saved under this idempotency key, or None."""
+def _goods_receipt_id_for_key(db, idempotency_key: str, *,
+                              domain: str = STORES_DOMAIN) -> Optional[int]:
+    """The receipt already saved under this idempotency key, or None.
+
+    A key held by the other desk's receipt is refused (already_exists) rather
+    than replayed: the replay would answer with a document this desk cannot
+    see, and a fresh receipt under the same key would hit the unique index."""
+    _assert_domain(domain)
     row = db.execute(
-        "SELECT id FROM goods_receipts WHERE idempotency_key = ?",
+        "SELECT id, domain FROM goods_receipts WHERE idempotency_key = ?",
         (idempotency_key,),
     ).fetchone()
+    if row and row["domain"] != domain:
+        raise ProcurementError(
+            "this idempotency key already belongs to another receipt. Nothing was "
+            "changed; retry with a new key.", code="already_exists")
     return int(row["id"]) if row else None
 
 
@@ -1992,6 +2340,7 @@ def _create_goods_receipt_core(
     remarks: Optional[str] = None,
     idempotency_key: Optional[str] = None,
     today: date | datetime | str,
+    domain: str = STORES_DOMAIN,
 ) -> int:
     """`create_goods_receipt` on the caller's connection, as a DRAFT. Returns the
     new receipt id.
@@ -2001,16 +2350,24 @@ def _create_goods_receipt_core(
     first, inside the same transaction) and the post (call
     `_post_goods_receipt_core`). `today` is the date an expiry is compared
     with: "expired" means before it. It is required so the caller decides
-    which clock that is (see `_calendar_today`)."""
+    which clock that is (see `_calendar_today`).
+
+    THE RECEIPT TAKES ITS DOMAIN FROM ITS PURCHASE ORDER. `domain` is the
+    caller's desk, and a purchase order of the other desk is not found, so a
+    stores receipt can never be raised against a pharmacy order. On a pharmacy
+    receipt every accepted line needs a batch and an expiry (a drug lot is
+    traced and dispensed by both), the store must be a pharmacy store, and a
+    line may carry free units, the pack MRP and a manufacturing date. The
+    minimum shelf life, the expiry typed twice and the MRP rules (GRN-R16,
+    GRN-RS6) are the pharmacy service's, checked before it calls this."""
+    _assert_domain(domain)
     receipt_today = _calendar_today(today)
     parsed = _coerce_grn_lines(lines)
     if qc_status not in ("pending", "passed", "failed", "partial"):
         raise ProcurementError(f"unknown qc_status {qc_status!r}", code="bad_qc_status")
 
-    po = db.execute("SELECT * FROM purchase_orders WHERE id = ?",
-                    (purchase_order_id,)).fetchone()
-    if not po:
-        raise ProcurementError(f"no purchase order {purchase_order_id}", code="not_found")
+    po = _document_in_domain(db, "purchase_orders", purchase_order_id, domain,
+                             "purchase order")
     if po["status"] not in RECEIVABLE_PO_STATUSES:
         raise ProcurementError(
             f"purchase order is {po['status']!r}; goods may only be received "
@@ -2024,8 +2381,7 @@ def _create_goods_receipt_core(
 
     store_id = po["store_id"]
     if store_code:
-        store = db.execute("SELECT id FROM stores WHERE code = ?",
-                           (store_code.upper(),)).fetchone()
+        store = _store_row(db, store_code, domain)
         if not store:
             raise ProcurementError(f"no store with code {store_code!r}", code="not_found")
         store_id = store["id"]
@@ -2033,6 +2389,15 @@ def _create_goods_receipt_core(
         raise ProcurementError(
             "a goods receipt needs a store, neither the purchase order nor "
             "this receipt names one", code="missing_store")
+    # The order's own store is checked too: goods land only in a store of the
+    # receiving desk's half of the master. A stores order whose store id
+    # dangles is received as it always was (no foreign keys here, by rule).
+    other_half = db.execute(
+        f"SELECT 1 FROM stores WHERE id = ? AND "
+        f"{_store_partition_sql(STORES_DOMAIN if domain == PHARMACY_DOMAIN else PHARMACY_DOMAIN)}",
+        (store_id,)).fetchone()
+    if other_half or (domain == PHARMACY_DOMAIN and _store_row(db, int(store_id), domain) is None):
+        raise ProcurementError(f"no store with id {store_id}", code="not_found")
 
     prepared: list[dict] = []
     for line in parsed:
@@ -2074,16 +2439,41 @@ def _create_goods_receipt_core(
                 code="over_receipt",
             )
 
-        item = None
-        if po_line.get("inventory_item_id"):
-            item_row = db.execute("SELECT * FROM inventory_items WHERE id = ?",
-                                  (po_line["inventory_item_id"],)).fetchone()
-            item = _row(item_row) if item_row else None
-        if item is None:
-            item = _resolve_item(db, po_line["item_code"])
-
         expiry = _as_date_str(line.expiry_date, "expiry_date")
         batch = _clean(line.batch_no, field_name="batch_no")
+        free = assert_quantity_milli(line.free_quantity_milli, "free_quantity_milli")
+        mfg = _as_date_str(line.mfg_date, "mfg_date")
+        mrp = assert_paise(line.mrp_pack_paise) if line.mrp_pack_paise is not None else None
+        item = None
+        if domain == PHARMACY_DOMAIN:
+            if not po_line.get(_DRUG_ID_COLUMN):
+                raise ProcurementError(
+                    f"line {line.po_line_no} names no drug; a pharmacy receipt is "
+                    "for drugs only", code="bad_line")
+            if accepted > 0 and (not batch or not expiry):
+                raise ProcurementError(
+                    f"{po_line['item_code']} must be received with a batch number and "
+                    "an expiry date: a drug is recalled, dispensed and expired by its "
+                    "batch", code="expiry_required")
+            if free < 0 or (mrp is not None and mrp < 0):
+                raise ProcurementError("free quantity and MRP must not be negative",
+                                       code="bad_quantity")
+            if mfg and expiry and mfg > expiry:
+                raise ProcurementError(
+                    f"{po_line['item_code']} batch {batch}: manufactured {mfg}, after "
+                    f"its expiry {expiry}", code="bad_date")
+        else:
+            if free or mrp is not None or mfg:
+                raise ProcurementError(
+                    "free quantity, MRP and manufacturing date are recorded on "
+                    "pharmacy receipts only", code="bad_line")
+            if po_line.get("inventory_item_id"):
+                item_row = db.execute("SELECT * FROM inventory_items WHERE id = ?",
+                                      (po_line["inventory_item_id"],)).fetchone()
+                item = _row(item_row) if item_row else None
+            if item is None:
+                item = _resolve_item(db, po_line["item_code"])
+
         if accepted > 0 and item_requires_expiry(item) and (not batch or not expiry):
             raise ProcurementError(
                 f"{po_line['item_code']} is a {item.get('category')}: it must be "
@@ -2119,6 +2509,7 @@ def _create_goods_receipt_core(
             "po_line": po_line, "item": item, "accepted": accepted,
             "rejected": rejected, "batch": batch, "expiry": expiry,
             "rate": rate, "totals": totals, "input": line,
+            "free": free, "mrp": mrp, "mfg": mfg,
         })
 
     foot = compute_invoice([p["totals"] for p in prepared], round_off_to_rupee=False)
@@ -2127,28 +2518,29 @@ def _create_goods_receipt_core(
                store_id, vendor_invoice_number, vendor_invoice_date,
                vendor_invoice_total_paise, status, qc_status, subtotal_paise,
                taxable_value_paise, cgst_paise, sgst_paise, igst_paise, tax_paise,
-               total_paise, received_by, idempotency_key, remarks)
-           VALUES (NULL,?,?,?,?,?,?, 'draft', ?, ?,?,?,?,?,?,?, ?,?,?)""",
+               total_paise, received_by, idempotency_key, remarks, domain)
+           VALUES (NULL,?,?,?,?,?,?, 'draft', ?, ?,?,?,?,?,?,?, ?,?,?, ?)""",
         (purchase_order_id, po["vendor_id"], store_id, vendor_invoice_number,
          _as_date_str(vendor_invoice_date, "vendor_invoice_date"),
          assert_paise(vendor_invoice_total_paise)
          if vendor_invoice_total_paise is not None else None,
          qc_status, foot.subtotal_paise, foot.taxable_value_paise, foot.cgst_paise,
          foot.sgst_paise, foot.igst_paise, foot.tax_paise, foot.total_paise,
-         received_by, idempotency_key, remarks),
+         received_by, idempotency_key, remarks, po["domain"]),
     )
     grn_id = cur.lastrowid
     for line_no, p in enumerate(prepared, start=1):
         po_line, totals = p["po_line"], p["totals"]
         db.execute(
-            """INSERT INTO goods_receipt_lines (goods_receipt_id, line_no,
+            f"""INSERT INTO goods_receipt_lines (goods_receipt_id, line_no,
                    purchase_order_line_id, inventory_item_id, item_code, description,
                    batch_no, expiry_date, uom, quantity_milli, accepted_quantity_milli,
                    rejected_quantity_milli, rejection_reason, unit_rate_paise,
                    gross_paise, discount_paise, gst_treatment, gst_rate_bp,
                    taxable_value_paise, cgst_paise, sgst_paise, igst_paise,
-                   tax_paise, total_paise, remarks)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   tax_paise, total_paise, remarks, {_DRUG_ID_COLUMN}, units_per_pack,
+                   free_quantity_milli, mrp_pack_paise, mfg_date)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?)""",
             (grn_id, line_no, po_line["id"], po_line.get("inventory_item_id"),
              po_line["item_code"],
              p["input"].description or po_line["description"],
@@ -2158,7 +2550,8 @@ def _create_goods_receipt_core(
              totals.gross_paise, totals.discount_paise, totals.gst_treatment,
              totals.gst_rate_bp, totals.taxable_value_paise, totals.cgst_paise,
              totals.sgst_paise, totals.igst_paise, totals.tax_paise,
-             totals.total_paise, p["input"].remarks),
+             totals.total_paise, p["input"].remarks, po_line.get(_DRUG_ID_COLUMN),
+             po_line.get("units_per_pack"), p["free"], p["mrp"], p["mfg"]),
         )
     return int(grn_id)
 
@@ -2180,13 +2573,19 @@ def post_goods_receipt(grn_id: int, *, actor: Optional[str] = None) -> dict:
     return get_goods_receipt(grn_id) or {}
 
 
-def _post_goods_receipt_core(db, grn_id: int, *, actor: Optional[str] = None) -> list[dict]:
+def _post_goods_receipt_core(db, grn_id: int, *, actor: Optional[str] = None,
+                             domain: str = STORES_DOMAIN) -> list[dict]:
     """`post_goods_receipt` on the caller's connection. Returns the receipt's
     lines as they were posted. The caller stamps the GRN number after its
-    transaction commits."""
-    grn = db.execute("SELECT * FROM goods_receipts WHERE id = ?", (grn_id,)).fetchone()
-    if not grn:
-        raise ProcurementError(f"no goods receipt {grn_id}", code="not_found")
+    transaction commits. Another desk's receipt is not found.
+
+    THE PHARMACY BRANCH MOVES NO STOCK HERE. It advances the order's received
+    quantities and status and marks the receipt posted, exactly as the stores
+    branch does, but it never calls _insert_movement and never touches
+    inventory_items: drug stock has one ledger, written only by
+    pharmacy_stock_service, which the caller runs on the returned lines in
+    the same transaction."""
+    grn = _document_in_domain(db, "goods_receipts", grn_id, domain, "goods receipt")
     assert_transition("goods_receipt", grn["status"], "posted")
     lines = [_row(r) for r in db.execute(
         "SELECT * FROM goods_receipt_lines WHERE goods_receipt_id = ? ORDER BY line_no",
@@ -2194,7 +2593,7 @@ def _post_goods_receipt_core(db, grn_id: int, *, actor: Optional[str] = None) ->
 
     for line in lines:
         accepted = int(line["accepted_quantity_milli"] or 0)
-        if accepted > 0:
+        if accepted > 0 and grn["domain"] == STORES_DOMAIN:
             _insert_movement(
                 db,
                 inventory_item_id=line.get("inventory_item_id"),
@@ -2287,12 +2686,11 @@ def cancel_goods_receipt(grn_id: int, *, reason: str, actor: Optional[str] = Non
 
 
 def _cancel_goods_receipt_core(db, grn_id: int, *, reason: str,
-                               actor: Optional[str] = None) -> None:
-    """`cancel_goods_receipt` on the caller's connection."""
-    row = db.execute("SELECT status FROM goods_receipts WHERE id = ?",
-                     (grn_id,)).fetchone()
-    if not row:
-        raise ProcurementError(f"no goods receipt {grn_id}", code="not_found")
+                               actor: Optional[str] = None,
+                               domain: str = STORES_DOMAIN) -> None:
+    """`cancel_goods_receipt` on the caller's connection. Another desk's
+    receipt is not found."""
+    row = _document_in_domain(db, "goods_receipts", grn_id, domain, "goods receipt")
     assert_transition("goods_receipt", row["status"], "cancelled")
     if not (reason or "").strip():
         raise ProcurementError("a cancellation needs a reason", code="missing_field")
@@ -2308,8 +2706,11 @@ def get_goods_receipt(grn_id: int) -> Optional[dict]:
         return _get_goods_receipt_core(db, grn_id)
 
 
-def _get_goods_receipt_core(db, grn_id: int) -> Optional[dict]:
-    """`get_goods_receipt` on the caller's connection."""
+def _get_goods_receipt_core(db, grn_id: int, *,
+                            domain: str = STORES_DOMAIN) -> Optional[dict]:
+    """`get_goods_receipt` on the caller's connection. None for another desk's
+    receipt."""
+    _assert_domain(domain)
     row = db.execute(
         """SELECT g.*, v.code AS vendor_code, v.name AS vendor_name,
                   s.code AS store_code, s.name AS store_name, p.po_number
@@ -2317,7 +2718,7 @@ def _get_goods_receipt_core(db, grn_id: int) -> Optional[dict]:
              LEFT JOIN vendors v ON v.id = g.vendor_id
              LEFT JOIN stores s ON s.id = g.store_id
              LEFT JOIN purchase_orders p ON p.id = g.purchase_order_id
-            WHERE g.id = ?""", (grn_id,),
+            WHERE g.id = ? AND g.domain = ?""", (grn_id, domain),
     ).fetchone()
     if not row:
         return None
@@ -2336,13 +2737,16 @@ def _get_goods_receipt_core(db, grn_id: int) -> Optional[dict]:
 
 def list_goods_receipts(
     *, purchase_order_id: Optional[int] = None, status: Optional[str] = None,
-    limit: int = 100,
+    limit: int = 100, domain: str = STORES_DOMAIN,
 ) -> list[dict]:
+    """One desk's goods receipts (the stores desk's unless `domain` says
+    otherwise)."""
+    _assert_domain(domain)
     sql = ("SELECT g.*, v.name AS vendor_name, s.code AS store_code, p.po_number "
            "FROM goods_receipts g LEFT JOIN vendors v ON v.id = g.vendor_id "
            "LEFT JOIN stores s ON s.id = g.store_id "
-           "LEFT JOIN purchase_orders p ON p.id = g.purchase_order_id WHERE 1=1")
-    params: list[Any] = []
+           "LEFT JOIN purchase_orders p ON p.id = g.purchase_order_id WHERE g.domain = ?")
+    params: list[Any] = [domain]
     if purchase_order_id is not None:
         sql += " AND g.purchase_order_id = ?"
         params.append(purchase_order_id)
@@ -2509,8 +2913,10 @@ def _record_stock_movement_core(
     if not item:
         raise ProcurementError(f"no non-pharmacy item with code {item_code!r}",
                                code="unknown_item")
-    store = db.execute("SELECT * FROM stores WHERE code = ?",
-                       (store_code.upper(),)).fetchone()
+    # The stores ledger moves stock through stores stores only: a pharmacy
+    # store is not found here, so nothing can be issued from or received into
+    # one through this ledger.
+    store = _store_row(db, store_code, STORES_DOMAIN)
     if not store:
         raise ProcurementError(f"no store with code {store_code!r}", code="not_found")
 
@@ -2606,7 +3012,10 @@ def stock_on_hand_milli(item_code: str, store_code: Optional[str] = None) -> int
            "WHERE m.item_code = ?")
     params: list[Any] = [item_code.upper()]
     if store_code:
-        sql += " AND m.store_id = (SELECT id FROM stores WHERE code = ?)"
+        # A pharmacy store code finds no store here, so it reads 0 (drug stock
+        # is never in this ledger).
+        sql += (" AND m.store_id = (SELECT id FROM stores WHERE code = ? "
+                "AND pharmacy_kind IS NULL)")
         params.append(store_code.upper())
     with db_session() as db:
         return int(db.execute(sql, params).fetchone()["q"])
@@ -2669,7 +3078,7 @@ def list_stock_on_hand(
               CROSS JOIN stores s
               LEFT JOIN stock_movements m
                      ON m.item_code = i.code AND m.store_id = s.id
-             WHERE i.is_active = 1 AND s.code = ?
+             WHERE i.is_active = 1 AND s.code = ? AND s.pharmacy_kind IS NULL
         """
         params.append(store_code.upper())
     else:
@@ -2678,7 +3087,7 @@ def list_stock_on_hand(
               FROM inventory_items i
               LEFT JOIN stock_movements m ON m.item_code = i.code
               LEFT JOIN stores s ON s.id = m.store_id
-             WHERE i.is_active = 1
+             WHERE i.is_active = 1 AND s.pharmacy_kind IS NULL
         """
     if category:
         sql += " AND i.category = ?"
@@ -2732,7 +3141,8 @@ def list_stock_on_hand(
 def stock_ledger(item_code: str, *, store_code: Optional[str] = None,
                  limit: int = 200) -> list[dict]:
     sql = ("SELECT m.*, s.code AS store_code FROM stock_movements m "
-           "LEFT JOIN stores s ON s.id = m.store_id WHERE m.item_code = ?")
+           "LEFT JOIN stores s ON s.id = m.store_id WHERE m.item_code = ? "
+           "AND s.pharmacy_kind IS NULL")
     params: list[Any] = [item_code.upper()]
     if store_code:
         sql += " AND s.code = ?"
@@ -2820,6 +3230,7 @@ def consumption_report(
           LEFT JOIN stores s ON s.id = m.store_id
           LEFT JOIN inventory_items i ON i.code = m.item_code
          WHERE m.movement_type IN ({placeholders})
+           AND s.pharmacy_kind IS NULL
     """
     params: list[Any] = list(CONSUMPTION_MOVEMENTS)
     if start:
@@ -2909,7 +3320,7 @@ def expiry_report(
           LEFT JOIN stores s ON s.id = m.store_id
           LEFT JOIN inventory_items i ON i.code = m.item_code
          WHERE m.expiry_date IS NOT NULL AND m.batch_no IS NOT NULL
-           AND m.expiry_date <= ?
+           AND m.expiry_date <= ? AND s.pharmacy_kind IS NULL
     """
     params: list[Any] = [horizon]
     if not include_expired:
@@ -2963,12 +3374,15 @@ def procurement_overview(*, store_code: Optional[str] = None) -> dict:
     expiring = expiry_report(within_days=90, store_code=store_code, limit=50)
     open_pos = list_purchase_orders(open_only=True, limit=50)
     with db_session() as db:
+        # The stores desk's documents only (see the Domains note). Vendors are
+        # one shared master and are counted whole.
         pending_indents = int(db.execute(
-            "SELECT COUNT(*) AS c FROM indents WHERE status = 'submitted'"
+            "SELECT COUNT(*) AS c FROM indents WHERE status = 'submitted' "
+            "AND domain = 'stores'"
         ).fetchone()["c"])
         draft_pos = int(db.execute(
             "SELECT COUNT(*) AS c FROM purchase_orders "
-            "WHERE status IN ('draft','pending_approval')"
+            "WHERE status IN ('draft','pending_approval') AND domain = 'stores'"
         ).fetchone()["c"])
         item_count = int(db.execute(
             "SELECT COUNT(*) AS c FROM inventory_items WHERE is_active = 1"

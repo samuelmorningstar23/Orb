@@ -1,13 +1,20 @@
-# Orb Hospital OS: Deployment Runbook
+# Orb Hospital OS: Deployment and configuration reference
 
-This is a practical, honest guide to running Orb in a container. It reflects how the
-repo actually behaves today (config defaults, required secrets, hardcoded endpoints)
-rather than an idealized setup. Read the **Caveats** section before any real deployment.
+This is the configuration reference for running Orb natively on its host: the Apple
+Silicon appliance for a pilot, or a developer's machine. The step-by-step appliance
+install is [`INSTALL_RUNBOOK.md`](INSTALL_RUNBOOK.md); this file holds the settings,
+backup, migration, metrics and encryption detail it points to. It reflects how the repo
+actually behaves today rather than an idealized setup. Read the **Caveats** section
+before any real deployment.
+
+The container deployment (`Dockerfile`, `docker-compose.yml`) was retired on 4 October
+2026. Orb is installed directly on the appliance, and a container on macOS cannot reach
+the GPU. The files, and this document as it stood with its container sections, are in
+`docs/archive/retired-docker-2026-10-04/`.
 
 Deliverables that back this runbook:
-- `Dockerfile`, multi-stage (frontend build + Python runtime)
-- `.dockerignore`, keeps the build context lean and PHI/secrets out of image layers
-- `docker-compose.yml`, `ollama` + `orb` services with persistent volumes
+- `install.sh` (one-command host install, §7) and `setup-mac.sh` (Apple Silicon dev setup)
+- `run-orb.sh`, starts the stack on a configured machine
 - `server/scripts/backup_db.py`, consistent SQLite backups
 - `server/scripts/encrypt_db.py`, migrate a plaintext `orb.db` to SQLCipher, or check its state (§11)
 - `scripts/backup.sh` + `scripts/install-backup-schedule.sh` + `scripts/restore-drill.sh`, 
@@ -18,60 +25,39 @@ Deliverables that back this runbook:
 
 ## 1. Prerequisites
 
-- **Docker Engine 24+** and the **Docker Compose v2 plugin** (`docker compose`, not
-  `docker-compose`).
+- **The host**: the appliance in [`HARDWARE_SPEC.md`](HARDWARE_SPEC.md) for a pilot.
+- **Ollama** on the same machine. Orb reaches it at `ORB_OLLAMA_BASE_URL` (default
+  `http://localhost:11434`).
 - **Disk**: budget for the model weights. `medgemma:27b` is ~17 GB in VRAM/RAM and
-  several GB on disk; the 4B fallback is far smaller. Plus a couple GB for the image.
-- **RAM / GPU**: MedGemma 27B realistically needs a capable GPU (or a lot of RAM for
-  slow CPU inference). On modest hardware use the **4B fallback** (see §4).
-- **A reverse proxy** for anything beyond localhost, unless you enable Orb's opt-in TLS
-  (`ORB_TLS_CERT` + `ORB_TLS_KEY`, see §3). By default Orb serves cleartext HTTP inside
-  the container (see Caveats).
-
-Optional NVIDIA GPU passthrough for Ollama requires the
-[`nvidia-container-toolkit`](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html);
-uncomment the `deploy.resources` block in `docker-compose.yml`.
+  several GB on disk; the 4B fallback is far smaller.
+- **RAM / GPU**: MedGemma 27B realistically needs a capable GPU or Apple unified memory
+  (or a lot of RAM for slow CPU inference). On modest hardware use the **4B fallback**
+  (see §4).
+- **TLS** for anything beyond localhost: Orb's opt-in TLS (`ORB_TLS_CERT` +
+  `ORB_TLS_KEY`, see §3) or a reverse proxy. By default Orb serves cleartext HTTP (see
+  Caveats).
 
 ---
 
 ## 2. Quick start
 
-From the repo root:
+On the appliance, follow [`INSTALL_RUNBOOK.md`](INSTALL_RUNBOOK.md). On a development
+Mac, from the repo root:
 
 ```bash
-# 1. Set the required production secrets (the app refuses to boot without them: see §3).
-export ORB_JWT_SECRET="$(openssl rand -hex 32)"
-export ORB_INGESTION_API_KEY="$(openssl rand -hex 32)"
-
-# 2. Build and start both services (ollama + orb).
-docker compose up -d --build
-
-# 3. Pull an LLM into Ollama (one-time; persisted on the ollama-models volume).
-docker compose exec ollama ollama pull medgemma:27b
-
-# 4. Check health.
+./setup-mac.sh        # one time: Python, dependencies, .env, models, seeded DB
+./run-orb.sh          # backend serves the built SPA on http://localhost:8000
 curl -fsS http://localhost:8000/api/health
-# -> {"status":"ok","service":"orb-hospital-os","version":"0.1.0"}
 ```
 
-The compose file uses `${VAR:?...}` guards, so `docker compose up` fails fast with a
-clear message if `ORB_JWT_SECRET` / `ORB_INGESTION_API_KEY` are unset. You can also
-put them in a `.env` file next to `docker-compose.yml` (it is git-ignored).
-
-Logs / lifecycle:
-
-```bash
-docker compose logs -f orb        # app logs (startup banner shows the active profile/mode)
-docker compose ps                 # service + health status
-docker compose down               # stop (volumes are preserved)
-docker compose down -v            # stop AND delete volumes (DESTROYS the DB, be careful)
-```
+`./run-orb.sh --dev` adds Vite hot reload on `http://localhost:5173`, and `--lan` makes
+it reachable from a second device on the same network (test data only).
 
 ---
 
 ## 3. Environment variables
 
-The container is configured through `ORB_*` env vars read by `server/config.py`.
+Orb is configured through `ORB_*` env vars in `.env`, read by `server/config.py`.
 The important ones:
 
 | Variable | Required? | Default | Notes |
@@ -79,10 +65,11 @@ The important ones:
 | `ORB_DEPLOYMENT_PROFILE` | no | `prod` | `prod` enforces the fail-closed secret checks and locks CORS to `ORB_CORS_ORIGINS`. `dev` relaxes both. |
 | `ORB_JWT_SECRET` | **yes (prod)** | n/a | JWT signing key. **In `prod` the app raises `CRITICAL SECURITY ERROR` at import and will not start if this is unset.** Generate with `openssl rand -hex 32`. |
 | `ORB_INGESTION_API_KEY` | **yes (prod)** | n/a | Protects the real-patient write path `/api/ingest/*`. **Also fail-closed in `prod`**, unset ⇒ the app refuses to boot. |
-| `ORB_HOST` | no | `127.0.0.1` | The image/compose set this to `0.0.0.0` so the server is reachable outside the container. |
+| `ORB_HOST` | no | `127.0.0.1` | Bind address. Loopback only by default; set `0.0.0.0` so ward devices can reach the appliance (INSTALL_RUNBOOK §7). |
 | `ORB_PORT` | no | `8000` | Listen port. |
-| `ORB_DB_PATH` | no | `<server>/orb.db` | Set to `/data/orb.db` in compose and mounted on a volume for persistence. |
+| `ORB_DB_PATH` | no | `<server>/orb.db` | Where the database file lives. |
 | `ORB_CORS_ORIGINS` | recommended | dev localhost list | Comma-separated allowed origins. Lock this to your real SPA origin in prod. **Single-origin deploy:** when the backend serves the built SPA itself, the realtime socket accepts the page's own address (its `Origin` matches the `Host` header, http or https) whether or not it is listed; an empty value means same-origin only. The list is still needed for a front end on a different address, and behind a reverse proxy that rewrites `Host` (nginx's default; add `proxy_set_header Host $http_host;`, which keeps the port, where `$host` drops it). An origin the socket refuses does not just stop live updates: within seconds the browser's socket retries hold every connection it allows to that address, so ordinary screens hang for 15 to 25 seconds at a time (see INSTALL_RUNBOOK F11). |
+| `ORB_ALLOWED_HOSTS` | no | derived | Extra host names Orb answers to, comma-separated (`host`, `host:port` or a URL), added to the ones it works out itself. Orb refuses with a 400 any request whose `Host` header is a name it does not know, which stops a DNS-rebinding web page from reaching it through a ward browser; a reverse proxy in front should still refuse unknown names itself. Any IP address always passes, and so do `localhost`, the hosts in `ORB_CORS_ORIGINS` and `ORB_PUBLIC_APP_BASE_URL`, `ORB_HOST` when it is a name, and this machine's own name and its `.local` name. List a name only if staff or a device reach Orb by a name in none of those, or a reverse proxy sends its upstream name as the `Host` (an nginx `upstream` block without `proxy_set_header Host $http_host;`). `X-Forwarded-Host` is never read. `*` turns the check off and the Trust Center shows it red. The log names each refused host once (INSTALL_RUNBOOK F15). The Vite dev server (`npm run dev`, port 5173) answers to the same names (`vite.hosts.ts`), so a tunnel such as ngrok must be listed here too. |
 | `ORB_COOKIE_SECURE` | no | `auto` | Marks the `orb_session`/`orb_csrf` cookies `Secure`. `auto` decides per-request from the effective scheme (honouring `X-Forwarded-Proto`), so an HTTPS session gets a `Secure` cookie while a plain-HTTP LAN pilot still works. Force with `1`/`0`. |
 | `ORB_LLM_MODEL` | no | `medgemma:27b` | Ollama model tag Orb queries. Use `alibayram/medgemma:4b` on small hardware. |
 | `ORB_INGESTION_MODE` | no | `ingestion` | `ingestion` = real data only (safe default); `simulation` = synthetic bots; `hybrid` = both. |
@@ -102,33 +89,26 @@ The important ones:
 > app must be served **same-origin** (the API and SPA share `window.location.origin`,
 > which is already the default) so the cookie is first-party.
 
-> **Note on the Ollama URL:** `server/config.py` **hardcodes**
-> `OLLAMA_BASE_URL = "http://localhost:11434"` and does not read it from an env var.
-> `docker-compose.yml` works around this by having the `orb` service **share the
-> `ollama` service's network namespace** (`network_mode: "service:ollama"`), so the
-> app's `localhost:11434` resolves to the Ollama container. A side effect is that the
-> Orb port (`8000`) is published on the `ollama` service, not on `orb`. See the
-> comments at the top of `docker-compose.yml` for the cleaner layout to adopt if/when
-> config is taught to read `ORB_OLLAMA_BASE_URL`.
+> **Ollama URL:** `ORB_OLLAMA_BASE_URL` (default `http://localhost:11434`) tells Orb
+> where Ollama answers. On the appliance Ollama runs on the same machine, so the
+> default is right.
 
 ---
 
 ## 4. Ollama models
 
-Models are pulled into the `ollama` container and cached on the `ollama-models`
-volume, so a pull survives restarts and image rebuilds.
+Models are pulled into Ollama's own store on the host, so a pull survives restarts.
 
 ```bash
 # Full-quality clinical model (needs a capable GPU / lots of RAM):
-docker compose exec ollama ollama pull medgemma:27b
+ollama pull medgemma:27b
 
 # Small-hardware fallback: pull the 4B model and point Orb at it:
-docker compose exec ollama ollama pull alibayram/medgemma:4b
-#   then set ORB_LLM_MODEL and restart orb:
-#   ORB_LLM_MODEL=alibayram/medgemma:4b docker compose up -d orb
+ollama pull alibayram/medgemma:4b
+#   then set ORB_LLM_MODEL=alibayram/medgemma:4b in .env and restart Orb.
 
 # Inspect what's installed:
-docker compose exec ollama ollama list
+ollama list
 ```
 
 If Orb logs `LLM warmup got HTTP 404 for model '<name>'`, the model tag in
@@ -140,8 +120,8 @@ Lens, Bridge and Scribe LLM calls return empty.
 ## 5. Backup & restore
 
 > **On the Mac Studio appliance, do not follow this section, follow
-> [`docs/BACKUP_AND_RESTORE.md`](BACKUP_AND_RESTORE.md) and §9 below.** This section covers
-> the *containerised* deployment. The appliance uses `scripts/backup.sh` (verify-then-rotate)
+> [`docs/BACKUP_AND_RESTORE.md`](BACKUP_AND_RESTORE.md) and §9 below.** This section describes
+> `backup_db.py`, the building block those scripts use. The appliance uses `scripts/backup.sh` (verify-then-rotate)
 > on a **launchd** schedule, plus a monthly **restore drill**, and it states the key-escrow
 > problem in full. Backups are only real once a restore has been tested.
 
@@ -160,87 +140,37 @@ live DB is plaintext or SQLCipher-encrypted.
 > `sqlite3` CLI cannot open an encrypted backup either; inspect one with a SQLCipher-aware
 > connection (see §11).
 
-**Back up (from the running container):**
-
-```bash
-# Writes /data/backups/orb-backup-YYYYmmdd-HHMMSS.db (ORB_DB_PATH defaults to /data/orb.db)
-docker compose exec orb python scripts/backup_db.py --out-dir /data/backups
-
-# Keep only the last 30 days:
-docker compose exec orb python scripts/backup_db.py --out-dir /data/backups --retain-days 30
-```
-
-Because `/data` is a named volume, backups written there persist. To pull a copy onto
-the host:
-
-```bash
-docker compose cp orb:/data/backups ./orb-backups
-```
-
-**Schedule it** with a host cron entry (runs daily at 02:00):
-
-```cron
-0 2 * * *  docker compose -f /path/to/Orb/docker-compose.yml exec -T orb python scripts/backup_db.py --out-dir /data/backups --retain-days 14
-```
-
-**Restore** (stop writers first so nothing races the swap):
-
-```bash
-docker compose stop orb
-# Overwrite the live DB with a chosen backup, inside the volume:
-docker compose run --rm --entrypoint sh orb -c \
-  'cp /data/backups/orb-backup-YYYYmmdd-HHMMSS.db /data/orb.db && rm -f /data/orb.db-wal /data/orb.db-shm'
-docker compose start orb
-```
-
-Run the script anywhere (no app imports needed), e.g. against a host DB:
+**Back up by hand** (for example before an upgrade). The script needs no app imports:
 
 ```bash
 python server/scripts/backup_db.py --db-path ./server/orb.db --out-dir ./backups
+# Keep only the last 30 days:
+python server/scripts/backup_db.py --db-path ./server/orb.db --out-dir ./backups --retain-days 30
 python server/scripts/backup_db.py --help
 ```
+
+**Restore** with [`BACKUP_AND_RESTORE.md`](BACKUP_AND_RESTORE.md) §5, which stops the
+server first so nothing races the swap.
 
 ---
 
 ## 6. Caveats (read before production)
 
-These are honest limitations of the current container/build, not TODOs hidden in a
+These are honest limitations of the current build, not TODOs hidden in a
 changelog:
 
 - **TLS is opt-in.** By default the app serves plain HTTP. Set `ORB_TLS_CERT` +
   `ORB_TLS_KEY` (see §3) and `main.py`'s `uvicorn.run` serves HTTPS directly. Otherwise,
   put Orb behind a TLS-terminating **reverse proxy** (nginx, Caddy, Traefik) and only
   expose the proxy publicly, JWTs and PHI would otherwise cross the wire in cleartext.
-- **The SPA is not served by the backend.** `main.py` mounts no `StaticFiles` route for
-  the built frontend. The image ships `dist/` at `/app/dist`, but you must serve it from
-  your reverse proxy (or add a static mount). The backend only answers `/api/*`,
-  Socket.IO, and the authenticated `/uploads/*` route.
-- **Embeddings & Whisper are degraded in this Linux container.** The image installs
-  `server/requirements-dev.txt`, deliberately **omitting** `FlagEmbedding` (BGE-M3
-  semantic embeddings) and `lightning-whisper-mlx` (on-device ASR), both are Mac-/GPU-
-  only and will not build on Linux. Consequences: embeddings-backed semantic retrieval
-  (Sage) and in-container Whisper transcription (Scribe) are unavailable/degraded. Text
-  LLM features work because **Ollama runs as an external service**, not inside the image.
-- **CPU-only inference for torch.** The image installs the PyTorch **CPU** wheel (no GPU
-  passthrough for the Orb container). Ollama can still use a GPU if you enable the
-  `deploy.resources` block.
-- **The container image cannot encrypt the database yet.** DB encryption needs the
-  `sqlcipher3` driver, which is pinned in `server/requirements.txt`, but the image
-  installs `server/requirements-dev.txt` (see the bullet below), and that file does not
-  carry it. Setting `ORB_DB_ENCRYPTION_KEY` in compose therefore logs
-  `no SQLCipher driver … falling back to PLAINTEXT sqlite3` and keeps running on a
-  plaintext `/data/orb.db`. **Check the startup log rather than assuming.** Until the
-  pin is added to the image build, rely on volume/host encryption there; §11's SQLCipher
-  path applies to the bare-metal (Apple Silicon) install, where `requirements.txt` is
-  what gets installed.
 - **Encryption at rest is available but opt-in, and it is not full-disk encryption.**
   Set `ORB_DB_ENCRYPTION_KEY` and `orb.db` is SQLCipher-encrypted (§11); set
   `ORB_UPLOAD_ENCRYPTION_KEY` and uploaded media is AES-256-GCM encrypted. Set neither
-  and both hold PHI in cleartext on the mounted volumes. Even with both set, the keys sit
-  in the container's environment / `.env` alongside the data, so this protects **copies**
-  (backups, exports, a volume snapshot read elsewhere), not a live or stolen host whose
-  environment the attacker can also read. Still encrypt the underlying storage
-  (LUKS/FileVault/cloud volume encryption) and restrict volume access.
+  and both hold PHI in cleartext on disk. Even with both set, the keys sit in `.env`
+  alongside the data, so this protects **copies** (backups, exports, a disk image read
+  elsewhere), not a live or stolen host whose environment the attacker can also read.
+  Still encrypt the underlying storage (FileVault on the appliance) and restrict who can
+  sign in to the machine.
 - **Not HIPAA-certified.** This deployment has not been through a HIPAA compliance
   assessment. Treat it as a self-hosted system for which *you* are responsible for the
   surrounding controls (TLS, at-rest encryption, access control, audit retention,
@@ -253,7 +183,7 @@ changelog:
 
 ## 7. Bare-metal / one-command install (`install.sh`)
 
-For a non-container host (e.g. the Apple Silicon Mac Studio Orb targets), the
+For the appliance (the Apple Silicon Mac Studio Orb targets) or another host, the
 repo-root `./install.sh` sets a machine up in one command. It is **idempotent and
 safe to re-run**, it never overwrites `.env`, existing TLS certs, or data.
 
@@ -313,7 +243,7 @@ python server/migrate.py --status   # print current vs target version, no change
 python server/migrate.py            # apply migrations (safe to repeat)
 
 # Target a specific DB:
-ORB_DB_PATH=/data/orb.db python server/migrate.py --status
+ORB_DB_PATH=/path/to/orb.db python server/migrate.py --status
 ```
 
 ---
@@ -448,10 +378,8 @@ file on disk is ciphertext. Uploaded media (Lens images, Scribe audio) is a sepa
 control: `ORB_UPLOAD_ENCRYPTION_KEY` encrypts those with AES-256-GCM.
 
 The driver (`sqlcipher3-wheels==0.5.7`, importable as `sqlcipher3`) is pinned in
-`server/requirements.txt`, so a bare-metal install
-(`pip install -r server/requirements.txt`) already has it. **The Docker image does
-not**, it installs `requirements-dev.txt`, which omits the pin, so the container
-silently falls back to a plaintext DB (see §6). It is the only
+`server/requirements.txt`, so a native install
+(`pip install -r server/requirements.txt`) already has it. It is the only
 distribution shipping a CPython 3.12 arm64 wheel, `sqlcipher3-binary` has none, and
 `pysqlcipher3` needs a local SQLCipher build. If the key is set but no driver is
 importable, the app does **not** fail, it logs a warning and runs on plaintext sqlite,

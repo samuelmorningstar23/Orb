@@ -4,6 +4,8 @@
     GET    /api/housekeeping/overview              the board (runs the discharge sweep)
     GET    /api/housekeeping/units                 the unit register
     POST   /api/housekeeping/units                 register / re-describe a unit
+                                                   (a bed is 409 while ORB_ADT is on:
+                                                   Bed setup owns beds then)
     POST   /api/housekeeping/units/{id}/state      move a unit through the machine
     POST   /api/housekeeping/units/{id}/occupy     record an occupancy, clean or not
     GET    /api/housekeeping/tasks                 the cleaning queue
@@ -64,6 +66,7 @@ from services.housekeeping_service import (
     CLEAN_TYPES,
     HousekeepingError,
     UnitAlreadyRegistered,
+    UnitManagedByBedSetup,
     LEGAL_TRANSITIONS,
     LINEN_DIRECTIONS,
     PRIORITIES,
@@ -72,6 +75,7 @@ from services.housekeeping_service import (
     cancel_cleaning,
     complete_cleaning,
     expected_minutes_for,
+    find_unit_by_code,
     force_occupied,
     get_task,
     get_unit,
@@ -320,8 +324,39 @@ def get_units(
     return {"units": list_units(ward, include_inactive=include_inactive)}
 
 
+#: The refusal a bed register request gets while Beds and admissions owns beds.
+_MANAGED_IN_BEDS_SETUP = (
+    "Beds are registered and changed in Bed setup while beds and admissions is "
+    "switched on, so this bed was not saved here. Rooms, bays and theatres are "
+    "still registered here."
+)
+
+
+def _managed_in_beds_setup(message: str = _MANAGED_IN_BEDS_SETUP) -> HTTPException:
+    return HTTPException(status_code=409,
+                         detail={"error": "managed_in_beds_setup", "message": message})
+
+
+def _refuse_beds_while_adt_is_on(body: UnitIn) -> None:
+    """With ORB_ADT on, the bed master is the only writer of bed units (adt-1,
+    critique C5): a bed created or relabelled here would be a second register
+    whose ward and label drift from the master's. So a request that creates a
+    bed, or changes a unit that is a bed, is refused with 409. Rooms, bays and
+    theatres are unaffected. Read at request time; with the switch off nothing
+    here runs and the register behaves exactly as before."""
+    if config.module_state("adt") == "off":
+        return
+    is_bed = (body.unit_type or "").strip().lower() == "bed"
+    if not is_bed:
+        existing = find_unit_by_code(body.unit_code)
+        is_bed = bool(existing) and existing.get("unit_type") == "bed"
+    if is_bed:
+        raise _managed_in_beds_setup()
+
+
 @router.post("/units")
 def post_unit(body: UnitIn, request: Request, user: dict = Depends(require_housekeeping_write())):
+    _refuse_beds_while_adt_is_on(body)
     try:
         unit = register_unit(
             unit_code=body.unit_code, ward=body.ward, room=body.room,
@@ -334,6 +369,10 @@ def post_unit(body: UnitIn, request: Request, user: dict = Depends(require_house
     except UnitAlreadyRegistered as e:
         raise HTTPException(status_code=409,
                             detail={"error": "already_exists", "message": str(e)})
+    except UnitManagedByBedSetup as e:
+        # A bed Bed setup registered (it carries a ward_id) is changed there,
+        # whatever the switch says now.
+        raise _managed_in_beds_setup(str(e))
     except HousekeepingError as e:
         raise _bad_request(e)
     _audit(request, user, "housekeeping_unit_registered",

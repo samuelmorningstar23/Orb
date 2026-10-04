@@ -47,20 +47,6 @@ def _dev(base_url):
     return mock.patch.multiple("config", DEPLOYMENT_PROFILE="dev", PUBLIC_APP_BASE_URL=base_url)
 
 
-@pytest.fixture
-def verify_budget_restored():
-    """/verify spends a per-IP budget that lives in-process for the whole
-    session (15 calls per window, every client here is 'testclient'), and the
-    discharge suites after this file need theirs. Put back what we spend."""
-    from services import discharge_access_service as das
-    with das._VERIFY_IP_LOCK:
-        saved = {ip: list(stamps) for ip, stamps in das._VERIFY_IP_ATTEMPTS.items()}
-    yield
-    with das._VERIFY_IP_LOCK:
-        das._VERIFY_IP_ATTEMPTS.clear()
-        das._VERIFY_IP_ATTEMPTS.update(saved)
-
-
 def _seed_patient(patient_id: str, *, mrn: str, dob="1964-03-11") -> None:
     with db_session() as db:
         db.execute("DELETE FROM discharge_access_tokens WHERE patient_id = ?", (patient_id,))
@@ -192,7 +178,7 @@ def test_prod_with_neither_address_nor_date_of_birth_gives_both_reasons():
     assert "no patient-reachable address" in audit and "second factor" in audit, audit
 
 
-def test_prod_with_a_configured_address_puts_exactly_that_in_the_link_and_qr(verify_budget_restored):
+def test_prod_with_a_configured_address_puts_exactly_that_in_the_link_and_qr():
     _seed_patient("PAT-PUB-SET", mrn="MRN-PUB-3")
     qr_urls: list = []
     with _prod(_APPLIANCE):

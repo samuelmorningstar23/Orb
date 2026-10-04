@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../api/client';
+import { canSeeWardList } from '../lib/roles';
 import './CommandPalette.css';
 
 /**
@@ -14,6 +15,13 @@ import './CommandPalette.css';
  *   2. window CustomEvent "orb:open-patient"  { detail: { patientId } }
  * (the Vigil panel + shell tab listeners are owned by other clusters — this
  * component only fires the events).
+ *
+ * ONLY FOR A ROLE THAT MAY SEARCH PATIENTS. GET /api/search/patients needs
+ * patient.read_all (server/routes/search_routes.py), the same permission as the
+ * ward list, so a cashier, a pharmacist and the hospital-system desk and lab
+ * roles would only ever get a refusal. For them the palette is not offered at
+ * all: Cmd/Ctrl-K is not claimed (the browser keeps its own shortcut), nothing
+ * renders and nothing is fetched. Doctor, nurse and admin are unchanged.
  */
 
 interface PatientResult {
@@ -36,6 +44,8 @@ const LISTBOX_ID = 'orb-command-palette-listbox';
 const optionId = (i: number) => `orb-cmdk-option-${i}`;
 
 export default function CommandPalette() {
+  // Read from the stored session on every render, as the ward list gate is.
+  const canSearch = canSeeWardList();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<PatientResult[]>([]);
@@ -56,8 +66,9 @@ export default function CommandPalette() {
     setLoading(false);
   }, []);
 
-  // ── Global Cmd/Ctrl-K toggle (registered while mounted) ──
+  // ── Global Cmd/Ctrl-K toggle (registered while mounted, for a role that may search) ──
   useEffect(() => {
+    if (!canSearch) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
         e.preventDefault();
@@ -66,7 +77,7 @@ export default function CommandPalette() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [canSearch]);
 
   // ── Focus the input when the palette opens ──
   useEffect(() => {
@@ -79,7 +90,7 @@ export default function CommandPalette() {
 
   // ── Debounced (200ms) search ──
   useEffect(() => {
-    if (!open) return;
+    if (!open || !canSearch) return;
     const trimmed = query.trim();
     if (trimmed.length < 2) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
@@ -109,7 +120,7 @@ export default function CommandPalette() {
     }, 200);
 
     return () => window.clearTimeout(handle);
-  }, [query, open]);
+  }, [query, open, canSearch]);
 
   // ── Keep the active option scrolled into view ──
   useEffect(() => {
@@ -154,7 +165,7 @@ export default function CommandPalette() {
     }
   };
 
-  if (!open) return null;
+  if (!open || !canSearch) return null;
 
   const trimmed = query.trim();
   const showEmpty = !loading && trimmed.length >= 2 && results.length === 0;

@@ -50,13 +50,14 @@ logger = logging.getLogger("orb.ws")
 # check", so an empty ORB_CORS_ORIGINS used to let EVERY origin open a socket.
 #
 # DNS rebinding: a page on attacker.example whose name now resolves to the
-# appliance sends a matching Host and Origin, so (2) lets its engine.io
-# handshake through. It still cannot authenticate. The browser files cookies by
-# host name, so the orb_session cookie for the real name never reaches
-# attacker.example, and connect() refuses the socket. That page can already
-# reach every REST route the same way (there is no Host allow-list), so the
-# socket gives it nothing new. The port is compared on purpose: cookies are not
-# port-scoped, so another service on the same host stays a foreign origin.
+# appliance sends a matching Host and Origin, so (2) alone would let its
+# engine.io handshake through. services/host_gate.HostGate (it wraps
+# main.socket_app) refuses that Host before engine.io sees the request. Behind
+# it, the page still could not authenticate: the browser files cookies by host
+# name, so the orb_session cookie for the real name never reaches
+# attacker.example, and connect() refuses the socket. The port is compared on
+# purpose: cookies are not port-scoped, so another service on the same host
+# stays a foreign origin.
 _configured_origins = list(CORS_ORIGINS)
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 

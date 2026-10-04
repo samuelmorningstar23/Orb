@@ -432,6 +432,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Terminology seed failed (non-fatal): %s", e)
 
+    # ── Laboratory module (ORB_LAB, default off) ──
+    # The one lifespan hook the LIS needs: state (on, draining, off), cutover
+    # event, starter catalogue while on, and its own background loops. See
+    # services/lab_module.py. Never raises.
+    from services import lab_module as _lab_module
+    await _lab_module.startup()
+
     # Seed the built-in drug-interaction pairs (data-backed DDI screening).
     try:
         from services.interaction_db import ensure_seeded
@@ -839,6 +846,8 @@ async def lifespan(app: FastAPI):
             await _vitals_registry.reset()
         except Exception as e:
             logger.warning("Vitals source shutdown issue: %s", e)
+
+    await _lab_module.shutdown()
 
     # BOUNDED shutdown. An unbounded gather here means ONE background task that
     # swallows its cancel holds the entire appliance open — and the appliance
@@ -1607,8 +1616,13 @@ if _DIST_DIR.is_dir():
 else:
     logger.info("No ../dist build found — SPA not served (dev mode: use `npm run dev`)")
 
-# ── Mount Socket.IO ──
-socket_app = socketio.ASGIApp(sio, app)
+# ── Mount Socket.IO, behind the Host allow-list ──
+# HostGate wraps the outermost app: socketio.ASGIApp answers /socket.io/ before any
+# FastAPI middleware runs, so this is the one place a check covers REST and the
+# socket. It refuses a Host name Orb was not told about (DNS rebinding); see
+# services/host_gate.py and config.allowed_host_names().
+from services.host_gate import HostGate
+socket_app = HostGate(socketio.ASGIApp(sio, app))
 
 
 # ── Refuse to boot on the wrong ASGI target ──

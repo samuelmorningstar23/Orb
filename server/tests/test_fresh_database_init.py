@@ -503,3 +503,51 @@ print("ORB_TEST_JSON:" + json.dumps({
     assert got["integrity"] == "ok"
     assert {48, 49} <= set(got["ledger"])
     assert got["inserted"] == _NEW_ROLES
+
+
+# ── Wave 2: migration 54, the pharmacy store schema ──────────────────────────
+
+def test_a_fresh_database_has_the_pharmacy_store_schema(tmp_path):
+    """init_db() alone on a brand new database runs migration 54 after 49 has
+    made the Helix tables: the twelve pharmacy tables, the NDPS register's two
+    triggers, the new Helix and procurement columns and the seven pharmacy
+    document series all exist, and an empty drug ledger needs no backfill.
+    Then init_helix_db runs over it (main.py's order) without complaint, which
+    is what HELIX_SCHEMA carrying the same columns guarantees."""
+    proc, _ = _boot(tmp_path, """
+import json
+from database import init_db, get_db
+from services.helix_db import init_helix_db
+from migrations_his.m0054_pharmacy_store_schema import TABLE_NAMES
+init_db()
+init_helix_db()
+conn = get_db()
+cols = lambda t: [r[1] for r in conn.execute("PRAGMA table_info(%s)" % t).fetchall()]
+print("ORB_TEST_JSON:" + json.dumps({
+    "missing_tables": [t for t in TABLE_NAMES if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (t,)).fetchone()],
+    "triggers": sorted(r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='ndps_register'")),
+    "lots": cols("helix_inventory_lots"),
+    "movements": cols("helix_stock_movements"),
+    "master": cols("helix_medication_master"),
+    "po": cols("purchase_orders"),
+    "stores": cols("stores"),
+    "series": sorted(r[0] for r in conn.execute(
+        "SELECT series_code FROM document_number_series WHERE series_code LIKE 'PH%'")),
+    "ledger": sorted(r[0] for r in conn.execute("SELECT version FROM schema_migrations")),
+    "movement_rows": conn.execute("SELECT COUNT(*) FROM helix_stock_movements").fetchone()[0],
+}))
+""")
+    got = _payload(proc)
+    assert got["missing_tables"] == []
+    assert got["triggers"] == ["trg_ndps_register_no_delete", "trg_ndps_register_no_update"]
+    assert {"store_id", "status", "receipt_line_ref", "unit_cost_paise"} <= set(got["lots"])
+    assert {"seq", "occurred_at", "movement_type", "balance_after_units"} <= set(got["movements"])
+    assert {"drug_schedule", "ndps_category", "identity_status", "is_active"} <= set(got["master"])
+    assert "domain" in got["po"] and "pharmacy_kind" in got["stores"]
+    assert got["series"] == ["PHCNT", "PHGRN", "PHIND", "PHPO", "PHRET", "PHTRF", "PHVR"]
+    assert 54 in got["ledger"]
+    assert got["movement_rows"] == 0
+    noise = proc.stdout + proc.stderr
+    assert "migration failed" not in noise and "Traceback" not in noise

@@ -172,6 +172,32 @@ def seed_terminology() -> dict:
     }
 
 
+def register_codes(conn, rows) -> int:
+    """Add (code_system, code, display) rows that `terminology` does not hold
+    yet, on the caller's connection and inside the caller's transaction.
+
+    For a module that brings its own orderable codes (the laboratory catalogue,
+    services/lab_master_service.py, only while ORB_LAB is on). A code already
+    present is left exactly as it is, display and is_active included, so a
+    licensed release loaded over the starter set always wins. Never commits.
+    Returns how many rows were added.
+    """
+    added = 0
+    for code_system, code, display in rows:
+        system = (code_system or "").strip().upper()
+        value = (code or "").strip()
+        text = (display or "").strip()
+        if not system or not value or not text:
+            raise ValueError("a terminology row needs a code system, a code and a display")
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO terminology (code_system, code, display, is_active) "
+            "VALUES (?, ?, ?, 1)",
+            (system, value, text),
+        )
+        added += max(cur.rowcount or 0, 0)
+    return added
+
+
 if __name__ == "__main__":
     # Standalone seeding: `python -m services.terminology_service`
     from database import init_db

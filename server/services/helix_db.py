@@ -11,7 +11,27 @@ CREATE TABLE IF NOT EXISTS helix_medication_master (
     name TEXT NOT NULL,
     generic_name TEXT,
     form TEXT,
-    strength TEXT
+    strength TEXT,
+    -- Migration 54 (pharmacy store). No CHECK on any of these: this table is
+    -- an FK parent and can never be rebuilt, so the pharmacy services
+    -- validate the values instead.
+    pack_size_units INTEGER,
+    purchase_uom TEXT,
+    dispense_unit TEXT,
+    hsn_code TEXT,
+    manufacturer TEXT,
+    gst_rate_bp INTEGER,
+    drug_schedule TEXT,
+    ndps_category TEXT,
+    is_essential_narcotic INTEGER NOT NULL DEFAULT 0,
+    storage_condition TEXT,
+    reorder_level_units INTEGER,
+    reorder_qty_units INTEGER,
+    lead_time_days INTEGER,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    identity_status TEXT NOT NULL DEFAULT 'active',
+    updated_by TEXT,
+    updated_at TIMESTAMP
 );
 
 -- Helix: Inventory Lots
@@ -20,7 +40,19 @@ CREATE TABLE IF NOT EXISTS helix_inventory_lots (
     medication_id TEXT REFERENCES helix_medication_master(id),
     lot_number TEXT NOT NULL,
     quantity INTEGER DEFAULT 0,
-    expiration_date DATE
+    expiration_date DATE,
+    -- Migration 54 (pharmacy store), no CHECK for the same reason. store_id
+    -- NULL is a legacy lot; status 'available' is today's meaning.
+    store_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'available',
+    units_per_pack INTEGER,
+    mrp_pack_paise INTEGER,
+    unit_cost_paise INTEGER,
+    mfg_date DATE,
+    vendor_id INTEGER,
+    receipt_line_ref INTEGER,
+    received_at TIMESTAMP,
+    created_at TIMESTAMP
 );
 
 -- Helix: Patient Medication Orders (extended for full workflow)
@@ -65,7 +97,20 @@ CREATE TABLE IF NOT EXISTS helix_stock_movements (
     order_id TEXT REFERENCES helix_patient_med_orders(id),
     quantity_change INTEGER,
     reason TEXT,
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Migration 54 (pharmacy store), which also owns this ledger's indexes.
+    -- seq is the ordering key; occurred_at is canonical UTC.
+    movement_type TEXT,
+    store_id INTEGER,
+    balance_after_units INTEGER,
+    unit_cost_paise INTEGER,
+    reference_type TEXT,
+    reference_id TEXT,
+    actor_id TEXT,
+    remarks TEXT,
+    idempotency_key TEXT,
+    occurred_at TEXT,
+    seq INTEGER
 );
 
 -- Helix: Transition Log (idempotency + audit)

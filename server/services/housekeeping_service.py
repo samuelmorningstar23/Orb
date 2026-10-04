@@ -100,6 +100,7 @@ import config
 from database import db_session
 from db_backend import DBIntegrityError
 from migrations import HOUSEKEEPING_INDEXES, HOUSEKEEPING_TABLES
+from migrations_his.m0053_adt_bed_master import add_housekeeping_unit_columns
 
 logger = logging.getLogger("orb.housekeeping")
 
@@ -115,6 +116,12 @@ __all__ = [
     "ensure_housekeeping_schema",
     "expected_minutes_for",
     "register_unit",
+    "register_unit_on",
+    "update_master_bed_on",
+    "adopt_unit_on",
+    "master_unit_code",
+    "find_unit_by_code",
+    "UnitManagedByBedSetup",
     "list_units",
     "get_unit",
     "transition_unit",
@@ -143,6 +150,13 @@ class HousekeepingError(ValueError):
 class UnitAlreadyRegistered(HousekeepingError):
     """The register form named a unit code that is already on the register.
     409 at the route: the request is fine, it collides with a record."""
+
+
+class UnitManagedByBedSetup(HousekeepingError):
+    """The unit is a bed the bed master registered (it carries a ward_id), so
+    only Bed setup may change how it is described. 409 at the route: a second
+    writer of the physical bed row is how its ward and label drift apart from
+    the master's (adt-1, critique C5)."""
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -252,6 +266,11 @@ def ensure_housekeeping_schema(force: bool = False) -> None:
     Lazy rather than at import: `DB_PATH` is bound at import time from config and
     the test harness rewrites it before `database` is first imported, so opening a
     connection at module import would race that.
+
+    The bed master columns (ward_id, room_id, bed_class, is_temporary,
+    retired_at; migration 53) are added by the same PRAGMA-guarded function the
+    migration uses, so a table this path creates, or one it created before
+    migration 53 existed, can never be left in the old shape.
     """
     global _schema_ready
     if _schema_ready and not force:
@@ -264,6 +283,7 @@ def ensure_housekeeping_schema(force: bool = False) -> None:
                 db.execute(statement)
             for statement in HOUSEKEEPING_INDEXES:
                 db.execute(statement)
+            add_housekeeping_unit_columns(db)
         _schema_ready = True
 
 
@@ -459,71 +479,325 @@ def register_unit(
 
     `create_only` is the register form: a code already on the register is
     refused (UnitAlreadyRegistered, naming the bed) and nothing is changed.
+
+    A thin wrapper over `register_unit_on` in a session of its own. A unit the
+    bed master registered (it carries a ward_id) is refused here
+    (UnitManagedByBedSetup): Bed setup is its only writer.
     """
     ensure_housekeeping_schema()
-    code = _require(unit_code, "unit_code")
-    ward_name = _require(ward, "ward")
+    with db_session() as db:
+        return register_unit_on(
+            db, unit_code=unit_code, ward=ward, room=room, bed_label=bed_label,
+            unit_type=unit_type, is_isolation_room=is_isolation_room,
+            initial_state=initial_state, notes=notes, actor_user_id=actor_user_id,
+            actor_role=actor_role, create_only=create_only,
+        )
+
+
+def master_unit_code(ward_code: str, bed_label: str) -> str:
+    """The unit code of a bed the bed master registers: '<ward code>/<bed label>'.
+
+    idx_hk_units_code is global, so the ward code is part of every bed's unit
+    code, and bed_master_service refuses '/' in ward codes and bed labels, so
+    two wards can never produce the same code."""
+    return f"{ward_code}/{bed_label}"
+
+
+def _has_ward_id(row) -> Optional[str]:
+    """The unit's ward_id, or None. Tolerates a row read before the bed master
+    columns existed."""
+    if row is None:
+        return None
+    return row["ward_id"] if "ward_id" in row.keys() else None
+
+
+def register_unit_on(
+    db,
+    *,
+    unit_code: str | None = None,
+    ward: str | None = None,
+    room: str | None = None,
+    bed_label: str | None = None,
+    unit_type: str = "bed",
+    is_isolation_room: bool = False,
+    initial_state: str = "vacant_dirty",
+    notes: str | None = None,
+    actor_user_id: str | None = None,
+    actor_role: str | None = None,
+    create_only: bool = False,
+    ward_id: str | None = None,
+    room_id: str | None = None,
+    bed_class: str | None = None,
+    is_temporary: bool = False,
+) -> dict:
+    """`register_unit` on the CALLER's connection, so many units, their events
+    and the caller's audit commit or roll back together (bed_master_service.
+    register_beds registers a whole ward in one immediate session).
+
+    The caller owns the session and must have called
+    `ensure_housekeeping_schema()` BEFORE opening it: this function never opens
+    a session of its own.
+
+    Without `ward_id` it is exactly `register_unit`: the typed ward is matched to
+    the hospital's spelling through `_canonical_ward`, and re-registering an
+    existing code updates its description.
+
+    With `ward_id` it registers a BED the bed master owns:
+      * the ward text is wards.code and the room text ward_rooms.code, read from
+        the master, so a typed spelling can never override them, and
+        `_canonical_ward` is skipped;
+      * the unit code is always '<ward code>/<bed label>' (master_unit_code);
+      * an existing unit code is always refused (UnitAlreadyRegistered): a
+        master bed is changed through update_master_bed_on, never by
+        re-registering it.
+    """
+    if ward_id is None:
+        if room_id is not None or bed_class is not None or is_temporary:
+            raise HousekeepingError(
+                "A room link, bed class or temporary bed is set in Bed setup, "
+                "which needs the ward the bed is on"
+            )
+        code = _require(unit_code, "unit_code")
+        ward_name = _require(ward, "ward")
     kind = _one_of(unit_type, ("bed", "room", "bay", "theatre"), "unit_type")
     state = _one_of(initial_state, UNIT_STATES, "initial_state")
     now = _now()
 
-    with db_session() as db:
+    if ward_id is None:
         ward_name = _canonical_ward(db, ward_name)
-        existing = db.execute(
-            "SELECT * FROM housekeeping_units WHERE unit_code = ?", (code,)
-        ).fetchone()
-        if existing and create_only:
-            where = ", ".join(x for x in (
-                existing["ward"],
-                f"bed {existing['bed_label']}" if existing["bed_label"] else None,
-            ) if x)
-            raise UnitAlreadyRegistered(
-                f"{code} is already registered ({where}). Nothing was changed. "
-                "Use a different unit code, or change that unit from its card."
-            )
-        if existing:
-            db.execute(
-                """UPDATE housekeeping_units
-                      SET ward = ?, room = COALESCE(?, room),
-                          bed_label = COALESCE(?, bed_label), unit_type = ?,
-                          is_isolation_room = ?, notes = COALESCE(?, notes),
-                          is_active = 1, updated_at = ?
-                    WHERE id = ?""",
-                (
-                    ward_name, _clean(room, _MAX_LABEL), _clean(bed_label, _MAX_LABEL),
-                    kind, 1 if is_isolation_room else 0, _clean(notes), now,
-                    existing["id"],
-                ),
-            )
-            return _row(
-                db.execute(
-                    "SELECT * FROM housekeeping_units WHERE id = ?", (existing["id"],)
-                ).fetchone()
+        room_text = _clean(room, _MAX_LABEL)
+        label = _clean(bed_label, _MAX_LABEL)
+    else:
+        if kind != "bed":
+            raise HousekeepingError("Bed setup registers beds only")
+        label = _require(bed_label, "bed_label")
+        ward_row = db.execute("SELECT id, code FROM wards WHERE id = ?", (ward_id,)).fetchone()
+        if ward_row is None:
+            raise HousekeepingError("No ward with that id is set up in Bed setup")
+        ward_name = ward_row["code"]
+        room_text = None
+        if room_id is not None:
+            room_row = db.execute(
+                "SELECT id, ward_id, code FROM ward_rooms WHERE id = ?", (room_id,)
+            ).fetchone()
+            if room_row is None or room_row["ward_id"] != ward_id:
+                raise HousekeepingError(f"That room is not on {ward_name}")
+            room_text = room_row["code"]
+        code = master_unit_code(ward_name, label)
+        typed = _clean(unit_code)
+        if typed is not None and typed != code:
+            raise HousekeepingError(
+                f"Bed {label} on {ward_name} is coded {code}. The unit code of a bed "
+                "in Bed setup is not chosen separately."
             )
 
-        unit_id = f"HKU{uuid.uuid4().hex[:12].upper()}"
+    existing = db.execute(
+        "SELECT * FROM housekeeping_units WHERE unit_code = ?", (code,)
+    ).fetchone()
+    if existing and (create_only or ward_id is not None):
+        where = ", ".join(x for x in (
+            existing["ward"],
+            f"bed {existing['bed_label']}" if existing["bed_label"] else None,
+        ) if x)
+        raise UnitAlreadyRegistered(
+            f"{code} is already registered ({where}). Nothing was changed. "
+            "Use a different unit code, or change that unit from its card."
+        )
+    if existing and _has_ward_id(existing):
+        raise UnitManagedByBedSetup(
+            f"{code} is a bed set up in Bed setup, so it is changed there. "
+            "Nothing was changed."
+        )
+    if existing:
+        db.execute(
+            """UPDATE housekeeping_units
+                  SET ward = ?, room = COALESCE(?, room),
+                      bed_label = COALESCE(?, bed_label), unit_type = ?,
+                      is_isolation_room = ?, notes = COALESCE(?, notes),
+                      is_active = 1, updated_at = ?
+                WHERE id = ?""",
+            (
+                ward_name, room_text, label,
+                kind, 1 if is_isolation_room else 0, _clean(notes), now,
+                existing["id"],
+            ),
+        )
+        return _row(
+            db.execute(
+                "SELECT * FROM housekeeping_units WHERE id = ?", (existing["id"],)
+            ).fetchone()
+        )
+
+    unit_id = f"HKU{uuid.uuid4().hex[:12].upper()}"
+    if ward_id is None:
         db.execute(
             """INSERT INTO housekeeping_units
                    (id, unit_code, ward, room, bed_label, unit_type, is_isolation_room,
                     state, state_since, is_active, notes, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)""",
             (
-                unit_id, code, ward_name, _clean(room, _MAX_LABEL),
-                _clean(bed_label, _MAX_LABEL), kind, 1 if is_isolation_room else 0,
+                unit_id, code, ward_name, room_text,
+                label, kind, 1 if is_isolation_room else 0,
                 state, now, _clean(notes), now, now,
             ),
         )
-        # The register's first event. Without it a unit created directly as
-        # 'vacant_ready' would have a state nobody signed for.
+    else:
         db.execute(
-            """INSERT INTO housekeeping_unit_events
-                   (unit_id, from_state, to_state, reason, actor_user_id, actor_role, occurred_at)
-               VALUES (?, NULL, ?, ?, ?, ?, ?)""",
-            (unit_id, state, "unit registered", actor_user_id, actor_role, now),
+            """INSERT INTO housekeeping_units
+                   (id, unit_code, ward, room, bed_label, unit_type, is_isolation_room,
+                    state, state_since, is_active, notes, created_at, updated_at,
+                    ward_id, room_id, bed_class, is_temporary)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                unit_id, code, ward_name, room_text,
+                label, kind, 1 if is_isolation_room else 0,
+                state, now, _clean(notes), now, now,
+                ward_id, room_id, _clean(bed_class, _MAX_LABEL), 1 if is_temporary else 0,
+            ),
         )
-        return _row(
-            db.execute("SELECT * FROM housekeeping_units WHERE id = ?", (unit_id,)).fetchone()
-        )
+    # The register's first event. Without it a unit created directly as
+    # 'vacant_ready' would have a state nobody signed for.
+    db.execute(
+        """INSERT INTO housekeeping_unit_events
+               (unit_id, from_state, to_state, reason, actor_user_id, actor_role, occurred_at)
+           VALUES (?, NULL, ?, ?, ?, ?, ?)""",
+        (unit_id, state, "unit registered", actor_user_id, actor_role, now),
+    )
+    return _row(
+        db.execute("SELECT * FROM housekeeping_units WHERE id = ?", (unit_id,)).fetchone()
+    )
+
+
+#: "Leave this field as it is" for update_master_bed_on, distinct from None
+#: ("clear it").
+_KEEP = object()
+
+
+def update_master_bed_on(
+    db,
+    unit_id: str,
+    *,
+    room_id: Any = _KEEP,
+    bed_class: Any = _KEEP,
+    is_isolation_room: Any = _KEEP,
+    notes: Any = _KEEP,
+    bed_label: Any = _KEEP,
+) -> dict:
+    """Change how a bed the bed master registered is described, on the
+    CALLER's connection. Only bed_master_service calls this; it owns the
+    session, the reference guards (a label is immutable once anything refers
+    to the bed), the bed_master_events row and the audit.
+
+    Never touches the cleaning state or its ledger: those stay housekeeping's.
+    A field left as _KEEP is unchanged; room_id or bed_class None clears it.
+    A new label also changes the unit code ('<ward code>/<label>').
+    """
+    unit = db.execute("SELECT * FROM housekeeping_units WHERE id = ?", (unit_id,)).fetchone()
+    if unit is None or not _has_ward_id(unit):
+        raise HousekeepingError("No bed with that id is set up in Bed setup")
+    sets: list[str] = []
+    params: list[Any] = []
+    if room_id is not _KEEP:
+        if room_id is None:
+            sets += ["room_id = NULL", "room = NULL"]
+        else:
+            room_row = db.execute(
+                "SELECT id, ward_id, code FROM ward_rooms WHERE id = ?", (room_id,)
+            ).fetchone()
+            if room_row is None or room_row["ward_id"] != unit["ward_id"]:
+                raise HousekeepingError(f"That room is not on {unit['ward']}")
+            sets += ["room_id = ?", "room = ?"]
+            params += [room_row["id"], room_row["code"]]
+    if bed_class is not _KEEP:
+        sets.append("bed_class = ?")
+        params.append(_clean(bed_class, _MAX_LABEL))
+    if is_isolation_room is not _KEEP:
+        sets.append("is_isolation_room = ?")
+        params.append(1 if is_isolation_room else 0)
+    if notes is not _KEEP:
+        sets.append("notes = ?")
+        params.append(_clean(notes))
+    if bed_label is not _KEEP:
+        label = _require(bed_label, "bed_label")
+        ward_row = db.execute("SELECT code FROM wards WHERE id = ?", (unit["ward_id"],)).fetchone()
+        if ward_row is None:
+            raise HousekeepingError("The ward this bed is on is not set up in Bed setup")
+        sets += ["bed_label = ?", "unit_code = ?"]
+        params += [label, master_unit_code(ward_row["code"], label)]
+    if not sets:
+        return _row(unit)
+    sets.append("updated_at = ?")
+    params.append(_now())
+    db.execute(
+        f"UPDATE housekeeping_units SET {', '.join(sets)} WHERE id = ?",
+        (*params, unit_id),
+    )
+    return _row(db.execute("SELECT * FROM housekeeping_units WHERE id = ?", (unit_id,)).fetchone())
+
+
+def adopt_unit_on(
+    db,
+    unit_id: str,
+    *,
+    ward_id: str,
+    bed_label: str,
+    room_id: str | None = None,
+    bed_class: str | None = None,
+    is_isolation_room: bool | None = None,
+) -> dict:
+    """Link a bed that was typed into the housekeeping register before Bed
+    setup existed to the master, on the CALLER's connection, keeping its
+    cleaning state, its ledger and its open tasks. Only bed_master_service
+    calls this, and only when the bed manager asked to adopt existing beds.
+
+    The ward and room text become the master's spelling, the label the
+    master's label, and the unit code '<ward code>/<label>'.
+    """
+    unit = db.execute("SELECT * FROM housekeeping_units WHERE id = ?", (unit_id,)).fetchone()
+    if unit is None:
+        raise HousekeepingError("No unit with that id is on the housekeeping register")
+    if _has_ward_id(unit):
+        raise UnitManagedByBedSetup(f"{unit['unit_code']} is already a bed in Bed setup")
+    if unit["unit_type"] != "bed":
+        raise HousekeepingError(f"{unit['unit_code']} is registered as a {unit['unit_type']}, not a bed")
+    label = _require(bed_label, "bed_label")
+    ward_row = db.execute("SELECT id, code FROM wards WHERE id = ?", (ward_id,)).fetchone()
+    if ward_row is None:
+        raise HousekeepingError("No ward with that id is set up in Bed setup")
+    room_text = None
+    if room_id is not None:
+        room_row = db.execute(
+            "SELECT id, ward_id, code FROM ward_rooms WHERE id = ?", (room_id,)
+        ).fetchone()
+        if room_row is None or room_row["ward_id"] != ward_id:
+            raise HousekeepingError(f"That room is not on {ward_row['code']}")
+        room_text = room_row["code"]
+    isolation = unit["is_isolation_room"] if is_isolation_room is None else (1 if is_isolation_room else 0)
+    db.execute(
+        """UPDATE housekeeping_units
+              SET unit_code = ?, ward = ?, room = COALESCE(?, room), bed_label = ?,
+                  ward_id = ?, room_id = ?, bed_class = ?, is_isolation_room = ?,
+                  is_active = 1, updated_at = ?
+            WHERE id = ?""",
+        (
+            master_unit_code(ward_row["code"], label), ward_row["code"], room_text, label,
+            ward_id, room_id, _clean(bed_class, _MAX_LABEL), isolation, _now(), unit_id,
+        ),
+    )
+    return _row(db.execute("SELECT * FROM housekeeping_units WHERE id = ?", (unit_id,)).fetchone())
+
+
+def find_unit_by_code(unit_code: str) -> dict | None:
+    """The unit with exactly this code, or None. Read only."""
+    ensure_housekeeping_schema()
+    code = _clean(unit_code)
+    if not code:
+        return None
+    with db_session() as db:
+        row = db.execute(
+            "SELECT * FROM housekeeping_units WHERE unit_code = ?", (code,)
+        ).fetchone()
+    return _row(row) if row is not None else None
 
 
 def list_units(ward: str | None = None, *, include_inactive: bool = False) -> list[dict]:

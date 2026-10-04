@@ -42,6 +42,21 @@ Every mutation takes `frontdesk.write` OR `patient.write`
 `admin.overview` (ruled 2026-08-12) so the registration clerk no longer has to
 hold the governance grant — the permission that also opens the audit log — just
 to file an admission. Reads stay on `patient.read_all`.
+
+── THE REGISTRATION DESK (opd-3, 3 October 2026) ───────────────────────────
+The OPD queue, one visit, the doctors list, registering a visit and cancelling
+one sit on permissions.require_registration_desk instead: read is
+`patient.read_all` OR `registration.read`, write adds `frontdesk.write` OR
+`patient.write` OR `registration.write`. The registration.* arms count only
+while ORB_REGISTRATION is on, so with it off these five routes behave exactly
+as before. That is what lets a receptionist (registration.* and nothing else)
+work the queue without holding the chart.
+
+Calling a patient in, completing a consultation, every transfer route and the
+movement history are NOT on it and keep the rules above. A receptionist
+therefore cannot move a patient (a transfer moves who can read the chart) and
+cannot finish a consultation (that raises the charge and, with the OPD feature,
+belongs to opd.consult).
 """
 from __future__ import annotations
 
@@ -62,6 +77,7 @@ from permissions import (
     log_phi_read,
     require_patient_access,
     require_permission,
+    require_registration_desk,
 )
 from services.audit_service import log_audit_event
 from services.frontdesk_service import (
@@ -207,6 +223,18 @@ def require_frontdesk_read():
     return _checker
 
 
+def require_desk_read():
+    """The registration desk's read rule (permissions.require_registration_desk)
+    with the module switch where it always sat: after the permission check."""
+    return require_registration_desk("read", gate=require_frontdesk_module)
+
+
+def require_desk_write():
+    """The registration desk's write rule with the module switch between the
+    read and the write check, the order require_frontdesk_write always had."""
+    return require_registration_desk("write", gate=require_frontdesk_module)
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _bad_request(err: FrontDeskError) -> HTTPException:
@@ -240,7 +268,7 @@ def opd_queue(
     date: str | None = None,
     doctor_id: str | None = None,
     include_completed: bool = False,
-    user: dict = Depends(require_frontdesk_read()),
+    user: dict = Depends(require_desk_read()),
 ):
     """Today's OPD queues for the caller's department, grouped by doctor.
 
@@ -277,7 +305,7 @@ def opd_queue(
 
 
 @router.get("/opd/doctors")
-def opd_doctors(user: dict = Depends(require_frontdesk_read())):
+def opd_doctors(user: dict = Depends(require_desk_read())):
     """The doctors this desk may book a visit with, from the STAFF TABLE.
 
     Not from today's queue. The panel used to derive its dropdown from
@@ -296,7 +324,7 @@ def opd_doctors(user: dict = Depends(require_frontdesk_read())):
 def create_opd_visit(
     data: OpdVisitIn,
     request: Request,
-    user: dict = Depends(require_frontdesk_write()),
+    user: dict = Depends(require_desk_write()),
 ):
     """Register an outpatient visit and issue a token."""
     patient_id = (data.patient_id or "").strip()
@@ -376,7 +404,7 @@ def create_opd_visit(
 def read_opd_visit(
     visit_id: str,
     request: Request,
-    user: dict = Depends(require_frontdesk_read()),
+    user: dict = Depends(require_desk_read()),
 ):
     visit = _visit_or_404(visit_id, user)
     log_phi_read(
@@ -482,7 +510,7 @@ def cancel_visit(
     visit_id: str,
     data: CancelVisitIn,
     request: Request,
-    user: dict = Depends(require_frontdesk_write()),
+    user: dict = Depends(require_desk_write()),
 ):
     """No-show / left without being seen. Soft — the row is kept."""
     _visit_or_404(visit_id, user)

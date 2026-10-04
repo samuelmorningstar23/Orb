@@ -1,5 +1,7 @@
 # The Test Harness and CI: e2e golden journeys, unit tests, pytest, pipeline gates
 
+> **Update, 4 October 2026.** The `Dockerfile` and `docker-compose.yml` described in this guide were retired: Orb is installed natively on the appliance, and a container on macOS cannot reach the GPU. The files are in `docs/archive/retired-docker-2026-10-04/`. The sections about them below are kept as a record of what they did.
+
 Orb ships with three independent automated-test layers and one delivery pipeline that runs them. **Playwright** drives five browser "golden journeys" against the *real* React shell and the *real* FastAPI backend; **Vitest** runs fast, isolated React component/unit tests in a fake browser (jsdom); **pytest** runs the Python backend suite against an isolated throwaway SQLite database. A single GitHub Actions workflow (`ci.yml`) gates every push and pull request on the pytest suite, the TypeScript typecheck+build, and the Vitest suite, while treating lint as informational. Alongside the harness live the *delivery artifacts*: a two-stage Dockerfile, a two-service docker-compose topology, a one-command `install.sh`, and a Grafana dashboard that reads the app's `/metrics` endpoint. This guide walks every file, defines the jargon inline, and tells you exactly what to change to extend each piece.
 
 ---

@@ -612,7 +612,7 @@ CSS Modules are the more collision-proof approach; new components should prefer 
 ```typescript
 server: {
   host: '0.0.0.0',       // LAN accessible
-  allowedHosts: true,
+  allowedHosts: devAllowedHosts(orbEnv, hostname()),  // vite.hosts.ts
   proxy: {
     '/api':      { target: 'http://localhost:8000', changeOrigin: true },
     '/uploads':  { target: 'http://localhost:8000', changeOrigin: true },

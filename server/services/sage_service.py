@@ -9,9 +9,11 @@ import logging
 import os
 import re
 import time
+import bisect
 import difflib
 from datetime import datetime, timezone
-from typing import AsyncGenerator
+from functools import lru_cache
+from typing import AsyncGenerator, NamedTuple
 from config import OLLAMA_BASE_URL, LLM_MODEL, OLLAMA_KEEP_ALIVE
 from database import get_db, db_session
 from permissions import department_scope
@@ -1980,8 +1982,12 @@ def _out_of_scope_locators(db, dept: str | None, in_scope_ids: set) -> list:
     """
     if dept is None:
         return []
+    # `bed` only for an admitted patient (R026): a discharged patient's bed
+    # belongs to someone else now, and "outside your department" about it
+    # would tell the clinician a real admission exists. Still three columns.
     rows = db.execute(
-        "SELECT p.id, p.name, p.bed FROM patients p "
+        "SELECT p.id, p.name, "
+        "CASE WHEN p.status = 'admitted' THEN p.bed END AS bed FROM patients p "
         "WHERE p.status IN ('admitted', 'discharged')"
     ).fetchall()
     return [r for r in rows if r["id"] not in in_scope_ids]
@@ -1999,6 +2005,20 @@ OUT_OF_SCOPE_NOTICE = (
     "access to it does not. If you need it clinically, contact the team caring "
     "for them, or ask an administrator to widen your department access. This "
     "request has been recorded in the audit log."
+)
+
+# The grounding for a patient (by name or bed) who is not in the caller's
+# census. Model-facing, not shown verbatim. Used by the no-such-patient exit
+# and, since R026, by the early exit for a bed nobody here is in. The chat
+# route keys on it to leave the open patient's name off such a turn.
+NO_MATCHING_PATIENT_NOTICE = (
+    "⚠️ NO MATCHING PATIENT: The user's question refers to a specific patient "
+    "(by name or bed) who is NOT in the patient census available to you, and not "
+    "in recent discharges. You MUST tell the user plainly that there is no such "
+    "patient in the census. That is the ONLY reason you may give. Do NOT say you "
+    "lack access to medical records, and do NOT say you need a connection to an "
+    "EHR: Orb IS the record system. You MUST NOT invent or state any vitals, "
+    "diagnosis, labs, medications, or clinical details for them."
 )
 
 
@@ -2291,6 +2311,882 @@ def _full_name_match(p_name: str, query_lower: str) -> bool:
     return all(re.search(rf'\b{re.escape(x)}\b', query_lower) for x in parts)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  BED LOCATORS (ruling R026, 3 and 4 October 2026)
+#
+#  THE DEFECT. Beds and wards were matched by squashing the question and every
+#  label to letters and digits and testing for a SUBSTRING. Ward "GM-1" sits
+#  inside bed "GM-103", so "Summarise bed GM-103" asked the doctor to pick among
+#  all of GM-1; bed "A1" sits inside "HbA1c" and bed "12" inside "after 12
+#  hours", so a question about neither attached that patient's chart.
+#
+#  THREE FIXES WERE BACKED OUT (docs/SAGE_BED_LOCATOR_FINDINGS_2026-10-03.md).
+#  The first matched less, and a turn that matches nobody falls back to the
+#  chart OPEN ON SCREEN, so "cot 12 lactate?" was answered from bed 7. The
+#  second described every way a clinician refers to a bed; each gap in that
+#  description ("how is 12?", "room 12", "MW/12", a bed typed with an en dash)
+#  fell to the open chart the same way. Any closed description has gaps. The
+#  third (this design) dropped "bed 12 HR 140" to the open chart and left the
+#  "ask" to a model that ignored it; this is the fourth.
+#
+#  SO BEDS ARE FOUND FROM WHAT IS ON THE WARD. Every bed label in the doctor's
+#  department is looked for in the question as a WHOLE label, in the shape the
+#  hospital stores it ("GM-103", "MW/12", "Room 205", "ICU Bed 3"), ignoring
+#  case, separators and leading zeros (ruling D2). Each hit is then:
+#    * CERTAIN: written after a bed word ("bed 12", "cot 12", "the patient in
+#      12", "12 number bed") or a lettered code written as a code ("GM-103").
+#    * NOT A BED: a dose, a duration, a ratio, a score ("2 gm 12", "12 hours",
+#      "2:1", "NEWS2 of 9").
+#    * UNSURE: a bare number ("how is 12?"), a clinical code ("is vitamin b12
+#      low?" on a ward with bed B12), a destination ("move her to bed 12").
+#      Sage ASKS (rulings Q1 and D4). Never the open chart.
+#  A reference written with a bed word, or as a code this department uses,
+#  that matches nobody here is NO MATCHING PATIENT (R026 (a)); one missing bed
+#  in a list ends the whole turn (D3). Only a LETTERED code another department
+#  holds is "outside your department": bed numbers repeat across wards (Q2).
+#  "bay" is a room of beds, not a bed (Q3).
+#
+#  The open-chart gate (_names_a_specific_patient) reads bed words through the
+#  same reader (_bed_word_refs), so the two cannot disagree about "bed 12".
+#  Everything here is linear in the length of the question: the request cap is
+#  512 KB, and attempt 2 took 57 s on 50 KB.
+# ══════════════════════════════════════════════════════════════════════════════
+
+#: Hospital-wide label vocabulary, refreshed with the census name tokens at the
+#: start of every turn (_refresh_census_name_tokens) and read by the pure
+#: reader, which runs inside the name gate. Letter prefixes of admitted beds and
+#: wards ("gm", "ccu"), the chunk keys of admitted beds, and of wards.
+_CENSUS_BED_PREFIXES: frozenset = frozenset()
+_CENSUS_BED_KEYS: frozenset = frozenset()
+_CENSUS_WARD_KEYS: frozenset = frozenset()
+
+#: Unicode dashes, spaces and fullwidth digits as the plain characters the
+#: rules expect. One character for one, so positions never move.
+_LOCATOR_FOLD = str.maketrans({
+    **{c: "-" for c in "‐‑‒–—―−﹘﹣－"},
+    **{c: " " for c in ("           "
+                        "  ​‌‍    ⁠　﻿")},
+    **{chr(0xFF10 + d): str(d) for d in range(10)},
+})
+
+#: Letter runs that are words or ward-round abbreviations before they are ward
+#: codes. Written spaced or joined ("RR 24", "rr24") they never START a bed
+#: reference on their own; written as a code ("RR-24") or after "bed" they do.
+#: A ward called "OR" is matched only after the word "ward".
+_LOCATOR_STOP_PREFIXES = frozenset({
+    # English
+    "am", "an", "and", "as", "at", "be", "by", "do", "for", "go", "he", "hi",
+    "if", "in", "is", "it", "me", "my", "no", "of", "ok", "on", "or", "per",
+    "pm", "so", "the", "to", "up", "us", "via", "vs", "we",
+    # locator words
+    "bed", "beds", "cot", "cots", "num", "ward",
+    # units and time. Not "gm": it is Orb's own General Medicine code, and the
+    # dose readings are caught by the number-before and unit-after guards.
+    "amp", "cap", "cc", "cm", "day", "days", "dose", "hr", "hrs", "iu", "kg",
+    "mcg", "meq", "mg", "min", "mins", "ml", "mm", "mmol", "ng", "pg", "puff",
+    "sec", "tab", "tabs", "unit", "units", "week", "wk", "wks",
+    # observations, scores, labs, routes and frequencies
+    "abg", "ac", "alt", "anc", "aptt", "asa", "ast", "bd", "bmi", "bnp", "bp",
+    "ca", "cbc", "cbg", "cd", "ck", "ckd", "covid", "cpk", "cr", "crp", "ct",
+    "cvp", "cxr", "dns", "ecg", "ed", "ef", "egfr", "ekg", "er", "esr", "etco",
+    "fbs", "fev", "fio", "ft", "gcs", "gfr", "gold", "grade", "hb", "hba",
+    "hco", "hd", "hs", "il", "im", "inr", "iv", "ivf", "ldh", "lv", "map",
+    "mews", "mri", "na", "nbm", "news", "npo", "nrs", "ns", "nyha", "od", "op",
+    "ot", "pao", "paco", "pc", "pct", "peep", "plt", "po", "pod", "pr", "prn",
+    "pt", "ptt", "qds", "rass", "rbs", "rl", "rr", "sc", "sos", "spo", "stage",
+    "stat", "tds", "tsh", "type", "uo", "vas", "vbg", "wbc",
+})
+
+#: Words after which a number is a value, not a bed ("NEWS2 of 9", "potassium
+#: 5", "GCS 8", "day 3", "vanc trough 20", "her son is 30"). Looked for up to
+#: six runs back, through the connectors below ("lactate came back 3", "GCS
+#: dropped from 14 to 12"). Drug names count too (_is_drug_word: "metoprolol
+#: 12 bd"). Not "pt": "pt 12 potassium?" is bed 12 as often as a prothrombin
+#: time, so Sage asks.
+_MEASURE_WORDS = frozenset({
+    "news", "news2", "mews", "pews", "gcs", "score", "scores", "pain", "vas",
+    "nrs", "sofa", "qsofa", "apache", "curb", "wells", "chads", "vasc",
+    "hasbled", "bled", "timi", "grace", "nihss", "asa", "nyha", "gold", "meld",
+    "braden", "waterlow", "morse", "rass", "apgar", "ecog", "mobitz", "ckd",
+    "grade", "stage", "class", "type", "level", "phase", "cycle", "day",
+    "days", "pod", "week", "weeks", "dose", "doses", "hr", "pulse", "rr", "bp",
+    "sbp", "dbp", "map", "cvp", "temp", "temperature", "sats", "sat", "spo",
+    "o", "fio", "peep", "pip", "rate", "flow", "k", "na", "cl", "phos",
+    "potassium", "sodium", "chloride", "calcium", "magnesium", "phosphate",
+    "hb", "hgb", "haemoglobin", "hemoglobin", "wbc", "tlc", "plt", "platelet",
+    "platelets", "anc", "neutrophils", "crp", "pct", "procalcitonin", "esr",
+    "inr", "aptt", "ptt", "lactate", "glucose", "sugar", "rbs", "fbs", "cbg",
+    "grbs", "bsl", "creatinine", "creat", "cr", "urea", "bun", "egfr", "gfr",
+    "ph", "pco", "po", "pao", "paco", "hco", "bicarb", "troponin", "trop",
+    "bnp", "albumin", "bilirubin", "bili", "alt", "ast", "alp", "ggt", "ldh",
+    "ck", "tsh", "hba", "ldl", "hdl", "ferritin", "vitamin", "trough",
+    "uric", "uo", "output", "input", "balance", "bolus", "volume", "insulin",
+    "age", "aged", "weight", "wt", "height", "bmi", "size", "count", "times",
+    "x", "every", "q", "ef", "lvef", "son", "daughter", "husband", "wife",
+    "mother", "father", "brother", "sister",
+})
+_MEASURE_CONNECTORS = frozenset({
+    "of", "is", "was", "were", "are", "at", "to", "from", "by", "around",
+    "about", "approx", "approximately", "now", "today", "still", "only",
+    "just", "down", "up", "and", "or", "then", "over", "under", "above",
+    "below", "than", "between", "rising", "falling", "dropped", "fell", "rose",
+    "went", "very", "nearly", "almost", "roughly", "since", "has", "have",
+    "had", "been", "came", "back", "spiked", "spiking", "peaked", "reached",
+    "hit", "increased", "decreased", "going", "for",
+})
+#: "review at 5", "repeat CBC at 6": a number after these is a time, unless a
+#: person comes first ("the patient at 12", which is a bed or a time: Sage asks).
+_TIME_WORDS = frozenset({"at", "by", "till", "until", "before", "after", "around"})
+_PERSON_WORDS = frozenset({"patient", "pt", "man", "woman", "lady", "gentleman",
+                           "guy", "chap", "boy", "girl", "baby", "child", "fellow",
+                           "one", "her", "him", "she", "he"})
+
+#: One letter plus digits that ward text uses as a code before a bed: vitamins
+#: (B12, D3, K1), spine levels (C5, T12, L4, S1), heart sounds (S3, A2, P2),
+#: ECG leads (V1-V9), thyroid (T3, T4), TNM and grade (T2 N0 M1 G3), GCS parts
+#: (E4 M6), days (D3 of antibiotics), times (x2), frequencies (q6), O2, H2.
+#: "A1" is deliberately absent: HbA1c is one token, and a site that names a bed
+#: A1 must still be able to say "summarise A1".
+_SHORT_CLINICAL_CODE_RE = re.compile(
+    r"^(?:b\d|b12|c\d|d\d{1,2}|e\d|t(?:\d|1[0-2])|l[1-5]|s[1-5]|v\d|k[12]"
+    r"|a[23]|p\d|n[0-3]|m\d|g\d|o2|h[12]|x\d{1,2}|q\d{1,2})$"
+)
+
+_NUM_UNITS = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+    "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+    "seventeen": 17, "eighteen": 18, "nineteen": 19,
+}
+#: With the two misspellings the second reviewer typed ("fourty", "ninty").
+_NUM_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fourty": 40, "fifty": 50,
+             "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90, "ninty": 90}
+_NUM_BIG = frozenset({"hundred", "thousand", "lakh", "lakhs", "crore"})
+_NUM_WORD_ALT = "|".join(sorted(list(_NUM_UNITS) + list(_NUM_TENS), key=len, reverse=True))
+
+_TOKEN_RE = re.compile(r"[a-z]+|[0-9]+")
+
+#: "bed", "beds", "cot", "cots", then "no" / "nos" / "nr" / "n°" / "num" /
+#: "number" / "#" / "=" / "(" / ",". Never "bay" (Q3). Never across a
+#: sentence: "." is not a separator here, so "out of bed. 2 nurses" is not
+#: bed 2. Separator runs are never adjacent, so whitespace cannot backtrack.
+_BED_WORD_SRC = (r"(?:beds?|cots?)(?![a-z])[\s#:=,(\-]*"
+                 r"(?:(?:nos?|nr|n[°º]|num(?:ber)?)(?![a-z])\.?[\s#:=,(.\-]*)?")
+_BED_WORD_RE = re.compile(r"(?<![a-z0-9])" + _BED_WORD_SRC)
+#: The same words at the start of a STORED label ("Bed 21"), dropped before
+#: comparing, so a site that stores "Bed 21" is found by "bed 21".
+_LABEL_BED_WORD_RE = re.compile(r"^\s*" + _BED_WORD_SRC)
+#: "head of bed 30 degrees" is a position, not a bed.
+_NOT_A_BED_WORD_BEFORE_RE = re.compile(r"(?:head|foot)\s+of\s+(?:the\s+)?$")
+
+#: "12 number bed", "12 no bed", "12th bed". Singular, so "12 number beds
+#: free" is a count, not bed 12. A bare "12 bed" is not here ("a 12 bed ICU").
+_NUMBER_BED_RE = re.compile(
+    r"(?<![a-z0-9.])(?P<n>[0-9]{1,6})(?:(?:st|nd|rd|th)[ \t]*|[ \t]*(?:no\.?|num(?:ber)?)[ \t]*)"
+    r"(?:bed|cot)(?![a-z])")
+
+#: "the patient in 12", "pt in 12", "the lady in GM-103". Only "in": "the
+#: patient at 4" is usually a time and "the patient on 2 pressors" a count,
+#: so those numbers are read like any bare number (Sage asks if that bed
+#: exists). A determiner is required before the person nouns other than
+#: patient/pt, so "one in 10 patients" is not a bed.
+_PATIENT_IN_RE = re.compile(
+    r"(?<![a-z])(?:(?:the|that|this)\s+(?:man|woman|lady|gentleman|guy|chap|boy|girl"
+    r"|baby|child|fellow|one)|patient|pt)\s+in\s+")
+
+#: Ward-round shorthand: "w6 b12", "w6/b12".
+_WARD_BED_SHORTHAND_RE = re.compile(
+    r"(?<![a-z0-9])w(?P<w>[0-9]{1,3})[ \t/,\-]*b(?P<b>[0-9]{1,6})(?![a-z0-9])")
+
+#: A list after a label: "beds 12 and 14", "12, 14", "12 & 14", "12/14",
+#: "12 or bed 14".
+_LOCATOR_LIST_RE = re.compile(
+    r"[ \t]*(?:,|&|/|\band\b|\bor\b|\bvs\b\.?|\bversus\b)[ \t]*"
+    r"(?:(?:beds?|cots?)(?![a-z])[ \t#:\-]*)?")
+#: "beds 12 to 14": a range, which is never one bed.
+_LOCATOR_RANGE_RE = re.compile(r"[ \t]+(?:to|till|until|through|thru)[ \t]+[0-9]")
+
+#: A ward written as a ward: "ward 6", "ward-6", "ward GM-1", "ward six", and
+#: (separately, so one cannot hide the other) "6th ward".
+_WARD_MENTION_RE = re.compile(
+    r"(?<![a-z0-9])ward[ \t#:\-]*(?:(?:no\.?|num(?:ber)?)(?![a-z])[ \t#:.\-]*)?"
+    r"(?P<w>(?:[a-z]{1,10}[\-_]?)?[0-9]{1,6}[a-z]?|" + _NUM_WORD_ALT + r")(?![a-z0-9])")
+_N_WARD_RE = re.compile(r"(?<![a-z0-9])(?P<w>[0-9]{1,3})(?:st|nd|rd|th)?[ \t]+ward(?![a-z])")
+
+#: Text allowed between a ward and a bed for them to be read TOGETHER: "ward
+#: 6 bed 12", "bed 12 ward 6", "ward 6 - bed 12", "bed 12 (ward 6)", "bed 12
+#: from ward 6", "ward-6/bed-12". "to" is absent: "transfer bed 12 to ward 6"
+#: is a move.
+_WARD_BED_GAP_RE = re.compile(
+    r"[\s,\-/()]*(?:(?:on|in|of|at|from)\s+)?(?:the\s+)?(?:ward\s*)?[\s,\-/()]*")
+_WARD_BED_WINDOW = 80
+
+#: A bed written after a MOVEMENT VERB and "to" is where a patient is going,
+#: not who the question is about: Sage asks if someone is in it, and an empty
+#: one is simply a bed. Without the verb ("ABG from bed 45", "what happened to
+#: bed 45", "compare bed 12 to bed 45") it is an ordinary reference.
+_DESTINATION_RE = re.compile(
+    r"\b(?:shift(?:ed|ing|s)?|mov(?:e|ed|es|ing)|transfer(?:red|ring|s)?|relocat(?:e|ed|ing)"
+    r"|send|sending|sent|wheel(?:ed|ing)?|put|plac(?:e|ed|es|ing)|admit(?:ted|ting|s)?"
+    r"|tak(?:e|es|ing)|took|bring(?:s|ing)?|brought)\b[^.?!\n]{0,30}?"
+    r"\b(?:to|into|onto|towards)\s+(?:the\s+|a\s+)?$")
+
+#: Words that make a number a duration, dose, rate, time, date or count, not
+#: a bed. "h", "d", "g" and "l" do not count before "/" ("h/o", "d/c", "g/c").
+_UNIT_WORDS = (
+    r"hours?|hrs?|hourly|hrly|h(?![a-z/])|minutes?|mins?|days?|d(?![a-z/])|weeks?|wks?|months?"
+    r"|years?|yrs?|y/?o|doses?|mg|mcg|ug|g(?![a-z/])|gms?|grams?|ml|cc|l(?![a-z/])|litres?"
+    r"|liters?|lpm|kg|lbs?|iu|units?|mmol|meq|mmhg|cm|mm|feet|ft|inch(?:es)?|bpm|tabs?"
+    r"|tablets?|puffs?|drops?|am|pm|o'?clock|breaths?|beats?|percent|degrees?|deg"
+    r"|seconds?|secs?")
+_COUNT_WORDS = (
+    r"beds|patients|nurses|doctors|people|cases|admissions|discharges|deaths|sets"
+    r"|episodes|pints|bags|units|stools|loose|times|more|pressors|inotropes|antibiotics"
+    r"|antihypertensives|drugs|agents|medications|meds|attempts|bottles|vials|ampoules")
+#: For a number written WITHOUT a bed word (and for a code like "ICU 3").
+_NOT_A_BED_AFTER_LOOSE_RE = re.compile(
+    r"\s*(?:" + _UNIT_WORDS + r")(?![a-z])"
+    r"|\s*(?:no\.?\s*|number\s+)?(?:" + _COUNT_WORDS + r")(?![a-z])"
+    r"|\s*(?:iv|im|sc|po|od|bd|tds|qds|qid|tid|bid|hs|prn|stat|sos|sl|nebs?|q[0-9]{1,2}h?)(?![a-z0-9])"
+    r"|\s*-?\s*leads?(?![a-z])"
+    r"|\s+(?:beds?|nurses?|nights?)(?![a-z])"
+    r"|\s*(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|jun|jul|aug(?:ust)?"
+    r"|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?![a-z])"
+    r"|\s*/\s*[mf](?![a-z])|\s+[mf](?![a-z])"
+    r"|\s*(?:%|°|\+)|[:.][0-9]|/[0-9]|\s*[x×]\s*[0-9]")
+#: After a BED WORD only these make the reference unsure (Sage asks if someone
+#: is in that bed, otherwise it is text): "bed 2 days ago", "bed 30 degrees",
+#: "out of bed, 2 nurses". Everything else after a bed word is that bed:
+#: "bed 12 HR 140", "bed 12 day 3", "bed 12 h/o CKD" (attempt 3 dropped these
+#: to the open chart).
+_SOFT_AFTER_BED_WORD_RE = re.compile(
+    r"\s*(?:hours|hrs|days|weeks|wks|months|years|yrs|minutes|mins|degrees?|deg|percent)(?![a-z])"
+    r"|\s*(?:no\.?\s*|number\s+)?(?:beds|patients|nurses|doctors|people|cases|admissions"
+    r"|discharges|deaths|sets|episodes|pints|bags|units|stools|times)(?![a-z])"
+    r"|\s*(?:%|°)|[:.][0-9]")
+#: A list never runs on into a value: "Bed 12, 65/M", "bed 12, 140/90",
+#: "bed 12, 4/5 power", "bed 12, 3 sets of cultures".
+_NOT_A_LIST_ITEM_AFTER_RE = re.compile(r"\s*/|\s+[mf](?![a-z])|[mf](?![a-z])")
+
+
+class _Tok(NamedTuple):
+    """A run of letters or digits. `value` is the text for letters and the
+    int for digits (None for more than 6 significant digits: never a bed, and
+    int() refuses more than 4,300 digits)."""
+    alpha: bool
+    text: str
+    value: object
+    start: int
+    end: int
+
+
+class _BedRef(NamedTuple):
+    """A bed written with a bed word or as a department code. `chunks` is
+    None when it cannot be read as ONE bed ("beds 12 to 14", "bed one two"):
+    never a guess, always no-match. `soft`: unsure (ask if someone is in that
+    bed, otherwise text). `spaced`: letters spaced from digits ("icu 3"),
+    which only this department's own prefixes may do."""
+    start: int
+    end: int
+    lab_start: int
+    lab_end: int
+    chunks: object
+    dest: bool = False
+    ward: object = None   # a ward written into the reference itself ("w6 b12")
+    soft: bool = False
+    spaced: bool = False
+
+
+class _Located(NamedTuple):
+    """What a question located. `matched` is the match list both lanes read
+    (names, certain beds, wards); `unresolved` is (ref, ward_qualified) for
+    every bed reference that matched nobody here; `ask` is the patients Sage
+    must ask about rather than answer (Q1, D4, destinations)."""
+    matched: list
+    unresolved: list
+    ask: list
+
+
+def _tokenize(q: str) -> list:
+    out = []
+    for m in _TOKEN_RE.finditer(q):
+        t = m.group(0)
+        if t[0].isdigit():
+            ok = len(t) <= 12 and len(t.lstrip("0")) <= 6
+            out.append(_Tok(False, t, int(t) if ok else None, m.start(), m.end()))
+        else:
+            out.append(_Tok(True, t, t, m.start(), m.end()))
+    return out
+
+
+def _ward_chunks(label):
+    """("gm", 1) for "GM-1", ("general", "medicine") for "General Medicine",
+    None for nothing. Digit runs are ints, so leading zeros drop out."""
+    if not label:
+        return None
+    toks = _tokenize(str(label).lower().translate(_LOCATOR_FOLD))
+    if not toks or any(t.value is None for t in toks):
+        return None
+    return tuple(t.value for t in toks)
+
+
+def _label_chunks(label):
+    """The comparison key of a bed label as stored: ("gm", 103) for "GM-103",
+    "gm 103" and "Bed GM-0103"; (21,) for "Bed 21"; ("icu", "bed", 3) for "ICU
+    Bed 3". None when there is no digit in it (a bed called "Side room" is
+    reached by name, not by number)."""
+    if not label:
+        return None
+    s = _LABEL_BED_WORD_RE.sub("", str(label).lower().translate(_LOCATOR_FOLD), count=1)
+    ch = _ward_chunks(s)
+    if not ch or not any(isinstance(c, int) for c in ch):
+        return None
+    return ch
+
+
+def _label_vocabulary(rows) -> tuple:
+    """(letter prefixes, bed keys, ward keys) of census rows carrying `bed`
+    and `ward`. A prefix is a letter run followed by digits ("gm" of GM-103)."""
+    prefixes, bed_keys, ward_keys = set(), set(), set()
+    for r in rows:
+        bk = _label_chunks(r["bed"])
+        wk = _ward_chunks(r["ward"])
+        if bk:
+            bed_keys.add(bk)
+        if wk:
+            ward_keys.add(wk)
+        for ch in (bk, wk):
+            if ch and len(ch) >= 2 and isinstance(ch[0], str) and isinstance(ch[1], int):
+                prefixes.add(ch[0])
+    return frozenset(prefixes), frozenset(bed_keys), frozenset(ward_keys)
+
+
+def _joins(a: _Tok, b: _Tok, gap: str, typed: bool, spaced_prefixes) -> bool:
+    """May runs `a` and `b` belong to ONE label across `gap`?
+
+    Letters then digits: "", "-", "_", ".", "/" ("GM-103", "MW/12", "GW.12"),
+    or one space when the letters are a ward prefix ("gm 103"); after a single
+    letter only "" or "-" ("a 1 point rise" is ordinary text). Digits then
+    letters: "12A". Letters then letters: a space only in a STORED label
+    ("ICU Bed 3"), never in typed text. Digits then digits: "-" only, so
+    "12/14" is a list and "12.5" a decimal.
+    """
+    if a.alpha and not b.alpha:
+        if len(a.text) == 1:
+            return gap in ("", "-")
+        if gap in ("", "-", "_", ".", "/"):
+            return True
+        return gap == " " and (spaced_prefixes is None or a.text in spaced_prefixes)
+    if not a.alpha and b.alpha:
+        return gap in ("", "-")
+    if a.alpha and b.alpha:
+        return gap in ("-", "_", ".") or (not typed and gap == " ")
+    return gap in ("-", "_")
+
+
+def _glued_left(toks, i) -> bool:
+    return i > 0 and toks[i - 1].end == toks[i].start
+
+
+def _glued_right(toks, j) -> bool:
+    return j + 1 < len(toks) and toks[j + 1].start == toks[j].end
+
+
+def _number_before(q: str, start: int) -> bool:
+    """Is the text just before `start` a number ("2 gm 12 hourly")?"""
+    i = start - 1
+    while i >= 0 and q[i] in " \t":
+        i -= 1
+    return i >= 0 and q[i].isdigit()
+
+
+def _is_drug_word(w: str) -> bool:
+    """A drug the ward's own lexicons know (the name gate's, see
+    _is_clinical_vocabulary), so "metoprolol 12 bd" is a dose, not bed 12."""
+    return bool(_DRUG_TOKEN_RE.match(w) or w in _BRAND_FLOOR
+                or (w in _FORMULARY_TERMS and w not in _CENSUS_NAME_TOKENS)
+                or (len(w) >= 6 and w.startswith(_DRUG_PREFIXES)))
+
+
+def _after_a_measure(toks, i) -> bool:
+    """Is the number at toks[i] a value ("NEWS2 of 9", "potassium 5 and 6",
+    "GCS dropped from 14 to 12", "trop I 21", "A1c is 11", "metoprolol 12")?
+    Single letters are stepped over ("trop I", "vitamin D"); a letter run
+    glued to digits ("news2", "a1c", "cd4") is a score or a lab."""
+    j, seen = i - 1, 0
+    while j >= 0 and seen < 6:
+        t = toks[j]
+        if t.alpha:
+            if (t.text in _MEASURE_WORDS or _is_drug_word(t.text)
+                    or _glued_left(toks, j) or _glued_right(toks, j)):
+                return True
+            if t.text not in _MEASURE_CONNECTORS and len(t.text) > 1:
+                return False
+        j -= 1
+        seen += 1
+    return False
+
+
+def _a_time(toks, i) -> bool:
+    """"review at 5", "temp spiked to 39 at 2": a time. "the patient at 12"
+    is not decided here (a bed or a time: Sage asks)."""
+    if i == 0 or not toks[i - 1].alpha or toks[i - 1].text not in _TIME_WORDS:
+        return False
+    return not (i >= 2 and toks[i - 2].alpha and toks[i - 2].text in _PERSON_WORDS)
+
+
+def _is_destination(q: str, start: int) -> bool:
+    return bool(_DESTINATION_RE.search(q[max(0, start - 60):start]))
+
+
+def _read_number_words(q, toks, i):
+    """(start, end, chunks, next_index, spaced) for "twelve", "twenty one",
+    "seventy-seven". chunks None for what cannot be one bed ("one two",
+    "hundred and two", "a hundred and two")."""
+    t = toks[i]
+    if t.text in _NUM_BIG or t.text == "a":
+        return t.start, t.end, None, i + 1, False
+    val, k = _NUM_UNITS.get(t.text, _NUM_TENS.get(t.text)), i
+    if (t.text in _NUM_TENS and k + 1 < len(toks) and toks[k + 1].alpha
+            and 1 <= _NUM_UNITS.get(toks[k + 1].text, 0) <= 9
+            and q[t.end:toks[k + 1].start] in (" ", "-")):
+        k += 1
+        val += _NUM_UNITS[toks[k].text]
+    if k + 1 < len(toks) and q[toks[k].end:toks[k + 1].start].strip(" \t-") == "":
+        nxt = toks[k + 1]
+        if not nxt.alpha or nxt.text in _NUM_UNITS or nxt.text in _NUM_TENS or nxt.text in _NUM_BIG:
+            return t.start, toks[k].end, None, k + 1, False
+    return t.start, toks[k].end, (val,), k + 1, False
+
+
+def _read_label(q, toks, at, pos, spaced_prefixes, after_bed_word):
+    """The label written at `pos`: (start, end, chunks, next_index, spaced),
+    or None when nothing there reads as a bed. Bounded to four runs, so it
+    costs the same however long the question is. After a bed word an ordinal
+    is that bed ("bed 45th") and a number too long to be a bed is no-match;
+    elsewhere ("the patient in 2nd degree block") they are not beds."""
+    i = at.get(pos)
+    if i is None:
+        return None
+    t = toks[i]
+    if t.alpha and (t.text in _NUM_UNITS or t.text in _NUM_TENS or t.text in _NUM_BIG
+                    or (t.text == "a" and i + 1 < len(toks) and toks[i + 1].text in _NUM_BIG)):
+        return _read_number_words(q, toks, i)
+    if t.value is None:
+        return (t.start, t.end, None, i + 1, False) if after_bed_word else None
+    k = i
+    while k + 1 < len(toks) and k - i < 3:
+        a, b = toks[k], toks[k + 1]
+        if b.value is None or not _joins(a, b, q[a.end:b.start], True,
+                                         spaced_prefixes if k == i else ()):
+            break
+        k += 1
+    run, tail = toks[i:k + 1], k
+    if after_bed_word and len(run) >= 2 and not run[-2].alpha and run[-1].alpha \
+            and run[-1].text in ("st", "nd", "rd", "th"):
+        run = run[:-1]                # "bed 45th" is bed 45
+    elif any(not x.alpha and y.alpha and y.text in ("st", "nd", "rd", "th")
+             for x, y in zip(run, run[1:])):
+        return None                   # "the patient in 2nd degree block"
+    if not any(not r.alpha for r in run) or _glued_right(toks, tail):
+        return None
+    spaced = len(run) >= 2 and run[0].alpha and q[run[0].end:run[1].start] == " "
+    chunks = tuple(r.value for r in run)
+    end, nxt = toks[tail].end, tail + 1
+    if _LOCATOR_RANGE_RE.match(q, end):
+        chunks = None     # "beds 12 to 14"
+    elif (nxt < len(toks) and not toks[nxt].alpha
+          and q[end:toks[nxt].start].strip(" \t") == ""
+          and not _NOT_A_BED_AFTER_LOOSE_RE.match(q, toks[nxt].end)):
+        chunks = None     # "bed 1 2"
+    return t.start, end, chunks, nxt, spaced
+
+
+def _labels_from(q, toks, at, pos, spaced_prefixes, after_bed_word):
+    """Every label from `pos` on, following a list ("12 and 14", "12, 14"),
+    as (claim_start, start, end, chunks, soft, spaced). A later item claims
+    its connector and any bed word in it ("12 and bed 14"), so that bed word
+    is never read again as the start of a new list: that re-reading made
+    "beds 7, beds 7, ..." quadratic. A later item followed by a value ("Bed
+    12, 65/M", "bed 12, 3 sets") ends the list instead of being a bed."""
+    claim, first = pos, True
+    while True:
+        lab = _read_label(q, toks, at, pos, spaced_prefixes, after_bed_word)
+        if lab is None:
+            return
+        start, end, chunks, _nxt, spaced = lab
+        if not first and chunks is not None and (
+                _NOT_A_LIST_ITEM_AFTER_RE.match(q, end) or _NOT_A_BED_AFTER_LOOSE_RE.match(q, end)
+                or _SOFT_AFTER_BED_WORD_RE.match(q, end)):
+            return
+        soft = chunks is not None and bool(_SOFT_AFTER_BED_WORD_RE.match(q, end))
+        yield claim, start, end, chunks, soft, spaced
+        if soft:
+            return
+        nxt = _LOCATOR_LIST_RE.match(q, end)
+        if not nxt or nxt.end() == end:
+            return
+        claim, pos, first = end, nxt.end(), False
+
+
+def _bed_word_refs(q: str, toks=None, at=None, spaced_prefixes=None) -> list:
+    """Every bed written WITH a bed word (pure, no census read beyond the
+    hospital label vocabulary): "bed 12", "beds 12 and 14", "cot 12", "bed
+    no. 12", "bed twelve", "bed 45th", "12 number bed", "12th bed", "the
+    patient in 12", "w6 b12". The name gate and the matcher both read this."""
+    if toks is None:
+        toks = _tokenize(q)
+        at = {t.start: n for n, t in enumerate(toks)}
+    if spaced_prefixes is None:
+        spaced_prefixes = _CENSUS_BED_PREFIXES
+    refs, taken = [], bytearray(len(q) + 1)
+
+    def _add(start, end, lab_start, lab_end, chunks, ward=None, soft=False, spaced=False):
+        if taken.find(1, start, end) != -1:
+            return
+        refs.append(_BedRef(start, end, lab_start, lab_end, chunks,
+                            _is_destination(q, start), ward, soft, spaced))
+        taken[start:end] = b"\x01" * (end - start)
+
+    for m in _WARD_BED_SHORTHAND_RE.finditer(q):
+        _add(m.start(), m.end(), m.start("b"), m.end("b"), (int(m.group("b")),),
+             ward=(int(m.group("w")),))
+    for kw in _BED_WORD_RE.finditer(q):
+        if taken[kw.start()] or _NOT_A_BED_WORD_BEFORE_RE.search(q[max(0, kw.start() - 16):kw.start()]):
+            continue   # inside a list already read; "head of bed 30 degrees"
+        first = True
+        for c, a, b, chunks, soft, spaced in _labels_from(q, toks, at, kw.end(), spaced_prefixes, True):
+            _add(kw.start() if first else c, b, a, b, chunks, soft=soft, spaced=spaced)
+            first = False
+    for m in _NUMBER_BED_RE.finditer(q):
+        _add(m.start(), m.end(), m.start("n"), m.end("n"), (int(m.group("n")),),
+             soft=bool(_SOFT_AFTER_BED_WORD_RE.match(q, m.end())))
+    for m in _PATIENT_IN_RE.finditer(q):
+        if taken[m.end()] or _BED_WORD_RE.match(q, m.end()):
+            continue  # "the patient in bed 15": the bed word has it
+        for c, a, b, chunks, _soft, spaced in _labels_from(q, toks, at, m.end(), spaced_prefixes, False):
+            if chunks and _NOT_A_BED_AFTER_LOOSE_RE.match(q, b):
+                break  # "the patient in 2 litres O2", "the patient in 2:1 block"
+            if chunks and len(chunks) == 1 and isinstance(chunks[0], int) \
+                    and b - a == 4 and 1900 <= chunks[0] <= 2099:
+                break  # "was the patient in 2019 on warfarin?"
+            if chunks and isinstance(chunks[0], str) and chunks in _CENSUS_WARD_KEYS:
+                break  # "the patient in GM-1" names the ward
+            _add(a if c == m.end() else c, b, a, b, chunks, spaced=spaced)
+    refs.sort(key=lambda r: r.start)
+    return refs
+
+
+@lru_cache(maxsize=16)
+def _bed_word_refs_cached(q: str, spaced_prefixes: frozenset, ward_keys: frozenset) -> tuple:
+    """Keyed on both census sets it reads, so a refresh can never serve a
+    reading taken against the old ones."""
+    return tuple(_bed_word_refs(q, spaced_prefixes=spaced_prefixes))
+
+
+def _bed_word_refs_now(q: str) -> tuple:
+    return _bed_word_refs_cached(q, _CENSUS_BED_PREFIXES, _CENSUS_WARD_KEYS)
+
+
+def _has_bed_reference(query_lower: str) -> bool:
+    """Does the question name a bed with a bed word? The name gate's reading,
+    from the same reader as the matcher. Not a destination ("move her to bed
+    12"), not an unsure one ("bed 2 days ago"), and not letters spaced from
+    digits ("the patient in ICU 3"), which only this department's own codes
+    may use; the matcher decides those, before the open chart is consulted."""
+    q = query_lower.translate(_LOCATOR_FOLD)
+    return any(not (r.dest or r.soft or r.spaced) for r in _bed_word_refs_now(q))
+
+
+def _ward_mentions(q, toks, at, ward_keys_here, taken) -> list:
+    """(start, end, key) for every ward written in the question: "ward 6",
+    "6th ward", or a ward label of this department written whole ("GM-1",
+    "CCU", "General Medicine"), outside text already read as a bed. A label
+    that is only digits, or a word like "OR", counts only after the word
+    "ward"; a label ending in letters does not count when digits follow ("ICU"
+    in "ICU-06")."""
+    out = []
+    for rx in (_WARD_MENTION_RE, _N_WARD_RE):
+        for m in rx.finditer(q):
+            if taken.find(1, m.start(), m.end()) != -1:
+                continue   # "bed 12 ward 6": "12 ward" belongs to the bed
+            w = m.group("w")
+            key = ((_NUM_UNITS.get(w, _NUM_TENS.get(w)),) if w in _NUM_UNITS or w in _NUM_TENS
+                   else _ward_chunks(w))
+            if key and None not in key:
+                out.append((m.start(), m.end(), key))
+    for key in ward_keys_here:
+        if all(isinstance(c, int) for c in key) or (
+                len(key) == 1 and key[0] in _LOCATOR_STOP_PREFIXES):
+            continue  # needs "ward", which the patterns above already read
+        for i, t in enumerate(toks):
+            if t.value != key[0] or _glued_left(toks, i) or i + len(key) > len(toks):
+                continue
+            run = toks[i:i + len(key)]
+            if any(r.value != c for r, c in zip(run, key)) or any(
+                    not _joins(x, y, q[x.end:y.start], False, None) for x, y in zip(run, run[1:])):
+                continue
+            end = run[-1].end
+            if _glued_right(toks, i + len(key) - 1):
+                continue
+            if isinstance(key[-1], str) and re.match(r"[\s\-_.]*[0-9]", q[end:end + 8]):
+                continue
+            if isinstance(key[-1], int) and (_NOT_A_BED_AFTER_LOOSE_RE.match(q, end)
+                                             or (isinstance(key[0], str) and _number_before(q, t.start))):
+                continue
+            out.append((t.start, end, key))
+    kept = []
+    for w in sorted(out):
+        if taken.find(1, w[0], w[1]) == -1:
+            kept.append(w)
+            taken[w[0]:w[1]] = b"\x01" * (w[1] - w[0])
+    return kept
+
+
+def _beside(q, a_start, a_end, b_start, b_end) -> bool:
+    """Are spans a and b written together ("ward 6 bed 12", "bed 12 (ward 6)")?"""
+    if a_end <= b_start:
+        return bool(_WARD_BED_GAP_RE.fullmatch(q, a_end, b_start))
+    if b_end <= a_start:
+        return bool(_WARD_BED_GAP_RE.fullmatch(q, b_end, a_start))
+    return False
+
+
+def _locate_patients(patients, discharged_patients, query_lower, query_words) -> _Located:
+    """Which of these patients did the clinician name, or locate by bed or ward?
+
+    Names exactly as before. Beds from the labels on the ward (see the section
+    comment above); wards whole. A ward written beside a bed narrows it, and a
+    pair that does not meet is no match, never "outside your department".
+    """
+    q = query_lower.translate(_LOCATOR_FOLD)
+    toks = _tokenize(q)
+    at = {t.start: n for n, t in enumerate(toks)}
+    rows_here = list(patients)
+    dept_prefixes, _bk, _wk = _label_vocabulary(rows_here + list(discharged_patients))
+    by_key: dict = {}
+    for p in rows_here:
+        k = _label_chunks(p['bed'])
+        if k:
+            by_key.setdefault(k, []).append(p)
+    first_index: dict = {}
+    for k, ps in by_key.items():
+        first_index.setdefault(k[0], []).append((k, ps))
+    ward_keys_here = {k for k in (_ward_chunks(p['ward']) for p in rows_here) if k}
+    all_ward_keys = ward_keys_here | _CENSUS_WARD_KEYS
+
+    # Beds written with a bed word first, so a ward mention can never claim
+    # their number ("bed 12 ward 6" is not "12 ward"). Letters spaced from
+    # digits that are another department's prefix ("the patient in ICU 3")
+    # name a unit in passing, not a bed.
+    taken = bytearray(len(q) + 1)
+    refs = [r for r in _bed_word_refs_now(q)
+            if not (r.spaced and r.chunks and isinstance(r.chunks[0], str)
+                    and r.chunks[0] not in dept_prefixes)]
+    for r in _bed_word_refs_now(q):
+        taken[r.start:r.end] = b"\x01" * (r.end - r.start)
+    wards = _ward_mentions(q, toks, at, ward_keys_here, taken)
+    ward_starts = [w[0] for w in wards]
+
+    # A code written without a bed word ("GM-103", "RB-106", "gm 103"). It
+    # counts when its letters are a prefix THIS department uses (so a missing
+    # one is no match), or when that exact bed is admitted in another
+    # department and it is written AS A CODE ("ICU-03", "icu03"; never "ICU 3
+    # bed free"), so the answer is "outside your department". Any other
+    # department's letters are left alone: "A1c", "D5W", "ANC 500", "COVID-19".
+    for i in range(len(toks) - 1):
+        a, b = toks[i], toks[i + 1]
+        if not a.alpha or b.alpha or b.value is None or _glued_left(toks, i):
+            continue
+        gap, pre, end, chunks = q[a.end:b.start], a.text, b.end, (a.text, b.value)
+        if _glued_right(toks, i + 1):
+            c = toks[i + 2]
+            if len(pre) == 1 or not c.alpha or len(c.text) > 1 or _glued_right(toks, i + 2):
+                continue   # "a1c", "d5w", "h2o"
+            chunks, end = (pre, b.value, c.text), c.end
+        if taken.find(1, a.start, end) != -1 or _NOT_A_BED_AFTER_LOOSE_RE.match(q, end):
+            continue
+        in_dept = pre in dept_prefixes
+        if not in_dept and (chunks not in _CENSUS_BED_KEYS or gap not in ("", "-", "_")):
+            continue
+        if chunks in all_ward_keys and chunks not in by_key:
+            continue   # "How is ward GM-1 doing?" names the ward
+        if len(pre) == 1:
+            if gap not in ("", "-") or _SHORT_CLINICAL_CODE_RE.match(f"{pre}{b.value}"):
+                continue
+        elif gap not in ("-", "_", "/", "."):
+            if gap not in ("", " ") or pre in _LOCATOR_STOP_PREFIXES or _number_before(q, a.start):
+                continue
+        refs.append(_BedRef(a.start, end, a.start, end, chunks, _is_destination(q, a.start)))
+        taken[a.start:end] = b"\x01" * (end - a.start)
+
+    # Every bed label of this department, written whole anywhere in the
+    # question. One pass over the runs; a label is only tried where its first
+    # run appears.
+    hits = []   # (start, end, key, rows, first_run_index)
+    for i, t in enumerate(toks):
+        for key, ps in first_index.get(t.value, ()):
+            j = i + len(key) - 1
+            if (j >= len(toks) or _glued_left(toks, i) or _glued_right(toks, j)
+                    or isinstance(key[0], str) != t.alpha):
+                continue
+            run = toks[i:j + 1]
+            if any(r.value != c or r.alpha != isinstance(c, str) for r, c in zip(run, key)):
+                continue
+            if any(not _joins(x, y, q[x.end:y.start], False, None) for x, y in zip(run, run[1:])):
+                continue
+            hits.append((t.start, run[-1].end, key, ps, i))
+
+    hit_ids, ask_ids, unresolved = set(), set(), []
+
+    def _narrow(rows, start, end):
+        lo = bisect.bisect_left(ward_starts, start - _WARD_BED_WINDOW)
+        hi = bisect.bisect_right(ward_starts, end + _WARD_BED_WINDOW)
+        beside = {w[2] for w in wards[lo:hi] if _beside(q, w[0], w[1], start, end)}
+        if not beside:
+            return rows, False
+        return [p for p in rows if _ward_chunks(p['ward']) in beside], True
+
+    # Hits are in question order. A hit that COVERS a reference's label (the
+    # stored "ICU Bed 3" around "bed 3") starts at most `widest` characters
+    # before it, so each reference looks at a bounded window, not every hit.
+    hit_starts = [x[0] for x in hits]
+    widest = max((x[1] - x[0] for x in hits), default=0)
+    for r in refs:
+        rows = list(by_key.get(r.chunks, ())) if r.chunks else []
+        lo = bisect.bisect_left(hit_starts, r.lab_start - widest)
+        hi = bisect.bisect_right(hit_starts, r.lab_start)
+        rows += [p for (s, e, _k, ps, _i) in hits[lo:hi] if e >= r.lab_end for p in ps]
+        if r.ward is not None:
+            rows, qualified = [p for p in rows if _ward_chunks(p['ward']) == r.ward], True
+        else:
+            rows, qualified = _narrow(rows, r.start, r.end)
+        if r.dest or r.soft:
+            ask_ids.update(p['id'] for p in rows)     # an empty one is just a bed
+        elif r.chunks is None or not rows:
+            unresolved.append((r, qualified))
+        else:
+            hit_ids.update(p['id'] for p in rows)
+
+    seen_hit = False
+    for s, e, key, ps, i in hits:
+        if taken.find(1, s, e) != -1:
+            continue   # read above as a bed reference, or as a ward
+        if (_NOT_A_BED_AFTER_LOOSE_RE.match(q, e)
+                or (s >= 2 and q[s - 1] in ":/." and q[s - 2].isdigit())
+                or (isinstance(key[0], int) and (_after_a_measure(toks, i) or _a_time(toks, i)))
+                or _number_before(q, s)):
+            continue   # a dose, a time, a ratio, a score, a count
+        if isinstance(key[0], int):
+            certain = False                                   # "how is 12?" (Q1)
+        elif len(key[0]) == 1:
+            certain = not (len(key) >= 2 and isinstance(key[1], int)
+                           and _SHORT_CLINICAL_CODE_RE.match(f"{key[0]}{key[1]}"))   # D4
+        elif key[0] in _LOCATOR_STOP_PREFIXES:
+            gap = q[toks[i].end:toks[i + 1].start]
+            if gap in ("-", "_", "/", "."):
+                certain = True                                # "RR-24"
+            elif gap == " " and key[0] in _MEASURE_WORDS:
+                continue                                      # "RR 24" is a respiratory rate
+            else:
+                certain = False                               # "rr24"
+        else:
+            certain = True
+        if _is_destination(q, s):
+            certain = False
+        rows, qualified = _narrow(list(ps), s, e)
+        if qualified and not rows:
+            if certain:
+                unresolved.append((_BedRef(s, e, s, e, key), True))
+            continue
+        seen_hit = True
+        (hit_ids if certain else ask_ids).update(p['id'] for p in rows)
+
+    # A ward named on its own is a question about its patients, as before.
+    # Not when a bed was named: "transfer bed 12 to ward 6" is about bed 12.
+    if not refs and not seen_hit:
+        named = {w[2] for w in wards}
+        hit_ids.update(p['id'] for p in rows_here if _ward_chunks(p['ward']) in named)
+
+    for p in rows_here:
+        p_name = str(p['name']).lower()
+        if _whole_name_in_query(p_name, query_lower) or _name_match(p_name, query_lower, query_words):
+            hit_ids.add(p['id'])
+
+    matched = [{'source': 'admitted', 'data': p} for p in rows_here if p['id'] in hit_ids]
+    ask = [p for p in rows_here if p['id'] in ask_ids and p['id'] not in hit_ids]
+
+    # Only if nothing admitted matched — a discharged patient is a weaker
+    # referent and must not shadow a live one. Never by bed: a discharged
+    # patient's bed belongs to someone else now.
+    if not matched:
+        for p in discharged_patients:
+            p_name = str(p['name']).lower()
+            if _whole_name_in_query(p_name, query_lower) or _name_match(p_name, query_lower, query_words):
+                matched.append({'source': 'discharged', 'data': p})
+    return _Located(matched, unresolved, ask)
+
+
+def _out_of_department_keys(located: _Located) -> set:
+    """Unresolved beds that may be "outside your department": a LETTERED code
+    written on its own (Q2). A bare number is not (bed numbers repeat across
+    wards), nor a pair of ward and bed that does not meet here, nor letters
+    spaced from digits ("ICU 3"), which name a unit as often as a bed."""
+    return {r.chunks for r, qualified in located.unresolved
+            if not qualified and not r.spaced and r.chunks
+            and any(isinstance(c, str) for c in r.chunks)}
+
+
+#: The which-patient question, written by the server (ruling A): the model is
+#: never asked to resolve which patient, because when it was it answered
+#: generically instead (with invented citations, in the 4 October replay).
+WHICH_PATIENT_QUESTION = "Which patient do you mean?"
+
+#: A reply after that question that names nobody ("yes", "ok, and her
+#: potassium?", "the first one") must be asked again: the open chart is the
+#: wrong patient if they meant the one Sage asked about.
+_REPLY_TO_AN_ASK_RE = re.compile(
+    r"^\s*(?:yes|yeah|yep|yup|ya|haan|ha|ok|okay|sure|correct|right|exactly|both|no|nope"
+    r"|that one|first|second|third|last|the (?:first|second|third|last|other) one)\b"
+    r"|\b(?:he|she|him|her|his|hers|they|them|their)\b")
+#: The open chart, said plainly ("this patient", as the question invites).
+_SAYS_THE_OPEN_CHART_RE = re.compile(
+    r"\b(?:this patient|current patient|the open chart|chart (?:that is |that's )?open"
+    r"|patient (?:whose chart is )?open)\b")
+
+
+def _which_patient_question(candidates, chart_open: bool) -> str:
+    """The question itself, streamed verbatim by the chat route. Names and
+    beds of in-department patients only (the candidates came from the
+    department-scoped lists)."""
+    parts = [WHICH_PATIENT_QUESTION]
+    if candidates:
+        parts.append("\n".join(
+            f"- Bed {p['bed'] or 'not recorded'}: {p['name']}, ward {p['ward'] or 'not recorded'}"
+            for p in candidates))
+    tail = "Reply with the bed or the patient's name."
+    if chart_open:
+        tail += ' If you meant the patient whose chart is open, say "this patient".'
+    parts.append(tail)
+    return "\n\n".join(parts)
+
+
+def _last_turn_asked_which_patient(patients, discharged_patients, history) -> bool:
+    """Was the clinician's previous turn one Sage answered with the
+    which-patient question? Read from that turn itself, because a question the
+    server streams is not saved as an assistant turn (the out-of-department
+    answer is not either)."""
+    for msg in reversed(history or []):
+        if (msg.get("role") or "") != "user":
+            continue
+        prev = (msg.get("content") or "").lower()
+        if not prev or _is_aggregate_only(prev) or any(kw in prev for kw in BROAD_QUERY_KEYWORDS):
+            return False
+        located = _locate_patients(patients, discharged_patients, prev, _name_tokens(prev))
+        return not located.unresolved and (bool(located.ask) or len(located.matched) > 1)
+    return False
+
+
 def _match_patients(patients, discharged_patients, query_lower, query_words, norm_query) -> list:
     """Which of these patients did the clinician name (or locate by bed/ward)?
 
@@ -2301,31 +3197,12 @@ def _match_patients(patients, discharged_patients, query_lower, query_words, nor
     every ward was in context and becomes a wrong answer the moment scoping
     exists, because the clinician gets a census they did not ask for instead of
     being told the patient is not theirs.
+
+    The matches only; _locate_patients also says which beds matched nobody
+    and which Sage must ask about. `norm_query` is no longer read (beds are
+    whole labels now) and is kept so callers do not change.
     """
-    matched = []
-    for p in patients:
-        p_name = str(p['name']).lower()
-        p_ward = str(p['ward']).lower() if p['ward'] else ""
-        p_bed = str(p['bed']).lower() if p['bed'] else ""
-
-        norm_bed = re.sub(r'[^a-zA-Z0-9]', '', p_bed) if p_bed else ""
-        norm_ward = re.sub(r'[^a-zA-Z0-9]', '', p_ward) if p_ward else ""
-        bed_match = norm_bed and (norm_bed in norm_query)
-        ward_match = norm_ward and (norm_ward in norm_query)
-
-        if (_whole_name_in_query(p_name, query_lower)
-                or _name_match(p_name, query_lower, query_words)
-                or bed_match or ward_match):
-            matched.append({'source': 'admitted', 'data': p})
-
-    # Only if nothing admitted matched — a discharged patient is a weaker
-    # referent and must not shadow a live one.
-    if not matched:
-        for p in discharged_patients:
-            p_name = str(p['name']).lower()
-            if _whole_name_in_query(p_name, query_lower) or _name_match(p_name, query_lower, query_words):
-                matched.append({'source': 'discharged', 'data': p})
-    return matched
+    return _locate_patients(patients, discharged_patients, query_lower, query_words).matched
 
 
 #: Capitalised words that are NEVER a patient's given name or surname. Two
@@ -2504,18 +3381,22 @@ _CENSUS_NAME_TOKENS: frozenset = frozenset()
 
 
 def _refresh_census_name_tokens(db) -> None:
-    """Re-read admitted patients' name tokens. Best-effort: a failed read keeps
-    the previous set. Hospital-wide on purpose, because the gates it feeds
+    """Re-read admitted patients' name tokens, and the bed and ward label
+    vocabulary the bed locator reads (R026). Best-effort: a failed read keeps
+    the previous sets. Hospital-wide on purpose, because the gates it feeds
     include the out-of-ward denial."""
-    global _CENSUS_NAME_TOKENS
+    global _CENSUS_NAME_TOKENS, _CENSUS_BED_PREFIXES, _CENSUS_BED_KEYS, _CENSUS_WARD_KEYS
     try:
-        rows = db.execute("SELECT name FROM patients WHERE status = 'admitted'").fetchall()
+        rows = db.execute("SELECT name, bed, ward FROM patients WHERE status = 'admitted'").fetchall()
         _CENSUS_NAME_TOKENS = frozenset(
             tok for r in rows
             for tok in re.split(r"[^a-z]+", str(r["name"] or "").lower()) if len(tok) >= 4
         )
+        _CENSUS_BED_PREFIXES, _CENSUS_BED_KEYS, _CENSUS_WARD_KEYS = _label_vocabulary(rows)
     except Exception:
-        logger.debug("census name tokens not refreshed", exc_info=True)
+        # A warning, not debug: with the label sets empty, a code like
+        # "GM-103" from another department reads as text, not as a bed.
+        logger.warning("census name tokens and bed labels not refreshed", exc_info=True)
 
 
 def _is_clinical_vocabulary(word_lower: str) -> bool:
@@ -2596,7 +3477,13 @@ def _names_a_specific_patient(query: str, query_lower: str) -> bool:
     # are never a patient's name. The `how is` probe was written lower-case with
     # no IGNORECASE against the ORIGINAL-case query, so it could never fire on a
     # sentence-initial "How is <Name>" — the exact phrasing it was added for.
-    if re.search(r'\bbed\s*\d+\b', query_lower):
+    #
+    # A bed is read by the SAME reader the matcher uses (R026). This was
+    # `\bbed\s*\d+\b`, which missed "cot 12", "beds 12 and 14" and "the
+    # patient in 12", and counted "head of bed 30 degrees" and "out of bed. 2
+    # nurses". A destination ("move her to bed 12") is not who the question is
+    # about; if someone is in that bed the matcher makes Sage ask.
+    if _has_bed_reference(query_lower):
         return True
     if re.search(r'\b(?:mr|mrs|ms|dr|master|baby)\.?\s+[A-Z][a-z]+', query, re.I):
         return True
@@ -2638,22 +3525,26 @@ def _names_a_specific_patient(query: str, query_lower: str) -> bool:
     return False
 
 
-def _match_out_of_scope(db, dept, in_scope_ids, query_lower, query_words, norm_query) -> list:
+def _match_out_of_scope(db, dept, in_scope_ids, query_lower, query_words, norm_query,
+                        bed_keys=(), names=True) -> list:
     """Did the clinician name a patient who exists but is NOT theirs?
 
     Bed is matched as well as name — a bed number is a patient locator exactly
     like a surname. Ward deliberately is NOT: a ward name would make "how is
     Cardiology doing" resolve to every Cardiology patient individually, and
     ward-level questions belong to the census lane, which is already scoped.
+
+    Beds come in as `bed_keys`: the lettered codes the caller's own
+    department could not resolve (R026, _out_of_department_keys), compared as
+    WHOLE labels, so "bed 9917" is never another department's bed 9, and a
+    bare number never reaches here (Q2). `names=False` checks beds only.
     """
     hits = []
     for p in _out_of_scope_locators(db, dept, in_scope_ids):
         p_name = str(p['name']).lower()
-        p_bed = str(p['bed']).lower() if p['bed'] else ""
-        norm_bed = re.sub(r'[^a-zA-Z0-9]', '', p_bed) if p_bed else ""
-        if (_whole_name_in_query(p_name, query_lower)
-                or _name_match(p_name, query_lower, query_words)
-                or (norm_bed and norm_bed in norm_query)):
+        if ((names and (_whole_name_in_query(p_name, query_lower)
+                        or _name_match(p_name, query_lower, query_words)))
+                or (bed_keys and p['bed'] and _label_chunks(p['bed']) in bed_keys)):
             hits.append(p)
     return hits
 
@@ -3227,11 +4118,16 @@ def _anchor_patient_from_history(patients, discharged_patients, history) -> str 
         if not text:
             continue
         text_lower = text.lower()
-        hits = _match_patients(
-            patients, discharged_patients, text_lower,
-            _name_tokens(text_lower),
-            re.sub(r'[^a-zA-Z0-9]', '', text_lower),
-        )
+        located = _locate_patients(
+            patients, discharged_patients, text_lower, _name_tokens(text_lower))
+        # A turn that reached for a bed nobody here is in, or one Sage could
+        # only ASK about ("how is 12?"), is the clinician's last referent
+        # (R026, Q1): walking past it to an older patient would answer about
+        # someone they had moved on from, and taking the asked-about bed would
+        # answer for a patient nobody confirmed.
+        if located.unresolved or located.ask:
+            return None
+        hits = located.matched
         if len(hits) == 1:
             return hits[0]['data']['id']
         if hits:
@@ -3322,8 +4218,8 @@ def get_relevant_context(query: str, user: dict, patient_id: str = None, history
     # carries a BROAD keyword; without this it skipped the patient path and the
     # clinician got a census instead of an answer about the person they asked
     # about — or, for another ward's patient, an implicit "never heard of them".
-    matched_patients = _match_patients(
-        patients, discharged_patients, query_lower, query_words, norm_query)
+    _located = _locate_patients(patients, discharged_patients, query_lower, query_words)
+    matched_patients = _located.matched
 
     # ── OUT-OF-SCOPE NAMED PATIENT ──
     # Nothing in this clinician's department matched. Before ANY lane runs,
@@ -3351,18 +4247,29 @@ def get_relevant_context(query: str, user: dict, patient_id: str = None, history
     # hand them a different chart than the one they asked for, silently. An
     # in-scope FULL-name match always wins (that is their own patient; a
     # homonym on another ward is not their problem).
-    if dept is not None and _names_a_specific_patient(query, query_lower):
+    # A lettered bed code this department does not have ("CCU-01" asked from
+    # General Medicine) reaches outside it exactly like a name does (R026),
+    # even with no bed word for the name gate to see.
+    _oos_bed_keys = _out_of_department_keys(_located)
+    _names_someone = _names_a_specific_patient(query, query_lower)
+    if dept is not None and (_names_someone or _oos_bed_keys):
         _in_scope_ids = {p['id'] for p in patients} | {p['id'] for p in discharged_patients}
         _named_in_scope_in_full = any(
             _full_name_match(str(p['name']).lower(), query_lower)
             for p in list(patients) + list(discharged_patients)
         )
-        out_of_scope_hits = [] if _named_in_scope_in_full else _match_out_of_scope(
+        out_of_scope_hits = [] if (_named_in_scope_in_full or not _names_someone) else _match_out_of_scope(
             db, dept, _in_scope_ids, query_lower, query_words, norm_query)
         _named_out_of_scope_in_full = [
             p for p in out_of_scope_hits
             if _full_name_match(str(p['name']).lower(), query_lower)
         ]
+        # Independent of the name rules above: "compare beds 41 and SX-17"
+        # with SX-17 on another ward reaches outside the department even
+        # though bed 41 is ours.
+        _bed_reach = _match_out_of_scope(
+            db, dept, _in_scope_ids, query_lower, query_words, norm_query,
+            bed_keys=_oos_bed_keys, names=False) if _oos_bed_keys else []
         _deny_reason = None
         if _named_out_of_scope_in_full or (out_of_scope_hits and not matched_patients):
             # The reason distinguishes the two cases for whoever reads the
@@ -3371,6 +4278,8 @@ def get_relevant_context(query: str, user: dict, patient_id: str = None, history
             # is the wrong-patient hazard and is worth being able to count.
             _deny_reason = ("named_patient_outranks_partial_match" if matched_patients
                             else "named_patient")
+        elif _bed_reach:
+            _deny_reason = "bed_outside_department"
 
         if _deny_reason:
             db.close()
@@ -3381,9 +4290,39 @@ def get_relevant_context(query: str, user: dict, patient_id: str = None, history
             _audit_out_of_scope(
                 user, dept, query, reason=_deny_reason,
                 target_patient_ids=[p['id'] for p in
-                                    (_named_out_of_scope_in_full or out_of_scope_hits)],
+                                    (_named_out_of_scope_in_full
+                                     or (out_of_scope_hits + _bed_reach))],
             )
             return (OUT_OF_SCOPE_NOTICE, "simple", [], "high", False, None, "OUT_OF_SCOPE")
+
+    # ── A BED NOBODY HERE IS IN (ruling R026) ──
+    # The clinician named a bed, with a bed word or as a code this department
+    # uses, and nobody here is in it. End the turn with the no-such-patient
+    # grounding BEFORE the census lane, the pronoun branch and the sticky
+    # anchor can attach a chart: the open chart is a different patient by
+    # definition, and answering "cot 12 lactate?" from bed 7's chart is the
+    # wrong-patient answer two earlier attempts were backed out for. One
+    # missing bed in a list ends the whole turn (D3), so nothing is silently
+    # dropped. Same return as the no-such-patient exit further down, so
+    # nothing downstream changes.
+    if _located.unresolved:
+        db.close()
+        return (NO_MATCHING_PATIENT_NOTICE, "simple", [], "high", False, None, "GENERAL_MEDICAL")
+
+    # ── AFTER SAGE ASKED WHICH PATIENT ──
+    # "yes", "ok, and her potassium?" or "the first one" right after the
+    # which-patient question names nobody, and the sticky anchor would answer
+    # it from the OPEN chart: the wrong patient whenever they meant the one
+    # Sage asked about. Ask again. "this patient" (which the question invites)
+    # and a bed or a name are answers, and go through as usual.
+    if (history and not matched_patients and not _located.ask
+            and _REPLY_TO_AN_ASK_RE.search(query_lower)
+            and not _SAYS_THE_OPEN_CHART_RE.search(query_lower)
+            and _last_turn_asked_which_patient(patients, discharged_patients, history)):
+        _chart_open = bool(patient_id) and _patient_in_scope(db, patient_id, dept)
+        db.close()
+        return (_which_patient_question([], _chart_open), "simple", [], "high", False, None,
+                "DISAMBIGUATE")
 
     # ── BROAD QUERY DETECTION ──
     is_broad_query = any(kw in query_lower for kw in BROAD_QUERY_KEYWORDS)
@@ -3555,8 +4494,16 @@ def get_relevant_context(query: str, user: dict, patient_id: str = None, history
             doctor_match = True
             break
 
-    explicit_patient_match = len(matched_patients) == 1
-    needs_disambiguation = len(matched_patients) > 1
+    # A bed Sage is unsure about ("how is 12?", "is vitamin b12 low?" on a
+    # ward with a bed B12, "move her to bed 12") is a question to ASK, not to
+    # answer: either reading may be right, and both wrong answers are a wrong
+    # patient (rulings Q1, D4). Merged here, after the census lane, so a
+    # census turn never pins that patient's score as though they were named.
+    if _located.ask:
+        matched_patients = matched_patients + [
+            {'source': 'admitted', 'data': p} for p in _located.ask]
+    explicit_patient_match = len(matched_patients) == 1 and not _located.ask
+    needs_disambiguation = len(matched_patients) > 1 or bool(_located.ask)
     matched_patient_id = matched_patients[0]['data']['id'] if explicit_patient_match else None
     patient_source_of_truth = matched_patients[0]['source'] if explicit_patient_match else None
 
@@ -3752,13 +4699,16 @@ def get_relevant_context(query: str, user: dict, patient_id: str = None, history
     patient_context_dict = None
     warm_guideline_candidates = None
     if query_scope == "DISAMBIGUATE":
-        # Provide the list of matches for disambiguation
+        # The SERVER writes the question (ruling A, 4 October). This used to be
+        # a bare list of candidates handed to the model under the general
+        # prompt, with nothing telling it to ask; in a replay it answered
+        # generically, with invented citations. The chat route streams this
+        # text verbatim and never calls the model; the voice lane reads it as
+        # its candidate list.
+        _chart_open = bool(patient_id) and _patient_in_scope(db, patient_id, dept)
         db.close()
-        disambiguation_list = []
-        for m in matched_patients:
-            p = dict(m['data'])
-            disambiguation_list.append(f"- {p['name']} (Bed {p.get('bed', 'N/A')}, Ward {p.get('ward', 'N/A')})")
-        context_str = "\n".join(disambiguation_list)
+        context_str = _which_patient_question(
+            [dict(m['data']) for m in matched_patients], _chart_open)
         return (context_str, "simple", [], "high", False, None, "DISAMBIGUATE")
     
     if query_scope in ("PATIENT_SPECIFIC", "CONTEXTUAL_FOLLOWUP", "PATIENT_ANCHORED") and matched_patient_id:
@@ -3931,7 +4881,7 @@ def get_relevant_context(query: str, user: dict, patient_id: str = None, history
     # whatever the verb, so it needs no data keyword to earn the warning.
     # Not "Dr": that names a colleague (doctor_match), not a missing patient.
     names_unambiguously = bool(
-        re.search(r'\bbed\s*\d+\b', query_lower)
+        _has_bed_reference(query_lower)
         or re.search(r'\b(?:mr|mrs|ms|master|baby)\.?\s+[A-Z][a-z]+', query, re.I))
     # ONE definition, shared with the out-of-scope denial above — see
     # _names_a_specific_patient. "You named someone who is not in your ward" and
@@ -3946,15 +4896,7 @@ def get_relevant_context(query: str, user: dict, patient_id: str = None, history
         # patient in another department is also absent from this caller's
         # census, and the refusal must not confirm or deny that they exist
         # elsewhere in the building.
-        no_patient_warning = (
-            "⚠️ NO MATCHING PATIENT: The user's question refers to a specific patient "
-            "(by name or bed) who is NOT in the patient census available to you, and not "
-            "in recent discharges. You MUST tell the user plainly that there is no such "
-            "patient in the census. That is the ONLY reason you may give. Do NOT say you "
-            "lack access to medical records, and do NOT say you need a connection to an "
-            "EHR: Orb IS the record system. You MUST NOT invent or state any vitals, "
-            "diagnosis, labs, medications, or clinical details for them."
-        )
+        no_patient_warning = NO_MATCHING_PATIENT_NOTICE
 
     # Early exit for queries with no clinical or patient relevance.
     # `patient_context_dict` carries the STICKY ANCHOR: a bound follow-up

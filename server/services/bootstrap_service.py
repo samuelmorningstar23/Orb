@@ -104,6 +104,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+# roles.py is import-free by contract, so this cannot close an import cycle.
+from roles import STORABLE_ROLES as _STORABLE_ROLES
+
 logger = logging.getLogger("orb.bootstrap")
 
 # The 'system' row is Orb Sage's audit identity, not a human account. Its
@@ -118,7 +121,16 @@ PRIVILEGED_ROLES = ("admin",)
 # Staff roles: everything that is a human login into the clinical product.
 # 'patient' is excluded on purpose — Bridge accounts are minted by
 # admission_service with a random secret and are not operator-chosen passwords.
-STAFF_ROLES = ("admin", "doctor", "nurse", "pharmacist")
+#
+# Derived from roles.STORABLE_ROLES (the single authority for stored roles), not
+# listed by hand: the hand-written list stopped at pharmacist, so cashier and the
+# five hospital-system roles (receptionist, ward clerk, lab staff) escaped both
+# the CIO account review and the default-password scan. A role added to
+# roles.py later is covered here without anyone remembering this file.
+NON_STAFF_ROLES = ("patient",)
+STAFF_ROLES: tuple[str, ...] = tuple(
+    r for r in _STORABLE_ROLES if r not in NON_STAFF_ROLES
+)
 
 # Passwords that Orb's own tooling, its docs, or universal habit will have put
 # on an appliance. Every entry here is a credential that could plausibly reach a

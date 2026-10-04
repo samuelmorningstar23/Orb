@@ -74,6 +74,7 @@ Browser / Mobile App
 | `HOST` | `ORB_HOST` | `127.0.0.1` | Network address the server listens on. The default `127.0.0.1` (loopback) means the server is only reachable from the same machine, safe. Setting `0.0.0.0` exposes it on every network interface, enabling LAN or internet access but also exposing unencrypted PHI if TLS is not in place. Change only when you have a plan for network security. |
 | `PORT` | `ORB_PORT` | `8000` | TCP port number. The React frontend expects `8000` by default. |
 | `CORS_ORIGINS` | `ORB_CORS_ORIGINS` | `http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173` | **CORS** (Cross-Origin Resource Sharing) is a browser security rule that blocks JavaScript on one domain from calling APIs on a different domain. This list tells FastAPI which origins are allowed. In production, lock this down to your actual frontend URL. Multiple origins are comma-separated in the env var. |
+| `ALLOWED_HOSTS_EXTRA` | `ORB_ALLOWED_HOSTS` | *(empty)* | Extra host names the backend answers to, added to the set `allowed_host_names()` derives (`localhost`, the hosts in `ORB_CORS_ORIGINS` and `ORB_PUBLIC_APP_BASE_URL`, `ORB_HOST` when it is a name, the machine's own name and its `.local` form). `services/host_gate.HostGate` wraps `main.socket_app` and returns 400 for any other `Host` name, which stops DNS rebinding; any IP address passes. `*` turns the check off. |
 
 **Authentication**
 

@@ -2424,7 +2424,14 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
             with db_session() as _db:
                 _view_patient_in_scope = _patient_in_scope(
                     _db, effective_patient_id, _dept_scope(user))
-        view_line = _describe_view(view_context, _view_patient_in_scope)
+        # Not on a no-such-patient turn (R026): the clinician asked about a
+        # bed or name nobody here holds, no chart was attached, and the open
+        # patient's name on this line would be the one patient the model
+        # could drift to.
+        from services.sage_service import NO_MATCHING_PATIENT_NOTICE
+        view_line = _describe_view(
+            view_context,
+            _view_patient_in_scope and NO_MATCHING_PATIENT_NOTICE not in (_context or ""))
         # NEVER add the view line to an OUT_OF_SCOPE notice. For every other
         # scope `_context` is prompt material the model reads and the clinician
         # never sees, so describing their screen in it is exactly right. The
@@ -2602,6 +2609,29 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                 turn_id=shadow_turn_id, lane=SHADOW_CHAT_LANE, outcome="refused",
                 user=user, question=query, patient_id=None,
                 query_scope="OUT_OF_SCOPE", refusal_class="out_of_scope_patient",
+                answer=context, route_info=route_info or _no_model_route_info,
+                confidence="high",
+                timings={"retrieval_ms": round(t_retrieval)},
+            )
+            return
+
+        # ── Which patient? Asked DETERMINISTICALLY, no model (ruling A, R026) ──
+        # Retrieval wrote the question (sage_service._which_patient_question):
+        # the candidates' beds and names from this clinician's own department.
+        # It used to be a bare list handed to the model under the general
+        # prompt with nothing telling it to ask, and in a replay the model
+        # answered generically with invented citations instead. Same shape and
+        # accounting as the out-of-scope answer above: a non-answer, so never
+        # `sage.drafted`, and provenance names no patient.
+        if query_scope == "DISAMBIGUATE":
+            yield f"data: {json.dumps({'content': context})}\n\n"
+            yield f"data: {json.dumps({'metadata': {'action_state': None, 'sources': [], 'confidence': 'high', 'escalation': False, 'display_mode': 'concise', 'query_scope': 'DISAMBIGUATE', 'patient_context_used': False, 'patient_id': None, 'patient_name': None, 'timing': {'retrieval_ms': round(t_retrieval)}}})}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+            await _sh_refused(None, SHADOW_CHAT_LANE, "which_patient", "retrieval", user)
+            await _prov_record(
+                turn_id=shadow_turn_id, lane=SHADOW_CHAT_LANE, outcome="refused",
+                user=user, question=query, patient_id=None,
+                query_scope="DISAMBIGUATE", refusal_class="which_patient",
                 answer=context, route_info=route_info or _no_model_route_info,
                 confidence="high",
                 timings={"retrieval_ms": round(t_retrieval)},

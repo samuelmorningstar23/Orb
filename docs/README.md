@@ -22,7 +22,7 @@ how the codebase was consolidated is documented in [`../BRANCHES.md`](../BRANCHE
 | Doc | What it covers |
 |---|---|
 | [`SETUP.md`](SETUP.md) | Environment setup, model downloads, deployment profiles |
-| [`DEPLOYMENT.md`](DEPLOYMENT.md) | Docker/production deployment |
+| [`DEPLOYMENT.md`](DEPLOYMENT.md) | Configuration reference: settings, TLS, backups, encryption at rest |
 
 ## Machine learning
 

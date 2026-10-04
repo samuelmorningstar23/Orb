@@ -1034,18 +1034,29 @@ def _discharge_stamp(db, admission: dict) -> Optional[str]:
     return row["discharged_at"] if row else None
 
 
+#: The movement types that change where a patient lies, and so the ward a bed
+#: day is priced at. The ledger also records an admission, a bed assigned on
+#: arrival, leave and its end, absconding and return, a discharge, and the link
+#: of an existing admission to a bed (migration 51's vocabulary); none of those
+#: moves the patient between wards, so none of them may reprice a day.
+_REPRICING_MOVEMENT_TYPES = ("transfer", "bed_change", "bed_swap", "correction")
+
+
 def _admission_moves(db, admission_id: str) -> list[dict]:
-    """The admission's ward transfers, oldest first. The ledger table is
-    created by services/frontdesk_service, so a database that never ran it has
-    no transfers to read, which is the same answer as an empty ledger."""
+    """The admission's ward moves, oldest first. The ledger table is created
+    by migration 51 (and lazily by services/frontdesk_service), so a database
+    without it has no transfers to read, which is the same answer as an empty
+    ledger."""
     if db.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'patient_movements'"
     ).fetchone() is None:
         return []
+    placeholders = ", ".join("?" for _ in _REPRICING_MOVEMENT_TYPES)
     rows = db.execute(
-        """SELECT from_ward, to_ward, moved_at FROM patient_movements
-            WHERE admission_id = ? ORDER BY julianday(moved_at) ASC, rowid ASC""",
-        (admission_id,),
+        f"""SELECT from_ward, to_ward, moved_at FROM patient_movements
+            WHERE admission_id = ? AND movement_type IN ({placeholders})
+            ORDER BY julianday(moved_at) ASC, rowid ASC""",
+        (admission_id, *_REPRICING_MOVEMENT_TYPES),
     ).fetchall()
     return [_row(r) for r in rows]
 

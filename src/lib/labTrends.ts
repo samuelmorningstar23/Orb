@@ -163,14 +163,40 @@ function labStatus(v: number, lo: number | null, hi: number | null, flag: string
   return 'unranged'
 }
 
+/* ─── A result Orb's own laboratory released: THE LABORATORY'S FLAG ONLY ───
+   A row the laboratory module released (observations.lab_result_id is set)
+   carries the flag the laboratory decided: H or L against a reference range a
+   pathologist approved, HH or LL against an agreed critical limit, at the
+   test's reporting precision. The card shows that verdict and never its own.
+   The 1.5x / 0.7x range heuristic above is NEVER applied to these rows: a
+   creatinine of 2.0 flagged H is high, not critical, because no critical limit
+   said otherwise. A blank flag means within the range when the laboratory had
+   one, and unranged when it did not ("Reference range not configured" is not
+   a range, rulings LIS-R2 and LIS-R7). Interfaced and imported rows keep
+   labStatus above, unchanged. */
+function lisStatus(flag: string | null, refText: string | null): LabStatus {
+  const f = (flag || '').trim().toUpperCase()
+  if (f === 'HH' || f === 'LL' || f === 'AA') return 'critical'
+  if (f === 'H') return 'high'
+  if (f === 'L') return 'low'
+  if (f === 'A') return 'abnormal'
+  if (f === '' || f === 'N') {
+    const ranged = refText !== null && refText.trim() !== '' && !/not configured/i.test(refText)
+    return ranged ? 'normal' : 'unranged'
+  }
+  // A flag the laboratory vocabulary does not have is shown as abnormal, never
+  // hidden as normal.
+  return 'abnormal'
+}
+
 /** Every recorded numeric lab result, grouped per analyte and unit, oldest
  *  point first, each with the time it was observed. Pure, for the tests. */
 export function buildLabTrends(notes: unknown, observations: unknown): LabTrend[] {
-  type Point = { t: number; ts: string; v: number; flag: string | null; range: [number, number] | null; refText: string | null; simulated: boolean }
+  type Point = { t: number; ts: string; v: number; flag: string | null; range: [number, number] | null; refText: string | null; simulated: boolean; lis: boolean }
   type Acc = { name: string; unit: string; pts: Point[] }
   const groups = new Map<string, Acc>()
   const add = (name: string, unit: string, range: [number, number] | null, refText: string | null,
-    ts: unknown, v: unknown, flag: string | null, simulated = false) => {
+    ts: unknown, v: unknown, flag: string | null, simulated = false, lis = false) => {
     if (typeof ts !== 'string' || !ts || typeof v !== 'number' || !Number.isFinite(v)) return
     const t = parseUTC(ts).getTime()
     if (!Number.isFinite(t)) return
@@ -180,7 +206,7 @@ export function buildLabTrends(notes: unknown, observations: unknown): LabTrend[
       a = { name: name.trim(), unit, pts: [] }
       groups.set(key, a)
     }
-    a.pts.push({ t, ts, v, flag, range, refText, simulated })
+    a.pts.push({ t, ts, v, flag, range, refText, simulated, lis })
   }
 
   for (const doc of Array.isArray(notes) ? notes : []) {
@@ -199,10 +225,13 @@ export function buildLabTrends(notes: unknown, observations: unknown): LabTrend[
     /* Provenance rides along, as it does for lab documents above: a result the
        simulator wrote (source 'simulated') carries the honesty label on the
        card. It used to be dropped here, so a simulated structured result
-       showed as if it were this patient's. */
+       showed as if it were this patient's.
+       A row Orb's laboratory released carries lab_result_id (migration 56);
+       its status comes from the laboratory's own flag (lisStatus). */
+    const lis = o.lab_result_id !== null && o.lab_result_id !== undefined && o.lab_result_id !== ''
     add(o.observation_name, (o.unit || '').trim(), parseRange(refText), refText,
       o.observed_at, typeof o.value_numeric === 'number' ? o.value_numeric : Number(o.value_numeric),
-      typeof o.abnormal_flag === 'string' ? o.abnormal_flag : null, o.source === 'simulated')
+      typeof o.abnormal_flag === 'string' ? o.abnormal_flag : null, o.source === 'simulated', lis)
   }
 
   return [...groups.values()].map(a => {
@@ -216,6 +245,7 @@ export function buildLabTrends(notes: unknown, observations: unknown): LabTrend[
     const range = newestFirst.find(p => p.range)?.range ?? null
     const refLow = range ? range[0] : null
     const refHigh = range ? range[1] : null
+    const newest = pts[pts.length - 1]
     return {
       name: a.name,
       unit: a.unit,
@@ -225,7 +255,9 @@ export function buildLabTrends(notes: unknown, observations: unknown): LabTrend[
       points,
       times: pts.map(p => p.ts),
       current,
-      status: labStatus(current, refLow, refHigh, pts[pts.length - 1].flag),
+      status: newest.lis
+        ? lisStatus(newest.flag, newest.refText)
+        : labStatus(current, refLow, refHigh, newest.flag),
       trendDir: current > prev ? 'up' : current < prev ? 'down' : 'stable',
       simulated: pts[pts.length - 1].simulated,
     }

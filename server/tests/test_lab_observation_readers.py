@@ -423,10 +423,13 @@ def test_live_filter_is_a_plain_literal_fragment_with_no_placeholders():
 SERVER = Path(__file__).resolve().parent.parent
 
 # Reads of observations that are not result reads, plus the helper itself.
+# Every entry must still match the guard (test_the_allow_list_does_not_rot), so
+# an exemption cannot outlive the read it was written for. The two writers,
+# services/ingestion_service.py and services/history_import_service.py, were
+# listed in wave 1 but neither reads the table (INSERT and UPDATE do not
+# match), so they are not exempt: a read added there later is caught.
 ALLOWED = {
     "services/lab_observations.py",       # the one reader
-    "services/ingestion_service.py",      # the interfaced writer
-    "services/history_import_service.py", # the history importer (writer)
     "routes/admin_routes.py",             # row counts by source on the admin overview
 }
 
@@ -486,7 +489,18 @@ def test_no_lane_reads_observations_outside_the_one_reader():
 def test_the_allow_list_does_not_rot():
     for rel in ALLOWED:
         assert (SERVER / rel).is_file(), f"{rel} no longer exists; drop it from ALLOWED"
-    assert _violations((SERVER / "services/lab_observations.py").read_text(encoding="utf-8"))
+        assert _violations((SERVER / rel).read_text(encoding="utf-8")), (
+            f"{rel} no longer reads observations; drop it from ALLOWED so a future "
+            "reader there is caught")
+
+
+def test_the_writers_are_guarded_like_any_other_file():
+    """The ingestion and history-import writers are not exempt: a SELECT of
+    observations added to either must go through the helper or come back to
+    ALLOWED with a reason."""
+    for rel in ("services/ingestion_service.py", "services/history_import_service.py"):
+        assert rel not in ALLOWED, rel
+        assert (SERVER / rel).is_file(), rel
 
 
 # ═════════════════════════════════════════════════════════════════════════════

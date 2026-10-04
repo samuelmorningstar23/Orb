@@ -14,8 +14,8 @@ THE RULES
     later correction superseded, is not a result anyone acts on. That is
     VOID_OBSERVATION_STATUSES, compared without case or surrounding spaces,
     with a blank status read as 'final'. A superseded row is marked by its
-    status; the superseded_by pointer column arrives with the lab links
-    migration and changes nothing here.
+    status, and a row whose superseded_by pointer is set (migration 56) is
+    left out too, so a writer that sets either one hides it.
   * Time is julianday(COALESCE(observed_at, recorded_at)), never the raw
     string. Interfaced rows keep observed_at as received, with a 'T' or a
     space, an offset or none (migration 43 canonicalised only vitals and
@@ -105,6 +105,9 @@ def live_observations_sql(alias: str = "", *, exclude_simulated: bool = False) -
     a = _prefix(alias)
     statuses = ", ".join(f"'{s}'" for s in VOID_OBSERVATION_STATUSES)
     sql = f"LOWER(TRIM(COALESCE({a}status, 'final'))) NOT IN ({statuses})"
+    # A row a later result replaced (migration 56's superseded_by pointer) is
+    # not live, whatever its status says. Every existing row has NULL here.
+    sql += f" AND {a}superseded_by IS NULL"
     if exclude_simulated:
         sql += f" AND COALESCE({a}source, '') != '{SIMULATED_SOURCE}'"
     return sql
@@ -139,14 +142,18 @@ def chart_lab_rows(db, patient_id: str, *, per_analyte: int, max_rows: int) -> l
 
     An analyte is grouped as buildLabTrends groups it: name and unit.
     observed_at in the result is the instant (observed, else recorded).
+    lab_result_id is set only on a result the laboratory module released
+    (migration 56); the card then takes the status from the laboratory's own
+    flag (src/lib/labTrends.ts).
     """
     return db.execute(
         f"""SELECT id, observation_name, value_numeric, unit, reference_range,
-                   abnormal_flag, status, source, observed_at
+                   abnormal_flag, status, source, observed_at, lab_result_id
             FROM (
                 SELECT * FROM (
                     SELECT id, observation_name, value_numeric, unit,
                            reference_range, abnormal_flag, status, source,
+                           lab_result_id,
                            {observed_instant_sql()} AS observed_at,
                            ROW_NUMBER() OVER (
                                PARTITION BY LOWER(TRIM(observation_name)),

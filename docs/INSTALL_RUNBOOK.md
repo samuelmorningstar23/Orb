@@ -61,6 +61,7 @@ number comes from a measurement, the date of the measurement is next to it.
 - [F12, Sage is slow during a busy period](#f12-sage-is-slow-during-a-busy-period)
 - [F13, The appliance rebooted](#f13-the-appliance-rebooted)
 - [F14, Scribe cannot transcribe](#f14-scribe-cannot-transcribe)
+- [F15, Orb does not answer to this address](#f15-orb-does-not-answer-to-this-address)
 - [Escalation](#escalation)
 - [What to write down after every incident](#what-to-write-down-after-every-incident)
 
@@ -292,6 +293,14 @@ Two settings people get wrong on the first install:
   and the browser's retries soon make every screen hang for 15 to 25
   seconds at a time, see
   [F11](#f11-the-screens-stopped-updating-by-themselves).
+- **Orb answers only to names it knows** (since 4 October 2026). Any IP
+  address works, and so does every host in `ORB_CORS_ORIGINS`, so listing
+  the name staff type there covers it. A name staff or a device use that is
+  not listed anywhere gets a plain page saying Orb does not answer to this
+  address. Add it to `ORB_ALLOWED_HOSTS`, see
+  [F15](#f15-orb-does-not-answer-to-this-address). This is what stops a web
+  page elsewhere from pointing its own name at the appliance and reaching
+  Orb through a ward browser (DNS rebinding).
 
 TLS in transit is not optional on a ward network. The installer generates a
 self-signed certificate (4096-bit, one year, common name `localhost`) and
@@ -388,6 +397,7 @@ ORB_HOST=0.0.0.0                     # reachable from the ward
 ORB_PORT=8000
 ORB_CORS_ORIGINS=https://orb.hospital.local:8000   # the exact origin staff type
 ORB_PUBLIC_APP_BASE_URL=https://orb.hospital.local:8000   # what the patient's discharge QR opens
+# ORB_ALLOWED_HOSTS=                 # only for a name staff use that is not above (F15)
 
 ORB_LLM_MODEL=medgemma:27b
 ORB_AMBIENT_LLM_MODEL=medgemma:4b    # see the note below; the template defaults this to the 27B
@@ -412,7 +422,9 @@ the discharge desk is told why, the startup log carries an error naming the
 setting, and the Trust Center's "Patient discharge link address" row is
 amber. Orb can check the shape of the address, not the route to it: whether a
 patient's phone can actually reach it is item 6 of
-[Network placement](#7-network-placement).
+[Network placement](#7-network-placement). Its host name is also one Orb
+answers to without an `ORB_ALLOWED_HOSTS` entry
+([F15](#f15-orb-does-not-answer-to-this-address)).
 
 **The ambient tier.** `.env.example` sets `ORB_AMBIENT_LLM_MODEL` to the 27B,
 and if the variable is absent the code also defaults it to the 27B. Ambient
@@ -909,6 +921,7 @@ Find the symptom. Start there.
 | Sage takes 20 seconds during a busy period | [F12](#f12-sage-is-slow-during-a-busy-period) |
 | The machine restarted on its own | [F13](#f13-the-appliance-rebooted) |
 | Scribe says "Transcription engine unavailable on this appliance", dictation dead, everything else fine | [F14](#f14-scribe-cannot-transcribe) |
+| A plain page: "Orb does not answer to this address" | [F15](#f15-orb-does-not-answer-to-this-address) |
 
 ---
 
@@ -1725,6 +1738,58 @@ will lose it again on the next one.
 
 ---
 
+## F15: Orb does not answer to this address
+
+**Symptom.** Instead of Orb, the browser shows one line of plain text:
+*"Orb does not answer to this address. Ask the person who installed Orb to
+add it to ORB_ALLOWED_HOSTS."* Usually every screen, for everyone who
+reaches Orb one particular way, while the same appliance works by its IP
+address.
+
+**Cause.** Since 4 October 2026 Orb refuses a request whose `Host` header is
+a name it was not told about. That is the fence against DNS rebinding: a web
+page elsewhere points its own name at the appliance, the browser then treats
+Orb as part of that page, and without the check the page could try
+passwords on the sign-in screen from inside the hospital. Any IP address
+always works. The names Orb knows without being told are `localhost`, the
+hosts in `ORB_CORS_ORIGINS` and `ORB_PUBLIC_APP_BASE_URL`, `ORB_HOST` when it
+is a name, and the machine's own name and its `.local` name. Anything else
+gets this page, including a reverse proxy that sends its upstream name as
+the `Host` (nginx does that with an `upstream` block unless the Orb location
+has `proxy_set_header Host $http_host;`).
+
+**Diagnose.** The log names each refused host once, with the address of the
+device that asked:
+
+```bash
+grep "Refused a request for Host" /opt/orb/logs/*.log | tail -5
+```
+
+If the name in that line is one staff really use, it is a missing entry.
+If nobody recognises it, a web page tried DNS rebinding: note the device's
+address from the same line and tell hospital IT which machine opened it. The
+Trust Center's "Web address check" row counts every refusal since the last
+restart and names the most recent one.
+
+**Fix.** Add the name to `.env` and restart Orb:
+
+```bash
+ORB_ALLOWED_HOSTS=orb-ward3.hospital.local
+```
+
+Several names are comma-separated, and `host`, `host:port` or a full URL all
+work. Behind nginx, `proxy_set_header Host $http_host;` passes the name staff
+typed through instead. Do not set `ORB_ALLOWED_HOSTS=*`: that turns the
+check off, and the Trust Center shows it red.
+
+**What to tell the ward.** Use the usual address (or the IP address) until it
+is fixed. Nothing is lost; the page never reached Orb.
+
+**Who to call.** Me, the same day if a name staff use is refused. If nobody
+recognises the name, tell hospital IT that day as well.
+
+---
+
 ## Escalation
 
 Fill this in with real names and numbers before you leave site. Print it and
@@ -1788,6 +1853,6 @@ that later gets rebuilt is a lesson nobody gets to learn.
 | [WARM_STANDBY.md](WARM_STANDBY.md) | The second Mac and the nightly restore onto it |
 | [HARDWARE_SPEC.md](HARDWARE_SPEC.md) | Sizing, measured footprints, and the pilot bill of materials |
 | [SHADOW_MODE.md](SHADOW_MODE.md) | How the pilot runs, and what must be true before it starts |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Configuration reference and the containerised deployment |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Configuration reference: settings, TLS, backups, encryption at rest |
 | [PILOT_ROADMAP.md](PILOT_ROADMAP.md) | The 13-week sequence, counted from signature |
 | `docs/perf/` | Soak and latency measurements referenced by the acceptance test |

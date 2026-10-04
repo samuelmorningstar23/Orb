@@ -73,6 +73,25 @@ EXTRA_TABLES_TO_CLEAR = [
     "housekeeping_unit_events",
     "housekeeping_tasks",
     "housekeeping_linen_movements",
+    # ── Pharmacy store documents (migration 54) ──
+    # seed_helix deletes every drug lot on each reseed, so a transfer, stock
+    # take, lot event or vendor return that survived would describe lots that
+    # no longer exist. None of them has a patient_id, and their links use the
+    # _ref suffix on purpose (see the migration), so the walk below cannot
+    # reach them: they are named here. Pharmacy purchase orders, receipts and
+    # indents are rows in the procurement tables above. pharmacy_ward_returns
+    # carries a patient_id and is wiped by the walk. The masters
+    # (pharmacy_par_levels, pharmacy_master_change_requests) are kept, as the
+    # stores masters are. ndps_register is a patient-scoped table whose live
+    # rows a trigger guards: see _CONDITIONAL_DELETE_PREDICATES.
+    "pharmacy_transfers",
+    "pharmacy_transfer_lines",
+    "pharmacy_lot_events",
+    "pharmacy_stock_counts",
+    "pharmacy_stock_count_lines",
+    "pharmacy_vendor_returns",
+    "pharmacy_vendor_return_lines",
+    "ndps_variances",
 ]
 
 
@@ -89,6 +108,12 @@ _CONDITIONAL_DELETE_PREDICATES = {
     # lane is disposable demo noise; the 'sweeper' and 'chat' lanes are the
     # pilot's actual shadow-mode evidence and are immutable by design.
     "shadow_events": "lane = 'simulator'",
+    # trg_ndps_register_no_delete aborts WHEN OLD.lane <> 'non_production'.
+    # ndps_service writes 'non_production' on any profile but prod, so a dev
+    # reseed clears the register rows its own testing wrote (the lots they
+    # balanced against are deleted by seed_helix), while a live register row,
+    # a statutory record, can never be deleted.
+    "ndps_register": "lane = 'non_production'",
 }
 
 

@@ -1318,8 +1318,13 @@ def _inpatient_days(db, start: datetime, end: datetime, ward: Optional[str]) -> 
         return {"inpatient_days": 0.0, "patients": 0, "open_stays": 0,
                 "assumed_ends": 0, "method": "window has not started"}
 
+    # A 'registered' row (migration 52) is a person on the patient index who
+    # has never been admitted: they have no stay, so they add no inpatient-day.
+    # Excluded at the source so a registration desk can never feed this
+    # denominator; until registration is switched on no such row exists.
     patients = [dict(r) for r in db.execute(
-        "SELECT id, ward, admission_date, status FROM patients"
+        "SELECT id, ward, admission_date, status FROM patients "
+        "WHERE COALESCE(status, 'admitted') <> 'registered'"
     ).fetchall()]
     patients = _ward_filter(patients, ward)
 

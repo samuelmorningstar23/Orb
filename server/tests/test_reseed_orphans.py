@@ -117,3 +117,91 @@ def test_a_declared_foreign_key_beats_the_name_match():
         wiped = set(patient_scoped_tables(conn))
     assert "helix_inventory_lots" not in wiped
     assert "helix_medication_master" not in wiped
+
+
+# ── Migration 54: every pharmacy store table, by name ────────────────────────
+#
+# Each new table's fate is a decision, so each is named. seed_helix deletes
+# every drug lot on a reseed, so documents about lots are wiped with them; the
+# two masters are kept, as the stores masters are; the NDPS register is wiped
+# only where its trigger allows (non-production rows).
+
+PHARMACY_STORE_WIPED = {
+    "pharmacy_transfers", "pharmacy_transfer_lines", "pharmacy_lot_events",
+    "pharmacy_stock_counts", "pharmacy_stock_count_lines", "pharmacy_ward_returns",
+    "pharmacy_vendor_returns", "pharmacy_vendor_return_lines", "ndps_variances",
+}
+PHARMACY_STORE_KEPT = {"pharmacy_par_levels", "pharmacy_master_change_requests"}
+
+
+def test_every_pharmacy_store_table_has_its_intended_reseed_fate():
+    from migrations_his.m0054_pharmacy_store_schema import TABLE_NAMES
+    from scripts.reset_db_and_seed import delete_protected_tables
+
+    assert set(TABLE_NAMES) == PHARMACY_STORE_WIPED | PHARMACY_STORE_KEPT | {"ndps_register"}, (
+        "migration 54 creates a table this test does not classify; decide whether a "
+        "reseed wipes it and add it here")
+    with db_session() as conn:
+        wiped = set(patient_scoped_tables(conn))
+        protected = delete_protected_tables(conn)
+    assert PHARMACY_STORE_WIPED <= wiped, sorted(PHARMACY_STORE_WIPED - wiped)
+    assert not (PHARMACY_STORE_KEPT & wiped), sorted(PHARMACY_STORE_KEPT & wiped)
+    # The register is in the wipe set (it has a patient_id) but guarded: only
+    # its non-production rows may go.
+    assert "ndps_register" in wiped
+    assert protected["ndps_register"] == "lane = 'non_production'"
+    # Lots and the drug master still survive, now with their new columns
+    # (store_id names stores, vendor_id names vendors, both kept).
+    assert "helix_inventory_lots" not in wiped
+    assert "helix_medication_master" not in wiped
+    # Pharmacy purchase orders, receipts and indents live in the procurement
+    # tables, which a reseed already wipes.
+    assert {"purchase_orders", "goods_receipts", "indents"} <= wiped
+
+
+def test_the_real_wipe_keeps_live_register_rows_and_the_masters(tmp_path):
+    """wipe_patient_tables on a scratch database holding the pharmacy schema:
+    the live register row and the two masters survive, a development register
+    row and every pharmacy document go."""
+    import sqlite3
+
+    import migrations
+    from migrations_his.m0049_helix_tables_in_runner import MIGRATION as M49
+    from migrations_his.m0054_pharmacy_store_schema import MIGRATION as M54
+    from scripts.reset_db_and_seed import wipe_patient_tables
+
+    conn = sqlite3.connect(str(tmp_path / "wipe.db"))
+    conn.execute("CREATE TABLE patients (id TEXT PRIMARY KEY, name TEXT)")
+    migrations._m20_hospital_admin_spine(conn)
+    M49.apply(conn)
+    M54.apply(conn)
+    register = ("INSERT INTO ndps_register (lane, store_id, helix_medication_id, seq, entry_type, "
+                "quantity_units, balance_after_units, actor_id, occurred_at) "
+                "VALUES (?, 1, 'MORPHINE', ?, 'receipt', 10, 10, 'PH1', 'now')")
+    conn.execute(register, ("live", 1))
+    conn.execute(register, ("non_production", 2))
+    conn.execute("INSERT INTO pharmacy_par_levels (store_id, helix_medication_id, par_units) "
+                 "VALUES (1, 'MORPHINE', 10)")
+    conn.execute("INSERT INTO pharmacy_master_change_requests (helix_medication_id, change_kind, "
+                 "reason, requested_by) VALUES ('MORPHINE', 'retire', 'Withdrawn', 'PH1')")
+    conn.execute("INSERT INTO pharmacy_transfers (from_store_id, to_store_id) VALUES (1, 2)")
+    conn.execute("INSERT INTO pharmacy_lot_events (lot_id, to_status, actor_id, occurred_at) "
+                 "VALUES ('L1', 'quarantined', 'PH1', 'now')")
+    conn.execute("INSERT INTO ndps_variances (lane, helix_medication_id, variance_kind, "
+                 "raised_by, raised_at) VALUES ('non_production', 'MORPHINE', 'count_mismatch', "
+                 "'PH1', 'now')")
+    conn.execute("INSERT INTO pharmacy_ward_returns (patient_id, helix_order_id, "
+                 "helix_medication_id, quantity_units, received_by) "
+                 "VALUES ('P1', 'O1', 'MORPHINE', 1, 'PH1')")
+    conn.commit()
+
+    wipe_patient_tables(conn)
+
+    count = lambda t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]  # noqa: E731
+    assert [r[0] for r in conn.execute("SELECT lane FROM ndps_register")] == ["live"]
+    assert count("pharmacy_par_levels") == 1
+    assert count("pharmacy_master_change_requests") == 1
+    for table in ("pharmacy_transfers", "pharmacy_lot_events", "ndps_variances",
+                  "pharmacy_ward_returns"):
+        assert count(table) == 0, table
+    conn.close()

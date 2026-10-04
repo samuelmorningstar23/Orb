@@ -209,3 +209,89 @@ def test_gates_refuse_unknown_ids():
         module_gate("billing")
     with pytest.raises(ValueError):
         feature_gate("no_such_feature")
+
+
+# ── 4. The pharmacy-store ward sub-router (GRN-RS5) ───────────────────────────
+# Ward imprest and crash carts sit behind the pharmacy_ward_stock feature as
+# well as the pharmacy-store module. The gate is a router-level dependency on
+# routes/pharmacy_store/ward.py, so every ward endpoint a later wave adds runs
+# the module gate first, then the feature gate, then its own permission.
+
+WARD_GATE = "require_pharmacy_ward_stock_feature"
+
+
+def test_the_ward_router_carries_the_ward_stock_feature_gate():
+    from routes.pharmacy_store import ward
+    names = [d.dependency.__name__ for d in ward.router.dependencies]
+    assert names == [WARD_GATE], names
+
+
+def test_every_mounted_ward_route_runs_the_module_gate_then_the_ward_gate():
+    ward_routes = [r for r in _routes_under("/api/pharmacy-store")
+                   if r.endpoint.__module__ == "routes.pharmacy_store.ward"]
+    for route in ward_routes:
+        names = [d.call.__name__ for d in route.dependant.dependencies]
+        assert names[:2] == ["require_pharmacy_store_module", WARD_GATE], (
+            f"{sorted(route.methods)} {route.path}: {names}")
+
+
+@pytest.fixture
+def ward_probe_client():
+    """A ward route added the way a later wave will add one, mounted under a
+    package router built like routes/pharmacy_store/__init__.py, on a scratch
+    app. The probe is removed from ward.router afterwards."""
+    from fastapi import APIRouter, Depends, FastAPI
+    from permissions import WARD_STOCK_READ, require_permission
+    from routes.opt_in_gates import require_pharmacy_store_module
+    from routes.pharmacy_store import ward
+
+    @ward.router.get("/ward/__gate_probe")
+    def _probe(user: dict = Depends(require_permission(WARD_STOCK_READ))):
+        return {"ok": True}
+
+    probe_route = ward.router.routes[-1]
+    try:
+        pkg = APIRouter(prefix="/api/pharmacy-store",
+                        dependencies=[Depends(require_pharmacy_store_module)])
+        pkg.include_router(ward.router)
+        app = FastAPI()
+        app.include_router(pkg)
+        mounted = [r for r in app.routes
+                   if isinstance(r, APIRoute) and r.path.endswith("/ward/__gate_probe")]
+        assert len(mounted) == 1
+        names = [d.call.__name__ for d in mounted[0].dependant.dependencies]
+        assert names[:2] == ["require_pharmacy_store_module", WARD_GATE], names
+        yield TestClient(app)
+    finally:
+        ward.router.routes.remove(probe_route)
+
+
+def test_a_ward_route_is_401_without_a_session(ward_probe_client):
+    assert ward_probe_client.get("/api/pharmacy-store/ward/__gate_probe").status_code == 401
+
+
+def test_a_ward_route_is_404_while_the_store_is_off(ward_probe_client, monkeypatch):
+    monkeypatch.setattr(config, "PHARMACY_WARD_STOCK_ENABLED", True)
+    resp = ward_probe_client.get("/api/pharmacy-store/ward/__gate_probe", headers=_hdr("nurse"))
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["error"] == "module_disabled"
+
+
+def test_a_ward_route_is_404_while_ward_stock_is_off(ward_probe_client, monkeypatch):
+    """The store on is not enough: ward stock is its own switch, off by default."""
+    monkeypatch.setattr(config, "PHARMACY_STORE_ENABLED", True)
+    resp = ward_probe_client.get("/api/pharmacy-store/ward/__gate_probe", headers=_hdr("nurse"))
+    assert resp.status_code == 404, resp.text
+    detail = resp.json()["detail"]
+    assert detail["error"] == "feature_disabled"
+    assert detail["feature"] == "pharmacy_ward_stock"
+
+
+def test_with_both_switches_on_the_ward_permission_decides(ward_probe_client, monkeypatch):
+    monkeypatch.setattr(config, "PHARMACY_STORE_ENABLED", True)
+    monkeypatch.setattr(config, "PHARMACY_WARD_STOCK_ENABLED", True)
+    ok = ward_probe_client.get("/api/pharmacy-store/ward/__gate_probe", headers=_hdr("nurse"))
+    assert ok.status_code == 200, ok.text
+    refused = ward_probe_client.get("/api/pharmacy-store/ward/__gate_probe",
+                                    headers=_hdr("cashier"))
+    assert refused.status_code == 403

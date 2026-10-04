@@ -539,6 +539,7 @@ Browser / Mobile App
 | `HOST` | `ORB_HOST` | `127.0.0.1` | Network address the server listens on. The default `127.0.0.1` (loopback) means the server is only reachable from the same machine, safe. Setting `0.0.0.0` exposes it on every network interface, enabling LAN or internet access but also exposing unencrypted PHI if TLS is not in place. Change only when you have a plan for network security. |
 | `PORT` | `ORB_PORT` | `8000` | TCP port number. The React frontend expects `8000` by default. |
 | `CORS_ORIGINS` | `ORB_CORS_ORIGINS` | `http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173` | **CORS** (Cross-Origin Resource Sharing) is a browser security rule that blocks JavaScript on one domain from calling APIs on a different domain. This list tells FastAPI which origins are allowed. In production, lock this down to your actual frontend URL. Multiple origins are comma-separated in the env var. |
+| `ALLOWED_HOSTS_EXTRA` | `ORB_ALLOWED_HOSTS` | *(empty)* | Extra host names the backend answers to, added to the set `allowed_host_names()` derives (`localhost`, the hosts in `ORB_CORS_ORIGINS` and `ORB_PUBLIC_APP_BASE_URL`, `ORB_HOST` when it is a name, the machine's own name and its `.local` form). `services/host_gate.HostGate` wraps `main.socket_app` and returns 400 for any other `Host` name, which stops DNS rebinding; any IP address passes. `*` turns the check off. |
 
 **Authentication**
 
@@ -11574,7 +11575,7 @@ CSS Modules are the more collision-proof approach; new components should prefer 
 ```typescript
 server: {
   host: '0.0.0.0',       // LAN accessible
-  allowedHosts: true,
+  allowedHosts: devAllowedHosts(orbEnv, hostname()),  // vite.hosts.ts
   proxy: {
     '/api':      { target: 'http://localhost:8000', changeOrigin: true },
     '/uploads':  { target: 'http://localhost:8000', changeOrigin: true },
@@ -11811,6 +11812,7 @@ marked **required in prod** will raise a `ValueError` and prevent startup if mis
 | `ORB_TLS_CERT` / `ORB_TLS_KEY` | *(none)* | Paths to a PEM certificate and key. When **both** are set, uvicorn serves HTTPS directly (`ssl_certfile` / `ssl_keyfile`). | Set in any deployment reachable beyond localhost, unless a reverse proxy terminates TLS. `install.sh` generates a self-signed **dev** cert; replace it for production. See `docs/DEPLOYMENT.md` §3. |
 | `ORB_PORT` | `8000` | TCP port for the FastAPI server. | Only change if 8000 is taken by another service. |
 | `ORB_CORS_ORIGINS` | `http://localhost:5173, http://localhost:5174, http://127.0.0.1:5173` | Comma-separated list of frontend origins the browser is allowed to call the API from. | In production, set to the real HTTPS URL of the frontend (e.g. `https://orb.yourhospital.internal`). Never leave as `*`. |
+| `ORB_ALLOWED_HOSTS` | *(empty)* | Extra host names Orb answers to, added to the ones it derives itself (`localhost`, the hosts in `ORB_CORS_ORIGINS` and `ORB_PUBLIC_APP_BASE_URL`, the machine's own name). A request whose `Host` is any other name gets a 400, which stops a DNS-rebinding page; any IP address passes. | Leave empty unless staff or a device reach Orb by a name in none of those, or you open the Vite dev server through a tunnel such as ngrok (`vite.hosts.ts` uses the same list). Never `*` on a ward. |
 | `ORB_DB_PATH` | `server/orb.db` | Path to the SQLite database file. | Override in tests to point at a temp file so tests never touch the live DB. ⚠️ **Corrected 2026-08-15:** this row used to read *"The DB holds PHI in cleartext"*. With `ORB_DB_ENCRYPTION_KEY` set, the file **and its `-wal`/`-shm` sidecars** are SQLCipher-encrypted (§2.10). Without it, the cleartext warning stands and the server logs a one-time warning rather than refusing to boot. Keep it on an encrypted volume regardless. |
 | `ORB_DB_BACKEND` | `sqlite` | Database backend selection. | Only `sqlite` is wired. `postgres`/`postgresql`/`pg` are recognised and **fail fast at import** with an actionable message (`server/db_backend.py:24-45`) rather than silently using the wrong store for a PHI database. |
 | `ORB_MAX_JSON_BODY_BYTES` | `524288` (512 KB) | Ceiling on non-multipart request bodies; over it → **413** (`server/main.py:708-723`). | Raise only if a legitimate JSON route needs it. Uploads are multipart and bounded by their own routes. |
@@ -12066,8 +12068,13 @@ Vite is both the development server and the production bundler.
   This allows nurses/doctors on the ward network to open the dev build. For a tightly controlled
   dev environment, override with `--host 127.0.0.1` on the CLI.
 
-- **`server.allowedHosts: true`**, disables Vite's host-header check, allowing requests from any
-  hostname (e.g. a hospital subdomain). Tighten this in production.
+- **`server.allowedHosts`**, the names the dev server answers to. `vite.hosts.ts` builds the list
+  from the same settings as the backend's Host check (`ORB_CORS_ORIGINS`, `ORB_PUBLIC_APP_BASE_URL`,
+  `ORB_HOST`, the machine's own name and its `.local` name, plus `ORB_ALLOWED_HOSTS`; `*` there turns
+  it off), read from `.env` or the environment. Vite always admits localhost and IP addresses. Any
+  other name gets a 403, which stops a DNS-rebinding page from reading the app or calling `/api`
+  through the proxy, where the backend only ever sees `Host: localhost:8000`. A tunnel such as
+  ngrok must be listed in `ORB_ALLOWED_HOSTS`. Until 4 October 2026 this was `true` (no check).
 
 - **`server.proxy`**, this is the key integration bridge between frontend and backend:
 

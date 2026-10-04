@@ -211,6 +211,64 @@ MODULE_TABLES: dict[str, tuple[str, ...]] = {
         "helix_medication_master", "helix_inventory_lots", "helix_patient_med_orders",
         "helix_pharmacy_verifications", "helix_stock_movements", "helix_transitions",
     ),
+    # ── migrations 50 and 51 (server/migrations_his/m0050_registration_opd_foundation.py,
+    # m0051_adt_movement_ledger.py) ──
+    # The outpatient visit register and the patient movement ledger used to be
+    # created lazily by the front desk, outside the runner, so they were never
+    # checked here. The registration tables are empty until a site switches
+    # registration on. A restore without them would lose who was seen in
+    # which clinic, every ward transfer, and every correction to a patient's
+    # identity.
+    "registration and outpatients": (
+        "opd_visits", "patient_demographics", "patient_identity_changes",
+        "patient_duplicate_candidates", "patient_match_keys", "opd_display_boards",
+    ),
+    "movement ledger": (
+        "patient_movements",
+    ),
+    # ── migration 54 (server/migrations_his/m0054_pharmacy_store_schema.py) ──
+    # The pharmacy store: par levels, transfers between drug stores, lot
+    # status events, stock takes, ward and vendor returns, two-person drug
+    # master requests, and the NDPS register with its variances. Empty until a
+    # site switches ORB_PHARMACY_STORE on. A restore that came back without the
+    # register would lose a statutory controlled-drug record.
+    "pharmacy store": (
+        "pharmacy_par_levels", "pharmacy_transfers", "pharmacy_transfer_lines",
+        "pharmacy_lot_events", "pharmacy_stock_counts", "pharmacy_stock_count_lines",
+        "pharmacy_ward_returns", "pharmacy_vendor_returns", "pharmacy_vendor_return_lines",
+        "pharmacy_master_change_requests", "ndps_variances", "ndps_register",
+    ),
+    # ── migration 55 (server/migrations_his/m0055_lab_contract.py) ──
+    # The laboratory information system: the test master with its approved
+    # reference ranges and critical limits, specimens, order items, results,
+    # critical-result callbacks and their append-only events. Empty until a
+    # site switches ORB_LAB on. A restore that came back without them would
+    # lose which range a released result was flagged against and who was told
+    # about a critical result, and when.
+    "laboratory": (
+        "lab_sections", "lab_specimen_types", "lab_tests", "lab_panel_components",
+        "lab_reference_ranges", "lab_critical_limits", "lab_rejection_reasons",
+        "lab_accession_counters", "lab_specimens", "lab_specimen_events",
+        "lab_order_items", "lab_results", "lab_result_events",
+        "lab_critical_notifications", "lab_critical_events", "lab_exceptions",
+        "lab_module_events",
+    ),
+    # ── migration 53 (server/migrations_his/m0053_adt_bed_master.py) ──
+    # The bed master: wards, their rooms, bed classes and the append-only
+    # record of who changed them. Empty until a site switches ORB_ADT on and
+    # sets up its beds. A restore that came back without them would leave
+    # every registered bed pointing at a ward that no longer exists.
+    "bed master": (
+        "wards", "ward_rooms", "bed_classes", "bed_master_events",
+    ),
+    # ── migration 57 (server/migrations_his/m0057_clinic_sessions.py) ──
+    # Clinic timings: each doctor's weekly outpatient sessions and the days a
+    # session does not run. Configuration, no patient data. Empty until a site
+    # switches ORB_REGISTRATION on and sets up its clinics. A restore that came
+    # back without them would lose every clinic timetable and its history.
+    "clinic schedule": (
+        "clinic_sessions", "clinic_session_exceptions",
+    ),
 }
 
 ALL_MIGRATED_TABLES: tuple[str, ...] = tuple(

@@ -200,7 +200,7 @@ Key structural facts:
 | `e2e/` | 5 Playwright golden-journey specs + helpers ([30-harness-and-ci](./guide/30-harness-and-ci.md)) |
 | `docs/` | This corpus (`ORB_MASTER.md`, `REBUILD_PLAN.md`, `guide/`) + older prose docs (treat as historical) |
 | `.github/workflows/ci.yml` | CI: backend pytest job + frontend lint/typecheck/build/test job |
-| `Dockerfile`, `docker-compose.yml`, `install.sh`, `ops/` | Deployment artifacts |
+| `install.sh`, `setup-mac.sh`, `run-orb.sh`, `ops/` | Deployment artifacts (the Docker files were retired on 4 October 2026, see `docs/archive/retired-docker-2026-10-04/`) |
 
 ## 7. The request lifecycle: one click, end to end
 

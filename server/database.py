@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS patients (
     ward TEXT,
     admission_date TIMESTAMP,
     diagnosis TEXT,
-    status TEXT DEFAULT 'admitted' CHECK (status IN ('admitted', 'discharged', 'transferred')),
+    status TEXT DEFAULT 'admitted' CHECK (status IN ('admitted', 'discharged', 'transferred', 'registered')),
     age INTEGER,
     date_of_birth DATE,
     sex TEXT,
@@ -1386,7 +1386,8 @@ def _harden_db_file_permissions():
 
 
 def _atomic_table_rebuild(conn, *, table: str, create_new_sql: str,
-                          shared_cols: str, post_sql: list) -> None:
+                          shared_cols: str, post_sql: list,
+                          before_commit=None) -> None:
     """Rebuild `table` via the SQLite create-copy-drop-rename dance as a single
     ALL-OR-NOTHING unit. Either the rebuilt table is in place with every row, or
     the original is untouched. There is no third outcome.
@@ -1416,6 +1417,13 @@ def _atomic_table_rebuild(conn, *, table: str, create_new_sql: str,
     must be issued while in autocommit, BEFORE the BEGIN — and it is needed,
     because `messages` is an FK parent (message_room_fit_flags.
     redirected_message_id), so DROP TABLE under enforced FKs would fail.
+
+    `before_commit`, when given, is called with the connection after the
+    rename and `post_sql`, inside the rebuild's own transaction. Raising from
+    it rolls the whole rebuild back, so a caller can prove the rebuilt table
+    (for example, that no FK child row lost its parent: PRAGMA
+    foreign_key_check works inside a transaction) before anything is
+    committed. Migration 52, the patients rebuild, uses it.
     """
     new_table = f"{table}_new"
     # The caller writes the CREATE by hand (the canonical schema, with the
@@ -1468,6 +1476,8 @@ def _atomic_table_rebuild(conn, *, table: str, create_new_sql: str,
             conn.execute(f'ALTER TABLE "{new_table}" RENAME TO "{table}"')
             for stmt in post_sql:
                 conn.execute(stmt)
+            if before_commit is not None:
+                before_commit(conn)
             conn.execute("COMMIT")
         except Exception:
             try:

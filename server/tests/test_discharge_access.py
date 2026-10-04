@@ -361,3 +361,46 @@ def test_a_grant_signed_with_the_staff_secret_is_rejected(setup_discharge, test_
     res = client.get(f"/api/discharge-access/{token_id}/summary",
                      headers={"Authorization": f"Bearer {forged}"})
     assert res.status_code in (401, 403), res.text
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  THE PER-IP BUDGET  (2026-10-04)
+#
+#  /verify also counts every call per IP across ALL tokens, so one address
+#  cannot walk through many links one guess at a time. Every TestClient call
+#  comes from 'testclient', and that budget used to last the whole session:
+#  this file spent 14 of 15 and test_discharge_review.py the last one.
+#  conftest._isolate_discharge_verify_throttle now resets it around each
+#  test. These two prove the reset did not switch the throttle off, and that
+#  it really does stop at the test boundary. They run in file order.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_the_per_ip_budget_throttles_verify_within_one_test():
+    """A fresh token on every call, so the per-token lockout never engages and
+    only the cross-token budget can say no."""
+    from services import discharge_access_service as das
+
+    for i in range(das._VERIFY_IP_MAX_ATTEMPTS):
+        res = client.post("/api/discharge-access/verify",
+                          json={"token": f"never-issued-{i}", "dob": "1900-01-01"})
+        assert res.json()["detail"]["reason"] == "invalid_token", (
+            f"call {i + 1} of {das._VERIFY_IP_MAX_ATTEMPTS}: {res.text}"
+        )
+
+    res = client.post("/api/discharge-access/verify",
+                      json={"token": "never-issued-one-too-many", "dob": "1900-01-01"})
+    assert res.status_code == 401
+    assert res.json()["detail"]["reason"] == "rate_limited"
+
+
+def test_the_next_test_starts_with_a_full_verify_budget():
+    """Runs straight after the test above has used up the whole budget."""
+    from services import discharge_access_service as das
+
+    with das._VERIFY_IP_LOCK:
+        spent = len(das._VERIFY_IP_ATTEMPTS.get("testclient", []))
+    assert spent == 0, f"{spent} verify call(s) from an earlier test still count against this one"
+
+    res = client.post("/api/discharge-access/verify",
+                      json={"token": "never-issued-next-test", "dob": "1900-01-01"})
+    assert res.json()["detail"]["reason"] == "invalid_token", res.text

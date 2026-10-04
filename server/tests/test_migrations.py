@@ -492,14 +492,21 @@ def _shape(conn, table):
 
 def test_migration_49_creates_exactly_what_helix_schema_creates(tmp_path):
     """Frozen copy versus the live fallback: same columns (name, type, not
-    null, default, key) and the same foreign keys, table by table."""
+    null, default, key) and the same foreign keys, table by table.
+
+    HELIX_SCHEMA stays in step with every later migration that adds a Helix
+    column (services/helix_db.init_helix_db), so the frozen 49 shape is
+    compared after those migrations have run on top of it: 54, the pharmacy
+    store schema. Its procurement parts are skipped on this Helix-only file."""
     import sqlite3
 
     from migrations_his.m0049_helix_tables_in_runner import MIGRATION as M49
+    from migrations_his.m0054_pharmacy_store_schema import MIGRATION as M54
     from services.helix_db import HELIX_SCHEMA
 
     by_runner = sqlite3.connect(str(tmp_path / "runner.db"))
     M49.apply(by_runner)
+    M54.apply(by_runner)
     by_runner.commit()
     by_schema = sqlite3.connect(str(tmp_path / "schema.db"))
     by_schema.executescript(HELIX_SCHEMA)

@@ -673,6 +673,15 @@ _RETENTION_SOURCES: dict[str, list[tuple[str, str, str]]] = {
         ("patient_allergy_assessments", "patient_id", "assessed_at"),
         # Laboratory (lis design, section 10). result_quarantine holds results
         # no patient has been matched to yet, so it has no patient column.
+        # clinical_record is minority-protected, and a row with no patient
+        # cannot be aged, so retention_review holds EVERY overdue quarantine
+        # row back as age-unknown and never counts one as destroyable (see the
+        # patient-less branch there). It is not moved to an unprotected
+        # category: an unmatched result is still a clinical result and may be a
+        # child's. When the LIS migration gives the table its patient link
+        # (attached_patient_id in the lis design), naming that column here makes
+        # attached rows ageable through the normal branch, and open or
+        # discarded rows (link still NULL) stay held as age-unknown there too.
         ("lab_specimens", "patient_id", "created_at"),
         ("lab_specimen_events", "patient_id", "occurred_at"),
         ("lab_order_items", "patient_id", "created_at"),
@@ -895,6 +904,18 @@ def retention_review(*, now: datetime | None = None,
                         # the alternative is destroying a record on the strength
                         # of not knowing whose it is.
                         mp["held_age_unknown"] += max(total - n - held_minor, 0)
+                    elif protected:
+                        # A minority-protected table with NO patient column
+                        # (result_quarantine: results not yet matched to anyone).
+                        # Orb cannot tell whether a row is a child's, so none of
+                        # it is releasable: every overdue row is held back as
+                        # age-unknown, the same answer the branch above gives a
+                        # row whose patient cannot be aged. Counting it as
+                        # overdue would put a possibly paediatric result on the
+                        # list a hospital destroys from before s.6 allows.
+                        n = 0
+                        entry["minority_protection"]["held_age_unknown"] += _count(
+                            where, params)
                     else:
                         n = _count(where, params)
                 except Exception as exc:  # pragma: no cover — defensive

@@ -55,6 +55,13 @@ def _load_file(path: Path, module_name: str):
     return module
 
 
+def _still_importing(module) -> bool:
+    """True while the import system is still executing this module's body
+    (CPython marks the spec with _initializing for exactly that window)."""
+    spec = getattr(module, "__spec__", None)
+    return bool(getattr(spec, "_initializing", False))
+
+
 def _is_migration(obj) -> bool:
     """A migrations.Migration (a NamedTuple of version, name, apply)."""
     return (isinstance(obj, tuple) and getattr(obj, "_fields", None) == ("version", "name", "apply")
@@ -88,6 +95,17 @@ def collect_from(directory: Path, *, package: str | None = None) -> list:
         else:
             module = _load_file(path, f"_orb_migration_{directory.name}_{path.stem}")
         mig = getattr(module, "MIGRATION", None)
+        if mig is None and _still_importing(module):
+            # The file is half-imported further up this very stack: something
+            # imported it, it ran "from migrations import ...", and that import
+            # is what is collecting now. Its MIGRATION line has simply not run
+            # yet. Say so, rather than claim the file defines no MIGRATION.
+            raise MigrationDiscoveryError(
+                f"{path.name} was being imported when migrations.py started "
+                "collecting this directory, so its MIGRATION is not defined yet "
+                "(an import cycle, not a broken file). Import migrations first "
+                "(\"import migrations\"), then the migration file."
+            )
         # Checked by shape, not isinstance: scripts/lib/verify_restore.py loads
         # migrations.py by path, so its Migration class is a different object
         # from the one a cached migration file was built with.
@@ -128,3 +146,18 @@ def merge(core: list, extra: list) -> list:
             )
         seen[mig.version] = mig.name
     return sorted(list(core) + list(extra), key=lambda m: m.version)
+
+
+# IMPORTING A MIGRATION FILE BEFORE migrations.py. A file here starts with
+# "from migrations import Migration", and importing migrations collects this
+# directory, so "from migrations_his.m0048_users_role_batch import FROZEN_ROLES"
+# in a fresh process used to re-enter the very file being imported and fail
+# with a misleading "defines no MIGRATION". Importing migrations here, at the
+# END of the package (after every function above exists), makes the package
+# import always finish collection first; the file import then finds its module
+# already complete. When migrations.py is the one importing this package, it
+# is already in sys.modules and this line returns it at once. When migrations.py
+# is loaded by file path (scripts/lib/verify_restore.py), it registers a module
+# under the name "migrations" before importing this package (see
+# migrations._with_his_migrations), so this line finds that one.
+import migrations as _migrations  # noqa: E402,F401

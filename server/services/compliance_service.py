@@ -359,11 +359,17 @@ def _residency() -> dict:
     installed = getattr(config, "cors_allow_origins", None)
     cors = list(installed() if callable(installed) else (getattr(config, "CORS_ORIGINS", []) or []))
     posture = effective_deployment_posture()
+    # The Host names main.py installs in services/host_gate.HostGate, and what that
+    # gate has turned away since the process started.
+    from services import host_gate
+    allowed_hosts = getattr(config, "allowed_host_names", None)
     return {
         "host": host,
         "loopback_only": loopback_only,
         "cors_origins": cors,
         "cors_wildcard": "*" in cors,
+        "allowed_hosts": sorted(allowed_hosts()) if callable(allowed_hosts) else None,
+        "host_refusals": dict(host_gate.refused),
         # THE OBSERVED ANSWER, not the declared label. This is the key the Trust
         # Center prints ("… · {deployment_profile} profile · on-prem"), so it must
         # never over-claim. The declared value is carried alongside it, unaltered,
@@ -895,6 +901,39 @@ def _build_controls(enc: dict, audit: dict, mfa: dict, rbac: dict,
             f"{len(origins)} named web address(es).",
             "Keep outside access behind the HTTPS proxy.", residency_settings)
 
+    # ── Web address check (DNS rebinding) ──
+    # Graded on the names services/host_gate.HostGate admits, plus what it has
+    # turned away since start: the only sign a rebinding page was ever opened.
+    # The refused name is attacker-chosen text, so it is cut short and limited to
+    # characters a host name can have before it reaches the screen.
+    allowed = residency.get("allowed_hosts")
+    refusals = residency.get("host_refusals") or {}
+    host_settings = ["ORB_ALLOWED_HOSTS", "ORB_CORS_ORIGINS", "ORB_PUBLIC_APP_BASE_URL"]
+    refused_count = int(refusals.get("count") or 0)
+    last = "".join(ch for ch in str(refusals.get("last_host") or "")[:60]
+                   if ch.isascii() and (ch.isalnum() or ch in ".-:[]"))
+    seen = (f" Since it started it has turned away {refused_count} request(s) for other "
+            f"names, most recently for \"{last}\"." if refused_count else "")
+    if allowed is None:
+        add("host_allow_list", "Web address check (DNS rebinding)", "unknown",
+            "Orb could not read which web addresses it answers to.",
+            "Contact Orb support.", host_settings)
+    elif "*" in allowed:
+        add("host_allow_list", "Web address check (DNS rebinding)",
+            "fail" if prod_profile else "warn",
+            "Orb answers to any web address name. A web page a staff member opens "
+            "elsewhere can point its own name at Orb and reach Orb's sign-in through "
+            "their browser, from inside the hospital." + seen,
+            "Ask the person who installed Orb to turn the address check back on and "
+            "list the names staff use instead.", host_settings)
+    else:
+        add("host_allow_list", "Web address check (DNS rebinding)", "pass",
+            f"Orb answers only to IP addresses and {len(allowed)} named address(es): "
+            f"{', '.join(allowed)}. A web page elsewhere that points its own name at "
+            f"Orb is turned away." + seen,
+            "If staff or a device reach Orb by a name not listed here, ask the person "
+            "who installed Orb to add it.", host_settings)
+
     # ── Deployment posture (declared vs observed) ──
     # Separate from data_residency on purpose: a box can bind loopback and still
     # be running the dev signing secret with a vitals simulator attached.
@@ -1035,6 +1074,12 @@ def _build_controls(enc: dict, audit: dict, mfa: dict, rbac: dict,
     return controls
 
 
+def _lab_drain_control() -> dict | None:
+    """The laboratory's drain check (services/lab_module.compliance_control)."""
+    from services.lab_module import compliance_control
+    return compliance_control()
+
+
 def _overall_score(controls: list[dict]) -> int:
     """Derive a 0–100 posture score as the weighted mean of control statuses."""
     if not controls:
@@ -1091,6 +1136,14 @@ def compliance_report() -> dict:
 
     controls = _build_controls(enc, audit, mfa, rbac, residency, backups, revocation,
                                dpdp, tls=tls, credentials=credentials)
+
+    # The laboratory module switched off with open work (ruling LIS-R21): a
+    # failing check until the open specimens, results and critical results are
+    # finished. Absent otherwise, so a site that never used the laboratory
+    # sees no new line.
+    lab_drain = _safe(_lab_drain_control, None)
+    if lab_drain:
+        controls.append(lab_drain)
 
     # Reflect an unknown audit probe honestly in the control status.
     if audit.get("unknown"):

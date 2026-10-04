@@ -82,6 +82,68 @@ def cors_allow_origins() -> list[str]:
     while the dev branch is serving `*`. Read at call time for tests."""
     return list(CORS_ORIGINS) if DEPLOYMENT_PROFILE == "prod" else ["*"]
 
+
+# Host names the backend answers to (services/host_gate.py). A request whose Host
+# header is a name not in this set gets a 400 before any route or the socket sees
+# it. That is the DNS-rebinding fence: a page on attacker.example that re-points
+# its own name at the appliance is same-origin to the browser, so CORS never
+# applies, but its requests still say Host: attacker.example.
+#
+# Any IP address passes without being listed (rebinding needs a name, and a
+# browser sends an IP as the Host only when it loaded the page from that IP), so
+# the set only holds names. It is derived from settings an install already has,
+# so a working install is not locked out: localhost, the hosts in ORB_CORS_ORIGINS
+# and ORB_PUBLIC_APP_BASE_URL, ORB_HOST when it is a name, and this machine's own
+# name with its mDNS .local form. ORB_ALLOWED_HOSTS ADDS names (host, host:port
+# or a URL all work); "*" there turns the check off and the Trust Center shows it
+# red. A "*" in ORB_CORS_ORIGINS does not: that answers a different question.
+ALLOWED_HOSTS_EXTRA = [h.strip() for h in os.getenv("ORB_ALLOWED_HOSTS", "").split(",") if h.strip()]
+
+
+def _host_name(value: str) -> str | None:
+    """The host NAME in a URL or a bare `host[:port]`, lowercased, trailing dot
+    dropped. None for an IP address or anything that is not a usable name."""
+    import ipaddress
+    import re
+    from urllib.parse import urlsplit
+
+    text = (value or "").strip()
+    try:
+        host = urlsplit(text if "//" in text else "//" + text).hostname
+    except ValueError:
+        return None
+    host = (host or "").rstrip(".")
+    try:
+        ipaddress.ip_address(host)
+        return None
+    except ValueError:
+        pass
+    return host if re.fullmatch(r"[a-z0-9_-]+(\.[a-z0-9_-]+)*", host) else None
+
+
+def allowed_host_names() -> frozenset[str]:
+    """The names services/host_gate.py admits; contains "*" when the check is off.
+    main.py installs this set and the Trust Center reports it. Read at call time
+    for tests."""
+    import socket
+
+    names = {"localhost"}
+    sources = [o for o in CORS_ORIGINS if o != "*"] + [PUBLIC_APP_BASE_URL, HOST]
+    for value in sources + [h for h in ALLOWED_HOSTS_EXTRA if h != "*"]:
+        name = _host_name(value)
+        if name:
+            names.add(name)
+    try:
+        own = _host_name(socket.gethostname())
+    except OSError:
+        own = None
+    if own:
+        label = own.split(".")[0]
+        names.update({own, label, label + ".local"})
+    if "*" in ALLOWED_HOSTS_EXTRA:
+        names.add("*")
+    return frozenset(names)
+
 # TLS in transit. Orb serves HTTPS itself when both are set (main.py); otherwise
 # a reverse proxy must terminate TLS, and ORB_TLS_TERMINATED_UPSTREAM=1 is the
 # operator's declaration that one does. The Trust Center inspects the cert.
@@ -140,9 +202,8 @@ UPLOAD_ENCRYPTION_KEY = os.getenv("ORB_UPLOAD_ENCRYPTION_KEY")
 
 
 # Ollama
-# Env-driven so the app can reach an Ollama that is not on localhost: a sibling
-# container (http://ollama:11434), the Docker host on macOS where the GPU lives
-# (http://host.docker.internal:11434), or a remote GPU box. Trailing slash is
+# Env-driven so the app can reach an Ollama that is not on localhost, such as a
+# remote GPU box. On the appliance it runs on the same machine. Trailing slash is
 # stripped because every call site interpolates f"{OLLAMA_BASE_URL}/api/...".
 OLLAMA_BASE_URL = os.getenv("ORB_OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
 # Single shared MedGemma 1 27B Multimodal instance for all modules (Sage, Lens, Bridge, Scribe).

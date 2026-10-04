@@ -21,6 +21,7 @@ import uuid
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Request
+import config
 from auth import get_current_user
 from database import db_session, run_db
 from services.audit_service import log_audit_event
@@ -848,6 +849,201 @@ def require_patient_access(*permissions: str, audit_action: str | None = None):
 
         return user
 
+    return _checker
+
+
+# ════════════════════════════════════════════════════════════════
+#  FastAPI Dependency: require_registration_desk (opd-3, W2-E)
+# ════════════════════════════════════════════════════════════════
+# The registration desk is reached by two kinds of account that hold different
+# permissions for the same job:
+#
+#   * a clinician or the administrator, who reach the desk through the chart
+#     permissions they already hold (patient.read_all to read, patient.write or
+#     frontdesk.write to register), exactly as before 3 October 2026;
+#   * the receptionist (ruling OPD-N3), who holds registration.read and
+#     registration.write and NOTHING on the chart.
+#
+# A dependency that hung off patient.read_all alone could never admit the
+# receptionist without handing her the chart, so the desk asks "any one of these
+# arms" instead. The registration.* arms count ONLY while the 'registration'
+# feature is on (ORB_REGISTRATION, checked at request time): with it off this
+# dependency is, denial audit and 403 body included, the old front-desk rule
+# (require_frontdesk_read / require_frontdesk_write in routes/frontdesk_routes),
+# so a site that never turns the feature on sees no change at all.
+#
+# WRITE IS READ PLUS A WRITE ARM. Every holder of a write arm today also holds a
+# read arm (doctor and admin hold patient.read_all, the receptionist holds
+# registration.read), so asking for both refuses nobody who works the desk, and
+# a future role handed a write arm alone cannot register into a queue it could
+# not read.
+#
+# What this does NOT open: any chart route (they stay on patient.read_all and
+# require_patient_access), transfers (they keep require_frontdesk_write, so a
+# receptionist cannot move a patient and with it the chart), money (payments.*
+# and billing.* are untouched), and calling a patient in or completing a
+# consultation (those stay on the front-desk write rule until opd.consult takes
+# them over with the OPD feature).
+
+REGISTRATION_DESK_READ_ARMS: tuple[str, ...] = (PATIENT_READ_ALL, REGISTRATION_READ)
+REGISTRATION_DESK_WRITE_ARMS: tuple[str, ...] = (FRONTDESK_WRITE, PATIENT_WRITE, REGISTRATION_WRITE)
+
+# What the screen says on a refusal while the feature is on. Plain words: the
+# message reaches the desk's error line, and the permission names stay in
+# `required` for anything that needs them.
+_DESK_DENIAL_WORDS = {
+    "read": "Your account cannot open the registration desk.",
+    "write": "Your account cannot register or change visits at the registration desk.",
+}
+
+
+def registration_desk_on() -> bool:
+    """Is the registration feature on right now? Read at call time, so a test
+    (and an operator's restart) sees the current switch."""
+    return config.feature_enabled("registration")
+
+
+def registration_desk_arms(mode: str, *, desk_on: bool | None = None) -> tuple[str, ...]:
+    """The permissions that open the desk in `mode` ('read' or 'write') now.
+
+    With the registration feature off only the pre-existing arms count, so a
+    receptionist account left over from a site that switched the feature off
+    holds nothing here."""
+    if mode not in ("read", "write"):
+        raise ValueError(f"registration desk mode must be 'read' or 'write', not {mode!r}")
+    arms = REGISTRATION_DESK_READ_ARMS if mode == "read" else REGISTRATION_DESK_WRITE_ARMS
+    on = registration_desk_on() if desk_on is None else desk_on
+    if on:
+        return arms
+    return tuple(p for p in arms if p not in (REGISTRATION_READ, REGISTRATION_WRITE))
+
+
+def may_use_registration_desk(role: str, mode: str, *, desk_on: bool | None = None) -> bool:
+    """Does `role` pass the desk check in `mode`? Write needs a read arm too."""
+    on = registration_desk_on() if desk_on is None else desk_on
+    can_read = any(has_permission(role, p) for p in registration_desk_arms("read", desk_on=on))
+    if mode == "read" or not can_read:
+        return can_read
+    return any(has_permission(role, p) for p in registration_desk_arms("write", desk_on=on))
+
+
+async def _deny_registration_desk(request: Request, user: dict, mode: str) -> None:
+    """The audited refusal while the feature is on. Raises 403 once the denial
+    is on the hash chain (a blocking await, like require_permission's)."""
+    role = user.get("role", "")
+    required = list(REGISTRATION_DESK_READ_ARMS if mode == "read" else REGISTRATION_DESK_WRITE_ARMS)
+    await run_db(
+        log_audit_event,
+        correlation_id=str(uuid.uuid4()),
+        event_category="authorization",
+        action_type="permission_denied",
+        outcome="denied",
+        summary_message=f"Registration desk {mode} requires one of: {', '.join(required)}",
+        actor_user_id=user.get("id"),
+        actor_role=role,
+        request_path=request.url.path,
+        http_method=request.method,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        metadata={
+            "required_any_of": required,
+            "desk_mode": mode,
+            "user_role": role,
+            "registration_feature": True,
+        },
+    )
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error": "permission_denied",
+            "message": _DESK_DENIAL_WORDS[mode],
+            "required": required,
+        },
+    )
+
+
+async def _no_desk_gate() -> None:
+    """The default `gate`: nothing between the read and the write check."""
+    return None
+
+
+def require_registration_desk(mode: str, *, gate=None):
+    """Dependency factory for the registration desk: 'read' or 'write'.
+
+    read:  patient.read_all OR registration.read.
+    write: the read check, then frontdesk.write OR patient.write OR
+           registration.write.
+    The registration.* arms count only while the 'registration' feature is on;
+    with it off the denials are the old front-desk ones, byte for byte (the
+    read refusal IS require_permission(patient.read_all)'s, called directly).
+
+    `gate` is an optional extra dependency resolved after the read check and
+    before the write check, which is where the front desk's module switch always
+    sat (routes/frontdesk_routes.require_frontdesk_module): a signed-in caller
+    who may read gets the module's 404 before any write refusal, as before.
+
+    Every refusal is audited before the 403 (authorization/permission_denied).
+    No database work on the happy path, so the check stays on the loop.
+    """
+    if mode not in ("read", "write"):
+        raise ValueError(f"registration desk mode must be 'read' or 'write', not {mode!r}")
+    patient_read_all_checker = require_permission(PATIENT_READ_ALL)
+    extra_gate = gate or _no_desk_gate
+
+    async def _read_check(request: Request, user: dict = Depends(get_current_user)) -> dict:
+        role = user.get("role", "")
+        if registration_desk_on():
+            if may_use_registration_desk(role, "read", desk_on=True):
+                return user
+            await _deny_registration_desk(request, user, "read")
+        # Feature off: the rule the desk always had, refusal included.
+        return await patient_read_all_checker(request, user)
+
+    if mode == "read":
+        async def _checker(
+            user: dict = Depends(_read_check),
+            _gate: None = Depends(extra_gate),
+        ) -> dict:
+            return user
+    else:
+        async def _checker(
+            request: Request,
+            user: dict = Depends(_read_check),
+            _gate: None = Depends(extra_gate),
+        ) -> dict:
+            role = user.get("role", "")
+            desk_on = registration_desk_on()
+            if any(has_permission(role, p) for p in registration_desk_arms("write", desk_on=desk_on)):
+                return user
+            if desk_on:
+                await _deny_registration_desk(request, user, "write")
+            # Feature off: the front desk's own refusal, unchanged (it was
+            # require_frontdesk_write's, written from a threadpooled sync def;
+            # the same row is written here through run_db).
+            await run_db(
+                log_audit_event,
+                correlation_id=str(uuid.uuid4()),
+                event_category="authorization",
+                action_type="permission_denied",
+                outcome="denied",
+                summary_message="Front-desk write requires patient.write or frontdesk.write",
+                actor_user_id=user.get("id"),
+                actor_role=role,
+                request_path=request.url.path,
+                http_method=request.method,
+                ip_address=request.client.host if request.client else None,
+                metadata={"required_permissions": [PATIENT_WRITE, FRONTDESK_WRITE]},
+            )
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "permission_denied",
+                    "message": "Front-desk actions require patient.write or frontdesk.write",
+                    "required": [PATIENT_WRITE, FRONTDESK_WRITE],
+                },
+            )
+
+    _checker.__name__ = f"require_registration_desk_{mode}"
     return _checker
 
 

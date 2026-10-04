@@ -656,6 +656,16 @@ def _is_covered(event: dict, covered_windows: list[dict]) -> bool:
 
 
 # ── Occupied bed-days ────────────────────────────────────────────────────────
+#: The census readers below take every patients row as a stay. A 'registered'
+#: row (migration 52) is a person on the patient index who has never been
+#: admitted: no ward, no admission date, no stay. Counting one would add a
+#: patient to `patients_scanned` and to `undated_admissions` in the coverage
+#: diagnostics, so those rows are left out at the source. Until the
+#: registration feature is switched on no such row exists, and the scorecard's
+#: numbers are exactly what they were.
+_NEVER_ADMITTED_EXCLUDED = " WHERE COALESCE(status, 'admitted') <> 'registered'"
+
+
 def _occupied_bed_days(conn, covered_windows: list[dict], ward: Optional[str]) -> dict:
     """Bed-days inside COVERED ward-shift time only.
 
@@ -671,7 +681,7 @@ def _occupied_bed_days(conn, covered_windows: list[dict], ward: Optional[str]) -
         return empty
     try:
         rows = conn.execute(
-            "SELECT id, ward, admission_date, status FROM patients"
+            "SELECT id, ward, admission_date, status FROM patients" + _NEVER_ADMITTED_EXCLUDED
         ).fetchall()
     except Exception:
         logger.debug("scorecard: patients table unavailable for bed-days", exc_info=True)
@@ -1640,7 +1650,7 @@ def _census_wards(conn, start: datetime, end: datetime,
     }
     try:
         rows = conn.execute(
-            "SELECT id, ward, admission_date, status FROM patients"
+            "SELECT id, ward, admission_date, status FROM patients" + _NEVER_ADMITTED_EXCLUDED
         ).fetchall()
     except Exception:
         logger.debug("scorecard: patients table unavailable for ward scope", exc_info=True)
