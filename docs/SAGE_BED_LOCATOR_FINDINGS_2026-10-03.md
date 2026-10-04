@@ -1,6 +1,6 @@
 # Sage bed and ward lookup: findings, 3 October 2026
 
-Status: open. Three fixes were built on 3 and 4 October. All three failed independent review for wrong-patient paths and all three were backed out. server/services/sage_service.py and server/routes/sage_routes.py are byte-identical to before (SHA-256 af7be48c... and 38aeb70a...). R026 is RULED (a) with D2 to D4 and Q1 to Q3; see "Attempt 2" and "Attempt 3" at the end.
+Status: open. Five fixes were built on 3 and 4 October. All five failed independent review for wrong-patient paths and all five were backed out; the back-out was committed (Samuel's instruction, 4 October), which also removed attempt 4's code that an automatic snapshot (5d4f104) had committed while it was under review. Bed matching in main is the original substring scan. R026 is RULED (a) with D2 to D4, Q1 to Q3 and A to F.
 
 ## The defect today
 
@@ -81,4 +81,55 @@ And three further problems:
 The cost of ruling Q1, measured by the reviewer on 54 realistic questions with numbers in them, on a ward numbered 1 to 30 with bed 7 open: the new code asked "did you mean bed N?" on 33 (61%), kept the open chart on 19, and attached a wrong chart on 0. The old code attached a DIFFERENT bed's chart on 28 of the 54. On Orb's own naming (GM-501 to GM-530) the new code asked on 0%. The asks came from: 12-lead ECG, lab words not on the list, doses written without units ("metoprolol 25 bd"), counts ("2 sets of cultures"), times ("review at 5") and an age.
 
 Saved: docs/archive/bed-locator-attempt3-2026-10-04/ (code, tests, the reviewer's probes and outputs, attempt3_*.patch).
+
+## Attempt 4 (4 October): attempt 3 plus its fixes, and the server writes the question; failed review, backed out
+
+320 new tests and 2,066 guard tests passed. On realistic traffic it was the best yet. The reviewer's tables, ward numbered 1 to 30, bed 7 open:
+
+| Question set | Attempt 4: asked / kept open chart / WRONG chart | Old code: WRONG chart |
+|---|---|---|
+| Attempt 3's 54 questions (attempt 4 was tuned on these) | 0 / 49 / 0 | 28 |
+| 50 new questions | 6 / 43 / 0 | about 19 |
+| Both sets on GM-501 style labels | 0 asks, 0 wrong | n/a |
+
+It fixed nearly everything the two earlier reviewers found. The reviewer still found wrong-patient paths:
+- The which-patient turn was never saved (the route returns before the try/finally that saves turns, like the out-of-department answer), so in production the "ask again" rule never saw it: "yes" after "how is 12?" answered from the open chart. The unit tests passed only because they supplied history by hand.
+- Replies after the question that name nobody but missed the reply pattern ("potassium?", "neither", "go ahead") went to the open chart; "not this patient" read as "this patient".
+- A REGRESSION in order phrasing: a bed number after a drug or lab word and "to / for / of / at" was read as a value, so "give lasix to 12", "hold metformin for 12", "what is the potassium of 12?", "can you look at 12?" went to the open chart (the order drafted on bed 7). The old substring matcher found bed 12 for these.
+- "bed sx 17" (another department's letters after a bed word) and "bed 12-3 days post-op" fell to the open chart; Devanagari and Arabic-Indic digits were not read; "out of bed 2nd day post-op" attached bed 2; "compare bed 12 with 45" dropped bed 45.
+- "bed 12 65M fever" (no comma) and "bed 12 2 PRBC given" became no-match for a real bed.
+- Hyphenated codes of another department in transfer phrasing ("transferred from ICU-03 yesterday", "is HDU-2 free?") were refused as out-of-department, each with a security audit row (a literal reading of Q2; may need a ruling).
+- The route appended the internal "ACTIVE VIEW ... viewing patient <name>" line to the server-written question, so the clinician saw it (the same bug class fixed for the out-of-department answer on 3 August).
+- The voice lane passes no history, so the ask-again rule cannot run there, and ruling A was not applied to voice.
+- The question cache pinned up to 457 MB with eight 512 KB questions.
+- Ward-level questions ("how is ward 5 doing?") now got the server's which-patient list instead of an answer, and two patients cannot be compared ("compare beds 12 and 14" asks).
+
+Saved: docs/archive/bed-locator-attempt4-2026-10-04/ (code, tests, reviewer probes and outputs, attempt4_*.patch).
+
+## Attempt 5 (4 October): attempt 4 plus its fixes and rulings E and F; under review
+
+Built on attempt 4. Every attempt 4 finding has a test (412 in tests/test_sage_bed_locator.py; 319 of them fail on the code before this work):
+- The which-patient turn is SAVED by the route, so the next turn knows it followed the question. Any reply that names nobody is asked once more; a reply that is only a bed ("12") is that bed; "this patient" is the open chart; after one re-ask the next unnamed turn is answered from the open chart, labelled.
+- A bed number right after to / for / of / at / in / on / with is a patient, not a value ("give lasix to 12", "potassium of 12", "look at 12"), except a change ("dropped from 14 to 12"), a scored value with an article ("a GCS of 12") or a time ("review at 3").
+- The screen line never reaches the which-patient question; voice speaks the server's question and the patient label, and passes its conversation to retrieval.
+- Unicode digits, "bed 12-3 days", "out of bed 2nd day", "compare bed 12 with 45", "bed 12 65M", "bed sx 17", more everyday counts.
+- A ward on its own is answered by the ward census; "should she go to CCU?" keeps the chart.
+- Ruling E: an answer from a chart the clinician did not name starts with "About <name>, bed <bed>:" (chat and voice), and an order that names no patient asks which patient before anything is drafted.
+- Ruling F: a bed or code in a transfer or place phrase keeps the open chart and writes no security event.
+- Long questions are tokenized once per turn and the caches are emptied when the turn ends.
+
+Guard suites: 2,414 passed across 49 files (the one order-dependent failure was a test patient named "Patient RBAC Test" matching the word "patient"; that case was rephrased). The name-matcher work's 512 KB timing tests pass with it (1.48 s against a 3 s budget).
+
+It was backed out once when work stopped before review, then re-applied unchanged for the review.
+
+### Attempt 5 review (4 October): failed, backed out
+
+On everyday questions it was the best attempt: 0 wrong charts in 134 questions (the old code: 28 of 54, 24 of 50, 12 of 30), asking 0 to 3% of the time. Every attempt 4 finding the reviewer re-ran was fixed. It still failed:
+- Wrong chart with NO label: "head end of bed 30-45 degrees", "bed 30-45° up", "raise the foot end of bed 15 cm" read as certain beds 30 and 15 (the "bed 12-3 days" rule dropped "-45" and left "30" certain).
+- Ruling F's place rule swallowed ordinary references: "is bed 12 ready for discharge?", "I'm going to bed 12 now, potassium?", "she was in bed 12 last night, how is she now?" were answered from the open chart (labelled); "is GM-545 ready for discharge?" got the open chart instead of no match.
+- Ruling E did not hold in practice: the label was a separate streamed event, but the screen replaces the streamed text with the structured answer when it arrives (src/pages/panels/SagePanel.tsx, src/components/sage/SageMessage.tsx), and the saved turn and provenance lacked it; the reviewer read this from the UI code, not a browser. And an order could still be drafted on the open chart: after "give him lasix 40 iv" got the order question, "yes" or "go ahead" drafted it on bed 7, because the ask-again rule re-reads the previous USER message and an unnamed order names nobody. "give him lasix", then "12", then "yes", then "yes" drafted it on bed 7. detect_mutation_intent misses 21 of 30 order shorthands ("inj lasix 40 iv stat", "transfuse 2 units prbc"). "not for this patient" counted as "this patient".
+- False no-match for real beds from closed word lists ("bed 12 2 vomits", "Bed 12, 65 male, fever"), false out-of-department refusals on transfer phrasing the place list missed ("back from ICU-03", "refer her to ICU-03?"), the history anchor binding an older patient after a turn the reader could not resolve, spurious which-patient questions after a ward census answer, and a quadratic-in-beds case (4.5 s on 480 KB of "gm 512" on a 60-bed ward against a 3 s budget).
+- Ruling E asked on 70% of 20 realistic ward-round orders typed with a chart open.
+
+The pattern across five reviews: every closed list (bed words, units, counts, place verbs, order shorthands, reply phrasings) leaves a tail, and each tail is a wrong-patient path or a false refusal. The probes are in docs/archive/bed-locator-attempt5-2026-10-04/probes/.
 

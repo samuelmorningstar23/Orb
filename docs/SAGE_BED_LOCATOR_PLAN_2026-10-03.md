@@ -1,6 +1,6 @@
 # Sage bed lookup: build plan, 3 October 2026
 
-Status: RULED (R026 (a), D2 to D4, Q1 to Q3). Attempts 2 and 3 failed review and were backed out. 4 October: Samuel ruled A (a) the server writes the which-patient question, B (a) keep asking with the extra filters, C build attempt 4. Build in progress.
+Status: RULED (R026 (a), D2 to D4, Q1 to Q3, A to F). Attempts 2 to 5 each failed independent review and were backed out; the back-out is committed, so main has the original bed matching. Next step is Samuel's decision (see the findings note, "Attempt 5 review").
 Reads with: docs/SAGE_BED_LOCATOR_FINDINGS_2026-10-03.md (the defect and why the first fix was backed out).
 
 ## The idea in one paragraph
@@ -165,4 +165,15 @@ Attempt 3's design stays: find beds from the labels on the ward, ask when unsure
 - **A. How Sage asks.** (a) The server writes the question itself, without the model, the way the out-of-department answer already works: "Which patient do you mean? Bed 12: <name>, ward 5. If you meant the patient whose chart is open, say so." Applies to every "which patient" turn, including today's name ambiguity. (b) Keep the model and add an explicit instruction to ask. Recommend (a): the reviewer's replay showed the model answering generically with invented citations when it was not told to ask.
 - **B. The ask rate on numbered wards.** With item 10 the 61% should fall a long way, but it will not reach zero on a ward numbered 1 to 30. (a) Keep Q1: an unsure number asks. (b) Revisit Q1. Recommend (a): the alternative answers "how is 12?" from the open chart, and the old code put a different bed's chart in front of the model on 28 of the same 54 questions.
 - **C. Build attempt 4 now, or pause.** Same process: tests first and shown failing, guard suites, a fresh reviewer with both earlier reviewers' probes.
+
+---
+
+## After attempt 4: where this stands (4 October)
+
+On realistic questions attempt 4 put a wrong chart in front of the model 0 times in 104, against 28 of 54 and about 19 of 50 for the code running today. Every adversarial review still finds phrasings that reach the wrong chart, because any text the reader misses falls to the open chart, and the long tail of ward phrasing does not end.
+
+Attempt 5 would fix every attempt 4 finding (save the which-patient turn; strip the view line from it; ask again on ANY reply that names nobody; never read a bed number after "to / for / of / at" as a value; voice-lane parity; Unicode digits; ordinals before day/week; "with / then / also" lists; a bounded cache; a ward-only question goes to the ward census, not the which-patient list). And it would add one structural backstop, so that the next phrasing nobody thought of is visible instead of silent:
+
+- **E. Name the patient on every answer the clinician did not name.** When Sage answers from the open chart or the conversation's patient on a turn that did not name that patient, the server puts one line first: "About <name>, bed <bed>:". An order drafted on such a turn always asks which patient before it is drafted. A missed bed reference then produces a visibly labelled answer about the open patient, never a silent one, and no order can land on the wrong chart by phrasing.
+- **F. Another department's code in a transfer phrase** ("transferred from ICU-03 yesterday", "is HDU-2 free?"): (a) a place in the open patient's story, keep the chart, no denial; (b) "outside your department", as attempt 4 did.
 
