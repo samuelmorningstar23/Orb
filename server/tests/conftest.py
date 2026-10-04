@@ -119,66 +119,6 @@ def _isolate_discharge_verify_throttle():
 
 
 @pytest.fixture(autouse=True)
-def _isolate_login_ip_limiter():
-    """Give every test an empty per-IP failed sign-in record.
-
-    THE FAILURE (found 2026-10-04). routes/auth_routes keeps LOGIN_ATTEMPTS in
-    process: MAX_LOGIN_ATTEMPTS (5) failed sign-ins from one IP inside
-    LOCKOUT_DURATION_SECONDS lock that IP out, and the check runs BEFORE the
-    password is verified. Every TestClient request comes from 'testclient'. A
-    successful login clears the IP, which is why the suite got away with it,
-    but failures from different tests add up: the three service-account
-    reset-password tests in test_admin_users_guards.py leave 3, test_audit.py's
-    test_login_failure leaves 1, and one more locked 'testclient' out. A
-    correct password is then refused too, so nothing clears it, and every later
-    login in the session got 429 for 15 minutes.
-
-    Same shape as _isolate_discharge_verify_throttle above: cleared before AND
-    after each test, found via sys.modules. A test still meets the real limiter
-    and can exhaust it on its own (test_login_ip_limiter.py proves it), and the
-    tests that clear it on purpose mid-test, to stand in for a fresh source IP,
-    work as before."""
-    def _clear():
-        auth_routes = sys.modules.get("routes.auth_routes")
-        if auth_routes is not None:
-            auth_routes.LOGIN_ATTEMPTS.clear()
-
-    _clear()
-    yield
-    _clear()
-
-
-@pytest.fixture(autouse=True)
-def _isolate_clinician_pin_limiter():
-    """Give every test an empty clinician PIN failure record.
-
-    services/pin_security keeps PIN_ATTEMPTS in process: MAX_PIN_ATTEMPTS (5)
-    wrong clinician PINs on a Relay agentic confirmation inside
-    LOCKOUT_DURATION_SECONDS lock that user out, checked before the PIN. It is
-    keyed by user id, not IP, so it leaks only between tests that share a user,
-    and a locked user's correct PIN is refused too, so nothing clears it for 15
-    minutes. Nothing failed from it as of 2026-10-04: the one test that leaves a
-    lock (test_optimized_agentic_orders.py::test_wrong_pin_five_times_locks_out,
-    D-PRIMARY-DOC) is followed only by tests that pull in that module's own
-    autouse fixture, which clears it. A later test confirming as that doctor
-    without that fixture, or one locking a shared seeded user such as D001,
-    would have failed in every test after it.
-
-    Same shape as the two fixtures above: cleared before AND after each test,
-    found via sys.modules. A test still meets the real limiter and can exhaust
-    it on its own (test_wrong_pin_five_times_locks_out, and
-    test_clinician_pin_limiter.py, which also proves the boundary)."""
-    def _clear():
-        pin_security = sys.modules.get("services.pin_security")
-        if pin_security is not None:
-            pin_security.PIN_ATTEMPTS.clear()
-
-    _clear()
-    yield
-    _clear()
-
-
-@pytest.fixture(autouse=True)
 def _reset_async_singletons():
     """Reset lazily-bound asyncio singletons before EVERY test.
 
@@ -383,7 +323,13 @@ def pytest_configure(config):
 
 
 @pytest.fixture(autouse=True)
-def _no_real_knowledge_pool(request, monkeypatch):
+def _no_real_knowledge_pool(request):
+    # Deliberately not via the monkeypatch fixture: an autouse conftest fixture
+    # that depends on monkeypatch instantiates it first for EVERY test, which
+    # flips the teardown order a module-level autouse fixture may rely on
+    # (test_heartbeat_service's _no_env_leaks asserts the environment is back
+    # to its snapshot and must tear down after monkeypatch's undo; with the
+    # dependency it tore down before, and all 25 tests errored).
     if request.node.get_closest_marker("real_knowledge_pool"):
         yield
         return
@@ -395,8 +341,12 @@ def _no_real_knowledge_pool(request, monkeypatch):
             "test @pytest.mark.real_knowledge_pool to spawn the real worker"
         )
 
-    monkeypatch.setattr(kw, "_ensure_pool", _refuse)
-    yield
+    original = kw._ensure_pool
+    kw._ensure_pool = _refuse
+    try:
+        yield
+    finally:
+        kw._ensure_pool = original
 
 
 @pytest.fixture(autouse=True, scope="session")
