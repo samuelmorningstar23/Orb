@@ -140,7 +140,18 @@ def _match_patient_identifiers(query_lower: str, include_ward: bool = True) -> b
     location, not an identifier: `include_ward=False` excludes it so a
     ward-scoped AGGREGATE question ("ICU bed occupancy") isn't misclassified as
     per-patient PHI. The ward is still a PHI signal for non-aggregate turns
-    (checked separately with include_ward=True)."""
+    (checked separately with include_ward=True).
+
+    The question is read ONCE (2026-10-04). This used to run one `\\bpart\\b`
+    regex over the whole question per name part per patient row (every
+    status), and a 512 KB question that named nobody took 13 s per call with
+    2,000 rows; classify_query_sensitivity can make two calls. A name part is
+    a-z only, so `\\bpart\\b` finds it exactly when it is one of the question's
+    whole a-z words, and each distinct ward/bed label needs testing only once.
+    Same answers, pinned against the old loop in
+    tests/test_ai_governance_identifier_scan.py; that includes the known
+    over-labelling (the squashed-substring test reads ward "OR" inside "for"),
+    which errs toward PHI and is left as it was."""
     try:
         from database import get_db
         db = get_db()
@@ -156,18 +167,22 @@ def _match_patient_identifiers(query_lower: str, include_ward: bool = True) -> b
     # slip past the match.
     query_lower = _fold_homoglyphs(query_lower)
     norm_query = re.sub(r"[^a-z0-9]", "", query_lower)
+    words = frozenset(re.findall(r"\b[a-z]+\b", query_lower))
+    tested_locs = set()
     for r in rows:
         name = str(r["name"] or "").lower()
         name_parts = [p for p in re.split(r"[^a-zA-Z]", name)
                       if p and p not in ("mr", "mrs", "ms", "dr", "prof")]
         for part in name_parts:
-            if len(part) > 2 and re.search(rf"\b{re.escape(part)}\b", query_lower):
+            if len(part) > 2 and part in words:
                 return True
         locs = (r["ward"], r["bed"]) if include_ward else (r["bed"],)
         for loc in locs:
             norm_loc = re.sub(r"[^a-z0-9]", "", str(loc or "").lower())
-            if norm_loc and norm_loc in norm_query:
-                return True
+            if norm_loc and norm_loc not in tested_locs:
+                tested_locs.add(norm_loc)
+                if norm_loc in norm_query:
+                    return True
     return False
 
 
