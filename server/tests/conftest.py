@@ -149,6 +149,36 @@ def _isolate_login_ip_limiter():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_clinician_pin_limiter():
+    """Give every test an empty clinician PIN failure record.
+
+    services/pin_security keeps PIN_ATTEMPTS in process: MAX_PIN_ATTEMPTS (5)
+    wrong clinician PINs on a Relay agentic confirmation inside
+    LOCKOUT_DURATION_SECONDS lock that user out, checked before the PIN. It is
+    keyed by user id, not IP, so it leaks only between tests that share a user,
+    and a locked user's correct PIN is refused too, so nothing clears it for 15
+    minutes. Nothing failed from it as of 2026-10-04: the one test that leaves a
+    lock (test_optimized_agentic_orders.py::test_wrong_pin_five_times_locks_out,
+    D-PRIMARY-DOC) is followed only by tests that pull in that module's own
+    autouse fixture, which clears it. A later test confirming as that doctor
+    without that fixture, or one locking a shared seeded user such as D001,
+    would have failed in every test after it.
+
+    Same shape as the two fixtures above: cleared before AND after each test,
+    found via sys.modules. A test still meets the real limiter and can exhaust
+    it on its own (test_wrong_pin_five_times_locks_out, and
+    test_clinician_pin_limiter.py, which also proves the boundary)."""
+    def _clear():
+        pin_security = sys.modules.get("services.pin_security")
+        if pin_security is not None:
+            pin_security.PIN_ATTEMPTS.clear()
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_async_singletons():
     """Reset lazily-bound asyncio singletons before EVERY test.
 
