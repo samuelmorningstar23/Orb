@@ -290,15 +290,6 @@ export default function PatientShell() {
   const now = new Date()
   const openSlots = selectedDate ? TIME_SLOTS.filter(slot => !slotHasPassed(selectedDate, slot, now)) : TIME_SLOTS
 
-  useEffect(() => {
-    loadStatus()
-    loadReports()
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
-    loadAppointments()
-    const interval = setInterval(loadStatus, 30000)
-    return () => clearInterval(interval)
-  }, [loadAppointments])
-
   const loadStatus = async () => {
     try {
       const data = await getBridgeStatus()
@@ -321,6 +312,15 @@ export default function PatientShell() {
       setReportsLoading(false)
     }
   }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
+    loadStatus()
+    loadReports()
+    loadAppointments()
+    const interval = setInterval(loadStatus, 30000)
+    return () => clearInterval(interval)
+  }, [loadAppointments])
 
   const handleAsk = async () => {
     if (!question.trim() || asking) return

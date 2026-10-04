@@ -63,9 +63,10 @@ vi.mock('../../api/client', () => ({
   socket: { on: vi.fn(), off: vi.fn(), emit: vi.fn() },
 }))
 
-import SageAlertAssessment, {
+import SageAlertAssessment from './SageAlertAssessment'
+import {
   partitionAssessments, patientSpecificView, isGenericAdviceLine,
-} from './SageAlertAssessment'
+} from './sageAssessmentView'
 import { socket } from '../../api/client'
 
 /** The mocked case-room socket. The component re-reads on

@@ -97,8 +97,8 @@ vi.mock('../../components/sage/SageAlertAssessment', async (importOriginal) => {
 
 import VigilPanel from './VigilPanel'
 import { NO_VALUE } from '../../lib/vitals'
-import { ActivePatientProvider } from '../../contexts/ActivePatientContext'
-import { ActiveViewProvider } from '../../contexts/ActiveViewContext'
+import { ActivePatientProvider } from '../../contexts/ActivePatientProvider'
+import { ActiveViewProvider } from '../../contexts/ActiveViewProvider'
 
 /* ─── Fixtures in the server's shapes ─────────────────────────────────────── */
 

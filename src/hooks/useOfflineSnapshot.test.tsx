@@ -45,7 +45,10 @@ describe('useOfflineSnapshot — while online', () => {
   })
 
   it('writes nothing when nobody is signed in', () => {
-    renderHook(() => useOfflineSnapshot('nurse:board', { patients: [] }, { userId: null }))
+    // Held outside the render, as a panel's state is: `live` must keep its
+    // identity between renders (see the hook).
+    const board = { patients: [] }
+    renderHook(() => useOfflineSnapshot('nurse:board', board, { userId: null }))
     expect(localStorage.getItem(`${OFFLINE_CACHE_PREFIX}nurse:board`)).toBeNull()
   })
 })

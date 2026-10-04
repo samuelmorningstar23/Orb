@@ -417,7 +417,7 @@ export interface PatientAssessments {
  *  siblings so an older UNRESOLVED draft cannot be buried by a newer failed one.
  *  Which siblings still need a clinician, and how they are shown, is the
  *  surface's decision: `partitionAssessments` in
- *  components/sage/SageAlertAssessment.tsx.
+ *  components/sage/sageAssessmentView.ts.
  */
 export async function getLatestAssessmentForPatient(
   patientId: string,

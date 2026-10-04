@@ -1,14 +1,5 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
-import { getSageAiPosture, type SageAiPosture } from '../api/client'
+import { createContext, useContext } from 'react'
+import type { SageAiPosture } from '../api/client'
 
 /** Shared runtime for every Sage surface (floating orb, SagePanel, Scribe):
  *
@@ -22,7 +13,7 @@ import { getSageAiPosture, type SageAiPosture } from '../api/client'
  *     before opening it and releases it after; everyone else observes.
  */
 
-interface SageRuntimeContextType {
+export interface SageRuntimeContextType {
   posture: SageAiPosture | null
   cloudSpeechAllowed: boolean
   /** Can on-appliance transcription actually run? `null` until the posture has
@@ -35,7 +26,9 @@ interface SageRuntimeContextType {
   releaseMic: (owner: string) => void
 }
 
-const SageRuntimeContext = createContext<SageRuntimeContextType>({
+// The provider lives in SageRuntimeProvider.tsx, so this module exports no
+// component (react-refresh/only-export-components) and the hook keeps its path.
+export const SageRuntimeContext = createContext<SageRuntimeContextType>({
   posture: null,
   cloudSpeechAllowed: false,
   localAsrAvailable: null,
@@ -45,45 +38,3 @@ const SageRuntimeContext = createContext<SageRuntimeContextType>({
 })
 
 export const useSageRuntime = () => useContext(SageRuntimeContext)
-
-export function SageRuntimeProvider({ children }: { children: ReactNode }) {
-  const [posture, setPosture] = useState<SageAiPosture | null>(null)
-  const [micOwner, setMicOwner] = useState<string | null>(null)
-  const micOwnerRef = useRef<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    getSageAiPosture()
-      .then(p => { if (!cancelled) setPosture(p) })
-      .catch(() => { /* fail-closed: posture stays null, cloud speech stays off */ })
-    return () => { cancelled = true }
-  }, [])
-
-  const claimMic = useCallback((owner: string): boolean => {
-    if (micOwnerRef.current && micOwnerRef.current !== owner) return false
-    micOwnerRef.current = owner
-    setMicOwner(owner)
-    return true
-  }, [])
-
-  const releaseMic = useCallback((owner: string) => {
-    if (micOwnerRef.current === owner) {
-      micOwnerRef.current = null
-      setMicOwner(null)
-    }
-  }, [])
-
-  const value = useMemo(
-    () => ({
-      posture,
-      cloudSpeechAllowed: posture?.cloud_speech_allowed === true,
-      localAsrAvailable: posture ? posture.local_asr_available === true : null,
-      micOwner,
-      claimMic,
-      releaseMic,
-    }),
-    [posture, micOwner, claimMic, releaseMic],
-  )
-
-  return <SageRuntimeContext.Provider value={value}>{children}</SageRuntimeContext.Provider>
-}

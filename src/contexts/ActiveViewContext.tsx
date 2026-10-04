@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState, useCallback, type ReactNode } from 'react'
+import { createContext, useContext } from 'react'
 
 /** What the clinician has open inside the active panel — an order being
  *  reviewed, a Relay channel, a lab, a bed. Published by each panel the same
@@ -10,14 +10,16 @@ export interface ViewSelection {
   patientId?: string | null
 }
 
-interface ActiveViewContextType {
+export interface ActiveViewContextType {
   activeTab: string
   selection: ViewSelection | null
   setViewTab: (tab: string) => void
   setViewSelection: (sel: ViewSelection | null) => void
 }
 
-const ActiveViewContext = createContext<ActiveViewContextType>({
+// The provider lives in ActiveViewProvider.tsx, so this module exports no
+// component (react-refresh/only-export-components) and the hook keeps its path.
+export const ActiveViewContext = createContext<ActiveViewContextType>({
   activeTab: '',
   selection: null,
   setViewTab: () => {},
@@ -25,22 +27,6 @@ const ActiveViewContext = createContext<ActiveViewContextType>({
 })
 
 export const useActiveView = () => useContext(ActiveViewContext)
-
-export function ActiveViewProvider({ children }: { children: ReactNode }) {
-  const [activeTab, setViewTab] = useState('')
-  const [selection, setSelection] = useState<ViewSelection | null>(null)
-
-  const setViewSelection = useCallback((sel: ViewSelection | null) => {
-    setSelection(sel)
-  }, [])
-
-  const value = useMemo(
-    () => ({ activeTab, selection, setViewTab, setViewSelection }),
-    [activeTab, selection, setViewSelection],
-  )
-
-  return <ActiveViewContext.Provider value={value}>{children}</ActiveViewContext.Provider>
-}
 
 /** Build the wire-format view_context for /sage/query and /sage/voice.
  *  The backend whitelists + length-clamps these fields and treats them as

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useEffectEvent, useRef } from 'react'
 
 /**
  * Reference-counted body scroll lock.
@@ -64,15 +64,20 @@ export function useFocusTrap<T extends HTMLElement>(
   const containerRef = useRef<T>(null)
   // Capture the trigger so focus can be restored to it on close.
   const previouslyFocused = useRef<HTMLElement | null>(null)
-  /* Held in a ref, and the effect below runs ONCE, deliberately.
+  /* An effect event, and the effect below runs ONCE, deliberately.
      If `onClose` were a dependency, every caller passing an inline arrow (or a
      value that flips, like `submitting ? undefined : onClose`) would tear the
      effect down and rebuild it on each render — and teardown restores focus to
      the trigger OUTSIDE the modal, so focus would jump out and back to the
-     first field on every keystroke in a modal form. The ref keeps the latest
-     handler without re-running the trap. */
-  const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
+     first field on every keystroke in a modal form. The effect event always
+     sees the latest handler without re-running the trap. (It replaced a ref
+     written during render, react-hooks/refs.) With no handler the key is left
+     alone, so it still reaches whatever is underneath. */
+  const closeOnEscape = useEffectEvent((e: KeyboardEvent) => {
+    if (!onClose) return
+    e.stopPropagation()
+    onClose()
+  })
 
   useEffect(() => {
     const container = containerRef.current
@@ -105,9 +110,7 @@ export function useFocusTrap<T extends HTMLElement>(
       // A dialog underneath the top one ignores the keyboard entirely.
       if (trapStack[trapStack.length - 1] !== token) return
       if (e.key === 'Escape') {
-        if (!onCloseRef.current) return
-        e.stopPropagation()
-        onCloseRef.current()
+        closeOnEscape(e)
         return
       }
       if (e.key !== 'Tab') return
@@ -143,7 +146,6 @@ export function useFocusTrap<T extends HTMLElement>(
       // Restore focus to the trigger when the modal closes.
       previouslyFocused.current?.focus?.()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   return containerRef

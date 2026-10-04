@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from db_backend import DBIntegrityError
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -560,7 +561,7 @@ def test_the_database_refuses_a_malformed_session_row(tmp_path):
         ("CS4", "D", "X", 0, "09:00", "10:00", 1),    # slot too short
     ]
     for row in bad:
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(DBIntegrityError):
             conn.execute(
                 "INSERT INTO clinic_sessions (id, doctor_id, department, weekday, start_time, "
                 "end_time, slot_minutes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'now')", row)

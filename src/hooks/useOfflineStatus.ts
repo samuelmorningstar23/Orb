@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useState } from 'react'
 
 /**
  * Is this device connected, and since when?
@@ -74,12 +74,14 @@ export function useOfflineStatus(): OfflineStatus {
  * event in between.
  */
 export function useOnReconnect(callback: (() => void) | undefined): void {
-  const ref = useRef(callback)
-  ref.current = callback
+  // An effect event always calls the latest callback without being a
+  // dependency, so the listener is attached once. It replaces a ref written
+  // during render (react-hooks/refs).
+  const fire = useEffectEvent(() => callback?.())
 
   useEffect(() => {
-    const fire = () => ref.current?.()
-    window.addEventListener('online', fire)
-    return () => window.removeEventListener('online', fire)
+    const onOnline = () => fire()
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
   }, [])
 }

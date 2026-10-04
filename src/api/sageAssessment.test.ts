@@ -14,7 +14,7 @@
  * So what is pinned here is not a shape for its own sake: the read must hand
  * back every row in the room, and the newest row must still be reported as the
  * current one. Which of the siblings still needs a clinician is the surface's
- * decision (`partitionAssessments` in components/sage/SageAlertAssessment.tsx);
+ * decision (`partitionAssessments` in components/sage/sageAssessmentView.ts);
  * this file's job is that the facts survive the trip.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'

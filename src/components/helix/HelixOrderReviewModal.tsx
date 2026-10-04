@@ -10,6 +10,7 @@ import {
   type SafetyAlert,
 } from '../../api/client'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
+import { getStatusBadge } from './statusBadge'
 
 interface HelixOrder {
   id: string
@@ -37,23 +38,6 @@ interface CatalogItem {
   generic_name: string
   form: string
   strength: string
-}
-
-// ─── State Machine Badge Helper ───
-const STATUS_CONFIG: Record<string, { label: string; class: string }> = {
-  pending:              { label: 'Pending',    class: 'badgePending' },
-  reviewing:            { label: 'Reviewing',  class: 'badgeReviewing' },
-  verified:             { label: 'Verified',   class: 'badgeVerified' },
-  rejected:             { label: 'Rejected',   class: 'badgeRejected' },
-  substitute_suggested: { label: 'Substitute', class: 'badgeSubstitute' },
-  scheduled:            { label: 'Scheduled',  class: 'badgeScheduled' },
-  dispensed:            { label: 'Dispensed',   class: 'badgeDispensed' },
-  delivered:            { label: 'Delivered',   class: 'badgeDelivered' },
-}
-
-export function getStatusBadge(status: string) {
-  const cfg = STATUS_CONFIG[status] || { label: status, class: 'badgeNeutral' }
-  return { label: cfg.label, className: styles[cfg.class] || styles.badgeNeutral }
 }
 
 // ─── Allowed next actions per state ───

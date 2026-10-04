@@ -18,7 +18,7 @@ vi.mock('./pages/DischargeAccess', () => ({ default: () => null }))
 vi.mock('./pages/DowntimeMode', () => ({ default: () => null }))
 vi.mock('./pages/HandoffPage', () => ({ default: () => null }))
 
-import App from './App'
+import App from './AppRoot'
 
 beforeEach(() => {
   // jsdom has no matchMedia; App's theme listener needs one.

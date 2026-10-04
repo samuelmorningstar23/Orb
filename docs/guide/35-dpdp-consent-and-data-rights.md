@@ -312,13 +312,13 @@ The module docstring (`:1-105`) is required reading and is summarised above rath
 **Why four categories have no entry:** `medico_legal_record`, `ambient_audio`, `non_clinical_contact` and `marketing_communications` have no table in Orb. The policy is still declared so that **the hospital's answer is on record**, `retention_review` returns them with `measurable: False` and a note saying so, rather than omitting them.
 **Breaks if you change it:** pointing a category at the wrong timestamp column silently mis-buckets every row, e.g. anchoring `clinical_record` on a row's `updated_at` would make an old record look recent every time anyone edited it, and the overdue list would go quietly empty.
 
-#### `list_retention_policies`: `consent_service.py:779`
+#### `list_retention_policies`: `consent_service.py:788`
 **Signature:** `() -> list[dict]`
 **Does:** The whole matrix, ordered `erasable, category`, so the refused categories print first.
 **On screen:** the `policies` half of `GET /api/admin/compliance/retention` (`compliance_routes.py:300`). No component renders it.
 **Breaks if you change it:** the ordering is what makes the printed matrix readable as "here is what we must keep, and then here is what you can have". Alphabetical ordering interleaves them.
 
-#### `retention_review`: `consent_service.py:785`
+#### `retention_review`: `consent_service.py:794`
 **Signature:** `(*, now: datetime | None = None, patient_id: str | None = None) -> dict`
 **Does:** Reports what is past its retention period, per category. **Deletes nothing.**
 **On screen:** the `review` half of the retention endpoint.
@@ -329,14 +329,14 @@ The module docstring (`:1-105`) is required reading and is summarised above rath
 **The `not_patient_scoped` branch (`:823`):** the breach register is keyed by incident, not by person. Counting it unfiltered under a `patient_id` review would report *every breach in the hospital* as this one patient's overdue data. It is skipped and **named in the response** rather than returning a number that reads as if it were theirs.
 **Breaks if you change it:** adding a delete here, even behind a flag, creates a background job that can destroy a medical record because a day count elapsed. Switching the comparison to `substr()` keeps the answer and loses the index. Dropping `not_patient_scoped` makes a per-patient review silently include hospital-wide counts. Counting a protected category without the releasable-patient filter puts paediatric records on a list a hospital destroys from.
 
-#### `_erase_ai_transcripts`: `consent_service.py:943`
+#### `_erase_ai_transcripts`: `consent_service.py:964`
 **Signature:** `(db, patient_id) -> tuple[int, dict]`
 **Does:** Deletes the patient's rows from `sage_observations`, `sage_room_memory`, `sage_decision_cache`, `sage_insights` and `insight_feedback`. Returns the total and a per-table breakdown.
 **On screen:** the per-category `detail` in the execution response.
 **Why this one is safe to honour:** every one of those tables is **derived**, regenerated from the clinical record. Erasing them removes the AI's notes about the patient without touching a single word a clinician wrote.
 **Breaks if you change it:** adding a table that is *not* derived turns an honoured erasure into destruction of the clinical record, the exact outcome the `erasable` column exists to prevent. The per-table `try/except` (`:910-913`) means a missing table is skipped and logged rather than aborting the run; that is right for a pre-migration database and wrong if it hides a table you meant to clear, so check the returned `detail` counts rather than the total.
 
-#### `_erase_portal_account`: `consent_service.py:962`
+#### `_erase_portal_account`: `consent_service.py:983`
 **Signature:** `(db, patient_id) -> tuple[int, dict]`
 **Does:** Revokes every outstanding `discharge_access_tokens` row and **deactivates** the linked patient `users` row.
 **On screen:** the `portal_logins_disabled` and `discharge_access_tokens_revoked` counts.
@@ -345,32 +345,32 @@ The module docstring (`:1-105`) is required reading and is summarised above rath
 **Why `token_version` is bumped (`:956`):** it kills every JWT already outstanding, so the erasure takes effect on the **next request** rather than at the next expiry. Without it, a patient whose portal account was "erased" keeps working access for the life of their current token.
 **Breaks if you change it:** deleting the `users` row instead orphans every audit and clinical row referencing it. Nulling `password_hash` violates `NOT NULL` and aborts the whole transaction. Dropping the `token_version` bump leaves a live session on an erased account.
 
-#### `_erase_ambient_audio` / `_unlink_erased_audio`: `consent_service.py:1006` / `:1034`
+#### `_erase_ambient_audio` / `_unlink_erased_audio`: `consent_service.py:1027` / `:1034`
 **Signature:** `(db, patient_id) -> tuple[int, dict]` / `(names) -> list[str]`
 **Does:** Detaches the patient's dictation audio from their `scribe_notes` (nulls `audio_path`) inside the erasure transaction and names the files; `execute_erasure_request` deletes those files **after** the commit and gets back the names that could not be removed.
 **Why two steps:** a file deleted inside the transaction cannot be rolled back with it; if a later executor or the execution row failed, the record would say nothing was erased while the audio was already gone. The signed note is the medical record and is not touched; the audio is working material.
 **How it trusts a path:** `scribe_notes.audio_path` arrives from the client, so a file is scheduled only when it resolves inside `UPLOAD_DIR`, and never when another patient's note points at the same file. Anything refused keeps its pointer and is counted (`kept_outside_upload_folder`, `kept_shared_with_another_record`); the unlink step repeats the containment check because it is the line that deletes, and treats a file already gone as removed.
 **Breaks if you change it:** unlinking inside `_erase_ambient_audio` makes a failed execution destroy audio while reporting nothing erased. Dropping the shared-file check deletes another patient's recording. Pinned by `server/tests/test_erasure_audio_and_retained.py`.
 
-#### `ERASURE_RETAINED_TABLES` / `_retained_after_erasure`: `consent_service.py:1127` / `:1103`
+#### `ERASURE_RETAINED_TABLES` / `_retained_after_erasure`: `consent_service.py:1148` / `:1103`
 **Does:** The stores that still name a patient after any erasure, each with the reason (the audit trail, the shadow evidence log, consent records and withdrawals, the erasure request, decision and execution rows, breach notifications), and a per-patient count of the ones with a `patient_id` column.
 **Why it exists:** every one of them except `audit_logs` is append-only at the storage layer, so nothing can delete from them; the point of the list is that an erasure **says** they remain instead of implying the patient is gone. `routes/admin_routes.py` builds its destruction plan's keep set from the same dict. Pinned by `test_every_retained_table_says_why` (`server/tests/test_erase_plan_retained.py:45`).
 
-#### `_ERASURE_EXECUTORS`: `consent_service.py:1102`
+#### `_ERASURE_EXECUTORS`: `consent_service.py:1123`
 **Signature:** `dict[str, Callable[[db, patient_id], tuple[int, dict]]]`
 **Does:** Three entries: `ai_interaction_transcript`, `patient_portal_account` and `ambient_audio`. **These are the only places this module deletes patient data** (for audio, the files go after the commit, see `_erase_ambient_audio`).
 **On screen:** membership decides `executable: True` on a decision row, which decides whether the execute step does anything for that category.
 **Why the registry shape:** a category with no executor is honoured in law and reported as `executable: False`. Orb does not claim an erasure it did not perform.
 **Breaks if you change it:** adding an executor for a category whose `erasable` is 0 does nothing, `adjudicate` only reaches the executor lookup inside the `if p["erasable"]` branch (`:1192`), so the two must be changed together, and the policy row is the one that decides.
 
-#### `_NOT_YET_EXECUTABLE`: `consent_service.py:1109`
+#### `_NOT_YET_EXECUTABLE`: `consent_service.py:1130`
 **Signature:** `dict[str, str]` (category → the sentence the principal is told)
 **Does:** Two entries (`ambient_audio` left this table when its executor landed). `non_clinical_contact`: Orb holds no contact store separate from the medical record, so those fields fall under `clinical_record`. `marketing_communications`: Orb runs no outreach list, so there is nothing held to erase.
 **On screen:** appended verbatim to the decision's `reason` (`:1204`).
 **Why it exists:** "granted" with no visible action is indistinguishable from being ignored. Naming the manual step converts a gap into a work item somebody owns.
 **Breaks if you change it:** deleting an entry leaves the generic fallback, *"Orb cannot yet carry this out automatically"*, which tells the principal nothing about who does it or when. Building the executor without deleting the entry is harmless; the entry is only consulted when there is no executor.
 
-#### `record_erasure_request`: `consent_service.py:1184`
+#### `record_erasure_request`: `consent_service.py:1205`
 **Signature:** `(*, patient_id, requested_by, categories=None, requester_identity='patient', channel='in_person', note=None) -> dict`
 **Does:** Logs the ask. Decides nothing, deletes nothing.
 **On screen:** nothing. Behind `POST /api/admin/compliance/erasure`.
@@ -378,7 +378,7 @@ The module docstring (`:1-105`) is required reading and is summarised above rath
 **Why `None` is the normal case:** a patient says "delete my data", not "delete retention category 7". Requiring a category list would push the hospital's taxonomy onto the principal.
 **Breaks if you change it:** defaulting to an empty list rather than `None` makes `adjudicate` filter the policy list down to nothing and produce a decision with zero rows, a request that reports as decided while answering nothing.
 
-#### `adjudicate_erasure_request`: `consent_service.py:1222`
+#### `adjudicate_erasure_request`: `consent_service.py:1243`
 **Signature:** `(request_id: str, *, decided_by: str) -> dict`
 **Does:** **The hard part, executed.** One sealed decision row per category in scope.
 **On screen:** nothing. Behind `POST .../erasure/{id}/adjudicate`, which turns its `ValueError` into a 409.
@@ -393,7 +393,7 @@ Then the request moves to `decided`.
 **The `residue_notice` (`:1247`)** is returned with every adjudication: *this request, this decision and anything Orb erases because of it are themselves recorded in the tamper-evident audit trail, which is not erased.* Position 3 of the collision, said to the principal rather than discovered by them.
 **Breaks if you change it:** allowing re-adjudication destroys the seal, the same request could produce two contradictory decisions with no way to tell which was given to the principal. Dropping `authority` reduces a lawful refusal to an unexplained one. Computing the disposition from anything other than `retention_policies.erasable` moves the hospital's legal position out of the table its counsel can edit and back into code.
 
-#### `execute_erasure_request`: `consent_service.py:1313`
+#### `execute_erasure_request`: `consent_service.py:1334`
 **Signature:** `(request_id: str, *, executed_by: str) -> dict`
 **Does:** Carries out only what was adjudicated **honoured AND executable** (`:1276-1278`).
 **On screen:** nothing. Behind `POST .../erasure/{id}/execute`.
@@ -402,21 +402,21 @@ Then the request moves to `decided`.
 **Why executions are their own table rather than a back-fill:** `erasure_decisions` is append-only at the database layer (`migrations.py:1115`), so `rows_erased`/`executed_at` on that table can never be filled in. The decision says what was **allowed**; the execution says what was **actually done**; they are separate facts on separate dates. The two unused columns on `erasure_decisions` are vestigial, see *Discrepancies* item 7.
 **Breaks if you change it:** removing the "not adjudicated" guard produces destruction with no decision row, no basis, nothing to show. Removing the `executable = 1` filter attempts executors that do not exist. Merging this into `adjudicate` collapses the audit story into a single event and removes the point at which a human can stop.
 
-#### `get_erasure_request` / `list_erasure_requests`: `consent_service.py:1388` / `:1350`
+#### `get_erasure_request` / `list_erasure_requests`: `consent_service.py:1409` / `:1350`
 **Signature:** `(request_id) -> {request, decisions, executions}` / `(*, patient_id=None, status=None, limit=200, department=None) -> list[dict]`
 **Does:** One request with its full decision and execution trail; and the register of requests.
 **On screen:** nothing renders either.
 **The `department` parameter is not optional in spirit.** Every row in the register names a patient, so an unfiltered listing hands a Cardiology-scoped administrator the id of **every patient in the hospital who ever asked to be forgotten**. The filter goes through `permissions.scope_patient_ids_sql` (`permissions.py:248`), the one derivation, rather than a second local idea of what a ward is. `None` means a genuinely unscoped governance account, per the `department_scope()` convention.
 **Breaks if you change it:** open-coding the ward filter here creates a second definition that will drift from the one every other route uses. Defaulting `department` to `None` at a call site that *has* a scoped user turns the register into a hospital-wide disclosure.
 
-#### `record_breach`: `consent_service.py:1450`
+#### `record_breach`: `consent_service.py:1471`
 **Signature:** `(*, nature, description, reported_by, discovered_at=None, occurred_at=None, exposed_to=None, data_categories=None, records_affected=None, principals_affected=None, affected_patient_ids=None, containment_at=None, containment_actions=None) -> dict`
 **Does:** Opens a breach record: what was exposed, to whom, when.
 **On screen:** indirectly, the **`dpdp_breach_register` Trust Center control** (`compliance_service.py:415`) goes from `warn` ("no breach has ever been recorded, so the process is untested") to `pass` or `fail` depending on notification state.
 **Why `discovered_at` and `occurred_at` are separate:** the two are almost never the same moment, and **the gap between them is the number a regulator asks about first**. `discovered_at` defaults to now; `occurred_at` is optional and never inferred.
 **Breaks if you change it:** collapsing them to one column destroys the detection-lag figure permanently, it cannot be reconstructed afterwards.
 
-#### `record_breach_notification`: `consent_service.py:1495`
+#### `record_breach_notification`: `consent_service.py:1516`
 **Signature:** `(*, breach_id, party_type, notified_party, method=None, reference=None, content_summary=None, recorded_by, notified_at=None) -> dict`
 **Does:** One immutable row per notification sent, and updates the header's convenience mirrors.
 **On screen:** flips `dpdp_breach_register` from `fail` to `pass` once the Board is notified.
@@ -424,7 +424,7 @@ Then the request moves to `decided`.
 **Why notifications are their own table:** DPDP s.8(6) requires notifying the Board **and** every affected Data Principal. Those are two obligations discharged at two different times, and one timestamp column cannot record both. The header mirrors exist only so a register listing does not need a join.
 **Breaks if you change it:** dropping the `COALESCE` lets a later notification overwrite the first, which is the timestamp the regulator cares about. Removing the mirrors is safe but makes `list_breaches` do a join per row.
 
-#### `get_breach`: `consent_service.py:1488`
+#### `get_breach`: `consent_service.py:1567`
 **Signature:** `(breach_id: str, *, department: str | None = None) -> dict`
 **Does:** One breach with its notification history and an `outstanding` list of what has not yet been done.
 **On screen:** nothing renders it. Behind `GET /api/admin/compliance/breaches/{breach_id}`.
@@ -432,14 +432,14 @@ Then the request moves to `decided`.
 **Why the withheld count rather than silent filtering:** the reader must know the incident is **wider than what they can see**, so they escalate rather than under-report it. A silently truncated list would let a ward administrator tell the Board "four patients affected" when the real number was forty.
 **Breaks if you change it:** dropping `affected_patient_ids_withheld` converts a scoped view into a misleading one. Scoping the whole breach record rather than just the patient list hides incidents from the people who need to act on them.
 
-#### `list_breaches`: `consent_service.py:1589`
+#### `list_breaches`: `consent_service.py:1610`
 **Signature:** `(*, limit: int = 200) -> list[dict]`
 **Does:** The register, newest first, each row carrying a `notification_count` subquery.
 **On screen:** nothing renders it.
 **Why `affected_patient_ids_json` is popped (`:1544`):** a register page is read by whoever is on shift, and it does not need the names to show that a breach is open and unnotified.
 **Breaks if you change it:** leaving the id list in the listing turns a hospital-wide governance page into a bulk PHI disclosure, and unlike `get_breach`, the listing has no `department` parameter to scope it with.
 
-#### `dpdp_posture`: `consent_service.py:1610`
+#### `dpdp_posture`: `consent_service.py:1631`
 **Signature:** `() -> dict` (eight integer counts)
 **Does:** Consents recorded, consents withdrawn, patients with consent, retention policies, erasure requests total and awaiting decision, breaches recorded and awaiting Board notification.
 **On screen:** **this is the one function in the module that reaches a screen.** `compliance_service._dpdp_posture` (`server/services/compliance_service.py:491`) calls it, `_build_controls` (`:524`) turns it into four Trust Center controls, and the Trust Center fetches and renders them (`src/pages/panels/admin/TrustCenter.tsx:112`):

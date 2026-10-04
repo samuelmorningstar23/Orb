@@ -183,25 +183,6 @@ export default function SurgicalSuitePanel() {
     }
   }, 3000, !!selectedSurgery && tier === 3 && isGenerating)
 
-  useEffect(() => {
-    loadSchedule()
-    loadEmergencyQueue()
-    loadCases()
-    
-    // Socket-first: immediate re-fetch on emergency intake event
-    const handleEmergencyIntake = (data: any) => {
-      loadEmergencyQueue()
-      loadCases()
-      setIntakePopupData({ surgeryId: data.surgery_id })
-    }
-    
-    socket.on('surgery:emergency_intake', handleEmergencyIntake)
-
-    return () => {
-      socket.off('surgery:emergency_intake', handleEmergencyIntake)
-    }
-  }, [])
-
   const loadCases = async () => {
     setCasesLoading(true)
     try {
@@ -224,12 +205,6 @@ export default function SurgicalSuitePanel() {
     }
   }
 
-  // Fallback poll: catch missed socket events (e.g. reconnect, tab switch).
-  useVisiblePolling(() => {
-    loadEmergencyQueue()
-    if (activeViewRef.current === 'cases') loadCases()
-  }, 10000)
-
   const loadSchedule = async () => {
     setLoading(true)
     try {
@@ -241,6 +216,32 @@ export default function SurgicalSuitePanel() {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
+    loadSchedule()
+    loadEmergencyQueue()
+    loadCases()
+    
+    // Socket-first: immediate re-fetch on emergency intake event
+    const handleEmergencyIntake = (data: any) => {
+      loadEmergencyQueue()
+      loadCases()
+      setIntakePopupData({ surgeryId: data.surgery_id })
+    }
+    
+    socket.on('surgery:emergency_intake', handleEmergencyIntake)
+
+    return () => {
+      socket.off('surgery:emergency_intake', handleEmergencyIntake)
+    }
+  }, [])
+
+  // Fallback poll: catch missed socket events (e.g. reconnect, tab switch).
+  useVisiblePolling(() => {
+    loadEmergencyQueue()
+    if (activeViewRef.current === 'cases') loadCases()
+  }, 10000)
 
   /* ── Day click → Tier 2 ── */
   const handleDayClick = useCallback((idx: number) => {

@@ -12,10 +12,6 @@ export default function AlertsSection({ onSelectChannel, channels }: AlertsSecti
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
 
-  useEffect(() => {
-    loadAlerts();
-  }, []);
-
   const loadAlerts = async () => {
     setLoading(true);
     setLoadError(false);
@@ -29,6 +25,11 @@ export default function AlertsSection({ onSelectChannel, channels }: AlertsSecti
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
+    loadAlerts();
+  }, []);
 
   if (loading) return null;
   if (loadError) {

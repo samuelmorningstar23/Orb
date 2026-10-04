@@ -37,7 +37,7 @@ vi.mock('./HandoffPage', () => ({ default: () => <div data-testid="page-handoff"
 vi.mock('../components/SessionExpiredModal', () => ({ default: () => null }))
 
 import '../i18n'
-import App from '../App'
+import App from '../AppRoot'
 import { resetFeatureFlags, resetModuleFlags } from '../shellConfig'
 
 function stubHealth(answer: 'down' | { modules: Record<string, boolean>; features: Record<string, boolean> }) {

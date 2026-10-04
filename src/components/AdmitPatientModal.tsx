@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { admitPatient, apiFetch } from '../api/client';
 import { useAuth } from '../App';
 import { useFocusTrap } from '../hooks/useFocusTrap';
@@ -85,12 +85,12 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
   // hand-off screen that means finishing (onSuccess), otherwise cancelling. While
   // a one-time password is on screen only "Done" finishes: it can never be shown
   // again, so a stray key (or backdrop click) must not throw it away.
-  const closeRef = useRef<() => void>(onClose);
-  closeRef.current = () => {
+  // useFocusTrap always calls the latest handler (an effect event inside it),
+  // so this closure is passed as it is rather than through a ref.
+  const modalRef = useFocusTrap<HTMLDivElement>(() => {
     if (!credential) onClose();
     else if (!credential.password) onSuccess();
-  };
-  const modalRef = useFocusTrap<HTMLDivElement>(useCallback(() => closeRef.current(), []));
+  });
 
   // Form State
   const [formData, setFormData] = useState({

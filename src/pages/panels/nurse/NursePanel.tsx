@@ -18,6 +18,7 @@ import { news2Description } from '../../../lib/news2'
 import { rovingTabKeyDown } from '../../../lib/tablist'
 import { HELIX_RECEIVE, hasPermission } from '../../../lib/roles'
 import { useOfflineSnapshot } from '../../../hooks/useOfflineSnapshot'
+import { useNow } from '../../../hooks/useNow'
 import { useVisiblePolling } from '../../../hooks/useVisiblePolling'
 import OfflineBanner from '../../../components/OfflineBanner'
 import './NursePanel.css'
@@ -235,11 +236,7 @@ export default function NursePanel() {
   // asleep in a pocket, where setInterval is throttled and the board on screen
   // silently ages. It re-reads the wall clock only; no value on this screen
   // moves because of it, which is why it is safe to run under an open sheet.
-  const [, setStaleTick] = useState(0)
-  useEffect(() => {
-    const timer = setInterval(() => setStaleTick(t => t + 1), STALE_TICK_MS)
-    return () => clearInterval(timer)
-  }, [])
+  const now = useNow(STALE_TICK_MS)
 
   // Age is measured from when ORB ANSWERED (offline.savedAt, a client-side
   // stamp), not from board.generated_at, so a tablet whose clock has drifted
@@ -247,12 +244,12 @@ export default function NursePanel() {
   // DISPLAYED is still generated_at, because that is the number a nurse
   // compares against her watch.
   //
-  // Recomputed on EVERY render, deliberately un-memoised: it reads the wall
-  // clock, and a memo keyed on the snapshot would freeze the ladder between
-  // ticks — so a tablet woken after twenty minutes would paint one render of
-  // "fresh" before correcting itself. The first paint is the one she reads.
+  // Recomputed on EVERY render, deliberately un-memoised: `now` re-reads the
+  // wall clock on every render (useNow), and a memo keyed on the snapshot
+  // would freeze the ladder between ticks — so a tablet woken after twenty
+  // minutes would paint one render of "fresh" before correcting itself. The first paint is the one she reads.
   const staleMinutes = offline.source === 'live' && offline.savedAt !== null
-    ? Math.floor((Date.now() - offline.savedAt) / 60_000)
+    ? Math.floor((now - offline.savedAt) / 60_000)
     : 0
 
   const staleness: 'fresh' | 'stale' | 'very-stale' =

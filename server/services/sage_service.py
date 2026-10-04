@@ -2619,6 +2619,14 @@ def _tokenize(q: str) -> list:
     return out
 
 
+@lru_cache(maxsize=8)
+def _tokens_and_index(q: str) -> tuple:
+    """The question's runs and a start-position index, read once per question
+    and shared by the name gate and the matcher."""
+    toks = _tokenize(q)
+    return toks, {t.start: n for n, t in enumerate(toks)}
+
+
 def _ward_chunks(label):
     """("gm", 1) for "GM-1", ("general", "medicine") for "General Medicine",
     None for nothing. Digit runs are ints, so leading zeros drop out."""
@@ -2817,8 +2825,10 @@ def _labels_from(q, toks, at, pos, spaced_prefixes, after_bed_word):
         start, end, chunks, _nxt, spaced = lab
         if not first and chunks is not None and (
                 _NOT_A_LIST_ITEM_AFTER_RE.match(q, end) or _NOT_A_BED_AFTER_LOOSE_RE.match(q, end)
-                or _SOFT_AFTER_BED_WORD_RE.match(q, end)):
-            return
+                or _SOFT_AFTER_BED_WORD_RE.match(q, end)
+                or (len(chunks) == 2 and isinstance(chunks[0], int)
+                    and chunks[1] in ("m", "f", "y", "yo", "yr", "yrs"))):
+            return   # "Bed 12, 65M": an age and a sex, not a second bed
         soft = chunks is not None and bool(_SOFT_AFTER_BED_WORD_RE.match(q, end))
         yield claim, start, end, chunks, soft, spaced
         if soft:
@@ -2835,8 +2845,7 @@ def _bed_word_refs(q: str, toks=None, at=None, spaced_prefixes=None) -> list:
     no. 12", "bed twelve", "bed 45th", "12 number bed", "12th bed", "the
     patient in 12", "w6 b12". The name gate and the matcher both read this."""
     if toks is None:
-        toks = _tokenize(q)
-        at = {t.start: n for n, t in enumerate(toks)}
+        toks, at = _tokens_and_index(q)
     if spaced_prefixes is None:
         spaced_prefixes = _CENSUS_BED_PREFIXES
     refs, taken = [], bytearray(len(q) + 1)
@@ -2960,8 +2969,7 @@ def _locate_patients(patients, discharged_patients, query_lower, query_words) ->
     pair that does not meet is no match, never "outside your department".
     """
     q = query_lower.translate(_LOCATOR_FOLD)
-    toks = _tokenize(q)
-    at = {t.start: n for n, t in enumerate(toks)}
+    toks, at = _tokens_and_index(q)
     rows_here = list(patients)
     dept_prefixes, _bk, _wk = _label_vocabulary(rows_here + list(discharged_patients))
     by_key: dict = {}

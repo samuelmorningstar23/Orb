@@ -69,9 +69,11 @@ export default function RoundDictation({
   const recognitionRef = useRef<{ stop: () => void } | null>(null)
   /** Kept so a failed transcription can be retried without asking the doctor to
    *  say it all again — the single most infuriating way to lose a ward round. */
-  const lastBlobRef = useRef<Blob | null>(null)
+  const [lastBlob, setLastBlob] = useState<Blob | null>(null)
+  // The latest draft, for appending a transcript that lands after an await.
+  // Updated after each render rather than during it (react-hooks/refs).
   const draftRef = useRef(draft)
-  draftRef.current = draft
+  useEffect(() => { draftRef.current = draft }, [draft])
 
   const teardownCapture = useCallback(() => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
@@ -122,7 +124,7 @@ export default function RoundDictation({
         if (blob.size < 800) {
           setMicError('That recording was too short to transcribe.')
         } else {
-          lastBlobRef.current = blob
+          setLastBlob(blob)
           void runTranscription(blob)
         }
       }
@@ -315,11 +317,11 @@ export default function RoundDictation({
       {micError && (
         <div className="round-dictate__error" role="alert">
           <span>{micError}</span>
-          {lastBlobRef.current && !transcribing && (
+          {lastBlob && !transcribing && (
             <button
               type="button"
               className="round-btn round-btn--quiet round-btn--xs"
-              onClick={() => { void runTranscription(lastBlobRef.current!) }}
+              onClick={() => { void runTranscription(lastBlob) }}
             >
               Retry transcription
             </button>

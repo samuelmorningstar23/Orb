@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { readCache, writeCache } from '../lib/offline/phiCache'
 import { getUser } from '../api/client'
 import { useOfflineStatus, useOnReconnect } from './useOfflineStatus'
+import { useClockAtRender } from './useNow'
 
 /**
  * The one consumer of lib/offline/phiCache.
@@ -65,6 +66,10 @@ export interface OfflineSnapshotOptions {
   onReconnect?: () => void
 }
 
+/** `live` must keep its identity between renders: pass the panel's React state
+ *  (or null), never an object built during the render. A new object on every
+ *  render reads as a new server answer every render, and the hook would re-stamp
+ *  it forever (React stops that with "Too many re-renders"). */
 export function useOfflineSnapshot<T>(
   key: string,
   live: T | null | undefined,
@@ -76,17 +81,20 @@ export function useOfflineSnapshot<T>(
   const { online } = useOfflineStatus()
   useOnReconnect(onReconnect)
 
-  // When the server last answered with the value currently in `live`. Written
-  // in a ref rather than state: it is metadata about a render, not a trigger
-  // for one, and setting state here would loop on every poll.
-  const liveAtRef = useRef<number | null>(null)
-  const lastLiveRef = useRef<T | null>(null)
+  // The last LIVE value and when the server answered with it. State adjusted
+  // DURING render when a new live value arrives, which is React's pattern for
+  // remembering something about earlier renders. It used to be two refs written
+  // during render, which React may replay or throw away (react-hooks/refs).
+  // The identity guard makes it one extra render per new live value, not a loop
+  // on every poll: every caller passes React state, so `live` keeps its identity
+  // until the panel really stores a new answer.
+  const renderedAt = useClockAtRender()
+  const [stamp, setStamp] = useState<{ value: T; at: number } | null>(null)
 
   const trustLive = online && !liveFailed && live !== null && live !== undefined
-  if (trustLive && live !== lastLiveRef.current) {
-    lastLiveRef.current = live as T
-    liveAtRef.current = Date.now()
-  }
+  const freshLive = trustLive && live !== stamp?.value
+  if (freshLive) setStamp({ value: live as T, at: renderedAt })
+  const lastLive = freshLive ? { value: live as T, at: renderedAt } : stamp
 
   // Mirror to the device only on a genuinely live value. `key` and `userId` are
   // in the deps so a user switch re-stamps ownership rather than leaving the
@@ -97,7 +105,7 @@ export function useOfflineSnapshot<T>(
   }, [key, userId, live, trustLive])
 
   if (trustLive) {
-    return { data: live as T, source: 'live', savedAt: liveAtRef.current, online, unreachable: false }
+    return { data: live as T, source: 'live', savedAt: lastLive?.at ?? null, online, unreachable: false }
   }
 
   const unreachable = online && liveFailed
@@ -114,9 +122,8 @@ export function useOfflineSnapshot<T>(
   // The panel still holds what it fetched before the drop. Prefer it over the
   // cache — it is the same data (the cache was written from it) without a JSON
   // parse, and if the cache write failed on quota it is the only copy left.
-  const inMemory = lastLiveRef.current
-  if (inMemory !== null && inMemory !== undefined) {
-    return { data: inMemory, source: 'cache', savedAt: liveAtRef.current, online, unreachable }
+  if (lastLive) {
+    return { data: lastLive.value, source: 'cache', savedAt: lastLive.at, online, unreachable }
   }
 
   // Cold start with no connection: the nurse opened Orb in the dead zone. This

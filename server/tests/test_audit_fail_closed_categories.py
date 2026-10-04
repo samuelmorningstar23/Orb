@@ -88,7 +88,6 @@ def emitted_categories(root: Path = SERVER_ROOT) -> dict[str, list[str]]:
 _PRE_REGISTERED = {
     "patient_identity": "opd-4 registration_service (W4-A)",
     "patient_movement": "adt-3 adt_service (W3-B)",
-    "clinical_config": "lis-3 lab_master_service (W2-D)",
 }
 
 

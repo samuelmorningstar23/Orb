@@ -25,7 +25,8 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import type { SageAssessmentTier1, SageAssessmentTier1Parameter } from '../../api/sageAssessment'
-import News2Drivers, { tier1DriverView, chartDriverView } from './News2Drivers'
+import News2Drivers from './News2Drivers'
+import { tier1DriverView, chartDriverView } from './news2DriverView'
 
 /** One parameter, shaped exactly as `_tier1_parameter` emits it. */
 function param(over: Partial<SageAssessmentTier1Parameter> = {}): SageAssessmentTier1Parameter {

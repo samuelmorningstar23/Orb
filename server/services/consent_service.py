@@ -1168,6 +1168,16 @@ ERASURE_RETAINED_TABLES: dict[str, str] = {
         "The narcotic and psychotropic drug register. Its live entries are a "
         "statutory record under the NDPS Act and cannot be erased."
     ),
+    # Migration 50 (registration). Append-only by trigger, because an identity
+    # edit that leaves no trail is how a chart ends up on the wrong patient.
+    # The erase plan used to delete from it and so aborted every erasure for a
+    # registered patient. Whether it should be redacted rather than kept is on
+    # Samuel's rulings list.
+    "patient_identity_changes": (
+        "The trail of corrections to this patient's identity. It still holds "
+        "the earlier and corrected names, dates of birth and identifiers, with "
+        "who changed them and why."
+    ),
 }
 
 #: Which rows of a retained table the erasure result reports as kept. A table

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import styles from './Helix.module.css'
-import { getStatusBadge } from './HelixOrderReviewModal'
+import { getStatusBadge } from './statusBadge'
 import { formatClinicalDateTime, formatUTCTime, localDateKey, parseUTC } from '../../lib/datetime'
 
 interface Order {

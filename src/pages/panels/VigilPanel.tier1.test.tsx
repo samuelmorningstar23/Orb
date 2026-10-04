@@ -108,8 +108,8 @@ vi.mock('../../components/vigil/PatientStory', () => ({ default: () => null }))
 vi.mock('../../components/ClinicalCourseTimeline', () => ({ ClinicalCourseTimeline: () => null }))
 
 import VigilPanel from './VigilPanel'
-import { ActivePatientProvider } from '../../contexts/ActivePatientContext'
-import { ActiveViewProvider } from '../../contexts/ActiveViewContext'
+import { ActivePatientProvider } from '../../contexts/ActivePatientProvider'
+import { ActiveViewProvider } from '../../contexts/ActiveViewProvider'
 
 const MOVEMENT_SBP =
   'Systolic BP 65mmHg, down from 108mmHg across the last 6 observations, NEWS2 points 1 → 3'

@@ -48,8 +48,11 @@ export default function SageFloatingAssistant({ activeTab }: SageFloatingAssista
 
   // Live view context refs so the async voice handler always sends the
   // CURRENT screen state, not the one captured when recognition started.
+  // Synced after each render rather than written during it (react-hooks/refs).
   const viewRef = useRef<{ tab: string; sel: typeof selection }>({ tab: '', sel: null })
-  viewRef.current = { tab: viewTab || activeTab || '', sel: selection }
+  useEffect(() => {
+    viewRef.current = { tab: viewTab || activeTab || '', sel: selection }
+  }, [viewTab, activeTab, selection])
   
   const abortRef = useRef<AbortController | null>(null)
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -72,6 +75,16 @@ export default function SageFloatingAssistant({ activeTab }: SageFloatingAssista
   const animationFrameIdRef = useRef<number | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   
+  // ASR Refs. Declared before the callbacks that use them: the TTS callbacks
+  // below write captureStartIndexRef, and a ref the compiler meets before its
+  // declaration is treated as a frozen hook argument (react-hooks/immutability).
+  const recognitionRef = useRef<any>(null)
+  const resultsCountRef = useRef(0)
+  const captureStartIndexRef = useRef(0)
+  const submittedResultsCountRef = useRef(0)
+  const isRecognitionActiveRef = useRef(false)
+  const restartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   // Conversation memory — rolling window of last 10 query-response pairs
   const conversationHistoryRef = useRef<Array<{ query: string; response: string }>>([])
   const currentResponseRef = useRef('')
@@ -323,14 +336,6 @@ export default function SageFloatingAssistant({ activeTab }: SageFloatingAssista
     }
   }, [speakSentence])
 
-  // ASR Refs
-  const recognitionRef = useRef<any>(null)
-  const resultsCountRef = useRef(0)
-  const captureStartIndexRef = useRef(0)
-  const submittedResultsCountRef = useRef(0)
-  const isRecognitionActiveRef = useRef(false)
-  const restartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
   // ── Voice query handler ──
   const handleQuery = useCallback(async (text: string) => {
     setQueryText(text)
@@ -551,7 +556,13 @@ export default function SageFloatingAssistant({ activeTab }: SageFloatingAssista
   const shouldRecognizeRef = useRef(shouldRecognize)
   // A denied mic must keep recognition OFF across re-renders — otherwise the effect
   // restarts it every render and floods the console with 'not-allowed' errors.
-  shouldRecognizeRef.current = shouldRecognize && !micDeniedRef.current
+  // Synced in an effect declared BEFORE the recognition effect, so it runs
+  // first in the same commit (it was written during render, react-hooks/refs).
+  // micDeniedRef only ever goes false to true, and the denial handler clears
+  // this ref itself.
+  useEffect(() => {
+    shouldRecognizeRef.current = shouldRecognize && !micDeniedRef.current
+  }, [shouldRecognize])
 
   // ── Unified Continuous Speech Recognition Effect ──
   useEffect(() => {

@@ -1,5 +1,5 @@
 import styles from './Helix.module.css'
-import { getStatusBadge } from './HelixOrderReviewModal'
+import { getStatusBadge } from './statusBadge'
 import { localDateKey } from '../../lib/datetime'
 import { LOW_STOCK_THRESHOLD, availableStock, formatPackCount } from './stock'
 

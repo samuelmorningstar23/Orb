@@ -112,8 +112,8 @@ vi.mock('../../components/ClinicalCourseTimeline', () => ({ ClinicalCourseTimeli
 
 import VigilPanel from './VigilPanel'
 import { labTrendTone, LAB_TREND_TONE_COLOR, labTrendLabel } from '../../lib/labTrends'
-import { ActivePatientProvider } from '../../contexts/ActivePatientContext'
-import { ActiveViewProvider } from '../../contexts/ActiveViewContext'
+import { ActivePatientProvider } from '../../contexts/ActivePatientProvider'
+import { ActiveViewProvider } from '../../contexts/ActiveViewProvider'
 
 /* ══════════════════════════════════════════════════════════════════════════
    THE RULE, OVER REAL ANALYTES FROM BOTH DIRECTIONS

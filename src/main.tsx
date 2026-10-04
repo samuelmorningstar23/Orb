@@ -12,7 +12,7 @@ import '@fontsource-variable/jetbrains-mono/index.css'
 import './index.css'
 import './print.css'
 import './i18n'
-import App from './App.tsx'
+import App from './AppRoot.tsx'
 
 // Website build only (vite.demo.config.ts): answer every API call from
 // recordings so the site can embed the real product with no backend.

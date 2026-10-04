@@ -110,8 +110,8 @@ vi.mock('../../components/vigil/PatientStory', () => ({ default: () => null }))
 // the real rendered course.
 
 import VigilPanel from './VigilPanel'
-import { ActivePatientProvider } from '../../contexts/ActivePatientContext'
-import { ActiveViewProvider } from '../../contexts/ActiveViewContext'
+import { ActivePatientProvider } from '../../contexts/ActivePatientProvider'
+import { ActiveViewProvider } from '../../contexts/ActiveViewProvider'
 
 function renderPanel() {
   return render(

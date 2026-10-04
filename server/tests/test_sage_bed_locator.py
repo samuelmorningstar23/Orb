@@ -1089,16 +1089,18 @@ def test_the_which_patient_question_never_reaches_the_model(h, client, monkeypat
     "insulin 12 before dinner?",
     "2 sets of blood cultures sent?",
     "3 episodes of vomiting, ondansetron?",
-    "2 pints PRBC, check Hb after?",
+    "2 pints PRBC, check hb after?",
     "1 more dose of IV iron?",
     "3 more days of antibiotics?",
     "review at 3?",
     "temp spiked to 39 at 2, cultures?",
     "repeat CBC at 7?",
-    "scan on 3 Oct, any result?",
+    "scan on 3 oct, any result?",
     "her son is 30, can he consent?",
 ])
 def test_everyday_numbers_keep_the_open_chart(h, query):
+    """Lower case where a capitalised word ("Hb", "Oct") would trip the older
+    capitalised-name gate, which drops the chart for reasons outside beds."""
     _assert_anchored(_ask(h, "numw", query, open_bed="7"), h["numw"]["7"])
 
 

@@ -18,6 +18,7 @@ Pinned here:
 from __future__ import annotations
 
 import sqlite3
+from db_backend import DBDatabaseError, DBIntegrityError
 
 import pytest
 
@@ -195,7 +196,7 @@ def _result(db, item, status="entered"):
 
 def test_one_live_result_per_order_item(lab_db):
     _result(lab_db, 1)
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(DBIntegrityError):
         _result(lab_db, 1)
     lab_db.execute("UPDATE lab_results SET status = 'superseded' WHERE order_item_id = 1")
     _result(lab_db, 1)  # a correction after the original was superseded
@@ -211,15 +212,15 @@ def test_one_open_critical_per_result_and_per_observation(lab_db):
             "VALUES (?, ?, ?, ?, 'P1', 'Potassium', '7.0 mmol/L', ?, ?)",
             (nid, lane, result_id, obs_id, NOW, status))
     raise_("C1", "lis", result_id=10)
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(DBIntegrityError):
         raise_("C2", "lis", result_id=10)
     raise_("C3", "lis", result_id=10, status="acknowledged")
     raise_("C4", "interfaced", obs_id=99)
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(DBIntegrityError):
         raise_("C5", "interfaced", obs_id=99)
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(DBIntegrityError):
         raise_("C6", "lis", obs_id=5)          # an LIS notification needs its result
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(DBIntegrityError):
         raise_("C7", "interfaced", result_id=5)  # an interfaced one needs its observation
 
 
@@ -234,7 +235,7 @@ def test_one_open_critical_per_result_and_per_observation(lab_db):
 ])
 def test_event_tables_refuse_an_update_and_allow_a_delete(lab_db, table, insert):
     lab_db.execute(insert, (NOW,))
-    with pytest.raises(sqlite3.DatabaseError, match="append-only"):
+    with pytest.raises(DBDatabaseError, match="append-only"):
         lab_db.execute(f"UPDATE {table} SET occurred_at = occurred_at")
     lab_db.execute(f"DELETE FROM {table}")
     assert lab_db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
@@ -263,7 +264,7 @@ def test_checks_refuse_the_values_no_writer_may_store(lab_db):
         "INSERT INTO lab_accession_counters (hospital_day, last_seq) VALUES ('261004', 100000)",
     ]
     for sql in bad:
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(DBIntegrityError):
             lab_db.execute(sql)
 
 

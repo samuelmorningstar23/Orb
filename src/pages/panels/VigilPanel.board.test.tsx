@@ -65,8 +65,8 @@ vi.mock('../../components/vigil/PatientStory', () => ({ default: () => null }))
 vi.mock('../../components/ClinicalCourseTimeline', () => ({ ClinicalCourseTimeline: () => null }))
 
 import VigilPanel from './VigilPanel'
-import { ActivePatientProvider } from '../../contexts/ActivePatientContext'
-import { ActiveViewProvider } from '../../contexts/ActiveViewContext'
+import { ActivePatientProvider } from '../../contexts/ActivePatientProvider'
+import { ActiveViewProvider } from '../../contexts/ActiveViewProvider'
 
 const T0 = '2026-10-03T08:00:00+00:00'
 const T_LATER = '2026-10-03T08:00:05+00:00'

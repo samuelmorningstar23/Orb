@@ -101,8 +101,8 @@ vi.mock('../../components/ClinicalCourseTimeline', () => ({ ClinicalCourseTimeli
 
 import VigilPanel from './VigilPanel'
 import { buildLabTrends } from '../../lib/labTrends'
-import { ActivePatientProvider } from '../../contexts/ActivePatientContext'
-import { ActiveViewProvider } from '../../contexts/ActiveViewContext'
+import { ActivePatientProvider } from '../../contexts/ActivePatientProvider'
+import { ActiveViewProvider } from '../../contexts/ActiveViewProvider'
 
 beforeEach(() => {
   vi.clearAllMocks()

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
 import type { OfflineSnapshot } from '../hooks/useOfflineSnapshot'
+import { useNow } from '../hooks/useNow'
 import { newestCachedAt } from '../lib/offline/phiCache'
 import { getUser } from '../api/client'
 import './OfflineBanner.css'
@@ -44,7 +44,7 @@ const TICK_MS = 20_000
  * decimal ("1.4 hours"), which reads as a measurement rather than as a warning,
  * and never a rounded-up "an hour ago" that could hide 90 minutes.
  */
-export function ageInWords(ms: number): string {
+function ageInWords(ms: number): string {
   if (ms < 60_000) return 'less than a minute old'
   const totalMinutes = Math.floor(ms / 60_000)
   if (totalMinutes < 60) {
@@ -62,17 +62,12 @@ function clockTime(savedAt: number): string {
 }
 
 export default function OfflineBanner({ snapshot, what, onRetry }: Props) {
-  const { source, savedAt, online, unreachable } = snapshot
+  const { source, savedAt, unreachable } = snapshot
 
   // Re-render on a slow tick so the age stays true while a nurse stands
   // looking at it. Only while degraded — a live view has nothing to age.
-  const [, setTick] = useState(0)
   const degraded = source !== 'live'
-  useEffect(() => {
-    if (!degraded) return
-    const timer = setInterval(() => setTick(t => t + 1), TICK_MS)
-    return () => clearInterval(timer)
-  }, [degraded])
+  const now = useNow(TICK_MS, degraded)
 
   if (!degraded) return null
 
@@ -102,7 +97,7 @@ export default function OfflineBanner({ snapshot, what, onRetry }: Props) {
             ) : (
               <>
                 Showing the {what} saved at <strong>{clockTime(savedAt)}</strong>,{' '}
-                <strong>{ageInWords(Date.now() - savedAt)}</strong>. Anything that changed
+                <strong>{ageInWords(now - savedAt)}</strong>. Anything that changed
                 since then is not here.
               </>
             )}

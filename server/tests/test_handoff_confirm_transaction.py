@@ -233,6 +233,7 @@ def test_a_step_that_loses_the_whole_transaction_is_not_swallowed():
     handoff would commit without the confirm it belongs to."""
     import sqlite3
 
+    from db_backend import DBOperationalError
     from services.sage_handoff_service import TransactionLost, _savepoint
 
     conn = sqlite3.connect(":memory:")
@@ -243,7 +244,7 @@ def test_a_step_that_loses_the_whole_transaction_is_not_swallowed():
     with pytest.raises(TransactionLost):
         with _savepoint(conn, "step"):
             conn.execute("ROLLBACK")  # what SQLite does on its own for those errors
-            raise sqlite3.OperationalError("disk I/O error")
+            raise DBOperationalError("disk I/O error")
 
     # An ordinary failure still rolls back only its own step.
     conn.execute("INSERT INTO t VALUES (2)")
