@@ -119,6 +119,36 @@ def _isolate_discharge_verify_throttle():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_login_ip_limiter():
+    """Give every test an empty per-IP failed sign-in record.
+
+    THE FAILURE (found 2026-10-04). routes/auth_routes keeps LOGIN_ATTEMPTS in
+    process: MAX_LOGIN_ATTEMPTS (5) failed sign-ins from one IP inside
+    LOCKOUT_DURATION_SECONDS lock that IP out, and the check runs BEFORE the
+    password is verified. Every TestClient request comes from 'testclient'. A
+    successful login clears the IP, which is why the suite got away with it,
+    but failures from different tests add up: the three service-account
+    reset-password tests in test_admin_users_guards.py leave 3, test_audit.py's
+    test_login_failure leaves 1, and one more locked 'testclient' out. A
+    correct password is then refused too, so nothing clears it, and every later
+    login in the session got 429 for 15 minutes.
+
+    Same shape as _isolate_discharge_verify_throttle above: cleared before AND
+    after each test, found via sys.modules. A test still meets the real limiter
+    and can exhaust it on its own (test_login_ip_limiter.py proves it), and the
+    tests that clear it on purpose mid-test, to stand in for a fresh source IP,
+    work as before."""
+    def _clear():
+        auth_routes = sys.modules.get("routes.auth_routes")
+        if auth_routes is not None:
+            auth_routes.LOGIN_ATTEMPTS.clear()
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_async_singletons():
     """Reset lazily-bound asyncio singletons before EVERY test.
 
