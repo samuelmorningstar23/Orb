@@ -1,6 +1,6 @@
 # Sage bed lookup: build plan, 3 October 2026
 
-Status: RULED (R026 (a), D2 to D4, Q1 to Q3, A to F). Attempts 2 to 5 each failed independent review and were backed out; the back-out is committed, so main has the original bed matching. Next step is Samuel's decision (see the findings note, "Attempt 5 review").
+Status: RULED (R026 (a), D2 to D4, Q1 to Q3, A to F, G, H). Attempts 2 to 6 failed independent review and were backed out; main is dd5203b. Attempt 6 was the closest (7 labelled wrong charts against the old code's 77 unlabelled) and failed bar G on two classes; next step needs Samuel's decision.
 Reads with: docs/SAGE_BED_LOCATOR_FINDINGS_2026-10-03.md (the defect and why the first fix was backed out).
 
 ## The idea in one paragraph
@@ -176,4 +176,22 @@ Attempt 5 would fix every attempt 4 finding (save the which-patient turn; strip 
 
 - **E. Name the patient on every answer the clinician did not name.** When Sage answers from the open chart or the conversation's patient on a turn that did not name that patient, the server puts one line first: "About <name>, bed <bed>:". An order drafted on such a turn always asks which patient before it is drafted. A missed bed reference then produces a visibly labelled answer about the open patient, never a silent one, and no order can land on the wrong chart by phrasing.
 - **F. Another department's code in a transfer phrase** ("transferred from ICU-03 yesterday", "is HDU-2 free?"): (a) a place in the open patient's story, keep the chart, no denial; (b) "outside your department", as attempt 4 did.
+
+---
+
+## Attempt 6 (4 October): a shipping bar, and attempt 5 plus fixes for its review
+
+**G. The bar (Samuel, 4 October).** Ship when: (1) no wrong-patient path that the old code got right; (2) fewer wrong charts than the old code on realistic questions; (3) every remaining miss is visibly labelled on screen. Each review measures against these, side by side with the old code, not against zero.
+
+**H. Orders (replaces ruling E's order half).** Sage asks before drafting only when the order contains a number that is a bed on the ward ("give lasix to 12"), or when it follows a which-patient question. A pronoun order with a chart open ("give him lasix") drafts as today; the label names the patient and the action card needs approval.
+
+Changes from attempt 5, one per review finding:
+1. "head end of bed 30-45 degrees", "foot end of bed", "out of bed", "propped up in bed": a position, not a bed word. A bed number cut short by "-45 degrees" or "-3 days" is unsure (asks), never certain.
+2. Ruling F narrowed to what it was for: another department's code with no bed word never draws an out-of-department refusal unless the turn reaches for a patient (the old gate's rule), and transfer phrases keep the chart. "is bed 12 ready for discharge?", "going to bed 12", "she was in bed 12" are ordinary references again.
+3. The "About <name>, bed <bed>:" label goes into the finished answer the screen shows and into the saved turn, not only the stream; transferred and discharged patients are labelled too, and the voice fallback chart is labelled.
+4. A which-patient question is recognised from the saved assistant turn, not by re-reading the user's message, so census answers never trigger it and the order flow cannot slip past it. After it, any reply that names nobody is asked again (no limit); "this patient" (not negated: "not this patient", "I don't mean this patient") or a bed answers it.
+5. No more forced no-match for a second number after a bed ("bed 12 2 vomits", "Bed 12, 65 male"): the bed stands, or Sage asks. Case-presentation words (male, female, old, yrs) end a list; "3x" and "20s" are not beds.
+6. The history walk stops at any turn that names a bed or a bare number, and a reply that is only a bed answers the question there too.
+7. More list words ("aur", "n", "+", "as well as", "along with", ";").
+8. Speed: bed labels indexed by their first two parts; history turns read once per turn; long-question caches hold a few entries and are emptied each turn.
 

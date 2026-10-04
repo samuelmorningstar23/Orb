@@ -1,6 +1,6 @@
 # Sage bed and ward lookup: findings, 3 October 2026
 
-Status: open. Five fixes were built on 3 and 4 October. All five failed independent review for wrong-patient paths and all five were backed out; the back-out was committed (Samuel's instruction, 4 October), which also removed attempt 4's code that an automatic snapshot (5d4f104) had committed while it was under review. Bed matching in main is the original substring scan. R026 is RULED (a) with D2 to D4, Q1 to Q3 and A to F.
+Status: open. Six fixes were built on 3 and 4 October. All six failed independent review and were backed out; main is commit dd5203b (the 3 October bed matching plus the name-matcher change). R026 is RULED (a) with D2 to D4, Q1 to Q3, A to F, G (the shipping bar) and H (orders). See "Attempt 6 review" for the closest result so far.
 
 ## The defect today
 
@@ -132,4 +132,17 @@ On everyday questions it was the best attempt: 0 wrong charts in 134 questions (
 - Ruling E asked on 70% of 20 realistic ward-round orders typed with a chart open.
 
 The pattern across five reviews: every closed list (bed words, units, counts, place verbs, order shorthands, reply phrasings) leaves a tail, and each tail is a wrong-patient path or a false refusal. The probes are in docs/archive/bed-locator-attempt5-2026-10-04/probes/.
+
+## Attempt 6 review (4 October): judged against ruling G, did not ship
+
+Ruling G (Samuel): ship when (1) no wrong-patient path the old code got right, (2) fewer wrong charts than the old code on realistic questions, (3) every remaining miss visibly labelled. Ruling H: ask before an order only when it holds a bed number or follows the which-patient question.
+
+Attempt 6 met (2) by a wide margin and most of (3): across all the realistic sets (184 questions and 40 orders on a numbered ward and on Orb's GM naming) it put 7 wrong charts in front of the model, all labelled; the old code put 77, none labelled. The label now reaches the finished answer and the saved turn; the server-written question is saved and re-asked; speed is within budget (worst 1.57 s on 512 KB).
+
+It failed (1) and (3) on two classes:
+- Number words after a bed word or "patient in" became certain beds, unlabelled, where the old code answered correctly from the open chart: "can she stay in bed one more day?" opened bed 1, "is the patient in two minds about surgery?" bed 2, "the patient in four point restraints" bed 4 (17 phrasings). With an order in the same turn, the order was drafted on bed 1. Also a bed word plus a number and a singular or unlisted unit ("raise bed 15 cm", "keep her in bed 30 min") read as certain where the old code asked.
+- A leading bed number or code followed by a route, unit, count or sex word was thrown away as a value and the open chart answered (labelled): "12 iv lasix 40 stat" and "GM-512 iv lasix 40 stat" drafted the order on the open patient where the old code asked (ruling H broken); "GM-512 HR 140", "GM-512 day 3 of tazo" and 16 numeric shorthands likewise.
+Also: false out-of-department refusals from a too-broad reach list ("show me the ICU-02 notes for her"); "bed 12, 45 potassium?" dropped bed 45; the label was lost on reload for fast-contract ACT| answers; voice cannot run the ask-again rule because the voice client sends no conversation history.
+
+Saved with the reviewer's probes in docs/archive/bed-locator-attempt6-2026-10-04/.
 
