@@ -1,0 +1,62 @@
+{
+  "no_relevance_score_floor": 0.03225,
+  "no_relevance_lexical_floor": 0.4,
+  "high_score": 0.03278,
+  "high_lexical": 0.66666,
+  "medium_score": 0.03278,
+  "medium_lexical": 0.4,
+  "source": "calibrated",
+  "min_relevance_cross_encoder": 0.31541,
+  "min_relevance_lexical": 0.41877,
+  "metrics": {
+    "positives": 30,
+    "negatives": 32,
+    "relevance_precision": 0.75,
+    "relevance_recall": 0.9,
+    "true_negatives": 23,
+    "false_positives": 9,
+    "relevance_floor": {
+      "cross_encoder": {
+        "floor": 0.31541,
+        "positives": 30,
+        "negatives": 32,
+        "evidence_kept_on_positives": 29,
+        "evidence_kept_on_negatives": 0,
+        "relevant_documents": 43,
+        "relevant_documents_cited": 36,
+        "irrelevant_documents_cited": 0,
+        "labelled_cases": 30,
+        "unlabelled_cases": 0,
+        "max_negative_score": 0.313,
+        "min_positive_score": 0.034424
+      },
+      "lexical": {
+        "floor": 0.41877,
+        "positives": 30,
+        "negatives": 32,
+        "evidence_kept_on_positives": 16,
+        "evidence_kept_on_negatives": 0,
+        "relevant_documents": 40,
+        "relevant_documents_cited": 18,
+        "irrelevant_documents_cited": 0,
+        "labelled_cases": 30,
+        "unlabelled_cases": 0,
+        "max_negative_score": 0.416923,
+        "min_positive_score": 0.152
+      }
+    }
+  },
+  "_provenance": {
+    "calibrated_at": "2026-08-15T07:21:03+00:00",
+    "calibration_set": "retrieval_calibration.json",
+    "cases": 62,
+    "corpus": {
+      "chunks": 35,
+      "documents": 23
+    },
+    "scorers": {
+      "lexical": "2026-08-15T07:20:23+00:00",
+      "cross_encoder": "2026-08-15T07:21:03+00:00"
+    }
+  }
+}
