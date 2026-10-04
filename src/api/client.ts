@@ -1816,7 +1816,7 @@ export async function structureNote(
   format: string;
   verification?: ScribeVerification;
   pipeline?: ScribePipelineMeta;
-  /** Declared but never set: the done event's `status` is not passed on. */
+  /** The saved note's status from the done event ('draft' today). */
   status?: string;
 }> {
   const response = await fetch(`${API_BASE}/scribe/structure`, {
@@ -1832,6 +1832,7 @@ export async function structureNote(
   let noteId = 0;
   let verificationData = undefined;
   let pipelineData = undefined;
+  let noteStatus: string | undefined = undefined;
 
   for await (const event of readSSEEvents(response)) {
     // Parse failures are skipped, but a real stream error must escape the loop —
@@ -1855,10 +1856,14 @@ export async function structureNote(
       noteId = data.id;
       verificationData = data.verification;
       pipelineData = data.pipeline;
+      noteStatus = data.status;
     }
   }
 
-  return { id: noteId, structured_note: fullResponse, format, verification: verificationData, pipeline: pipelineData };
+  return {
+    id: noteId, structured_note: fullResponse, format,
+    verification: verificationData, pipeline: pipelineData, status: noteStatus,
+  };
 }
 
 /** The active Scribe pipeline (admin only): models and enabled stages. */
