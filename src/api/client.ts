@@ -923,6 +923,9 @@ export interface LensAnalysisRow {
   reviewed_by?: string | null;
   reviewed_at?: string | null;
   reviewed_text?: string | null;
+  /** 'simulated' for a simulator's report (migration 46), so the chart can
+   *  label it; null for a clinician's own. Every route sends it (SELECT *). */
+  source?: string | null;
 }
 
 /** A `medications` row on the chart. `unverified` is true for an
@@ -1403,7 +1406,9 @@ export interface SageSourceRef {
   title?: string;
   source?: string;
   source_type?: string;
-  trust_tier?: string;
+  /** The document's trust tier, an integer: 1-2 the hospital's own policy and
+   *  formulary, 3+ external guidance. Null when the source carries none. */
+  trust_tier?: number | null;
   is_synthetic?: boolean;
   category?: string;
   fusion_score?: number;

@@ -127,9 +127,8 @@ function formatForDisplay(text: string | undefined): string {
 // Trust tiers, most trusted first: 1-2 are the hospital's own approved policy,
 // 3+ are external guidance. A clinician weighs "our SOP says" very differently
 // from "a guideline somewhere says", so the tier is shown, never averaged away.
-// Keyed by the server's int tier. SageSourceRef (api/client) declares the
-// field a string, so the lookup is typed to take either ("3" finds tier 3).
-const TRUST_TIER_LABEL: Record<string | number, string> = {
+// Keyed by the server's int tier.
+const TRUST_TIER_LABEL: Record<number, string> = {
   1: 'Hospital policy',
   2: 'Hospital formulary',
   3: 'External guideline',
@@ -146,8 +145,8 @@ const ATTRIBUTION_LABEL: Record<string, string> = {
   context_only: 'Retrieved, not used',
 };
 
-/** A source row under either declaration: SageSource (sageSources.ts, the
- *  int `trust_tier` the server sends) or the stream's SageSourceRef. */
+/** A source row under either declaration: SageSource (sageSources.ts) or the
+ *  stream's SageSourceRef (api/client). Both carry the int `trust_tier`. */
 type SourceRow = SageSource | SageSourceRef;
 
 function attributionOf(s: SourceRow): string {

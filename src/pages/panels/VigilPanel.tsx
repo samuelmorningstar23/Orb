@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo, lazy, Suspense, type ComponentProps } from 'react'
 import { createPortal } from 'react-dom'
-import { apiFetch, getPatientDetail, dischargePatient, getOpenEscalations, resolveEscalation, type EscalationChain, addClinicalNote, addMedication, getAdministrations, givenAcrossAllergy, isSafetyAckRequired, getPatientForecast, getTimelineProjection, getDischargeQrObjectUrl, prefetchSageContext, getUnseenCounts, socket, getUser, buildHeaders, type Patient, type MedicationSafety, type SafetyAck, type AdministrationRecord, type PatientDetail, type ChartVitalsRow, type PatientRisk, type LensAnalysisRow, type ChartMedicationRow, type DischargeResult, type DischargeSummaryView, type TimelineProjection } from '../../api/client'
+import { apiFetch, getPatientDetail, dischargePatient, getOpenEscalations, resolveEscalation, type EscalationChain, addClinicalNote, addMedication, getAdministrations, givenAcrossAllergy, isSafetyAckRequired, getPatientForecast, getTimelineProjection, getDischargeQrObjectUrl, prefetchSageContext, getUnseenCounts, socket, getUser, buildHeaders, type Patient, type MedicationSafety, type SafetyAck, type AdministrationRecord, type PatientDetail, type ChartVitalsRow, type PatientRisk, type ChartMedicationRow, type DischargeResult, type DischargeSummaryView, type TimelineProjection } from '../../api/client'
 import { ClinicalCourseTimeline } from '../../components/ClinicalCourseTimeline'
 import { useActivePatient } from '../../contexts/ActivePatientContext'
 import { useActiveView } from '../../contexts/ActiveViewContext'
@@ -753,16 +753,10 @@ interface VitalsTick extends ChartVitalSet {
   risk: PatientRisk
 }
 
-/** A `lens_analyses` row as the chart serves it. The route sends every column
- *  (`SELECT *`), and `source` ('simulated' for a simulator's report) is one
- *  that LensAnalysisRow does not name. */
-type ChartLensRow = LensAnalysisRow & { source?: string | null }
-
 /** The chart as this view holds it: the GET response, with live ticks
  *  appended to `vitals` (see onVitals). */
-type ChartData = Omit<PatientDetail, 'vitals' | 'lens_analyses'> & {
+type ChartData = Omit<PatientDetail, 'vitals'> & {
   vitals: ChartVitalSet[]
-  lens_analyses: ChartLensRow[]
 }
 
 /** A charted document or a Scribe note, as the notes history lists both.
