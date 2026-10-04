@@ -56,7 +56,7 @@ is a server-side alias for `doctor` (`server/permissions.py:137`).
 | **nurse** | Ward nurses | Vigil, Orders, Relay, Sage, Scribe, Lens, Forecast, Revenue, Appointments | Clinical read/write but **cannot** sign notes or publish discharges (`permissions.py:103-111`) |
 | **pharmacist** | Pharmacy staff | Helix (Pharmacy), Verify Queue, Sage | Only `sage.query`, `helix.read`, `helix.write` (`permissions.py:112-116`), a deliberately tiny surface |
 | **admin** | Governance/ops | Vigil, Relay, Sage, Forecast, Command, Simulator, Revenue, Appointments, Admin | Read-only clinical + audit/ingestion/governance (`audit.read`, `admin.overview`, `permissions.py:117-129`) |
-| **patient** | The patient at home | The Bridge portal only (`/bridge`, `src/App.tsx:84`) | Self-only: `bridge.read_own`, `bridge.ask` (`permissions.py:130-133`) |
+| **patient** | The patient during their admission (login closes at the end of the discharge day, ruling R029) | The Bridge portal only (`/bridge`, `src/App.tsx:84`) | Self-only: `bridge.read_own`, `bridge.ask` (`permissions.py:130-133`) |
 
 Demo credentials (dev builds only, the quick-access chips are tree-shaken out of
 production bundles, `src/pages/Login.tsx:10-13`): `DOC001/password` (doctor),

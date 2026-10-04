@@ -195,10 +195,18 @@ def _authenticate(auth, environ=None) -> dict | None:
     try:
         with db_session() as db:
             row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            # Bridge is for the admission only (ruling R029): the same verdict
+            # auth.get_current_user applies to every REST request.
+            portal = None
+            if row is not None and row["role"] == "patient":
+                from services.patient_portal_access import portal_access
+                portal = portal_access(db, row["id"])
     except Exception as e:
         logger.warning("WS auth DB lookup failed: %s", e)
         return None
     if not row:
+        return None
+    if portal is not None and not portal["open"]:
         return None
     user = dict(row)
     # Mirror the REST layer's revocation checks (auth.get_current_user): a socket

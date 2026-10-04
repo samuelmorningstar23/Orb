@@ -17,7 +17,7 @@ Bridge is deliberately narrow. A patient signed into Bridge can see **only their
 
 This chapter covers three related experiences:
 
-1. The **signed-in patient portal** (the "Orb Bridge" screen) used during an admission.
+1. The **signed-in patient portal** (the "Orb Bridge" screen) used during an admission. It is for the hospital stay only: the login works while the patient is admitted and until the end of the day they are discharged, then closes (see *When the portal closes* below).
 2. The **AI question box** inside that portal, including exactly what it will and will not answer.
 3. The **discharge access flow**, the secure link and QR code printed at discharge that lets a patient open their discharge summary on the hospital's patient Wi-Fi, after verifying their date of birth, and save a copy to their phone before they leave.
 
@@ -41,6 +41,16 @@ Notes for administrators:
 - If a patient leaves the password blank the page prompts "Please enter your password.", there is no default or shared password; every portal account requires a real credential.
 
 Signing out: the **Sign out** button is always visible at the top right of the Bridge header.
+
+#### When the portal closes
+
+Bridge is for the hospital stay only. The login works while the patient is admitted, and until the end of the hospital's calendar day on which they are discharged (midnight by the hospital clock). After that:
+
+- signing in shows "Your hospital stay has ended, so this portal is closed. Your discharge summary was given to you before you left. If you need help, contact the hospital.";
+- a patient who is still signed in is returned to the sign-in page at their next action, and the live updates stop;
+- the discharge summary stays available on paper and through the saved copy from the discharge link (see *The secure discharge link and QR code*).
+
+The reason: once a patient is discharged, their case room is closed in Relay, so a message they send through Bridge, including an emergency, would reach no one, and the portal's medicines and status cards describe the stay that has ended. If the same patient record is later readmitted, the same login works again with no action from staff.
 
 ---
 
@@ -256,6 +266,7 @@ Other messages the page can show:
 
 | Symptom | Likely cause | Resolution |
 |---|---|---|
+| "Your hospital stay has ended, so this portal is closed." | The patient was discharged before today (hospital time); Bridge is for the admission only | Expected. Give the patient the printed discharge summary or a fresh copy through the discharge link while they are in the hospital |
 | Patient can't sign in | Wrong Patient ID or password | Verify the ID format (e.g. `P001`); passwords are required, there is no default. An administrator can reset the account |
 | "This account must set up an authenticator app before signing in." | MFA enrollment is required but not completed | An administrator must enroll the account before portal sign-in |
 | Status card stuck on "Loading your status…" | The backend is unreachable or the patient record isn't linked to the portal account | Check that the server is running and that the patient row is linked to the login account |

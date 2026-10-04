@@ -68,4 +68,17 @@ describe('patient sign-in prompts', () => {
     expect(apiFetch).toHaveBeenCalledTimes(1)
     expect(JSON.parse(apiFetch.mock.calls[0][1].body)).toMatchObject({ employee_id: 'P001', password: 'secret-pass' })
   })
+
+  it('says the portal closed when the stay has ended (ruling R029)', async () => {
+    // What the server sends after the discharge day: a 403 whose detail apiFetch
+    // turns into the error message.
+    const closed = 'Your hospital stay has ended, so this portal is closed. Your discharge ' +
+      'summary was given to you before you left. If you need help, contact the hospital.'
+    apiFetch.mockRejectedValue(Object.assign(new Error(closed), { status: 403 }))
+    renderPatientLogin()
+    fireEvent.change(document.getElementById('input-registration')!, { target: { value: 'P001' } })
+    fireEvent.change(document.getElementById('input-dob')!, { target: { value: 'secret-pass' } })
+    await submit()
+    expect(screen.getByText(closed)).toBeInTheDocument()
+  })
 })

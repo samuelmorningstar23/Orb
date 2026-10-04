@@ -436,6 +436,10 @@ def _load_session_context(user_id: str, device_id: Optional[str]):
 
     `device_id` is None for ordinary password sessions, which is the overwhelming
     majority of traffic — those pay exactly the single query they always did.
+
+    A patient login also gets its portal verdict here, in the same session
+    (services/patient_portal_access, ruling R029: Bridge is for the admission
+    only). Staff sessions pay nothing for it.
     """
     with db_session() as db:
         row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -451,7 +455,11 @@ def _load_session_context(user_id: str, device_id: Optional[str]):
                 # Table missing (pre-migration-12 database). Fail CLOSED: a token
                 # claiming a device we cannot verify is not honoured.
                 device = None
-        return row, device
+        portal = None
+        if row is not None and row["role"] == "patient":
+            from services.patient_portal_access import portal_access
+            portal = portal_access(db, row["id"])
+        return row, device, portal
 
 
 async def get_current_user(request: Request) -> dict:
@@ -480,7 +488,7 @@ async def get_current_user(request: Request) -> dict:
     # rest each page read also costs HMAC-SHA512 + AES, so on the loop it
     # serialises the whole API behind one SQLite lock.
     device_id = payload.get("did")
-    row, device_row = await run_db(_load_session_context, user_id, device_id)
+    row, device_row, portal = await run_db(_load_session_context, user_id, device_id)
 
     if not row:
         raise HTTPException(status_code=401, detail="User not found")
@@ -527,6 +535,12 @@ async def get_current_user(request: Request) -> dict:
     current_tv = user.get("token_version") or 0
     if int(token_tv) != int(current_tv):
         raise HTTPException(status_code=401, detail="Session revoked; please log in again")
+
+    # A patient's portal closes at the end of their discharge day (ruling R029).
+    # 401, not 403: the session is over, so the app's session-expiry path takes
+    # the patient back to sign-in, which then says why (auth_routes.login).
+    if portal is not None and not portal["open"]:
+        raise HTTPException(status_code=401, detail=portal["reason"])
 
     return user
 

@@ -604,6 +604,8 @@ Query param: `limit` (default 50, max 200). Requires `admin.full` permission (mo
 
 Bridge is the only Orb module that talks directly to patients. It provides a chatbot, a status view, vitals, and a document/report portal, all scoped strictly to the logged-in patient's own data. Because patients are not trained clinicians and may be frightened or in distress, Bridge includes a hard safety guardrail that fires before any AI model response.
 
+**The login lasts for the admission (ruling R029, 4 October 2026).** `services/patient_portal_access.portal_access` decides, from the record each time: open while the patient's status is `admitted`, and for a `discharged` patient until the end of the hospital-local day (`services/hospital_time`) of their latest `discharge_summaries.discharged_at`; closed for every other status and for a discharge with no time on record. Three lanes apply it: `auth.get_current_user` (401 with the reason, so the app returns to sign-in, computed in the same session as the other per-request checks), `auth_routes.login` (403 with the reason, audited as `login_denied_portal_closed`), and `ws.realtime._authenticate` (socket refused). Nothing is switched off at discharge, so a file readmitted later (planned in HIS_BUILD_PLAN W6-B) opens again by itself. An account with no linked patient row is left as it was. Why: after discharge Relay hides the case room, so a Bridge emergency post reached nobody while the reply said the care team was notified; `bridge_service._case_room_closed` now keeps that sentence out for a discharged patient during the discharge day.
+
 ---
 
 ### `server/services/bridge_service.py`

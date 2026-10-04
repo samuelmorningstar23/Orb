@@ -480,6 +480,28 @@ def login(credentials: UserLogin, request: Request, response: Response):
         )
         raise HTTPException(status_code=403, detail="Account deactivated. Contact an administrator.")
 
+    # Bridge is for the admission only (ruling R029): a patient login is refused
+    # from the end of the hospital-local day of their discharge. Checked after
+    # password verification, like the gate above, so only the account's holder
+    # learns why. get_current_user applies the same rule to live sessions.
+    if user["role"] == "patient":
+        from services.patient_portal_access import portal_access_for
+        portal = portal_access_for(user["id"])
+        if not portal["open"]:
+            log_audit_event(
+                correlation_id=correlation_id, event_category="authentication",
+                action_type="login_denied_portal_closed", outcome="denied",
+                summary_message=(
+                    f"Patient portal sign-in refused: patient status "
+                    f"'{portal['status']}', portal closed"
+                    + (f" at {portal['until']}" if portal["until"] else "") + "."
+                ),
+                actor_user_id=user["id"], actor_role=user["role"],
+                request_path=request.url.path, http_method=request.method,
+                ip_address=client_host, user_agent=user_agent,
+            )
+            raise HTTPException(status_code=403, detail=portal["reason"])
+
     # Legacy-hash gate: an unsalted-SHA-256 password hash is offline-crackable at
     # GPU speed, so by default the account is refused a session until an
     # administrator resets the password. ORB_ALLOW_LEGACY_SHA256=1 (temporary,

@@ -40,7 +40,7 @@ Orb has five roles, and the sidebar adapts to each. Access is enforced on the se
 | Nurse | Ward nurses | Patients, Orders, Messages, Sage, Scribe, Lens, Forecast, Revenue, Appointments |
 | Pharmacist | Pharmacy staff | Pharmacy, Verify Queue, Sage |
 | Administrator | Governance and operations | Patients, Messages, Sage, Forecast, Command, Simulator, Revenue, Appointments, Admin |
-| Patient | The patient, at home or at the bedside | The Bridge portal only (a separate, simplified interface) |
+| Patient | The patient, at the bedside during their admission (the login closes at the end of the discharge day) | The Bridge portal only (a separate, simplified interface) |
 
 Demonstration installations are seeded with sample accounts so you can explore every role (all with the password "password" unless noted): **DOC001** Dr. Meera Sharma (physician), **NUR001** Priya Reddy (nurse), **PHA001** Deepa Joshi (pharmacist), and **ADM001** Rajesh Kumar (administrator). The demo patient portal account is **P001** with the password "patient123". On demo builds, the login screen shows Quick access chips that fill these in with one click; production builds do not include them.
 

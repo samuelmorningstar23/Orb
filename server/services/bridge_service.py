@@ -179,9 +179,22 @@ def _store_red_flag(patient_id: str, content: str) -> tuple[str | None, dict | N
     return channel["id"], msg
 
 
+def _case_room_closed(patient_id: str) -> bool:
+    """True when Relay no longer shows this patient's case room to any clinician.
+
+    relay_service hides a discharged patient's case room from every channel
+    list, so a post there is stored but nobody sees it. Bridge stays open until
+    the end of the discharge day (ruling R029), so a discharged patient can still
+    raise a flag in that window. Blocking; call via run_db.
+    """
+    with db_session() as db:
+        row = db.execute("SELECT status FROM patients WHERE id = ?", (patient_id,)).fetchone()
+    return bool(row) and row["status"] == "discharged"
+
+
 async def _raise_red_flag(red_flag: dict, patient_context: dict) -> bool:
     """Tell a human, then the nervous system. True once the alert is stored in
-    the patient's case room. Never raises."""
+    a case room a clinician can see. Never raises."""
     category = red_flag["category"]
     patient_id = patient_context.get("patient_id") or patient_context.get("id")
     delivered = False
@@ -192,6 +205,12 @@ async def _raise_red_flag(red_flag: dict, patient_context: dict) -> bool:
         channel_id = msg = None
         failed = False
         try:
+            room_closed = await run_db(_case_room_closed, patient_id)
+        except Exception as e:  # noqa: BLE001: unknown counts as closed, never as heard
+            room_closed = True
+            logger.error("Bridge red flag (%s) for %s: could not check the case room: %s",
+                         category, patient_id, e)
+        try:
             channel_id, msg = await run_db(
                 _store_red_flag, patient_id,
                 _red_flag_post(category, red_flag.get("matched"), patient_context.get("bed")),
@@ -200,7 +219,13 @@ async def _raise_red_flag(red_flag: dict, patient_context: dict) -> bool:
             failed = True
             logger.error("Bridge red flag (%s) for %s: case-room post FAILED: %s",
                          category, patient_id, e)
-        if msg:
+        if msg and room_closed:
+            # Stored for the record, but Relay hides the room: the reply must
+            # not say the care team was notified.
+            logger.error("Bridge red flag (%s): patient %s is discharged, so the "
+                         "case room is closed in Relay; it reached no clinician",
+                         category, patient_id)
+        elif msg:
             delivered = True
             try:
                 from ws.realtime import sio

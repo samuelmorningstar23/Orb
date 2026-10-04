@@ -37,7 +37,9 @@ LAB_TEXT = "Complete Blood Count\nHb 11.2 g/dL\nWBC 12.4"
 def _setup():
     """One patient with a portal login and one clinician with no department,
     so ward scoping cannot mask a result. The patient is discharged so no ward
-    board in another test counts them. Rows from an earlier run are removed."""
+    board in another test counts them, and discharged NOW: Bridge stays open
+    only until the end of the discharge day (ruling R029), and a discharge with
+    no time on record closes it. Rows from an earlier run are removed."""
     with db_session() as db:
         db.execute(
             "INSERT OR IGNORE INTO users (id, name, role, password_hash) VALUES (?, ?, 'patient', 'x')",
@@ -52,8 +54,12 @@ def _setup():
                VALUES (?, ?, 'Portal Labs Test', 'MRN-PLR-1', 50, 'F', 'GM', 'B-9', 'Test', 'discharged')""",
             (PATIENT_ID, PATIENT_USER),
         )
-        for table in ("clinical_documents", "lens_analyses", "appointments"):
+        for table in ("clinical_documents", "lens_analyses", "appointments", "discharge_summaries"):
             db.execute(f"DELETE FROM {table} WHERE patient_id = ?", (PATIENT_ID,))
+        db.execute(
+            "INSERT INTO discharge_summaries (patient_id, author_id, summary) VALUES (?, ?, 'Test.')",
+            (PATIENT_ID, DOCTOR),
+        )
 
 
 def _auth(user_id: str, role: str) -> dict:
