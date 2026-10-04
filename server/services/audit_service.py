@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import sqlite3
 from db_backend import DBIntegrityError
 from datetime import datetime, timezone
@@ -120,13 +121,65 @@ def _clip(value: Any, limit: int, *, strip_controls: bool = False) -> Any:
     return value if len(value) <= limit else value[:limit]
 
 
+#: The hashed columns that are TEXT in `audit_logs`: every one but
+#: `source_event_id`, which is INTEGER.
+_TEXT_COLUMNS = (
+    "timestamp", "correlation_id", "event_category", "actor_user_id", "actor_role",
+    "target_type", "target_id", "patient_id", "encounter_id", "source_type",
+    "request_path", "http_method", "ip_address", "user_agent", "session_id",
+    "outcome", "action_type", "summary_message", "metadata_json",
+)
+
+
+def _as_stored_integer(value: Any) -> Any:
+    """`source_event_id` as the INTEGER column will hand it back.
+
+    SQLite's INTEGER affinity rewrites a numeric value on the way in ("119",
+    119.0 and True are all stored as 119), and a hash taken over the value the
+    caller passed would then no longer match the stored row. The plain cases
+    become an int here, before hashing. Anything stranger is passed as given:
+    no caller sends one today (they all pass the ingestion event's integer id).
+    """
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, float) and value.is_integer():
+        number = int(value)
+    elif isinstance(value, str) and _INTEGER_TEXT.fullmatch(value):
+        number = int(value)
+    else:
+        return value
+    # Outside SQLite's 64-bit range the driver refuses a Python int outright,
+    # where the value as given still stores.
+    return number if -(2 ** 63) <= number < 2 ** 63 else value
+
+
+# An ASCII integer literal, with the whitespace SQLite's affinity skips.
+_INTEGER_TEXT = re.compile(r"[ \t\n\v\f\r]*[+-]?[0-9]+[ \t\n\v\f\r]*")
+
+
 def bound_audit_fields(row: dict[str, Any]) -> dict[str, Any]:
     """Apply the field bounds to a row dict, IN PLACE, before hashing.
 
     Ordering is load-bearing: this runs BEFORE `compute_audit_row_hash` and
     before the INSERT, so the hash is taken over exactly the bytes that get
     stored and `database.verify_audit_chain()` still reconciles.
+
+    That includes the TYPE (fixed 2026-10-04). A caller passing an int
+    target_id (a cursor.lastrowid) had the hash cover the JSON number 119
+    while the TEXT column stored "119", so verify_audit_chain recomputed a
+    different hash and reported the row as TAMPERED. Every monitor-feed Relay
+    alert wrote one such row. A TEXT column therefore receives text from here,
+    and `source_event_id` the integer its column will store.
     """
+    for field in _TEXT_COLUMNS:
+        value = row.get(field)
+        if value is not None and not isinstance(value, str):
+            # The text SQLite itself would have stored, so the stored value
+            # does not change, only the hash now agrees with it: a bool is
+            # "1"/"0" there, not "True"/"False".
+            row[field] = str(int(value)) if isinstance(value, bool) else str(value)
+    if row.get("source_event_id") is not None:
+        row["source_event_id"] = _as_stored_integer(row["source_event_id"])
     for field in _ID_FIELDS:
         if row.get(field) is not None:
             row[field] = _clip(row[field], _MAX_ID_CHARS, strip_controls=True)
