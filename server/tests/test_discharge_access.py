@@ -11,6 +11,16 @@ from config import DISCHARGE_ACCESS_MAX_ATTEMPTS
 
 client = TestClient(app)
 
+
+@pytest.fixture(autouse=True)
+def _patient_address(monkeypatch):
+    """A patient-reachable https address for the discharge link, whatever profile
+    the suite runs under. With ORB_DEPLOYMENT_PROFILE unset, config defaults to
+    prod, where an unset or localhost ORB_PUBLIC_APP_BASE_URL withholds the link
+    (e89fe5c). These tests are about the second factor and the review, not the
+    address; tests/test_discharge_public_base_url.py covers the address."""
+    monkeypatch.setattr("config.PUBLIC_APP_BASE_URL", "https://orb.hospital.example")
+
 @pytest.fixture
 def auth_headers():
     response = client.post("/api/auth/login", json={"employee_id": "DOC001", "password": "password"})
