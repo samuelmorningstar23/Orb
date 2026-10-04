@@ -1,6 +1,6 @@
 # Sage bed lookup: build plan, 3 October 2026
 
-Status: RULED (R026 (a), D2 to D4, Q1 to Q3, A to F, G, H). Attempts 2 to 6 failed independent review and were backed out; main is dd5203b. Attempt 6 was the closest (7 labelled wrong charts against the old code's 77 unlabelled) and failed bar G on two classes; next step needs Samuel's decision.
+Status: RULED (R026 (a), D2 to D4, Q1 to Q3, A to F, G, H). Attempts 2 to 6 failed review and were backed out; main is dd5203b. Attempt 7 (attempt 6 plus the fixes below) was built on 4 October, failed review against ruling G and was backed out (see the findings doc, "Attempt 7 review"). Next step: Samuel's call.
 Reads with: docs/SAGE_BED_LOCATOR_FINDINGS_2026-10-03.md (the defect and why the first fix was backed out).
 
 ## The idea in one paragraph
@@ -194,4 +194,30 @@ Changes from attempt 5, one per review finding:
 6. The history walk stops at any turn that names a bed or a bare number, and a reply that is only a bed answers the question there too.
 7. More list words ("aur", "n", "+", "as well as", "along with", ";").
 8. Speed: bed labels indexed by their first two parts; history turns read once per turn; long-question caches hold a few entries and are emptied each turn.
+
+---
+
+## Attempt 7 (4 October): attempt 6 plus fixes for its two blocking classes
+
+Judged against the same bar (ruling G). Changes:
+1. Number words are read as a bed only when they ARE the whole reference: "bed twelve?", "bed twenty one, lactate?". "bed one more day", "in bed one month", "the patient in two minds" are ordinary words again, as in the old code. "the patient in" never takes a number word.
+2. After a bed word, a number followed by cm, mm, min, minute, hour, inch, am or pm is unsure (Sage asks), never a certain bed ("raise bed 15 cm", "keep her in bed 30 min").
+3. Never discarded as a dose or a value: this department's own bed code ("GM-512 iv lasix 40 stat", "GM-512 HR 140" are GM-512), and a bare number that OPENS the message ("12 iv lasix 40 stat", "12 nebs given?", "14 day 5 of meropenem": Sage asks). A spaced code followed by a unit counts only when it is a bed here ("gm 512 iv lasix" yes, "ceftriaxone gm 12 hourly" no). Two numbers joined by and / or ("ceftriaxone 12 and 14?") are asked about.
+4. Typed spacing the old code tolerated: "12 a" for bed 12A; "c 4" for bed C-4 when it opens the message (asked).
+5. Another department's code is a reach for its patient only when the reach verb is followed by the code and then the end of the clause ("summarise ICU-03"); "show me the ICU-02 notes for her" is not.
+6. "bed 12, 45 potassium?": a later list item that is not an age, sex or value is a bed, so a missing one is no match (D3) again.
+7. The label is not inserted into a fast-contract "ACT|" answer (it broke the contract on reload; the action card names the patient).
+8. The per-turn history cache is per thread.
+Known and accepted: voice cannot ask again after its question, because the voice screen sends no conversation history (labelled answers instead).
+
+As built (4 October), with these details settled during the build:
+- "The whole reference" for a number word: number words up to the end of the clause, optionally followed by doing / now / today / tonight / overnight / please ("how is bed twelve now?").
+- A number opens a line when only spaces or bullets come before it, at the start of the message or of any line. It stays a value there only before an everyday count (sets, episodes, pints, units, more, options...), an ECG lead, a decimal, time, date, percentage or an age or sex. Durations ("14 days of meropenem") and devices ("12 drains removed?") ask.
+- A number before a route or frequency word (iv, po, stat, nebs, bd...) is a dose only when a drug or measure word comes before it ("lasix 20 iv"); otherwise Sage asks ("give 12 iv lasix 40").
+- A code of ours written with a space before "bed", "nurse" or "nights" is a count in a unit, not a bed ("is a CCU 1 bed free?").
+- One-letter codes typed with a space ("c 4", "n 1") ask anywhere, not only at the start, when that bed is on the ward; never for a, i, o or x.
+- A bed word, a bed nobody here is in, then a bare second number ("bed 45 2 vomits") is no match; a second number followed by a time or an angle ("bed 30 45 degrees", "bed 12 2 days post-op") makes the bed unsure (asked about).
+- "12/14" is a list like "12, 14"; two bare numbers joined by and / or at the end of a clause are asked about, but not a range ("between 88 and 92").
+- The history memo keeps the census list it was read against, so an id() reuse can never serve another list's reading.
+Tests: tests/test_sage_bed_locator.py, 633 tests (with test_sage_name_match_bounds.py, 652 pass); 472 fail on the code before this work. The attempt 6 reviewer's probe sets re-run: 0 wrong charts in every realistic set (old code 77), no regressions, 3 labelled misses the old code also got wrong ("ICU-02 hr 140", "SX-17 potassium?" with no reach verb; "bed 45 2 vomits", since fixed). Code, patches and probe output: docs/archive/bed-locator-attempt7-2026-10-04/; pre-change copies: docs/archive/pre-bed-locator-a7-2026-10-04/.
 

@@ -1,6 +1,6 @@
 # Sage bed and ward lookup: findings, 3 October 2026
 
-Status: open. Six fixes were built on 3 and 4 October. All six failed independent review and were backed out; main is commit dd5203b (the 3 October bed matching plus the name-matcher change). R026 is RULED (a) with D2 to D4, Q1 to Q3, A to F, G (the shipping bar) and H (orders). See "Attempt 6 review" for the closest result so far.
+Status: open. Seven fixes were built on 3 and 4 October. All seven failed independent review and were backed out; main has the code of commit dd5203b (the 3 October bed matching plus the name-matcher change). R026 is RULED (a) with D2 to D4, Q1 to Q3, A to F, G (the shipping bar) and H (orders). See "Attempt 7 review" for the closest result so far and for why every attempt has failed the same way.
 
 ## The defect today
 
@@ -146,3 +146,22 @@ Also: false out-of-department refusals from a too-broad reach list ("show me the
 
 Saved with the reviewer's probes in docs/archive/bed-locator-attempt6-2026-10-04/.
 
+## Attempt 7 review (4 October): judged against ruling G, did not ship
+
+Attempt 7 was attempt 6 plus fixes for both of its blocking classes (docs/SAGE_BED_LOCATOR_PLAN_2026-10-03.md, "Attempt 7"). 633 locator tests (472 fail on the old code) and 2,635 guard tests passed. The one timing failure in the guard run was machine load: the same test passed alone in 1.3 s.
+
+The reviewer confirmed every attempt 6 finding fixed. On realistic traffic it is far ahead of the old code: across 234 questions and orders on a numbered ward it put 2 wrong charts in front of the model (both unlabelled, both from B1 below); the old code put 91. On Orb's GM naming: 0 and 0.
+
+It failed items 1 and 3 of the bar on three classes. In each, the new code attached a different patient's chart with no label where the old code asked. The first two were already in attempt 6; review 6 did not probe them.
+- B1. A bed in ANOTHER unit, written with a bed word, read as a certain bed on the doctor's own ward: "transferred from ICU bed 12, still on noradrenaline?", "transferred from ward 6 bed 12 yesterday", "came from ICU bed 12 this morning", "ex-MICU bed 14", "bed 12 in ICU is septic, can we take her?", and census talk ("ICU beds 12, any free tonight?"). 30 phrasings where the old code asked. With an order in the turn ("transferred from ICU bed 12, start lasix 40 iv") the order was drafted on our bed 12's patient. The place and destination rules only fire when "from" or "to" sits right before the bed word; a unit name in between defeats them. On Orb's GM naming the same phrasings are no match: safe, but a false no-match.
+- B2. A bed word, a number and a unit word not on attempt 7's list: "keep her flat in bed 12 hr after the angio", "flat in bed 24 hr post LP?", "raise the bed 15 cms", "bed 12 noon onwards nil by mouth?", "bed 10 o clock sedation?". 17 phrasings where the old code asked; orders drafted on that bed. "hr" was deliberately left off the list because "bed 12 HR 140" is bed 12.
+- B3 (new in attempt 7, rare). A number word ending the clause after a separator: "pillows in bed: two" opened bed 2.
+Also: whitespace runs are quadratic (15 s for "how is 12" plus 40,000 spaces; attempt 7 made it about 5 times worse with `\s*-?\s*` patterns); "Bed 12, 56, k/c/o DM" (age first, no sex) is no match where the old code asked; a spelled missing bed followed by more words ("bed forty five potassium?") gets the labelled open chart, not no match; a reloaded order turn shows no label (/history shows the stored safe answer).
+
+Backed out by reverse patch the same evening; the three files are byte-identical to the committed code. Code, tests, patches, the author's and the reviewer's probes: docs/archive/bed-locator-attempt7-2026-10-04/ (probes_review7/ is the reviewer's; run.sh runs them).
+
+### Why seven attempts failed the same way
+
+Every attempt from 3 on put its closed lists on the NOT-A-BED side: units, counts, positions, place verbs and route words that make a number "not a bed" or "unsure". Anything missing from those lists stays a CERTAIN bed, so each word a reviewer finds that is not on a list ("hr", "cms", "noon", "ICU" before "bed") is a wrong chart, and the old code, which asks about nearly every digit, "got it right". Adding words shortens the tail but never closes it.
+
+The way out is to move the closed list to the CERTAIN side: a bed reference is certain only in shapes Sage recognises (the bed phrase is the subject of the question, "bed 12?", "how is bed 12", "bed 12 potassium?", "bed 12 HR 140", a list of beds), and every other shape is unsure, which means Sage asks when that bed is occupied and treats it as text when it is not. Then each missing word lands on "ask", which the bar counts as right wherever the old code asked, and never on a wrong chart. The cost is more questions on unusual phrasings, which has to be measured on the same realistic sets before it is built.
