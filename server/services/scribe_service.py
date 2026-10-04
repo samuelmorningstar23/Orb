@@ -877,11 +877,18 @@ def save_scribe_note(
     version: int = 1,
     supersedes_note_id: Optional[int] = None,
     ai_generated: bool = True,
+    db=None,
 ) -> int:
-    """Save a scribe note to the database. New notes default to 'draft' status."""
+    """Save a scribe note to the database. New notes default to 'draft' status.
+
+    ``db``: write on the caller's connection and transaction instead of a
+    session of its own, and do not commit. The Sage handoff files a note this
+    way so it stands or falls with the confirm that asked for it.
+    """
     structured_note = prune_placeholder_sections(structured_note)
-    with db_session() as db:
-        cursor = db.execute(
+
+    def _insert(conn) -> int:
+        cursor = conn.execute(
             """INSERT INTO scribe_notes
                (patient_id, author_id, raw_transcript, structured_note, note_format,
                 audio_path, verification_json, pipeline_meta_json,
@@ -891,7 +898,12 @@ def save_scribe_note(
              audio_path, verification_json, pipeline_meta_json,
              status, version, supersedes_note_id, 1 if ai_generated else 0),
         )
-        note_id = cursor.lastrowid
+        return cursor.lastrowid
+
+    if db is not None:
+        return _insert(db)
+    with db_session() as conn:
+        note_id = _insert(conn)
     return note_id
 
 

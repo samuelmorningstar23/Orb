@@ -89,7 +89,7 @@ sequenceDiagram
 
 ### Flow B: the Sage action "handoff" (`sage_handoff_service.py`)
 
-This is the *other* handoff. When a doctor confirms an AI-suggested action in the Relay chat (see guides 08-relay / 09-sage), the transition endpoint calls `create_and_dispatch_handoff(action, actor_id)` (`server/routes/relay_routes.py:420`). That function creates a durable `sage_handoffs` audit row, then routes the action by its **exact** verb, looked up in `ACTION_ROUTES` (`server/services/sage_handoff_service.py:30`), to at most one downstream adapter. Spacing, hyphens and case are normalised first, so "Start medication" and `start_medication` are one verb; words inside a verb are never matched:
+This is the *other* handoff. When a doctor confirms an AI-suggested action in the Relay chat (see guides 08-relay / 09-sage), the transition endpoint confirms the card and dispatches it in ONE transaction (`_confirm_and_hand_off`, `server/routes/relay_routes.py:407`, which runs `dispatch_in_transaction` on the confirm's own connection). That creates a durable `sage_handoffs` audit row, then routes the action by its **exact** verb, looked up in `ACTION_ROUTES` (`server/services/sage_handoff_service.py:31`), to at most one downstream adapter. Spacing, hyphens and case are normalised first, so "Start medication" and `start_medication` are one verb; words inside a verb are never matched:
 
 | Action verb (normalised) | Target module | Adapter | Effect |
 |---|---|---|---|
@@ -377,53 +377,70 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 
 ### server/services/sage_handoff_service.py  (the *other* handoff: Sage action dispatch)
 
-#### `create_and_dispatch_handoff`: `server/services/sage_handoff_service.py:115`
+#### One transaction: `TransactionLost` and `_savepoint`: `server/services/sage_handoff_service.py:116`, `:124`
+**Does:** let one adapter step fail on its own without taking the confirm with it, inside the confirm's single transaction.
+**How it works:** `_savepoint(db, name)` issues `SAVEPOINT name`; on an exception it rolls back to that savepoint and re-raises, so the caller can record a `failed` or `blocked` outcome with nothing half-written. If SQLite has already rolled back the WHOLE transaction (it does on `SQLITE_FULL`, `IOERR`, `BUSY`, `NOMEM`), `db.in_transaction` is false and it raises `TransactionLost` instead (`:136`), which no adapter handler swallows: Python's sqlite3 would otherwise open a new transaction for the next statement, and the handoff would commit without the confirm it belongs to.
+**Why it exists:** until 2026-10-04 the confirm and every handoff step committed separately (guide 08-relay, `transition_sage_action`).
+**Gotchas:** an adapter must write only on the `db` it is handed. A `db_session()` of its own escapes the transaction, and on an unpooled connection it would deadlock against the transaction's write lock. Pinned by `test_a_step_that_loses_the_whole_transaction_is_not_swallowed` (`server/tests/test_handoff_confirm_transaction.py`).
+
+#### `prescreen_handoff`: `server/services/sage_handoff_service.py:145`
+**Signature:** `(action: dict, actor_id: str) → dict | HandoffBlocked | None`
+**Does:** run the one part of a dispatch that must happen BEFORE the write transaction opens: the drug-safety screen for a Helix-bound card.
+**How it works:** returns `None` unless the verb routes to `helix`; otherwise runs `_screen_helix` and returns its payload, or the `HandoffBlocked` it raised (`:159`), for `dispatch_in_transaction` to act on.
+**Why it exists:** the screen writes its own audit rows, which must stand whatever happens to the confirm, and on an unpooled connection those writes would deadlock against the transaction's write lock.
+
+#### `create_and_dispatch_handoff`: `server/services/sage_handoff_service.py:163`
 **Signature:** `(action: dict, actor_id: str) → dict`
-**Does:** create a durable `sage_handoffs` record for a confirmed action and dispatch it downstream, idempotently.
+**Does:** create a durable `sage_handoffs` record for an ALREADY confirmed action and dispatch it, in one transaction of its own.
+**How it works:** `prescreen_handoff`, then one `db_session` around `dispatch_in_transaction`, then `schedule_prep_package` for a newly booked case once that has committed.
+**Talks to:** direct callers and the tests (`server/tests/test_handoff.py`). The Relay transition endpoint does NOT come through here: it runs `dispatch_in_transaction` on the confirm's own transaction (`server/routes/relay_routes.py:407`, guide 08-relay).
+
+#### `dispatch_in_transaction`: `server/services/sage_handoff_service.py:182`
+**Signature:** `(db, action: dict, actor_id: str, screened) → (dict, str | None)`
+**Does:** record and dispatch a confirmed action on the caller's transaction, idempotently. Never commits.
 **How it works:**
 1. Generate a UUID handoff id and UTC timestamp.
-2. **Idempotency:** look up the newest existing handoff for `action['id']`; if its status is `pending`, `accepted` or `blocked`, return it unchanged (`:132`). `blocked` is terminal like `accepted`: a stopped order is not quietly re-run behind the clinician who confirmed it.
+2. **Idempotency:** look up the newest existing handoff for `action['id']`; if its status is `pending`, `accepted` or `blocked`, return it unchanged (`:207`). `blocked` is terminal like `accepted`: a stopped order is not quietly re-run behind the clinician who confirmed it.
 3. Otherwise `INSERT` a new `sage_handoffs` row (status `pending`, `target_module='unknown'`, full action JSON as payload) and a `sage_handoff_events` row (`NULL→pending`).
-4. Call `_dispatch_handoff` and return its (updated) record through `_handoff_view`, which parses the stored `safety_json` into a `safety` dict for the card.
-**Why it exists:** an auditable coordination layer so a confirmed AI action reliably reaches the right module without cluttering the Relay action table.
-**Data in/out:** action dict (`id, room_id, patient_id, action_type, target, rationale, …`) → the persisted handoff row as a dict, with `safety` (the drug-safety summary, or `None`).
-**Talks to:** called by the Relay transition endpoint (`server/routes/relay_routes.py:420`) when a Sage action moves to `confirmed`.
-**Change guide:** *Worked example, make failed dispatches retry-safe.* A first attempt that ends `unsupported`/`failed` is **not** short-circuited (only `pending`/`accepted`/`blocked` are), so a re-confirm creates a *new* handoff row and re-attempts, intentional. To also short-circuit `failed`, add it to the tuple at `:132`; footgun: you would then block manual retries.
-**Gotchas:** the SELECT+INSERT+event are one `db_session` block (atomic), but under concurrent double-confirm two rows could still race if both pass the idempotency SELECT before either INSERTs, mitigated in practice by the Relay endpoint's optimistic version lock (`server/routes/relay_routes.py:326`).
+4. Call `_dispatch_handoff` and return `(handoff view, surgery_id)`: the record through `_handoff_view`, which parses the stored `safety_json` into a `safety` dict for the card, and the id of a newly booked emergency case whose prep package the caller starts after the commit (else `None`).
+**Why it exists:** an auditable coordination layer so a confirmed AI action reliably reaches the right module without cluttering the Relay action table, and one that commits with the confirm or not at all.
+**Data in/out:** action dict (`id, room_id, patient_id, action_type, target, rationale, …`) plus `screened` (from `prescreen_handoff`) → the handoff row as a dict, with `safety` (the drug-safety summary, or `None`).
+**Change guide:** *Worked example, make failed dispatches retry-safe.* A first attempt that ends `unsupported`/`failed` is **not** short-circuited (only `pending`/`accepted`/`blocked` are), so a second dispatch creates a *new* handoff row and re-attempts, intentional. To also short-circuit `failed`, add it to the tuple at `:207`; footgun: you would then block manual retries.
+**Gotchas:** on the transition endpoint the claim's version-guarded UPDATE (`server/routes/relay_routes.py:332-338`) runs first on the same transaction, so it already holds the write lock when the idempotency SELECT runs and two confirms cannot both insert. A direct caller of `create_and_dispatch_handoff` has no such claim in front of it.
 
-#### `_dispatch_handoff`: `server/services/sage_handoff_service.py:154`
-**Signature:** `(handoff_id, action, actor_id) → dict`
-**Does:** route the action to one adapter by its exact verb, then update status + write an event.
-**How it works:** normalises `action_type` (`normalize_action_verb`, `:48`) and looks it up with `route_for_action` (`:53`, `:166`) in `ACTION_ROUTES`; `admissions` → `_dispatch_to_transfer`, `helix` → `_dispatch_to_helix`, `scribe` → `_dispatch_to_scribe`. A verb not in the table is stored `unsupported` with the summary "Needs manual dispatch: Orb has no automatic route for ..., so nothing was sent or changed" (`:186`). `HandoffBlocked` from the Helix adapter → status `blocked`, the reason as `error_summary` and the screen summary as `safety_json` (`:190`); any other adapter exception → status `failed` with the message. Then `UPDATE sage_handoffs` and `INSERT sage_handoff_events` with prior/new status; returns the fresh row.
-**Why it exists:** the router. Exact verbs are the clinical safety: the old substring match sent "start monitoring" to pharmacy ("start"), and a stop card to the Helix adapter, which only ever starts a drug (the comment above `ACTION_ROUTES`, `:21-29`).
+#### `_dispatch_handoff`: `server/services/sage_handoff_service.py:228`
+**Signature:** `(db, handoff_id, action, actor_id, screened) → (dict, str | None)`
+**Does:** route the action to one adapter by its exact verb, then update status + write an event, all on `db`.
+**How it works:** normalises `action_type` (`normalize_action_verb`, `:49`) and looks it up with `route_for_action` (`:54`) in `ACTION_ROUTES`; `admissions` → `_dispatch_to_transfer`, `helix` → `_write_helix`, `scribe` → `_dispatch_to_scribe`, each under `_savepoint(db, "handoff_adapter")` (`:249`, `:255`, `:261`). A verb not in the table is stored `unsupported` with the summary "Needs manual dispatch: Orb has no automatic route for ..., so nothing was sent or changed" (`:269`). `TransactionLost` is re-raised (`:273`). `HandoffBlocked` → status `blocked`, the reason as `error_summary` and the screen summary as `safety_json` (`:275`); any other adapter exception → status `failed` with the message, and the savepoint has already undone whatever the adapter wrote. Then `UPDATE sage_handoffs` and `INSERT sage_handoff_events` with prior/new status; returns the fresh row and the surgery to package.
+**Why it exists:** the router. Exact verbs are the clinical safety: the old substring match sent "start monitoring" to pharmacy ("start"), and a stop card to the Helix adapter, which only ever starts a drug (the comment above `ACTION_ROUTES`, `:22-30`).
 **Data in/out:** action → updated handoff dict with `target_module`, `status`, `downstream_ref_id`, `error_summary`, `safety`.
-**Talks to:** `_dispatch_to_transfer`/`_dispatch_to_helix`/`_dispatch_to_scribe`; `sage_ambient_service` reads the same `ACTION_ROUTES` table to drop a classifier verb before it can become a card.
-**Change guide:** to add an "order lab" route, add its verbs to `ACTION_ROUTES` with a new module name, an `elif module == ...` branch, and a `_dispatch_to_labs` adapter returning a ref id. Watch out: a verb that is not in the table is never routed, so a classifier phrasing you did not list falls to `unsupported` (the safe direction).
+**Talks to:** `_dispatch_to_transfer`/`_write_helix`/`_dispatch_to_scribe`; `sage_ambient_service` reads the same `ACTION_ROUTES` table to drop a classifier verb before it can become a card.
+**Change guide:** to add an "order lab" route, add its verbs to `ACTION_ROUTES` with a new module name, an `elif module == ...` branch under `_savepoint`, and a `_dispatch_to_labs(action, actor_id, db)` adapter that writes only on `db` and returns a ref id. Watch out: a verb that is not in the table is never routed, so a classifier phrasing you did not list falls to `unsupported` (the safe direction).
 **Gotchas:** `stop_medication` is deliberately absent (no adapter discontinues a drug), and so is a bare `transfer` (it could mean the ICU or a ward). Pinned by `test_handoff.py`: `test_create_and_dispatch_handoff_unsupported_action` (`:358`), `test_a_verb_that_only_contains_a_medication_word_reaches_no_module` (`:428`), `test_a_stop_card_never_starts_the_drug` (`:440`), `test_a_bare_transfer_books_no_surgery` (`:451`).
 
-#### `_dispatch_to_helix`: `server/services/sage_handoff_service.py:224`
+#### `_dispatch_to_helix`: `server/services/sage_handoff_service.py:309` (with `_screen_helix`, `:344`, and `_write_helix`, `:404`)
 **Signature:** `(action, actor_id) → tuple[str, dict, str | None]` (order id or `"charted-only"`, drug-safety summary, note)
-**Does:** safely chart an AI-extracted medication and create a pharmacy order, or raise `HandoffBlocked` and chart nothing.
+**Does:** safely chart an AI-extracted medication and create a pharmacy order, or raise `HandoffBlocked` and chart nothing. `_dispatch_to_helix` is the standalone form (screen, then `_write_helix` in a session of its own); the transition endpoint screens through `prescreen_handoff` and writes through `_write_helix` on the confirm's transaction.
 **How it works:**
-1. Pull `target` med + `rationale`; **never fabricate a dose**, dose/route/frequency default to `"REVIEW REQUIRED"`/`"Review"` (`:246`), with route upgraded to IV/IM/SC only if literally present in the rationale (`:251`).
-2. **Drug-safety gate:** `enforce_medication_safety(..., entry_point="sage.agentic_handoff", interactive=False)` (`:276`), the same gate every medication write path uses. There is nobody to type an acknowledgement, so a severe alert raises `MedicationSafetyBlocked` and the adapter raises `HandoffBlocked` with a clinician-facing reason ("Not charted: the drug-safety screen blocked ...", `:294`). A screen that could not run, or a gate that raised anything else, also raises `HandoffBlocked` ("could not run, so ... was not checked", `:300`): fail closed, nothing charted.
-3. Chart the med into `medications` with `source='llm_extracted'` (visibly unverified) (`:312`).
-4. Create the Helix pharmacy order and return `(order_id, safety_summary, None)` (`:329`); on failure the med is still charted and it returns `("charted-only", safety_summary, note)`, where the note says the order was not sent to pharmacy and to place it in Helix (`:336`).
+1. Pull `target` med + `rationale`; **never fabricate a dose**, dose/route/frequency default to `"REVIEW REQUIRED"`/`"Review"` (`_helix_order_fields`, `:333`), with route upgraded to IV/IM/SC only if literally present in the rationale (`:338`).
+2. **Drug-safety gate** (`_screen_helix`): `enforce_medication_safety(..., entry_point="sage.agentic_handoff", interactive=False)` (`:373`), the same gate every medication write path uses. There is nobody to type an acknowledgement, so a severe alert raises `MedicationSafetyBlocked` and the adapter raises `HandoffBlocked` with a clinician-facing reason ("Not charted: the drug-safety screen blocked ...", `:391`). A screen that could not run, or a gate that raised anything else, also raises `HandoffBlocked` ("could not run, so ... was not checked", `:397`): fail closed, nothing charted.
+3. `_write_helix` re-raises a `HandoffBlocked` screen result, and refuses outright when no screen ran (`:412`). It charts the med into `medications` with `source='llm_extracted'` (visibly unverified) under its own savepoint (`:424`).
+4. It finds the drug by name exactly as `helix_service.create_order` does and writes the order with `helix_service.insert_order` on the same transaction (`:440-447`), returning `(order_id, safety_summary, None)`; on failure the med is still charted and it returns `("charted-only", safety_summary, note)`, where the note says the order was not sent to pharmacy and to place it in Helix (`:465`).
 **Why it exists:** enforces human-in-the-loop dosing and drug safety on any agentic order.
-**Data in/out:** action → the tuple above; `_dispatch_handoff` stores the summary as `safety_json` and the note as `error_summary`. The summary (`_safety_summary`, `:75`) carries every alert, the non-blocking ones too, so a moderate alert that charted the drug still reaches the doctor who confirmed it.
-**Talks to:** `medication_safety_gate.enforce_medication_safety`, `helix_service.create_order` (guides 14-helix / 15-pharmacy-verify).
-**Gotchas:** a non-formulary drug is *charted but not ordered*, the handoff is still `accepted` with ref `charted-only` (`test_create_and_dispatch_handoff_prescribe_noncatalog_still_charts`, `server/tests/test_handoff.py:314`). The charted med carries `source='llm_extracted'` so Vigil shows it as unverified. Until 2026-10-02 a severe allergy returned `"blocked-allergy"` as if it were an order id and the handoff was stored `accepted`, so the Relay card read "Sent to Helix" for an order that never left; `server/tests/test_handoff_blocked.py` pins the `blocked` outcome, the failed-screen case and the terminal status.
+**Data in/out:** action → the tuple above; `_dispatch_handoff` stores the summary as `safety_json` and the note as `error_summary`. The summary (`_safety_summary`, `:76`) carries every alert, the non-blocking ones too, so a moderate alert that charted the drug still reaches the doctor who confirmed it.
+**Talks to:** `medication_safety_gate.enforce_medication_safety`, `helix_service.insert_order` (guides 14-helix / 15-pharmacy-verify).
+**Gotchas:** a non-formulary drug is *charted but not ordered*, the handoff is still `accepted` with ref `charted-only` (`test_create_and_dispatch_handoff_prescribe_noncatalog_still_charts`, `server/tests/test_handoff.py:314`). The charted med carries `source='llm_extracted'` so Vigil shows it as unverified. Until 2026-10-02 a severe allergy returned `"blocked-allergy"` as if it were an order id and the handoff was stored `accepted`, so the Relay card read "Sent to Helix" for an order that never left; `server/tests/test_handoff_blocked.py` pins the `blocked` outcome, the failed-screen case and the terminal status. Until 2026-10-04 the chart row and the order each committed on their own, before the handoff's final status; a failure there left a pending order behind a handoff stuck at `pending` (`server/tests/test_handoff_confirm_transaction.py`).
 
-#### `_dispatch_to_scribe`: `server/services/sage_handoff_service.py:338`
-**Signature:** `(action, actor_id) → str` (note id)
-**Does:** create a SOAP draft note from the action's `target`+`rationale`.
-**How it works:** builds `raw_transcript = f"Sage Ambient Observation: {target}. {rationale}"`, calls `save_scribe_note(note_format="soap", structured_note=None, ai_generated=True)`, returns the id; re-raises as `RuntimeError` on failure.
+#### `_dispatch_to_scribe`: `server/services/sage_handoff_service.py:467`
+**Signature:** `(action, actor_id, db) → str` (note id)
+**Does:** create a SOAP draft note from the action's `target`+`rationale`, on `db`.
+**How it works:** builds `raw_transcript = f"Sage Ambient Observation: {target}. {rationale}"`, calls `save_scribe_note(note_format="soap", structured_note=None, ai_generated=True, db=db)` so the note joins the confirm's transaction, returns the id; re-raises as `RuntimeError` on failure.
 **Why it exists:** turns a "document" action into a real (unstructured) note for later structuring.
 **Data in/out:** action → scribe note id (string).
 **Talks to:** `save_scribe_note` (guide 11-scribe). Verified by `test_..._document_success` (`server/tests/test_handoff.py:194`).
 **Gotchas:** note_format is hard-coded `"soap"`; the `target`'s hint ("… soap notes") is ignored.
 
-#### `_resolve_surgeon_id`: `server/services/sage_handoff_service.py:362`
+#### `_resolve_surgeon_id`: `server/services/sage_handoff_service.py:492`
 **Signature:** `(db, patient_id, actor_id) → str`
 **Does:** pick the lead surgeon for an emergency transfer.
 **How it works:** precedence: (1) the attending doctor *iff* they are a Surgery-dept doctor; (2) the on-call Surgery-dept doctor; (3) the attending doctor (any dept); (4) the confirming clinician.
@@ -432,20 +449,26 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `_dispatch_to_transfer`.
 **Gotchas:** `department LIKE '%Surg%'` is a substring match; a department literally named "SurgX" would qualify. `ORDER BY id LIMIT 1` is deterministic-but-arbitrary "on-call" selection.
 
-#### `_dispatch_to_transfer`: `server/services/sage_handoff_service.py:413`
-**Signature:** `(action, actor_id) → str` (surgery id)
-**Does:** move the active admission to the target department, post a Relay system message, and create/advance an emergency surgery.
+#### `_dispatch_to_transfer`: `server/services/sage_handoff_service.py:543`
+**Signature:** `(action, actor_id, db) → (surgery_id, needs_package)`
+**Does:** move the active admission to the target department, post a Relay system message, and create/advance an emergency surgery, on `db` (never commits).
 **How it works:**
-1. Require an `active` admission (else `RuntimeError`). The card's `target` is accepted as the new department only if some user belongs to a department of that name; otherwise it is `"General Surgery"` (`:436`), because an LLM target often names the procedure ("Exploratory Laparotomy"), and writing that into `admissions.department` removed the patient from every department-filtered board. Then set the admission's `department` (`:439`).
-2. Post a `SYSTEM:` transfer message into the case room (`:443`).
-3. **Idempotent surgery:** if an `emergency_%` surgery already exists for the patient, flip it to `emergency_ready`, alert the team, return it (`:458`).
-4. Else create a new `emergency_pending` surgery dated on the hospital calendar (`hospital_now`, `:469`), with `procedure_name` taken from the card by `_procedure_from_target` (`:400`, `:489`): the target if it names an operation, or `"To be confirmed"` when it names a department or a generic destination ("surgery", "theatre"). It pulls real comorbidities, resolves the surgeon, alerts the team, and schedules `generate_transfer_surgery_package_async` if an event loop is running (`:519`).
+1. Require an `active` admission (else `RuntimeError`). The card's `target` is accepted as the new department only if some user belongs to a department of that name; otherwise it is `"General Surgery"` (`:562`), because an LLM target often names the procedure ("Exploratory Laparotomy"), and writing that into `admissions.department` removed the patient from every department-filtered board. Then set the admission's `department` (`:571`).
+2. Post a `SYSTEM:` transfer message into the case room (`:577`).
+3. **Idempotent surgery:** if an `emergency_%` surgery already exists for the patient, flip it to `emergency_ready`, alert the team, return `(it, False)` (`:590`).
+4. Else create a new `emergency_pending` surgery dated on the hospital calendar (`hospital_now`, `:601`), with `procedure_name` taken from the card by `_procedure_from_target` (`:530`, `:621`): the target if it names an operation, or `"To be confirmed"` when it names a department or a generic destination ("surgery", "theatre"). It pulls real comorbidities, resolves the surgeon, alerts the team, and returns `(surgery_id, True)` (`:642`). It does NOT start the prep package (see `schedule_prep_package`).
 **Why it exists:** the surgical-escalation path of a confirmed transfer action.
-**Data in/out:** action → surgery id.
-**Talks to:** `admissions`, `messages`, `surgeries`, `patient_profiles`, `surgery_team_assignments`, `users` (department names); the async package generator.
-**Gotchas:** `SELECT … WHERE patient_id = ? AND status LIKE 'emergency_%'` is scoped to the patient (the comment on `:450-451` wrongly says "regardless of patient id"). The procedure used to default to "Exploratory Laparotomy: Source Control" and read "hartmann" out of the rationale, so every transfer was booked as an operation nobody ordered (comment at `:485-488`). The two special tests (`server/tests/test_handoff.py:232,281`) pin `"To be confirmed"` as the procedure and the PAT007 pre-seeded-surgery advance. The scheduling branch carries a thread-affinity warning (`:506-515`): moved off the event loop, it silently leaves the case at `emergency_pending`.
+**Data in/out:** action → surgery id and whether it needs a package.
+**Talks to:** `admissions`, `messages`, `surgeries`, `patient_profiles`, `surgery_team_assignments`, `users` (department names).
+**Gotchas:** `SELECT … WHERE patient_id = ? AND status LIKE 'emergency_%'` is scoped to the patient (the comment on `:582-583` wrongly says "regardless of patient id"). The procedure used to default to "Exploratory Laparotomy: Source Control" and read "hartmann" out of the rationale, so every transfer was booked as an operation nobody ordered (comment at `:617-620`). The two special tests (`server/tests/test_handoff.py:232,281`) pin `"To be confirmed"` as the procedure and the PAT007 pre-seeded-surgery advance. A failed final handoff write now rolls back the admission move, the message and the booking (`test_a_failed_final_status_leaves_no_transfer`).
 
-#### `_alert_assigned_team`: `server/services/sage_handoff_service.py:527`
+#### `schedule_prep_package`: `server/services/sage_handoff_service.py:645`
+**Signature:** `(surgery_id) → None`
+**Does:** start `generate_transfer_surgery_package_async` for a newly booked emergency case.
+**How it works:** `asyncio.get_running_loop().create_task(...)` (`:658`); with no running loop it logs a WARNING and the case stays at `emergency_pending`.
+**Why it exists:** the adapter now runs inside the confirm's transaction, off the event loop, where `get_running_loop()` fails; and a task started before the commit could look for a case that is not there yet. The transition endpoint calls this after `run_db` returns, on the loop (`server/routes/relay_routes.py:466`); `create_and_dispatch_handoff` calls it after its own commit. Pinned by `test_transfer_confirm_still_schedules_the_prep_package`.
+
+#### `_alert_assigned_team`: `server/services/sage_handoff_service.py:661`
 **Signature:** `(db, surgery_id, patient_id) → None`
 **Does:** persist targeted `surgical_alert` messages for the surgeon + one nurse + one anaesthetist.
 **How it works:** finds the case-room channel; builds a roster (surgeon real id, first nurse, first anaes-department/name user); wipes and re-inserts `surgery_team_assignments` (idempotent) with status `alerted`; inserts one `surgical_alert` message per member carrying a JSON payload with `target_user_id`.
@@ -454,23 +477,23 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** the Relay `surgical_alert` renderer; live delivery is done separately by `emit_team_alerts_live`.
 **Gotchas:** persistence only, nothing is pushed live from here.
 
-#### `emit_team_alerts_live`: `server/services/sage_handoff_service.py:611`
+#### `emit_team_alerts_live`: `server/services/sage_handoff_service.py:745`
 **Signature:** `async (surgery_id, patient_id) → None`
 **Does:** push each `surgical_alert` for this surgery over sockets, both to the case-room room and to each target user's personal room `user:<id>`.
-**How it works:** reads the recent `surgical_alert` messages off the loop (`_load_alert_rows`, `:593`), filters to this surgery, serialises each row with `relay_service._message_row_to_dict` (`:632`), the same serializer the history endpoint uses, so the live copy carries `is_bot` and `source`, and `sio.emit("message:new", …, room=…)` to the channel and the `user:<id>` room (`:634-637`). A **socket room** is a named group the server can broadcast to; `user:<id>` is a per-user room so an alert reaches that clinician on any device.
+**How it works:** reads the recent `surgical_alert` messages off the loop (`_load_alert_rows`, `:727`), filters to this surgery, serialises each row with `relay_service._message_row_to_dict` (`:766`), the same serializer the history endpoint uses, so the live copy carries `is_bot` and `source`, and `sio.emit("message:new", …, room=…)` to the channel and the `user:<id>` room (`:768-771`). A **socket room** is a named group the server can broadcast to; `user:<id>` is a per-user room so an alert reaches that clinician on any device.
 **Why it exists:** live delivery without polling; separated from persistence so it can run inside the request's event loop.
 **Data in/out:** surgery+patient ids → socket emits.
-**Talks to:** `ws.realtime.sio` (guide 06-realtime); called by the Relay transition handler *after* dispatch (`server/routes/relay_routes.py:426`).
+**Talks to:** `ws.realtime.sio` (guide 06-realtime); called by the Relay transition handler *after* dispatch (`server/routes/relay_routes.py:472`).
 **Gotchas:** emits `message:new` (the same event normal chat uses) so existing clients render it with no new handler. A failed emit is logged, never raised.
 
-#### `generate_transfer_surgery_package_async`: `server/services/sage_handoff_service.py:690`
+#### `generate_transfer_surgery_package_async`: `server/services/sage_handoff_service.py:824`
 **Signature:** `async (surgery_id) → None`
 **Does:** flip the surgery to `emergency_context_generating`, write the shared prep-package template (risk assessment, complications, checklist, instruments, staff) and set `emergency_ready`, emitting `surgery:emergency_intake` before and after.
-**How it works:** `_mark_generating` (`:646`) flips the status in one transaction, then `_persist_package` (`:662`) writes `PREP_PACKAGE` from `surgery_escalation_service` with `notes.ai_package_status = "template"` (`:709`, `:714`). There is no wait and no model call. If the write fails, the case is finalised with `FALLBACK_DATA` and status `failed` (`:726`) rather than left behind a spinner.
+**How it works:** `_mark_generating` (`:780`) flips the status in one transaction, then `_persist_package` (`:796`) writes `PREP_PACKAGE` from `surgery_escalation_service` with `notes.ai_package_status = "template"` (`:843`, `:848`). There is no wait and no model call. If the write fails, the case is finalised with `FALLBACK_DATA` and status `failed` (`:860`) rather than left behind a spinner.
 **Why it exists:** gives the transferred case a WHO-style checklist and prep list the moment it lands in the Surgical Suite.
 **Data in/out:** surgery id → DB updates + two socket emits.
 **Talks to:** `surgeries` table, `ws.realtime.sio`, `surgery_escalation_service.PREP_PACKAGE` / `FALLBACK_DATA` / `_finalize_surgery`.
-**Gotchas:** no model reads the patient on this path, so the template makes no patient claim: no ASA class, no sepsis claim, `success_probability` is `None`, and the staff rows read "Assigned on arrival". Until 2026-10-02 it wrote "ASA IV, septic shock", a 78.5% success figure and invented clinicians onto every real transfer (comment at `:704-707`).
+**Gotchas:** no model reads the patient on this path, so the template makes no patient claim: no ASA class, no sepsis claim, `success_probability` is `None`, and the staff rows read "Assigned on arrival". Until 2026-10-02 it wrote "ASA IV, septic shock", a 78.5% success figure and invented clinicians onto every real transfer (comment at `:838-841`).
 
 ### Tests (behavioural contract)
 
@@ -496,7 +519,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 
 **Socket events emitted (Sage handoff):** `message:new` (to channel room and `user:<id>` rooms) via `emit_team_alerts_live`; `surgery:emergency_intake` via `generate_transfer_surgery_package_async`. (I-PASS emits none.)
 
-**Exported functions other code depends on:** `build_ipass`, `save_ipass_handoff`, `get_recent_handoffs` (routes); `create_and_dispatch_handoff`, `emit_team_alerts_live` (Relay, `server/routes/relay_routes.py:420,426`); `_dispatch_to_helix` (drug-safety tests). Frontend exports `getIpassDraft`, `saveIpass` (used by `IpassHandoffView`), `getRecentHandoffs` (used by the nurse `HandoverSheet`), `HandoffPrintView` (imported by VigilPanel).
+**Exported functions other code depends on:** `build_ipass`, `save_ipass_handoff`, `get_recent_handoffs` (routes); `prescreen_handoff`, `dispatch_in_transaction`, `schedule_prep_package`, `emit_team_alerts_live` (Relay, `server/routes/relay_routes.py:427-439,466,472`); `create_and_dispatch_handoff` (direct callers and tests); `_dispatch_to_helix` (drug-safety tests). Frontend exports `getIpassDraft`, `saveIpass` (used by `IpassHandoffView`), `getRecentHandoffs` (used by the nurse `HandoverSheet`), `HandoffPrintView` (imported by VigilPanel).
 
 **Inbound contracts consumed:** `get_patient_risk`→`{level,raw_news2,drivers,scoring_model,…}` and `get_vitals_trend`→`{trend,hr_delta,sbp_delta,spo2_delta}` (guide 07-vigil); `get_bundles_for_patient(active_only=True)` element `{state,label,…}` + `compliance_pct`/`completion_pct` (guide 07-vigil); `save_scribe_note(...)` (guide 11-scribe); `require_permission` (guide 03-auth-rbac); `apiFetch` (guide 02-api-client).
 
@@ -517,7 +540,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 3. `src/api/ipass.ts`, interfaces + three fetch wrappers.
 4. `HandoffPage.tsx` + the `/handoff/:patientId` route (role-gated) + `IpassHandoffView.tsx`.
 5. Wire the VigilPanel **HANDOFF** button to `window.open('/handoff/<id>')`.
-6. Separately: `sage_handoff_service.py` (only after Helix, drug-safety, Scribe, admissions/surgeries and Relay exist), build the adapters, then `create_and_dispatch_handoff`, then have the Relay transition endpoint invoke it and `emit_team_alerts_live`. Validate with `test_handoff.py`.
+6. Separately: `sage_handoff_service.py` (only after Helix, drug-safety, Scribe, admissions/surgeries and Relay exist), build the adapters (each writing only on the connection it is handed), then `dispatch_in_transaction`, then have the Relay transition endpoint run it on the confirm's own transaction and call `schedule_prep_package` and `emit_team_alerts_live` after the commit. Validate with `test_handoff.py`.
 
 **Acceptance checks:**
 - You can `GET /api/ipass/<id>/draft` for a seeded patient and receive five populated sections + `plain_text` containing all five headers, with the local LLM stopped, proving determinism.
@@ -537,5 +560,5 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 6. ~~**`getRecentHandoffs` / `GET /recent` are unused by the UI.**~~ Closed. The nurse handover sheet now calls `getRecentHandoffs` (`src/pages/panels/nurse/HandoverSheet.tsx:142`) alongside `getIpassDraft` and `saveIpass`; the endpoint stays tested server-side (`test_get_recent_handoffs_returns_saved_note`).
 7. **Unused import.** `import uuid` in `ipass_routes.py:9` is never referenced (the correlation id is an f-string). Harmless dead import.
 8. **`generate_transfer_surgery_package_async` writes a template, not AI output.** Resolved as a safety issue on 2026-10-02: it used to write a hard-coded "ASA IV, septic shock" risk text, `success_probability = 78.5` and invented staff names over the team `_alert_assigned_team` assigned. It now writes the shared `PREP_PACKAGE` (`server/services/surgery_escalation_service.py:187`), which makes no patient claim and stamps `ai_package_status = "template"`. The function name still says "generate"; nothing is generated.
-9. **Misleading comment in `_dispatch_to_transfer`.** The comment at `sage_handoff_service.py:450-451` says the seeded-surgery reuse happens "regardless of patient id," but the query is scoped `WHERE patient_id = ?`. The code (patient-scoped) is the safe behaviour; the comment is wrong.
+9. **Misleading comment in `_dispatch_to_transfer`.** The comment at `sage_handoff_service.py:582-583` says the seeded-surgery reuse happens "regardless of patient id," but the query is scoped `WHERE patient_id = ?`. The code (patient-scoped) is the safe behaviour; the comment is wrong.
 10. **Save persists client-supplied content.** `save_draft` stores whatever `content` the browser posts rather than re-deriving it server-side, so a tampered client could persist arbitrary handoff text. It is gated by `scribe.create_draft` and audited, but the server does not re-validate the draft.

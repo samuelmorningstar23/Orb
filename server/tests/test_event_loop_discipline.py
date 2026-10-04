@@ -174,11 +174,6 @@ _KNOWN_INDIRECT = {
     ("routes/admin_routes.py", "history_import_rejects", "_history_audit"),
     ("routes/roster_import_routes.py", "dry_run", "_audit"),
     ("routes/roster_import_routes.py", "commit", "_audit"),
-    # sage_handoff_service schedules the transfer package with
-    # get_running_loop(), which only works ON the loop thread; moving this call
-    # to run_db silently skips the package (its own comment says so). Needs a
-    # change in that module first.
-    ("routes/relay_routes.py", "transition_sage_action", "create_and_dispatch_handoff"),
     # Whisper hint vocabulary read at session start (open, 2026-10-03).
     ("ws/scribe_stream.py", "handle_start_session", "build_whisper_hints"),
 }

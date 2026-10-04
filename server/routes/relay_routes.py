@@ -302,55 +302,62 @@ def get_sage_actions(
 
 def _transition_action(action_id, channel_id, req, user):
     with db_session() as db:
-        # Check current state and version
-        action = db.execute(
-            "SELECT state, version FROM sage_actions WHERE id = ? AND room_id = ?",
-            (action_id, channel_id)
-        ).fetchone()
+        return _apply_transition(db, action_id, channel_id, req, user)
 
-        if not action:
-            raise HTTPException(status_code=404, detail="Action not found")
 
-        current_state = action["state"]
+def _apply_transition(db, action_id, channel_id, req, user):
+    """The state write behind the transition endpoint, on the caller's
+    transaction. A confirm joins the handoff to this same transaction
+    (_confirm_and_hand_off)."""
+    # Check current state and version
+    action = db.execute(
+        "SELECT state, version FROM sage_actions WHERE id = ? AND room_id = ?",
+        (action_id, channel_id)
+    ).fetchone()
 
-        # Valid transition rules
-        if current_state in ("confirmed", "dismissed"):
-            raise HTTPException(status_code=400, detail="Cannot transition from a resolved state")
-        if current_state == "failed" and req.state == "confirmed":
-            raise HTTPException(status_code=400, detail="Cannot confirm a failed action")
+    if not action:
+        raise HTTPException(status_code=404, detail="Action not found")
 
-        # Optimistic locking. This is also what keeps the read above honest: the
-        # SELECT holds no snapshot, so the version predicate — not the check —
-        # is what stops a parallel transition from being overwritten.
-        res = db.execute(
-            "UPDATE sage_actions SET state = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?",
-            (req.state, action_id, req.version)
-        )
+    current_state = action["state"]
 
-        if res.rowcount == 0:
-            raise HTTPException(status_code=409, detail="Action was modified concurrently. Please refresh.")
+    # Valid transition rules
+    if current_state in ("confirmed", "dismissed"):
+        raise HTTPException(status_code=400, detail="Cannot transition from a resolved state")
+    if current_state == "failed" and req.state == "confirmed":
+        raise HTTPException(status_code=400, detail="Cannot confirm a failed action")
 
-        # Log event
-        db.execute(
-            """INSERT INTO sage_action_events
-               (action_id, prior_state, new_state, actor_id, actor_name, actor_role, reason, source)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 'ui')""",
-            (action_id, current_state, req.state, user["id"], user["name"], user["role"], req.reason)
-        )
+    # Optimistic locking. This is also what keeps the read above honest: the
+    # SELECT holds no snapshot, so the version predicate — not the check —
+    # is what stops a parallel transition from being overwritten.
+    res = db.execute(
+        "UPDATE sage_actions SET state = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?",
+        (req.state, action_id, req.version)
+    )
 
-        updated_action = db.execute("SELECT * FROM sage_actions WHERE id = ?", (action_id,)).fetchone()
-        action_dict = dict(updated_action)
+    if res.rowcount == 0:
+        raise HTTPException(status_code=409, detail="Action was modified concurrently. Please refresh.")
 
-        # ── SHADOW: `action.approved` / `action.declined` ──
-        # THE DECLINE IS THE VALUABLE ROW. Everything else in Orb records what
-        # the clinician accepted; a dismissal writes a sage_action_events row and
-        # nothing else, so "Sage suggested it and a doctor said no" was invisible
-        # to every metric. `agreement` counts a decline as a resolved pair that
-        # never matches — which is exactly what an honest disagreement rate needs.
-        # On THIS transaction (db=db): the optimistic UPDATE above holds the WAL
-        # write lock, and only its winner reaches this line.
-        _emit_action_resolution(db, action_dict, req, user)
-        return action_dict
+    # Log event
+    db.execute(
+        """INSERT INTO sage_action_events
+           (action_id, prior_state, new_state, actor_id, actor_name, actor_role, reason, source)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'ui')""",
+        (action_id, current_state, req.state, user["id"], user["name"], user["role"], req.reason)
+    )
+
+    updated_action = db.execute("SELECT * FROM sage_actions WHERE id = ?", (action_id,)).fetchone()
+    action_dict = dict(updated_action)
+
+    # ── SHADOW: `action.approved` / `action.declined` ──
+    # THE DECLINE IS THE VALUABLE ROW. Everything else in Orb records what
+    # the clinician accepted; a dismissal writes a sage_action_events row and
+    # nothing else, so "Sage suggested it and a doctor said no" was invisible
+    # to every metric. `agreement` counts a decline as a resolved pair that
+    # never matches — which is exactly what an honest disagreement rate needs.
+    # On THIS transaction (db=db): the optimistic UPDATE above holds the WAL
+    # write lock, and only its winner reaches this line.
+    _emit_action_resolution(db, action_dict, req, user)
+    return action_dict
 
 
 def _emit_action_resolution(db, action_dict: dict, req, user: dict) -> None:
@@ -397,6 +404,42 @@ def _emit_action_outcome(db, kind: str, action_dict: dict, user: dict, decline_r
         pass
 
 
+def _confirm_and_hand_off(action_id, channel_id, req, user):
+    """Confirm a card and dispatch it in ONE transaction.
+
+    The confirm used to commit first and the handoff after it, step by step: the
+    handoff record, the chart row, the Helix order and the final status each in
+    a session of their own. A failure in between left a card reading
+    "confirmed" with nothing dispatched and no record, or a pending order in the
+    pharmacist's queue behind a handoff stuck at 'pending'. Now the claim
+    (version-guarded, as before), the handoff and everything its adapter writes
+    commit together. A dispatch that fails or is blocked is still a committed
+    outcome on a confirmed card; a fault anywhere else rolls back the confirm
+    too, and the card can be confirmed again.
+
+    The drug-safety screen runs first, outside the transaction (it writes its
+    own audit rows; see prescreen_handoff). Returns ``(action, handoff,
+    surgery_id)``, the last being a newly booked case whose prep package the
+    caller starts after the commit.
+    """
+    from services.sage_handoff_service import dispatch_in_transaction, prescreen_handoff
+
+    with db_session() as db:
+        pre = db.execute(
+            "SELECT * FROM sage_actions WHERE id = ? AND room_id = ?", (action_id, channel_id)
+        ).fetchone()
+    # No screen for a card the claim below will refuse anyway: it would only
+    # write a screen audit row for an order that cannot happen.
+    screened = None
+    if pre and pre["state"] not in ("confirmed", "dismissed", "failed"):
+        screened = prescreen_handoff(dict(pre), user["id"])
+
+    with db_session() as db:
+        action_dict = _apply_transition(db, action_id, channel_id, req, user)
+        handoff_dict, package_for = dispatch_in_transaction(db, action_dict, user["id"], screened)
+    return action_dict, handoff_dict, package_for
+
+
 @router.post("/channels/{channel_id}/sage_actions/{action_id}/transition")
 async def transition_sage_action(
     channel_id: str,
@@ -412,18 +455,23 @@ async def transition_sage_action(
     if req.state not in valid_states:
         raise HTTPException(status_code=400, detail="Invalid state")
 
-    action_dict = await run_db(_transition_action, action_id, channel_id, req, user)
-
     handoff_dict = None
     if req.state == "confirmed":
-        from services.sage_handoff_service import create_and_dispatch_handoff
-        handoff_dict = create_and_dispatch_handoff(action_dict, user["id"])
+        from services.sage_handoff_service import schedule_prep_package
+        action_dict, handoff_dict, package_for = await run_db(
+            _confirm_and_hand_off, action_id, channel_id, req, user)
+        # Committed: a newly booked case can have its prep package now, from
+        # the loop thread (the only place get_running_loop() works).
+        if package_for:
+            schedule_prep_package(package_for)
 
         # If this confirmation created/staged a surgery, deliver the targeted
         # team alerts LIVE (the rows were persisted inside the handoff dispatch).
         if handoff_dict and handoff_dict.get("target_module") == "admissions" and handoff_dict.get("downstream_ref_id"):
             from services.sage_handoff_service import emit_team_alerts_live
             await emit_team_alerts_live(handoff_dict["downstream_ref_id"], action_dict["patient_id"])
+    else:
+        action_dict = await run_db(_transition_action, action_id, channel_id, req, user)
 
     await sio.emit("sage:action_update", {"channel_id": channel_id}, room=channel_id)
     return {"status": "ok", "action": action_dict, "handoff": handoff_dict}
