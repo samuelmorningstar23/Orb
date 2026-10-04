@@ -383,7 +383,13 @@ def pytest_configure(config):
 
 
 @pytest.fixture(autouse=True)
-def _no_real_knowledge_pool(request, monkeypatch):
+def _no_real_knowledge_pool(request):
+    # Deliberately not via the monkeypatch fixture: an autouse conftest fixture
+    # that depends on monkeypatch instantiates it first for EVERY test, which
+    # flips the teardown order a module-level autouse fixture may rely on
+    # (test_heartbeat_service's _no_env_leaks asserts the environment is back
+    # to its snapshot and must tear down after monkeypatch's undo; with the
+    # dependency it tore down before, and all 25 tests errored).
     if request.node.get_closest_marker("real_knowledge_pool"):
         yield
         return
@@ -395,8 +401,12 @@ def _no_real_knowledge_pool(request, monkeypatch):
             "test @pytest.mark.real_knowledge_pool to spawn the real worker"
         )
 
-    monkeypatch.setattr(kw, "_ensure_pool", _refuse)
-    yield
+    original = kw._ensure_pool
+    kw._ensure_pool = _refuse
+    try:
+        yield
+    finally:
+        kw._ensure_pool = original
 
 
 @pytest.fixture(autouse=True, scope="session")
