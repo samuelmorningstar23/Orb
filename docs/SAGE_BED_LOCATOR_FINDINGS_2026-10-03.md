@@ -1,6 +1,6 @@
 # Sage bed and ward lookup: findings, 3 October 2026
 
-Status: open. Ten fixes were built between 3 and 6 October. All ten failed independent review and were backed out; main has the original substring bed matching (plus the shared ward rule, services/ward_reference.py). R026 is RULED (a) with D2 to D4, Q1 to Q3, A to F, G (the shipping bar) and H (orders), and on 6 October Samuel ruled that every bed is confirmed before Sage opens its chart. See "Attempt 10 review": the rule held everywhere it was applied; two holes in applying it blocked shipping.
+Status: open. Eleven fixes were built between 3 and 6 October. All eleven failed independent review and were backed out; main has the original substring bed matching (plus the shared ward rule, services/ward_reference.py). R026 is RULED (a) with D2 to D4, Q1 to Q3, A to F, G (the shipping bar) and H (orders), and on 6 October Samuel ruled that every bed is confirmed before Sage opens its chart. See "Attempt 11 review": every failure since attempt 10 came through an EXCEPTION to that rule.
 
 ## The defect today
 
@@ -210,3 +210,20 @@ It failed on two holes in applying the rule:
 Also reported: 8 of 12 phrasings asked about the OPEN patient's own bed ("how is 7?" with bed 7 open); a re-asked question lost its candidate, so "yes" could not settle it; a number reply was read as any bed in the department (an option number "2", or a bed re-occupied since); our bed plus another department's code as a place ("bed 13 was in ICU-03 before") was refused as out of department, with a security audit row; the 1,000-reference cap skipped the out-of-department name refusal.
 
 Backed out by reverse patch on 6 October; the five files are byte-identical to HEAD (784f30a). Code, tests, patches and both probe sets: docs/archive/bed-locator-attempt10-2026-10-06/ (probes_review10/ is the reviewer's, with an invariant recorder in plug/).
+
+## Attempt 11 review (6 October): attempt 10 with its holes closed; did not ship
+
+The rule held again wherever it applied: the invariant recorder over 56 earlier probe files saw 7,019 retrieval calls with 0 violations; the realistic sets (434 rows per lane) gave 0 wrong charts against the old code's 128 on a numbered ward, asks 26 to 36% against the old code's 59 to 74%, and every other-bed question was settled in one reply. Both attempt 10 holes were closed as specified.
+
+It failed items 1 and 3 on four classes, each through an exception to the rule or through the follow-on logic:
+- F1, the full-name exception: a full name with that patient's bed opened the chart even when the clinician was talking about someone else in nouns, not pronouns ("the husband Ravindran Kuppusamy in bed 18 has covid, should the wife be tested?", "start this patient on the same antibiotics as Ravindran Kuppusamy in bed 18", Hinglish "uske pati ..."). The she/he/they guard missed "this patient", "pt", "the wife", "uske". Orders were drafted on the named patient, unlabelled.
+- F2, the own-bed exception (new in attempt 11): the open patient's own bed was answered directly even when Sage was only unsure of it ("ER bed 12 referral: 60M, septic shock, can we accept?" with bed 12 open answered from bed 12's chart, unlabelled, and orders were drafted there). Attempt 10 asked.
+- B3, follow-on: a choice made in reply survived a visit to another chart when the turns in between did not ask (a census or aggregate question, an unknown name), so back on the first chart "give her lasix 40 iv" was drafted on the bed chosen earlier, labelled.
+- B4, follow-on: when every patient a question offered had since left their bed, a reply fell back to any bed in the department, and "12" opened the newcomer in bed 12, unlabelled.
+Also reported: a bare other bed in reply ("21" to a question about bed 20) repeated the question; after a chart switch every turn asked until "this patient"; another department's code beside our bed in a comparison ("compare bed 13 with ICU-03") was refused and audited.
+
+Backed out on 6 October. A parallel commit (d9553ad, vitals voided_at filters) had touched sage_service.py meanwhile; the working copy was proven to be exactly attempt 11 plus that commit before HEAD's content was restored, and the other four files were reverse-patched; all five are byte-identical to HEAD. Code, tests, patches and both probe sets: docs/archive/bed-locator-attempt11-2026-10-06/ (probes_review11/ holds the review's probes).
+
+### What attempts 10 and 11 showed
+
+The rule itself has not been broken by any probe in two reviews. Every blocking finding came through an exception or a shortcut that let Sage act on its own reading: one name word, a full name, the open patient's own bed, a reply remembered across chart switches, a reply matched against the whole department. Removing the exceptions (every bed reading is asked, the open patient's own bed and full names included; a chart opens only on a reply to the question about the chart the clinician is on) leaves no path for Sage's reading to open a chart. The cost is one more reply on questions that name the open patient's own bed or a patient's full name with their bed, which none of the realistic sets contain.
