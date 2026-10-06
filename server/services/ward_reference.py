@@ -57,9 +57,21 @@ THE RULE (ruled by Samuel 2026-10-04):
     The lists only REMOVE matches: a phrasing they do not cover names the
     ward as before ("the mortality of septic shock in ICU" still does).
 
+  * A code of SEVERAL words that are all ordinary words ("General Medicine",
+    "Care of the Elderly", "High Dependency") needs a sign the same way
+    (2026-10-06): "Is this a general medicine or a surgical problem?" gave
+    the General Medicine census. The signs for a phrase: every letter in
+    capitals ("GENERAL MEDICINE"), every word but the small ones capitalised
+    away from the start of a sentence ("Anyone on Care of the Elderly?"), or
+    "ward" right before or after it ("the general medicine ward"). A code
+    that already ends in or contains a place word ("Burns Unit", "Labour
+    Room", "Private Ward", _PLACE_NOUNS) carries its own sign and matches
+    case-blind, as does any code with a digit or an abbreviation in it ("GM-1",
+    "Neuro ICU"). The words of a code must sit in one sentence: "labour? Room
+    4" is not "Labour Room".
+
 Beds are NOT read here: bed matching is ruling R026's work
-(docs/SAGE_BED_LOCATOR_PLAN_2026-10-03.md). A ward code made of several
-ordinary words ("General Medicine") still matches that phrase case-blind.
+(docs/SAGE_BED_LOCATOR_PLAN_2026-10-03.md).
 """
 from __future__ import annotations
 
@@ -90,7 +102,14 @@ _WARD_WORDS = frozenset({
     "onc", "onco", "uro", "endo", "cath", "burn", "eye", "skin", "bone", "lung",
     "post", "step", "main", "side", "east", "west", "red", "blue", "pink",
     "gold", "grey", "gray", "rose", "lily",
+    # short words that sit inside many-word ward names ("Care of the Elderly",
+    # "High Dependency", "Step Down", "Baby Care")
+    "care", "high", "down", "baby", "kids", "home", "rest", "pain", "sick",
 })
+
+#: Place words. A code that contains one ("Burns Unit", "Labour Room",
+#: "Private Ward") names a place by itself and needs no further sign.
+_PLACE_NOUNS = frozenset({"ward", "unit", "room", "bay", "wing", "suite", "block", "floor"})
 
 #: An all-letter code this long or longer is an ordinary word.
 _WORD_MIN_LETTERS = 5
@@ -151,6 +170,12 @@ def _needs_a_sign(token: str) -> bool:
             or len(token) >= _WORD_MIN_LETTERS)
 
 
+def _phrase_needs_a_sign(want: tuple) -> bool:
+    """Is this many-token code made only of ordinary words, with no digit, no
+    abbreviation and no place word in it?"""
+    return all(t.isalpha() and _needs_a_sign(t) and t not in _PLACE_NOUNS for t in want)
+
+
 class _TextIndex:
     """One question, tokenised once and shared by every ward test against it."""
 
@@ -182,6 +207,22 @@ class _TextIndex:
                 and self.tokens[i + 1] == "ward"):
             return True
         return False
+
+    def phrase_signed(self, i: int, n: int) -> bool:
+        """Is the many-word code at tokens i..i+n-1 written as a ward?"""
+        raws = self.raw[i:i + n]
+        if all(r.isupper() for r in raws):
+            return True
+        if (all(r[0].isupper() for r, t in zip(raws, self.tokens[i:i + n])
+                if t not in _FUNCTION_WORDS)
+                and not self.opens_a_sentence(i)):
+            return True
+        if i > 0 and self.tokens[i - 1] == "ward":
+            return True
+        return i + n < len(self.tokens) and self.tokens[i + n] == "ward"
+
+    def in_one_sentence(self, i: int, n: int) -> bool:
+        return all(self._together(k, k + 1) for k in range(i, i + n - 1))
 
     def _together(self, a: int, b: int) -> bool:
         """Are neighbouring tokens a < b in one sentence?"""
@@ -217,9 +258,10 @@ def ward_named_in(label, text: str) -> bool:
     """Does `text`, as typed (case kept), name the ward `label`?
 
     Pass the question as the clinician typed it, not lower-cased: the signs
-    for a one-word code read the case and the sentence position. A
-    lower-cased text still finds every abbreviation and multi-part code, and
-    a word code beside "ward". An empty label names nothing. A mention used
+    for a code of ordinary words read the case and the sentence position. A
+    lower-cased text still finds every abbreviation, every code with a digit
+    or a place word in it, and a word code beside "ward". An empty label
+    names nothing. A mention used
     generically ("ICU admission criteria", "should she go to ICU?") names no
     ward; each occurrence is judged on its own, and any one that counts is
     enough.
@@ -231,9 +273,17 @@ def ward_named_in(label, text: str) -> bool:
     hit = idx.verdicts.get(want)
     if hit is None:
         n = len(want)
-        needs_sign = n == 1 and _needs_a_sign(want[0])
+        if n == 1:
+            def sign_ok(i):
+                return not _needs_a_sign(want[0]) or idx.signed(i, want[0])
+        else:
+            phrase = _phrase_needs_a_sign(want)
+
+            def sign_ok(i):
+                return not phrase or idx.phrase_signed(i, n)
         hit = any(tuple(idx.tokens[i:i + n]) == want
-                  and (not needs_sign or idx.signed(i, want[0]))
+                  and idx.in_one_sentence(i, n)
+                  and sign_ok(i)
                   and not idx.generic(i, n)
                   for i in idx.starts.get(want[0], ()))
         idx.verdicts[want] = hit

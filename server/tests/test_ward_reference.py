@@ -55,8 +55,28 @@ WARD_TABLE = [
     ("ICU-02", "who is in icu 2", True),
     ("NW-1", "nw1 handover", True),
     ("A1", "is the hba1c high", False),
-    ("General Medicine", "who is on general medicine today", True),
     ("General Medicine", "general practice and medicine", False),
+    # a code of several ordinary words needs a sign too (2026-10-06)
+    ("General Medicine", "Is this a general medicine or a surgical problem?", False),
+    ("General Medicine", "How is hyponatraemia managed in general medicine?", False),
+    ("General Medicine", "General medicine textbooks you would recommend?", False),
+    ("General Medicine", "who is on general medicine today", False),     # lower case, no "ward"
+    ("General Medicine", "General Medicine handover at 8?", False),      # opens the sentence
+    ("General Medicine", "Any concerns on General Medicine tonight?", True),
+    ("General Medicine", "who is on the general medicine ward", True),
+    ("General Medicine", "GENERAL MEDICINE census please", True),
+    ("Care of the Elderly", "What does care of the elderly involve in India?", False),
+    ("Care of the Elderly", "Anyone on Care of the Elderly deteriorating?", True),
+    ("High Dependency", "When is high dependency care indicated?", False),
+    ("High Dependency", "Who is in High Dependency tonight?", True),
+    ("Step Down", "Step down the steroid dose after a week?", False),
+    ("Step Down", "Anyone on Step Down tonight?", True),
+    # a place word or an abbreviation in the code is sign enough
+    ("Burns Unit", "who is in the burns unit", True),
+    ("Labour Room", "anyone in labour room tonight", True),
+    ("Neuro ICU", "neuro icu census", True),
+    # the words of a code sit in one sentence
+    ("Labour Room", "Is she in labour? Room 4 is free.", False),
     # one-token word-like labels: capitals or after "ward"
     ("OR", "is it okay for her", False),
     ("OR", "Should I give amoxicillin or cefuroxime?", False),
@@ -323,6 +343,10 @@ def test_or_ward_general_question_attaches_no_chart():
      "Who is on Surgery tonight?"),
     ("Recovery", "How long is recovery after a hip replacement?",
      "Anyone still in Recovery?"),
+    ("General Medicine", "Is this a general medicine or a surgical problem?",
+     "Any concerns on General Medicine tonight?"),
+    ("Care of the Elderly", "What does care of the elderly involve in India?",
+     "Anyone on Care of the Elderly deteriorating?"),
     ("6", "Should I give 6 units of insulin for a glucose of 18?",
      "Who is on ward 6 tonight?"),
 ])
