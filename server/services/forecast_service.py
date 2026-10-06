@@ -252,6 +252,17 @@ def predict_patient_los(patient_id: str) -> dict:
     Predict length-of-stay and discharge probability for a single patient.
     Uses LSTM inference with features extracted from the database.
     """
+    # Models switched off (ORB_MODELS_ENABLED, or the Orb Ward Record): the
+    # LSTM is not loaded or run. The transparent heuristic answers instead,
+    # labelled as such, exactly as it does for an untrained network.
+    from services.model_switch import models_enabled
+    if not models_enabled():
+        result = _heuristic_prediction(patient_id)
+        result["model_trained"] = False
+        result["prediction_source"] = "heuristic"
+        result["models_enabled"] = False
+        return result
+
     model = get_model()
 
     # FAIL CLOSED on the untrained network: until a validated checkpoint is

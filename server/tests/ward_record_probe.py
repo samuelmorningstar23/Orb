@@ -145,6 +145,21 @@ def _install_gateway_tripwires() -> None:
     ollama_gateway.post = _post
     ollama_gateway.stream = _stream
 
+    # The torch checkpoints: the forecast LSTM and the CfC overlay.
+    try:
+        from services import forecast_service, vigil_service as _vs
+
+        def _forecast_model(*a, **k):
+            _model_call("forecast_service.get_model")
+
+        def _cfc_models(*a, **k):
+            _model_call("vigil_service._load_cfc_models")
+
+        forecast_service.get_model = _forecast_model
+        _vs._load_cfc_models = _cfc_models
+    except Exception:  # noqa: BLE001
+        pass
+
     try:
         from services import knowledge_worker as kw
 

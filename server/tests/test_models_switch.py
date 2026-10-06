@@ -309,3 +309,31 @@ def test_the_ops_status_page_still_asks_ollama_with_the_models_on(monkeypatch):
         "reachable": False, "configured": ["m"], "loaded": [], "not_loaded": ["m"]})
     assert ops_health_service._check_models()["status"] == ops_health_service.URGENT
     assert asked == [1]
+
+
+# ── The forecast LSTM (review, 7 October 2026) ──────────────────────────────
+# The chart asks /api/forecast/patient/{id} on every open, and that loaded and
+# ran the torch LSTM with the models switched off (only its boot warm-up was
+# gated).
+
+def test_the_forecast_lstm_is_not_loaded_with_the_models_off(models_off, monkeypatch):
+    from services import forecast_service
+    monkeypatch.setattr(forecast_service, "get_model",
+                        lambda: pytest.fail("the forecast LSTM was loaded"))
+    out = forecast_service.predict_patient_los("ANY")
+    assert out["prediction_source"] == "heuristic" and out["models_enabled"] is False
+
+
+def test_the_forecast_lstm_is_still_asked_with_the_models_on(monkeypatch):
+    from services import forecast_service
+    monkeypatch.setattr(config, "MODELS_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "WARD_RECORD", False, raising=False)
+    asked = []
+
+    class _Untrained:
+        trained = False
+
+    monkeypatch.setattr(forecast_service, "get_model", lambda: asked.append(1) or _Untrained())
+    monkeypatch.setattr(forecast_service, "_cache_prediction", lambda *a, **k: None)
+    forecast_service.predict_patient_los("ANY")
+    assert asked == [1]
