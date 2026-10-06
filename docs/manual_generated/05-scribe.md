@@ -48,7 +48,7 @@ Above the transcript area is a **Language** selector. It controls the language u
 
 Choose the language **before** you start recording, the selector is locked while a recording or refinement is in progress. The selection applies to both dictation modes.
 
-Note that the instant on-screen preview text shown during standard dictation (see below) is English-only; the accurate transcript that replaces it when you stop respects your language selection.
+There is no word-by-word preview during standard dictation: the transcript appears when you stop, produced by the local speech engine in the language you selected.
 
 ### 5.4 Capturing a note: three ways
 
@@ -62,12 +62,12 @@ This is the standard microphone workflow, designed for a complete dictation done
 
 1. Click the **microphone button**. Your browser may ask for microphone permission the first time, allow it.
 2. The status line shows **"Recording, speak now…"** and a red recording indicator with a running timer appears next to the **Transcript** heading.
-3. Speak naturally. Depending on how your deployment is configured, you may see instant live text appear as you talk (see the note below). Don't worry about its accuracy, it is only a preview.
+3. Speak naturally. No text appears while you talk; the transcript box reads "Recording. The transcript appears when you stop."
 4. Click the microphone button again (**Stop recording**) when you are done.
-5. The status changes to **"Refining with medical AI…"** and a "Refining…" indicator appears. Orb now runs the full recording through its local medical speech engine, which is far more accurate on clinical vocabulary and drug names than any live preview.
-6. When refinement completes, the transcript is replaced with the accurate version and the status reads **"Medical transcription complete"**. You can now edit the text freely before structuring.
+5. The status changes to **"Refining with medical AI…"** and a "Refining…" indicator appears. Orb now runs the full recording through its local medical speech engine, which is biased toward clinical vocabulary and drug names.
+6. When refinement completes, the transcript appears in the text field and the status reads **"Medical transcription complete"**. You can now edit the text freely before structuring.
 
-**About the live preview.** During recording, Scribe can display instant, word-by-word text using the browser's built-in speech recognizer. Because that recognizer may send audio to a cloud service, a patient-privacy consideration, Orb only enables it when the deployment's privacy posture permits cloud speech. If your installation disallows it, you will simply see "Listening…" while you speak, and the full transcript appears after you stop, produced entirely by the local engine. Either way, the local engine's output is the source of truth.
+**Local speech only.** Dictation never uses the browser's built-in speech recognizer, which would send your voice to an outside service. Orb does not support it and there is no setting that turns it on. Everything you say is transcribed by the local speech engine on the Orb server.
 
 **Shared microphone.** Scribe shares the microphone with Sage's voice features. If Sage is actively listening, Scribe will refuse to start and display "Microphone is in use by Sage, stop it before dictating." Stop the Sage voice session first, then start dictation.
 
@@ -84,7 +84,7 @@ The streaming button (the microphone icon with a green dot) starts a continuous 
 
 Streaming mode transcribes each utterance with the same local medical speech engine used by the refine step, including drug-name correction, so the text you see is already the accurate version, there is no separate refinement pass at the end.
 
-**The local speech engine is an optional server component.** Both dictation modes depend on Orb's locally installed speech-recognition engine (a Whisper model accelerated for Apple Silicon). On some installations this component is deferred at setup time and installed later. If it is not present, typing still works fully, and the live browser preview (where permitted) still works, but the refine step will report **"Refinement unavailable, using browser transcript"** and live streaming will return errors. Ask your administrator to complete the speech-engine installation if you see this persistently; administrators can check the engine's warm-daemon status from the server's diagnostics.
+**The local speech engine is installed with Orb.** Both dictation modes depend on Orb's locally installed speech-recognition engine (a Whisper model accelerated for Apple Silicon). It is installed with the appliance and never downloads anything while Orb is running. If it is not installed on your server, Scribe says so before you start: both microphone buttons are disabled and a note reads **"Voice dictation is not available on this system"**. Typing a note and structuring it still work fully. Ask your administrator to complete the speech-engine installation; administrators can check the engine's warm-daemon status from the server's diagnostics.
 
 ### 5.5 Linking the note to a patient
 
@@ -223,8 +223,9 @@ Always verify the auto-filled demographics against the source dictation. The ext
 | "Microphone access denied." | The browser blocked microphone access. Allow microphone permission for Orb in your browser's site settings and try again. |
 | "Microphone is in use by Sage, stop it before dictating." | Sage's voice listening is holding the microphone. Stop the Sage voice session, then start Scribe. |
 | "Recording too short" | The recording was under about a second. Record again and speak for several seconds. |
-| "Whisper empty, using browser transcript" | The local speech engine returned nothing (usually silence or an audio problem). The live-preview text, if any, is kept. Re-record closer to the microphone. |
-| "Refinement unavailable, using browser transcript" | The local speech engine could not be reached, it may not be installed yet on this server, or its warm daemon is down. Typing still works; ask your administrator to check the speech-engine installation and daemon status. |
+| "Nothing was transcribed from that recording. Try again, or type the note." | The local speech engine heard nothing usable (usually silence or an audio problem). Re-record closer to the microphone. |
+| "Voice dictation is not available on this system" (microphone buttons disabled) | The local speech engine is not installed on this server. Typing still works; ask your administrator to complete the speech-engine installation. |
+| "Transcription failed on this appliance. Try again, or type the note." | The local speech engine is installed but could not be reached, usually because its warm daemon is down. Typing still works; ask your administrator to check the daemon status. |
 | "Streaming error" messages in live mode | The live-transcription session lost its connection or the speech engine failed on an utterance. Stop and restart streaming; check the network connection to the Orb server. |
 | "Structuring failed: … Is Ollama running?" | The local AI model service is not running or the model is not loaded. An administrator should confirm the AI runtime is up; then click **✨ Structure Note** again, your transcript is not lost. |
 | Badge shows "Verification timed out, try again later" or "⚠ Verification unavailable" | The background check exceeded its polling window or failed (a server restart mid-check will also do this). Click **↻ Retry** next to the badge. If verification is disabled in server configuration, it will not run at all. |
@@ -238,6 +239,6 @@ Always verify the auto-filled demographics against the source dictation. The ext
 - **Verification is an aid, not a guarantee.** The hallucination check is itself an AI model. A **✅ Verified** badge raises confidence but does not replace your own reading; conversely, findings under **⚠️ Review suggested** may include false positives. The one thing the system enforces is that a note which *failed* or *never received* verification cannot be silently one-click signed.
 - **Fail-safe verification.** If the verifier itself breaks mid-check, Orb records "could not verify" rather than inventing a pass, an unverifiable note is treated the same as a failing one at the sign-gate.
 - **Speech recognition mishears.** Clinical dictation is hard for any speech engine. Orb biases recognition toward medical vocabulary and corrects drug names against a pharmacology dictionary, but numbers, doses, and similar-sounding drugs remain the highest-risk transcription errors. Always check doses and medication names in the draft against what you said.
-- **Live preview privacy.** The instant word-by-word preview during dictation may use the browser's cloud speech service and is disabled entirely on deployments that forbid sending audio off-site. The accurate transcript is always produced locally.
+- **No word-by-word preview.** Because Orb never sends audio to an outside service, there is no instant preview while you record a standard dictation; the transcript appears when you stop. Live streaming mode (5.4.3) gives you text utterance by utterance, still produced locally.
 - **Signed means signed.** Signed notes cannot be edited or deleted from the interface, only superseded through the revision workflow, keeping the original visible in the record. Rejections require a stated reason. All of it is audited.
 - **Not a decision-support tool.** Scribe documents what you said. It does not validate the clinical correctness of your assessment or plan, and its output must not be used as diagnostic advice.

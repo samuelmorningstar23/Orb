@@ -83,11 +83,8 @@ describe('nurse view tabs', () => {
 describe('the floating Sage orb', () => {
   const fab = css('src/components/sage/SageFloatingAssistant.css')
 
-  it('keeps the voice toggle a 24px dot under the coarse-pointer floor', () => {
-    const body = rule(fab, '.sage-fab__toggle')
-    expect(body).toMatch(/width:\s*24px/)
-    expect(body).toMatch(/min-width:\s*0/)
-    expect(body).toMatch(/min-height:\s*0/)
+  it('has no hotword toggle: the orb is text-only', () => {
+    expect(fab).not.toContain('.sage-fab__toggle')
   })
 
   it('lifts clear of a bottom composer, and steps aside on a phone where the tab has its own mic', () => {

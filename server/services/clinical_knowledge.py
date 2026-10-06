@@ -56,8 +56,9 @@ def _local_snapshot_or_name(model_name: str) -> str:
     disk. On a throttled/blocked network those requests can hang with no
     timeout — wedging Sage's first query and the test suite. Handing the
     constructor a local *path* skips the hub entirely. Falls back to the plain
-    name (normal online download) when the model isn't cached yet; callers fall
-    back to the name again if the path-load fails (self-heal for partial cache).
+    name when the model isn't cached; with HF_HUB_OFFLINE=1 (set in config.py,
+    Orb is strictly offline) that fails fast instead of downloading, and search
+    degrades to lexical-only until the model is installed.
     """
     try:
         from huggingface_hub import snapshot_download

@@ -634,8 +634,8 @@ specific reasons:
    semantics you can express in 40 lines of SQL is a bad trade under
    India's DPDP Act.
 2. **A second daemon to install, monitor and restart** on an appliance that a
-   solo operator maintains remotely through an outbound heartbeat
-   (`server/services/heartbeat_service.py:1-40`). Every additional process is
+   solo operator maintains with no remote access (Orb is strictly offline, so the
+   on-site ops status page is the only monitoring surface). Every additional process is
    another thing that can be down while the API looks fine.
 3. **The throughput argument does not apply.** Four topics, tens of events per
    minute. Redis buys durability-with-throughput; there is no throughput problem.
@@ -1154,7 +1154,7 @@ API, and on a dev box that reloads on every file save, that is a lot of 40-secon
 waits. It would also give clean lifecycle control via launchd.
 
 It was not chosen, and the honest reasons are: (a) it is another daemon to install,
-supervise and heartbeat on an appliance maintained by one person remotely; (b) the
+supervise and monitor on an appliance maintained by one person with no remote access; (b) the
 `ProcessPoolExecutor` version is ~80 lines and needs no port, no protocol, no auth
 and no health check; (c) the parent-death watchdog gives most of the lifecycle safety
 for four lines. For Week 13, (b) wins. The seam is clean if that changes, the
@@ -1602,8 +1602,7 @@ and `threading.enumerate()`, "emphatically not the database, the database is a p
 suspect in the failure we are recording" (`:382-384`). Stack walks are capped at depth
 40 (`:395`).
 
-**Why the daemon thread and not a task.** Same argument as the heartbeat
-(`server/services/heartbeat_service.py:35-46`): a task on the loop is not scheduled
+**Why the daemon thread and not a task.** A task on the loop is not scheduled
 when the loop is starved, so it would go silent at exactly the moment it is needed.
 `daemon=True` "must never hold up interpreter shutdown" (`:689`).
 
@@ -1656,9 +1655,8 @@ Three files in `ORB_WATCHDOG_DIR` (default `server/ops/watchdog`, `:193-199`):
 * **`status.json`**, written atomically (tmp + `fsync` + `os.replace`, `:626-633`)
   **by the daemon thread only**, "so a stale `written_unixtime` here means even the
   watchdog thread is starved, which is itself the alarm" (`:610-612`). This is the
-  file the outbound heartbeat reads from disk
-  (`server/services/heartbeat_service.py:47-49`), the one channel that reports
-  during a freeze.
+  file anyone on the box can read from disk while the API is frozen and
+  `/api/health/loop` never answers, the one channel that reports during a freeze.
 
 Two pathologies are handled explicitly and both were found the hard way:
 
@@ -1708,10 +1706,11 @@ The docstring lists these under a heading that says "be honest about these"
 * Under **total** GIL starvation, Lane 2 contributes nothing: `sys._current_frames`,
   `threading.enumerate` and the JSON writes all need the GIL. Lane 1 is the whole
   product in that case.
-* Neither lane can page anybody. Files, gauges and logs only; something outside the
-  process has to read them. That something is
-  `server/services/heartbeat_service.py:47-49`, which is why it runs on its own daemon
-  thread and reads `status.json` from disk rather than calling `/api/health`.
+* Neither lane can page anybody. Files, gauges and logs only; a person has to read
+  them: `GET /api/health/loop` while the loop still answers, `status.json` and the
+  dead-man file on disk when it does not. Orb is strictly offline, so nothing off the
+  appliance is told. (Until 4 October 2026 an outbound heartbeat read `status.json`
+  from its own daemon thread and paged the operator; it was removed with that ruling.)
 * A wedged process may have wedged its disk. Every write here is a plain stdlib write
   to an already-open fd or a small file; nothing touches the DB.
 
@@ -1764,11 +1763,6 @@ The case for launchd (or systemd, or a plain cron'd shell script):
 3. **It is standard, zero-code, and already required.** The appliance needs a launchd
    job to start uvicorn at boot anyway (`docs/DEPLOYMENT.md`,
    `docs/INSTALL_RUNBOOK.md`). Adding `KeepAlive` is one plist key.
-4. **The heartbeat already proves the pattern is accepted.**
-   `server/services/heartbeat_service.py:52-58` documents a standalone mode
-   (`python -m services.heartbeat_service --loop`) as its own launchd job, with the
-   explicit reasoning "A daemon thread still needs the GIL; a separate process does
-   not." That argument applies verbatim to the watchdog.
 
 The case for the in-process watchdog, as built:
 
@@ -1796,16 +1790,15 @@ The right end state is the watchdog exactly as it is (evidence, gauges,
 `status.json`) **plus** a launchd job with `KeepAlive` and a `WatchPaths`- or
 script-based check that reads `status.json`'s `written_unixtime` and `stall_active`,
 restarting only on a stall that has persisted well past the 60 s dead-man threshold
-and only after the dump has been written. That is exactly what the docstring is asking
-for when it says "something outside the process (the pilot's outbound heartbeat) has
-to read them" (`:79-80`), it names the reader but stops short of giving it authority
-to act.
+and only after the dump has been written. The docstring leaves the reading to a person
+("a person has to read them", `:79`); a launchd check would be a reader on the box that
+also has the authority to act.
 
 Whether the restart authority should exist at all in a clinical system is a genuine
 open question, and §6.6.7's argument cuts against it. But the current position, no
 in-process recovery *and* no external recovery, means a freeze is unbounded in
 duration, and that is a worse answer than either extreme. For the pilot, with two
-wards and a champion on site, "page Samuel and he restarts it" may be adequate. It is
+wards and a champion on site, "someone on site notices and restarts it" may be adequate. It is
 worth writing down as a deliberate, dated decision rather than an omission, because it
 is the single largest availability gap in the platform layer.
 
@@ -2151,14 +2144,15 @@ this: "note the honest limit: `/metrics` is served BY the loop, so during a stal
 scrape simply fails. That scrape failure is itself the page; these gauges are what
 tells the operator what happened once it answers again"
 (`server/services/loop_watchdog.py:561-565`). Correct, and it means the metrics
-surface is not a liveness surface, `status.json` and the outbound heartbeat are.
+surface is not a liveness surface, `status.json` (read on the box) is.
 
 **4. There is nothing scraping it.** No Prometheus, Grafana or alerting configuration
 ships with the appliance, and the deployment target is a single Mac Studio in a
-cupboard with no inbound path (`server/services/heartbeat_service.py:5-9`). The
-`/metrics` endpoint is therefore, today, a surface for a human with `curl` and for a
-future central monitoring story. The actual production monitoring is the outbound
-heartbeat.
+cupboard with no network path in or out (Orb is strictly offline, owner's ruling of
+4 October 2026). The `/metrics` endpoint is therefore a surface for a human with `curl`
+on the hospital LAN. The actual production monitoring is the local ops status page
+(`server/services/ops_health_service.py`), read on site; the outbound heartbeat that
+used to fill this role was removed with the offline ruling.
 
 **5. No latency instrumentation.** No histogram, no summary, no per-route timing.
 Everything measured in `docs/perf/` came from external harnesses
@@ -2253,8 +2247,7 @@ are real and several are documented at the site:
 | 14 | Shadow sweeper | 425-441 | See below |
 | 15 | **Loop watchdog** | 443-457 | **Last**, "after all the synchronous startup seeds above, so a slow first boot is never mistaken for a stall" |
 | 16 | Bootstrap access check (daemon thread) | 459-471 | bcrypt sweep is minutes on a cold box; must never sit in front of `/api/health` |
-| 17 | Outbound heartbeat (daemon thread) | 473-483 | Reads `status.json` from disk |
-| 18 | Vitals sources | 485-496 | `start_all` never raises, "a monitor whose VLAN is down must not stop Orb booting, because manual entry lives in this same process and is the ward's redundancy layer" |
+| 17 | Vitals sources | 485-496 | `start_all` never raises, "a monitor whose VLAN is down must not stop Orb booting, because manual entry lives in this same process and is the ward's redundancy layer" |
 
 Steps 15 and 4 are the two ordering constraints that would produce subtle, hard-to-find
 bugs if violated: a watchdog armed before the seeds would fire on a legitimate slow
@@ -2290,20 +2283,17 @@ Also deliberate (`server/main.py:508-546`):
 1. **Disarm the watchdog first**, "an orderly shutdown drains the loop, and a dead-man
    timer still armed through that drain would write a dump for a stall that never
    happened" (`:508-510`).
-2. **Stop the heartbeat**, "a 'healthy' beat sent while the process is on its way down
-   is a lie an operator would act on" (`:517-518`).
-3. **Stop and reset the vitals sources** before cancelling the generic task set,
+2. **Stop and reset the vitals sources** before cancelling the generic task set,
    because "a monitor feed holds a bound TCP port, and leaving it open across a reload
    is what turns 'restart Orb' into 'port already in use' on the appliance"
    (`:525-528`).
-4. `cancel()` every `lifespan_tasks` entry, then `gather(..., return_exceptions=True)`
+3. `cancel()` every `lifespan_tasks` entry, then `gather(..., return_exceptions=True)`
    (`:536-538`).
-5. **Reap the knowledge worker child** (`:539-545`) so a reload never leaves an
+4. **Reap the knowledge worker child** (`:539-545`) so a reload never leaves an
    orphaned 2–4 GB model process.
 
-Each of these is a lesson someone learned once. Steps 1 and 2 are both about *not
-emitting a false signal during a state transition*, which is a class of bug most
-systems ship.
+Each of these is a lesson someone learned once. Step 1 is about *not emitting a false
+signal during a state transition*, which is a class of bug most systems ship.
 
 ### 6.9.4 The two sweeps
 
@@ -2356,7 +2346,6 @@ blocking work.
 | asyncio default | ~16 | stdlib | What everything else still uses, `to_thread` in the sweeps, sage route context prep, scribe ASR |
 | `orb-loop-watchdog` | 1 daemon thread | `server/services/loop_watchdog.py:686` | Must not share the loop's fate |
 | `parent-watchdog` | 1 daemon thread (child) | `server/services/knowledge_worker.py:98` | Kill an orphaned 2–4 GB model process |
-| heartbeat | 1 daemon thread | `server/services/heartbeat_service.py` | Must beat through a wedged loop |
 | bootstrap check | 1 daemon thread | `server/services/bootstrap_service.py` | bcrypt sweep is minutes on a cold box |
 
 **The rule this table encodes**, stated in three different files independently: *a
@@ -2365,7 +2354,7 @@ long-running blocking job must not share an executor with latency-sensitive work
 `downtime_service.py:311-317` all arrive at it from different incidents.
 
 **The rule it does not encode, and should:** there is no upper bound on the total
-thread count and no place that reasons about the sum. Today it is 1+4+2+1+16+~4 ≈ 28
+thread count and no place that reasons about the sum. Today it is 1+4+2+1+16+~3 ≈ 27
 threads plus a child process, on a machine also running Ollama with two resident
 models. That is fine. But every new private lane is a local optimum, and the fourth or
 fifth one will need someone to look at the total. A short table like this one in
@@ -2431,8 +2420,10 @@ pass. Each item names the thing that would go wrong.
 **Watchdog**
 8. `cat server/ops/watchdog/status.json`, `written_unixtime` should be within
    ~30 s of now, `stall_active` false, `deadman_armed` 1.
-9. Confirm the outbound heartbeat is configured (`ORB_HEARTBEAT_URL`); without it the
-   watchdog's evidence has no reader (§6.6.6).
+9. Confirm the on-site IT contact knows to open the ops status page and
+   `status.json` during an incident. Orb is strictly offline, so nothing off the
+   appliance is told, and the watchdog's evidence has no reader but a person on site
+   (§6.6.6).
 10. **Decide the external-supervisor question** (§6.6.8) and write the decision down.
     Today a freeze is unbounded in duration.
 

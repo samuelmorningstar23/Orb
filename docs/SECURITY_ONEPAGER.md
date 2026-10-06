@@ -18,16 +18,18 @@ consultation audio sit in a separate directory.
 
 **Where it goes: nowhere.** There is exactly one inference provider in the code
 and it points at the local Ollama process. No cloud AI SDK is installed. Every
-inference is written to the audit chain with the model that served it. Two
-exceptions, neither carrying patient data:
+inference is written to the audit chain with the model that served it. On
+4 October 2026 I ruled that Orb has no internet connection of any kind, and
+removed the outbound heartbeat and browser cloud dictation under that rule.
+One exception remains in this build, carrying no patient data:
 
 | Outbound | What leaves | Default |
 |---|---|---|
 | **Orb Pulse** (weather, air quality, openFDA recalls, CDC flu) | a latitude and longitude and public query filters; every call is logged | on; you can block it at the firewall with no loss of clinical function |
-| **Browser cloud dictation** (Web Speech API) | spoken audio, to the browser vendor | **off**, and fail-closed: the client asks the server for permission and treats no answer as no; local Whisper is used instead |
 
-Partial: the dictation gate lives in the shipped web client, so a modified
-browser could bypass it. Your firewall is the real control.
+Dictation and spoken answers are on-device only. Browser cloud speech is not
+supported and cannot be switched on; the speech engine and its model are
+installed with the appliance and never download anything.
 
 **Encryption at rest.** The database and its WAL sidecars are opened through
 SQLCipher (AES-256); backups inherit it. Media is AES-256-GCM under a second
@@ -120,10 +122,10 @@ problems, active medicines, latest vitals and NEWS2, recent notes) that works
 with no models and no network. Gaps, stated plainly: on the development
 appliance nothing is scheduled yet, the schedule installer ships and scheduling
 is an install-day step; the full swap-and-boot restore has not been rehearsed on
-your hardware; the no-PHI heartbeat that pages a human exists at both ends
-(built 10 August, with a dead-man alarm) but I deploy the receiving end outside
-your building before go-live; the warm-standby restore job and switchover
-runbook are built but the second machine has not been bought; and the key
+your hardware; nothing pages anyone off site, because the appliance has no
+internet connection, so monitoring is a daily on-site check of the ops status
+page, the Trust Center and the backup log; the warm-standby restore job and
+switchover runbook are built but the second machine has not been bought; and the key
 escrow ceremony (two sealed envelopes, both keys) has not happened. Until it
 does, the whole record depends on one file on one machine.
 
@@ -177,7 +179,9 @@ produces.
   a model correction pass, not on a dictionary check.
 - **The on-device speech engine is an install step.** The dictation pipeline is
   built and gated; the Whisper runtime is not installed on my development
-  machine today, and it goes on your appliance at install.
+  machine today, and it goes on your appliance at install, before the
+  appliance joins your network. It never downloads anything afterwards, and
+  without it voice is off: there is no browser fallback.
 - **Bedside-monitor feeds are bench-tested only.** The HL7v2 adapter exists and
   is off by default; it has not yet run against a real monitor, which needs your
   biomedical team's access.

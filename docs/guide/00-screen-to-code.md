@@ -15,6 +15,8 @@ cannot be reconstructed from one, which is the whole reason it is here.
 **Scale of the index.** 1,092 contribution statements, covering 895 distinct
 `path::function` pairs across 237 files. 116 of those functions drive more than one
 screen, see [the dangerous ones](#the-dangerous-ones--functions-that-drive-more-than-one-screen).
+(Counts are from the last full sweep. The 4 October 2026 offline pass removed the floating orb's
+voice loop and the hotword hook, and the entries it touched were edited by hand.)
 
 **Repo root for every path below:** `/Users/samuelmorningstar/Documents/Projects/Orb`.
 
@@ -71,7 +73,7 @@ files are the complete inventory.
 | AI status chip and the model popover | 01 | `src/components/AiStatusChip.tsx::AiStatusChip` | `server/main.py::health_models` |
 | Offline / Syncing / Synced / Sync-failed badge | 01 | `src/pages/ClinicianShell.tsx::ClinicianShell` |, (client queue, `src/api/client.ts::processOfflineQueue`) |
 | Command palette (⌘K) result rows | 01 | `src/components/CommandPalette.tsx::CommandPalette` | `server/routes/search_routes.py::search_patients` |
-| Sage floating orb and its answer card | 01 | `src/components/sage/SageFloatingAssistant.tsx::SageFloatingAssistant` | `server/routes/sage_routes.py::sage_voice_query` |
+| Sage floating orb (text-only, opens the Sage tab) | 01 | `src/components/sage/SageFloatingAssistant.tsx::SageFloatingAssistant` | n/a |
 | Pulse panel (weather / AQI / flu / FDA recalls) | 01, 15 | `src/components/PulseWidget.tsx::PulseWidget` | `server/services/pulse_service.py::get_pulse_dashboard` |
 | Admit Patient modal and the one-time Bridge credential | 01 | `src/components/AdmitPatientModal.tsx::AdmitPatientModal` | `server/services/admission_service.py::admit_patient` |
 | Staleness banner, "Offline, not live" | 06, 07, 08, 09, 10 | `src/components/OfflineBanner.tsx::OfflineBanner` | n/a |
@@ -253,7 +255,7 @@ Read this table before you edit anything in it.
 | **3** | `src/api/client.ts::buildHeaders` | Whether an authenticated fetch succeeds on the screens that bypass the shared client. |
 | **3** | `src/api/client.ts::transcribeAudio` | The client half of every dictation path. |
 | **3** | `src/api/nurse.ts::getShiftBoard` | The single call behind the nurse board, both bedside sheets, and the ward round. |
-| **3** | `src/contexts/SageRuntimeContext.tsx::SageRuntimeProvider` | Microphone arbitration, and the AI posture that greys voice out. |
+| **3** | `src/contexts/SageRuntimeContext.tsx::SageRuntimeProvider` | Microphone arbitration, and the local speech engine check that refuses voice up front. |
 | **3** | `src/hooks/useFocusTrap.ts::useFocusTrap` | Escape-to-close, Tab containment and scroll lock in every modal and sheet. |
 | **3** | `src/index.css` *(whole file)* | `.glass-card`, the fade/slide animations, and every status colour token. |
 | **3** | `src/lib/datetime.ts::formatUTCDateTime` | Every rendered UTC timestamp. |
@@ -265,7 +267,7 @@ Read this table before you edit anything in it.
 | **3** | `src/pages/panels/nurse/time.ts::clockTime` | Every "HH:MM" a nurse reads. |
 
 <details>
-<summary>The remaining 84 two-screen functions</summary>
+<summary>The remaining 81 two-screen functions</summary>
 
 | Screens | `path::function` |
 |---|---|
@@ -280,14 +282,13 @@ Read this table before you edit anything in it.
 | Relay list, Relay thread | `server/routes/relay_routes.py::list_channels` |
 | Relay list, Relay thread | `server/routes/relay_routes.py::mark_read` |
 | Relay list, Relay thread | `server/routes/relay_routes.py::resolve_alert` |
-| App shell, Round mode | `server/routes/sage_routes.py::get_ai_posture` |
-| App shell, Sage | `server/routes/sage_routes.py::sage_voice_query` |
+| Sage, Round mode | `server/routes/sage_routes.py::get_ai_posture` |
 | Relay thread, Surgical/Appointments | `server/routes/surgery_routes.py::surgical_team_response` |
 | Vigil chart, Round mode | `server/routes/vigil_routes.py::_insert_patient_note` |
 | Vigil chart, Round mode | `server/routes/vigil_routes.py::add_patient_note` |
 | Vigil chart, Round mode | `server/routes/vigil_routes.py::get_patient_story_route` |
 | Vigil board, Round mode | `server/routes/vigil_routes.py::list_patients` |
-| App shell, Round mode | `server/services/ai_governance.py::ai_posture` |
+| Sage, Round mode | `server/services/ai_governance.py::ai_posture` |
 | Login, Nurse handover | `server/services/audit_service.py::log_audit_event` |
 | Nurse vitals/eMAR, Orders | `server/services/drug_safety_service.py::evaluate_dose` |
 | Nurse board, Nurse handover | `server/services/ipass_service.py::_build_action_list` |
@@ -313,9 +314,8 @@ Read this table before you edit anything in it.
 | App shell, Login | `src/App.tsx::App` |
 | Vigil chart, Round mode | `src/api/client.ts::addClinicalNote` |
 | Relay list, Relay thread | `src/api/client.ts::getChannels` |
-| App shell, Round mode | `src/api/client.ts::getSageAiPosture` |
+| Sage, Round mode | `src/api/client.ts::getSageAiPosture` |
 | Relay list, Relay thread | `src/api/client.ts::markChannelRead` |
-| App shell, Sage | `src/api/client.ts::querySageVoice` |
 | Relay list, Relay thread | `src/api/client.ts::resolveAlert` |
 | Relay thread, Surgical/Appointments | `src/api/client.ts::socket` |
 | Nurse board, Nurse handover | `src/api/ipass.ts::getIpassDraft` |
@@ -329,7 +329,6 @@ Read this table before you edit anything in it.
 | App shell, Analytics/Pharmacy/Scribe/Lens/Bridge | `src/components/PulseWidget.tsx::getAqiColorClass` |
 | Vigil chart, Nurse vitals/eMAR | `src/components/vigil/AdministerModal.tsx::AdministerModal` |
 | Vigil chart, Orders | `src/components/vigil/SafetyAlertModal.tsx::SafetyAlertModal` |
-| App shell, Sage | `src/contexts/ActiveViewContext.tsx::buildWireViewContext` |
 | Vigil board, Nurse board | `src/hooks/useOfflineStatus.ts::useOfflineStatus` |
 | Relay list, Vigil board | `src/hooks/useVisiblePolling.ts::useVisiblePolling` |
 | App shell, Login | `src/i18n/locales/en.json` *(whole file)* |
@@ -589,7 +588,7 @@ nowhere), these are correctly documented as dead, not mis-cited:
 
 **`src/contexts/`** (3), `ActivePatientContext.tsx`, `ActiveViewContext.tsx`, `SageRuntimeContext.tsx`
 
-**`src/hooks/`** (6), `useFocusTrap.ts`, `useOfflineSnapshot.ts`, `useOfflineStatus.ts`, `useSageHotword.ts`, `useStreamingTranscription.ts`, `useVisiblePolling.ts`
+**`src/hooks/`** (5), `useFocusTrap.ts`, `useOfflineSnapshot.ts`, `useOfflineStatus.ts`, `useStreamingTranscription.ts`, `useVisiblePolling.ts`
 
 **`src/i18n/`** (1), `index.ts`
 
@@ -1080,8 +1079,8 @@ nowhere), these are correctly documented as dead, not mis-cited:
 - `::_strip_forbidden`
   - *Sage*, absence of fabricated confirmations in the final answer and clinical assessment
 - ⚠ `::get_ai_posture`, **2 screens**
-  - *App shell*, Sage hotword toggle; Sage privacy-refusal card; Sage floating orb (mic gate)
-  - *Round mode*, "Local speech recognition is not installed…"; presence of the "Hearing …" line
+  - *Sage*, voice mode's up-front refusal when the local speech engine is not installed
+  - *Round mode*, "Local speech recognition is not installed…"
 - `::get_history`
   - *Sage*, Recent Conversations list
 - `::MarkerAnswerStreamer`
@@ -1090,8 +1089,7 @@ nowhere), these are correctly documented as dead, not mis-cited:
   - *Sage*, answer text and detail sections on the fast contract
 - `::sage_query`
   - *Sage*, streaming answer text; stage indicator; all six banners; details expander; source chips; action card; refusal texts
-- ⚠ `::sage_voice_query`, **2 screens**
-  - *App shell*, Sage response text; Sage thinking shimmer
+- `::sage_voice_query`
   - *Sage*, spoken answer tokens; voice-lane refusal text
 - `::SentenceStreamSanitizer`
   - *Sage*, absence of fabricated "order placed"/"Done." confirmations in streamed text
@@ -1217,8 +1215,8 @@ nowhere), these are correctly documented as dead, not mis-cited:
 ### `server/services/ai_governance.py`
 
 - ⚠ `::ai_posture`, **2 screens**
-  - *App shell*, Sage hotword toggle; Sage privacy-refusal card
-  - *Round mode*, "Local speech recognition is not installed…"; presence of the "Hearing …" line
+  - *Sage*, voice mode's up-front refusal when the local speech engine is not installed
+  - *Round mode*, "Local speech recognition is not installed…"
 - `::local_asr_available`
   - *Round mode*, "Local speech recognition is not installed…"; the mic button's refusal message
 
@@ -1975,8 +1973,8 @@ nowhere), these are correctly documented as dead, not mis-cited:
 - `::getSageActions`
   - *Relay thread*, suggested action cards; handled action cards; handoff badge
 - ⚠ `::getSageAiPosture`, **2 screens**
-  - *App shell*, Sage hotword toggle; Sage privacy-refusal card
-  - *Round mode*, "Local speech recognition is not installed…"; presence of the "Hearing …" live line
+  - *Sage*, voice mode's up-front refusal when the local speech engine is not installed
+  - *Round mode*, "Local speech recognition is not installed…"
 - `::getSageHistory`
   - *Sage*, Recent Conversations list; sidebar empty state
 - `::getSageInsights`
@@ -2014,8 +2012,7 @@ nowhere), these are correctly documented as dead, not mis-cited:
   - *App shell*, Syncing badge; Synced badge; Sync-failed badge
 - `::querySage`
   - *Sage*, streaming answer text; stage indicator; banner metadata; details expander data; source chips
-- ⚠ `::querySageVoice`, **2 screens**
-  - *App shell*, Sage response text; Sage thinking shimmer
+- `::querySageVoice`
   - *Sage*, spoken answer text in voice mode
 - `::rejectScribeNote`
   - *Analytics/Pharmacy/Scribe/Lens/Bridge*, Rejected badge
@@ -2566,7 +2563,7 @@ nowhere), these are correctly documented as dead, not mis-cited:
 - `::mmss`
   - *Round mode*, the elapsed timer inside "Stop · M:SS"
 - `::RoundDictation`
-  - *Round mode*, "Dictate the plan" mic button; "Stop · M:SS"; "Transcribing…"; blinking "Recording" indicator; "Transcribing on this appliance…"; "Press to dictate, or type below."; "Local speech recognition is not installed…"; "Hearing …" live line; microphone/transcription error box; "Retry transcription"; "Plan for today" label and textarea; "Save plan to chart" / "Saving…"; "Saved to the chart"; inline save error
+  - *Round mode*, "Dictate the plan" mic button; "Stop · M:SS"; "Transcribing…"; blinking "Recording" indicator; "Transcribing on this appliance…"; "Press to dictate, or type below."; "Local speech recognition is not installed…"; microphone/transcription error box; "Retry transcription"; "Plan for today" label and textarea; "Save plan to chart" / "Saving…"; "Saved to the chart"; inline save error
 - `::runTranscription`
   - *Round mode*, transcript appended to the plan textarea; "Nothing was transcribed from that recording."; "Transcription failed: …"
 - `::startRecording`
@@ -2678,13 +2675,13 @@ nowhere), these are correctly documented as dead, not mis-cited:
 ### `src/components/sage/SageFloatingAssistant.css`
 
 - *(whole file / stylesheet)*
-  - *App shell*, Sage floating orb position; Sage raised position on the Sage tab; Sage hotword toggle disc
+  - *App shell*, Sage floating orb position; Sage raised position on the Sage tab
 
 
 ### `src/components/sage/SageFloatingAssistant.tsx`
 
 - `::SageFloatingAssistant`
-  - *App shell*, Sage floating orb; Sage listening rings; Sage "Listening..." label; Sage answer card; Sage query text; Sage thinking shimmer; Sage response text; Sage patient chip; Sage hotword toggle; Sage privacy-refusal card
+  - *App shell*, Sage floating orb (text-only); "Voice is not available here" card; "Open Sage to type" button
 
 
 ### `src/components/sage/SageHistorySidebar.tsx`
@@ -2776,15 +2773,14 @@ nowhere), these are correctly documented as dead, not mis-cited:
 ### `src/contexts/ActivePatientContext.tsx`
 
 - `::ActivePatientProvider`
-  - *App shell*, Sage patient chip
+  - *App shell*, Sage patient chip (on the floating orb's answer card, which went with the orb's voice loop on 2026-10-04)
 
 
 ### `src/contexts/ActiveViewContext.tsx`
 
 - `::ActiveViewProvider`
-  - *App shell*, Sage answer card (screen context); Sage floating orb raised position
-- ⚠ `::buildWireViewContext`, **2 screens**
-  - *App shell*, Sage answer card (patient/tab context sent with the question)
+  - *App shell*, Sage floating orb raised position
+- `::buildWireViewContext`
   - *Sage*, patient chip on the details button (via server-side patient resolution); patient-scoped answers without naming the patient
 
 
@@ -2793,9 +2789,9 @@ nowhere), these are correctly documented as dead, not mis-cited:
 - `::claimMic`
   - *Round mode*, "The microphone is in use by Sage."
 - ⚠ `::SageRuntimeProvider`, **3 screens**
-  - *App shell*, Sage floating orb (suspended/greyed); Sage hotword toggle (disabled by posture); Sage privacy-refusal card
-  - *Sage*, "Microphone is in use by another Sage surface." status; local-transcription listening status
-  - *Round mode*, "Local speech recognition is not installed…"; the "Hearing …" line
+  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, Scribe's "Microphone is in use by Sage, stop it before dictating."
+  - *Sage*, "Microphone is in use by another Sage surface." status; local-transcription listening status; voice mode's refusal when the local speech engine is not installed
+  - *Round mode*, "Local speech recognition is not installed…"
 
 
 ### `src/hooks/useFocusTrap.ts`
@@ -2821,12 +2817,6 @@ nowhere), these are correctly documented as dead, not mis-cited:
 - ⚠ `::useOfflineStatus`, **2 screens**
   - *Vigil board*, offline vs unreachable wording in the staleness banner
   - *Nurse board*, offline vs unreachable wording; suppression of the red error notice while offline
-
-
-### `src/hooks/useSageHotword.ts`
-
-- `::useSageHotword`
-  - *App shell*, Sage hotword toggle
 
 
 ### `src/hooks/useStreamingTranscription.ts`
@@ -3041,7 +3031,7 @@ nowhere), these are correctly documented as dead, not mis-cited:
   - *Orders*, the left-nav "Orders" entry and its document icon
   - *Analytics/Pharmacy/Scribe/Lens/Bridge*, Forecast sidebar tab; Command sidebar tab; Pharmacy sidebar tab; Verify Queue sidebar tab; Scribe sidebar tab; Lens sidebar tab
 - `::ViewTabSync`
-  - *App shell*, Sage answer card (patient/tab context); Sage floating orb
+  - *App shell*, Sage floating orb
 
 
 ### `src/pages/HandoffPage.tsx`
@@ -3219,11 +3209,11 @@ nowhere), these are correctly documented as dead, not mis-cited:
 - `::refreshHistory`
   - *Sage*, Recent Conversations list; sidebar empty state
 - `::SagePanel`
-  - *Sage*, Sage workspace root; message list; message list scroll container; user bubble mount; assistant turn mount; stage indicator (retrieving/generating); voice-mode landing screen; floating voice HUD; "Listening... m:ss" timer; live transcript line; "Connection failed" answer text; "Stopped by user" metadata flag; empty-assistant-turn suppression; composer mount; history sidebar mount
+  - *Sage*, Sage workspace root; message list; message list scroll container; user bubble mount; assistant turn mount; stage indicator (retrieving/generating); voice-mode landing screen; floating voice HUD; "Listening... m:ss" timer; "Connection failed" answer text; "Stopped by user" metadata flag; empty-assistant-turn suppression; composer mount; history sidebar mount
 - `::startVoiceRecording`
-  - *Sage*, "Listening…" status; mic-contention status; mic error statuses; voice HUD timer; live transcript line
+  - *Sage*, "Listening…" status; mic-contention status; mic error statuses; voice HUD timer; refusal when the local speech engine is not installed
 - `::stopVoiceRecording`
-  - *Sage*, "Processing…" status; "Transcribing with Whisper AI…" status; "No speech detected."; "Transcription failed."; "Whisper failed, using live transcript…"
+  - *Sage*, "Processing…" status; "Transcribing with Whisper AI…" status; "No speech detected."; "Transcription failed."
 - `::submitQuery`
   - *Sage*, typing dots; streaming answer text; stage indicator; "Stopped by user" banner; "Connection failed" answer text; disappearance of question+placeholder on early Stop; Recent Conversations refresh
 - `::toggleVoiceMode`

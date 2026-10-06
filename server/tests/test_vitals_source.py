@@ -686,7 +686,7 @@ class TestClockSkewIsAFaultNotSilence:
     def test_skew_is_counted_per_device_not_per_patient(self):
         """One monitor serves many beds; the fault belongs to the clock. Keying
         it by patient would also put an identifier into a report that is
-        rendered on an admin screen and shipped in the heartbeat."""
+        rendered on an admin screen."""
         sink = IngestionSink(skew_tolerance_seconds=600)
         for patient in ("P1", "P2", "P3"):
             sink.classify("mon", [ReadingHint(patient, _iso(-30), device_id="MON-A")])
@@ -727,7 +727,7 @@ class TestClockSkewIsAFaultNotSilence:
         assert stats.clock_skew_state == "skewed"
         assert stats.last_clock_skew_seconds == pytest.approx(-1800, abs=5)
         assert stats.max_abs_clock_skew_seconds == pytest.approx(1800, abs=5)
-        json.dumps(stats.as_dict())   # must stay serialisable for the heartbeat
+        json.dumps(stats.as_dict())   # must stay serialisable for the admin surface
 
     def test_forgetting_a_source_keeps_the_clock_finding(self):
         """'The monitor in bay 3 has a wrong clock' is an operational finding

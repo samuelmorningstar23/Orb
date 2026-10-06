@@ -387,7 +387,9 @@ passing props.
 network is unavailable.
 
 **`SageFloatingAssistant`:** Rendered outside the panel area, always visible regardless of
-active tab. Listens for a hotword and triggers a voice query to the Sage API.
+active tab. Text-only since 4 October 2026: clicking it opens a small card saying voice is not
+available here, with an "Open Sage to type" button that switches to the Sage tab. It never
+opens the microphone (browser speech was removed when Orb was ruled strictly offline).
 
 **`AdmitPatientModal`:** The "Admit Patient" button in the sidebar opens this modal; on
 success it reloads the page to refresh all panels.
@@ -491,24 +493,22 @@ live microphone transcription. It:
 Returns an object with: `{ isStreaming, isProcessing, isSpeaking, currentTranscript,
 fullTranscript, utteranceCount, audioLevel, startStreaming, stopStreaming }`.
 
-Used by: `ScribePanel.tsx` (streaming mode toggle), `SageFloatingAssistant.tsx` (implicit
-via the hotword hook pathway).
+Used by: `ScribePanel.tsx` (streaming mode toggle).
 
 ⚠️ **If you rename Socket.IO events on the server:** update the `socket.on(...)` and
 `socket.emit(...)` calls in this file too. There is no type-safety across the wire.
 
-#### `src/hooks/useSageHotword.ts`
+#### `src/hooks/useSageHotword.ts` (removed 2026-10-04)
 
-A lightweight hook that persists a boolean `isEnabled` flag to `localStorage` under
-`orb_sage_hotword`. Returns `{ isEnabled, toggleEnabled }`. Used by
-`SageFloatingAssistant.tsx` to gate the hotword listener.
+Persisted the "Sage" hotword flag to `localStorage` under `orb_sage_hotword` for the floating
+orb's browser speech listener. Removed with browser speech; nothing reads that key now.
 
 #### `src/contexts/ActivePatientContext.tsx`
 
 Provides `{ activePatientId, activePatientName, setActivePatient }` to the entire
 `ClinicianShell` tree. When a clinician selects a patient in `VigilPanel`, it calls
-`setActivePatient(id, name)`. `SageFloatingAssistant` reads the active patient and
-automatically scopes voice queries to that patient.
+`setActivePatient(id, name)`. Sage reads the active patient and automatically scopes
+questions to that patient.
 
 Pattern for consuming it in a panel:
 ```typescript
@@ -545,7 +545,7 @@ These live under `src/components/` and are reused across shells and panels.
 
 | File | Role |
 |---|---|
-| `SageFloatingAssistant.tsx` + `SageFloatingAssistant.css` | Always-visible floating orb that listens for a hotword and runs a voice query. Uses `useActivePatient` to scope queries. |
+| `SageFloatingAssistant.tsx` + `SageFloatingAssistant.css` | Always-visible floating orb, text-only: clicking it explains voice is not available here and offers to open Sage to type. |
 | `SageComposer.tsx` | The text input + submit button at the bottom of SagePanel. |
 | `SageMessage.tsx` | Renders a single Sage chat message, handling markdown display. |
 | `SageHistorySidebar.tsx` | Left sidebar in SagePanel listing past conversations. |
@@ -659,7 +659,6 @@ src/
 │   └── ActivePatientContext.tsx      Cross-panel "which patient is selected" state
 │
 ├── hooks/
-│   ├── useSageHotword.ts             Persists hotword-enabled flag to localStorage
 │   └── useStreamingTranscription.ts  Mic capture → VAD → PCM → Socket.IO → transcript
 │
 ├── pages/
@@ -711,7 +710,7 @@ src/
     ├── DischargePrintView.tsx        Print layout for discharge summary
     │
     ├── sage/
-    │   ├── SageFloatingAssistant.tsx + .css  Always-visible hotword voice assistant
+    │   ├── SageFloatingAssistant.tsx + .css  Always-visible text-only Sage orb
     │   ├── SageComposer.tsx          Text input bar in SagePanel
     │   ├── SageMessage.tsx           Single chat message bubble with markdown
     │   ├── SageHistorySidebar.tsx    Past-conversation list sidebar

@@ -786,24 +786,22 @@ the draft is empty.
 **API:** `GET /api/sage/ai-posture` (`src/api/client.ts:992-994`), fetched once by the provider
 (`SageRuntimeProvider.tsx:10-16`).
 **Server:** `server/routes/sage_routes.py:2782-2788` → `services/ai_governance.ai_posture`
-(`:342-364`), whose `local_asr_available()` (`:367-393`) reports **configuration**: the voice
-daemon flag must be on and a `whisper*` checkpoint must exist under `server/models`.
+(`:342-364`), whose `local_asr_available()` reports **configuration**: the voice daemon flag
+must be on and the Whisper weights (`config.json` + `weights.npz`) must be installed under
+`server/mlx_models/<model>/`, where the daemon and worker load them from. Nothing downloads
+them (Orb is strictly offline). Until 4 October 2026 it looked for a `whisper*` folder under
+`server/models`, where nothing loads from.
 **Change this →** it is said *before* the doctor speaks, on purpose (comment at
 `RoundDictation.tsx:300-301`). If the posture request fails, `localAsrAvailable` stays `null`
 (`SageRuntimeProvider.tsx:36`) and this line does **not** appear, the generic hint shows instead.
 
-### The "Hearing …" live line
-**Where:** a tinted italic strip under the controls, only while recording.
-**Rendered by:** `RoundDictation.tsx:309-313`, gated on `recording && heard`.
-**Data from:** `heard` (`:63`), fed by the browser's `SpeechRecognition` interim results
-(`:213-219`).
-**API:** **none of Orb's.** This is the browser's cloud recogniser and it runs **only** when
-`cloudSpeechAllowed` is true (`:204-207`).
-**Server:** `sage_routes.py:2782` → `ai_governance.ai_posture:353` → `config.CLOUD_SPEECH_ALLOWED`.
-Until the posture arrives the context reports `false` (`SageRuntimeProvider.tsx:35`), fail-closed.
-**Change this →** this text is **never written into the note** (`:204-206` and the module comment
-at `:12-16`); only the local Whisper transcript is appended. Turn the posture off and this strip
-never appears, while dictation still works. Style `Round.css:844-860`.
+### The "Hearing …" live line (removed 4 October 2026)
+Until 4 October 2026 a tinted italic strip under the controls showed the browser's
+`SpeechRecognition` interim results while recording, but only when the posture allowed cloud
+speech (`config.CLOUD_SPEECH_ALLOWED`); that text was never written into the note. Browser speech
+streams audio to the browser vendor's cloud, so it was removed when Orb was ruled strictly offline,
+along with the setting. Nothing shows while the doctor speaks except the timer and the "Recording"
+indicator; the local Whisper transcript is the only text, and it arrives when they stop.
 
 ### The microphone / transcription error box
 **Where:** a red-tinted box under the controls.
@@ -1106,7 +1104,7 @@ Only patient ids and a `seen`/`skipped`/`pending` mark.
 - `src/components/round/RoundStates.tsx::RoundDegraded` → "Ward board unavailable" strip; "Patient board unavailable" strip; "Sage surveillance flags could not be loaded" strip; strip "Retry" chip
 - `src/components/round/RoundSummaryView.tsx::RoundSummaryView` → big bed chip; patient name; age/sex/"Day N" meta line; MRN; diagnosis line; "Since HH:00 today/yesterday" heading; overnight event rows; "N more events overnight"; "Current issues" heading; issue rows (dot, label, severity word, detail); "Decide today" heading; decision rows
 - `src/components/round/RoundSummaryView.tsx::AllergyStrip` → "Allergies" label; "None recorded"; "Unknown, ward data unavailable"; allergy chips with reaction sub-text
-- `src/components/round/RoundDictation.tsx::RoundDictation` → "Dictate the plan" mic button; "Stop · M:SS"; "Transcribing…"; blinking "Recording" indicator; "Transcribing on this appliance…"; "Press to dictate, or type below."; "Local speech recognition is not installed…"; "Hearing …" live line; microphone/transcription error box; "Retry transcription"; "Plan for today" label and textarea; "Save plan to chart" / "Saving…"; "Saved to the chart"; inline save error
+- `src/components/round/RoundDictation.tsx::RoundDictation` → "Dictate the plan" mic button; "Stop · M:SS"; "Transcribing…"; blinking "Recording" indicator; "Transcribing on this appliance…"; "Press to dictate, or type below."; "Local speech recognition is not installed…"; microphone/transcription error box; "Retry transcription"; "Plan for today" label and textarea; "Save plan to chart" / "Saving…"; "Saved to the chart"; inline save error
 - `src/components/round/RoundDictation.tsx::startRecording` → "The microphone is in use by Sage."; insecure-context message; "Microphone access was denied."; recorder-start failure message; ASR-not-installed message
 - `src/components/round/RoundDictation.tsx::stopRecording` → "That recording was too short to transcribe."
 - `src/components/round/RoundDictation.tsx::runTranscription` → transcript appended to the plan textarea; "Nothing was transcribed from that recording."; "Transcription failed: …"
@@ -1138,7 +1136,7 @@ Only patient ids and a `seen`/`skipped`/`pending` mark.
 - `src/api/client.ts::getSageInsights` → Sage insight issue rows; "Sage suggests: …" decision rows; "Sage surveillance flags could not be loaded" strip
 - `src/api/client.ts::addClinicalNote` → "Saved to the chart"; the new "Manual Entry" note in the overnight column
 - `src/api/client.ts::transcribeAudio` → transcript text appearing in the plan textarea; "Transcription failed: …"
-- `src/api/client.ts::getSageAiPosture` → "Local speech recognition is not installed…"; presence of the "Hearing …" live line
+- `src/api/client.ts::getSageAiPosture` → "Local speech recognition is not installed…"
 - `src/api/client.ts::getUser` → which stored round is restored (the resume banner)
 - `src/api/client.ts::apiFetch` → the error text inside both degraded strips and the fatal error card; "Session expired"
 - `src/lib/offline/writeGuard.ts::assertOnlineForWrite` → the offline refusal text in the inline save error
@@ -1146,7 +1144,7 @@ Only patient ids and a `seen`/`skipped`/`pending` mark.
 - `src/lib/datetime.ts::formatUTCTime` → the time column on each overnight event row
 - `src/lib/datetime.ts::formatUTCDateTime` → "Last set at …" inside "Observations overdue"
 - `src/lib/datetime.ts::parseUTC` → overnight event filtering and ordering; "Day N"; "No plan documented today yet"
-- `src/contexts/SageRuntimeContext.tsx::SageRuntimeProvider` → "Local speech recognition is not installed…"; the "Hearing …" line
+- `src/contexts/SageRuntimeContext.tsx::SageRuntimeProvider` → "Local speech recognition is not installed…"
 - `src/contexts/SageRuntimeContext.tsx::claimMic` → "The microphone is in use by Sage."
 - `server/routes/nurse_routes.py::get_board` → ward name subtitle; "ward data as of HH:MM"; queue rows; allergy strip; NEWS2 row; "Observations overdue"; "N medications overdue"; unverified-medication decision rows; "Ward board unavailable" strip
 - `server/services/nurse_shift_service.py::build_board` → ward name subtitle; "ward data as of HH:MM"; queue rows; allergy chips; NEWS2 row; "Observations overdue"; "N medications overdue"
@@ -1166,8 +1164,8 @@ Only patient ids and a `seen`/`skipped`/`pending` mark.
 - `server/services/sage_proactive_service.py::get_active_insights` → Sage insight issue rows; "Sage suggests: …" decision rows
 - `server/routes/scribe_routes.py::transcribe` → transcript text in the plan textarea; "Transcription failed: …"
 - `server/services/scribe_service.py::transcribe_audio` → transcript text in the plan textarea
-- `server/routes/sage_routes.py::get_ai_posture` → "Local speech recognition is not installed…"; presence of the "Hearing …" line
-- `server/services/ai_governance.py::ai_posture` → "Local speech recognition is not installed…"; presence of the "Hearing …" line
+- `server/routes/sage_routes.py::get_ai_posture` → "Local speech recognition is not installed…"
+- `server/services/ai_governance.py::ai_posture` → "Local speech recognition is not installed…"
 - `server/services/ai_governance.py::local_asr_available` → "Local speech recognition is not installed…"; the mic button's refusal message
 - `server/permissions.py::department_scope` → which patients appear as queue rows; the ward name in the subtitle
 - `server/permissions.py::require_patient_access` → "Overnight events unavailable" (404 for an off-ward patient); inline save error on an off-ward plan save

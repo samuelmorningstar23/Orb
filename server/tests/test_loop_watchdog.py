@@ -197,7 +197,7 @@ def test_python_lane_dump_names_the_blocking_frame(sleep_run):
 
 def test_status_json_is_readable_out_of_process(sleep_run):
     """The channel that survives a frozen loop: a file, written by the daemon
-    thread, that an outbound heartbeat process can read without asking the API."""
+    thread, that a person on the box can read without asking the API."""
     _, outdir, _ = sleep_run
     status = json.loads((outdir / "status.json").read_text())
     assert status["watchdog"] == "loop-starvation"

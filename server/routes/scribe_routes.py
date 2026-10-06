@@ -1048,6 +1048,13 @@ def _asr_runtime_importable() -> bool:
     return importlib.util.find_spec("lightning_whisper_mlx") is not None
 
 
+def _asr_model_installed() -> bool:
+    """Are the worker's Whisper weights on this appliance? Nothing downloads
+    them (Orb is offline), so a runtime without its weights cannot transcribe."""
+    from services.asr_model_files import is_installed
+    return is_installed(SCRIBE["asr"]["model"], SCRIBE["asr"].get("quant"))
+
+
 def _asr_daemon_responds() -> bool:
     """True only when the warm Whisper daemon answers its socket (1s budget).
     The daemon is a separate process with its own environment, so it can serve
@@ -1089,13 +1096,22 @@ def asr_status(user: dict = Depends(require_permission("scribe.create_draft"))):
     provider = SCRIBE["asr"]["provider"]
     reason = None
     if provider == "whisper-mlx":
-        worker_ready = _asr_runtime_importable() and os.path.exists(WORKER_SCRIPT)
+        runtime_ready = _asr_runtime_importable() and os.path.exists(WORKER_SCRIPT)
+        worker_ready = runtime_ready and _asr_model_installed()
         if not worker_ready and not _asr_daemon_responds():
-            reason = (
-                "ASR runtime (lightning_whisper_mlx) is not installed in the server "
-                "environment and no warm Whisper daemon is answering. Audio cannot "
-                "be transcribed on this appliance"
-            )
+            if runtime_ready:
+                reason = (
+                    "The speech model is not installed: the Whisper weights for "
+                    f"'{SCRIBE['asr']['model']}' are not under server/mlx_models, Orb "
+                    "never downloads them, and no warm Whisper daemon is answering. "
+                    "Audio cannot be transcribed on this appliance"
+                )
+            else:
+                reason = (
+                    "ASR runtime (lightning_whisper_mlx) is not installed in the server "
+                    "environment and no warm Whisper daemon is answering. Audio cannot "
+                    "be transcribed on this appliance"
+                )
     return {
         "available": reason is None,
         "provider": provider,

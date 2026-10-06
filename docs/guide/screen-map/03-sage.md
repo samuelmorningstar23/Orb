@@ -241,8 +241,10 @@ lifecycle (`SagePanel.tsx:573`, `:583`, `:589-593`, `:600`, `:630`, `:668`, `:68
 `:695`, `:702`, `:709`, `:712`, `:732`).
 **Change this →** the muted line is the only progress a clinician gets on the voice landing
 screen, and it cycles through *"Starting voice mode…" → "Requesting microphone…" → "Listening…" →
-"Processing…" → "Transcribing with Whisper AI…" → "Sending to Sage…"*. When cloud speech is
-disabled it instead reads **"Listening… (local transcription; tap to stop)"** (`:629-631`).
+"Processing…" → "Transcribing with Whisper AI…" → "Sending to Sage…"*. There is no browser
+speech recognition (removed 4 October 2026, Orb is strictly offline), so listening is local
+transcription and the clinician taps to stop. When the local speech engine is not installed,
+voice mode says so up front instead of recording.
 
 ---
 
@@ -758,9 +760,9 @@ click back. The comment at `:160-165` explains the split: the per-answer banner 
 `sage-btn-icon--active` when `voiceMode` (`:119`, style `Sage.css:377-382`). Title flips between
 "Voice mode" and "Switch to text" (`:121`).
 **Data from:** `toggleVoiceMode` (`src/pages/panels/SagePanel.tsx:724-752`).
-**Change this →** turning it **on** (`:728-734`) cancels any TTS, clears the live text and timer,
+**Change this →** turning it **on** (`:728-734`) cancels any TTS, clears the timer,
 sets the status to "Starting voice mode…" and auto-starts recording after 300ms. Turning it
-**off** (`:735-751`) force-kills every mic resource: interval, `SpeechRecognition`,
+**off** (`:735-751`) force-kills every mic resource: interval,
 `MediaRecorder` (with `onstop` nulled first so the pending Whisper call is abandoned) and all
 `MediaStream` tracks. If there are no messages yet, the main area also swaps to the "Voice Mode"
 landing screen (`SagePanel.tsx:844`).
@@ -797,16 +799,18 @@ titles "Stop recording" / "Start recording".
 (`SagePanel.tsx:686`) → `src/api/client.ts:1086-1108` → `POST /api/scribe/transcribe`.
 **Server:** `server/routes/scribe_routes.py:310-318` `transcribe`, behind
 `require_permission("scribe.create_draft")`.
-**Change this →** the recording pipeline is two parallel captures (comment at
-`SagePanel.tsx:612-616`): a `MediaRecorder` feeding **local Whisper**, which is the source of
-truth for the query, and, only when `cloudSpeechAllowed`, a browser `SpeechRecognition` used for
-live preview text and a 2-second silence auto-stop (`:620-628`). With cloud speech off, `SR` is
-`null` (`:617-619`) and the status line says "(local transcription; tap to stop)" (`:630`).
+**Change this →** the recording pipeline is one capture: a `MediaRecorder` feeding **local
+Whisper**, the only recogniser. Until 4 October 2026 a browser `SpeechRecognition` could run
+alongside it for live preview text and a 2-second silence auto-stop when the posture allowed
+cloud speech; it was removed when Orb was ruled strictly offline and cannot be switched on. When
+the posture reports the local engine is not installed (`localAsrAvailable` false), the button
+refuses up front with a clear message rather than recording audio that could never be
+transcribed.
 After transcription the text is run through `correctClinicalSpelling`
 (`SagePanel.tsx:133-141`) against the ~60-entry `CLINICAL_CORRECTIONS` map at `:92-130`, so a
-Whisper "meropinem" is sent as **"Meropenem"**. A quick tap under 1.5s with no speech is dropped
-silently (`:676-681`). If Whisper fails, the live transcript is used instead and the status reads
-"Whisper failed, using live transcript…" (`:708-710`).
+Whisper "meropinem" is sent as **"Meropenem"**. A quick tap under 1.5s is dropped
+silently (`:676-681`). If Whisper fails there is no browser transcript to fall back on; the
+clinician is told and can record again or type.
 
 ### Microphone-contention and error status lines
 **Where:** the voice status line (landing screen) or the floating HUD.
@@ -818,28 +822,28 @@ silently (`:676-681`). If Whisper fails, the live transcript is used instead and
 `:592` (`Mic error [<name>]: <message>` for anything else),
 `:702` ("No speech detected."), `:712` ("Transcription failed.").
 **Data from:** `claimMic('sage-panel')` (`SagePanel.tsx:566`) from
-`src/contexts/SageRuntimeProvider.tsx:18`, the shared mic lock across the floating orb, this
-panel and Scribe. `cloudSpeechAllowed` comes from the AI posture at
-`SageRuntimeProvider.tsx:35` (`posture?.cloud_speech_allowed === true`).
+`src/contexts/SageRuntimeProvider.tsx:18`, the shared mic lock across this panel, Scribe and
+Ward Round dictation (the floating orb is text-only and never takes it). `localAsrAvailable`
+comes from the AI posture (`posture.local_asr_available`).
 **Change this →** each of these self-clears on a timer: 2.5s for the contention message
 (`:568`), 5s for mic errors (`:594`), 2s for the no-speech/failure messages (`:703`, `:713`).
 Note the first `getUserMedia` failure is retried once after 500ms with the status "Retrying mic
 access…" (`:582-584`) before any error text is shown.
 
-### Floating voice HUD ("Listening... 0:07" + live transcript)
+### Floating voice HUD ("Listening... 0:07")
 **Where:** a small elevated card pinned 100px from the bottom and 40px from the right edge of the
 main area, over the message list.
 **Rendered by:** `src/pages/panels/SagePanel.tsx:892-899`, inline styles, `zIndex: 10`. First
 line: `Listening... {formatTime(voiceElapsed)}` while recording, `Transcribing...` while
-transcribing (`:895`). Second line: `voiceLiveText` in smaller muted text (`:897`).
+transcribing (`:895`).
 **Data from:** `voiceElapsed` ticked once a second by the interval at `SagePanel.tsx:655`;
-`formatTime` at `:780` renders `m:ss`. `voiceLiveText` is the browser
-`SpeechRecognition` interim result (`:643`).
+`formatTime` at `:780` renders `m:ss`.
 **Mount condition (`:892`):** `voiceMode && (voiceRecording || voiceTranscribing) && !isLanding`
 so it only exists once a conversation has started; on the landing screen the status text at
 `:849` does this job instead.
-**Change this →** with cloud speech disabled there is no `SpeechRecognition`, so `voiceLiveText`
-stays empty and the HUD shows only the timer line.
+**Change this →** until 4 October 2026 a second line showed `voiceLiveText`, the browser
+`SpeechRecognition` interim result. Browser speech was removed, so the HUD shows only the timer
+line. Do not bring a browser recogniser back for a preview: it sends ward audio off the appliance.
 
 ---
 
@@ -964,15 +968,15 @@ Useful to know before you go looking for them on screen.
 ## Reverse map contributions
 
 - `src/pages/ClinicianShell.tsx::ClinicianShell` → Sage nav tab; Sage tab panel mount; userName prop feeding the greeting
-- `src/pages/panels/SagePanel.tsx::SagePanel` → Sage workspace root; message list; message list scroll container; user bubble mount; assistant turn mount; stage indicator (retrieving/generating); voice-mode landing screen; floating voice HUD; "Listening... m:ss" timer; live transcript line; "Connection failed" answer text; "Stopped by user" metadata flag; empty-assistant-turn suppression; composer mount; history sidebar mount
+- `src/pages/panels/SagePanel.tsx::SagePanel` → Sage workspace root; message list; message list scroll container; user bubble mount; assistant turn mount; stage indicator (retrieving/generating); voice-mode landing screen; floating voice HUD; "Listening... m:ss" timer; "Connection failed" answer text; "Stopped by user" metadata flag; empty-assistant-turn suppression; composer mount; history sidebar mount
 - `src/pages/panels/SagePanel.tsx::newConversationId` → New Chat thread reset (server-side history forgetting)
 - `src/pages/panels/SagePanel.tsx::submitQuery` → typing dots; streaming answer text; stage indicator; "Stopped by user" banner; "Connection failed" answer text; disappearance of question+placeholder on early Stop; Recent Conversations refresh
 - `src/pages/panels/SagePanel.tsx::isNearBottom` → follow-the-stream scroll behaviour
 - `src/pages/panels/SagePanel.tsx::handleMessagesScroll` → follow-the-stream scroll behaviour
 - `src/pages/panels/SagePanel.tsx::refreshHistory` → Recent Conversations list; sidebar empty state
 - `src/pages/panels/SagePanel.tsx::loadConversation` → recent-conversation row click behaviour; scroll-to-end after load
-- `src/pages/panels/SagePanel.tsx::startVoiceRecording` → "Listening…" status; mic-contention status; mic error statuses; voice HUD timer; live transcript line
-- `src/pages/panels/SagePanel.tsx::stopVoiceRecording` → "Processing…" status; "Transcribing with Whisper AI…" status; "No speech detected."; "Transcription failed."; "Whisper failed, using live transcript…"
+- `src/pages/panels/SagePanel.tsx::startVoiceRecording` → "Listening…" status; mic-contention status; mic error statuses; voice HUD timer; refusal when the local speech engine is not installed
+- `src/pages/panels/SagePanel.tsx::stopVoiceRecording` → "Processing…" status; "Transcribing with Whisper AI…" status; "No speech detected."; "Transcription failed."
 - `src/pages/panels/SagePanel.tsx::toggleVoiceMode` → voice-mode toggle active state; "Voice Mode" landing screen; "Starting voice mode…" status
 - `src/pages/panels/SagePanel.tsx::correctClinicalSpelling` → corrected drug spellings in the sent question
 - `src/pages/panels/SagePanel.tsx::handleStop` → Stop button behaviour; "Stopped by user" banner

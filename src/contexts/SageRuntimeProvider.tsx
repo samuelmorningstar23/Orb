@@ -11,7 +11,7 @@ export function SageRuntimeProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     getSageAiPosture()
       .then(p => { if (!cancelled) setPosture(p) })
-      .catch(() => { /* fail-closed: posture stays null, cloud speech stays off */ })
+      .catch(() => { /* posture stays null: transcription capability stays unknown */ })
     return () => { cancelled = true }
   }, [])
 
@@ -32,7 +32,6 @@ export function SageRuntimeProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       posture,
-      cloudSpeechAllowed: posture?.cloud_speech_allowed === true,
       localAsrAvailable: posture ? posture.local_asr_available === true : null,
       micOwner,
       claimMic,

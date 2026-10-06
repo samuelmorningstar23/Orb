@@ -803,15 +803,16 @@ Whole screen: `src/pages/panels/ScribePanel.tsx` (default export line 20).
 **Where:** a small labelled `<select>` above the transcript box.
 **Rendered by:** `ScribePanel.tsx:294-308`; options English / Hindi (हिन्दी) / Auto-detect.
 **Change this →** disabled while recording or refining (line 300). The value is sent as the
-`language` form field on the Whisper call, so it changes which language the **accuracy pass**
-transcribes in, the browser's live Web Speech pass is hard-coded to `en-US` (line 105).
+`language` form field on the Whisper call, so it sets the language the local engine
+transcribes in. (A browser Web Speech live pass, hard-coded to `en-US`, used to run alongside it;
+it was removed on 4 October 2026, Orb is strictly offline.)
 
 ### Transcript box
 **Where:** the bordered card under the header.
 **Rendered by:** `ScribePanel.tsx:309-316`.
 **Change this →** shows the transcript text; while recording with nothing yet captured it
-shows a faded "Listening…" (line 311); interim (not-yet-final) speech renders at 50% opacity
-appended to the confirmed text (line 312); a blinking block cursor `▍` is appended while
+shows a faded "Recording. The transcript appears when you stop." (there is no interim text:
+the browser recogniser that produced it was removed on 4 October 2026); a blinking block cursor `▍` is appended while
 recording or refining (line 313). The box auto-scrolls to the bottom on every change
 (the effect at line 65).
 
@@ -833,18 +834,21 @@ when a structured note exists *and* its modal is closed (lines 333–338).
 the streaming button 363–376.
 **Change this →** the mic button's glyph swaps from a microphone to a filled square while
 recording, and gains the `--active` class (lines 351–360). Pressing it calls `startRecording`
-(line 71), which first claims the shared microphone from the floating Sage assistant, if Sage
-holds it, the status line reads "Microphone is in use by Sage, stop it before dictating."
+(line 71), which first claims the shared microphone (Sage panel voice mode and Ward Round
+dictation use the same claim; the floating orb never takes it), if Sage holds it, the status line reads "Microphone is in use by Sage, stop it before dictating."
 (line 74) and nothing starts. A denied browser permission shows "Microphone access denied."
 (line 82). Typing in the input clears any structured note (line 349). The two buttons are
-mutually exclusive: each is disabled while the other is running (lines 352, 367).
+mutually exclusive: each is disabled while the other is running (lines 352, 367), and both are
+disabled, with "Voice dictation is not available on this system" as their label, when the
+local speech engine is not installed.
 
 ### Status line
 **Where:** a single line between the output area and the composer.
 **Rendered by:** `ScribePanel.tsx:345`.
 **Change this →** this is the running narration: "🔴 Recording, speak now…", "🧠 Refining
-with medical AI…", "✅ Medical transcription complete", "⚠️ Whisper empty, using browser
-transcript", "Recording too short", "Structuring failed: …". Set from a dozen places; the
+with medical AI…", "✅ Medical transcription complete", "⚠️ Nothing was transcribed from that
+recording. Try again, or type the note.", "⚠️ Transcription failed on this appliance. Try again,
+or type the note.", "Recording too short", "Structuring failed: …". Set from a dozen places; the
 transcription outcomes are at lines 143–149.
 
 ### Structured note modal: "✨ Structured AI Note"

@@ -31,7 +31,7 @@ lever into ceremony, and ceremony gets copy-pasted wrong.
 HOW IT REACHES THE REST OF THE SERVER
 ─────────────────────────────────────
 The settings this file owns already have readers — escalation_service reads
-ORB_ESCALATION_TIERS, heartbeat_service reads ORB_HEARTBEAT_BACKUP_MAX_AGE_H,
+ORB_ESCALATION_TIERS, ops_health_service reads ORB_HEARTBEAT_BACKUP_MAX_AGE_H,
 and so on. Rather than fork a second source of truth (the exact mistake that
 produced the nurse-board scope hole: a surface growing its OWN idea of a value
 beside the existing one), this loader TRANSLATES the file into those same
@@ -520,7 +520,7 @@ def _to_env(cfg: SiteConfig) -> dict[str, str]:
     """Translate the file into the ORB_* variables the existing readers use.
 
     Deliberately a translation and not a second source of truth: escalation_service
-    keeps being the only thing that interprets a tier ladder, heartbeat_service
+    keeps being the only thing that interprets a tier ladder, ops_health_service
     keeps being the only thing that interprets a staleness threshold. This
     function's whole job is to speak their language.
     """

@@ -48,7 +48,7 @@ vi.mock('../../api/client', () => ({
 
 const SAGE_RUNTIME = {
   posture: null, micOwner: null,
-  claimMic: () => true, releaseMic: () => {}, cloudSpeechAllowed: false,
+  claimMic: () => true, releaseMic: () => {},
 }
 vi.mock('../../contexts/SageRuntimeContext', () => ({ useSageRuntime: () => SAGE_RUNTIME }))
 

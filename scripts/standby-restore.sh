@@ -50,10 +50,10 @@
 #      standby database intact rather than a half-written one.
 #   5. Keeps ONE generation back (orb.db.previous) so a bad night is reversible.
 #   6. Unpacks the matching uploads tar, if present.
-#   7. Writes a machine-readable receipt to server/ops/standby/last-restore.json,
-#      which services/heartbeat_service.py reads and reports as `standby.*`. A
+#   7. Writes a machine-readable receipt to server/ops/standby/last-restore.json
+#      for a person to check (install-standby-schedule.sh prints the command). A
 #      standby that silently stopped restoring is a cold standby wearing a warm
-#      standby's clothes; the receipt is how that becomes a page.
+#      standby's clothes; the receipt is how you tell the two apart.
 #
 # Usage:
 #   set -a && . ./.env && set +a
@@ -110,7 +110,7 @@ STARTED_AT="$(date +%s)"
 RESULT_STAGE="init"
 
 # The receipt is written on EVERY exit path, success or failure. A missing
-# receipt and a failed receipt must look different to the heartbeat: the first
+# receipt and a failed receipt must look different to whoever checks: the first
 # means "this box never ran the job", the second means "it ran and could not".
 write_receipt() {
     local ok="$1" stage="$2" detail="$3" source_file="${4:-}"
@@ -326,8 +326,8 @@ fi
 
 RESULT_STAGE="done"
 write_receipt true "done" "restored" "$ABS_TARGET"
-log "Receipt written to $RECEIPT (the heartbeat reads this — a standby that stops"
-log "  restoring is otherwise indistinguishable from one that is working)."
+log "Receipt written to $RECEIPT (check it: a standby that stops restoring is"
+log "  otherwise indistinguishable from one that is working)."
 
 cat <<EOF
 

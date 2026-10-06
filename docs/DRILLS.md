@@ -236,7 +236,8 @@ touched at any point.
 > (`ORB_STANDBY_FORCE=1` overrides that, and you should have a reason). It
 > warns if the newest backup is more than two days old. And it writes a
 > receipt to `server/ops/standby/last-restore.json` on every exit, pass or
-> fail, which is what the schedule and the heartbeat read. See
+> fail, which the operator reads in the daily check (nothing reports it off
+> the box: Orb has no internet connection). See
 > [WARM_STANDBY.md](WARM_STANDBY.md). Learn the manual path once, use the
 > script thereafter.
 
@@ -1007,7 +1008,7 @@ where everything went smoothly because nothing was actually tested.
 
 | Drill | When | Who | Evidence |
 |---|---|---|---|
-| Backup | Every night at 02:30, as the `com.orbhospital.backup` job installed on the day | The scheduler | `logs/orb-backup.log`; the heartbeat's backup age |
+| Backup | Every night at 02:30, as the `com.orbhospital.backup` job installed on the day | The scheduler | `logs/orb-backup.log`; the backup check in `./scripts/orb.sh status`, read in the daily on-site check |
 | Restore, desk drill | Monthly, day 1 at 04:00, as the `com.orbhospital.restore-drill` job (`install-backup-schedule.sh --with-drill`), and by hand after any backup failure | The scheduler, then me reading the log | `logs/orb-restore-drill.log` and the sign-off sheet in section 1.6 |
 | Standby restore | Every night at 03:30 on the standby, as the `com.orbhospital.standby-restore` job; monthly I run `standby-restore.sh --check-only` and read the receipt | The scheduler, then me | `logs/orb-standby-restore.log` and `server/ops/standby/last-restore.json` |
 | Restore, full rehearsal | **On ceremony day, before go-live**, then quarterly | Me and hospital IT | Sign-off sheet, section 1.6 |

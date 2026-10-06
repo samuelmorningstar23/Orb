@@ -79,7 +79,7 @@ operator turns off.
 | Not covered | Why it matters | What to do |
 |---|---|---|
 | `.env` | Holds **both** encryption keys. Deliberately excluded, a backup containing its own key is not encrypted in any meaningful sense. | Escrow separately. [§6](#6-the-key-escrow-problem) |
-| Ollama model weights | Large, re-downloadable, no PHI. | Re-pull after a rebuild. |
+| Ollama model weights | Large, re-downloadable, no PHI. | Re-pull after a rebuild, off the hospital network: the appliance never downloads anything (INSTALL_RUNBOOK.md section 8). |
 
 **There are two keys, not one.** `ORB_DB_ENCRYPTION_KEY` unlocks the database;
 `ORB_UPLOAD_ENCRYPTION_KEY` unlocks the media. Escrowing one and losing the other
@@ -361,11 +361,13 @@ Honest list, so nobody is surprised in front of a hospital CIO:
   the images and recordings. Both keys go in the envelopes.
 - **Daily cadence means up to 24h of loss.** Acceptable for a pilot only if the
   ward is told; not obviously acceptable for a live hospital.
-- **Nothing pages anybody yet.** A failed backup writes to a log file. The
-  outbound heartbeat reports backup age and the receiver in `ops/` can raise it
-  on a phone, but only once both ends are stood up and the simulate drill has
-  passed. Until then the daily check is the alarm, and the monthly drill needs
-  a calendar event with a human name on it.
+- **Nothing pages anybody.** The appliance has no internet connection (ruling
+  of 4 October 2026), so there is no off-site pager. A failed backup writes to
+  a log file, and `./scripts/orb.sh status`, `/api/ops/status` and the Trust
+  Center flag a stale or failed backup to whoever looks. The outbound
+  heartbeat and its receiver, built in August, were removed under that rule.
+  The daily on-site check is the alarm, and the monthly drill needs a calendar
+  event with a human name on it.
 - **Restore has never been done end-to-end on this appliance**, the drill proves
   the backup is readable, which is most of the risk, but not the swap-and-boot
   path. Do one full rehearsal on a spare machine before go-live.

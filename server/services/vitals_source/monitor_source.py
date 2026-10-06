@@ -491,8 +491,8 @@ class HL7MonitorSource(VitalsSource):
         MSH-3/MSH-4 (sending application / facility) is what a monitor or its
         gateway calls itself, and it is the natural key for "whose clock is
         wrong" — one device, one clock, many beds. Deliberately NOT the patient
-        id: the skew report is rendered on an admin screen and shipped in the
-        heartbeat, and a patient identifier there would be PHI.
+        id: the skew report is rendered on an admin screen, and a patient
+        identifier there would be PHI.
         """
         app = (message.sending_application or "").strip()
         facility = (message.sending_facility or "").strip()

@@ -377,8 +377,10 @@ repeated on yours.
 **Operational**
 
 - [ ] Operator contactable, with an agreed response expectation.
-- [ ] Outbound heartbeat live and paging on failure, no PHI in it (both ends are
-      built; I deploy the receiving end outside the hospital).
+- [ ] Daily on-site operator check agreed, with a named person. The appliance
+      has no internet connection, so nothing pages anyone off site (the
+      outbound heartbeat was removed on 4 October 2026); the check reads
+      `./scripts/orb.sh status`, the Trust Center and the backup log.
 - [ ] Downtime print packs generated and the drill rehearsed.
 - [ ] Runbook on the ward, covering every failure mode with a page.
 
@@ -386,9 +388,9 @@ repeated on yours.
 
 ## 7. Operating rhythm
 
-**Daily (me, about 10 minutes).** Heartbeat green? Ingestion gaps overnight?
-Backup ran and verified? Any alert storm or error spike? Scorecard still
-populating?
+**Daily (me, on site, about 10 minutes).** Status page green
+(`./scripts/orb.sh status`)? Ingestion gaps overnight? Backup ran and
+verified? Any alert storm or error spike? Scorecard still populating?
 
 **Weekly (me and the champion, about 30 minutes).** Walk the week's alerts.
 Adjudicate the sample. Read the disagreements individually. Note anything that
@@ -413,8 +415,9 @@ arrives:
   keys are escrowed physically, not held by me.
 - The audit trail is tamper-evident. Entries are hash-chained; altering history
   breaks the chain visibly.
-- The outbound heartbeat contains no PHI: health, disk, backup age, model
-  warmth. That is all it can contain.
+- There is no outbound health signal. The heartbeat was removed on 4 October
+  2026, when Orb was ruled strictly offline (no internet connection of any
+  kind); the appliance is monitored on site.
 - Access is on-site only. There is no inbound remote access to the appliance.
 - The scorecard export is de-identified, and states what was removed. The
   identified dataset stays in the building.

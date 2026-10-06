@@ -1924,7 +1924,9 @@ There is no Whisper model in `server/models/`.
 - The global mic FAB, the largest, most saturated control on **every** screen, is disabled:
   `aria-label="Voice input disabled by privacy posture (cloud speech egress not approved)"`.
   Clicking explains that browser speech recognition would send audio to a cloud service and
-  points at `ORB_CLOUD_SPEECH_ALLOWED`.
+  points at `ORB_CLOUD_SPEECH_ALLOWED`. _(2026-10-04: that setting and browser speech itself
+  were removed when Orb was ruled strictly offline. There is no cloud path left to approve;
+  voice works only through the local speech engine, so installing it is the only fix.)_
 - Ward Round "Dictate the plan", **silently does nothing**.
 - Scribe's two mic buttons, unlabelled, and the pipeline reports `ASR -s`.
 - Sage voice mode, same gate.

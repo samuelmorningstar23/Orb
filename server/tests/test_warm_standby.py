@@ -478,7 +478,7 @@ def test_refuses_to_restore_a_backup_over_itself(standby):
     assert "Refusing" in result.stderr
 
 
-# ── The receipt, and its consumer ────────────────────────────────────────────
+# ── The receipt ──────────────────────────────────────────────────────────────
 def test_receipt_is_written_on_success_and_on_failure(standby):
     assert _run([], standby["env"]).returncode == 0
     ok = json.loads(standby["receipt"].read_text())
@@ -490,22 +490,6 @@ def test_receipt_is_written_on_success_and_on_failure(standby):
     assert _run([], standby["env"]).returncode == 2
     bad = json.loads(standby["receipt"].read_text())
     assert bad["ok"] is False, "a failed restore must look different from one that never ran"
-
-
-def test_heartbeat_reads_the_receipt(standby, monkeypatch):
-    """End to end: the restore writes a receipt, the heartbeat turns it into a
-    number that leaves the building. Without this link a standby that stopped
-    restoring is invisible until the primary dies."""
-    from services import heartbeat_service as hb
-
-    assert _run([], standby["env"]).returncode == 0
-    monkeypatch.setenv("ORB_STANDBY_RECEIPT", str(standby["receipt"]))
-    payload = hb.build_payload()
-    assert payload["standby"]["receipt_present"] is True
-    assert payload["standby"]["last_restore_ok"] is True
-    assert payload["standby"]["last_restore_age_s"] is not None
-    assert payload["standby"]["last_restore_age_s"] < 300
-    assert "standby_stale" not in payload["alerts"]
 
 
 def test_media_archive_is_restored_alongside_the_database(standby, tmp_path):
@@ -1114,8 +1098,6 @@ BACKUP_DIR_RESOLVERS = {
         "from routes import backup_routes; print(backup_routes._out_dir())",
     "services.ops_health_service._backup_dir":
         "from services import ops_health_service as m; print(m._backup_dir())",
-    "services.heartbeat_service._backup_dir":
-        "from services import heartbeat_service as m; print(m._backup_dir())",
     "scripts.backup_db._resolve_out_dir":
         "import importlib.util, pathlib;"
         "spec = importlib.util.spec_from_file_location('bdb', 'scripts/backup_db.py');"
@@ -1143,7 +1125,7 @@ def _eval_in_server(snippet: str, env_extra=None) -> str:
 def test_every_backup_dir_resolver_agrees(name, snippet):
     """Every resolver in the repo points at <repo>/backups, with no env set."""
     assert Path(_eval_in_server(snippet)).resolve() == REAL_BACKUP_DIR.resolve(), (
-        f"{name} resolved somewhere other than {REAL_BACKUP_DIR}. All five "
+        f"{name} resolved somewhere other than {REAL_BACKUP_DIR}. All four "
         f"resolvers must agree — see config.BACKUP_DIR."
     )
 

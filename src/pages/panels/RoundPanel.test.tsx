@@ -75,7 +75,7 @@ vi.mock('../../api/ipass', () => ({
 
 const SAGE_RUNTIME = {
   posture: null, micOwner: null,
-  claimMic: () => true, releaseMic: () => {}, cloudSpeechAllowed: false,
+  claimMic: () => true, releaseMic: () => {},
 }
 vi.mock('../../contexts/SageRuntimeContext', () => ({ useSageRuntime: () => SAGE_RUNTIME }))
 

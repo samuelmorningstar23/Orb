@@ -236,5 +236,3 @@ EOF
 warn "This is a LaunchAgent: it only runs while this user is logged in. Turn ON"
 warn "  automatic login for this account, or an unattended reboot silently stops the"
 warn "  standby advancing and nobody finds out until the primary dies."
-warn "Set ORB_HEARTBEAT_URL and ORB_HEARTBEAT_SITE on this machine too. The receipt"
-warn "  this job writes is only an alarm if something reads it off the box."

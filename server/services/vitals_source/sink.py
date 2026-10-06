@@ -130,8 +130,7 @@ class ClockSkewRecord:
     """What we know about one device's clock. PHI-free by construction.
 
     Keyed by (source, device) and holding no patient identifier, because this
-    record is rendered on the admin surface and shipped in the outbound
-    heartbeat.
+    record is rendered on the admin surface.
     """
     device_id: str
     readings: int = 0
@@ -331,7 +330,7 @@ class IngestionSink:
             )
 
     def clock_skew_report(self, source_id: Optional[str] = None) -> dict:
-        """PHI-free clock health, for `status()` and the heartbeat."""
+        """PHI-free clock health, for `status()` and the admin surface."""
         records = [r for (sid, _), r in self._clocks.items()
                    if source_id is None or sid == source_id]
         skewed = [r for r in records if r.state == "skewed"]

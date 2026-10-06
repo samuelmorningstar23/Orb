@@ -52,7 +52,7 @@ Orb's intelligence is entirely local. Nothing you type, dictate, or upload is se
 | MedGemma 4B | The lighter "ambient" tier: fast background tasks such as Sage's ambient intelligence | ~3.3 GB |
 | Gemma 3 1B | Small utility model pulled at setup | ~1 GB |
 | BGE-M3 | The embedding model behind Sage's guideline search (RAG) | ~2.2 GB |
-| Whisper large-v3 (optional) | Scribe's local speech-recognition engine; deferred on some installations | varies |
+| Whisper large-v3 (optional) | The local speech-recognition engine for Scribe, Sage voice mode and Ward Round dictation. Installed with the appliance and never downloaded at runtime; where it is not installed, voice features say so up front and typing still works | varies |
 
 Two operational consequences follow from these sizes:
 
@@ -158,10 +158,10 @@ Three deliberate limitations to understand:
 ### 15.10 Frequently asked questions
 
 **Does Orb need an internet connection?**
-Only during setup (model downloads) and the first start (the knowledge-index build). Day-to-day operation is fully local.
+Only during installation, before the appliance joins the hospital network (software packages and model files). After that Orb never connects to the internet: it is strictly offline, and a missing model is reported, not downloaded.
 
 **Is any patient data sent to a cloud AI?**
-No, all models run on the machine in your facility. The one nuance is Scribe's optional live dictation preview, which can use the browser's own speech recognizer; deployments that forbid off-site audio disable it, and the authoritative transcript is always produced locally.
+No, all models run on the machine in your facility, including speech recognition. Orb does not use the browser's own cloud speech recognizer and cannot be set to, and spoken answers use only voices that run on your device.
 
 **Why is the first AI answer after startup slow?**
 The model was still loading into memory. Orb pre-warms its models at startup and keeps them warm; if you beat the warm-up, the first answer pays the loading cost. Later answers are fast.

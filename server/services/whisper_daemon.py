@@ -25,12 +25,19 @@ from pathlib import Path
 SERVER_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SERVER_DIR))
 
+from services.asr_model_files import (
+    MLX_MODELS_DIR, SpeechModelNotInstalled, force_hub_offline, require_installed,
+)
+
+# Orb is offline: no Hugging Face lookup from this process, ever. Set before
+# anything imports huggingface_hub, which reads it once at import time.
+force_hub_offline()
+
 import zmq
 
 # ── Configuration ──
 DEFAULT_SOCKET = os.getenv("ORB_WHISPER_SOCKET", "ipc:///tmp/orb-whisper.sock")
 DEFAULT_MODEL = os.getenv("ORB_WHISPER_STREAMING_MODEL", "large-v3")
-MLX_MODELS_DIR = SERVER_DIR / "mlx_models"
 
 # Global model reference (kept warm)
 _whisper_model = None
@@ -61,17 +68,24 @@ def convert_to_wav(input_path: str) -> str:
 
 
 def load_model(model_name: str):
-    """Load Whisper model into memory (one-time cost on startup)."""
+    """Load Whisper model into memory (one-time cost on startup).
+
+    The weights must already be on the appliance: a missing model raises
+    SpeechModelNotInstalled and the daemon does not start. It used to build a
+    LightningWhisperMLX here, whose constructor downloads the weights from
+    Hugging Face; Orb is offline, so it is not called at all."""
     global _whisper_model, _model_name
     
     if _whisper_model is not None and _model_name == model_name:
         return _whisper_model
     
+    model_path = require_installed(model_name)
     print(f"[WhisperDaemon] Loading model '{model_name}' into Unified Memory...")
     t0 = time.time()
     
-    from lightning_whisper_mlx import LightningWhisperMLX
-    _whisper_model = LightningWhisperMLX(model=model_name, batch_size=12, quant=None)
+    # Imported here so a missing runtime fails at start, not on the first request.
+    import lightning_whisper_mlx.transcribe  # noqa: F401
+    _whisper_model = model_path
     _model_name = model_name
     
     elapsed = time.time() - t0
@@ -221,12 +235,16 @@ def test_transcribe(audio_path: str):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--test":
-        if len(sys.argv) < 3:
-            print("Usage: python whisper_daemon.py --test <audio_file>")
-            sys.exit(1)
-        test_transcribe(sys.argv[2])
-    else:
-        model = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_MODEL
-        socket = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_SOCKET
-        run_daemon(socket, model)
+    try:
+        if len(sys.argv) > 1 and sys.argv[1] == "--test":
+            if len(sys.argv) < 3:
+                print("Usage: python whisper_daemon.py --test <audio_file>")
+                sys.exit(1)
+            test_transcribe(sys.argv[2])
+        else:
+            model = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_MODEL
+            socket = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_SOCKET
+            run_daemon(socket, model)
+    except SpeechModelNotInstalled as e:
+        print(f"[WhisperDaemon] {e}", file=sys.stderr)
+        sys.exit(2)

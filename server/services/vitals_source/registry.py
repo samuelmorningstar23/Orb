@@ -91,7 +91,7 @@ class VitalsSourceRegistry:
     # ── observability ──
 
     def status(self) -> dict:
-        """Feed health for the admin surface / heartbeat. No PHI."""
+        """Feed health for the admin surface. No PHI."""
         return {
             "count": len(self._sources),
             "sources": [s.status() for s in self._sources.values()],

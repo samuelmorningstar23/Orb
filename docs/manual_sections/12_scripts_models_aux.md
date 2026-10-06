@@ -465,7 +465,7 @@ python scripts/transcribe_worker.py <audio_path> [model_name] [hints] [batch_siz
 
 **What it does:**
 1. Converts the input audio to 16 kHz mono WAV using `ffmpeg` (handles WebM, M4A, etc.)
-2. Loads `LightningWhisperMLX` with the specified model (default `large-v3`)
+2. Finds the specified model (default `large-v3`) under `server/mlx_models/` and never downloads it: if the weights are not installed it prints "speech model not installed" on stderr and exits 2 (`asr_model_files.require_installed`; Orb is strictly offline)
 3. Prepends a generic clinical prompt plus any patient-specific hint words to bias Whisper's beam search toward medical terminology
 4. Prints the JSON result to stdout delimited by `###RESULT###` markers (the server reads stdout and parses between these markers)
 5. Cleans up the temporary WAV file

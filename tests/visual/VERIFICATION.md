@@ -39,7 +39,7 @@ which the workflow uploads as build artifacts.
 - `ci-gate.cjs` prints the capture count and exits 0 with
   `GATE GREEN — 0 non-allowlisted findings`.
 - Remaining allowlisted items are exactly the known-intentional set (disabled
-  discharge verify button, hover-reveal Sage hotword toggle, forced-401 /
+  discharge verify button, forced-401 /
   session-expired console noise) — anything new in the allowlisted bucket is a
   review flag.
 - `out/gallery.html` — open it and eyeball the light/dark pairs, especially
@@ -160,7 +160,6 @@ Build checks: `tsc` clean; server modules compile; **lint ratchet 389 → 379**
 
 ## Gate allowlist (intentional states)
 
-- Sage hotword toggle at rest (hover/`:focus-visible` reveal).
 - Disabled discharge button (WCAG 1.4.3 exempts inactive controls).
 - "Session expired" console logs **only** within the session-expired scenario,
   which force-401s every API by design.

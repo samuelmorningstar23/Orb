@@ -1,6 +1,10 @@
 /**
  * The floating Sage orb: what it shows, and where it gets out of the way.
  *
+ * The orb is TEXT-ONLY (Orb is strictly offline): it never opens the
+ * microphone and never speaks. Pressing it says voice is not available and
+ * offers the Sage panel, to type.
+ *
  * jsdom has no layout, so the overlap itself (the orb over Relay's Send button
  * and the round's "Seen, next bed" corner) is asserted as the class that lifts
  * the orb on those tabs; the lift's geometry is in SageFloatingAssistant.css.
@@ -8,64 +12,75 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const runtime = vi.hoisted(() => ({ cloudSpeechAllowed: false }))
+const bus = vi.hoisted(() => ({ gotoTab: vi.fn() }))
 
-vi.mock('../../contexts/SageRuntimeContext', () => ({
-  useSageRuntime: () => ({
-    cloudSpeechAllowed: runtime.cloudSpeechAllowed,
-    micOwner: null,
-    claimMic: vi.fn(() => true),
-    releaseMic: vi.fn(),
-  }),
-}))
-vi.mock('../../contexts/ActivePatientContext', () => ({
-  useActivePatient: () => ({ activePatientId: null, activePatientName: null }),
-}))
 vi.mock('../../contexts/ActiveViewContext', () => ({
   useActiveView: () => ({ activeTab: '', selection: null }),
-  buildWireViewContext: () => ({}),
 }))
-vi.mock('../../hooks/useSageHotword', () => ({
-  useSageHotword: () => ({ isEnabled: false, toggleEnabled: vi.fn() }),
-}))
-vi.mock('../../api/client', () => ({ querySageVoice: vi.fn() }))
+vi.mock('../../lib/orbBus', () => ({ gotoTab: bus.gotoTab }))
 
 import SageFloatingAssistant from './SageFloatingAssistant'
-import { INVESTIGATIONAL_LEAD } from '../InvestigationalBanner'
+
+const getUserMedia = vi.fn()
+const speak = vi.fn()
 
 beforeEach(() => {
-  // jsdom has no speech synthesis; the orb cancels speech on unmount.
-  vi.stubGlobal('speechSynthesis', { cancel: vi.fn(), resume: vi.fn(), speak: vi.fn() })
+  vi.stubGlobal('speechSynthesis', { cancel: vi.fn(), resume: vi.fn(), speak })
+  Object.defineProperty(navigator, 'mediaDevices', { value: { getUserMedia }, configurable: true })
 })
 
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
-  runtime.cloudSpeechAllowed = false
+  vi.clearAllMocks()
 })
 
-describe('the hotword toggle', () => {
-  it('is not rendered when this hospital has not allowed voice', () => {
-    runtime.cloudSpeechAllowed = false
-    const { container } = render(<SageFloatingAssistant activeTab="vigil" />)
-    expect(container.querySelector('.sage-fab__toggle')).toBeNull()
-  })
-
-  it('is rendered, labelled by its state, when voice is allowed', () => {
-    runtime.cloudSpeechAllowed = true
-    render(<SageFloatingAssistant activeTab="vigil" />)
-    expect(screen.getByRole('button', { name: 'Enable "Sage" hotword' })).toBeTruthy()
-  })
-})
-
-describe('pressing the orb with voice off', () => {
-  it('says so in plain words, under the investigational label', async () => {
+describe('pressing the orb', () => {
+  it('says voice is not available, in plain words', async () => {
     const { container } = render(<SageFloatingAssistant activeTab="vigil" />)
     await act(async () => { fireEvent.click(screen.getByTitle('Ask Sage')) })
     const card = container.querySelector('.sage-fab__card')!
-    expect(card.textContent).toContain('Voice input is off at this hospital')
-    expect(card.textContent).not.toMatch(/ORB_|posture|egress/)
-    expect(card.querySelector('[role="note"]')?.textContent).toContain(INVESTIGATIONAL_LEAD)
+    expect(card.textContent).toContain('Voice is not available here. Type your question in Sage instead.')
+    expect(card.textContent).not.toMatch(/ORB_|posture|egress|cloud/)
+  })
+
+  it('never opens the microphone or speaks', async () => {
+    render(<SageFloatingAssistant activeTab="vigil" />)
+    await act(async () => { fireEvent.click(screen.getByTitle('Ask Sage')) })
+    expect(getUserMedia).not.toHaveBeenCalled()
+    expect(speak).not.toHaveBeenCalled()
+    expect(document.querySelector('.sage-fab--listening')).toBeNull()
+  })
+
+  it('offers the Sage panel to type, and closes as it goes there', async () => {
+    const { container } = render(<SageFloatingAssistant activeTab="vigil" />)
+    await act(async () => { fireEvent.click(screen.getByTitle('Ask Sage')) })
+    const open = screen.getByRole('button', { name: 'Open Sage to type' })
+    expect(document.activeElement).toBe(open)
+    await act(async () => { fireEvent.click(open) })
+    expect(bus.gotoTab).toHaveBeenCalledWith('sage')
+    expect(container.querySelector('.sage-fab__card')).toBeNull()
+  })
+
+  it('closes on a second press, and on Escape back to the orb', async () => {
+    const { container } = render(<SageFloatingAssistant activeTab="vigil" />)
+    const orb = screen.getByTitle('Ask Sage')
+    await act(async () => { fireEvent.click(orb) })
+    expect(orb.getAttribute('aria-expanded')).toBe('true')
+    await act(async () => { fireEvent.click(orb) })
+    expect(container.querySelector('.sage-fab__card')).toBeNull()
+
+    await act(async () => { fireEvent.click(orb) })
+    await act(async () => { fireEvent.keyDown(window, { key: 'Escape' }) })
+    expect(container.querySelector('.sage-fab__card')).toBeNull()
+    expect(document.activeElement).toBe(orb)
+    expect(bus.gotoTab).not.toHaveBeenCalled()
+  })
+
+  it('has no hotword toggle', () => {
+    const { container } = render(<SageFloatingAssistant activeTab="vigil" />)
+    expect(container.querySelector('.sage-fab__toggle')).toBeNull()
+    expect(screen.getAllByRole('button')).toHaveLength(1)
   })
 })
 
@@ -85,7 +100,7 @@ describe('the orb keeps clear of a panel\'s own bottom controls', () => {
     expect(container.querySelector('.sage-fab')!.classList.contains('sage-fab--own-mic')).toBe(true)
   })
 
-  it.each(['relay', 'round'])('stays on %s, where it is the only voice entry', tab => {
+  it.each(['relay', 'round'])('stays on %s on a phone', tab => {
     const { container } = render(<SageFloatingAssistant activeTab={tab} />)
     expect(container.querySelector('.sage-fab')!.classList.contains('sage-fab--own-mic')).toBe(false)
   })

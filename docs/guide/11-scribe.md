@@ -56,7 +56,7 @@ Neighbors this subsystem leans on (cross-referenced throughout):
 | `server/routes/scribe_routes.py` | 964 | FastAPI routes under `/api/scribe`: transcribe, structure (SSE), note CRUD, sign/reject/revise, async verification + retry, config, daemon status. |
 | `server/scripts/transcribe_worker.py` | 75 | The cold-path CLI: loads Whisper in a fresh subprocess, transcribes one file, prints JSON. |
 | `server/scripts/fixtures/scribe/case_01_chest_pain.json` | 8 | A golden benchmark case (STEMI dictation → reference SOAP note + expected entities/sections). The executable spec's ground truth. |
-| `src/pages/panels/ScribePanel.tsx` | 822 | The React UI: dual capture (Web Speech live text + MediaRecorder for the Whisper accuracy pass), structuring, the verification/sign modal, and quick-admit. |
+| `src/pages/panels/ScribePanel.tsx` | 822 | The React UI: capture (MediaRecorder for the local Whisper pass, or live streaming), structuring, the verification/sign modal, and quick-admit. |
 | `src/pages/panels/ScribePanel.css` | 464 | The gold "liquid-glass" styling for the panel, record buttons, live indicator, and audio-level meter. |
 | `src/hooks/useStreamingTranscription.ts` | 297 | React hook: mic capture, Float32→Int16 PCM conversion, energy-based VAD, Socket.IO streaming, transcript accumulation. |
 | `server/tests/test_scribe_pipeline.py` | 1065 | The pipeline's executable spec: config, provider, service, verification schema, lifecycle, permissions, and route-registration tests. |
@@ -69,8 +69,8 @@ Scribe has **two capture modes** and **one shared LLM pipeline**.
 
 ### Flow A: file upload transcription (the default "record then refine" path)
 
-1. In `ScribePanel`, pressing the mic button (`startRecording`, `ScribePanel.tsx:60`) does *two* things at once: it starts a browser `MediaRecorder` capturing `audio/webm`, **and** it starts the browser's built-in **Web Speech API** (`webkitSpeechRecognition`) to show instant, low-accuracy live text while the doctor talks.
-2. On stop (`stopRecording`, `ScribePanel.tsx:113`), the accumulated webm `Blob` is POSTed to `POST /api/scribe/transcribe`. The Web Speech text is only a placeholder; the webm audio gets the accurate "medical AI" pass.
+1. In `ScribePanel`, pressing the mic button (`startRecording`, `ScribePanel.tsx:60`) starts a browser `MediaRecorder` capturing `audio/webm`. Nothing else listens: the browser's built-in Web Speech API, which streams audio to the browser vendor's cloud, was removed on 4 October 2026 (Orb is strictly offline) and cannot be switched on. When the panel's ASR probe (`getScribeAsrStatus`) says the local speech engine is not installed, both mic buttons are disabled and the panel says plainly that voice dictation is not available; typing still works.
+2. On stop (`stopRecording`, `ScribePanel.tsx:113`), the accumulated webm `Blob` is POSTed to `POST /api/scribe/transcribe`. The local engine's result is the transcript; there is no browser placeholder.
 3. `transcribe` (`scribe_routes.py:311`) enriches the ASR "hints" with patient-specific vocabulary, encrypts the audio to disk, then calls `transcribe_audio` off the event loop.
 4. `transcribe_audio` (`scribe_service.py:91`) tries the **warm Whisper daemon** first (ZeroMQ), falls back to the **cold subprocess worker**, then applies **RxNorm** phonetic drug correction and optional **LLM correction**.
 5. The corrected transcript returns to the panel. The doctor picks a format and clicks "Structure Note" → `POST /api/scribe/structure`.
@@ -357,10 +357,10 @@ The stage backends are chosen by `config.SCRIBE` (`config.py:299`). In the `dev`
 **Gotchas:** Silent fallback to the original path on ffmpeg failure means a bad codec surfaces as a downstream transcription error, not here.
 
 #### load_model: `server/services/whisper_daemon.py:63`
-**Signature:** `(model_name) -> LightningWhisperMLX`
-**Does:** Loads Whisper into a module-global `_whisper_model` once; returns the cached instance if already loaded with the same name.
+**Signature:** `(model_name) -> Path`
+**Does:** Resolves the installed Whisper folder into a module-global `_whisper_model` once; returns the cached value if already loaded with the same name. It never downloads: `asr_model_files.require_installed` raises `SpeechModelNotInstalled` when `server/mlx_models/<name>/` lacks `config.json` or `weights.npz`, and the daemon exits rather than start. (It used to construct `LightningWhisperMLX`, whose constructor fetches weights from Hugging Face; removed 4 October 2026, Orb is strictly offline. `HF_HUB_OFFLINE=1` is set before `huggingface_hub` can be imported.)
 **Why it exists:** **This is the entire reason the daemon exists.** Model load is the expensive, one-time cost; keeping it resident in Apple's Unified Memory makes every subsequent request warm. (Unified Memory = shared CPU/GPU RAM on Apple Silicon.)
-**Gotchas:** Hard-codes `batch_size=12, quant=None` here (independent of `config.SCRIBE.asr`).
+**Gotchas:** Hard-codes `batch_size=12` on the `transcribe_audio` call (independent of `config.SCRIBE.asr`).
 
 #### transcribe: `server/services/whisper_daemon.py:82`
 **Signature:** `(audio_path, hints="", language="en") -> dict`
@@ -544,7 +544,7 @@ Router is `APIRouter(prefix="/api/scribe")` (`:29`) and is mounted by `app.inclu
 ### server/scripts/transcribe_worker.py
 
 #### convert_to_wav: `server/scripts/transcribe_worker.py:10` / main: `:31`
-**Does:** The cold-path CLI. `main` reads argv `[audio, model, hints, batch_size, quant, language]`, `convert_to_wav`, constructs `LightningWhisperMLX(model, batch_size, quant)`, builds a fixed clinical `initial_prompt` (+ hints), maps `auto→None`, transcribes from `./mlx_models/{name}`, and prints `###RESULT###{json}###RESULT###`.
+**Does:** The cold-path CLI. `main` reads argv `[audio, model, hints, batch_size, quant, language]`, `convert_to_wav`, resolves the installed model folder with `asr_model_files.require_installed` (exit 2 with "speech model not installed" on stderr when it is missing; it never downloads), builds a fixed clinical `initial_prompt` (+ hints), maps `auto→None`, transcribes from that folder, and prints `###RESULT###{json}###RESULT###`.
 **Why it exists:** Runs Whisper in a fresh process so MLX/tiktoken state never contaminates the server; the `###RESULT###` fence lets `_transcribe_via_subprocess` extract the JSON past any import noise.
 **Talks to:** invoked by `scribe_service._transcribe_via_subprocess`.
 **Gotchas:** Loads the model *every invocation*, the exact cost the daemon avoids. `batch_size`/`quant` here come from `config.SCRIBE.asr` (passed as argv), unlike the daemon's hard-coded 12/None.
@@ -590,18 +590,18 @@ A **React hook** is a reusable function that plugs state/effects into a componen
 ### src/pages/panels/ScribePanel.tsx
 
 #### ScribePanel: `src/pages/panels/ScribePanel.tsx:20`
-**Does:** The Scribe screen. Manages three capture paths (typed text, "record + refine" via MediaRecorder+Web Speech, and live streaming via the hook), structuring, the verification poll loop, and the note modal.
-**Key state:** `transcript, interimText, structuredNote, noteFormat, language, processing, currentNoteId, noteStatus, verificationData, pipelineData`.
+**Does:** The Scribe screen. Manages three capture paths (typed text, "record + refine" via MediaRecorder, and live streaming via the hook), structuring, the verification poll loop, and the note modal.
+**Key state:** `transcript, structuredNote, noteFormat, language, processing, currentNoteId, noteStatus, verificationData, pipelineData`.
 
-- **startRecording `:60`**, opens the mic; starts a `MediaRecorder('audio/webm')` (for the accurate Whisper pass) *and* the browser Web Speech API (`webkitSpeechRecognition`, `continuous+interimResults`) for instant on-screen text; runs an elapsed-time counter.
-- **stopRecording `:113`**, stops Web Speech and the timer; on `MediaRecorder.onstop`, builds the webm `Blob` and calls `transcribeAudio(blob, undefined, false, language)` to replace the rough browser transcript with the "medical AI" one (status "🧠 Refining with medical AI…").
+- **startRecording `:60`**, opens the mic; starts a `MediaRecorder('audio/webm')` for the local Whisper pass; runs an elapsed-time counter. (Until 4 October 2026 it also started the browser Web Speech API for instant on-screen text; removed, Orb is strictly offline.)
+- **stopRecording `:113`**, stops the timer; on `MediaRecorder.onstop`, builds the webm `Blob` and calls `transcribeAudio(blob, undefined, false, language)` for the "medical AI" transcript (status "🧠 Refining with medical AI…").
 - **handleStructure `:213`**, calls `structureNote(transcript, noteFormat, undefined, undefined, true, onChunk)` with `verify=true`; streams partial notes into `structuredNote`; on done captures `id/status/verification/pipeline` and, if verification is `pending`, starts polling.
 - **startVerificationPolling `:165` / stopVerificationPolling `:156`**, poll `getScribeNoteVerification` every 3 s up to `MAX_POLL_ATTEMPTS=20` (~60 s), then stop; store the verdict/pipeline.
 - **handleRetryVerification `:194`**, POST retry, then re-poll if `pending`.
 - Renders the transcript card, the language picker (`en`/`hi`/`auto`), record + stream buttons, and (conditionally) the `StructuredNoteModal` and `QuickAdmitModal`.
 
 **Talks to:** `client.ts` (`transcribeAudio, structureNote, getScribeNoteVerification, retryScribeNoteVerification, signScribeNote, rejectScribeNote, reviseScribeNote, editScribeNoteDraft`), `useStreamingTranscription`.
-**Gotchas:** `streamingMode`/`setStreamingMode` (`:39`) is set-but-never-read dead state; the `.scribe-mode-toggle` CSS classes are defined but unused. Two separate live systems (Web Speech in record mode vs. the streaming hook) can confuse, they are mutually exclusive via the disabled-button logic.
+**Gotchas:** `streamingMode`/`setStreamingMode` (`:39`) is set-but-never-read dead state; the `.scribe-mode-toggle` CSS classes are defined but unused. Record mode and the streaming hook are two separate capture paths; they are mutually exclusive via the disabled-button logic, and both are disabled when the local speech engine is not installed.
 
 #### QuickAdmitModal: `src/pages/panels/ScribePanel.tsx:441`
 **Does:** "Admit to Vigil", extracts patient demographics from the note via `querySage` (LLM → JSON), pre-fills an admission form, and `createPatient` on submit; surfaces the one-time Bridge login if returned.

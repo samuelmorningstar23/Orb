@@ -18,7 +18,7 @@ Sage appears in three places:
 | Surface | Where you find it | What it does |
 |---|---|---|
 | **Sage tab** | Sidebar → **Sage** | Full chat workspace with history, details, sources, and voice mode |
-| **Floating orb** | Bottom corner of every clinician screen | Hands-free voice assistant ("Ask Sage"), aware of what is on your screen |
+| **Floating orb** | Bottom corner of every clinician screen | Text-only shortcut ("Ask Sage") that points you to Sage to type; it does not listen |
 | **Sage Copilot / insights** | Relay case rooms and the Patients dashboard | Ambient listening and proactive alerts that draft actions for your confirmation |
 
 All three run on the same local AI models and the same safety rules. Nothing you type or say to Sage about a patient leaves the building.
@@ -116,28 +116,22 @@ Two properties are worth knowing: the on-screen context is treated strictly as *
 
 The microphone icon in the composer toggles **Voice mode** (tooltip "Voice mode" / "Switch to text").
 
-1. Click the microphone. Sage shows "Voice Mode, Sage is ready to listen" and begins recording automatically.
-2. Speak your question. A status card shows **"Listening… tap to stop & send"** with an elapsed timer and, where enabled, a live transcript. After about two seconds of silence recording stops on its own; you can also tap the stop square.
+1. Click the microphone. Sage shows "Voice Mode, Sage is ready to listen" and begins recording automatically. If the local speech engine is not installed on your Orb server, Sage does not switch to voice mode; it says straight away **"Voice questions are not available on this appliance: local speech recognition is not installed. Type your question instead."**
+2. Speak your question. The status reads **"Listening… (local transcription; tap to stop)"** with an elapsed timer. No text appears while you speak, and recording does not stop on its own: tap the stop square when you have finished.
 3. The audio is transcribed **locally by Whisper** ("Transcribing with Whisper AI…"). Transcription is biased with the current patient names so spoken names resolve correctly, and a clinical spelling corrector fixes common drug-name mis-hearings (e.g. "meropenim" → "Meropenem").
-4. The transcript is sent to Sage ("Sending to Sage…"), and the reply is displayed and **spoken aloud** sentence-by-sentence. When Sage finishes speaking it automatically listens for your follow-up, giving a continuous back-and-forth.
+4. The transcript is sent to Sage ("Sending to Sage…"), and the reply is displayed and **spoken aloud** sentence-by-sentence by a voice that runs on your device. If your device has no on-device voice, Sage does not speak and the answer is shown on screen only. When Sage finishes speaking (or, with no on-device voice, when the answer is complete) it automatically listens for your follow-up, giving a continuous back-and-forth.
 
 Voice replies come from the faster conversational model rather than the large reasoning model, trading some depth for speed. Status lines cycle through "Sage is thinking…", "Sage is speaking…", and "Tap to speak".
 
-**Privacy gating.** The live on-screen transcript and silence auto-stop use the browser's speech recognition, which sends audio to a cloud service. If your deployment's privacy posture forbids that, the live preview is disabled and the status reads **"Listening… (local transcription; tap to stop)"**, recording and Whisper transcription still work fully locally; you tap to stop instead of relying on silence detection.
+**Local speech only.** Everything in voice mode happens on the Orb server and your device: the recording is transcribed by the local speech engine, and answers are spoken only by a voice that runs on your device. Orb never uses the browser's own cloud speech recognition, and there is no setting that turns it on.
 
-**One microphone, many surfaces.** Only one Sage surface may hold the microphone at a time; if the floating orb or Scribe dictation has it, the panel shows "Microphone is in use by another Sage surface."
+**One microphone, many surfaces.** Only one voice surface may hold the microphone at a time; if Scribe or Ward Round dictation has it, the panel shows "Microphone is in use by another Sage surface."
 
 ### 4.6 The floating Ask Sage orb
 
-A small glowing orb sits in the bottom corner of **every** clinician screen, Patients, Orders, Relay, anywhere. Its tooltip reads **"Ask Sage"**. It is a hands-free voice assistant with four visible states: dormant, listening (pulsing rings and a "Listening..." label), processing ("Thinking"), and speaking (a stop square).
+A small orb sits in the bottom corner of **every** clinician screen, Patients, Orders, Relay, anywhere. Its tooltip reads **"Ask Sage"**. The orb is text-only: it never listens. Clicking it opens a small card, **"Voice is not available here. Type your question in Sage instead."**, with an **Open Sage to type** button that takes you to the Sage tab. Press Escape or click the orb again to close the card. Sage still knows what is on your screen, so "summarise this chart" works on whatever patient you have open.
 
-- **Click to talk.** Click the orb, speak, and pause, after about a second of silence the question submits. A card pops up showing your question and the streamed answer, with the active patient's name in the header when one is open.
-- **"Sage" hotword.** A small toggle beside the orb enables the wake word (tooltip: "Enable 'Sage' hotword"). With it on, saying *"Sage, what's the latest on bed six?"* from anywhere wakes the assistant and carries straight into the question.
-- **Barge-in.** Say "Sage" while it is speaking to interrupt and ask something new; clicking the orb mid-speech stops it.
-- **Follow-ups.** After an answer, the orb listens for about five seconds for a follow-up, no hotword needed, then goes dormant. It remembers your last ten exchanges in the session.
-- **Screen awareness.** The orb sends the same view context as the panel, so "summarise this chart" works on whatever patient you have open.
-
-The orb greys out while another surface owns the microphone (panel voice mode, Scribe dictation). If the deployment forbids cloud speech, clicking the orb explains that voice input is disabled by the privacy posture and points you to text chat in the Sage tab.
+There is no wake word and nothing listens in the background. To ask by voice, use voice mode in the Sage tab (4.5), which uses the local speech engine on the Orb server.
 
 ### 4.7 Asking Sage to *do* something: drafted actions, never executions
 
@@ -204,9 +198,10 @@ Each answer's timing (retrieval, first token, total) is recorded in its metadata
 | Sage refuses and mentions safety rules | Your phrasing tripped the harm or injection gate | Rephrase as a genuine clinical question; for real safety concerns escalate to the senior clinician on duty |
 | **"Limited evidence"** on most answers | The corpus lacks material for your specialty, or citations failed validation | Verify against primary sources; ask an administrator about extending the corpus |
 | **"Mic blocked…" / "Mic busy…" / "No mic detected…"** | Browser or OS microphone problem | Follow the on-screen message; the panel retries mic access once automatically |
-| **"Microphone is in use by another Sage surface."** | The floating orb or Scribe dictation holds the mic | Stop the other surface, then retry |
-| Orb won't listen; "privacy posture" message | The deployment disallows cloud speech recognition | Use text chat in the Sage tab, or ask an administrator to review the setting |
-| "Sage" hotword not responding | Hotword toggle off, mic permission denied, or cloud speech disabled | Check the toggle beside the orb and browser mic permission |
+| **"Microphone is in use by another Sage surface."** | Scribe or Ward Round dictation holds the mic | Stop the other surface, then retry |
+| Clicking the floating orb shows "Voice is not available here" | The orb is text-only by design | Press **Open Sage to type**, or use voice mode in the Sage tab |
+| **"Voice questions are not available on this appliance…"** | The local speech engine is not installed on this Orb server | Type your question; ask your administrator to complete the speech-engine installation |
+| Sage answers on screen but does not speak | This device has no on-device voice, and Sage never uses one that sends text to an outside service | Read the answer on screen; ask IT whether an on-device voice can be installed on this computer |
 | An old patient keeps appearing in answers | Conversation history is scoping follow-ups to them | Press **New Chat** before switching topics |
 
 ### 4.11 Safety & limitations

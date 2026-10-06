@@ -69,7 +69,7 @@ graph TD
 | `src/components/round/roundQueue.ts` | 363 | **No React, no fetching, no clinical text.** Bed ordering, the two-pass "next bed" rule, progress, hand-on list, and the whole persistence/purge story. |
 | `src/components/round/roundSummary.ts` | 324 | **No React.** Decides what earns a line on a screen that does not scroll: the overnight window, the change feed, issues, decisions, day count. Classifies server-computed fields; never scores a patient itself. |
 | `src/components/round/RoundSummaryView.tsx` | 251 | The one-screen summary, patient header, allergy strip, three columns, each owning its own loading/empty/failed state, and Sage's reasoned assessment collapsed underneath. |
-| `src/components/round/RoundDictation.tsx` | 362 | The mic button, the live "hearing…" line, the retry-held audio, the editable plan box, the save button. |
+| `src/components/round/RoundDictation.tsx` | 362 | The mic button, the retry-held audio, the editable plan box, the save button. |
 | `src/components/round/RoundQueueRail.tsx` | 109 | The left rail: progress bar and one 44px `<button>` per bed, status by icon **and** word. |
 | `src/components/round/RoundHandoff.tsx` | 86 | The end-of-round screen: unsaved plans first, then who is still owed a visit. |
 | `src/components/round/RoundStates.tsx` | 122 | `RoundLoading` (`:18`), `RoundEmpty` (`:31`), `RoundError` (`:66`), `RoundDegraded` (`:106`), four deliberately different shapes. |
@@ -471,7 +471,7 @@ The docstring (`:1-15`) is the whole rationale: a blank region on a clinical scr
 
 ### File: `src/components/round/RoundDictation.tsx`: voice as the primary input
 
-The docstring (`:1-21`) states the PHI posture: the accuracy pass is **always** the local Whisper endpoint; the browser's Web Speech API, which streams microphone audio to a cloud recogniser, drives only the live "hearing…" line, only when the deployment posture permits cloud speech, and **its output never enters the note**.
+The docstring (`:1-21`) states the PHI posture: transcription is **always** the local Whisper endpoint on the appliance, and nothing else listens. Until 4 October 2026 the browser's Web Speech API, which streams microphone audio to a cloud recogniser, could drive a live "Hearing…" preview line when the deployment posture permitted cloud speech (its output never entered the note). It was removed when Orb was ruled strictly offline, and there is no setting that turns it back on.
 
 #### `SaveState`: `RoundDictation.tsx:34`
 **Signature:** `'idle' | 'saving' | 'saved' | 'error'`
@@ -489,8 +489,8 @@ The docstring (`:1-21`) states the PHI posture: the accuracy pass is **always** 
 
 #### `teardownCapture`: `RoundDictation.tsx:76`
 **Signature:** `useCallback(() => void)`
-**Does:** Stops the timer, stops the cloud recogniser, stops every media track, and **releases the shared microphone claim**.
-**On screen:** the recording indicator and the "Hearing…" line disappear; the tablet's OS microphone indicator goes out.
+**Does:** Stops the timer, stops every media track, and **releases the shared microphone claim**.
+**On screen:** the recording indicator disappears; the tablet's OS microphone indicator goes out.
 **Why `releaseMic('round')` matters:** the microphone is a single shared resource arbitrated by `SageRuntimeContext` (`claimMic` at `src/contexts/SageRuntimeProvider.tsx:18`). Failing to release it means Sage's voice input is dead for the rest of the session with no error anyone can act on.
 **Breaks if you change it:** drop the track stop and the browser keeps the mic open, a hot microphone on a ward, carried from bed to bed.
 
@@ -518,16 +518,16 @@ The docstring (`:1-21`) states the PHI posture: the accuracy pass is **always** 
 
 #### `startRecording`: `RoundDictation.tsx:143`
 **Signature:** `async () -> void`
-**Does:** Claims the mic, gets a stream, starts a `MediaRecorder`, optionally starts the live preview recogniser, and starts the timer.
-**On screen:** the button turns red and becomes "Stop · 0:00"; "Recording" with a pulsing dot appears; if cloud speech is permitted, a "Hearing …" line streams under it.
+**Does:** Claims the mic, gets a stream, starts a `MediaRecorder`, and starts the timer.
+**On screen:** the button turns red and becomes "Stop · 0:00"; "Recording" with a pulsing dot appears. No text appears while the doctor speaks; the transcript arrives when she stops.
 **The rule the comment at `:135-142` states:** **every exit from this function must leave a message on screen.** Before it, three separate paths could end a click with nothing at all, `navigator.mediaDevices` absent, the second `new MediaRecorder(stream)` throwing outside any `try`, and `recorder.start()` throwing. All three rejected an async callback nobody awaited, so "Dictate the plan" produced no UI change, no error and no network request. **A control that looks broken because it says nothing is worse than one that admits what it cannot do.** The five guarded exits now are: local ASR not installed (`:146`), mic held by Sage (`:155`), no secure context (`:160`), permission denied (`:170`), recorder unstartable (`:190`).
 **Why the mimeType fallback (`:182-187`):** Safari and some tablet browsers reject the explicit `audio/webm`, so a bare `new MediaRecorder(stream)` is tried second.
-**Why cloud speech is gated (`:204-207`):** `cloudSpeechAllowed` comes from the server's posture (`SageRuntimeProvider.tsx:35`). If the posture is unknown the runtime reports not-allowed, so it stays off, PHI does not leave the appliance by default.
-**Breaks if you change it:** let any of those five paths return silently and the mic button becomes a control that does nothing, which a doctor will press three times and then abandon. Feed the Web Speech interim text into `appendToDraft` and cloud-recognised PHI lands in the chart.
+**Why there is no live preview:** the preview used the browser's Web Speech API, gated on a `cloudSpeechAllowed` posture flag. Browser speech was removed on 4 October 2026 (Orb is strictly offline), so the local Whisper pass is the only recogniser. The first guarded exit, local ASR not installed, is what tells the doctor up front, with a clear message, that dictation cannot run here.
+**Breaks if you change it:** let any of those five paths return silently and the mic button becomes a control that does nothing, which a doctor will press three times and then abandon. Do not add a browser recogniser back for a preview: it sends PHI off the appliance.
 
 #### The unmount / patient-change effect: `RoundDictation.tsx:237`
 **Signature:** `useEffect(cleanup, [patientId, releaseMic])`
-**Does:** Tears down the recorder, the timer, the recogniser and the stream when the component unmounts **or the patient changes**. It nulls `recorder.onstop` first (`:241`) so a stop triggered by leaving the bed does not fire a transcription.
+**Does:** Tears down the recorder, the timer and the stream when the component unmounts **or the patient changes**. It nulls `recorder.onstop` first (`:241`) so a stop triggered by leaving the bed does not fire a transcription.
 **On screen:** walking to the next bed silently ends any recording; the next bed opens with a clean, idle mic.
 **Why this is a safety boundary and not a cleanup nicety:** combined with `key={currentPatient.id}` on the component (`src/pages/panels/RoundPanel.tsx:639`), it is what stops the previous patient's dictation state walking to the next bed. Without the key React keeps **one** dictation instance across the whole round, and its transient state, a failed-transcription notice, the held audio behind "Retry transcription", the transcribing lock, travels with the doctor. Retrying there would transcribe the **previous** patient's recording into **this** patient's plan.
 **Breaks if you change it:** remove the key or the cleanup and you get all three failures at once. All three are pinned as attacks: `RoundPanel.dictation.attack.test.tsx:131` (previous transcript must not appear in the next plan), `:162` (the Retry button must not follow), `:188` (the mic must still work at the next bed while the previous transcript is in flight).
@@ -536,7 +536,6 @@ The docstring (`:1-21`) states the PHI posture: the accuracy pass is **always** 
 **On screen, element by element:**
 - **The mic button** (`:264-287`), `min-height: 64px` (`Round.css:767`), the biggest target on the screen, press-to-start / press-to-stop with `aria-pressed`. **Not** hold-to-talk, which fails with gloves and fails the moment the tablet is put down.
 - **The status line** (`:289-306`), `aria-live="polite"`, "Recording", "Transcribing on this appliance…", or the idle hint. When `localAsrAvailable === false` the idle hint says so **before the doctor speaks** (`:299-303`): "Local speech recognition is not installed on this appliance, type the plan below."
-- **The "Hearing" line** (`:309-313`), live preview only, never saved.
 - **The error block** (`:315-328`), `role="alert"`, with the Retry-transcription button when held audio exists.
 - **The plan textarea** (`:330-340`), labelled "Plan for today", placeholder *"Dictated text appears here. Edit it before saving, it is a draft, not a signature."*
 - **The save row** (`:342-359`), disabled while busy or empty, with the saved/error feedback beside it.
@@ -735,7 +734,7 @@ The docstring (`:1-21`) states the PHI posture: the accuracy pass is **always** 
 | `SageInsight.state` + `severity` | `src/api/client.ts:1038` (guide 09) | `CLOSED_INSIGHT_STATES` (`src/components/round/roundSummary.ts:33`), `SEVERITY_CLASS` | a new closed state Orb does not know keeps resolved insights on the round forever |
 | `StoryEvent.timestamp` as bare UTC | `src/api/client.ts:1811` | `changesSince` via `parseUTC` (`src/lib/datetime.ts:17`) | parsing as local time shifts every overnight event by the offset |
 | `transcribeAudio(blob, hints, skipCorrection)` | `src/api/client.ts:1287` (guide 11) | `runTranscription` (`RoundDictation.tsx:99`) | a changed signature could silently skip the accuracy pass |
-| `claimMic` / `releaseMic` / `cloudSpeechAllowed` / `localAsrAvailable` | `src/contexts/SageRuntimeProvider.tsx:18`, `:25`, `:35`, `:36` (guide 10) | `startRecording` (`RoundDictation.tsx:155`), `teardownCapture` (`RoundDictation.tsx:85`) | a lost release leaves Sage's voice input dead for the session |
+| `claimMic` / `releaseMic` / `localAsrAvailable` | `src/contexts/SageRuntimeProvider.tsx:18`, `:25`, `:35` (guide 10) | `startRecording` (`RoundDictation.tsx:155`), `teardownCapture` (`RoundDictation.tsx:85`) | a lost release leaves Sage's voice input dead for the session |
 | `assertOnlineForWrite` throwing `OfflineWriteRefusedError` | `src/lib/offline/writeGuard.ts:57`, `:17` (guide 28) | `savePlan` (`src/pages/panels/RoundPanel.tsx:381`) | a guard that stops throwing re-enables the silent queue |
 | `addClinicalNote(patient, text, 'Ward Round')` | `src/api/client.ts:1546` | `savePlan` (`src/pages/panels/RoundPanel.tsx:382`) | the doc type is the only thing marking a plan as a round plan in the chart |
 | `--tap-min: 44px` | `src/index.css:119` (guide 27) | every `.round-btn` / `.round-mic` / `.round-rail__item` / `.round-handoff__row` | `RoundPanel.test.tsx:335` reads the stylesheet and fails the build if any control declares less |
@@ -782,7 +781,7 @@ The docstring (`:1-21`) states the PHI posture: the accuracy pass is **always** 
 
 7. **`insightsFailed` is a boolean, not a message.** Both rosters carry the real error text into their degraded strips; Sage's failure is reduced to a flag (`src/pages/panels/RoundPanel.tsx:103`, `:196`) and the strip says only "could not be loaded". Nothing on screen tells the doctor whether Sage is down or her session expired.
 
-8. **The Web Speech preview is silent about being off.** When `cloudSpeechAllowed` is false the "Hearing …" line simply never appears (`RoundDictation.tsx:204`). The doctor is not told the live preview is disabled by posture, she just sees nothing while she speaks, which is indistinguishable from a microphone that is not picking her up. The transcription itself is unaffected.
+8. **No live feedback while dictating (was: the Web Speech preview is silent about being off).** The browser Web Speech preview was removed on 4 October 2026, so the only cue while she speaks is the timer and the pulsing "Recording" dot. That is honest, but a microphone that is not picking her up still looks the same as one that is until she stops. A local audio-level meter (Scribe's streaming hook already computes one) would close this without sending anything off the appliance.
 
 9. **The no-scroll guarantee is a landscape-tablet guarantee.** Below 900px the panel switches to `overflow-y: auto` (`Round.css:1133-1138`), stated plainly in the CSS comment: at that width the round genuinely does not fit in one viewport, so it scrolls rather than clipping clinical content.
 

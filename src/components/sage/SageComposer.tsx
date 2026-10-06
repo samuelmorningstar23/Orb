@@ -17,6 +17,9 @@ interface Props {
   startVoiceRecording: () => void
   stopVoiceRecording: () => void
   isSpeaking: boolean
+  /** The appliance cannot transcribe (no local speech recognition). The voice
+   *  button stays pressable and says so; SagePanel refuses on press. */
+  voiceUnavailable?: boolean
 }
 
 export function SageComposer({
@@ -30,6 +33,7 @@ export function SageComposer({
   voiceRecording,
   startVoiceRecording,
   stopVoiceRecording,
+  voiceUnavailable = false,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -117,7 +121,8 @@ export function SageComposer({
           <button
             className={`sage-btn-icon ${voiceMode ? 'sage-btn-icon--active' : ''}`}
             onClick={toggleVoiceMode}
-            title={voiceMode ? 'Switch to text' : 'Voice mode'}
+            title={voiceUnavailable && !voiceMode ? 'Voice questions are not available on this appliance' : voiceMode ? 'Switch to text' : 'Voice mode'}
+            aria-label={voiceUnavailable && !voiceMode ? 'Voice questions are not available on this appliance' : voiceMode ? 'Switch to text' : 'Voice mode'}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>

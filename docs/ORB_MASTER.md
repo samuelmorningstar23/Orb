@@ -182,7 +182,7 @@ Key structural facts:
 | `src/components/` | Feature components grouped by pillar (`vigil/`, `relay/`, `sage/`, `surgery/`, `helix/`, `orders/`, `coding/`, `command/`, `capacity/`, `handoff/`, `admin` widgets) + shared chrome (`OrbLogo`, `ClockWidget`, `PulseWidget`, `Aurora`, `ProvenanceChip`, `FlightRecorder`) |
 | `src/api/` | `client.ts` (the ~1200-line API client: apiFetch, socket, SSE, offline queue, every endpoint wrapper) + thin domain modules (`bundles`, `downtime`, `ipass`, `pharmacy`) |
 | `src/contexts/` | `ActivePatientContext`, cross-panel "currently selected patient" |
-| `src/hooks/` | `useFocusTrap`, `useSageHotword`, `useStreamingTranscription` |
+| `src/hooks/` | `useFocusTrap`, `useStreamingTranscription` |
 | `src/i18n/` | i18next setup + `en.json` / `hi.json` locales |
 | `src/index.css` | THE design-token sheet: dark tokens, light overrides, glass recipes ([27-design-system](./guide/27-design-system.md)) |
 | `server/main.py` | FastAPI app assembly: lifespan, middleware, router mounting, authenticated `/uploads`, socket_app |
@@ -474,7 +474,7 @@ reference. **Web/framework** terms first, then **clinical**.
 | **design token** | A CSS custom property (`--accent-gold`, `--space-4`) defined once and reused; the whole theme system is tokens (`index.css:4-102`). |
 | **error boundary** | A React component that catches render-time exceptions in its subtree. Orb has a root one (`main.tsx:26`) and a per-panel one (`ClinicianShell.tsx:177`). |
 | **FHIR / HL7** | Healthcare interoperability standards (resources, Bundles, `$everything`). Orb ingests and exports FHIR; see guide 24. |
-| **hook (React)** | A function like `useState`/`useEffect`/`useMemo` that lets a component hold state or run side effects. Custom hooks: `useFocusTrap`, `useSageHotword`, `useStreamingTranscription`. |
+| **hook (React)** | A function like `useState`/`useEffect`/`useMemo` that lets a component hold state or run side effects. Custom hooks: `useFocusTrap`, `useStreamingTranscription`. |
 | **idempotency** | A request that can be safely repeated without duplicate effect. Orb's offline replay *requires* it because a lost response may be retried (`client.ts:250-253`). |
 | **JWT** | JSON Web Token, a signed token (`{sub, role, tv, jti, exp}`) the client presents as `Authorization: Bearer`. Signed HS256 (`auth.py:40-63`). |
 | **LSTM** | Long Short-Term Memory, a recurrent neural net for sequences; Forecast's core model (`models/forecast_lstm.py`), with a heuristic fallback. |

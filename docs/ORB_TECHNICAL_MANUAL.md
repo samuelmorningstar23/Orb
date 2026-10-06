@@ -390,7 +390,7 @@ Orb Project/
 │   └── tests/               ← the pytest suite (181 files, 6,161 collected tests)           [§13]
 ├── src/                     ← the React frontend (the product UI)                           [§14]
 │   └── shellConfig.tsx      ← the shell's ONE role input: home + tabs + primary action      [§14]
-├── ops/                     ← off-appliance ops (heartbeat receiver, Grafana dashboard)
+├── ops/                     ← off-appliance ops (Grafana dashboard)
 ├── docs/
 │   ├── ORB_TECHNICAL_MANUAL.md  ← THIS MANUAL (assembled from docs/manual_sections/)
 │   ├── MODULE_MANUAL.md / USER_MANUAL.md ← the non-engineer manuals
@@ -689,7 +689,7 @@ The Sage module has an "ambient" mode that passively monitors conversations and 
 
 **The eleven hospital-module switches and their tuning constants**, `server/config.py:540-771`. Covered in §0.5 and §16. Note the two groups of site-settable numbers that are **defaults a site must review, not measurements**, and are labelled as such in the UI: housekeeping turnaround targets (`ORB_HK_STANDARD_CLEAN_MINUTES` 45, `ORB_HK_TERMINAL_CLEAN_MINUTES` 120, `:635-636`) and workforce thresholds (`ORB_WORKFORCE_OT_DAILY_MINUTES` 480, `ORB_WORKFORCE_LATE_GRACE_MINUTES` 10, `ORB_WORKFORCE_MAX_SPAN_MINUTES` 960, `:661-676`). The overtime comment is explicit that 8 h is not a legal finding, Indian working-hours law for a hospital is state law.
 
-**Other flags worth knowing:** `ORB_DEMO_MODE` (`:316`, defaults to **true in dev, false in prod**), `ORB_LENS_ENABLED` (`:323`, same split, Lens is **off by default in prod** unless an operator opts in), `ORB_CLOUD_SPEECH_ALLOWED` (`:295`, default **false**, the on-prem guarantee), `ORB_MODEL_FALLBACK_ENABLED` (`:145`), the background-LLM governor `ORB_BG_LLM_*` (`:225-254`), `ORB_SAGE_HISTORY_SUMMARIZE` (`:274`, default **off**), the `ORB_MONITOR_*` bedside-monitor listener group (`:406-436`, `ORB_MONITOR_ENABLED` default **false**), `ORB_MAX_JSON_BODY_BYTES` (`server/main.py:708`, 512 KB), `ORB_DB_BACKEND` (`server/db_backend.py:24`, only `sqlite` is wired) and `ORB_DISCHARGE_FINANCIAL_ENFORCE` (`:799`, default **off**, and §0.5 explains why it must stay off for the pilot).
+**Other flags worth knowing:** `ORB_DEMO_MODE` (`:316`, defaults to **true in dev, false in prod**), `ORB_LENS_ENABLED` (`:323`, same split, Lens is **off by default in prod** unless an operator opts in), `ORB_MODEL_FALLBACK_ENABLED` (`:145`), the background-LLM governor `ORB_BG_LLM_*` (`:225-254`), `ORB_SAGE_HISTORY_SUMMARIZE` (`:274`, default **off**), the `ORB_MONITOR_*` bedside-monitor listener group (`:406-436`, `ORB_MONITOR_ENABLED` default **false**), `ORB_MAX_JSON_BODY_BYTES` (`server/main.py:708`, 512 KB), `ORB_DB_BACKEND` (`server/db_backend.py:24`, only `sqlite` is wired) and `ORB_DISCHARGE_FINANCIAL_ENFORCE` (`:799`, default **off**, and §0.5 explains why it must stay off for the pilot).
 
 ---
 
@@ -5374,7 +5374,7 @@ If the audio file is not already a `.wav`, calls `ffmpeg` to convert it to 16kHz
 
 #### `load_model(model_name)`
 
-Loads the Whisper model from `server/mlx_models/{model_name}/` into Apple Silicon unified memory using `LightningWhisperMLX`. This is called once on daemon startup. Subsequent calls are no-ops if the model is already loaded. The `batch_size=12` parameter controls how many audio segments Whisper processes in parallel, higher values improve throughput on longer recordings.
+Loads the Whisper model from `server/mlx_models/{model_name}/` into Apple Silicon unified memory. This is called once on daemon startup. Subsequent calls are no-ops if the model is already loaded. It never downloads anything: `require_installed` (`server/services/asr_model_files.py`) checks that the folder holds `config.json` and `weights.npz`, and a missing model raises `SpeechModelNotInstalled`, so the daemon exits with "speech model not installed" instead of starting. The weights are installed with the appliance. (Until 4 October 2026 this constructed `LightningWhisperMLX`, whose constructor fetches the weights from Hugging Face. Orb is strictly offline, so that constructor is no longer called, and the process sets `HF_HUB_OFFLINE=1` before anything imports `huggingface_hub`.) The `batch_size=12` passed to `transcribe_audio` controls how many audio segments Whisper processes in parallel, higher values improve throughput on longer recordings.
 
 #### `transcribe(audio_path, hints, language)`
 
@@ -10156,7 +10156,7 @@ python scripts/transcribe_worker.py <audio_path> [model_name] [hints] [batch_siz
 
 **What it does:**
 1. Converts the input audio to 16 kHz mono WAV using `ffmpeg` (handles WebM, M4A, etc.)
-2. Loads `LightningWhisperMLX` with the specified model (default `large-v3`)
+2. Finds the specified model (default `large-v3`) under `server/mlx_models/` and never downloads it: if the weights are not installed it prints "speech model not installed" on stderr and exits 2 (`asr_model_files.require_installed`; Orb is strictly offline)
 3. Prepends a generic clinical prompt plus any patient-specific hint words to bias Whisper's beam search toward medical terminology
 4. Prints the JSON result to stdout delimited by `###RESULT###` markers (the server reads stdout and parses between these markers)
 5. Cleans up the temporary WAV file
@@ -11354,7 +11354,9 @@ passing props.
 network is unavailable.
 
 **`SageFloatingAssistant`:** Rendered outside the panel area, always visible regardless of
-active tab. Listens for a hotword and triggers a voice query to the Sage API.
+active tab. Text-only since 4 October 2026: clicking it opens a small card saying voice is not
+available here, with an "Open Sage to type" button that switches to the Sage tab. It never
+opens the microphone (browser speech was removed when Orb was ruled strictly offline).
 
 **`AdmitPatientModal`:** The "Admit Patient" button in the sidebar opens this modal; on
 success it reloads the page to refresh all panels.
@@ -11458,24 +11460,22 @@ live microphone transcription. It:
 Returns an object with: `{ isStreaming, isProcessing, isSpeaking, currentTranscript,
 fullTranscript, utteranceCount, audioLevel, startStreaming, stopStreaming }`.
 
-Used by: `ScribePanel.tsx` (streaming mode toggle), `SageFloatingAssistant.tsx` (implicit
-via the hotword hook pathway).
+Used by: `ScribePanel.tsx` (streaming mode toggle).
 
 ⚠️ **If you rename Socket.IO events on the server:** update the `socket.on(...)` and
 `socket.emit(...)` calls in this file too. There is no type-safety across the wire.
 
-#### `src/hooks/useSageHotword.ts`
+#### `src/hooks/useSageHotword.ts` (removed 2026-10-04)
 
-A lightweight hook that persists a boolean `isEnabled` flag to `localStorage` under
-`orb_sage_hotword`. Returns `{ isEnabled, toggleEnabled }`. Used by
-`SageFloatingAssistant.tsx` to gate the hotword listener.
+Persisted the "Sage" hotword flag to `localStorage` under `orb_sage_hotword` for the floating
+orb's browser speech listener. Removed with browser speech; nothing reads that key now.
 
 #### `src/contexts/ActivePatientContext.tsx`
 
 Provides `{ activePatientId, activePatientName, setActivePatient }` to the entire
 `ClinicianShell` tree. When a clinician selects a patient in `VigilPanel`, it calls
-`setActivePatient(id, name)`. `SageFloatingAssistant` reads the active patient and
-automatically scopes voice queries to that patient.
+`setActivePatient(id, name)`. Sage reads the active patient and automatically scopes
+questions to that patient.
 
 Pattern for consuming it in a panel:
 ```typescript
@@ -11512,7 +11512,7 @@ These live under `src/components/` and are reused across shells and panels.
 
 | File | Role |
 |---|---|
-| `SageFloatingAssistant.tsx` + `SageFloatingAssistant.css` | Always-visible floating orb that listens for a hotword and runs a voice query. Uses `useActivePatient` to scope queries. |
+| `SageFloatingAssistant.tsx` + `SageFloatingAssistant.css` | Always-visible floating orb, text-only: clicking it explains voice is not available here and offers to open Sage to type. |
 | `SageComposer.tsx` | The text input + submit button at the bottom of SagePanel. |
 | `SageMessage.tsx` | Renders a single Sage chat message, handling markdown display. |
 | `SageHistorySidebar.tsx` | Left sidebar in SagePanel listing past conversations. |
@@ -11626,7 +11626,6 @@ src/
 │   └── ActivePatientContext.tsx      Cross-panel "which patient is selected" state
 │
 ├── hooks/
-│   ├── useSageHotword.ts             Persists hotword-enabled flag to localStorage
 │   └── useStreamingTranscription.ts  Mic capture → VAD → PCM → Socket.IO → transcript
 │
 ├── pages/
@@ -11678,7 +11677,7 @@ src/
     ├── DischargePrintView.tsx        Print layout for discharge summary
     │
     ├── sage/
-    │   ├── SageFloatingAssistant.tsx + .css  Always-visible hotword voice assistant
+    │   ├── SageFloatingAssistant.tsx + .css  Always-visible text-only Sage orb
     │   ├── SageComposer.tsx          Text input bar in SagePanel
     │   ├── SageMessage.tsx           Single chat message bubble with markdown
     │   ├── SageHistorySidebar.tsx    Past-conversation list sidebar
@@ -11959,11 +11958,10 @@ to small/fast models; `prod` defaults to full-quality.
 | `ORB_SAGE_HISTORY_SUMMARIZE` | `0` (off) | Sage conversation-history summarisation. |
 | `ORB_SAGE_PREWARM*` | `config.py:470-478` | Sage prewarm behaviour. |
 
-#### 15.2.11 Data-source, demo and egress flags
+#### 15.2.11 Data-source and demo flags
 
 | Variable | Default | What it controls |
 |---|---|---|
-| `ORB_CLOUD_SPEECH_ALLOWED` | **`false`** | Whether any speech may leave the appliance (`config.py:295`). The on-prem guarantee depends on this staying false. |
 | `ORB_DEMO_MODE` | `true` in dev, **`false` in prod** | Demo affordances (`config.py:316`). |
 | `ORB_LENS_ENABLED` | `true` in dev, **`false` in prod** | Lens imaging is **off by default in production** unless an operator explicitly opts in (`config.py:323`). |
 | `ORB_MONITOR_ENABLED` and the `ORB_MONITOR_*` / `ORB_HL7_DEFAULT_TZ` group | **`false`** / see `config.py:406-436` | The live bedside-monitor feed: protocol, mode, host, port, source id, timezone and clock-skew tolerance. |
@@ -12856,7 +12854,7 @@ The distinction matters for how much to trust the rest: **rot** means the manual
 | **`services/field_crypto.py`** | Field-level PHI encryption. Existence confirmed; behaviour **not read**. |
 | **`services/ai_governance.py`** | Only its relationship to the `ai_egress` fail-closed category was confirmed. *2026-09-04:* that relationship never existed. `record_inference` writes `ai_inference`, which replaced `ai_egress` in the fail-closed set on 2026-09-04 (§10.5). |
 | **`services/mfa_service.py`** | Summarised in §1 from its module docstring; the verification window and enrolment flow were **not traced through the routes**. |
-| **~40 further services** | `escalation_service`, `medication_safety_gate`, `allergy_interlock`, `drug_safety_service`, `loop_watchdog`, `heartbeat_service`, `world_model_service`, `thinking_mode`, `model_router`, `sage_narrator_service`, `sage_provenance_service`, `compliance_service`, `consent_service`, `downtime_service`, `flight_recorder_service`, and others have **no manual coverage**. |
+| **~40 further services** | `escalation_service`, `medication_safety_gate`, `allergy_interlock`, `drug_safety_service`, `loop_watchdog`, `world_model_service`, `thinking_mode`, `model_router`, `sage_narrator_service`, `sage_provenance_service`, `compliance_service`, `consent_service`, `downtime_service`, `flight_recorder_service`, and others have **no manual coverage**. |
 
 #### 17.3.3 Specific claims left standing but unchecked
 

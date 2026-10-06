@@ -171,7 +171,6 @@ async function runScenario(browser, scenario) {
       }
       localStorage.setItem('orb-theme', theme);
       localStorage.setItem('orb_theme', theme);
-      localStorage.setItem('orb_sage_hotword', 'false');
     } catch {}
   }, { user: !LIVE && scenario.user ? stripPw(USERS[scenario.user]) : null,
        theme: (scenario.themes && scenario.themes[0]) || 'dark' });
@@ -489,34 +488,40 @@ async function assertWardBriefAndInsights({ page }, theme) {
   return out;
 }
 
-// PHI voice governance: the AI posture fixture (/api/sage/ai-posture) says
-// cloud_speech_allowed:false, so clicking the orb must show the "disabled by
-// privacy posture" explanation card — and must NOT enter the listening state
-// (browser speech recognition would stream ward audio to a cloud ASR).
-async function assertVoiceGovernanceGate({ page }) {
+// The orb is TEXT-ONLY: Orb is strictly offline, so there is no browser
+// speech. Clicking it must show the card saying voice is not available, with
+// a button into the Sage panel to type, and must never enter a listening state.
+async function assertOrbTextOnly({ page }) {
   const out = [];
   const card = page.locator('.sage-fab__card');
   if (!(await card.count())) {
     out.push({
       type: 'semantic-loss', severity: 'critical', selector: '.sage-fab__card',
-      snippet: 'voice governance card',
-      detail: 'clicking the Sage orb with cloud speech disallowed did not surface the governance card',
+      snippet: 'voice not available card',
+      detail: 'clicking the Sage orb did not surface the "voice is not available" card',
     });
     return out;
   }
   const text = (await card.textContent().catch(() => '')) || '';
-  if (!/privacy posture/i.test(text)) {
+  if (!/voice is not available/i.test(text)) {
     out.push({
       type: 'semantic-loss', severity: 'major', selector: '.sage-fab__card',
       snippet: text.slice(0, 50),
-      detail: 'governance card rendered, but without the privacy-posture explanation text',
+      detail: 'orb card rendered, but without saying voice is not available',
+    });
+  }
+  if (!(await page.locator('.sage-fab__open').count())) {
+    out.push({
+      type: 'semantic-loss', severity: 'major', selector: '.sage-fab__open',
+      snippet: 'Open Sage to type',
+      detail: 'orb card has no button into the Sage panel',
     });
   }
   if (await page.locator('.sage-fab--listening').count()) {
     out.push({
       type: 'semantic-loss', severity: 'critical', selector: '.sage-fab--listening',
       snippet: 'mic opened',
-      detail: 'orb entered listening state despite cloud_speech_allowed=false — the voice egress gate failed',
+      detail: 'orb entered a listening state: it is text-only and must never open the microphone',
     });
   }
   return out;
@@ -1097,8 +1102,8 @@ const MOCKED = [
   //    harness — docs/assets/sage/visual-gate-report.json). Three gates:
   //    (1) the floating orb is omnipresent on every clinician surface,
   //    (2) Vigil carries the ward brief + proactive insights feed,
-  //    (3) voice is governance-gated — with cloud speech disallowed the orb
-  //        click shows the privacy-posture card instead of opening the mic.
+  //    (3) the orb is text-only: its click shows the "voice is not available"
+  //        card with a way into the Sage panel, and never opens the mic.
   //    (The branch's sage-panel light/dark captures are already covered by
   //    doctor/sage above, which runs both themes by default.) ──
   {
@@ -1119,14 +1124,15 @@ const MOCKED = [
   },
   {
     // Captured dark-only, matching the branch's voice-governance-gate-dark
-    // doc asset — the card auto-dismisses after ~6s, too short to re-theme.
-    name: 'sage/voice-governance', user: 'doctor', path: '/dashboard', waitFor: '.patient-row',
+    // doc asset. Waits for the orb itself: the doctor now lands on Today,
+    // which has no .patient-row.
+    name: 'sage/orb-text-only', user: 'doctor', path: '/dashboard', waitFor: '.sage-fab__orb',
     themes: ['dark'],
     assert: (ctx, theme, step) =>
-      (step === 'gate-card' ? assertVoiceGovernanceGate(ctx) : Promise.resolve([])),
+      (step === 'text-only-card' ? assertOrbTextOnly(ctx) : Promise.resolve([])),
     steps: [
       {
-        name: 'gate-card',
+        name: 'text-only-card',
         act: async ({ page }) => {
           // patient-scoped surface (orders), as in the branch capture
           await page.click('#nav-orders');

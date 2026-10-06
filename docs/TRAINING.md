@@ -568,15 +568,14 @@ credible.
   local. No patient question, no chart content and no answer is sent to any
   outside service.
 - Whisper transcription is local. The audio does not leave the machine.
-- One exception exists and it ships switched off. The browser's own speech
-  recognition, used only for the live on-screen transcript and the automatic
-  stop-on-silence, sends audio to a cloud service, which would be spoken
-  patient data leaving the building. It is off by default; the server tells the
-  browser whether it is permitted, and if the browser cannot get an answer it
-  assumes not permitted. With it off, voice still works entirely: you tap to
-  stop instead of relying on silence detection, and Whisper still transcribes
-  locally. Staff will see the status line read "Listening (local transcription;
-  tap to stop)", and that is the correct, private state.
+- There is no exception for speech. The browser's own speech recognition sends
+  audio to a cloud service, which would be spoken patient data leaving the
+  building, so it was removed on 4 October 2026, when Orb was ruled strictly
+  offline, and no setting brings it back. Voice works entirely on the
+  appliance: you tap to stop, Whisper transcribes locally, and spoken answers
+  use the voices installed on the device. Staff will see the status line read
+  "Listening (local transcription; tap to stop)", and that is the correct,
+  private state.
 - The Pulse panel pulls public data in (weather, air quality, influenza
   surveillance, drug recalls), and its footer states the rule: inbound only,
   zero patient data transmitted.

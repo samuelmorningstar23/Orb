@@ -27,7 +27,8 @@ Three invariants, each of which was structurally false before the fix:
 
   3. ASR PROBE IS HONEST. /api/scribe/asr/status says "unavailable" only when
      neither the in-venv runtime nor the warm daemon can transcribe, and
-     "available" when the subprocess worker path is whole.
+     "available" when the subprocess worker path is whole: the runtime, the
+     worker script AND the Whisper weights, which Orb never downloads.
 """
 import asyncio
 import json
@@ -356,9 +357,26 @@ def test_asr_status_reports_unavailable_when_runtime_and_daemon_absent(monkeypat
     assert "INSTALL_RUNBOOK" in body["runbook"]
 
 
+def test_asr_status_reports_unavailable_when_the_weights_are_missing(monkeypatch):
+    """A runtime with no model is not a transcription engine. Before Orb went
+    offline the worker fetched the weights on first use; now nothing does, so
+    the probe has to say the model is missing instead of reporting available."""
+    token = _doctor_token()
+    monkeypatch.setattr("routes.scribe_routes._asr_runtime_importable", lambda: True)
+    monkeypatch.setattr("routes.scribe_routes._asr_model_installed", lambda: False)
+    monkeypatch.setattr("routes.scribe_routes._asr_daemon_responds", lambda: False)
+    resp = client.get("/api/scribe/asr/status", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["available"] is False
+    assert "speech model is not installed" in body["reason"]
+    assert "never downloads" in body["reason"]
+
+
 def test_asr_status_reports_available_when_worker_path_whole(monkeypatch):
     token = _doctor_token()
     monkeypatch.setattr("routes.scribe_routes._asr_runtime_importable", lambda: True)
+    monkeypatch.setattr("routes.scribe_routes._asr_model_installed", lambda: True)
     # WORKER_SCRIPT exists in the repo, so no daemon probe should be needed —
     # make the daemon path an assertion failure to prove it is not consulted.
     monkeypatch.setattr(

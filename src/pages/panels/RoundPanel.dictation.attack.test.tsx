@@ -73,7 +73,6 @@ const SAGE_RUNTIME = {
   micOwner: null,
   claimMic: () => true,
   releaseMic: () => {},
-  cloudSpeechAllowed: false,
 }
 vi.mock('../../contexts/SageRuntimeContext', () => ({
   useSageRuntime: () => SAGE_RUNTIME,

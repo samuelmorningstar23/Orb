@@ -409,7 +409,7 @@ socket.
 | Reachability from ward devices (nurse-station desktops, bedside tablets, clinicians' phones) on the ward Wi-Fi | This is the only way anybody uses the system. |
 | Reachability from the patient monitors in scope for integration | Monitor integration is read-only: Orb reads vital signs and can never send anything to a monitor or change a setting on one. The adapter has been tested against a simulator and is first run against your real devices with your biomedical team present. |
 | No inbound access from the internet. None. | There is no remote support path and I am not asking for one. |
-| Outbound internet: optional | Orb runs fully without it. Two things use it and neither carries patient data: the outbound health heartbeat (system health, disk, backup age, model warmth; no PHI) and the Pulse panel's public feeds (weather, air quality, influenza surveillance, drug recalls). If the hospital would rather have no outbound path at all, Pulse degrades gracefully and the heartbeat is replaced by a daily manual check. Say which you want. |
+| Outbound internet: optional | Orb runs fully without it. The outbound health heartbeat that used it was removed on 4 October 2026; monitoring is a daily on-site check. One thing uses it and it carries no patient data: the Pulse panel's public feeds (weather, air quality, influenza surveillance, drug recalls). If the hospital would rather have no outbound path at all, Pulse degrades gracefully. Say which you want. |
 
 A dedicated VLAN for the appliance and the monitors is good practice and I will
 work with whatever the hospital's network team prefers.

@@ -65,13 +65,10 @@ same on-prem engine as everything else.
 
 ### Config
 
-```
-ORB_CLOUD_SPEECH_ALLOWED   browser cloud ASR permitted      (default: false)
-```
-
-There is no provider switch: every request runs on local MedGemma. The one
-posture flag here governs the **browser's** speech recognition (§5), not where
-the model runs.
+There is no provider switch: every request runs on local MedGemma. There is no
+speech switch either. The `ORB_CLOUD_SPEECH_ALLOWED` flag that used to govern the
+**browser's** cloud speech recognition was removed on 4 October 2026, when Orb was
+ruled strictly offline (§5).
 
 ---
 
@@ -112,15 +109,18 @@ sides.)
 
 `SageRuntimeContext` is the shared runtime for **every** Sage surface:
 
-- **Governance posture**, fetched once from `GET /api/sage/ai-posture`. Until
-  it loads, cloud speech is treated as *not allowed* (fail-closed).
-- **Mic ownership**, one registry (`claimMic`/`releaseMic`) so the floating
-  orb's continuous recognition, `SagePanel`'s voice recording, and Scribe's
-  dictation stop fighting over the single input device. A surface claims the mic
-  before opening it; the others observe and pause.
+- **Governance posture**, fetched once from `GET /api/sage/ai-posture`. It
+  carries the local model name and `local_asr_available`, whether the local
+  speech engine is installed. Until it loads, voice is treated as unavailable
+  (fail-closed).
+- **Mic ownership**, one registry (`claimMic`/`releaseMic`) so `SagePanel`'s
+  voice recording, Scribe's dictation and Ward Round dictation stop fighting
+  over the single input device. A surface claims the mic before opening it; the
+  others observe and pause.
 
-The floating orb's old blanket self-suspend on the sage/scribe tabs is gone, it
-is now genuinely omnipresent; what pauses it is mic contention, not the tab.
+The floating orb is on every page and is text-only: it never opens the mic.
+Clicking it explains that voice is not available there and offers a button that opens
+Sage to type.
 
 ---
 
@@ -239,15 +239,18 @@ model saw this patient's data, and when" answerable after the fact. (The old
 `model_governance` registry was descriptive-only, hardcoded `medgemma-27b`, and
 neither logged nor timed the call.)
 
-### The mic egress leak
+### The mic egress leak, closed
 
-`SageFloatingAssistant`'s `webkitSpeechRecognition` streams mic audio to a cloud
-ASR, egress of spoken PHI, and the one path in Sage that can still leave the
-building. It is gated by the governance posture: recognition only runs when
-`cloud_speech_allowed` (from `/sage/ai-posture`) is true; clicking the orb
-otherwise shows a card explaining the privacy posture. `SagePanel` and
-`ScribePanel` gate their parallel `webkitSpeechRecognition` the same way, their
-local-Whisper path (the source of truth) is unaffected.
+`webkitSpeechRecognition` streams mic audio to the browser vendor's cloud ASR,
+egress of spoken PHI, and it was the one path in Sage that could still leave the
+building. It used to be gated by a `cloud_speech_allowed` posture flag. Since
+4 October 2026 it is gone: no surface constructs it and there is no setting that
+switches it on. Voice input exists only through the local speech engine on the
+appliance (Sage panel voice mode, Scribe, Ward Round dictation), each of which
+refuses up front with a clear message when the engine is not installed. The
+floating orb is text-only. Spoken answers use only voices that run on the
+device; if there is none, Sage does not speak. The speech engine is installed
+with the appliance and never downloads a model at runtime.
 
 Guardrails apply to **every** surface: the safety/injection gate, the mutation
 gate, the incremental sanitizer + action-state override, cited-source validation,
@@ -352,6 +355,8 @@ python scripts/loadtest_sage.py --target sage --levels 1,4,8
 ```
 
 Screenshots of the key states (ward brief + insights, the omnipresent orb on a
-previously Sage-less page, the voice governance gate, both themes) are in
-`docs/assets/sage/`.
+previously Sage-less page, both themes) are in `docs/assets/sage/`.
+`voice-governance-gate-dark.png` there shows the privacy-posture card the orb
+showed before 4 October 2026. The orb is now text-only (scenario
+`sage/orb-text-only`), and that capture has not been retaken.
 ```

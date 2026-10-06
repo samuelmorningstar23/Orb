@@ -1570,12 +1570,11 @@ export interface SageAiPosture {
   hosted_configured: boolean;
   hosted_host_allowlisted: boolean;
   phi_egress_approved: boolean;
-  cloud_speech_allowed: boolean;
   local_model: string;
-  /** Whether ON-APPLIANCE transcription can run. Separate question from
-   *  `cloud_speech_allowed` (a privacy gate): this is a capability fact, and
-   *  every dictation control needs it so it can say what it can do BEFORE the
-   *  clinician speaks, rather than failing after thirty seconds of dictation. */
+  /** Whether ON-APPLIANCE transcription can run. A capability fact, and every
+   *  dictation control needs it so it can say what it can do BEFORE the
+   *  clinician speaks, rather than failing after thirty seconds of dictation.
+   *  It is the only speech recognition there is: Orb is strictly offline. */
   local_asr_available?: boolean;
 }
 

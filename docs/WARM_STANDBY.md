@@ -41,8 +41,11 @@ The standby is a full Orb install that never serves traffic.
    ./install.sh
    ```
    This builds the venv (with `sqlcipher3`), pulls models, and builds the SPA.
-   When it asks for an admin account, create one, it is harmless, and the
-   nightly restore will replace the whole user table with the primary's anyway.
+   All of that downloads, so do it before this Mac joins the hospital network,
+   exactly as for the primary (`docs/INSTALL_RUNBOOK.md` section 8): Orb is
+   strictly offline. When it asks for an admin account, create one, it is
+   harmless, and the nightly restore will replace the whole user table with the
+   primary's anyway.
 
 2. **Copy the keys from the primary.** The standby needs **both**:
    - `ORB_DB_ENCRYPTION_KEY`, the database is SQLCipher-encrypted; without the
@@ -50,9 +53,8 @@ The standby is a full Orb install that never serves traffic.
    - `ORB_UPLOAD_ENCRYPTION_KEY`, a *different* key protecting Lens images and
      Scribe audio (AES-256-GCM per file).
 
-   Copy them by hand into the standby's `.env`. Do not sync `.env`, the two
-   machines need different `ORB_HEARTBEAT_SITE` values and the standby should not
-   inherit the primary's TLS paths.
+   Copy them by hand into the standby's `.env`. Do not sync `.env`: the standby
+   should not inherit the primary's TLS paths.
 
    > Escrowing only the DB key still loses every image and every dictation.
    > Both keys, in the same envelope, off both machines.
@@ -82,16 +84,6 @@ The standby is a full Orb install that never serves traffic.
    Runs an hour after the primary's 02:30 backup, so it picks up the same night's
    snapshot rather than the previous one.
 
-6. **Turn on the heartbeat on the standby too**, with a distinct site slug:
-   ```
-   ORB_HEARTBEAT_URL=https://...        # same endpoint
-   ORB_HEARTBEAT_SITE=pilot-standby
-   ```
-   It reports `standby.last_restore_age_s` and `standby.last_restore_ok` from the
-   receipt the restore writes. **A standby that quietly stops restoring is a cold
-   standby wearing a warm standby's clothes**, the receipt is the only thing that
-   makes that visible before you need it.
-
 ---
 
 ## What the nightly job actually does
@@ -111,8 +103,16 @@ The standby is a full Orb install that never serves traffic.
 5. Keeps one generation as `orb.db.previous`.
 6. Unpacks the matching `*-uploads.tar` so images and dictation come with the
    chart.
-7. Writes `server/ops/standby/last-restore.json`, the receipt the heartbeat
-   reads.
+7. Writes `server/ops/standby/last-restore.json`, the receipt, on every exit,
+   pass or fail. Nothing reads it automatically and nothing pages anyone: Orb
+   has no internet connection. A person reads it in the daily check (`"ok":
+   true`, and a `finished_utc` from last night), along with the job's log,
+   `logs/orb-standby-restore.log`, where `grep -c '\[standby\]\[fail\]'`
+   should print 0. Run by hand, the script's exit code says the same thing:
+   0 restored, 1 a precondition failed, 2 verification failed and nothing was
+   installed. **A standby that quietly stops restoring is a cold standby
+   wearing a warm standby's clothes**, and the receipt is the only thing that
+   shows it before you need it.
 
 Verification failure installs **nothing** and exits 2, leaving last night's good
 standby in place.
@@ -275,13 +275,12 @@ Record every drill. Date, who ran it, how long steps 1–5 took, what broke.
   take with it. Lose the DB key and every backup on both machines is permanently
   unreadable, there is no recovery path and no vendor who can help.
 - **A shared sync volume is a single point of failure too.** If both Macs mount
-  the same NAS and that NAS dies, the standby stops advancing silently. The
-  heartbeat's `standby.last_restore_age_s` is what catches it.
+  the same NAS and that NAS dies, the standby stops advancing silently. Nothing
+  pages anyone when it does; a person reading the receipt's `finished_utc` and
+  the job's log in the daily check is what catches it.
 
 ## Related
 
 - `docs/BACKUP_AND_RESTORE.md`, backup mechanics, restore drill, key escrow
 - `scripts/standby-restore.sh`, the nightly job (`--help` documents every flag)
 - `scripts/install-standby-schedule.sh`, installs it as a launchd job
-- `server/services/heartbeat_service.py`, what gets reported off the box
-- `ops/heartbeat_receiver.py`, the receiving end that actually pages someone (setup: `docs/INSTALL_RUNBOOK.md`, "Stand up the pager")

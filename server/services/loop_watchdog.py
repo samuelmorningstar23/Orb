@@ -76,10 +76,10 @@ CANNOT catch (be honest about these):
     writes) all require the GIL. Under total starvation Lane 2 contributes
     nothing and Lane 1 is the whole product.
   * Neither lane can page anybody by itself. It writes files, gauges and logs;
-    something outside the process (the pilot's outbound heartbeat) has to read
-    them. status.json is written by the DAEMON THREAD, never by the loop,
-    precisely so it still moves while the loop is dead — and when even that
-    stops, its stale mtime is itself the alarm.
+    a person has to read them (GET /api/health/loop while the loop still
+    answers, the files on disk when it does not). status.json is written by the
+    DAEMON THREAD, never by the loop, precisely so it still moves while the loop
+    is dead, and when even that stops, its stale mtime is itself the alarm.
   * A wedged process may also have wedged its DISK. Every write here is a plain
     stdlib write to an already-open fd or a small file; nothing touches the DB.
   * Lane 1's file can be deleted out from under it without any error — the C
@@ -617,8 +617,8 @@ class LoopWatchdog:
     def _write_status(self, age: Optional[float] = None) -> None:
         """Atomically refresh status.json — the out-of-process alarm surface.
 
-        The pilot's outbound heartbeat runs as a separate process; it can read
-        this file even while the API is frozen, which is the whole point. Written
+        Anyone on the box can read this file even while the API is frozen and
+        /api/health/loop never answers, which is the whole point. Written
         atomically (tmp + os.replace) so a reader never sees a half file, and by
         the DAEMON THREAD only.
         """

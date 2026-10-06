@@ -229,8 +229,8 @@ class ReadingHint:
     `device_id` names the CLOCK the timestamp came off — one monitor, one clock.
     Clock skew is tracked per device rather than per patient, both because that
     is where the fault actually lives (a wrong clock is wrong for every bed it
-    serves) and because the skew report is shown on an admin screen and shipped
-    in the heartbeat, where a patient identifier would be PHI.
+    serves) and because the skew report is shown on an admin screen, where a
+    patient identifier would be PHI.
 
     `device_time_had_offset` records whether the device stated its UTC offset or
     we supplied one. A skew computed against an ASSUMED zone is a weaker claim

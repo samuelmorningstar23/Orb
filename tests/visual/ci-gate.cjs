@@ -50,11 +50,7 @@ const ALLOWLIST = [
       (f.type === 'contrast' || f.type === 'invisible-control' || f.disabled === true),
   },
   {
-    reason: 'Sage hotword toggle is an intentional hover-reveal control (opacity 0 until .sage-fab hover)',
-    match: (f) => f.type === 'invisible-control' && /sage-fab__toggle/.test(f.selector || ''),
-  },
-  {
-    reason: 'Sage FAB orb: dark mic icon sits on a bright gold radial-gradient disc (.sage-fab__orb-visual, pointer-events:none) — ~10:1 visually; compositing misses the decorative layer',
+    reason: 'Sage FAB orb: the icon sits on the painted disc (.sage-fab__orb-visual, pointer-events:none), ~10:1 visually; compositing misses the decorative layer',
     match: (f) => f.type === 'icon-contrast' && /sage-fab__orb/.test(f.selector || ''),
   },
   {

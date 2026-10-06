@@ -88,11 +88,10 @@ it produces opacity/contrast false positives.
 ## Known-intentional allowlist (ci-gate.cjs)
 
 1. DischargeAccess `verify-btn` disabled state (DOB gate / brute-force lockout).
-2. `.sage-fab__toggle` hover-reveal hotword control (opacity 0 by design).
-3. "Session expired"/401 console errors inside `errors/forced-401` and
+2. "Session expired"/401 console errors inside `errors/forced-401` and
    `errors/session-expired` only.
-4. Vite dev HMR websocket noise.
-5. Live mode: LLM-backed streaming endpoints absent in this environment.
+3. Vite dev HMR websocket noise.
+4. Live mode: LLM-backed streaming endpoints absent in this environment.
 
 ## Extending
 
@@ -255,14 +254,15 @@ Critical rows float to the top of the board by their real NEWS2 band, not a
 hardcoded demo patient id. Estimated lab trends render **dashed** (distinct
 from measured data) in addition to the "Estimated" badge.
 
-## 19. Hotword is opt-in and never cloud ASR by default (slice 2)
-**Reach:** any clinician shell (the floating Sage mic).
-**Check:** The hotword is **OFF by default** — no microphone capture starts
-at login. Even when a user enables the hotword, continuous browser speech
-recognition (which streams audio to cloud ASR) stays disabled unless
-`localStorage.orb_allow_cloud_asr === 'true'` is explicitly set — a second,
-deliberate consent. Out of the box, no ward-room audio (PHI) ever leaves the
-device, consistent with the on-prem posture.
+## 19. The floating orb is text-only and never listens (slice 2, revised 4 October 2026)
+**Reach:** any clinician shell (the floating Sage orb).
+**Check:** No microphone capture starts at login or when the orb is clicked.
+Clicking the orb shows "Voice is not available here. Type your question in
+Sage instead." with an **Open Sage to type** button into the Sage panel.
+There is no wake word and no browser speech recognition anywhere, and no
+setting turns either on: Orb is strictly offline. Voice questions go through
+the Sage panel's voice mode on the local speech engine. Scenario:
+`sage/orb-text-only`.
 
 ## 20. Live presence on every patient (slice 3)
 **Reach:** open the same patient (Vigil → patient detail) as two different

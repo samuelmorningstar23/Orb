@@ -68,7 +68,7 @@ graph TD
   LOAD -->|any problem| BOOM[SiteConfigError → printed, exit 2<br/>main.py:36-40]
   LOAD -->|ok| ENV[_to_env :519 → ORB_* variables]
   ENV --> ESC[escalation_service]
-  ENV --> HB[heartbeat_service]
+  ENV --> OPS
   ENV --> HL7[HL7 default timezone]
   LOAD --> MEM[_loaded :558]
   MEM --> SNAP[site_config_snapshot :636]
@@ -214,12 +214,13 @@ sequenceDiagram
 #### The module docstring: `ops_health_service.py:1-54`
 **Does:** States the audience (one on-site IT person, no vendor to ring), lists the eight questions
 (`:14-18`), explains why question 3 is phrased "and DID IT VERIFY" (`:20-32`), asserts the no-PHI
-property (`:34-40`), and names the relationship to `heartbeat_service` (`:42-49`).
-**Why it matters operationally:** `:46-49` records a contract you can rely on, where a threshold
-exists, this module reads **the same environment variable the heartbeat reads**
-(`ORB_HEARTBEAT_BACKUP_MAX_AGE_H`, `ORB_HEARTBEAT_DISK_MIN_PCT`; the heartbeat's copies are at
-`heartbeat_service.py:537-538`). Retune one and you have retuned both. If you ever see the status
-page and the outbound heartbeat disagree about staleness, that contract has been broken.
+property (`:34-40`), and explains why two of its thresholds are still called `ORB_HEARTBEAT_*`
+(`:43-50`).
+**Why it matters operationally:** backup staleness and minimum free disk are read from
+`ORB_HEARTBEAT_BACKUP_MAX_AGE_H` and `ORB_HEARTBEAT_DISK_MIN_PCT`. The names are left over from the
+outbound heartbeat, which was removed on 4 October 2026 when Orb was ruled strictly offline (no
+connection of any kind leaves the building). They are now local thresholds, this module is the only
+thing that reads them, and they keep their names because a site may already set them.
 **Breaks if you change it:** the line that matters most is `:51`, **NEVER RAISES**. A status page
 that can throw is a status page that goes blank during the incident it exists for.
 
@@ -297,12 +298,13 @@ directories existed for a fortnight and each half of the system believed its own
 - worse in the other direction, the admin **create backup** button
   (`routes/backup_routes.py`) also wrote to `server/backups/`, so one click could turn this check
   **green** while the real backup directory rotted untouched;
-- `heartbeat_service._backup_dir()` was already anchored to the repo root, so the heartbeat and this
-  page reported different answers about the same appliance;
+- the outbound heartbeat's own `_backup_dir()` (since removed) was already anchored to the repo
+  root, so the heartbeat and this page reported different answers about the same appliance;
 - and the restore drill selected a **schema-v4** backup from that stale directory when the build
   ships v32, 28 migrations of silent loss, certified as `RESULT: PASS`.
 
-All five resolvers now derive the same path, and
+All four resolvers now derive the same path (five until the heartbeat's was removed on
+4 October 2026), and
 `server/tests/test_warm_standby.py::test_every_backup_dir_resolver_agrees` fails if any of them
 drifts. `test_moving_the_database_does_not_move_the_backup_dir` pins the specific mistake: setting
 `ORB_DB_PATH` must never relocate where backups are looked for. Setting `ORB_BACKUP_DIR` explicitly
@@ -433,7 +435,7 @@ did it verify**.
    from the admin screen do not leave a receipt, that is why this says 'unchecked' rather than
    'broken'."*
 4. **Verified but stale** (`:449`) → **attention**: older than `ORB_HEARTBEAT_BACKUP_MAX_AGE_H`
-   (default 36 hours, `:353`). The phrasing is careful, *"It was checked successfully when it was
+   (a local threshold despite the name, default 36 hours, `:353`). The phrasing is careful, *"It was checked successfully when it was
    made, so it is usable, it is just out of date."*
 5. **Verified and fresh** (`:484`) → **ok**, with the proof quoted from the receipt: *"It contains
    214 patient record(s) and 88,301 history entries."*
@@ -532,7 +534,8 @@ and reports the worse of them.
 - **Critical** (`:706`) → **urgent** when free space is below a quarter of the warning level **or
   under 2 GB**. The advice is an ordered list of what is safe to delete, ending with *"Do not delete
   anything under the uploads folder, those are patient scans and recordings."*
-- **Low** (`:722`) → **attention**, below `ORB_HEARTBEAT_DISK_MIN_PCT` (default 10%).
+- **Low** (`:722`) → **attention**, below `ORB_HEARTBEAT_DISK_MIN_PCT` (a local threshold despite the name,
+  default 10%).
 - **Fine** (`:735`) → **ok**, quoting both volumes.
 **Why two volumes:** on this appliance they are usually the same disk, but the moment a site points
 `ORB_BACKUP_DIR` at an external drive they diverge, and a full backup drive is a silent backup
@@ -971,14 +974,15 @@ consult.
 | `escalation.escalate_on_single_parameter_3` | `ORB_ESCALATION_ON_SINGLE_PARAM_3` | `escalation_service` |
 | `escalation.scan_lookback_minutes` | `ORB_ESCALATION_SCAN_LOOKBACK_MINUTES` | `escalation_service` |
 | `escalation.relay_notify` | `ORB_ESCALATION_RELAY_NOTIFY` | `escalation_service` |
-| `operations.backup_max_age_hours` | `ORB_HEARTBEAT_BACKUP_MAX_AGE_H` | `heartbeat_service:537`, `ops_health_service:353` |
-| `operations.disk_min_free_percent` | `ORB_HEARTBEAT_DISK_MIN_PCT` | `heartbeat_service:538`, `ops_health_service:696` |
+| `operations.backup_max_age_hours` | `ORB_HEARTBEAT_BACKUP_MAX_AGE_H` | `ops_health_service:353` |
+| `operations.disk_min_free_percent` | `ORB_HEARTBEAT_DISK_MIN_PCT` | `ops_health_service:696` |
 | `site.timezone` | `ORB_HL7_DEFAULT_TZ` | `config.HL7_DEFAULT_TZ` |
 
 **Why a translation and not a second source of truth** (`:520-525`): `escalation_service` keeps being
-the **only** thing that interprets a tier ladder; `heartbeat_service` keeps being the **only** thing
-that interprets a staleness threshold. Forking a second reader is the precise mistake that produced
-the nurse-board scope hole, a surface growing its *own* idea of a value beside the existing one.
+the **only** thing that interprets a tier ladder; `ops_health_service` keeps being the **only** thing
+that interprets a staleness threshold (the two `ORB_HEARTBEAT_*` names are leftovers from the
+removed outbound heartbeat; both are local thresholds now). Forking a second reader is the precise
+mistake that produced the nurse-board scope hole, a surface growing its *own* idea of a value beside the existing one.
 **The timezone note is not decoration** (`:548-550`): an HL7 timestamp with no UTC offset is read in
 this zone, and getting it wrong once stamped **every reading 5.5 hours into the future** in a
 UTC+05:30 hospital.
@@ -1222,12 +1226,12 @@ mid-shift, that a day of charting is gone.
 
 | Contract | Producer | Consumer | Breaks how |
 |---|---|---|---|
-| `ORB_HEARTBEAT_BACKUP_MAX_AGE_H`, `ORB_HEARTBEAT_DISK_MIN_PCT` | `site_config_service._to_env` (`:542-545`) | `heartbeat_service:537-538`, `ops_health_service:353`, `:696` | fork one reader and the status page and the outbound heartbeat disagree about the same appliance |
+| `ORB_HEARTBEAT_BACKUP_MAX_AGE_H`, `ORB_HEARTBEAT_DISK_MIN_PCT` | `site_config_service._to_env` (`:542-545`) | `ops_health_service:353`, `:696` (the only reader; the names are leftovers from the outbound heartbeat removed 2026-10-04, both are local thresholds) | fork a second reader and two surfaces disagree about the same appliance |
 | `ORB_ESCALATION_TIERS` (JSON array of `{tier, role, label, timeout_minutes, entry_min_news2}`) | `_to_env` (`:530`) | `escalation_service.tier_policy()` | the file becomes decorative, the operator edits timings, the ward escalates on the old ones |
 | `ORB_HL7_DEFAULT_TZ` | `_to_env` (`:551`) | `config.HL7_DEFAULT_TZ` | bedside timestamps land hours in the future; it has happened |
 | Receipt schema `orb.backup.verification/1` (`ops_health_service:80`) | **nobody today**, intended: `scripts/backup.sh` | `_read_receipt` (`:335`) | with no producer, every verified backup reports as unproven |
 | Backup filename `orb-backup-*.db` + `*-uploads.tar` | `scripts/backup.sh:64-65`, `:185` | `_check_backups` (`:365`, `:396`), `restore-drill.sh:53-54`, `standby-restore.sh:79-80`, `:364` | rename the prefix in one place and the status page reports "no backups at all" |
-| `ORB_BACKUP_DIR` | operator `.env` | all five resolvers: `config.BACKUP_DIR`, `ops_health_service._backup_dir` (`:118`), `heartbeat_service._backup_dir`, `routes/backup_routes._out_dir`, `scripts/backup_db._resolve_out_dir`, plus `backup.sh:60`, `restore-drill.sh:71`, `standby-restore.sh:81` | all default to `<repo>/backups` since 2026-08-15; `test_every_backup_dir_resolver_agrees` fails if one drifts |
+| `ORB_BACKUP_DIR` | operator `.env` | all four resolvers: `config.BACKUP_DIR`, `ops_health_service._backup_dir` (`:118`), `routes/backup_routes._out_dir`, `scripts/backup_db._resolve_out_dir`, plus `backup.sh:60`, `restore-drill.sh:71`, `standby-restore.sh:81` | all default to `<repo>/backups` since 2026-08-15; `test_every_backup_dir_resolver_agrees` fails if one drifts |
 | `admin.overview` | `permissions.py:95`, granted to `admin` at `:156` | both ops endpoints, `/api/health/access` (`main.py:900`), backup routes, governance dashboard | widening it hands the appliance's weak points to every clinician |
 | `bootstrap_snapshot()` keys (`admins_active`, `admins_with_mfa`, `default_credential_accounts`, `state`) | `bootstrap_service:482` | `_check_access` (`:833-843`) | a renamed key silently degrades the access check to "not finished checking yet" |
 | `registry.status()` → `{count, sources[{running, stats{last_error, last_reading_at}}]}` | `vitals_source/registry.py:93` | `_check_integrations` (`:578-621`) | a shape change makes every feed read as "never delivered a reading" |
@@ -1262,8 +1266,10 @@ mid-shift, that a day of charting is gone.
 12. **Explain the bound, not just the breach.** "Out of range" makes an operator pick the nearest
     legal number; "NEWS2 tops out at 20, so nothing would ever escalate" makes them pick the right
     one.
-13. **Read the same threshold the alerting path reads.** A status page that disagrees with the
-    heartbeat is worse than either alone.
+13. **One threshold, one reader.** Backup staleness and minimum free disk are interpreted only by
+    the status page. While the outbound heartbeat also read them (removed 4 October 2026, Orb is
+    strictly offline), both had to read the same variable, because two surfaces that disagree
+    about the same appliance are worse than either alone.
 14. **Refuse dangerous installs by probing, not by asking.** The standby installer curls
     `/api/health` and stops if anything answers.
 
@@ -1305,7 +1311,7 @@ mid-shift, that a day of charting is gone.
    existed and had diverged for a fortnight: `server/backups/` held five **schema-v4** artefacts
    from 2026-08-01 while every real nightly backup landed in `<repo>/backups`. The restore drill
    selected from the stale one and certified a database that predated **28 migrations**.
-   All five resolvers now derive `<repo>/backups` from `config.BACKUP_DIR`, the stale artefacts are
+   All four resolvers now derive `<repo>/backups` from `config.BACKUP_DIR`, the stale artefacts are
    quarantined (`stale-backups/README.md`), and three tests in
    `server/tests/test_warm_standby.py` hold the line, 
    `test_every_backup_dir_resolver_agrees`, `test_moving_the_database_does_not_move_the_backup_dir`

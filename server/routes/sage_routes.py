@@ -3859,9 +3859,8 @@ def get_ward_brief(request: Request,
 
 @router.get("/ai-posture")
 def get_ai_posture(user: dict = Depends(get_current_user)):
-    """Client-visible AI governance posture (no secrets). The frontend uses
-    cloud_speech_allowed to gate webkitSpeechRecognition (browser mic audio to
-    a cloud ASR is egress of spoken PHI) and shows provider provenance."""
+    """Client-visible AI governance posture (no secrets): the local model the
+    UI names as provenance, and whether on-appliance transcription can run."""
     from services.ai_governance import ai_posture
     return ai_posture()
 

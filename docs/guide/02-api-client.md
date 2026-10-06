@@ -394,7 +394,7 @@ The `Message` type carries provenance flags `is_bot`/`source` so automated posts
 **Does:** Streams the low-latency Sage voice-agent answer, delivering per-token deltas and final timing stats.
 **How it works:** 1. Builds `{query, patient_id, conversation_history?}`, history only included when non-empty (`:564-567`). 2. Raw fetch POST to `/sage/voice` (`:568-576`); non-OK → `handleResponseError`. 3. Per event: `data.token` is the **delta** (unlike `querySage`'s cumulative `onChunk`) appended and forwarded (`:586-589`); `data.done && data.timing` captures `{ttft_ms, total_ms, tokens}` (`:590-592`; ttft = time to first token); `data.error` throws (`:593-595`).
 **Why it exists:** The voice assistant needs token deltas (for progressive speech synthesis) and latency telemetry.
-**Talks to:** SagePanel and SageFloatingAssistant (`src/components/sage/SageFloatingAssistant.tsx:4`).
+**Talks to:** SagePanel's voice mode only. (The floating orb used to call it too; it went text-only on 4 October 2026.)
 **Data in/out:** as above; returns `{fullResponse, timing?}`.
 **Change guide:** Mirror changes in the backend voice route's frame schema; keep the delta semantics, consumers concatenate.
 **Gotchas:** **Error swallowing bug:** the `throw new Error(data.error)` at `:594` is caught by the surrounding `catch (e)` at `:596`, which only re-throws when `e.message === 'Voice agent query failed'` (`:597`). Any *other* server-reported error message is silently discarded and the function returns a truncated `fullResponse` as if successful. See Discrepancies.

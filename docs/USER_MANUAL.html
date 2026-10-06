@@ -339,7 +339,7 @@ p > em:only-child {
 <p>This stance is enforced in the software, not just promised:</p>
 <ul>
 <li><strong>There is no cloud AI lane at all.</strong> This is stronger than "off by default", and it is worth stating precisely because it is the claim a reviewer will check. Orb ships exactly one chat provider, the local one, and there is no cloud AI SDK in its dependencies at all, so there is no hosted lane to enable, no provider to configure and no switch to leave in the wrong position. Every clinical AI request runs on the machine in your building, and the audit record for each one is written with its lane recorded as local because that is the only value it can take. (An optional hosted lane existed in an earlier version; it was removed entirely in July 2026, and this paragraph previously described its controls. If you are auditing against an older copy of this manual, that is why.)</li>
-<li><strong>No cloud speech recognition by default.</strong> Browser-based cloud dictation streams your voice to an outside service, so Orb refuses to use it unless an administrator has explicitly allowed it. Voice features use the local Whisper engine instead.</li>
+<li><strong>No cloud speech recognition, ever.</strong> Browser-based cloud dictation streams your voice to an outside service, so Orb does not support it and there is no setting that turns it on. Voice input uses only the local speech engine (Whisper) on the Orb server, which is installed with Orb and never downloads anything while running, and spoken answers use only voices that run on your own device.</li>
 <li><strong>Self-contained by design.</strong> Fonts and interface assets are bundled with the application rather than fetched from the internet, so Orb renders correctly on an offline, locked-down hospital network.</li>
 <li><strong>Accountability alongside autonomy.</strong> Every change anyone makes is written to a tamper-evident audit log in which each entry is cryptographically chained to the previous one, deleting or editing history breaks the chain visibly. Access to patient media (images, audio) is authenticated, scoped to the patient, and refused outright if the audit record cannot be written first.</li>
 </ul>
@@ -1245,7 +1245,7 @@ p > em:only-child {
 <tr>
 <td><strong>Floating orb</strong></td>
 <td>Bottom corner of every clinician screen</td>
-<td>Hands-free voice assistant ("Ask Sage"), aware of what is on your screen</td>
+<td>Text-only shortcut ("Ask Sage") that points you to Sage to type; it does not listen</td>
 </tr>
 <tr>
 <td><strong>Sage Copilot / insights</strong></td>
@@ -1396,24 +1396,17 @@ p > em:only-child {
 <h3 id="45-voice-mode-in-the-sage-tab">4.5 Voice mode in the Sage tab</h3>
 <p>The microphone icon in the composer toggles <strong>Voice mode</strong> (tooltip "Voice mode" / "Switch to text").</p>
 <ol>
-<li>Click the microphone. Sage shows "Voice Mode, Sage is ready to listen" and begins recording automatically.</li>
-<li>Speak your question. A status card shows <strong>"Listening… tap to stop &amp; send"</strong> with an elapsed timer and, where enabled, a live transcript. After about two seconds of silence recording stops on its own; you can also tap the stop square.</li>
+<li>Click the microphone. Sage shows "Voice Mode, Sage is ready to listen" and begins recording automatically. If the local speech engine is not installed on your Orb server, Sage does not switch to voice mode; it says straight away <strong>"Voice questions are not available on this appliance: local speech recognition is not installed. Type your question instead."</strong></li>
+<li>Speak your question. The status reads <strong>"Listening… (local transcription; tap to stop)"</strong> with an elapsed timer. No text appears while you speak, and recording does not stop on its own: tap the stop square when you have finished.</li>
 <li>The audio is transcribed <strong>locally by Whisper</strong> ("Transcribing with Whisper AI…"). Transcription is biased with the current patient names so spoken names resolve correctly, and a clinical spelling corrector fixes common drug-name mis-hearings (e.g. "meropenim" → "Meropenem").</li>
-<li>The transcript is sent to Sage ("Sending to Sage…"), and the reply is displayed and <strong>spoken aloud</strong> sentence-by-sentence. When Sage finishes speaking it automatically listens for your follow-up, giving a continuous back-and-forth.</li>
+<li>The transcript is sent to Sage ("Sending to Sage…"), and the reply is displayed and <strong>spoken aloud</strong> sentence-by-sentence by a voice that runs on your device. If your device has no on-device voice, Sage does not speak and the answer is shown on screen only. When Sage finishes speaking (or, with no on-device voice, when the answer is complete) it automatically listens for your follow-up, giving a continuous back-and-forth.</li>
 </ol>
 <p>Voice replies come from the faster conversational model rather than the large reasoning model, trading some depth for speed. Status lines cycle through "Sage is thinking…", "Sage is speaking…", and "Tap to speak".</p>
-<p><strong>Privacy gating.</strong> The live on-screen transcript and silence auto-stop use the browser's speech recognition, which sends audio to a cloud service. If your deployment's privacy posture forbids that, the live preview is disabled and the status reads <strong>"Listening… (local transcription; tap to stop)"</strong>, recording and Whisper transcription still work fully locally; you tap to stop instead of relying on silence detection.</p>
-<p><strong>One microphone, many surfaces.</strong> Only one Sage surface may hold the microphone at a time; if the floating orb or Scribe dictation has it, the panel shows "Microphone is in use by another Sage surface."</p>
+<p><strong>Local speech only.</strong> Everything in voice mode happens on the Orb server and your device: the recording is transcribed by the local speech engine, and answers are spoken only by a voice that runs on your device. Orb never uses the browser's own cloud speech recognition, and there is no setting that turns it on.</p>
+<p><strong>One microphone, many surfaces.</strong> Only one voice surface may hold the microphone at a time; if Scribe or Ward Round dictation has it, the panel shows "Microphone is in use by another Sage surface."</p>
 <h3 id="46-the-floating-ask-sage-orb">4.6 The floating Ask Sage orb</h3>
-<p>A small glowing orb sits in the bottom corner of <strong>every</strong> clinician screen, Patients, Orders, Relay, anywhere. Its tooltip reads <strong>"Ask Sage"</strong>. It is a hands-free voice assistant with four visible states: dormant, listening (pulsing rings and a "Listening..." label), processing ("Thinking"), and speaking (a stop square).</p>
-<ul>
-<li><strong>Click to talk.</strong> Click the orb, speak, and pause, after about a second of silence the question submits. A card pops up showing your question and the streamed answer, with the active patient's name in the header when one is open.</li>
-<li><strong>"Sage" hotword.</strong> A small toggle beside the orb enables the wake word (tooltip: "Enable 'Sage' hotword"). With it on, saying <em>"Sage, what's the latest on bed six?"</em> from anywhere wakes the assistant and carries straight into the question.</li>
-<li><strong>Barge-in.</strong> Say "Sage" while it is speaking to interrupt and ask something new; clicking the orb mid-speech stops it.</li>
-<li><strong>Follow-ups.</strong> After an answer, the orb listens for about five seconds for a follow-up, no hotword needed, then goes dormant. It remembers your last ten exchanges in the session.</li>
-<li><strong>Screen awareness.</strong> The orb sends the same view context as the panel, so "summarise this chart" works on whatever patient you have open.</li>
-</ul>
-<p>The orb greys out while another surface owns the microphone (panel voice mode, Scribe dictation). If the deployment forbids cloud speech, clicking the orb explains that voice input is disabled by the privacy posture and points you to text chat in the Sage tab.</p>
+<p>A small orb sits in the bottom corner of <strong>every</strong> clinician screen, Patients, Orders, Relay, anywhere. Its tooltip reads <strong>"Ask Sage"</strong>. The orb is text-only: it never listens. Clicking it opens a small card, <strong>"Voice is not available here. Type your question in Sage instead."</strong>, with an <strong>Open Sage to type</strong> button that takes you to the Sage tab. Press Escape or click the orb again to close the card. Sage still knows what is on your screen, so "summarise this chart" works on whatever patient you have open.</p>
+<p>There is no wake word and nothing listens in the background. To ask by voice, use voice mode in the Sage tab (4.5), which uses the local speech engine on the Orb server.</p>
 <h3 id="47-asking-sage-to-do-something-drafted-actions-never-executions">4.7 Asking Sage to <em>do</em> something: drafted actions, never executions</h3>
 <p>Sage is read-only against the chart. When you ask it to act, "Add paracetamol 500 mg for Ajay", two independent detectors fire: a deterministic phrase gate on your request, and the model's own declared intent. Either puts the turn into <strong>action mode</strong>:</p>
 <ol>
@@ -1568,18 +1561,23 @@ p > em:only-child {
 </tr>
 <tr>
 <td><strong>"Microphone is in use by another Sage surface."</strong></td>
-<td>The floating orb or Scribe dictation holds the mic</td>
+<td>Scribe or Ward Round dictation holds the mic</td>
 <td>Stop the other surface, then retry</td>
 </tr>
 <tr>
-<td>Orb won't listen; "privacy posture" message</td>
-<td>The deployment disallows cloud speech recognition</td>
-<td>Use text chat in the Sage tab, or ask an administrator to review the setting</td>
+<td>Clicking the floating orb shows "Voice is not available here"</td>
+<td>The orb is text-only by design</td>
+<td>Press <strong>Open Sage to type</strong>, or use voice mode in the Sage tab</td>
 </tr>
 <tr>
-<td>"Sage" hotword not responding</td>
-<td>Hotword toggle off, mic permission denied, or cloud speech disabled</td>
-<td>Check the toggle beside the orb and browser mic permission</td>
+<td><strong>"Voice questions are not available on this appliance…"</strong></td>
+<td>The local speech engine is not installed on this Orb server</td>
+<td>Type your question; ask your administrator to complete the speech-engine installation</td>
+</tr>
+<tr>
+<td>Sage answers on screen but does not speak</td>
+<td>This device has no on-device voice, and Sage never uses one that sends text to an outside service</td>
+<td>Read the answer on screen; ask IT whether an on-device voice can be installed on this computer</td>
 </tr>
 <tr>
 <td>An old patient keeps appearing in answers</td>
@@ -1664,7 +1662,7 @@ p > em:only-child {
 </tbody>
 </table>
 <p>Choose the language <strong>before</strong> you start recording, the selector is locked while a recording or refinement is in progress. The selection applies to both dictation modes.</p>
-<p>Note that the instant on-screen preview text shown during standard dictation (see below) is English-only; the accurate transcript that replaces it when you stop respects your language selection.</p>
+<p>There is no word-by-word preview during standard dictation: the transcript appears when you stop, produced by the local speech engine in the language you selected.</p>
 <h3 id="54-capturing-a-note-three-ways">5.4 Capturing a note: three ways</h3>
 <h4>5.4.1 Typing</h4>
 <p>The simplest path: click into the input bar, type or paste your note, and proceed straight to structuring (5.6). Nothing about the AI pipeline requires voice, a typed transcript flows through exactly the same drafting and verification stages as a dictated one.</p>
@@ -1673,12 +1671,12 @@ p > em:only-child {
 <ol>
 <li>Click the <strong>microphone button</strong>. Your browser may ask for microphone permission the first time, allow it.</li>
 <li>The status line shows <strong>"Recording, speak now…"</strong> and a red recording indicator with a running timer appears next to the <strong>Transcript</strong> heading.</li>
-<li>Speak naturally. Depending on how your deployment is configured, you may see instant live text appear as you talk (see the note below). Don't worry about its accuracy, it is only a preview.</li>
+<li>Speak naturally. No text appears while you talk; the transcript box reads "Recording. The transcript appears when you stop."</li>
 <li>Click the microphone button again (<strong>Stop recording</strong>) when you are done.</li>
-<li>The status changes to <strong>"Refining with medical AI…"</strong> and a "Refining…" indicator appears. Orb now runs the full recording through its local medical speech engine, which is far more accurate on clinical vocabulary and drug names than any live preview.</li>
-<li>When refinement completes, the transcript is replaced with the accurate version and the status reads <strong>"Medical transcription complete"</strong>. You can now edit the text freely before structuring.</li>
+<li>The status changes to <strong>"Refining with medical AI…"</strong> and a "Refining…" indicator appears. Orb now runs the full recording through its local medical speech engine, which is biased toward clinical vocabulary and drug names.</li>
+<li>When refinement completes, the transcript appears in the text field and the status reads <strong>"Medical transcription complete"</strong>. You can now edit the text freely before structuring.</li>
 </ol>
-<p><strong>About the live preview.</strong> During recording, Scribe can display instant, word-by-word text using the browser's built-in speech recognizer. Because that recognizer may send audio to a cloud service, a patient-privacy consideration, Orb only enables it when the deployment's privacy posture permits cloud speech. If your installation disallows it, you will simply see "Listening…" while you speak, and the full transcript appears after you stop, produced entirely by the local engine. Either way, the local engine's output is the source of truth.</p>
+<p><strong>Local speech only.</strong> Dictation never uses the browser's built-in speech recognizer, which would send your voice to an outside service. Orb does not support it and there is no setting that turns it on. Everything you say is transcribed by the local speech engine on the Orb server.</p>
 <p><strong>Shared microphone.</strong> Scribe shares the microphone with Sage's voice features. If Sage is actively listening, Scribe will refuse to start and display "Microphone is in use by Sage, stop it before dictating." Stop the Sage voice session first, then start dictation.</p>
 <p><strong>Very short recordings.</strong> A recording of less than roughly a second is rejected with "Recording too short", record again and speak for at least a few seconds.</p>
 <h4>5.4.3 Live streaming, utterance by utterance</h4>
@@ -1690,7 +1688,7 @@ p > em:only-child {
 <li>Click the button again ("Stop live streaming") when you are finished. The accumulated transcript remains on screen for editing and structuring.</li>
 </ol>
 <p>Streaming mode transcribes each utterance with the same local medical speech engine used by the refine step, including drug-name correction, so the text you see is already the accurate version, there is no separate refinement pass at the end.</p>
-<p><strong>The local speech engine is an optional server component.</strong> Both dictation modes depend on Orb's locally installed speech-recognition engine (a Whisper model accelerated for Apple Silicon). On some installations this component is deferred at setup time and installed later. If it is not present, typing still works fully, and the live browser preview (where permitted) still works, but the refine step will report <strong>"Refinement unavailable, using browser transcript"</strong> and live streaming will return errors. Ask your administrator to complete the speech-engine installation if you see this persistently; administrators can check the engine's warm-daemon status from the server's diagnostics.</p>
+<p><strong>The local speech engine is installed with Orb.</strong> Both dictation modes depend on Orb's locally installed speech-recognition engine (a Whisper model accelerated for Apple Silicon). It is installed with the appliance and never downloads anything while Orb is running. If it is not installed on your server, Scribe says so before you start: both microphone buttons are disabled and a note reads <strong>"Voice dictation is not available on this system"</strong>. Typing a note and structuring it still work fully. Ask your administrator to complete the speech-engine installation; administrators can check the engine's warm-daemon status from the server's diagnostics.</p>
 <h3 id="55-linking-the-note-to-a-patient">5.5 Linking the note to a patient</h3>
 <p>Once a transcript exists and recording has stopped, an action row appears beneath the transcript. Its first control is a patient selector:</p>
 <ul>
@@ -1872,12 +1870,16 @@ p > em:only-child {
 <td>The recording was under about a second. Record again and speak for several seconds.</td>
 </tr>
 <tr>
-<td>"Whisper empty, using browser transcript"</td>
-<td>The local speech engine returned nothing (usually silence or an audio problem). The live-preview text, if any, is kept. Re-record closer to the microphone.</td>
+<td>"Nothing was transcribed from that recording. Try again, or type the note."</td>
+<td>The local speech engine heard nothing usable (usually silence or an audio problem). Re-record closer to the microphone.</td>
 </tr>
 <tr>
-<td>"Refinement unavailable, using browser transcript"</td>
-<td>The local speech engine could not be reached, it may not be installed yet on this server, or its warm daemon is down. Typing still works; ask your administrator to check the speech-engine installation and daemon status.</td>
+<td>"Voice dictation is not available on this system" (microphone buttons disabled)</td>
+<td>The local speech engine is not installed on this server. Typing still works; ask your administrator to complete the speech-engine installation.</td>
+</tr>
+<tr>
+<td>"Transcription failed on this appliance. Try again, or type the note."</td>
+<td>The local speech engine is installed but could not be reached, usually because its warm daemon is down. Typing still works; ask your administrator to check the daemon status.</td>
 </tr>
 <tr>
 <td>"Streaming error" messages in live mode</td>
@@ -1911,7 +1913,7 @@ p > em:only-child {
 <li><strong>Verification is an aid, not a guarantee.</strong> The hallucination check is itself an AI model. A <strong>✅ Verified</strong> badge raises confidence but does not replace your own reading; conversely, findings under <strong>⚠️ Review suggested</strong> may include false positives. The one thing the system enforces is that a note which <em>failed</em> or <em>never received</em> verification cannot be silently one-click signed.</li>
 <li><strong>Fail-safe verification.</strong> If the verifier itself breaks mid-check, Orb records "could not verify" rather than inventing a pass, an unverifiable note is treated the same as a failing one at the sign-gate.</li>
 <li><strong>Speech recognition mishears.</strong> Clinical dictation is hard for any speech engine. Orb biases recognition toward medical vocabulary and corrects drug names against a pharmacology dictionary, but numbers, doses, and similar-sounding drugs remain the highest-risk transcription errors. Always check doses and medication names in the draft against what you said.</li>
-<li><strong>Live preview privacy.</strong> The instant word-by-word preview during dictation may use the browser's cloud speech service and is disabled entirely on deployments that forbid sending audio off-site. The accurate transcript is always produced locally.</li>
+<li><strong>No word-by-word preview.</strong> Because Orb never sends audio to an outside service, there is no instant preview while you record a standard dictation; the transcript appears when you stop. Live streaming mode (5.4.3) gives you text utterance by utterance, still produced locally.</li>
 <li><strong>Signed means signed.</strong> Signed notes cannot be edited or deleted from the interface, only superseded through the revision workflow, keeping the original visible in the record. Rejections require a stated reason. All of it is audited.</li>
 <li><strong>Not a decision-support tool.</strong> Scribe documents what you said. It does not validate the clinical correctness of your assessment or plan, and its output must not be used as diagnostic advice.</li>
 </ul>
@@ -5114,7 +5116,7 @@ Role: <strong>Anesthetist</strong></p>
 </tr>
 <tr>
 <td>Whisper large-v3 (optional)</td>
-<td>Scribe's local speech-recognition engine; deferred on some installations</td>
+<td>The local speech-recognition engine for Scribe, Sage voice mode and Ward Round dictation. Installed with the appliance and never downloaded at runtime; where it is not installed, voice features say so up front and typing still works</td>
 <td>varies</td>
 </tr>
 </tbody>
@@ -5228,7 +5230,7 @@ Role: <strong>Anesthetist</strong></p>
 <p><strong>Does Orb need an internet connection?</strong>
 Only during setup (model downloads) and the first start (the knowledge-index build). Day-to-day operation is fully local.</p>
 <p><strong>Is any patient data sent to a cloud AI?</strong>
-No, all models run on the machine in your facility. The one nuance is Scribe's optional live dictation preview, which can use the browser's own speech recognizer; deployments that forbid off-site audio disable it, and the authoritative transcript is always produced locally.</p>
+No, all models run on the machine in your facility, including speech recognition. Orb does not use the browser's own cloud speech recognizer and cannot be set to, and spoken answers use only voices that run on your device.</p>
 <p><strong>Why is the first AI answer after startup slow?</strong>
 The model was still loading into memory. Orb pre-warms its models at startup and keeps them warm; if you beat the warm-up, the first answer pays the loading cost. Later answers are fast.</p>
 <p><strong>Sage says "Sorry, I encountered an error. Please try again.", every time. What now?</strong>

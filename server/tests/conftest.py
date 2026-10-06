@@ -387,9 +387,9 @@ def _no_real_knowledge_pool(request):
     # Deliberately not via the monkeypatch fixture: an autouse conftest fixture
     # that depends on monkeypatch instantiates it first for EVERY test, which
     # flips the teardown order a module-level autouse fixture may rely on
-    # (test_heartbeat_service's _no_env_leaks asserts the environment is back
-    # to its snapshot and must tear down after monkeypatch's undo; with the
-    # dependency it tore down before, and all 25 tests errored).
+    # (a fixture that asserts the environment is back to its snapshot must tear
+    # down after monkeypatch's undo; with the dependency it tore down before,
+    # and every test in its module errored).
     if request.node.get_closest_marker("real_knowledge_pool"):
         yield
         return

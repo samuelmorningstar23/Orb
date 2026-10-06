@@ -56,7 +56,7 @@ vi.mock('../../api/scribeAdmission', () => ({
 }))
 
 vi.mock('../../contexts/SageRuntimeContext', () => ({
-  useSageRuntime: () => ({ claimMic: () => true, releaseMic: () => {}, cloudSpeechAllowed: false }),
+  useSageRuntime: () => ({ claimMic: () => true, releaseMic: () => {} }),
 }))
 
 vi.mock('../../hooks/useStreamingTranscription', () => ({
@@ -197,8 +197,8 @@ describe('honest ASR state', () => {
     const hint = screen.getByTestId('scribe-landing-hint')
     expect(hint).not.toHaveTextContent(/real-time/)
     expect(hint).toHaveTextContent(/Voice dictation is not available on this system/)
-    // Both mic paths are disabled with an explanation (cloud speech is off in
-    // this posture, so there is no transcription path at all).
+    // Both mic paths are disabled with an explanation (the local engine is the
+    // only transcription path, and it is not installed here).
     const micButtons = screen.getAllByTitle('Voice dictation is not available on this system')
     expect(micButtons).toHaveLength(2)
     micButtons.forEach(btn => expect(btn).toBeDisabled())

@@ -784,18 +784,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Bootstrap access check failed to start (non-fatal): %s", e)
 
-    # ── Outbound heartbeat ──
-    # Off unless ORB_HEARTBEAT_URL is set. Runs on its own daemon thread with a
-    # blocking stdlib HTTP client and reads the watchdog's status.json from DISK,
-    # so it still reports while the event loop is starved — which is the failure
-    # it exists to page about. Carries no PHI (asserted in
-    # tests/test_heartbeat_service.py against the real serialised payload).
-    try:
-        from services.heartbeat_service import start_heartbeat
-        start_heartbeat()
-    except Exception as e:
-        logger.warning("Heartbeat failed to start (non-fatal): %s", e)
-
     # ── Vitals sources ──
     # One registry owns the simulator, manual entry and (when configured) the
     # bedside-monitor feed. start_all never raises: a monitor whose VLAN is down
@@ -825,14 +813,6 @@ async def lifespan(app: FastAPI):
     try:
         from services.loop_watchdog import stop_watchdog
         stop_watchdog()
-    except Exception:
-        pass
-
-    # Stop the heartbeat before the loop drains: a "healthy" beat sent while the
-    # process is on its way down is a lie an operator would act on.
-    try:
-        from services.heartbeat_service import stop_heartbeat
-        stop_heartbeat()
     except Exception:
         pass
 
@@ -1274,8 +1254,9 @@ async def health_loop():
     and where the automatic thread dump was written. The two channels that DO
     survive a frozen loop are out-of-process: the watchdog's status.json (written
     by a daemon thread) and the dead-man dump file (written by a GIL-free C
-    thread). Both paths are reported in this payload so the heartbeat knows where
-    to look. Unauthenticated, same as /api/health — it carries no PHI.
+    thread). Both paths are reported in this payload so whoever is checking the
+    box knows which files to open. Unauthenticated, same as /api/health, since
+    it carries no PHI.
     """
     from services.loop_watchdog import watchdog_status
     return watchdog_status()
@@ -1288,12 +1269,11 @@ from permissions import require_permission
 
 @app.get("/api/health/access")
 def health_access(user: dict = Depends(require_permission("admin.overview"))):
-    """Fresh-install access posture + outbound-heartbeat state, for an admin.
+    """Fresh-install access posture, for an admin.
 
     Answers the two questions services/bootstrap_service.py checks at every
     boot — is there a login-capable administrator, and is any staff account
-    still holding one of Orb's shipped demo passwords — plus whether the
-    heartbeat is armed and what it last did.
+    still holding one of Orb's shipped demo passwords.
 
     Admin-gated because it enumerates the appliance's weak points, and a plain
     `def` (FastAPI runs it in the threadpool) because reading the snapshot is
@@ -1302,8 +1282,7 @@ def health_access(user: dict = Depends(require_permission("admin.overview"))):
     used to make the box do minutes of work per request.
     """
     from services.bootstrap_service import bootstrap_snapshot
-    from services.heartbeat_service import heartbeat_status
-    return {"access": bootstrap_snapshot(), "heartbeat": heartbeat_status()}
+    return {"access": bootstrap_snapshot()}
 
 
 @app.get("/api/health/models")

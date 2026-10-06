@@ -210,7 +210,7 @@ out); `routes/bridge_routes.py:130`; `routes/surgery_routes.py:680`;
 | `nurse_shift_service.py` | 997 | 16 | 0 | **NONE** |
 | `shadow_export_service.py` | 977 | 28 | 0 | **NONE** |
 | `sage_provenance_service.py` | 974 | 28 | 0 | **NONE** |
-| `heartbeat_service.py` | 962 | 30 | 1 | **NONE** |
+| `heartbeat_service.py` | 962 | 30 | 1 | **NONE** (file removed 2026-10-04, Orb is strictly offline) |
 | `emar_service.py` | 883 | 12 | 0 | **NONE** |
 | `vigil_service.py` | 867 | 9 | 0 | ch 07 |
 | `relay_service.py` | 854 | 15 | 1 | ch 08 |
@@ -650,7 +650,7 @@ invisible:
    `llm_providers.py`, `ai_governance.py`, `src/api/thinkingMode.ts`, `/api/sage/ai-posture`.
    The safety floor (patient + dosing stay on the 27B model) is a load-bearing product decision
    with no written description.
-8. **Operational resilience.** `loop_watchdog.py` (784 ln), `heartbeat_service.py` (962 ln),
+8. **Operational resilience.** `loop_watchdog.py` (784 ln), `heartbeat_service.py` (962 ln, removed 2026-10-04),
    `bootstrap_service.py` (746 ln), `batch_coordinator.py`, `routes/backup_routes.py`,
    `server/ops/watchdog/`.
 9. **Users and access administration.** `routes/admin_users_routes.py` (8 routes),
@@ -695,7 +695,7 @@ thing a reader would go looking for.
 | 45 | Patient chart timeline, story and review marks | `patient_timeline_service.py`, `patient_story_service.py`, the 3 chart routes, unseen counts, `patient_review_marks`, and the `PatientStory` / `ClinicalCourseTimeline` components including the ward-board unseen badge. |
 | 46 | Roster import | Tolerant CSV parsing, column mapping, dry-run, idempotent apply, the run ledger, and the admin Roster Import screen. |
 | 47 | Thinking mode, model routing and the AI safety floor | `thinking_mode.py`, `model_router.py`, `llm_providers.py`, `ai_governance.py`, `/api/sage/ai-posture`, the env gate, and what the user sees in `AiStatusChip` when the toggle is off. |
-| 48 | Operational resilience: watchdog, heartbeat, bootstrap, backups | `loop_watchdog.py`, `heartbeat_service.py` and its no-PHI payload proof, `bootstrap_service.py` first-admin flow, `backup_routes.py`, and `server/ops/watchdog/`. |
+| 48 | Operational resilience: watchdog, bootstrap, backups | `loop_watchdog.py`, `bootstrap_service.py` first-admin flow, `backup_routes.py`, and `server/ops/watchdog/`. |
 | 49 | User and access administration | `admin_users_routes.py`'s 8 routes, `UsersPanel`, `DataPanel`, MFA enrolment and reset, account lock/unlock, and `access_review.py`. |
 | 50 | Appointments and patient search | `appointments_routes.py`, `search_routes.py`, the Appointments panel, and the Bridge-side appointment surfaces. |
 | 51 | Sage support layer: ward brief, relay context, world model, feedback | `sage_narrator_service.py`, `sage_relay_context.py`, `world_model_service.py`, `sage_feedback_service.py`, `knowledge_worker.py`, and `WardBrief` / `SageRuntimeContext`. |

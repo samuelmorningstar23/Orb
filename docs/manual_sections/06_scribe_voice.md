@@ -156,7 +156,7 @@ If the audio file is not already a `.wav`, calls `ffmpeg` to convert it to 16kHz
 
 #### `load_model(model_name)`
 
-Loads the Whisper model from `server/mlx_models/{model_name}/` into Apple Silicon unified memory using `LightningWhisperMLX`. This is called once on daemon startup. Subsequent calls are no-ops if the model is already loaded. The `batch_size=12` parameter controls how many audio segments Whisper processes in parallel, higher values improve throughput on longer recordings.
+Loads the Whisper model from `server/mlx_models/{model_name}/` into Apple Silicon unified memory. This is called once on daemon startup. Subsequent calls are no-ops if the model is already loaded. It never downloads anything: `require_installed` (`server/services/asr_model_files.py`) checks that the folder holds `config.json` and `weights.npz`, and a missing model raises `SpeechModelNotInstalled`, so the daemon exits with "speech model not installed" instead of starting. The weights are installed with the appliance. (Until 4 October 2026 this constructed `LightningWhisperMLX`, whose constructor fetches the weights from Hugging Face. Orb is strictly offline, so that constructor is no longer called, and the process sets `HF_HUB_OFFLINE=1` before anything imports `huggingface_hub`.) The `batch_size=12` passed to `transcribe_audio` controls how many audio segments Whisper processes in parallel, higher values improve throughput on longer recordings.
 
 #### `transcribe(audio_path, hints, language)`
 

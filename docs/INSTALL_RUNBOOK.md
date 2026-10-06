@@ -253,16 +253,13 @@ Agree these six things with hospital IT, in writing, before you plug in:
    needs a route to the appliance, either to port 8000 for the HTTP ingestion
    endpoints or to port 2575 if Orb's own HL7 listener is used (section 11).
    Biomedical engineering owns this side.
-5. **Outbound.** Orb needs no internet to run. Leave outbound open only if the
-   hospital is comfortable with it. The one thing that uses it is the operator
-   heartbeat, which carries no patient data: its payload is a fixed allowlist
-   of operational keys and it makes no database read at all. The sender ships
-   **disabled** and does nothing unless `ORB_HEARTBEAT_URL` is set. The
-   receiving end that turns a missed beat into a phone call is
-   `ops/heartbeat_receiver.py`, which I run on a box outside the hospital; set
-   it up in [Stand up the pager](#stand-up-the-pager-the-heartbeat-receiver).
-   Until both ends are live, nothing pages anybody. See
-   [WARM_STANDBY.md](WARM_STANDBY.md) and [Escalation](#escalation).
+5. **No outbound either.** Orb is strictly offline (ruling of 4 October 2026):
+   it needs no internet to run and makes no connection to it. Ask IT to block
+   all outbound traffic from the appliance at the firewall, so that stays true
+   whatever is installed on it later. The operator heartbeat that used outbound
+   was removed under that ruling, so there is no remote pager: nothing pages
+   anybody off site, and the daily operator check on site is the monitoring,
+   see [Escalation](#escalation).
 6. **Which network patients' phones use to reach it, or none.** At
    discharge Orb prints a link and QR code for the patient's own phone, built
    on `ORB_PUBLIC_APP_BASE_URL` (section 8.4). Given item 3, it opens only on
@@ -344,6 +341,30 @@ that is already HTTPS (directly, or as the proxy reports in
 > `setup-mac.sh` is my developer script. It writes `ORB_DEPLOYMENT_PROFILE=dev`
 > and `ORB_DEMO_MODE=true`, and it seeds demo clinicians whose password is
 > `password`. That is correct for my laptop and catastrophic on a ward.
+
+**Everything that needs the internet happens before the appliance joins the
+hospital network, and never again.** Orb itself never downloads anything: it
+runs its model libraries with `HF_HUB_OFFLINE=1`, so a missing model is
+reported, not fetched. On the provisioning network, before cabling it to the
+ward:
+
+1. Run `./install.sh` (Python packages and the web build, section 8.2).
+2. Pull the Ollama models (section 8.3).
+3. Fetch the knowledge-search models once, explicitly allowing it for this one
+   command:
+   ```bash
+   cd /opt/orb/server
+   HF_HUB_OFFLINE=0 .venv/bin/python -c "from huggingface_hub import snapshot_download as s; s('BAAI/bge-m3'); s('BAAI/bge-reranker-v2-m3')"
+   ```
+   Without them Sage's guideline search falls back to keyword matching.
+4. If the ward will use voice, put the Whisper weights in
+   `server/mlx_models/<model>/`. The speech engine never downloads anything at
+   runtime: if its model is not already on the disk, Orb reports voice as
+   unavailable and refuses rather than fetch it
+   ([F14](#f14-scribe-cannot-transcribe)).
+
+Then remove the internet for good, and confirm it in the acceptance test
+(section 13).
 
 ### 8.1 Prerequisites
 
@@ -778,46 +799,15 @@ a restore loses everything since the last one, **up to 24 hours** of vitals,
 notes and orders. [WARM_STANDBY.md](WARM_STANDBY.md) explains how to run
 several a day.
 
-### Stand up the pager: the heartbeat receiver
-
-The appliance's outbound heartbeat reports backup age, disk headroom, loop
-health and access posture every five minutes, but **a beat pages nobody until
-something is listening**, and a frozen appliance's only external signal is a
-beat that stops arriving. The listening end is `ops/heartbeat_receiver.py`:
-one file with no dependencies beyond Python, run on any always-on box I
-control **outside the hospital** (a small VPS, or the standby Mac). This is
-not install-day work for the hospital. It is my homework, done before
-go-live.
-
-```bash
-# On the receiver box: the same token and secret the appliance's .env will
-# carry, kept in a mode-600 env file, never on the command line.
-export ORB_HEARTBEAT_TOKEN=...   ORB_HEARTBEAT_SECRET=...
-python3 heartbeat_receiver.py --port 8787 --state /var/lib/orb-receiver/state.json \
-    --max-silence 15 --ntfy-topic <your-private-topic>
-
-# On the appliance: uncomment ORB_HEARTBEAT_URL / _TOKEN / _SECRET in .env
-# (there is a worked example in .env.example) and restart Orb.
-```
-
-The sender's thresholds are in the same block of `.env.example`:
-`ORB_HEARTBEAT_INTERVAL_S` (300), `ORB_HEARTBEAT_BACKUP_MAX_AGE_H` (36) and
-`ORB_HEARTBEAT_DISK_MIN_PCT` (10). Alarm channels on the receiver:
-`--ntfy-topic` (the ntfy phone app is the two-minute path to a real pager),
-`--smtp host:port:from:to`, or `--on-alert '<any shell command>'`. TLS flags
-and a ready-to-paste systemd unit and launchd plist are in the file's own
-header; the flags are in [ops/README.md](../ops/README.md).
-
-Then **prove the pager pages**, the same discipline as the restore drill,
-because an unproven pager is a decorative one:
-
-```bash
-python3 heartbeat_receiver.py --state /tmp/sim.json --simulate --ntfy-topic <topic>
-```
-
-Exactly **4 notifications** must reach the phone: CRITICAL, SILENT,
-RECOVERED, CLEARED. Fewer means the path is broken. Re-run monthly, alongside
-the drill, and after any change to the receiver box.
+**Nobody is paged when a backup goes stale.** The appliance has no internet
+connection, so nothing leaves it to raise an alarm. Two local thresholds in
+`.env` decide when the ops status page (`./scripts/orb.sh status`,
+`/api/ops/status`) calls the backup or the disk a problem:
+`ORB_HEARTBEAT_BACKUP_MAX_AGE_H` (36 hours, also used by the Trust Center's
+backup row) and `ORB_HEARTBEAT_DISK_MIN_PCT` (10 % free). The names are older
+than the offline rule; they are read on the appliance only. Somebody has to
+look, which is what the daily operator check in [Escalation](#escalation) is
+for.
 
 ---
 
@@ -829,6 +819,7 @@ each line on the install record with a time and an initial.
 **Platform**
 
 - [ ] `curl /api/health` returns 200 from a ward device, not from the appliance
+- [ ] From the appliance, the internet is unreachable: `curl -m 5 -sS https://example.com` fails (Orb is strictly offline, section 7 item 5)
 - [ ] The startup log shows both models pre-loaded with `keep_alive=-1`, and `Mode: INGESTION`
 - [ ] `scripts/encrypt_db.py --check` confirms the database is encrypted
 - [ ] The startup log contains **no** `falling back to PLAINTEXT sqlite3`
@@ -933,7 +924,7 @@ Find the symptom. Start there.
 | The boards only update when you refresh | [F11](#f11-the-screens-stopped-updating-by-themselves) |
 | Sage takes 20 seconds during a busy period | [F12](#f12-sage-is-slow-during-a-busy-period) |
 | The machine restarted on its own | [F13](#f13-the-appliance-rebooted) |
-| Scribe says "Transcription engine unavailable on this appliance", dictation dead, everything else fine | [F14](#f14-scribe-cannot-transcribe) |
+| Scribe says "Voice dictation is not available on this system", dictation dead, everything else fine | [F14](#f14-scribe-cannot-transcribe) |
 | A plain page: "Orb does not answer to this address" | [F15](#f15-orb-does-not-answer-to-this-address) |
 
 ---
@@ -1131,14 +1122,14 @@ running with no recent backup:
 cd /opt/orb && set -a && . ./.env && set +a && ./scripts/backup.sh
 ```
 
-**Prevent.** The outbound heartbeat reports the newest backup's age, and the
-receiver raises `backup_stale` on a phone once the age passes
-`ORB_HEARTBEAT_BACKUP_MAX_AGE_H` (36 hours by default). That only pages once
-**both ends are configured and the `--simulate` drill has landed four
-notifications** (see [Stand up the pager](#stand-up-the-pager-the-heartbeat-receiver)).
-Until then the daily operator check is the control, and it is the first line
-of the daily rhythm: did last night's backup run, and is the newest file from
-last night?
+**Prevent.** Nothing pages anyone remotely: the appliance has no internet
+connection (section 7, item 5). The daily operator check, on site, is the
+control, and it is the first line of the daily rhythm: did last night's
+backup run, and is the newest file from last night? `./scripts/orb.sh status`
+answers it in the terminal, and works with the server down; it flags the
+backup once the newest one is older than `ORB_HEARTBEAT_BACKUP_MAX_AGE_H`
+(36 hours by default). The same check is at `/api/ops/status` and on the Trust
+Center, and `logs/orb-backup.log` has the detail.
 
 **Who to call.** Me. Same day, not tomorrow.
 
@@ -1276,9 +1267,11 @@ ls -la /opt/orb/server/orb.db.plaintext-* 2>/dev/null
 **Never** free space by deleting backups before confirming the off-box copies
 exist and drill clean.
 
-**Prevent.** Add disk headroom to the weekly check. The heartbeat alarms when
-free space drops under `ORB_HEARTBEAT_DISK_MIN_PCT` (10 %), once the pager is
-stood up.
+**Prevent.** Add disk headroom to the weekly check. `./scripts/orb.sh status`
+(and `/api/ops/status`) flags the disk once free space drops under
+`ORB_HEARTBEAT_DISK_MIN_PCT` (10 %), and calls it urgent below a quarter of
+that or under 2 GB. Nothing pages anyone remotely, so it only helps if
+somebody looks: that is the daily operator check.
 
 **Who to call.** Me. Hospital IT if the fix is more storage.
 
@@ -1701,10 +1694,11 @@ download but not install.
 
 **Symptom.** The Scribe screen shows an amber banner: *"Transcription engine
 unavailable on this appliance."* The dictation and live-streaming mic buttons
-are disabled, their tooltip says to see the operator runbook, and if a
-browser-side transcript exists Scribe says it is using the browser
-transcript rather than pretending it transcribed anything. **Everything else
-works**: charts, typed notes, note structuring, Sage, Lens.
+are disabled and their tooltip says to see the operator runbook. There is no
+browser fallback: browser speech recognition sends audio to a cloud service,
+and it was removed on 4 October 2026 under the offline rule, so this engine is
+the only way voice works. **Everything else works**: charts, typed notes, note
+structuring, Sage, Lens.
 
 **This is not [F6](#f6-ai-features-degraded-model-not-loaded).** F6 is the
 Ollama language models. This is the speech engine, a separate runtime
@@ -1732,6 +1726,7 @@ curl -fsS https://orb.hospital.local:8000/api/scribe/daemon/status
 |---|---|---|
 | Import fails in step 1 | The runtime never made it into this venv | `/opt/orb/server/.venv/bin/pip install -r /opt/orb/server/requirements.txt`, then restart Orb |
 | Step 1 OK but the status still says unavailable | Worker script missing or daemon expected but dead | Check `/api/scribe/daemon/status`; restart the daemon (below) |
+| The runtime imports but the log says `speech model not installed` | The Whisper weights (`config.json` and `weights.npz`) are not in `server/mlx_models/<model>/`, for example `server/mlx_models/large-v3/`, and Orb never downloads them | Prepare that folder on a machine with internet, off the hospital network, and copy it in ([section 8](#8-install-orb)). Never connect the appliance to the internet to fetch it |
 | Daemon `not_running` and you rely on it | The warm daemon process died or was never started | `/opt/orb/server/.venv/bin/python /opt/orb/server/services/whisper_daemon.py` in its own session; the socket is `ORB_WHISPER_SOCKET` (default `ipc:///tmp/orb-whisper.sock`), the toggle is `ORB_WHISPER_DAEMON_ENABLED` (default `true`) |
 
 Then reopen the Scribe tab. The availability probe runs on mount, so the
@@ -1823,16 +1818,15 @@ tape it inside the cupboard door.
    travel time. Agree what that number is with the hospital and write it
    here: `Response expectation: ____________`.
 
-2. **Nothing pages anybody until the pager is stood up and drilled.** The
-   appliance writes evidence to disk (`server/ops/watchdog/status.json`,
-   `logs/orb-backup.log`, the `/metrics` endpoint) and the outbound heartbeat
-   carries it off the box, but the sender **ships disabled** and the
-   receiving end (`ops/heartbeat_receiver.py`) pages only once it is running
-   somewhere, both ends share the token and secret, and the `--simulate`
-   drill has landed all 4 notifications on a phone, see
-   [Stand up the pager](#stand-up-the-pager-the-heartbeat-receiver). Until
-   that drill passes, **the daily operator check is the monitoring system.**
-   Do not describe it as anything more than that to the CIO.
+2. **Nothing pages anybody remotely.** The appliance has no internet
+   connection (section 7, item 5), so nothing leaves it to reach a phone, and
+   a frozen or dead appliance tells nobody off site. **The daily operator
+   check, on site, is the monitoring system.** It reads what the appliance
+   writes about itself: `./scripts/orb.sh status` in a terminal (it works with
+   the server down), `/api/ops/status` for the same checks as JSON,
+   `/api/health/loop` and the watchdog's `server/ops/watchdog/status.json`
+   for a stalled server, the Trust Center, and `logs/orb-backup.log` for last
+   night's backup. Do not describe it as anything more than that to the CIO.
 
 ---
 

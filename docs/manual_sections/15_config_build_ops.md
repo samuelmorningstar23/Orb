@@ -214,11 +214,10 @@ to small/fast models; `prod` defaults to full-quality.
 | `ORB_SAGE_HISTORY_SUMMARIZE` | `0` (off) | Sage conversation-history summarisation. |
 | `ORB_SAGE_PREWARM*` | `config.py:470-478` | Sage prewarm behaviour. |
 
-#### 15.2.11 Data-source, demo and egress flags
+#### 15.2.11 Data-source and demo flags
 
 | Variable | Default | What it controls |
 |---|---|---|
-| `ORB_CLOUD_SPEECH_ALLOWED` | **`false`** | Whether any speech may leave the appliance (`config.py:295`). The on-prem guarantee depends on this staying false. |
 | `ORB_DEMO_MODE` | `true` in dev, **`false` in prod** | Demo affordances (`config.py:316`). |
 | `ORB_LENS_ENABLED` | `true` in dev, **`false` in prod** | Lens imaging is **off by default in production** unless an operator explicitly opts in (`config.py:323`). |
 | `ORB_MONITOR_ENABLED` and the `ORB_MONITOR_*` / `ORB_HL7_DEFAULT_TZ` group | **`false`** / see `config.py:406-436` | The live bedside-monitor feed: protocol, mode, host, port, source id, timezone and clock-skew tolerance. |

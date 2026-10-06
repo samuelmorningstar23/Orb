@@ -44,7 +44,7 @@ flowchart TB
             EBX["eventbus executor (1)"]
             WEX["sage warm executor (2)"]
             FEX["FHIR export executor (1)"]
-            DT["daemon threads:<br/>watchdog · heartbeat · bootstrap"]
+            DT["daemon threads:<br/>watchdog · bootstrap"]
         end
         P2["knowledge worker<br/>(spawn child, 1 worker)<br/>BGE-M3 + reranker ~2GB each"]
         P3["ollama serve<br/>medgemma:27b + medgemma:4b"]
@@ -78,15 +78,18 @@ before the alternatives, because each alternative fails against a specific one:
 1. **PHI must not leave the building.** Stated as the product thesis in
    `server/config.py:136-146`: "Orb's thesis is 'PHI never leaves the building': the local
    Ollama/MedGemma instance configured above is the ONLY inference engine, so no model call
-   can carry patient data off the box." The one residual egress path, the browser's Web
-   Speech API, which streams microphone audio to a cloud ASR, is gated OFF by default
-   (`CLOUD_SPEECH_ALLOWED`, `server/config.py:146`) and the frontend reads that posture
-   before it will start cloud speech.
-2. **No inbound network path.** The pilot's operating model is "on-site only access (no
-   inbound remote); outbound no-PHI heartbeat + alerts" (`docs/PILOT_ROADMAP.md:28`). The
-   appliance sits behind hospital NAT and nobody can SSH in. This is why observability is an
-   *outbound* daemon-thread beacon (`server/services/heartbeat_service.py:1-9`) rather than a
-   scrape endpoint.
+   can carry patient data off the box." Voice follows the same rule: speech is recognised
+   only by the local speech engine on the appliance, and spoken answers use only voices that
+   run on the device. The browser's own speech recognition (the Web Speech API, which streams
+   microphone audio to the browser vendor's cloud) is not supported and there is no setting
+   that switches it on (removed 4 October 2026).
+2. **No network path in or out.** The pilot roadmap's operating model was "on-site only
+   access (no inbound remote); outbound no-PHI heartbeat + alerts" (`docs/PILOT_ROADMAP.md:28`).
+   The owner's ruling of 4 October 2026 went further: Orb is strictly offline, with no
+   internet connection of any kind, inbound or outbound, so the outbound heartbeat was
+   removed. The appliance sits on the hospital LAN and nobody can SSH in from outside. This is
+   why observability is the local ops status page (`server/services/ops_health_service.py`),
+   read on site, rather than a beacon or a scrape endpoint.
 3. **The buyer is an Indian district hospital CIO with a basic incumbent HIS.** The hospital
    *buys the hardware* (`docs/PILOT_ROADMAP.md:19`), which makes the unit economics a
    licence+hardware sale rather than a per-seat subscription.
@@ -144,8 +147,9 @@ Why it loses here:
   allowlist anywhere in the tree**, grep finds none. `ai_governance.record_inference` hard
   codes `"lane": "local"` (`:307`) with the comment "local IS the only engine" (`:294`), and
   the module docstring at `:4` states outright that there is "no lane a request can take off
-  the" appliance. The one real egress switch, `CLOUD_SPEECH_ALLOWED` (`:353`), governs
-  *browser speech recognition*, not inference, a different surface.
+  the" appliance. The one egress switch that used to exist, `CLOUD_SPEECH_ALLOWED`, governed
+  *browser speech recognition*, not inference, a different surface, and it was removed on
+  4 October 2026 along with browser speech itself.
   So the honest reading is: Alternative B was built, then **removed in July 2026**, leaving
   the governance scaffolding behind. Re-enabling it would be a build, not a configuration
   change. Do not describe those remnants as "switches that are off", a reviewer who greps
@@ -309,26 +313,23 @@ reason, its delivery ledger depends on ordered execution.
 
 ### 1.3.4 The daemon threads
 
-Three daemon threads run outside asyncio entirely, and all three exist because an asyncio
+Two daemon threads run outside asyncio entirely, and both exist because an asyncio
 task cannot report on a dead event loop:
 
 * **Loop watchdog monitor** (`server/services/loop_watchdog.py:686-689`). Compares a
   loop-written monotonic beat against wall time and, on a stall, writes a pre-diagnosed
   incident file naming which threads are in the DB layer.
-* **Outbound heartbeat** (`server/services/heartbeat_service.py:850`). Blocking stdlib HTTP,
-  its own `threading.Event` timer, and it reads the watchdog's `status.json` **from disk**, 
-  so it still reports while the loop is starved. The rationale is stated as the load-bearing
-  design decision of that module (`server/services/heartbeat_service.py:33-45`): a heartbeat
-  that runs as an asyncio task is useless for the freeze case, because the absence of a beat
-  is indistinguishable from "the ward's internet is down", which in an Indian district
-  hospital is a nightly event, and an alarm that cries wolf every evening gets muted.
 * **Bootstrap access check** (`server/services/bootstrap_service.py:699`). Sweeps the staff
   table with bcrypt to answer "is there a login-capable admin" and "is any account still
   holding a shipped demo password". It is on a thread because "bcrypt over the staff table is
   ~minutes on a cold box and must never sit in front of `/api/health`"
   (`server/main.py:461-463`).
 
-Plus a fourth inside the child process: the knowledge worker's parent-death watchdog
+Until 4 October 2026 there was a third, the outbound heartbeat, which POSTed a no-PHI status
+beat off the appliance. It was removed when Orb was ruled strictly offline. Its backup and
+disk thresholds survive as local settings that the ops status page reads.
+
+Plus one more inside the child process: the knowledge worker's parent-death watchdog
 (`server/services/knowledge_worker.py:91-98`), which `os._exit(0)`s if its parent PID
 changes, a 2–4 GB orphan surviving a dev reload is a named ops hazard in this repo.
 
@@ -497,7 +498,6 @@ interaction seed should not stop a ward from working.
 | shadow negatives sweeper | `:435-441` | see below |
 | loop watchdog | `:451-457` | started **LAST**, on purpose |
 | bootstrap access check | `:468-471` | own daemon thread; bcrypt is minutes |
-| outbound heartbeat | `:480-483` | own daemon thread |
 | vitals sources | `:490-496` | `start_all` never raises |
 
 Three of these deserve individual attention.
@@ -545,13 +545,11 @@ After `yield` (`server/main.py:506`), teardown runs in a deliberately non-obviou
 
 1. **Disarm the watchdog first**, "an orderly shutdown drains the loop, and a dead-man timer
    still armed through that drain would write a dump for a stall that never happened."
-2. **Stop the heartbeat**, "a 'healthy' beat sent while the process is on its way down is a
-   lie an operator would act on."
-3. **Stop and reset the vitals registry**, before the generic task cancellation, because "a
+2. **Stop and reset the vitals registry**, before the generic task cancellation, because "a
    monitor feed holds a bound TCP port, and leaving it open across a reload is what turns
    'restart Orb' into 'port already in use' on the appliance."
-4. **Cancel and gather all lifespan tasks** (`:536-538`).
-5. **Reap the knowledge worker child** (`:539-545`) "so reloads/shutdowns never leave an
+3. **Cancel and gather all lifespan tasks** (`:536-538`).
+4. **Reap the knowledge worker child** (`:539-545`) "so reloads/shutdowns never leave an
    orphaned 2-4 GB model process holding memory."
 
 Each step is a specific bug that happened once.

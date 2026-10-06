@@ -93,7 +93,7 @@ The distinction matters for how much to trust the rest: **rot** means the manual
 | **`services/field_crypto.py`** | Field-level PHI encryption. Existence confirmed; behaviour **not read**. |
 | **`services/ai_governance.py`** | Only its relationship to the `ai_egress` fail-closed category was confirmed. *2026-09-04:* that relationship never existed. `record_inference` writes `ai_inference`, which replaced `ai_egress` in the fail-closed set on 2026-09-04 (§10.5). |
 | **`services/mfa_service.py`** | Summarised in §1 from its module docstring; the verification window and enrolment flow were **not traced through the routes**. |
-| **~40 further services** | `escalation_service`, `medication_safety_gate`, `allergy_interlock`, `drug_safety_service`, `loop_watchdog`, `heartbeat_service`, `world_model_service`, `thinking_mode`, `model_router`, `sage_narrator_service`, `sage_provenance_service`, `compliance_service`, `consent_service`, `downtime_service`, `flight_recorder_service`, and others have **no manual coverage**. |
+| **~40 further services** | `escalation_service`, `medication_safety_gate`, `allergy_interlock`, `drug_safety_service`, `loop_watchdog`, `world_model_service`, `thinking_mode`, `model_router`, `sage_narrator_service`, `sage_provenance_service`, `compliance_service`, `consent_service`, `downtime_service`, `flight_recorder_service`, and others have **no manual coverage**. |
 
 #### 17.3.3 Specific claims left standing but unchecked
 

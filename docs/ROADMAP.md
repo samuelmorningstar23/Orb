@@ -67,7 +67,11 @@ path remains (grep-provable).
   table itself; explicitly labeled as *not* clinically validated.
 - Make "Estimated" lab-trend fallbacks visually distinct, not just badged.
 - Hotword mic: default OFF, explicit opt-in, and never cloud ASR, local
-  Whisper path or nothing (aligns with the on-prem PHI promise).
+  Whisper path or nothing (aligns with the on-prem PHI promise). Superseded
+  4 October 2026: the hotword was removed outright, not made opt-in. The
+  floating orb is text-only and nothing listens in the background; voice
+  questions go through the Sage panel's voice mode on the local speech engine,
+  and Orb has no internet connection of any kind.
 
 **Gate:** visual captures of new Vigil detail; unit tests on the attribution
 math; no synthetic data rendered unlabelled anywhere.
@@ -152,9 +156,10 @@ joins) and the event log.
 
 - Postgres path / Alembic migrations (SQLite + additive migrations hold at
   pilot scale; revisit at multi-ward load).
-- Family/caregiver Bridge extension; voice-first rounds mode (after Slice 2's
-  hotword rework); i18n completion beyond shell+Bridge (Bridge Hindi rides
-  along in Slice 5's empty-state pass if capacity allows).
+- Family/caregiver Bridge extension; voice-first rounds mode (local speech
+  engine only; there is no hotword since 4 October 2026); i18n completion
+  beyond shell+Bridge (Bridge Hindi rides along in Slice 5's empty-state pass
+  if capacity allows).
 - Event-bus outbox/replay redesign (documented; needs its own design).
 
 ---

@@ -32,12 +32,13 @@ neither is obvious from reading the code alone:
   run. `lightning-whisper-mlx` is not importable, `pyzmq` is not installed, `mlx_models/`
   does not exist, nothing in the repository starts the Whisper daemon, and
   `datasets/rxnorm/` is absent. §7.2.6 traces exactly what a clinician sees when they press
-  the microphone button in that state, and it is not an error message.
+  the microphone button in that state: since the browser-speech fallback was removed, the
+  panel says up front that voice dictation is not available rather than recording.
 
-Read §7.8 (the note lifecycle and what signing means) and §7.9 (`CLOUD_SPEECH_ALLOWED`)
-even if you read nothing else. §7.8 contains a defect that makes the Sign button
-unusable in the default configuration; §7.9 documents the only genuine egress switch in
-the product.
+Read §7.8 (the note lifecycle and what signing means) and §7.9 (local speech only) even if
+you read nothing else. §7.8 contains a defect that makes the Sign button unusable in the
+default configuration; §7.9 records why browser speech recognition, once the only
+genuine egress switch in the product, was removed and cannot be switched back on.
 
 | § | Subject | Primary modules |
 |---|---|---|
@@ -49,7 +50,7 @@ the product.
 | 7.6 | Drafting: note formats and the prompt contract | `scribe_service` |
 | 7.7 | Verification, and why it fails safe | `scribe_service`, `scribe_routes` |
 | 7.8 | The note lifecycle and the signing path | `scribe_service`, `scribe_routes` |
-| 7.9 | `CLOUD_SPEECH_ALLOWED`, the one real egress switch | `config`, `ai_governance` |
+| 7.9 | Local speech only: the removed `CLOUD_SPEECH_ALLOWED` switch | `ai_governance`, `ScribePanel` |
 | 7.10 | The provider layer | `scribe_providers` |
 | 7.11 | Alternatives considered, and why they lost | n/a |
 | 7.12 | The frontend | `ScribePanel.tsx` |
@@ -116,7 +117,9 @@ buttons rather than letting the click 403,
    provider here runs on the local box, Scribe payloads are clinical narrative (the
    transcript IS the note), so inference never leaves the building"
    (`server/services/scribe_providers.py:350-352`). The registry has exactly two entries,
-   Ollama and MLX (`:343-346`), both loopback/in-process.
+   Ollama and MLX (`:343-346`), both loopback/in-process. The audio follows the same rule:
+   only the local speech engine on the appliance transcribes it, and the browser's cloud
+   speech recognition is not used at all (§7.9).
 2. **Scribe is not an autonomous author.** Every note is created with
    `status = 'draft'` (`server/services/scribe_service.py:650`) and `ai_generated = 1`
    (`:653`, `:665`). Nothing transitions it to `signed` except an explicit POST by a
@@ -145,7 +148,7 @@ sequenceDiagram
     participant Q as llm_queue
     participant O as Ollama / MLX
 
-    UI->>UI: MediaRecorder(audio/webm) [+ Web Speech if posture allows]
+    UI->>UI: MediaRecorder(audio/webm)
     UI->>R: POST /api/scribe/transcribe (multipart)
     R->>R: extension allowlist + 100 MB cap
     R->>C: write_encrypted(uploads/<uuid>.webm)
@@ -192,23 +195,28 @@ effectively dead. Naming all three is the only way to make the panel's behaviour
 
 ### 7.2.1 Capture path A: MediaRecorder batch (the accuracy path)
 
-`startRecording` (`src/pages/panels/ScribePanel.tsx:71`) does three things in order:
+`startRecording` (`src/pages/panels/ScribePanel.tsx:71`) does two things in order:
 
 1. **Claims the shared microphone.** `claimMic('scribe')` (`:73`) coordinates with the
-   floating Sage assistant, which owns the mic for hotword listening. If Sage holds it, the
-   panel refuses rather than fighting for the device (`:74-75`). This is the
+   other voice surfaces (Sage panel voice mode, Ward Round dictation). If one of them holds
+   it, the panel refuses rather than fighting for the device (`:74-75`). This is the
    `SageRuntimeContext` mic-ownership mechanism documented in Chapter 5 §5.9.
 2. **Starts a `MediaRecorder` in `audio/webm`** (`:92-95`), accumulating blobs in a ref.
    This is the recording that will actually be transcribed.
-3. **Optionally starts the browser's Web Speech API** (`:100-127`) for instant on-screen
-   text, and only if `cloudSpeechAllowed` is true (`:100-102`). See §7.9.
 
-`stopRecording` (`:134`) stops the timer and recogniser, releases the mic, and on the
+When the panel opens, it asks the server whether the local speech engine can run
+(`getScribeAsrStatus`). When it cannot, both microphone buttons are disabled and the panel
+says plainly, "Voice dictation is not available on this system. You can still type a note
+and structure it." Until 4 October 2026 there was a third step, an optional
+browser Web Speech recogniser for instant on-screen text, gated on `cloudSpeechAllowed`.
+It was removed with browser speech (§7.9).
+
+`stopRecording` (`:134`) stops the timer, releases the mic, and on the
 recorder's `onstop` posts the assembled blob to `/api/scribe/transcribe`
 (`:141-151`). Blobs under 1000 bytes are discarded as "Recording too short" (`:143`).
-Crucially, the comment at `:99` states the design intent: "the local-Whisper accuracy pass
-(step 1) is always the source of truth", the browser transcript is a placeholder that gets
-overwritten by the server's result (`:147`).
+The local speech engine's result is the transcript; there is no other source. An empty
+result reads "Nothing was transcribed from that recording. Try again, or type the note."
+and a failed one "Transcription failed on this appliance. Try again, or type the note."
 
 ### 7.2.2 The server ingest: `POST /api/scribe/transcribe`
 
@@ -379,11 +387,16 @@ daemon were down. `_transcribe_via_subprocess` then execs the worker, which rais
 (`scripts/transcribe_worker.py:42`), exits non-zero, and returns `""` (`:209-211`).
 `transcribe_audio` returns `""` at `:114-115`. The route returns **HTTP 200** with
 `{"transcript": "", "audio_path": "…"}` (`server/routes/scribe_routes.py:353-356`).
+(Since 4 October 2026 the worker checks for the installed weights first and never downloads
+them, so on that box it now exits 2 with "speech model not installed" before it reaches the
+import. The route's result is the same.)
 
-The panel handles that gracefully but ambiguously: `⚠️ Whisper empty, using browser
-transcript` (`src/pages/panels/ScribePanel.tsx:148`). With `CLOUD_SPEECH_ALLOWED` false, 
-the default, there *is* no browser transcript, so the clinician sees an empty transcript
-box and a warning that names a fallback that does not exist.
+The panel used to handle that gracefully but ambiguously: `⚠️ Whisper empty, using
+browser transcript`, a warning that named a fallback that, with cloud speech off by
+default, did not exist. Browser speech was removed on 4 October 2026, so there is no
+browser transcript at all now. The panel instead asks up front whether the local speech
+engine can run, and when it cannot, it disables the microphone and says voice dictation
+is not available before anyone speaks (§7.2.1).
 
 This is a deployment gap, not a code defect, and `docs/SETUP.md:85-93` records it as a
 known open item ("Whisper ASR (deferred)"). But three things follow that the pilot plan
@@ -397,8 +410,9 @@ should own:
    distinct from a genuinely silent recording, would make the failure visible.
 3. **The pilot's Week-13 date includes dictation.** Whichever of `docs/SETUP.md`'s three
    options is taken (install Rust for the old tiktoken, switch to `mlx-whisper`, or run
-   Whisper only on the 48 GB box), it is a site-visit task with a model download behind
-   it, and `mlx_models/` has to be populated before a ward sees the panel.
+   Whisper only on the 48 GB box), `mlx_models/` has to be populated when the appliance is
+   built, before a ward sees the panel. Orb is strictly offline: the speech engine is
+   installed with the appliance and never downloads a model at runtime.
 
 ---
 
@@ -452,7 +466,7 @@ Design choices worth naming:
   The daemon has no key and no crypto code.
 * **IPC, not TCP.** `ipc:///tmp/orb-whisper.sock` (`:31`), local machine only, no listening
   network port on a hospital LAN. This is the same instinct as the appliance's
-  no-inbound-path posture (Chapter 1 §1.2.1 constraint 2).
+  no-network-path posture (Chapter 1 §1.2.1 constraint 2).
 * **REQ/REP is strictly one-in-flight.** There is one `while True` loop
   (`:168-213`) doing `recv_string` → `transcribe` → `send_string`. Two concurrent
   transcriptions serialise at the socket. That is not a limitation to work around; it is
@@ -1148,80 +1162,54 @@ to `complete` (unblocking only if the model returns `verified: true`).
 
 ---
 
-## 7.9 `CLOUD_SPEECH_ALLOWED`: the one real egress switch
+## 7.9 Local speech only, and the removed `CLOUD_SPEECH_ALLOWED` switch
 
 Chapter 1 §1.2.3 establishes the general claim: Orb has no hosted inference lane, only
-governance scaffolding where one used to be. There is exactly one exception, and it lives
-in this chapter.
+governance scaffolding where one used to be. Until 4 October 2026 there was exactly one
+exception, and it lived in this chapter: the browser's own speech recognition, behind a
+`CLOUD_SPEECH_ALLOWED` switch. The owner's ruling of that date, that Orb is strictly
+offline with no internet connection of any kind, removed it. This section records what it
+was, what runs instead, and why the history matters.
 
-### 7.9.1 What it is
+### 7.9.1 What it was
 
-```python
-# server/config.py:136-146
-# Orb's thesis is "PHI never leaves the building": the local Ollama/MedGemma
-# instance configured above is the ONLY inference engine, so no model call can
-# carry patient data off the box.
-#
-# Browser-side speech is the one remaining path that could. The Web Speech API
-# (webkitSpeechRecognition) streams mic audio to a cloud ASR service, outside
-# this server's control: egress of spoken PHI: so it is OFF unless an operator
-# explicitly approves it. The frontend reads this via GET /api/sage/ai-posture
-# and refuses to start cloud speech when false.
-CLOUD_SPEECH_ALLOWED = os.getenv("ORB_CLOUD_SPEECH_ALLOWED", "false").strip().lower() in ("1", "true", "yes", "on")
-```
+`server/config.py` read `ORB_CLOUD_SPEECH_ALLOWED` (default `false`), and its comment
+called browser-side speech "the one remaining path" by which spoken PHI could leave the
+building. The frontend read the value through `GET /api/sage/ai-posture` and refused to
+start cloud speech when it was false.
 
-The mechanism it governs is genuinely outside Orb's control. `webkitSpeechRecognition` in
+The mechanism it governed was genuinely outside Orb's control. `webkitSpeechRecognition` in
 Chromium does not run a local model; it opens a connection from the *browser* to Google's
 speech service and streams the microphone. No server-side control can intercept it, because
-the server is not in the path. That is what makes this different in kind from every other
-"cloud" switch in the repository: it is not a lane Orb could choose not to use, it is a
-lane the *browser* provides, and the only defence is to not construct the object.
+the server is not in the path. It was not a lane Orb could choose not to use, it was a lane
+the *browser* provides, and the only defence is to not construct the object. That is now
+the whole design: no code path in Orb constructs it, and the setting is gone, so browser
+speech is not supported and cannot be switched on.
 
-### 7.9.2 How it fails closed
+### 7.9.2 What runs instead
 
-The value reaches the client through `ai_posture()`
-(`server/services/ai_governance.py:340-353`), exposed at `GET /api/sage/ai-posture`
-(`server/routes/sage_routes.py:2007-2014`), a route that requires only authentication, not
-`sage.query`, precisely so every panel can read it.
+Voice input exists only through the local speech engine on the appliance, in three places:
+Sage panel voice mode (Chapter 5 §5.9.3), Scribe (§7.2.1) and Ward Round dictation. Each
+records with `MediaRecorder` and sends the audio to the appliance's own transcription
+route. Each refuses up front, with a clear message, when the engine is not installed:
+`GET /api/sage/ai-posture` reports `local_asr_available`, and Scribe also asks
+`getScribeAsrStatus`, so the clinician learns before speaking rather than after thirty
+seconds of dictation that could never be transcribed. Typing still works everywhere.
 
-`SageRuntimeContext` fetches it and derives the flag with a strict identity check
-(`src/contexts/SageRuntimeContext.tsx:73`):
+The floating Sage orb is text-only. Clicking it explains that voice is not available there
+and offers a button that opens Sage so the clinician can type. Spoken answers use only voices that run on the
+device; if the device has none, Sage does not speak and the answer stays on screen. The
+speech engine is installed with the appliance and never downloads a model at runtime.
 
-```ts
-cloudSpeechAllowed: posture?.cloud_speech_allowed === true
-```
-
-with the context's initial value `false` (`:35`).
-
-**This is the fail-closed property, and it is worth being precise about why the code is
-written this way.** `posture` is `null` until the fetch resolves, and `null?.x` is
-`undefined`. `undefined === true` is `false`. So during the entire window between page load
-and the posture response, and permanently, if the request fails, `cloudSpeechAllowed` is
-`false`. Had the expression been `posture?.cloud_speech_allowed !== false`, or
-`!!posture?.cloud_speech_allowed` combined with a default-true initial state, a slow or
-failed posture fetch would have opened the cloud lane. The `=== true` is doing real work.
-
-The three consumers all gate on it before touching the API:
-
-* **ScribePanel** (`src/pages/panels/ScribePanel.tsx:100-103`): `const SR =
-  cloudSpeechAllowed ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null`
-  when the posture is false, the constructor is never even looked up, so no recogniser
-  object exists to be started by any later code path.
-* **SagePanel** (`src/pages/panels/SagePanel.tsx:547-559`), same shape, plus an explicit
-  refusal branch.
-* **SageFloatingAssistant** (`src/components/sage/SageFloatingAssistant.tsx:455-460`,
-  `:526-528`), `shouldRecognize` requires `cloudSpeechAllowed`, the toggle is inert
-  (`:840-841`), and the user gets a specific explanation: "Voice input is disabled by this
-  deployment's privacy posture (browser speech recognition sends audio to a cloud service).
-  Use the Sage tab to chat by text, or ask an admin to enable ORB_CLOUD_SPEECH_ALLOWED."
-
-That message is a small piece of excellent product design: it names the reason, names the
-alternative, and names the exact knob, so the clinician can have an informed conversation
-with the admin rather than filing "voice is broken".
+One property of the old gate is worth keeping as a rule for any future posture flag. The
+client derived it with a strict identity check, `posture?.cloud_speech_allowed === true`,
+so during the window before the posture fetch resolved, and permanently if it failed, the
+flag was `false`. Had it been `!== false`, a slow or failed fetch would have opened the
+cloud lane. A posture flag must fail closed while unknown.
 
 ### 7.9.3 The history, which matters
 
-This gate is a *fix*, and the repository records the bug it fixed.
+The gate was a *fix*, and the repository records the bug it fixed.
 `docs/ORB_ANALYSIS.md:542-543` describes the pre-fix state: the floating assistant ran
 "continuous webkitSpeechRecognition globally (hotword 'Sage' enabled by default…) with
 retry/restart loops on every onend" and notes it "contradicts the local-first/on-prem
@@ -1232,25 +1220,21 @@ continuously, auto-restarting every 50ms".
 Ambient ward audio is not the clinician's dictation. It is every conversation within
 microphone range, other patients, families, staff. Continuous cloud streaming of that,
 from a product sold on "PHI never leaves the building", is the kind of finding that ends a
-CIO conversation. The current posture, default off, fail closed while null, refused at the
-constructor, explained in the UI, is the correct response to it.
+CIO conversation. The first response, default off, fail closed while null, refused at the
+constructor, explained in the UI, was correct. The 4 October 2026 ruling finished the job:
+an off switch is still a switch someone can turn on, so the switch, the browser lane behind
+it and the "Sage" hotword that depended on it were all removed.
 
-### 7.9.4 What remains true when it is enabled
+### 7.9.4 What was lost
 
-Even with `CLOUD_SPEECH_ALLOWED=true`, the browser transcript is never the record.
-`ScribePanel` overwrites it with the Whisper result when the recording stops
-(`src/pages/panels/ScribePanel.tsx:146-147`), and the inline comment states the invariant:
-"the local-Whisper accuracy pass (step 1) is always the source of truth" (`:99`). Cloud
-speech is a *latency* feature, instant on-screen text so the clinician can see that the
-mic is working, not an accuracy or storage path. Nothing from the Web Speech API is
-persisted unless the Whisper pass returns empty and the clinician chooses to keep what is
-on screen.
-
-An operator enabling this switch should be told exactly that, and should be told the
-trade: they are accepting cloud egress of spoken PHI in exchange for a progress indicator.
-On that framing, the honest recommendation is to leave it off and instead show a live
-audio-level meter, which the streaming path already computes
-(`useStreamingTranscription.ts:157-158`) and renders (`ScribePanel.tsx:287-289`).
+Even when it was enabled, the browser transcript was never the record. `ScribePanel`
+overwrote it with the Whisper result when the recording stopped, under the invariant "the
+local-Whisper accuracy pass (step 1) is always the source of truth". Browser speech was a
+*latency* feature: instant on-screen text so the clinician could see the mic was working,
+plus the Sage panel's 2-second silence auto-stop. Removing it costs that progress
+indicator and nothing else. The honest replacement is a live audio-level meter, which the
+streaming path already computes (`useStreamingTranscription.ts:157-158`) and renders
+(`ScribePanel.tsx:287-289`).
 
 ---
 
@@ -1353,7 +1337,8 @@ violation of the thesis at `server/config.py:136-139`, and unlike a Sage query (
 could at least imagine redaction) there is nothing to redact from. It also fails the
 availability constraint: a district-hospital uplink that drops mid-round takes dictation
 with it, and `server/database.py:741-744` records that downtime resilience is treated as a
-structural advantage, not a nice-to-have.
+structural advantage, not a nice-to-have. Since 4 October 2026 it is not an option at all:
+Orb is strictly offline and has no internet connection to send audio over.
 
 **The browser Web Speech API as the primary engine.**
 
@@ -1364,8 +1349,9 @@ no ASR dependency to install, which, given §7.2.6, is not nothing.
 every objection above **plus** two more. It is Chromium-only, so the ward's tablet browser
 becomes a hard dependency. And its accuracy on clinical proper nouns is worse than
 Whisper's, because there is no `initial_prompt` equivalent, you cannot prime it with this
-patient's drug list. It survives in the codebase strictly as an optional, gated,
-non-authoritative progress indicator.
+patient's drug list. It survived in the codebase for a while as an optional, gated,
+non-authoritative progress indicator, and was removed on 4 October 2026 when Orb was ruled
+strictly offline (§7.9).
 
 **Whisper large-v3, local (chosen).**
 

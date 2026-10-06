@@ -362,17 +362,16 @@ const SAGE_WARD_BRIEF = {
   generated_at: t('09:00'),
 };
 
-// AI governance posture — SageAiPosture type (client.ts). cloud_speech_allowed
-// stays FALSE so the sage/voice-governance scenario exercises the fail-closed
-// path: clicking the orb must show the privacy-posture card, not open the mic.
+// AI governance posture: SageAiPosture type (client.ts). There is no cloud
+// speech; local_asr_available says whether on-appliance transcription can run.
 const SAGE_AI_POSTURE = {
   provider_mode: 'local',
   hosted_enabled: false,
   hosted_configured: false,
   hosted_host_allowlisted: false,
   phi_egress_approved: false,
-  cloud_speech_allowed: false,
   local_model: 'medgemma-4b',
+  local_asr_available: false,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

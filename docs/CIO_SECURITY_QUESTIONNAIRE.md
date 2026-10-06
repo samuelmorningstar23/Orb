@@ -411,8 +411,9 @@ verifies a backup before installing it (size floor, decrypt, integrity check,
 row-count floors, audit-chain linkage, and that a login-capable admin exists),
 stages it on the same filesystem and moves it into place so a power cut leaves
 the previous copy intact, keeps one generation back, unpacks the matching media
-archive, and writes a receipt the heartbeat reports. It refuses to run if it
-detects a live Orb on the port. The switchover runbook is written
+archive, and writes a receipt that the operator reads in the daily on-site
+check (nothing reports it off the box). It refuses to run if it detects a live
+Orb on the port. The switchover runbook is written
 (`docs/WARM_STANDBY.md`).
 
 What does not exist is the second Mac. Today there is one machine, so none of
@@ -439,16 +440,17 @@ straight off the filesystem when the server is down. The drill for using it is
 rehearsed with your IT staff before go-live, not just documented.
 
 **5.7 Alerting on backup failure?**
-*Built, not yet deployed.* The outbound no-PHI heartbeat that carries backup
-age, disk headroom, loop health and access posture runs on its own daemon thread
-so a frozen event loop cannot silence it, issues no database query at all, and
-key-allowlists its payload before send. It ships disabled and does nothing
-unless `ORB_HEARTBEAT_URL` is set. The receiving end exists since 10 August
-2026: a standalone receiver with a dead-man alarm that pages when a beat is
-missed or unhealthy, with a simulation drill that must produce the page before I
-trust it. I deploy that receiver outside your building before go-live. Until it
-is live, the control is my daily check, and the monthly drill is a calendar
-event with a human name on it.
+*On site only, by design.* The appliance has no internet connection of any kind
+(my ruling of 4 October 2026), so it has no outbound alerting and nothing pages
+anyone off site. The outbound heartbeat and off-site receiver I built in August
+were removed under that rule. What exists is on the appliance: the ops status
+page (`./scripts/orb.sh status` in a terminal, which works with the server
+down, and the same checks at `/api/ops/status` for an administrator) flags a
+backup older than 36 hours by default, a backup that failed its check, and low
+disk; the Trust Center shows the backup state; the watchdog records evidence
+when the server stalls (7.1); and the backup log records every run. The control
+is my daily on-site check of those, and the monthly drill is a calendar event
+with a human name on it.
 
 **5.8 Can we get our data out?**
 *Implemented.* FHIR R4 export of the clinical record, with provenance tags
@@ -594,17 +596,22 @@ data:
   whose parameters are a latitude and longitude and public query filters. Every
   call is logged. These can be blocked at your firewall with no loss of clinical
   function.
-- Model weights and software updates, downloaded once at installation, not
-  during operation.
+- Model weights, software packages and the speech model, downloaded once
+  before the appliance joins your network, never by the appliance during
+  operation.
 
-Optionally, and off by default: browser-based cloud dictation. The Web Speech
-API streams microphone audio to the browser vendor's speech service, which would
-be egress of spoken PHI, so the server ships it disabled and the client asks the
-server for permission before starting it, treating "no answer" as no. All three
-voice surfaces enforce that check, and local Whisper transcription is the source
-of truth regardless. Honest scope: this is a client-side gate, so a modified
-browser could bypass it; the definitive control is your firewall. I recommend
-leaving it off.
+Browser-based cloud dictation is not supported and cannot be enabled. A
+browser's own speech recognition streams microphone audio to the browser
+vendor's speech service, which would be egress of spoken PHI, so it was removed
+on 4 October 2026 and no setting brings it back. Dictation and voice questions
+are transcribed on the appliance by the local speech engine, and spoken answers
+use on-device voices only. The speech engine and its model are installed with
+the appliance and never download anything: if the model is missing, voice is
+reported unavailable rather than fetched.
+
+Two things that used to reach the internet are gone, both removed on 4 October
+2026 under my ruling that Orb has no internet connection of any kind: the
+outbound operator heartbeat (5.7) and browser cloud dictation.
 
 **8.4 Does data cross a national border?**
 *Implemented.* No patient data leaves the appliance, so no patient data leaves
@@ -849,7 +856,7 @@ after. Status as of 3 September 2026.
 | 6 | Ground-truth outcome capture: definition and owner (the capture screen exists) | Hospital champion | Blocking the headline metric |
 | 7 | Security-incident plan with named roles and timelines | Joint | Before go-live |
 | 8 | Dependency vulnerability scanning in CI | Orb | On request |
-| 9 | Heartbeat receiver deployed outside the hospital (both ends are built) | Orb | Appliance hardening |
+| 9 | Daily on-site operator check agreed and named (the appliance has no outbound alerting; the off-site heartbeat was removed on 4 October 2026, see 5.7) | Joint | Install |
 | 10 | Warm-standby second machine (the restore job and switchover runbook are built; the hardware is not bought) | Joint | Appliance hardening |
 | 11 | Whether `helix.write` and `surgery.write` stay in the admin role (2.4) | Hospital decision | Before install |
 | 12 | External penetration test: required for approval or not? | Hospital decision | Decide now (long lead) |
@@ -857,7 +864,7 @@ after. Status as of 3 September 2026.
 | 14 | Two dead fail-closed audit categories (4.3) | Orb | Before install |
 | 15 | Patient erasure blocked by the shadow-event guard (9.5) | Orb | Before go-live |
 | 16 | Bedside-monitor adapter tested on the ward's real devices | Joint | Integration phase |
-| 17 | On-device speech engine installed on the appliance | Orb | Install |
+| 17 | On-device speech engine and its model installed on the appliance, before it joins your network (it never downloads afterwards) | Orb | Install |
 
 *Companion documents: `docs/SECURITY_ONEPAGER.md` (one page, for the review
 meeting), `docs/BACKUP_AND_RESTORE.md` (the operator's runbook),

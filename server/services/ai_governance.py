@@ -476,23 +476,20 @@ def ai_posture() -> dict:
     """The client-visible governance posture (no secrets).
 
     local_model is the provenance the UI shows: there is exactly one engine, and
-    naming it is how a clinician can tell what answered them. cloud_speech_allowed
-    gates the browser's Web Speech API, the only path by which anything spoken
-    could leave the building (see config.CLOUD_SPEECH_ALLOWED).
+    naming it is how a clinician can tell what answered them. There is no
+    browser or cloud speech to report: Orb is strictly offline, so the only
+    speech recognition is the local Whisper lane below.
     """
-    from config import CLOUD_SPEECH_ALLOWED, LLM_MODEL
+    from config import LLM_MODEL
 
     return {
-        "cloud_speech_allowed": CLOUD_SPEECH_ALLOWED,
         "local_model": LLM_MODEL,
-        # Whether ON-APPLIANCE transcription can actually run. This is not the
-        # same question as cloud_speech_allowed and the UI needs both: cloud
-        # speech is a PRIVACY gate, this is a CAPABILITY fact. Without it every
-        # dictation control in the product looked live, and a clinician learned
-        # otherwise only after speaking for thirty seconds into a recorder whose
-        # transcription was always going to fail. Reported honestly rather than
-        # used to hide the feature — the control stays, it just says what it can
-        # and cannot do right now.
+        # Whether ON-APPLIANCE transcription can actually run, a CAPABILITY
+        # fact. Without it every dictation control in the product looked live,
+        # and a clinician learned otherwise only after speaking for thirty
+        # seconds into a recorder whose transcription was always going to fail.
+        # Reported honestly rather than used to hide the feature: the control
+        # stays, it just says what it can and cannot do right now.
         "local_asr_available": local_asr_available(),
     }
 
@@ -502,12 +499,12 @@ def local_asr_available() -> bool:
 
     Deliberately cheap and non-invasive: it reports CONFIGURATION, not a live
     probe, because this is called on every client boot. The daemon flag is the
-    operator's own switch, and the model directory is the thing that is actually
+    operator's own switch, and the model weights are the thing that is actually
     missing on an appliance where ASR was never installed.
     """
     try:
-        from config import VOICE, BASE_DIR
-    except Exception:  # pragma: no cover — config shape change must not 500
+        from config import SCRIBE, VOICE
+    except Exception:  # pragma: no cover: a config shape change must not 500
         return False
 
     try:
@@ -516,12 +513,16 @@ def local_asr_available() -> bool:
     except Exception:  # pragma: no cover
         return False
 
-    # A whisper checkpoint has to exist somewhere under server/models for either
-    # the daemon or the subprocess worker to load one.
+    # The weights have to be where the daemon and the subprocess worker load
+    # them from: server/mlx_models/<model>/. Nothing downloads them (Orb is
+    # offline), so a missing folder means no transcription. This used to look
+    # for a "whisper" folder under server/models, where nothing loads from, so
+    # an installed model read as missing.
     try:
-        models_dir = BASE_DIR / "models"
-        if not models_dir.exists():
-            return False
-        return any("whisper" in p.name.lower() for p in models_dir.iterdir())
+        from services.asr_model_files import is_installed
+        return (
+            is_installed(SCRIBE["asr"]["model"], SCRIBE["asr"].get("quant"))
+            or is_installed(VOICE["daemon"]["model"])
+        )
     except Exception:  # pragma: no cover
         return False

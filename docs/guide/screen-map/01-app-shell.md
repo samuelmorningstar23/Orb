@@ -917,95 +917,31 @@ present on every tab.
 
 **Where:** fixed bottom-right corner, `bottom:24px; right:24px`, z-index 9990
 (`src/components/sage/SageFloatingAssistant.css:3-10`).
-**Rendered by:** `src/components/sage/SageFloatingAssistant.tsx:818-836`, a
-`<button className="sage-fab__orb">` containing `sage-fab__orb-visual` plus
-either a **stop square** while speaking (`:825-827`) or a **microphone** while
-listening/dormant (`:829-834`). The wrapper carries a state class:
-`` `sage-fab sage-fab--${state}` `` (`:778`). Mounted at
-`ClinicianShell.tsx:633` with `activeTab={activeTab}`.
-**Data from:** `state` (`:34`), one of `dormant | listening | processing |
-speaking`; `viewTab` from `ActiveViewContext`; `micOwner` and
-`cloudSpeechAllowed` from `SageRuntimeContext`.
-**API:** on submit, `POST /api/sage/voice` (SSE) via
-`querySageVoice` (`src/api/client.ts:1032-1053`); the governance posture comes
-from `GET /api/sage/ai-posture` (`client.ts:992-994`) fetched once by
-`SageRuntimeProvider` (`src/contexts/SageRuntimeProvider.tsx:10-16`).
-**Server:** `server/routes/sage_routes.py:2506-2526` `sage_voice_query`
-(`require_permission("sage.query")`), and
-`server/routes/sage_routes.py:2782-2788` `get_ai_posture` →
-`server/services/ai_governance.py:342-364` `ai_posture`.
-**Change this →** On the **Sage tab only** the orb lifts to `bottom:96px`
-(`:775` sets `onSageTab`, `.sage-fab--raised` at `css:14-16`) so it stops
-covering the composer's send button. Its title changes with state (`:821`):
-"Ask Sage" / "Sage is listening" / "Stop". Clicking while dormant starts
-listening; clicking while speaking cancels TTS and returns to dormant
-(`:450-521`). **If the deployment has not approved cloud speech, clicking does
-not open the mic at all**, it shows an explanatory card instead (`:455-472`),
-because `cloud_speech_allowed` is false until the server says otherwise and the
-default is fail-closed (`SageRuntimeProvider.tsx:35`). The orb also greys and
-suspends when another surface owns the mic (`:84-85`), which is the visible
-consequence of SagePanel voice mode or Scribe dictation being active.
+**Rendered by:** `src/components/sage/SageFloatingAssistant.tsx`, a single orb
+button, mounted once in `ClinicianShell.tsx` with `activeTab={activeTab}`. The
+component was rewritten on 4 October 2026 as a **text-only** orb; line
+citations for it are left out until the next citation sweep.
+**Data from:** `viewTab` from `ActiveViewContext` (for the raised position).
+**API:** none. The orb never opens the microphone, never runs speech
+recognition and never speaks. **Server:** none.
+**Change this →** On the Sage, Scribe, Relay and Ward Round tabs the orb lifts to
+`bottom:96px` (`.sage-fab--raised` at `css:14-16`) so it stops covering the
+controls those panels keep in that corner. Its title reads "Ask Sage". Clicking it
+toggles a small card above it, **"Voice is not available here. Type your question
+in Sage instead."**, with one button, **Open Sage to type**, which switches to the
+Sage tab. Escape closes the card and returns focus to the orb.
+Voice lives in the Sage panel's voice mode, Scribe and Ward Round dictation, all
+on the local speech engine.
 
-### Sage listening rings and "Listening..." label
-
-**Where:** concentric expanding rings around the orb, with a small caption above
-it.
-**Rendered by:** `src/components/sage/SageFloatingAssistant.tsx:780-786` (three
-`sage-fab__ring` divs) and `:789-791`
-(`<div className="sage-fab__status-label">Listening...</div>`), both gated on
-`state === 'listening'`.
-**Data from:** `state`; the ring amplitude is driven by a CSS custom property
-`--audio-level` written from a live WebAudio analyser
-(`stopAudioAnalysis` clears it at `:101-103`, `startAudioAnalysis` at `:106-120`
-opens the mic stream).
-**API:** none directly. **Server:** none.
-**Change this →** Rings and caption appear only in the listening state and
-vanish the instant a query is submitted (a 1.2s silence timer submits
-automatically, `:420-430`) or after 5 seconds of initial silence, which drops
-straight back to dormant (`:439-447`). Both strings are hard-coded English.
-
-### Sage answer card
-
-**Where:** floats directly above the orb, bottom-right.
-**Rendered by:** `src/components/sage/SageFloatingAssistant.tsx:794-815`, 
-`sage-fab__card`, with:
-- header dot + title reading **"Thinking"** while processing and **"Sage"**
-  otherwise (`:798-800`);
-- the active patient's name as a chip when one is open (`:801-803`);
-- the recognised query text (`:806`);
-- a shimmer placeholder while processing with no tokens yet (`:807-809`);
-- the streamed response text (`:810-812`).
-**Data from:** `queryText` / `responseText` state; `activePatientName` from
-`ActivePatientContext`; `cardDismissing` adds the exit class (`:795`).
-**API / Server:** as for the orb, `POST /api/sage/voice` streams tokens.
-**Change this →** The patient chip is the visible proof that the voice question
-was scoped to a patient; it disappears when no patient is open, and with it goes
-the patient context that `buildWireViewContext`
-(`src/contexts/ActiveViewContext.tsx:49-69`) attaches to the request. Note the
-card is also reused for the **privacy refusal** message when cloud speech is
-disallowed (`:459-461`), auto-dismissing after 6 seconds (`:463-470`).
-
-### Sage hotword toggle
-
-**Where:** a 24px disc clipped to the top-left corner of the orb
-(`css:243-256`, `position:absolute; top:-6px; left:-6px`).
-**Rendered by:** `src/components/sage/SageFloatingAssistant.tsx:839-852`, 
-`` className={`sage-fab__toggle ${isEnabled && cloudSpeechAllowed ? 'sage-fab__toggle--active' : ''}`} ``
-around a small mic SVG.
-**Data from:** `useSageHotword()` (`:405` → `src/hooks/useSageHotword.ts:8-27`),
-whose state is persisted in `localStorage['orb_sage_hotword']` and **defaults to
-OFF** (`useSageHotword.ts:14-17`), the comment there records why: leaving it on
-meant every shell streamed ward-room audio to a cloud recogniser without
-consent.
-**API:** none directly; it decides whether continuous recognition runs
-(`:528`).
-**Server:** `cloud_speech_allowed` from `/api/sage/ai-posture` is the outer gate.
-**Change this →** Its `title`/`aria-label` is the state (`:407-411`): "Enable
-&quot;Sage&quot; hotword", "Disable …", or, when the posture forbids cloud
-speech, "Voice input disabled by privacy posture (cloud speech egress not
-approved)", in which case clicking does nothing at all (`:841` wraps the call in
-`if (cloudSpeechAllowed)`). Turn it on and saying "Sage" anywhere in the product
-wakes the orb without a click.
+**What was removed (4 October 2026).** Until then the orb was a hands-free voice
+assistant: listening rings and a "Listening..." caption driven by a WebAudio
+analyser, an answer card above the orb streaming `POST /api/sage/voice` with the
+active patient's name as a chip, and a "Sage" hotword toggle disc on its corner
+(`useSageHotword`, `localStorage['orb_sage_hotword']`). All of it ran on the
+browser's `webkitSpeechRecognition`, which streams microphone audio to the
+browser vendor's cloud, gated by a `cloud_speech_allowed` posture flag. Orb was
+ruled strictly offline, so the voice loop, the card, the toggle, the hook and the
+flag were removed. Browser speech is not supported and cannot be switched on.
 
 ### Command palette (Cmd/Ctrl-K patient search)
 
@@ -1186,8 +1122,9 @@ by NursePanel's shift strip so the two cannot drift (`tablist.ts:16-17`).
 
 **Active view publication.** `ViewTabSync` (`:296-303`) is a render-less
 component that pushes `activeTab` into `ActiveViewContext` and clears any stale
-panel selection on every tab change. That is how the Sage orb knows which screen
-you are on and includes it in `view_context` on `/api/sage/voice`.
+panel selection on every tab change. That is how Sage knows which screen you are
+on and includes it in `view_context` (the floating orb itself only uses it to
+lift on the Sage tab; it no longer sends questions).
 
 ---
 
@@ -1231,7 +1168,7 @@ you are on and includes it in `view_context` on `/api/sage/voice`.
 - `src/pages/ClinicianShell.tsx::PanelErrorBoundary` → Panel error state; "Reload panel" button; "Updating to the latest version..."
 - `src/pages/ClinicianShell.tsx::isStaleChunkError` → "Updating to the latest version..."
 - `src/pages/ClinicianShell.tsx::chunkReloadAllowed` → "Updating to the latest version..."; Panel error state
-- `src/pages/ClinicianShell.tsx::ViewTabSync` → Sage answer card (patient/tab context); Sage floating orb
+- `src/pages/ClinicianShell.tsx::ViewTabSync` → Sage floating orb
 - `src/pages/ClinicianShell.css` → Sidebar rail geometry; Active nav item indicator; Admit Patient button fill; User card; Sign Out button; Top bar row; Page title; Page subtitle; Offline/sync badges; Header icon buttons; Language toggle; Theme toggle; Panel region gutter; AI status chip; AI configuration popover; Responsive icon-rail (≤1024px); Responsive top-bar (≤768px)
 - `src/components/OrbLogo.tsx::OrbLogo` → Orb logo mark
 - `src/components/OrbLogo.css` → Orb logo mark (spinning ring, pulsing core)
@@ -1253,9 +1190,8 @@ you are on and includes it in `view_context` on `/api/sage/voice`.
 - `src/components/MfaEnrollmentModal.tsx::groupSecret` → MFA setup key (4-character groups)
 - `src/components/AdmitPatientModal.tsx::AdmitPatientModal` → Admit Patient modal; Admit modal seven-tab strip; Admit modal tab completeness indicators; Admit modal chip inputs; Admit modal error strip; One-time Bridge credential card; Copy credentials button
 - `src/components/AdmitPatientModal.tsx::ChipInput` → Admit modal chip inputs
-- `src/components/sage/SageFloatingAssistant.tsx::SageFloatingAssistant` → Sage floating orb; Sage listening rings; Sage "Listening..." label; Sage answer card; Sage query text; Sage thinking shimmer; Sage response text; Sage patient chip; Sage hotword toggle; Sage privacy-refusal card
-- `src/components/sage/SageFloatingAssistant.css` → Sage floating orb position; Sage raised position on the Sage tab; Sage hotword toggle disc
-- `src/hooks/useSageHotword.ts::useSageHotword` → Sage hotword toggle
+- `src/components/sage/SageFloatingAssistant.tsx::SageFloatingAssistant` → Sage floating orb (text-only); "Voice is not available here" card; "Open Sage to type" button
+- `src/components/sage/SageFloatingAssistant.css` → Sage floating orb position; Sage raised position on the Sage tab
 - `src/hooks/useFocusTrap.ts::useFocusTrap` → Keyboard shortcuts sheet; MFA enrolment modal; Admit Patient modal
 - `src/lib/orbBus.ts::gotoTab` → Active nav item indicator; Panel region
 - `src/lib/orbBus.ts::openPatient` → Command palette result rows
@@ -1275,15 +1211,10 @@ you are on and includes it in `view_context` on `/api/sage/voice`.
 - `src/services/criticalAlerts.ts::toggleAlertSoundMuted` → Critical-alert bell (click to mute/unmute)
 - `src/services/criticalAlerts.ts::flashTitle` → Tab title "⚠ N critical alerts, Orb"
 - `src/services/criticalAlerts.ts::playChime` → Critical-alert chime
-- `src/contexts/SageRuntimeContext.tsx::SageRuntimeProvider` → Sage floating orb (suspended/greyed); Sage hotword toggle (disabled by posture); Sage privacy-refusal card
-- `src/contexts/ActiveViewContext.tsx::ActiveViewProvider` → Sage answer card (screen context); Sage floating orb raised position
-- `src/contexts/ActiveViewContext.tsx::buildWireViewContext` → Sage answer card (patient/tab context sent with the question)
-- `src/contexts/ActivePatientContext.tsx::ActivePatientProvider` → Sage patient chip
+- `src/contexts/ActiveViewContext.tsx::ActiveViewProvider` → Sage floating orb raised position
 - `src/App.tsx::App` → Sign Out button; User name; Role · department line; User avatar disc; whole shell mount/redirect
 - `src/api/client.ts::apiFetch` → Command palette result rows; Pulse panel error state; MFA modal error strip; Admit Patient modal error strip
 - `src/api/client.ts::admitPatient` → Admit Patient modal submit; One-time Bridge credential card
-- `src/api/client.ts::querySageVoice` → Sage response text; Sage thinking shimmer
-- `src/api/client.ts::getSageAiPosture` → Sage hotword toggle; Sage privacy-refusal card
 - `src/api/client.ts::clearOfflineQueue` → Offline badge, N pending (destroyed on sign-out)
 - `src/api/client.ts::clearForeignOfflineQueue` → Sync-failed badge
 - `src/api/client.ts::processOfflineQueue` → Syncing badge; Synced badge; Sync-failed badge
@@ -1302,9 +1233,6 @@ you are on and includes it in `view_context` on `/api/sage/voice`.
 - `server/permissions.py::ROLE_PERMISSIONS` → Command palette result rows; Pulse panel; AI configuration popover Load/Unload buttons; Admit Patient modal submit
 - `server/routes/pulse_routes.py::pulse_dashboard` → Pulse alert badge; Pulse panel; Pulse weather block; Pulse air-quality block; Pulse flu block; Pulse FDA recalls block
 - `server/services/pulse_service.py::get_pulse_dashboard` → Pulse alert badge; Pulse panel Active Clinical Alerts; Pulse no-alerts empty state; Pulse weather block; Pulse air-quality block; Pulse flu block; Pulse FDA recalls block
-- `server/routes/sage_routes.py::get_ai_posture` → Sage hotword toggle; Sage privacy-refusal card; Sage floating orb (mic gate)
-- `server/routes/sage_routes.py::sage_voice_query` → Sage response text; Sage thinking shimmer
-- `server/services/ai_governance.py::ai_posture` → Sage hotword toggle; Sage privacy-refusal card
 - `server/routes/admission_routes.py::process_admission` → Admit Patient modal submit; One-time Bridge credential card; Admit Patient modal error strip
 - `server/services/admission_service.py::admit_patient` → One-time Bridge credential card (Login ID, one-time password)
 - `server/routes/auth_routes.py::mfa_enroll_begin` → MFA setup key; MFA provisioning URI; MFA disable view (via "MFA already enabled")

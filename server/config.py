@@ -2,6 +2,17 @@
 import os
 from pathlib import Path
 
+# ── Strictly offline (standing rule, 4 October 2026) ──
+# Hugging Face libraries download a model the moment it is missing from the local
+# cache; the knowledge embedder and reranker loaders fall back to a plain model
+# name for exactly that. Set before anything imports huggingface_hub or
+# transformers, and inherited by every worker process Orb starts, so a missing
+# model fails fast instead of reaching the internet. setdefault, so provisioning
+# can still pass HF_HUB_OFFLINE=0 explicitly on a machine that is not yet on the
+# hospital network (install runbook, section 8).
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
 # ── Deployment profile ──
 # Resolved FIRST because the fail-closed secret guards below key off it. It is
 # stripped (systemd/.env values routinely carry trailing whitespace or CRLF) and
@@ -413,12 +424,9 @@ except ValueError:
 # instance configured above is the ONLY inference engine, so no model call can
 # carry patient data off the box.
 #
-# Browser-side speech is the one remaining path that could. The Web Speech API
-# (webkitSpeechRecognition) streams mic audio to a cloud ASR service, outside
-# this server's control — egress of spoken PHI — so it is OFF unless an operator
-# explicitly approves it. The frontend reads this via GET /api/sage/ai-posture
-# and refuses to start cloud speech when false.
-CLOUD_SPEECH_ALLOWED = os.getenv("ORB_CLOUD_SPEECH_ALLOWED", "false").strip().lower() in ("1", "true", "yes", "on")
+# There is no browser or cloud speech recognition, and no switch for it: Orb is
+# strictly offline (owner ruling, 4 October 2026). Speech is transcribed by the
+# local Whisper lane only (SCRIBE["asr"], VOICE["daemon"] below).
 
 # Embeddings
 EMBEDDING_MODEL = "BAAI/bge-m3"

@@ -40,14 +40,14 @@ department names and configuration — never a patient name, a record number, or
 an identifier that leads to one. `tests/test_ops_health.py` seeds a patient with
 an unmistakable name and asserts it appears nowhere in any rendering.
 
-RELATIONSHIP TO services/heartbeat_service.py
+WHY TWO THRESHOLDS ARE CALLED ORB_HEARTBEAT_*
 ─────────────────────────────────────────────
-The heartbeat answers "should someone far away be woken up", in codes, over the
-network. This answers "what do I, standing here, do next", in sentences, on
-screen. They deliberately measure the same underlying things and MUST agree —
-where a threshold exists (backup staleness, minimum free disk) this module reads
-the SAME environment variable the heartbeat does, so a site that retunes one has
-retuned both.
+Backup staleness and minimum free disk are read from
+ORB_HEARTBEAT_BACKUP_MAX_AGE_H and ORB_HEARTBEAT_DISK_MIN_PCT. The names are
+left over from the outbound heartbeat, which was removed when Orb went strictly
+offline (no connection of any kind leaves the building). They keep those names
+because a site may already set them, and this module is now the only thing that
+interprets them.
 
 NEVER RAISES. A status page that can throw is a status page that goes blank
 during the incident it exists for. Every collector converts its own failure into

@@ -7,7 +7,7 @@ import { useActivePatient } from '../../contexts/ActivePatientContext'
 import { useActiveView, buildWireViewContext } from '../../contexts/ActiveViewContext'
 import { useSageRuntime } from '../../contexts/SageRuntimeContext'
 import { useDataChanged } from '../../hooks/useDataChanged'
-import { getSpeechRecognitionCtor, type SpeechRecognition } from '../../lib/speechRecognition'
+import { pickOnDeviceVoice } from '../../lib/onDeviceVoice'
 import { onSageAsk, takePendingSageQuestion } from '../../lib/orbBus'
 import OrbLogo from '../../components/OrbLogo'
 import { SageAnswerMeta } from '../../components/SageAnswerMeta'
@@ -124,25 +124,16 @@ function extractSentences(text: string): [string[], string] {
   return [sentences, remainder]
 }
 
-/** Pick the best available voice — prefer macOS neural/enhanced voices */
+/** The ON-DEVICE voice to read answers with, or null, and then nothing is
+ *  read aloud: a network voice would send the answer text off the appliance
+ *  (lib/onDeviceVoice). */
 function getBestVoice(): SpeechSynthesisVoice | null {
-  const voices = speechSynthesis.getVoices()
-  if (voices.length === 0) return null
-
-  // Prefer high-quality English voices (macOS enhanced/premium)
-  const preferred = [
-    'Samantha', 'Karen', 'Daniel', 'Zoe', 'Alex',
-    'Moira', 'Tessa', 'Rishi', 'Fiona', 'Victoria'
-  ]
-
-  for (const name of preferred) {
-    const v = voices.find(v => v.name.includes(name) && v.lang.startsWith('en'))
-    if (v) return v
-  }
-
-  // Fallback: any English voice
-  return voices.find(v => v.lang.startsWith('en')) || voices[0]
+  return pickOnDeviceVoice(speechSynthesis.getVoices())
 }
+
+/** Said up front, before any recording, when the appliance cannot transcribe. */
+const VOICE_UNAVAILABLE =
+  'Voice questions are not available on this appliance: local speech recognition is not installed. Type your question instead.'
 
 
 interface SagePanelProps {
@@ -160,12 +151,12 @@ export default function SagePanel({ userName }: SagePanelProps) {
   // When the current turn was sent, for the elapsed seconds on the status line.
   const [turnStartedAt, setTurnStartedAt] = useState(0)
 
-  // Shared Sage runtime: active patient + on-screen view (so panel chat is as
-  // context-aware as the floating orb) and mic ownership (so panel voice mode
-  // doesn't fight the orb or Scribe for the device).
+  // Shared Sage runtime: active patient + on-screen view (so panel chat is
+  // scoped to what is on screen) and mic ownership (so panel voice mode
+  // doesn't fight Scribe or the round for the device).
   const { activePatientId, activePatientName } = useActivePatient()
   const { activeTab: viewTab, selection } = useActiveView()
-  const { claimMic, releaseMic, cloudSpeechAllowed } = useSageRuntime()
+  const { claimMic, releaseMic, localAsrAvailable } = useSageRuntime()
   const viewRef = useRef<{ pid: string | null; pname: string | null; tab: string; sel: typeof selection }>({ pid: null, pname: null, tab: '', sel: null })
   // Synced after each render rather than written during it (react-hooks/refs).
   useEffect(() => {
@@ -229,17 +220,16 @@ export default function SagePanel({ userName }: SagePanelProps) {
   const [voiceRecording, setVoiceRecording] = useState(false)
   const [voiceTranscribing, setVoiceTranscribing] = useState(false)
   const [voiceElapsed, setVoiceElapsed] = useState(0)
-  const [voiceLiveText, setVoiceLiveText] = useState('')
   const [voiceStatus, setVoiceStatus] = useState('')  // step-by-step status
+  // A refusal shown above the composer, in a conversation as well as on the
+  // landing screen (voiceStatus only shows on the voice landing screen).
+  const [voiceNotice, setVoiceNotice] = useState<string | null>(null)
   const [isSpeaking, setIsSpeaking] = useState(false)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
   const voiceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const recognitionRef = useRef<SpeechRecognition | null>(null)
-  const liveTextRef = useRef<string>('')
   const recordingStartRef = useRef<number>(0)
-  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [patientNamesHint, setPatientNamesHint] = useState<string>('Orb Hospital')
 
   // ─── TTS State ───
@@ -253,6 +243,14 @@ export default function SagePanel({ userName }: SagePanelProps) {
 
   // Keep voiceModeRef in sync
   useEffect(() => { voiceModeRef.current = voiceMode }, [voiceMode])
+
+  // The refusal stands for a few seconds; the voice button's own label keeps
+  // saying it after that.
+  useEffect(() => {
+    if (!voiceNotice) return
+    const t = setTimeout(() => setVoiceNotice(null), 8000)
+    return () => clearTimeout(t)
+  }, [voiceNotice])
 
   // Pre-fetch active patient names to bias Whisper's transcription engine.
   // ROLE-GATED: /api/vigil/patients requires vigil.view, which a pharmacist
@@ -307,7 +305,6 @@ export default function SagePanel({ userName }: SagePanelProps) {
     return () => {
       if (voiceTimerRef.current) clearInterval(voiceTimerRef.current)
       if (autoListenTimerRef.current) clearTimeout(autoListenTimerRef.current)
-      if (recognitionRef.current) try { recognitionRef.current.stop() } catch { /* already stopped */ }
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') mediaRecorderRef.current.stop()
       streamRef.current?.getTracks().forEach(t => t.stop())
       speechSynthesis.cancel()
@@ -345,12 +342,22 @@ export default function SagePanel({ userName }: SagePanelProps) {
       return
     }
 
+    // No on-device voice: drop what is queued and finish the turn silently,
+    // so voice mode still goes back to listening. Never the browser default,
+    // which can be a network voice.
+    const voice = getBestVoice()
+    if (!voice) {
+      ttsQueueRef.current = []
+      ttsBufferRef.current = ''
+      speakNextSentence()
+      return
+    }
+
     ttsSpeakingRef.current = true
     setIsSpeaking(true)
 
     const utterance = new SpeechSynthesisUtterance(nextSentence)
-    const voice = getBestVoice()
-    if (voice) utterance.voice = voice
+    utterance.voice = voice
     utterance.rate = 1.05
     utterance.pitch = 1.0
 
@@ -403,6 +410,7 @@ export default function SagePanel({ userName }: SagePanelProps) {
   // ─── Submit Query ───
   const submitQuery = useCallback(async (userQuery: string) => {
     if (!userQuery.trim()) return
+    setVoiceNotice(null)
 
     // If already streaming, abort current response (keep partial answer) and start new query
     if (streaming && abortControllerRef.current) {
@@ -581,8 +589,16 @@ export default function SagePanel({ userName }: SagePanelProps) {
 
   // ─── Voice Recording Logic ───
   const startVoiceRecording = async () => {
-    // Claim the shared mic so the floating orb's continuous recognition pauses
-    // and Scribe dictation can't grab the device mid-recording.
+    // Refuse BEFORE the clinician speaks, as the round's dictation does. This
+    // used to record anyway and end on "No speech detected" when the appliance
+    // had no speech recognition installed.
+    if (localAsrAvailable === false) {
+      setVoiceNotice(VOICE_UNAVAILABLE)
+      setVoiceStatus('')
+      return
+    }
+    // Claim the shared mic so Scribe or the round can't grab the device
+    // mid-recording.
     if (!claimMic('sage-panel')) {
       setVoiceStatus('Microphone is in use by another Sage surface.')
       setTimeout(() => setVoiceStatus(''), 2500)
@@ -617,10 +633,7 @@ export default function SagePanel({ userName }: SagePanelProps) {
       }
     }
 
-    setVoiceStatus('Listening…')
     audioChunksRef.current = []
-    liveTextRef.current = ''
-    setVoiceLiveText('')
     setVoiceElapsed(0)
 
     // MediaRecorder for Whisper transcription
@@ -629,61 +642,22 @@ export default function SagePanel({ userName }: SagePanelProps) {
     recorder.start()
     mediaRecorderRef.current = recorder
 
-    // Web Speech API for live preview text + 2s silence auto-stop. This streams
-    // audio to a cloud ASR, so it is PHI egress — only enable it when the
-    // deployment posture permits cloud speech. The MediaRecorder→local-Whisper
-    // path above is unaffected and remains the source of truth for the query.
-    // When cloud speech is off we fall back to a fixed max-duration auto-stop.
-    const SR = cloudSpeechAllowed ? getSpeechRecognitionCtor() : null
-    const resetSilenceTimer = () => {
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current)
-      silenceTimerRef.current = setTimeout(() => {
-        // 2s of silence → auto-stop recording
-        if (mediaRecorderRef.current?.state === 'recording' && liveTextRef.current.trim()) {
-          stopVoiceRecording()
-        }
-      }, 2000)
-    }
-    if (!cloudSpeechAllowed) {
-      setVoiceStatus('Listening… (local transcription; tap to stop)')
-    }
-    if (SR) {
-      const recog = new SR()
-      recog.continuous = true; recog.interimResults = true; recog.lang = 'en-US'
-      recog.onresult = (event) => {
-        let allFinal = '', currentInterim = ''
-        for (let i = 0; i < event.results.length; i++) {
-          const r = event.results[i]
-          if (r.isFinal) allFinal += r[0].transcript
-          else currentInterim += r[0].transcript
-        }
-        if (allFinal) liveTextRef.current = allFinal
-        setVoiceLiveText(liveTextRef.current + (currentInterim ? ' ' + currentInterim : ''))
-        // Reset silence timer on any speech
-        resetSilenceTimer()
-      }
-      recog.onerror = () => {}
-      recog.onend = () => { if (recognitionRef.current) try { recog.start() } catch { /* already started */ } }
-      try { recog.start(); recognitionRef.current = recog } catch { /* live captions are optional: the recording carries on without them */ }
-    }
-
+    // Local Whisper transcribes the recording when it stops. Nothing listens
+    // while it runs (no browser speech), so it stops when the clinician taps.
+    setVoiceStatus('Listening… (local transcription; tap to stop)')
     setVoiceRecording(true)
     const start = Date.now()
     recordingStartRef.current = start
     voiceTimerRef.current = setInterval(() => setVoiceElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
-    // Start initial silence timer
-    resetSilenceTimer()
   }
 
   // Kept current after every render. speakNext is memoised once, and it used to
-  // call the startVoiceRecording of the FIRST render, whose cloudSpeechAllowed
-  // was always false because the AI posture had not loaded yet.
+  // call the startVoiceRecording of the FIRST render, from before the AI
+  // posture (and so localAsrAvailable) had loaded.
   useEffect(() => { startVoiceRecordingRef.current = () => { void startVoiceRecording() } })
 
   const stopVoiceRecording = () => {
-    if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null }
     if (voiceTimerRef.current) { clearInterval(voiceTimerRef.current); voiceTimerRef.current = null }
-    if (recognitionRef.current) { const r = recognitionRef.current; recognitionRef.current = null; try { r.stop() } catch { /* already stopped */ } }
     // Release mic ownership so other Sage surfaces resume (the device tracks are
     // stopped below, after the recorder finalizes).
     releaseMic('sage-panel')
@@ -693,12 +667,10 @@ export default function SagePanel({ userName }: SagePanelProps) {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.onstop = async () => {
         const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
-        const liveText = liveTextRef.current.trim()
         const elapsed = (Date.now() - recordingStartRef.current) / 1000
 
-        // Quick tap (< 1.5s) with no speech detected → skip Whisper
-        if (!liveText && elapsed < 1.5) {
-          setVoiceLiveText('')
+        // Quick tap (< 1.5s) → skip Whisper
+        if (elapsed < 1.5) {
           setVoiceStatus('')
           return
         }
@@ -711,30 +683,17 @@ export default function SagePanel({ userName }: SagePanelProps) {
           const finalText = rawText ? correctClinicalSpelling(rawText) : ''
           if (finalText) {
             setVoiceStatus('Sending to Sage…')
-            setVoiceLiveText('')
             setVoiceTranscribing(false)
             await submitQuery(finalText)
-          } else if (liveText) {
-            setVoiceStatus('Using live transcript…')
-            setVoiceLiveText('')
-            setVoiceTranscribing(false)
-            await submitQuery(liveText)
           } else {
-            setVoiceLiveText('')
             setVoiceTranscribing(false)
             setVoiceStatus('No speech detected.')
             setTimeout(() => setVoiceStatus(''), 2000)
           }
         } catch {
-          setVoiceLiveText('')
           setVoiceTranscribing(false)
-          if (liveText) {
-            setVoiceStatus('Whisper failed, using live transcript…')
-            await submitQuery(liveText)
-          } else {
-            setVoiceStatus('Transcription failed.')
-            setTimeout(() => setVoiceStatus(''), 2000)
-          }
+          setVoiceStatus('Transcription failed.')
+          setTimeout(() => setVoiceStatus(''), 2000)
         }
       }
       mediaRecorderRef.current.stop()
@@ -749,8 +708,13 @@ export default function SagePanel({ userName }: SagePanelProps) {
     const enteringVoice = !voiceMode
     
     if (enteringVoice) {
+      // Say so now, rather than switching into a voice mode that cannot hear.
+      if (localAsrAvailable === false) {
+        setVoiceNotice(VOICE_UNAVAILABLE)
+        return
+      }
+      setVoiceNotice(null)
       setVoiceMode(true)
-      setVoiceLiveText('')
       setVoiceElapsed(0)
       setVoiceStatus('Starting voice mode…')
       // Auto-start recording after render settles
@@ -758,7 +722,6 @@ export default function SagePanel({ userName }: SagePanelProps) {
     } else {
       // Leaving voice mode → force-kill ALL mic resources
       if (voiceTimerRef.current) { clearInterval(voiceTimerRef.current); voiceTimerRef.current = null }
-      if (recognitionRef.current) { const r = recognitionRef.current; recognitionRef.current = null; try { r.stop() } catch { /* already stopped */ } }
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.onstop = null
         try { mediaRecorderRef.current.stop() } catch { /* already inactive */ }
@@ -768,7 +731,6 @@ export default function SagePanel({ userName }: SagePanelProps) {
       streamRef.current = null
       setVoiceRecording(false)
       setVoiceMode(false)
-      setVoiceLiveText('')
       setVoiceElapsed(0)
       setVoiceStatus('')
     }
@@ -892,14 +854,16 @@ export default function SagePanel({ userName }: SagePanelProps) {
           startVoiceRecording={startVoiceRecording}
           stopVoiceRecording={stopVoiceRecording}
           isSpeaking={isSpeaking}
+          voiceUnavailable={localAsrAvailable === false}
         />
+
+        {voiceNotice && <div className="sage-voice-notice" role="alert">{voiceNotice}</div>}
 
         {voiceMode && (voiceRecording || voiceTranscribing) && !isLanding && (
           <div style={{ position: 'absolute', bottom: '100px', right: '40px', background: 'var(--bg-elevated)', border: '1px solid var(--border-glass)', padding: '10px 14px', borderRadius: '10px', boxShadow: 'var(--shadow-lg)', zIndex: 10 }}>
              <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-primary)' }}>
                {voiceRecording ? `Listening... ${formatTime(voiceElapsed)}` : voiceTranscribing ? 'Transcribing...' : ''}
              </p>
-             {voiceLiveText && <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>{voiceLiveText}</p>}
           </div>
         )}
       </div>

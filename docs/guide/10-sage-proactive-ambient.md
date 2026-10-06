@@ -1,6 +1,6 @@
-# Sage Proactive and Ambient: insights surveillance, floating assistant, hotword
+# Sage Proactive and Ambient: insights surveillance and the floating Sage orb
 
-Orb's "Sage" brand covers three different AI surfaces that all *watch* rather than *wait to be asked*. This guide covers the three ambient/proactive ones (the fourth, the interactive text/voice agent you type or speak to, lives in **guide 09-sage**). **Sage Proactive** is a server-side surveillance loop: every 15 seconds it re-scans every admitted patient with cheap deterministic rules and emits prioritized *insights* ("Sage noticed X") to the attending clinician's dashboard. **Sage Ambient** is a silent observer of Relay case-room chat: for each new message it runs a five-gate cheap filter, optionally asks a local small language model to classify the message, keeps a bounded per-room memory, and surfaces suggested *action cards* and *risk flags* in a copilot sidebar. **The Floating Assistant** is the always-present golden orb in the bottom-right corner that you can summon by saying "Sage…", which uses the browser's built-in speech recognition and speech synthesis to run a hands-free voice conversation. None of these three replace clinical judgment: rules and models only *draft*; a human always confirms.
+Orb's "Sage" brand covers three different AI surfaces that all *watch* rather than *wait to be asked*. This guide covers the three ambient/proactive ones (the fourth, the interactive text/voice agent you type or speak to, lives in **guide 09-sage**). **Sage Proactive** is a server-side surveillance loop: every 15 seconds it re-scans every admitted patient with cheap deterministic rules and emits prioritized *insights* ("Sage noticed X") to the attending clinician's dashboard. **Sage Ambient** is a silent observer of Relay case-room chat: for each new message it runs a five-gate cheap filter, optionally asks a local small language model to classify the message, keeps a bounded per-room memory, and surfaces suggested *action cards* and *risk flags* in a copilot sidebar. **The Floating Assistant** is the always-present orb in the bottom-right corner. It is text-only: it never listens, and clicking it explains that voice is not available there and offers an "Open Sage to type" button. (Until 4 October 2026 it ran a hands-free voice loop on the browser's built-in speech recognition, which streams audio to the browser vendor's cloud; that was removed when Orb was ruled strictly offline.) None of these three replace clinical judgment: rules and models only *draft*; a human always confirms.
 
 ---
 
@@ -10,9 +10,9 @@ Orb's "Sage" brand covers three different AI surfaces that all *watch* rather th
 
 1. **Nobody is watching the trend lines.** SpO2 (blood-oxygen saturation, a percentage) creeping down over three readings is invisible in a single glance. → **Sage Proactive** watches server-side, continuously, and pushes the finding.
 2. **Decisions get made in chat, then lost.** A doctor types "transfer him to theatre now" in a case room; that directive never becomes a tracked action. → **Sage Ambient** reads the chat passively and turns unambiguous directives into confirmable cards.
-3. **Hands are busy / eyes are on the patient.** Typing a question into a computer is friction. → **The Floating Assistant** lets you just *speak*.
+3. **Hands are busy / eyes are on the patient.** Hunting for the Sage tab is friction. → **The Floating Assistant** is a one-click, text-only way into Sage from any screen. Voice lives in the Sage panel's voice mode, on the local speech engine (guide 09-sage).
 
-Everything here is **defensive by design**: surveillance must never crash the app, ambient observation must never block or appear in the chat UI, and the voice orb must survive a denied microphone. That defensiveness (blanket `try/except`, "never raises" contracts) is the dominant style in the code and is called out repeatedly below.
+Everything here is **defensive by design**: surveillance must never crash the app, ambient observation must never block or appear in the chat UI, and the orb must never open the microphone. That defensiveness (blanket `try/except`, "never raises" contracts) is the dominant style in the code and is called out repeatedly below.
 
 ```mermaid
 graph LR
@@ -24,14 +24,12 @@ graph LR
   subgraph Client
     FEED["SageInsightsFeed<br/>(Vigil dashboard)"]
     SIDEBAR["SageAmbientSidebar<br/>(Relay copilot)"]
-    ORB["SageFloatingAssistant<br/>(global orb)"]
-    HOOK["useSageHotword"]
+    ORB["SageFloatingAssistant<br/>(global orb, text-only)"]
   end
   PROSVC -. "sage:insight" .-> FEED
   PROROUTES <--> FEED
   AMBSVC -. "sage:action_update / sage:memory_update" .-> SIDEBAR
-  ORB --> HOOK
-  ORB -->|"/sage/voice SSE"| VOICE["Sage voice agent<br/>(guide 09-sage)"]
+  ORB -->|"Open Sage to type"| PANEL["Sage panel<br/>(guide 09-sage)"]
 ```
 
 Neighboring guides referenced throughout: **06-realtime** (socket.io rooms and the `sio` emitter), **08-relay** (case rooms, messages, the `sage_actions` transition/confirm endpoints), **09-sage** (the interactive voice/text agent behind `/sage/voice`), **03-auth-rbac** (`require_permission`), **04-database-schema** (the `sage_*` tables).
@@ -47,11 +45,10 @@ Neighboring guides referenced throughout: **06-realtime** (socket.io rooms and t
 | `server/services/sage_ambient_service.py` | 1987 | The passive chat observer: 5 gates, deterministic + LLM extraction, bounded room memory, observation log, action-card creation. Called as a fire-and-forget background task per message. |
 | `src/components/sage/SageInsightsFeed.tsx` | 154 | React component on the Vigil dashboard that renders the live insight feed and the dismiss / "draft action" buttons. |
 | `src/components/sage/SageInsightsFeed.css` | 169 | Styling for the insight feed (severity color rails, glass card, act/dismiss buttons). Presentation only. |
-| `src/components/sage/SageFloatingAssistant.tsx` | 855 | The global golden voice orb: a 4-state machine (dormant/listening/processing/speaking) driving Web Speech recognition, hotword detection, streaming TTS, and audio-reactive visuals. |
-| `src/components/sage/SageFloatingAssistant.css` | 398 | Styling and keyframe animations for the orb (pulse, breathing aura, listening rings, the response card). Presentation only. |
+| `src/components/sage/SageFloatingAssistant.tsx` | rewritten 2026-10-04 | The global orb, text-only: clicking it opens a small card saying voice is not available there, with an "Open Sage to type" button. No microphone, no speech recognition, no speech synthesis. |
+| `src/components/sage/SageFloatingAssistant.css` | 171 | Styling for the orb and its text-only card (one slide-up keyframe). Presentation only. |
 | `src/components/relay/SageAmbientSidebar.tsx` | 251 | The Relay copilot sidebar: renders ambient room memory (concern + summary), risk flags, and suggested/handled action cards with acknowledge/dismiss/confirm buttons. |
 | `src/components/relay/SageAmbientSidebar.module.css` | 315 | Scoped (CSS-module) styling for the copilot sidebar. Presentation only. |
-| `src/hooks/useSageHotword.ts` | 29 | A tiny hook that stores the "is the 'Sage' hotword globally enabled?" boolean in `localStorage`. |
 
 *Jargon note.* A **React component** is a function returning UI; a **React hook** (`useState`, `useEffect`, `useCallback`, `useRef`) is a function that lets a component hold state or run side effects. A **CSS module** (`*.module.css`) auto-namespaces class names so styles can't leak between components; a plain `*.css` is global. A **socket event** is a named realtime message pushed over a persistent connection (see guide 06-realtime).
 
@@ -106,18 +103,11 @@ Key properties, all enforced in `sage_ambient_observe` (`server/services/sage_am
 - **Never appears in chat.** It writes to `sage_room_memory`, `sage_observations`, and `sage_actions`, separate tables, and only the copilot sidebar reads them. The chat transcript is untouched.
 - **Cheap first, expensive last.** The five gates reject the overwhelming majority of messages (bots, acknowledgments, duplicates, non-clinical chat) *before* the LLM is ever called.
 
-### Flow C: Floating voice assistant (browser-only, hands-free)
+### Flow C: The floating orb (text-only)
 
-The orb is a **4-state machine**: `dormant → listening → processing → speaking → (follow-up) listening → dormant`. The engine is the browser's `webkitSpeechRecognition` (Web Speech API) running continuously; a `useEffect` restarts it whenever it ends. What the code does with each recognition result depends on the current state:
+The orb has one job: get the clinician into Sage from any screen. Clicking it opens a small card, "Voice is not available here. Type your question in Sage instead.", with an **Open Sage to type** button that switches to the Sage tab (`gotoTab('sage')`), where the clinician types, or uses voice mode, which runs on the local speech engine on the appliance (guide 09-sage). The orb never opens the microphone, never runs speech recognition and never speaks.
 
-| State | What recognition does | How it advances |
-|---|---|---|
-| `dormant` | Scans every transcript for the word "sage" (`/\bsage\b/i`). | Hotword match → `listening`. |
-| `listening` | Accumulates the transcript as the query; resets a 1.2 s silence timer on every update. | Silence timer fires (or you click the orb) → `processing`. |
-| `processing` | Only listens for "sage" again (barge-in). | First streamed token arrives → `speaking`. |
-| `speaking` | Streams tokens to the browser's `speechSynthesis` (TTS) in small clauses; still allows "sage" barge-in. | TTS finishes → 5 s follow-up `listening`, then `dormant`. |
-
-The query itself is answered by the streaming voice agent at `POST /sage/voice` (guide 09-sage); this component owns only the audio I/O and the state machine.
+Until 4 October 2026 the orb was a 4-state hands-free voice machine (`dormant → listening → processing → speaking`) on the browser's `webkitSpeechRecognition`, with a "Sage" wake word, interrupt-by-saying-"Sage" while it spoke, a 5 s follow-up window and streamed answers read aloud. `webkitSpeechRecognition` streams microphone audio to the browser vendor's cloud ASR, so the whole loop was removed when Orb was ruled strictly offline, together with the wake-word toggle and its `useSageHotword` hook. Browser speech is not supported anywhere in Orb and cannot be switched on.
 
 ---
 
@@ -460,16 +450,9 @@ These are the cheap filter cascade. Each returns a simple bool (or `_gate_room` 
 
 ---
 
-### File: `src/hooks/useSageHotword.ts`
+### File: `src/hooks/useSageHotword.ts` (removed 2026-10-04)
 
-#### useSageHotword: `src/hooks/useSageHotword.ts:8`
-**Signature:** `() -> { isEnabled: boolean; toggleEnabled: () => void }`
-**Does:** Persists a single boolean, "is the global 'Sage' hotword listening enabled?", in `localStorage` under `orb_sage_hotword`, defaulting to `true`.
-**How it works:** `useState` initializer reads `localStorage` once (`stored === 'true'`, default true if unset). `toggleEnabled` flips it and writes the new value back as a string.
-**Why it exists:** So the setting survives reloads and the orb's toggle button has somewhere to store its state. It's deliberately tiny, no context, no server round-trip.
-**Data in/out:** `localStorage['orb_sage_hotword'] = "true" | "false"`.
-**Talks to:** consumed only by `SageFloatingAssistant` (`:381`), whose recognition effect reads `isEnabled`.
-**Gotchas:** Each call is an **independent** `useState`, if two components called this hook they'd have separate in-memory copies (kept loosely in sync only via `localStorage`, and only across reloads). Today only the orb uses it, so this is a non-issue, but don't assume it's a shared global.
+Removed with the wake word. It stored "is the 'Sage' hotword enabled?" in `localStorage` under `orb_sage_hotword`. A browser that ran an older build may still hold that key; nothing reads it.
 
 ---
 
@@ -526,53 +509,15 @@ Module constants: `CONFIDENCE_THRESHOLD_SUGGESTION = 0.75`, `CONFIDENCE_THRESHOL
 
 ### File: `src/components/sage/SageFloatingAssistant.tsx`
 
-This is the largest unit. It renders a single `<div className="sage-fab">` containing the orb button, a toggle, listening rings, and a response card, and internally runs a full voice loop. `activeTab` prop lets the app suspend it while the dedicated Sage/Scribe tabs are open.
+Rewritten on 4 October 2026 as a text-only orb. Line citations for the new component are left out until the next citation sweep.
 
-Module helper `sanitizeTextForTTS` (`:13`) strips markdown, HTML tags, and model scaffolding ("Thought:", "Response:", "Sage:") from text before it's spoken, preventing the synthesizer from reading asterisks or the model saying its own name (which would cause "self-barge-in").
-
-#### SageFloatingAssistant: `src/components/sage/SageFloatingAssistant.tsx:33`
-**Signature:** `({ activeTab }) -> JSX`
-**Does:** The always-mounted golden orb: a 4-state (`dormant/listening/processing/speaking`) hands-free voice assistant with hotword activation, streaming speech synthesis, and an audio-reactive glow.
-
-Because this component is a web of `useCallback`/`useRef`, it's documented as its internal parts:
-
-**State & refs (`:32–63`).** React state drives the render (`state`, `responseText`, `queryText`, card visibility). A parallel `stateRef` (`:63`) mirrors `state` because the long-lived speech-recognition callbacks are **stale-closure-prone**, they capture the `state` from the render they were created in, so they read `stateRef.current` instead to see the *live* state. `setStateAndRef` (`:65`) updates both at once. Many other refs hold mutable machinery: abort controller, silence timers, the TTS utterance set, the ASR (automatic speech recognition) result cursors, audio-analysis nodes, and a rolling `conversationHistoryRef` of the last 10 query/response pairs.
-
-**Suspension (`:70–71`).** `isTabSuspended` is true on the `sage`/`scribe` tabs; `isAssistantSuspended` also covers any non-dormant state.
-
-**Audio-reactive visuals, `startAudioAnalysis` / `stopAudioAnalysis` (`:92` / `:73`).** While `listening`, it opens the mic via `getUserMedia`, builds a Web Audio `AnalyserNode` (`fftSize` 256), and on every animation frame averages the frequency data into a 0–1 `--audio-level` CSS variable on the container. The CSS scales/glows the orb from that variable, so the orb visibly "breathes" with your voice. Stop tears down the stream, context, and RAF. A `useEffect` (`:134`) runs start on entering `listening` and stop otherwise.
-
-*Jargon:* **Web Audio API** = browser audio-graph API; **AnalyserNode** = a node that exposes real-time frequency/amplitude data; **RAF** = `requestAnimationFrame`, the ~60 Hz render callback.
-
-**TTS pipeline, `speakSentence` / `processTokensForTTS` / `flushTTSBuffer` / `handleTTSFinished` (`:196` / `:261` / `:249` / `:163`).** As the answer streams in token-by-token, `processTokensForTTS` accumulates a buffer and splits it into small clauses at punctuation (`.?!;: –, `) once a chunk is ≥15 chars (or the buffer grows long), speaking each via `speakSentence`. `speakSentence` sanitizes, picks a natural English voice, sets rate 1.08, and tracks the utterance in a live `Set`; when the last utterance ends and the stream is done, `handleTTSFinished` fires. That opens a **5 s follow-up listening window** (no hotword needed) so you can ask a follow-up; if silent, it goes `dormant` and dismisses the card. `flushTTSBuffer` speaks whatever's left when the token stream ends.
-
-*Jargon:* **TTS** = text-to-speech (`window.speechSynthesis` + `SpeechSynthesisUtterance`, the Web Speech Synthesis API).
-
-**Query handler, `handleQuery` (`:314`).** On a captured query: set `processing`, show the card, say "Let me check.", reset all TTS state, abort any in-flight request, then call `querySageVoice(text, activePatientId, onToken, signal, history)` (guide 09-sage). Each token updates `responseText`, feeds `processTokensForTTS`, and flips `processing → speaking` on the first token. When the stream completes (and wasn't aborted), it flushes TTS and appends the exchange to `conversationHistoryRef` (kept to the last 10). Errors (other than aborts) speak a fallback apology.
-
-**Silence timers (`:383–417`).** `resetSilenceTimer` (1.2 s) auto-submits the captured query after you stop talking. `resetInitialSilenceTimer` (5 s) drops back to `dormant` if you activate but say nothing.
-
-**Click handler, `handleOrbClick` (`:420`).** Clicking the orb: from `dormant` → start `listening` (and unlock TTS autoplay with a silent utterance, a browser gesture requirement); from `listening` → submit the query if any, else cancel; from `processing`/`speaking` → stop everything and dismiss.
-
-**The recognition engine, `useEffect` (`:490`).** This is the heart. `shouldRecognize` (`:473`) is true when not suspended and either the hotword is enabled or the assistant is already active. It creates a `webkitSpeechRecognition` with `continuous=true`, `interimResults=true`, `lang='en-US'`, and in `onresult` branches on `stateRef.current`:
-- **dormant** → scan for `\bsage\b`; on match, capture any words after "sage" as the initial query and go `listening`.
-- **listening** → accumulate final+interim transcript (stripping a leading "sage"), with **aggressive echo cancellation**: discard results arriving within `ignoreUntilRef` (1 s after TTS ends) so the mic doesn't hear the speaker.
-- **processing/speaking** → only react to "sage" (barge-in): abort the current answer, save the interrupted exchange to memory, and restart `listening`.
-`onerror` (`:638`) permanently disables recognition on `not-allowed`/`service-not-allowed` (denied mic) via `micDeniedRef`, and ignores benign `no-speech`/`aborted`. `onend` (`:655`) auto-restarts after 50 ms if still wanted, this is what makes "continuous" recognition actually continuous, since browsers time out sessions.
-
-**Render (`:715`).** A container whose class encodes the state (`sage-fab--{state}`), listening rings + a "Listening…" label while listening, the response card (query + streaming response or a shimmer placeholder), the main orb button (mic or stop icon), and the hotword enable/disable toggle wired to `useSageHotword`.
-
-**Why it exists:** Hands-free, always-available access to Sage anywhere in the app, without a dedicated tab.
-**Data in/out:** speaks/consumes audio; sends `{query, patient_id, conversation_history}` to `POST /sage/voice` and streams tokens back (SSE, server-sent events).
-**Talks to:** `useSageHotword`, `useActivePatient` (context giving the current patient for scoping), `querySageVoice` (guide 09-sage). Rendered once in `ClinicianShell.tsx:527`.
-**Change guide (worked examples).**
-1. *Change the wake word from "sage" to "orb":* replace the two `\bsage\b` tests (`:521`, `:591`) and the "after sage" slicing (`:524`, `:610`) and the leading-strip at `:568`. Knock-on: purely client-side; watch out, the ambient service's voice-prewarm sniff (`sage_ambient_service.py:680`) also keys on "sage", so keep them consistent if you rely on prewarm.
-2. *Lengthen the auto-submit pause:* raise the `1200` ms in `resetSilenceTimer` (`:399`). Knock-on: feels less snappy but tolerates slower speakers; watch out, too long and the follow-up window (`:193`, 5 s) may expire first.
-**Gotchas:**
-- **Privacy (flagged in-code, `:480–489`):** `webkitSpeechRecognition` in Chrome streams captured audio to **Google's cloud** ASR. For a "local-first / on-prem PHI" product this contradicts the privacy pitch, and it contends for the single mic with the Whisper-based transcription path (guide 11-scribe). The in-file recommendation is to default the hotword **off**, centralize mic ownership, and route patient-adjacent audio through the local Whisper pipeline. **As written the hotword defaults ON** (`useSageHotword` default `true`).
-- **Stale closures:** the recognition callbacks live for the app's lifetime; they *must* read `stateRef`/`liveTextRef`/etc., never the captured `state`. This is why nearly everything mutable is a ref.
-- **Echo/self-barge-in:** two defenses, `ignoreUntilRef` time-gating and stripping "Sage:" in `sanitizeTextForTTS`, exist because the mic hears the TTS. If you change TTS timing, revisit both.
-- A denied mic sets `micDeniedRef` permanently for the session to stop an error-spam restart loop; the user must reload after granting permission.
+#### SageFloatingAssistant
+**Does:** The always-mounted orb on every clinician screen. Clicking it toggles a small card, "Voice is not available here. Type your question in Sage instead.", whose one button, **Open Sage to type**, closes the card and calls `gotoTab('sage')` (`src/lib/orbBus.ts`). The button takes focus when the card opens; Escape closes the card and returns focus to the orb. Sage still gets the on-screen context through `ActiveViewContext`, so "summarise this chart" works on whatever patient is open.
+**Why it exists:** One-click access to Sage from anywhere in the app, without hunting for the tab.
+**Data in/out:** no audio in or out. It never calls `getUserMedia`, never constructs a speech recogniser and never calls `speechSynthesis`.
+**Talks to:** the Sage tab (guide 09-sage). Rendered once in `ClinicianShell`.
+**What it used to be:** a 4-state hands-free voice assistant (`dormant/listening/processing/speaking`) built on `webkitSpeechRecognition`, with a "Sage" wake word toggled by `useSageHotword`, interrupt-by-voice while it spoke, a 1.2 s silence auto-submit, a 5 s follow-up window, streamed answers read aloud through `speechSynthesis`, and an audio-reactive glow from a Web Audio `AnalyserNode`. The privacy problem was flagged in its own code: in Chrome, `webkitSpeechRecognition` streams captured audio to Google's cloud ASR, and the hotword once defaulted ON, which meant ambient ward audio. A posture flag (`cloud_speech_allowed`) later gated it off by default. The 4 October 2026 offline ruling removed the loop, the toggle, the hook and the flag.
+**Gotcha:** do not add voice back to the orb through any browser API. Voice belongs to the Sage panel's voice mode, Scribe and Ward Round dictation, which record with `MediaRecorder`, send the audio to the local speech engine, and refuse up front with a clear message when the engine is not installed. Spoken answers there use only voices that run on the device.
 
 ---
 
@@ -580,8 +525,8 @@ Because this component is a web of `useCallback`/`useRef`, it's documented as it
 
 `SageInsightsFeed.css`, `SageFloatingAssistant.css`, and `SageAmbientSidebar.module.css` carry no logic. Notes worth keeping:
 - All three lean on the shared **design tokens** (`--accent-gold`, `--glass-sheen`, `--text-primary`, `--radius-*`, `--elev-*`) with hard-coded fallbacks, so they degrade gracefully if the token stylesheet is missing (see the design-system guide).
-- `SageFloatingAssistant.css` reads the JS-set `--audio-level` variable (`:106–122`) to scale the orb, the one place CSS and JS share live state, and honors `prefers-reduced-motion` (`:554`) by killing animations.
-- `SageAmbientSidebar.module.css` is a **CSS module** (class names are locally hashed), so its `.card`, `.badge`, etc. can't collide with global styles. It also imports a Google Font via `@import url(...)` at `:1`, an external network fetch worth noting for offline/on-prem deployments.
+- `SageFloatingAssistant.css` honors `prefers-reduced-motion` (`:167`) by killing animations. Its old `--audio-level` rules, set from JS by the orb's listening loop, were removed with that loop.
+- `SageAmbientSidebar.module.css` is a **CSS module** (class names are locally hashed), so its `.card`, `.badge`, etc. can't collide with global styles. It loads no external font or stylesheet; Orb's fonts are bundled (`@fontsource`), so nothing is fetched from the internet.
 
 ---
 
@@ -597,7 +542,7 @@ Because this component is a web of `useCallback`/`useRef`, it's documented as it
 | POST | `/api/sage/insights/evaluate` | `sage.query` | Manual sweep (`{patient_id?}`); returns `{created, ids}`. |
 
 ### Routes this subsystem *consumes* but does not own
-- `POST /sage/voice`, the streaming voice agent (guide 09-sage), called by `SageFloatingAssistant`.
+- `POST /sage/voice`, the streaming voice agent (guide 09-sage), called by the Sage panel's voice mode. The floating orb no longer calls it.
 - `GET /api/relay/channels/{id}/sage_memory`, `GET …/sage_actions`, `POST …/sage_actions/{id}/transition` (and `…/confirm_agentic`), owned by **Relay** (guide 08-relay), consumed by `SageAmbientSidebar`.
 
 ### Socket events (guide 06-realtime)
@@ -632,7 +577,7 @@ Because this component is a web of `useCallback`/`useRef`, it's documented as it
 2. **Realtime** (guide 06), the `sio` socket server and the room-join convention, so emits reach clients.
 3. **Auth/RBAC** (guide 03), `require_permission` and the `sage.query` permission.
 4. **Relay** (guide 08), case rooms, message POST (to hang the ambient background task off), and the `sage_actions` transition/confirm endpoints the sidebar calls.
-5. **Sage voice agent** (guide 09), `POST /sage/voice` streaming SSE, for the floating orb.
+5. **Sage panel** (guide 09), which the floating orb opens.
 6. A local **Ollama** server + `LLM_MODEL` for ambient classification (config in guide 09).
 
 **Build order within this subsystem:**
@@ -642,12 +587,12 @@ Because this component is a web of `useCallback`/`useRef`, it's documented as it
 4. `SageInsightsFeed.tsx` + CSS, socket-subscribe + 20 s poll; dismiss/act.
 5. `sage_ambient_service.py`, regexes and gates first, then dedup ring, then context fetchers, then `_classify_with_llm`, then `_update_memory`/`_write_observation`, then the `sage_ambient_observe` orchestrator; hook it into Relay's message POST as a `BackgroundTask`.
 6. `SageAmbientSidebar.tsx` + module CSS, consume the relay `sage_memory`/`sage_actions` routes; subscribe to the two room events.
-7. `useSageHotword.ts`, then `SageFloatingAssistant.tsx` + CSS, the state machine last (it depends on the voice route).
+7. `SageFloatingAssistant.tsx` + CSS last: a text-only orb that opens the Sage tab.
 
 **Acceptance checks, you can now:**
 - Admit a patient, feed vitals with temp >38.0, HR >90, RR >20, wait ≤15 s, and see a "possible sepsis" card appear on the Vigil dashboard **without a page refresh**, with only a Dismiss button (no rule drafts an order).
 - Type "transfer him to theatre now" in a patient case room and, within a moment, see a `transfer_to_surgery` card in the Sage Copilot sidebar, created by the deterministic fast-path even if the LLM is down.
-- Say "Sage, what's this patient's risk?" near the mic and watch the orb grow/glow, show the streamed answer in its card, and speak it aloud; stay silent 5 s and watch it return to dormant.
+- Click the orb on any screen and see the card saying voice is not available there; press **Open Sage to type** and land on the Sage tab; the browser never asks for microphone permission.
 
 ---
 
@@ -659,5 +604,5 @@ Because this component is a web of `useCallback`/`useRef`, it's documented as it
 4. **`CONFIDENCE_THRESHOLD_SUGGESTION = 0.75` is declared but unused** in `SageAmbientSidebar.tsx:9`. Action cards are shown purely by `state` (`suggested`/`acknowledged`), not by confidence, so this constant misleads anyone tuning thresholds. Only the risk threshold (0.80) is actually applied.
 5. **`active_intents` is written but never displayed.** `_merge_intent`/`_update_memory` maintain `sage_room_memory.active_intents` (labeled "Stage 2 legacy"), and the `SageAmbientMemory` TS type includes it, but `SageAmbientSidebar` renders action cards from the separate `sage_actions` table instead. Dead-but-persisted data; safe to ignore, confusing to inherit.
 6. **Hard-coded antibiotic in Proactive suggestions (fixed 2026-10-02).** Rules 1 (critical) and 3 (sepsis) used to suggest the literal `IV ceftriaxone 2g` regardless of the patient's allergies, cultures, or existing meds, and a doctor confirming the drafted card charted it for a patient with a documented penicillin anaphylaxis. Both rules now carry no action; stored rows are hidden and refused server-side (see Rule 3 notes). Tests: `server/tests/test_handoff_blocked.py`.
-7. **Privacy contradiction in the hotword path** (already flagged in-code, `SageFloatingAssistant.tsx:480–489`): browser `webkitSpeechRecognition` ships audio to Google's cloud, at odds with an on-prem PHI posture, and the hotword defaults **ON**. Noted here as an open product decision, not a code bug.
+7. **Privacy contradiction in the hotword path: resolved 4 October 2026.** Browser `webkitSpeechRecognition` shipped audio to Google's cloud, at odds with an on-prem PHI posture. The hotword path and browser speech were removed when Orb was ruled strictly offline; the orb is text-only and no audio can reach an outside service.
 8. **`get_active_insights` broadcasts `NULL`-target insights to all non-admins.** Since rules set `target = attending_doctor_id`, a patient with no attending yields `target_user_id = NULL`, which the query shows to *every* clinician. Probably unintended for real multi-team wards.

@@ -234,8 +234,7 @@ def _identity(event) -> str:
     """A short, PHI-free label for one observation identifier.
 
     Code and display name only — never the value, never the patient. This string
-    is counted into `status()`, rendered on an admin screen and shipped in the
-    heartbeat.
+    is counted into `status()` and rendered on an admin screen.
     """
     code = (event.observation_code or "").strip()
     name = (event.observation_name or "").strip()

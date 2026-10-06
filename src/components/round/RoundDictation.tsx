@@ -8,12 +8,10 @@
  * the moment the tablet is put down), and the transcript lands in an editable
  * box because dictation is a draft, never a signature.
  *
- * PHI HANDLING. The accuracy pass is the LOCAL Whisper endpoint
- * (api/client.transcribeAudio), always. The browser's Web Speech API — which
- * streams microphone audio to a cloud recogniser — is used only for the live
- * "hearing…" line, only when the deployment posture permits cloud speech, and
- * its output is never written into the note. If the posture is unknown the
- * runtime reports not-allowed, so it stays off.
+ * PHI HANDLING. Transcription is the LOCAL Whisper endpoint
+ * (api/client.transcribeAudio), and nothing else. There is no live "hearing"
+ * preview: the browser's Web Speech API streams microphone audio to an outside
+ * recogniser, and Orb is strictly offline (owner ruling, 4 October 2026).
  *
  * Dictated text is held in memory only. It is deliberately never mirrored to
  * localStorage: this is free clinical text about a named patient, on a shared
@@ -22,7 +20,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { transcribeAudio } from '../../api/client'
 import { useSageRuntime } from '../../contexts/SageRuntimeContext'
-import { getSpeechRecognitionCtor } from '../../lib/speechRecognition'
 
 /** There is deliberately no 'queued' state.
  *
@@ -55,19 +52,17 @@ function mmss(totalSeconds: number): string {
 export default function RoundDictation({
   patientId, hints, draft, onDraftChange, onSave, saveState, saveError,
 }: Props) {
-  const { claimMic, releaseMic, cloudSpeechAllowed, localAsrAvailable } = useSageRuntime()
+  const { claimMic, releaseMic, localAsrAvailable } = useSageRuntime()
 
   const [recording, setRecording] = useState(false)
   const [transcribing, setTranscribing] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [micError, setMicError] = useState<string | null>(null)
-  const [heard, setHeard] = useState('')
 
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const recognitionRef = useRef<{ stop: () => void } | null>(null)
   /** Kept so a failed transcription can be retried without asking the doctor to
    *  say it all again — the single most infuriating way to lose a ward round. */
   const [lastBlob, setLastBlob] = useState<Blob | null>(null)
@@ -78,11 +73,6 @@ export default function RoundDictation({
 
   const teardownCapture = useCallback(() => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
-    if (recognitionRef.current) {
-      const r = recognitionRef.current
-      recognitionRef.current = null
-      try { r.stop() } catch { /* already stopped */ }
-    }
     streamRef.current?.getTracks().forEach(t => t.stop())
     streamRef.current = null
     releaseMic('round')
@@ -117,7 +107,6 @@ export default function RoundDictation({
   const stopRecording = useCallback(() => {
     const recorder = recorderRef.current
     setRecording(false)
-    setHeard('')
     if (recorder && recorder.state !== 'inactive') {
       recorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
@@ -202,27 +191,6 @@ export default function RoundDictation({
     }
     recorderRef.current = recorder
 
-    // Live "hearing…" line only. Cloud ASR is PHI egress, so it runs only when
-    // the server's posture allows it, and its text never enters the note.
-    const SR = cloudSpeechAllowed ? getSpeechRecognitionCtor() : null
-    if (typeof SR === 'function') {
-      try {
-        const recog = new SR()
-        recog.continuous = true
-        recog.interimResults = true
-        recog.onresult = (event) => {
-          let interim = ''
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            interim += event.results[i][0].transcript
-          }
-          setHeard(interim)
-        }
-        recog.onerror = () => {}
-        recog.start()
-        recognitionRef.current = recog
-      } catch { /* live preview is optional */ }
-    }
-
     setRecording(true)
     setElapsed(0)
     const started = Date.now()
@@ -230,7 +198,7 @@ export default function RoundDictation({
       () => setElapsed(Math.floor((Date.now() - started) / 1000)),
       1000,
     )
-  }, [claimMic, releaseMic, cloudSpeechAllowed, localAsrAvailable])
+  }, [claimMic, releaseMic, localAsrAvailable])
 
   // Moving to the next bed must never leave the microphone open on the previous
   // patient. Unmount and patient change both tear the capture down.
@@ -243,16 +211,10 @@ export default function RoundDictation({
       }
       recorderRef.current = null
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
-      if (recognitionRef.current) {
-        const r = recognitionRef.current
-        recognitionRef.current = null
-        try { r.stop() } catch { /* already stopped */ }
-      }
       streamRef.current?.getTracks().forEach(t => t.stop())
       streamRef.current = null
       releaseMic('round')
       setRecording(false)
-      setHeard('')
     }
   }, [patientId, releaseMic])
 
@@ -305,12 +267,6 @@ export default function RoundDictation({
           )}
         </div>
       </div>
-
-      {recording && heard && (
-        <p className="round-dictate__heard">
-          <span className="round-dictate__heard-label">Hearing</span> {heard}
-        </p>
-      )}
 
       {micError && (
         <div className="round-dictate__error" role="alert">

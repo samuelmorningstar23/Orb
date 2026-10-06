@@ -438,7 +438,7 @@ When `ORB_DB_ENCRYPTION_KEY` is set but no SQLCipher driver imports,
 **The case against.**
 
 - Nothing in the API surfaces the degraded state. There is no health-check field,
-  no admin banner, no heartbeat flag saying "running unencrypted". A single
+  no admin banner, no ops-status flag saying "running unencrypted". A single
   `logger.warning` on a machine nobody reads logs from is not a control.
 - The failure is *silent in the direction that matters*. An operator who set the
   key believes encryption is on. The system's behaviour is identical. The
@@ -459,7 +459,7 @@ five-line change, an `ORB_REQUIRE_DB_ENCRYPTION` env var checked in
 `_warn_db_encryption_unavailable`, symmetrical with the two that already exist, 
 and its absence looks like an oversight rather than a decision. Second best, and
 cheaper still: expose `db_encrypted: bool` in `/api/health` so the degraded state
-is machine-visible to the heartbeat that already pages the operator.
+is machine-visible to the ops status page the operator already reads on site.
 
 ### 2.4.5 Alternatives considered
 

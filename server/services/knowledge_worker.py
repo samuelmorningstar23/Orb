@@ -46,10 +46,16 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 
+# Strictly offline (standing rule, 4 October 2026): the same guard as config.py,
+# repeated because this child never imports server app modules. A missing model
+# fails fast; it is never downloaded.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
 logger = logging.getLogger("orb.knowledge_worker")
 
-# Generous ceilings: the FIRST call after boot pays the ~2 GB model load (and,
-# on a pristine appliance, possibly a model download). A slow worker blocks
+# Generous ceilings: the FIRST call after boot pays the ~2 GB model load (the
+# models are installed with the appliance, never downloaded). A slow worker blocks
 # only the calling thread — never the event loop — so patience is cheap.
 EMBED_TIMEOUT_S = float(os.getenv("ORB_KNOWLEDGE_EMBED_TIMEOUT_S", "420"))
 RERANK_TIMEOUT_S = float(os.getenv("ORB_KNOWLEDGE_RERANK_TIMEOUT_S", "420"))

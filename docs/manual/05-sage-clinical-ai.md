@@ -79,8 +79,10 @@ The public surface is small, seven routes, all under `/api/sage`:
 
 All of them except `/ai-posture` sit behind `require_permission("sage.query")`;
 `/ai-posture` needs only an authenticated session (`server/routes/sage_routes.py:2008`)
-because the frontend uses it to decide whether the browser's cloud speech
-recognition may be enabled at all.
+because every screen reads it at boot to learn whether the local speech engine is
+installed (`local_asr_available`), so voice controls can refuse up front when it is
+not. (Until 4 October 2026 it also carried `cloud_speech_allowed`, the switch for the
+browser's cloud speech recognition. Browser speech is gone and that field with it.)
 
 ### 5.1.1 The five things Sage is not
 
@@ -2860,14 +2862,15 @@ owns state and delegates rendering:
 | `SageMessage` | `src/components/sage/SageMessage.tsx` | one bubble: banners, action card, markdown, details expander |
 | `SageComposer` | `src/components/sage/SageComposer.tsx` | textarea, send/stop, voice toggle |
 
-A separate `SageFloatingAssistant` (`src/components/sage/SageFloatingAssistant.tsx`,
-855 lines) provides the same conversation from any tab; it is outside this
-chapter's scope but shares the same API client and the same server route.
+A separate `SageFloatingAssistant` (`src/components/sage/SageFloatingAssistant.tsx`)
+is the floating Sage orb shown on every tab. It is text-only: clicking it explains
+that voice is not available there and offers an "Open Sage to type" button. It is
+outside this chapter's scope.
 
 Three contexts supply the shared runtime: `ActivePatientContext` (the patient
 whose chart is open), `ActiveViewContext` (tab + selection, serialised by
 `buildWireViewContext`, `src/pages/panels/SagePanel.tsx:398`), and
-`SageRuntimeContext` (mic ownership and `cloudSpeechAllowed`,
+`SageRuntimeContext` (mic ownership and `localAsrAvailable`,
 `:194`).
 
 The view is mirrored into a ref that is rewritten on **every render**
@@ -2905,26 +2908,26 @@ the grey "⏸ Stopped by user" banner
 
 ### 5.9.3 Voice mode
 
-Voice mode runs **two** recognisers at once
-(`src/pages/panels/SagePanel.tsx:536-580`):
+Voice mode runs **one** recogniser (`src/pages/panels/SagePanel.tsx`):
+`MediaRecorder` → `audio/webm` blob → `transcribeAudio` → the **local speech
+engine** (Whisper) on the appliance. That is the only path. The status reads
+"Listening… (local transcription; tap to stop)" and the clinician taps to stop
+recording.
 
-* `MediaRecorder` → `audio/webm` blob → `transcribeAudio` → **local Whisper**. This
-  is the source of truth for the query.
-* The browser's `SpeechRecognition` → live preview text and a 2-second
-  silence-based auto-stop.
+When the local engine is not installed (`local_asr_available` false in
+`/api/sage/ai-posture`), voice mode refuses up front, both on entering voice mode and on
+starting a recording, with "Voice questions are not available on this appliance: local
+speech recognition is not installed. Type your question instead." (`VOICE_UNAVAILABLE`),
+instead of recording audio that could never be transcribed.
+The engine is installed with the appliance and never downloads a model at runtime.
 
-The second is gated on `cloudSpeechAllowed`
-(`src/pages/panels/SagePanel.tsx:547-548`) with an explicit reason in the comment:
-"This streams audio to a cloud ASR, so it is **PHI egress**, only enable it when
-the deployment posture permits cloud speech." The flag comes from
-`/api/sage/ai-posture` (`server/routes/sage_routes.py:2007-2013`). When it is off,
-the live preview and silence detection are lost and the status line says so, 
-"Listening… (local transcription; tap to stop)" (`:559-561`).
+Until 4 October 2026 the panel also ran the browser's `SpeechRecognition` alongside it,
+for live preview text and a 2-second silence-based auto-stop, gated on a
+`cloudSpeechAllowed` posture flag because it streamed audio to the browser vendor's
+cloud ASR (PHI egress). Orb is now strictly offline, so that path and its flag are
+gone. Browser speech is not supported and cannot be switched on.
 
-This is a good example of a privacy decision surfaced honestly rather than hidden:
-the feature degrades visibly rather than silently sending audio off-box.
-
-Whisper is given a **hotword prompt** built from the live patient roster, 
+Whisper is given a **vocabulary prompt** built from the live patient roster, 
 `"Orb Hospital. Current patients: {names}"`
 (`src/pages/panels/SagePanel.tsx:243-248`, used at `:616`), which biases
 transcription toward the surnames that actually exist on the ward. Together with
@@ -2936,7 +2939,7 @@ right amount for an Indian ward, and it is the kind of thing that does not appea
 in an architecture diagram but decides whether voice mode is usable.
 
 Mic ownership is claimed and released through `SageRuntimeContext`
-(`:495-499`, `:596`) so the panel, the floating orb, and Scribe cannot fight for
+(`:495-499`, `:596`) so the panel, Scribe and Ward Round dictation cannot fight for
 the device. Failure to acquire produces a specific message per `DOMException` name
 blocked, busy, not found (`:519-522`), with one automatic retry after 500 ms
 "(mic might be releasing from another app)" (`:511-515`).
@@ -2944,16 +2947,21 @@ blocked, busy, not found (`:519-522`), with one automatic retry after 500 ms
 ### 5.9.4 Text-to-speech
 
 The TTS pipeline (`src/pages/panels/SagePanel.tsx:278-359`) is a sentence queue
-over the Web Speech API: `feedTTS` strips markdown, splits with `extractSentences`
+over the browser's speech synthesis: `feedTTS` strips markdown, splits with `extractSentences`
 (which treats `.`, `!`, `?`, `:` and newline as boundaries, colons and newlines
 being "natural structural pauses in markdown", `:132-134`), and pushes any sentence
 not already in a seen-set. `speakNext` drains the queue one utterance at a time,
 and when the queue empties **and** streaming has finished, it speaks the remainder
 and, in voice mode, auto-restarts recording after 800 ms (`:294-302`).
 
-Voice selection prefers macOS enhanced voices by name
-(Samantha, Karen, Daniel, Zoe, Alex, Moira, Tessa, Rishi, Fiona, Victoria) with an
-any-English fallback (`:150-167`).
+Spoken answers use only voices that run on the device (`localService` true), chosen
+by `pickOnDeviceVoice` (`src/lib/onDeviceVoice.ts`). Among those it prefers macOS
+enhanced English voices by name (Samantha, Karen, Daniel, Zoe, Alex, Moira, Tessa,
+Rishi, Fiona, Victoria), then any English on-device voice, then any on-device voice.
+Some browsers also offer network voices that send the text off the machine to be
+spoken; those are never used, and neither is the browser's default voice. If the
+device has no on-device voice, Sage does not speak: the queue is dropped, the answer
+stays on screen, and in voice mode the turn ends silently and recording resumes.
 
 Note that TTS in the **chat** lane speaks `partial`, the accumulated, already
 server-sanitized content (`:420-421`). The voice lane speaks tokens that passed the
@@ -3216,8 +3224,9 @@ weaker clinical answer is not acceptable"
 **Alternative B, cloud (GPT-4-class).** Faster, better, and impossible. The
 `llm_providers` seam exists (`server/services/llm_providers.py:33-45`) so a hosted
 provider *could* be added, and the governance layer already computes a PHI
-classification per turn and exposes a `phi_egress_approved` posture flag
-(`src/api/client.ts:786-794`), the scaffolding for a two-lane world is present.
+classification per turn. The client-side posture flags for a hosted lane
+(`phi_egress_approved` and the `hosted_*` fields) were removed on 4 October 2026
+under the strictly-offline ruling, and the seam is not to be used.
 But `query_ollama` currently routes **every** turn local, PHI or not
 (`server/services/sage_service.py:938-941`), and that is the honest state to
 document.

@@ -175,7 +175,7 @@ Orb Project/
 │   └── tests/               ← the pytest suite (181 files, 6,161 collected tests)           [§13]
 ├── src/                     ← the React frontend (the product UI)                           [§14]
 │   └── shellConfig.tsx      ← the shell's ONE role input: home + tabs + primary action      [§14]
-├── ops/                     ← off-appliance ops (heartbeat receiver, Grafana dashboard)
+├── ops/                     ← off-appliance ops (Grafana dashboard)
 ├── docs/
 │   ├── ORB_TECHNICAL_MANUAL.md  ← THIS MANUAL (assembled from docs/manual_sections/)
 │   ├── MODULE_MANUAL.md / USER_MANUAL.md ← the non-engineer manuals

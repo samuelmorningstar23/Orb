@@ -506,6 +506,27 @@
 }
 .sage-fast-notice strong { font-weight: 700; }
 
+/* A voice refusal. Floated just above the composer, where the recording HUD
+   sits, so it is on screen wherever the composer is without moving it (under
+   the composer it fell below the fold on a 1280x800 tablet). Opaque, because
+   it lies over the conversation. */
+.sage-voice-notice {
+  position: absolute;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(var(--sage-col), calc(100% - var(--sage-gutter) * 2));
+  z-index: 10;
+  padding: 9px 13px;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--status-warn-text);
+  background: color-mix(in srgb, var(--status-warn) 9%, var(--bg-elevated));
+  border: 1px solid color-mix(in srgb, var(--status-warn) 26%, var(--bg-elevated));
+  box-shadow: var(--elev-3);
+}
+
 /* The composer collapses to icons on narrow tablets; the pill keeps its label
    because the label is the entire point of the control. The voice button is
    the one that gives up space. */

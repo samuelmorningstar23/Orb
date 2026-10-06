@@ -145,9 +145,9 @@ def test_scan_finds_the_seeded_demo_password(db):
 
 
 def test_scan_never_reports_the_password_itself(db):
-    """The result is written to ops/bootstrap/status.json and summarised to the
-    heartbeat. A file listing working credentials for the appliance would be a
-    rather spectacular own goal."""
+    """The result is written to ops/bootstrap/status.json and summarised to
+    admins (/api/health/access, the ops status page). A file listing working
+    credentials for the appliance would be a rather spectacular own goal."""
     _add(db, "ADM001", password="password")
     result = bs.scan_default_credentials(db, candidates=["password"])
     blob = repr(result)
@@ -243,11 +243,11 @@ def test_status_json_is_written_and_carries_no_password(inject, db, tmp_path):
     status = tmp_path / "ops" / "bootstrap" / bs.STATUS_FILENAME
     assert status.exists()
     blob = status.read_text()
-    json.loads(blob)  # must be valid JSON for the heartbeat to read
+    json.loads(blob)  # must be valid JSON for whoever reads it on the box
     assert '"password"' not in blob
 
 
-def test_snapshot_is_published_for_the_heartbeat(inject, db):
+def test_snapshot_is_published_for_the_access_checks(inject, db):
     _add(db, "ADM001", password="tK9!marigold-cupboard", mfa=1)
     bs.run_bootstrap_check(enforce=True)
     snap = bs.bootstrap_snapshot()
@@ -339,6 +339,5 @@ def test_health_access_endpoint_is_admin_only_and_never_sweeps():
                       headers={"Authorization": f"Bearer {_token('ACCESS-ADM')}"})
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert "access" in body and "heartbeat" in body
-    # The heartbeat is off unless configured — no appliance calls home by accident.
-    assert body["heartbeat"] == {"enabled": False}
+    # Orb is strictly offline: there is no outbound heartbeat state to report.
+    assert set(body) == {"access"}

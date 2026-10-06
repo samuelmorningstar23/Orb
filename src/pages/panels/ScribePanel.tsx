@@ -12,17 +12,16 @@ import { humaniseSignGateReason } from '../../lib/humanise'
 import { getQuickAdmitOptions, quickAdmit } from '../../api/scribeAdmission'
 import type { QuickAdmitOptions } from '../../api/scribeAdmission'
 import { hasPermission, PATIENT_WRITE } from '../../lib/roles'
-import { getSpeechRecognitionCtor, type SpeechRecognition, type SpeechRecognitionEvent } from '../../lib/speechRecognition'
 import './ScribePanel.css'
 
 /* ═══════════════════════════════════════════════════
-   SCRIBE PANEL — Hybrid: Web Speech (live) + Whisper (accuracy)
+   SCRIBE PANEL: local Whisper only (record then transcribe, or live VAD
+   streaming). No browser speech: Orb is strictly offline.
    ═══════════════════════════════════════════════════ */
 
 export default function ScribePanel() {
   const [recording, setRecording] = useState(false)
   const [transcript, setTranscript] = useState('')
-  const [interimText, setInterimText] = useState('')
   const [structuredNote, setStructuredNote] = useState('')
   const [noteFormat, setNoteFormat] = useState<'soap' | 'discharge' | 'handoff'>('soap')
   const [language, setLanguage] = useState<string>('en')  // Whisper transcription language
@@ -35,7 +34,7 @@ export default function ScribePanel() {
   const [patients, setPatients] = useState<Patient[]>([])
   const [selectedPatientId, setSelectedPatientId] = useState('')
 
-  const { claimMic, releaseMic, cloudSpeechAllowed } = useSageRuntime()
+  const { claimMic, releaseMic } = useSageRuntime()
 
   // Honest ASR state: null = probe unresolved (assume nothing, show nothing);
   // {available:false} = the appliance cannot transcribe and the UI must say so
@@ -54,13 +53,11 @@ export default function ScribePanel() {
   // A patient admitted since (here or from the shell) can be linked too.
   useDataChanged(() => { getPatients().then(setPatients).catch(() => {}) })
 
-  const recognitionRef = useRef<SpeechRecognition | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const transcriptEndRef = useRef<HTMLDivElement | null>(null)
-  const finalTranscriptRef = useRef<string>('')  // accumulates Web Speech final results
 
   // Live streaming transcription hook
   const streaming = useStreamingTranscription({
@@ -79,10 +76,10 @@ export default function ScribePanel() {
     if (transcriptEndRef.current) {
       transcriptEndRef.current.scrollIntoView({ behavior: 'smooth' })
     }
-  }, [transcript, interimText])
+  }, [transcript])
 
   const startRecording = async () => {
-    // Claim the shared mic so the floating Sage orb pauses its listening.
+    // Claim the shared mic so Sage voice mode and the round cannot take it.
     if (!claimMic('scribe')) {
       setStatus('Microphone is in use by Sage. Stop it before dictating.')
       return
@@ -97,45 +94,14 @@ export default function ScribePanel() {
       return
     }
 
-    setTranscript(''); setInterimText(''); setStructuredNote(''); setElapsed(0)
+    setTranscript(''); setStructuredNote(''); setElapsed(0)
     audioChunksRef.current = []
-    finalTranscriptRef.current = ''
 
-    // 1) MediaRecorder captures audio for Whisper accuracy pass
+    // MediaRecorder captures the audio; local Whisper transcribes it on stop.
     const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
     recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data) }
     recorder.start()
     mediaRecorderRef.current = recorder
-
-    // 2) Web Speech API for instant real-time text. Cloud ASR = PHI egress, so
-    // it only runs when the deployment posture permits cloud speech; the
-    // local-Whisper accuracy pass (step 1) is always the source of truth.
-    const SR = cloudSpeechAllowed ? getSpeechRecognitionCtor() : null
-    if (SR) {
-      const recog = new SR()
-      recog.continuous = true; recog.interimResults = true; recog.lang = 'en-US'
-      recog.onresult = (event: SpeechRecognitionEvent) => {
-        // Properly accumulate ALL final results across all events
-        let allFinal = '', currentInterim = ''
-        for (let i = 0; i < event.results.length; i++) {
-          const r = event.results[i]
-          if (r.isFinal) {
-            allFinal += r[0].transcript
-          } else {
-            currentInterim += r[0].transcript
-          }
-        }
-        // Set the accumulated final text (Web Speech keeps all results in event.results)
-        if (allFinal) {
-          finalTranscriptRef.current = allFinal
-          setTranscript(allFinal)
-        }
-        setInterimText(currentInterim)
-      }
-      recog.onerror = () => {}
-      recog.onend = () => { if (recognitionRef.current) try { recog.start() } catch { /* already started */ } }
-      try { recog.start(); recognitionRef.current = recog } catch { /* live captions are optional: the recording carries on without them */ }
-    }
 
     setRecording(true); setStatus('🔴 Recording, speak now…')
     const start = Date.now()
@@ -144,9 +110,8 @@ export default function ScribePanel() {
 
   const stopRecording = () => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
-    if (recognitionRef.current) { const r = recognitionRef.current; recognitionRef.current = null; try { r.stop() } catch { /* already stopped */ } }
     releaseMic('scribe')
-    setInterimText(''); setRecording(false)
+    setRecording(false)
 
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.onstop = async () => {
@@ -156,11 +121,9 @@ export default function ScribePanel() {
         try {
           const result = await transcribeAudio(blob, undefined, false, language)
           if (result.transcript?.trim()) { setTranscript(result.transcript.trim()); setStatus('✅ Medical transcription complete') }
-          else { setStatus('⚠️ Whisper empty, using browser transcript') }
+          else { setStatus('⚠️ Nothing was transcribed from that recording. Try again, or type the note.') }
         } catch {
-          setStatus(asrUnavailable
-            ? '⚠️ Transcription engine unavailable on this appliance, using browser transcript'
-            : '⚠️ Refinement unavailable, using browser transcript')
+          setStatus('⚠️ Transcription failed on this appliance. Try again, or type the note.')
         }
         setRefining(false)
       }
@@ -172,7 +135,6 @@ export default function ScribePanel() {
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
-      if (recognitionRef.current) try { recognitionRef.current.stop() } catch { /* already stopped */ }
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') mediaRecorderRef.current.stop()
       streamRef.current?.getTracks().forEach(t => t.stop())
     }
@@ -331,8 +293,7 @@ export default function ScribePanel() {
               </div>
               <div className="scribe-section__content glass-card" style={{ minHeight: 120, maxHeight: 300, overflowY: 'auto' }}>
                 <div className="scribe-section__text" style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>
-                  {transcript || (recording ? <span style={{ opacity: 0.4 }}>Listening…</span> : '')}
-                  {interimText && <span style={{ opacity: 0.5 }}>{transcript ? ' ' : ''}{interimText}</span>}
+                  {transcript || (recording ? <span style={{ opacity: 0.4 }}>Recording. The transcript appears when you stop.</span> : '')}
                   {(recording || refining) && <span className="scribe-cursor">▍</span>}
                   <div ref={transcriptEndRef} />
                 </div>
@@ -378,17 +339,8 @@ export default function ScribePanel() {
             data-testid="scribe-asr-unavailable"
             style={{ margin: '0 0 12px', padding: '10px 14px', background: 'color-mix(in srgb, var(--status-warn) 10%, transparent)', borderLeft: '3px solid var(--status-warn)', borderRadius: '4px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}
           >
-            {cloudSpeechAllowed ? (
-              <>
-                <strong style={{ color: 'var(--status-warn-text)' }}>On-device voice transcription is not available on this system.</strong>{' '}
-                Dictation uses the browser's speech recognition only, so check the transcript before you structure it. You can still type a note and structure it.
-              </>
-            ) : (
-              <>
-                <strong style={{ color: 'var(--status-warn-text)' }}>Voice dictation is not available on this system.</strong>{' '}
-                You can still type a note and structure it.
-              </>
-            )}
+            <strong style={{ color: 'var(--status-warn-text)' }}>Voice dictation is not available on this system.</strong>{' '}
+            You can still type a note and structure it.
             {(asrStatus?.reason || asrStatus?.runbook) && (
               <details data-testid="scribe-asr-it-details" style={{ marginTop: 6 }}>
                 <summary style={{ cursor: 'pointer', minHeight: 24, color: 'var(--text-secondary)' }}>Details for IT</summary>
@@ -410,10 +362,10 @@ export default function ScribePanel() {
               hover that a ward tablet cannot produce). The visible
               role="status" banner above carries the same explanation. */}
           <button className={`scribe-record ${recording ? 'scribe-record--active' : ''}`} id="scribe-record-btn"
-            title={asrUnavailable && !cloudSpeechAllowed ? 'Voice dictation is not available on this system' : recording ? 'Stop recording' : 'Start voice dictation'}
-            aria-label={asrUnavailable && !cloudSpeechAllowed ? 'Voice dictation is not available on this system' : recording ? 'Stop recording' : 'Start voice dictation'}
+            title={asrUnavailable ? 'Voice dictation is not available on this system' : recording ? 'Stop recording' : 'Start voice dictation'}
+            aria-label={asrUnavailable ? 'Voice dictation is not available on this system' : recording ? 'Stop recording' : 'Start voice dictation'}
             onClick={recording ? stopRecording : startRecording}
-            disabled={processing || refining || streaming.isStreaming || (asrUnavailable && !cloudSpeechAllowed)}>
+            disabled={processing || refining || streaming.isStreaming || asrUnavailable}>
 
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               {recording ? (

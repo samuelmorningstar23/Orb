@@ -36,11 +36,11 @@ THE TWO INVARIANTS, AND HOW EACH IS ENFORCED
 INVARIANT 1 — "no admin" can never be a quiet state.
     Checked at every boot. When there is no login-capable admin the module logs
     CRITICAL, writes ops/bootstrap/FIRST-ADMIN-REQUIRED.txt with the exact
-    command to fix it, publishes a gauge, and surfaces `admins_active: 0` in the
-    heartbeat payload — so it pages out of the building rather than waiting to
-    be noticed. We do NOT refuse to boot: an appliance that will not start is
-    worse for patients than one that starts and shouts, and refusing to boot
-    would also remove the only channel (the heartbeat) that reports the problem.
+    command to fix it, publishes a gauge, and records `admins_active: 0` in
+    ops/bootstrap/status.json for whoever checks the box next. We do NOT refuse
+    to boot: an appliance that will not start is worse for patients than one
+    that starts and shouts, and refusing to boot would also take down the gauge
+    that reports the problem.
 
 INVARIANT 2 — a shipped default credential cannot be used.
     In the prod profile, any account whose password verifies against the
@@ -351,9 +351,9 @@ def scan_default_credentials(
              "budget_exhausted": bool, "elapsed_s": float}.
 
     `password_hint` is a redacted marker, never the password itself: this result
-    is written to ops/bootstrap/status.json and surfaced to the heartbeat, and a
-    file listing working credentials for the appliance would be a rather
-    spectacular own goal.
+    is written to ops/bootstrap/status.json and summarised to admins (the
+    /api/health/access JSON and the ops status page), and a file listing working
+    credentials for the appliance would be a rather spectacular own goal.
     """
     from auth import verify_password
 
@@ -485,9 +485,9 @@ def _clear_first_admin_notice() -> None:
 
 
 # ── The startup check ────────────────────────────────────────────────────────
-# Last published snapshot, read by the heartbeat and the admin surface. Written
-# by the bootstrap thread, read by others; a dict rebind is atomic under the GIL
-# so no lock is needed (same reasoning as the watchdog's _last_beat).
+# Last published snapshot, read by the ops status page and the admin surface.
+# Written by the bootstrap thread, read by others; a dict rebind is atomic under
+# the GIL so no lock is needed (same reasoning as the watchdog's _last_beat).
 _snapshot: dict[str, Any] = {"state": "not_run"}
 
 # A digest of each flagged account's password hash as the scan saw it. Memory
