@@ -102,9 +102,15 @@ def test_his_grants_per_role_are_exactly_the_ruled_set(role):
     assert held == EXPECTED_HIS_GRANTS[role], role
 
 
+# Grants a new role holds outside the HIS set, each ruled on its own. The Orb
+# Ward Record (6 October 2026): the clerk copies the paper observation sheet
+# (vitals.transcribe), never vitals.write or vitals.read.
+OUTSIDE_HIS_GRANTS = {"ward_clerk": {"vitals.transcribe"}}
+
+
 def test_new_roles_hold_nothing_outside_the_his_set():
     for role in NEW_ROLES:
-        assert P.ROLE_PERMISSIONS[role] <= HIS_PERMISSIONS, role
+        assert P.ROLE_PERMISSIONS[role] - HIS_PERMISSIONS == OUTSIDE_HIS_GRANTS.get(role, set()), role
 
 
 def test_the_clinician_alias_carries_the_doctor_grants():

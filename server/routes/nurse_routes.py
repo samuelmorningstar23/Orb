@@ -22,12 +22,18 @@ body, or header — can widen either. The per-patient guards were added
 from __future__ import annotations
 
 import uuid
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
-from permissions import department_scope, require_patient_access, require_permission
+from permissions import (
+    VITALS_WRITE,
+    department_scope,
+    has_permission,
+    require_patient_access,
+    require_permission,
+)
 from services import nurse_shift_service
 from services.audit_service import log_audit_event
 
@@ -45,7 +51,11 @@ class ObservationRequest(BaseModel):
     on_oxygen: bool = False
     # Stamped client-side when the nurse hits Save. Doubles as the dedupe key
     # for an offline replay — see nurse_shift_service.record_observation.
+    # For the ward clerk it is the time written on the paper sheet.
     taken_at: Optional[str] = None
+    # Readings the paper sheet showed but nobody could read (field names from
+    # nurse_shift_service.ILLEGIBLE_FIELDS). Each is stored empty and named.
+    illegible: List[str] = []
 
 
 @router.get("/board")
@@ -174,7 +184,13 @@ def record_observations(
     # it writes the `patient_scope_denied` row that makes a cross-ward probe
     # visible in the trail. A department of None stays UNSCOPED — a governance
     # account keeps writing hospital-wide.
-    user: dict = Depends(require_patient_access("vitals.write")),
+    #
+    # ANY ONE of vitals.write or vitals.transcribe (Orb Ward Record, 6 October
+    # 2026): the ward clerk copies the paper observation sheet under
+    # vitals.transcribe, with exactly the same patient scope, 404 and denial row.
+    # Which permission let the caller in decides the stored source below.
+    user: dict = Depends(require_patient_access("vitals.write", "vitals.transcribe",
+                                                any_of=True)),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
     """Record a nurse-taken observation set and the NEWS2 it produces.
@@ -185,6 +201,12 @@ def record_observations(
     """
     payload = req.model_dump()
     taken_at = payload.pop("taken_at", None)
+    illegible = payload.pop("illegible", None) or []
+    # A bedside account (vitals.write) charts as the nurse; an account that
+    # only transcribes is the clerk copying the sheet, stored as such.
+    source = (nurse_shift_service.OBS_SOURCE
+              if has_permission(user.get("role", ""), VITALS_WRITE)
+              else nurse_shift_service.CLERK_SOURCE)
     try:
         return nurse_shift_service.record_observation(
             patient_id,
@@ -192,6 +214,8 @@ def record_observations(
             payload,
             idempotency_key=idempotency_key,
             taken_at=taken_at,
+            source=source,
+            illegible=illegible,
         )
     except ValueError as e:
         # "patient not found" is a 404; everything else is a validation failure.

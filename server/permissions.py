@@ -37,6 +37,12 @@ PATIENT_READ_ALL = "patient.read_all"          # View any patient record
 PATIENT_WRITE = "patient.write"                # Create/edit patient records
 VITALS_READ = "vitals.read"                    # View vital signs for any patient
 VITALS_WRITE = "vitals.write"                  # Record a bedside observation set (nurse/doctor)
+# Copy an observation set from the paper sheet (the Orb Ward Record's ward
+# clerk). Reaches the same observations route as VITALS_WRITE, but the set is
+# stored with source 'clerk_transcribed' and its time is the time written on the
+# sheet. It is NOT vitals.write: the clerk cannot mark a set entered in error,
+# and holds no vitals.read, so no score preview and no chart.
+VITALS_TRANSCRIBE = "vitals.transcribe"
 ALERT_READ = "alert.read"                      # View clinical alerts
 MEDICATION_WRITE = "medication.write"          # Chart / modify a medication order, and record a dose
 
@@ -435,6 +441,9 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     # no admission or end of stay (ADT-S3, ADT-S5 held). Department required.
     "ward_clerk": {
         ADT_READ, ADT_BED,
+        # The Orb Ward Record (6 October 2026): the clerk keys each round from
+        # the paper observation sheet. Transcribe only, never vitals.write.
+        VITALS_TRANSCRIBE,
     },
     # Laboratory roles (LIS-R12): hospital-wide, no department, and none of
     # patient.read_all, relay.* or sage.query. A technician never authorises
@@ -929,12 +938,60 @@ def require_permission(*permissions: str):
     return _checker
 
 
+def require_any_permission(*permissions: str):
+    """Dependency factory: require the user to hold AT LEAST ONE listed permission.
+
+    Same denial shape as require_permission (a permission_denied audit row,
+    then a 403), so a caller holding none of the arms is refused exactly as
+    before. Used where two kinds of account reach one write for different
+    reasons: the observations route takes vitals.write (a nurse or doctor at
+    the bedside) OR vitals.transcribe (the ward clerk copying the paper sheet).
+    """
+    async def _checker(
+        request: Request,
+        user: dict = Depends(get_current_user),
+    ) -> dict:
+        role = user.get("role", "")
+        user_perms = ROLE_PERMISSIONS.get(role, set())
+        if not any(p in user_perms for p in permissions):
+            await run_db(
+                log_audit_event,
+                correlation_id=str(uuid.uuid4()),
+                event_category="authorization",
+                action_type="permission_denied",
+                outcome="denied",
+                summary_message=f"Missing any of permissions: {', '.join(permissions)}",
+                actor_user_id=user.get("id"),
+                actor_role=role,
+                request_path=request.url.path,
+                http_method=request.method,
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent"),
+                metadata={
+                    "required_any_of": list(permissions),
+                    "user_role": role,
+                },
+            )
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "permission_denied",
+                    "message": "Insufficient permissions",
+                    "required_any_of": list(permissions),
+                    "missing": list(permissions),
+                },
+            )
+        return user
+
+    return _checker
+
+
 # ════════════════════════════════════════════════════════════════
 #  FastAPI Dependency: require_patient_access
 # ════════════════════════════════════════════════════════════════
 
 def require_patient_access(*permissions: str, audit_action: str | None = None,
-                           opd_arm: bool = False):
+                           opd_arm: bool = False, any_of: bool = False):
     """require_permission + "…and this patient is on your ward" + a read audit.
 
     ONE guard hung off every ``/{patient_id}`` route rather than N copies of the
@@ -964,8 +1021,13 @@ def require_patient_access(*permissions: str, audit_action: str | None = None,
     route on the whitelist in tests/test_opd_scope_drift.py may pass it; every
     chart route, read or write, keeps the default and stays admission-only.
     The returned dependency carries `orb_opd_arm` so that test can find it.
+
+    `any_of=True` asks for ANY ONE of `permissions` instead of all of them
+    (require_any_permission). The patient scope, the 404 and the scope-denied
+    audit row below are the same either way.
     """
-    permission_checker = require_permission(*permissions)
+    permission_checker = (require_any_permission(*permissions) if any_of
+                          else require_permission(*permissions))
 
     async def _checker(
         request: Request,

@@ -46,6 +46,7 @@ from services.vital_charting import as_charted, vitals_line
 from services.news2_text import news2_description
 from services.vitals_source.base import (
     LABEL_ADMISSION_VITALS,
+    LABEL_CLERK_TRANSCRIBED,
     LABEL_MANUAL_ENTRY,
     LABEL_NURSE_OBSERVATION,
 )
@@ -61,12 +62,26 @@ logger = logging.getLogger("orb.nurse")
 # own observations to a human.
 OBS_SOURCE = LABEL_NURSE_OBSERVATION
 
+# The Orb Ward Record's clerk lane: a set copied from the paper observation
+# sheet by an account holding vitals.transcribe and not vitals.write. Same
+# route, same transaction, its own label, so every reader can tell a bedside
+# set from a transcribed one.
+CLERK_SOURCE = LABEL_CLERK_TRANSCRIBED
+MANUAL_OBS_SOURCES = (OBS_SOURCE, CLERK_SOURCE)
+
+# The readings a paper sheet can show but nobody can read. An illegible field
+# is stored NULL (never guessed) and named in vitals.illegible, comma separated,
+# in this order.
+ILLEGIBLE_FIELDS = ("heart_rate", "systolic_bp", "diastolic_bp", "spo2",
+                    "temperature", "respiratory_rate", "consciousness", "on_oxygen")
+
 # THE READINGS THAT RESET THE OBS-DUE CLOCK: a set a person took (SourceKind
 # MANUAL). The clock used to run off the newest row of any kind, so under
 # simulation a synthetic reading every 5 s re-anchored it and "obs overdue"
 # never fired. A simulated row is not care delivered, and a monitor row carries
 # no ACVPU or supplemental O2, so neither stands in for a NEWS2 set.
-OBS_CLOCK_SOURCES = (LABEL_NURSE_OBSERVATION, LABEL_MANUAL_ENTRY, LABEL_ADMISSION_VITALS)
+OBS_CLOCK_SOURCES = (LABEL_NURSE_OBSERVATION, LABEL_MANUAL_ENTRY, LABEL_ADMISSION_VITALS,
+                     LABEL_CLERK_TRANSCRIBED)
 
 # The shadow instrument's lane for everything raised from bedside entry. One of
 # the six in shadow_service.LANES (and in migration 4's CHECK constraint), and
@@ -679,16 +694,40 @@ def build_board(department: str | None) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # Observations — score preview and record
 # ─────────────────────────────────────────────────────────────────────────────
-def _clean_obs(obs: dict) -> dict:
+def normalise_illegible(illegible) -> tuple[str, ...]:
+    """The illegible field names, validated and in ILLEGIBLE_FIELDS order.
+
+    Raises ValueError naming an unknown field, so a typo can never quietly
+    turn into "nothing was illegible".
+    """
+    if not illegible:
+        return ()
+    names = {str(f).strip() for f in illegible if str(f).strip()}
+    unknown = sorted(names - set(ILLEGIBLE_FIELDS))
+    if unknown:
+        raise ValueError(f"illegible must name readings from {list(ILLEGIBLE_FIELDS)}, "
+                         f"not {unknown}")
+    return tuple(f for f in ILLEGIBLE_FIELDS if f in names)
+
+
+def _clean_obs(obs: dict, illegible: tuple[str, ...] = ()) -> dict:
     """Validate and coerce a submitted observation set.
 
     Every field is optional (a nurse may legitimately record a partial set —
     e.g. no BP on an agitated patient), but anything present must be a number
     inside OBS_RANGES. Raises ValueError with the offending field named.
+
+    A field named in `illegible` (normalise_illegible) is stored None whatever
+    was sent for it: the sheet showed a value nobody could read, and a guess is
+    worse than a gap. ACVPU and oxygen marked illegible are None too, which the
+    scorer already reads as "not assessed", never as alert or on air.
     """
     cleaned: dict = {}
     for field, (lo, hi, unit) in OBS_RANGES.items():
         raw = obs.get(field)
+        if field in illegible:
+            cleaned[field] = None
+            continue
         if raw is None or raw == "":
             cleaned[field] = None
             continue
@@ -703,11 +742,13 @@ def _clean_obs(obs: dict) -> dict:
     consciousness = str(obs.get("consciousness") or "alert").strip().lower()
     if consciousness not in ACVPU_LEVELS:
         raise ValueError(f"consciousness must be one of {list(ACVPU_LEVELS)}")
-    cleaned["consciousness"] = consciousness
-    cleaned["on_oxygen"] = bool(obs.get("on_oxygen"))
+    cleaned["consciousness"] = None if "consciousness" in illegible else consciousness
+    cleaned["on_oxygen"] = None if "on_oxygen" in illegible else bool(obs.get("on_oxygen"))
 
-    if all(cleaned[f] is None for f in OBS_RANGES) and consciousness == "alert" \
-            and not cleaned["on_oxygen"]:
+    # A set whose only entries are illegible marks is still a round on the
+    # sheet, so it is recorded; a set with nothing at all is refused as before.
+    if not illegible and all(cleaned[f] is None for f in OBS_RANGES) \
+            and consciousness == "alert" and not cleaned["on_oxygen"]:
         raise ValueError("an observation set must contain at least one reading")
 
     return cleaned
@@ -736,7 +777,7 @@ def score_observation(patient_id: str, obs: dict) -> dict:
     would then differ from the recorded score for the same numbers. The preview
     is the RCP table, exactly as recorded.
     """
-    cleaned = _clean_obs(obs)
+    cleaned = _clean_obs(obs, normalise_illegible(obs.get("illegible")))
     with db_session() as db:
         scale_2 = _on_scale_2(db, patient_id)
 
@@ -763,8 +804,14 @@ def _same_reading(row, cleaned: dict) -> bool:
     for field in OBS_RANGES:
         if not _num_eq(row[field], cleaned[field]):
             return False
-    if str(row["consciousness"] or "alert").strip().lower() != cleaned["consciousness"]:
+    if cleaned["consciousness"] is None:
+        # Marked illegible: only a row that also stored no ACVPU matches.
+        if row["consciousness"] is not None:
+            return False
+    elif str(row["consciousness"] or "alert").strip().lower() != cleaned["consciousness"]:
         return False
+    if cleaned["on_oxygen"] is None:
+        return row["on_oxygen"] is None
     return bool(row["on_oxygen"]) == bool(cleaned["on_oxygen"])
 
 
@@ -790,7 +837,7 @@ def _shadow_alert_dropped(episode_id, patient_id: str, level: str, reason: str) 
 
 
 def _push_vitals_update(patient_id: str, observed_at: datetime, cleaned: dict,
-                        news2: dict) -> bool:
+                        news2: dict, source: str = OBS_SOURCE) -> bool:
     """Schedule `vitals:update` for a committed nurse set. Never raises.
 
     The route is a sync `def`, so this runs in an anyio worker thread and the
@@ -803,7 +850,7 @@ def _push_vitals_update(patient_id: str, observed_at: datetime, cleaned: dict,
         # The stored spelling, so the push matches the charted row byte for byte.
         row = {"patient_id": patient_id, "timestamp": format_utc(observed_at), **cleaned}
         return schedule_patient_vitals(
-            "vitals:update", vitals_update_payload(row, news2, source=OBS_SOURCE))
+            "vitals:update", vitals_update_payload(row, news2, source=source))
     except Exception:
         logger.warning("nurse obs: vitals:update push failed for %s (the set is charted)",
                        patient_id, exc_info=True)
@@ -1067,8 +1114,14 @@ def record_observation(
     *,
     idempotency_key: str | None = None,
     taken_at: str | None = None,
+    source: str | None = None,
+    illegible: list | None = None,
 ) -> dict:
     """Record a nurse-entered observation set and its NEWS2.
+
+    `source` is None for a bedside set (OBS_SOURCE) or CLERK_SOURCE for a set
+    the ward clerk copied from the paper sheet; `illegible` names readings the
+    sheet showed but nobody could read (see _clean_obs).
 
     Routed through `ManualEntrySource.record_observation` — the provenance seam
     every manual vitals write shares — so the write is counted on the same
@@ -1080,7 +1133,8 @@ def record_observation(
     """
     return _manual_entry_source().record_observation(
         patient_id, actor_id, obs,
-        idempotency_key=idempotency_key, taken_at=taken_at)
+        idempotency_key=idempotency_key, taken_at=taken_at,
+        source=source, illegible=illegible)
 
 
 def _record_observation_txn(
@@ -1090,6 +1144,8 @@ def _record_observation_txn(
     *,
     idempotency_key: str | None = None,
     taken_at: str | None = None,
+    source: str | None = None,
+    illegible: list | None = None,
 ) -> dict:
     """The transactional write behind `record_observation`.
 
@@ -1119,8 +1175,23 @@ def _record_observation_txn(
     is worse than either accepting or refusing it. The dedupe now compares the
     VALUES too: same time + same values is a replay, same time + different values
     is a new reading and is charted.
+
+    THE CLERK LANE (Orb Ward Record, 6 October 2026). `source=CLERK_SOURCE`
+    stores the set under 'clerk_transcribed'; `taken_at` is then the time
+    written on the paper sheet, which may be days back. Every set, either lane,
+    also stores `entered_at`, the UTC time it was keyed, so the clerk's entry lag
+    is reportable on its own and never moves the observation time. The replay
+    check compares against rows of the SAME source: a clerk keying the nurse's
+    own set is a second record, not a replay of hers.
     """
-    cleaned = _clean_obs(obs)
+    if source is None:
+        source = OBS_SOURCE
+    if source not in MANUAL_OBS_SOURCES:
+        raise ValueError(f"unknown observation source {source!r}")
+    illegible_fields = normalise_illegible(illegible)
+    illegible_text = ",".join(illegible_fields) or None
+    cleaned = _clean_obs(obs, illegible_fields)
+    entered_at = format_utc(_now())
     # In UTC, and stored in the one spelling every vitals/risk_scores writer
     # uses (services/clinical_time.py). `_parse_ts` keeps a caller's offset, so
     # an API caller's '+05:30' used to be stored as typed beside '+00:00' rows,
@@ -1142,7 +1213,7 @@ def _record_observation_txn(
                      FROM vitals
                     WHERE patient_id = ? AND source = ? AND timestamp = ?
                     ORDER BY id DESC LIMIT 1""",
-                (patient_id, OBS_SOURCE, stored_at),
+                (patient_id, source, stored_at),
             ).fetchone()
             if existing is not None and _same_reading(existing, cleaned):
                 news2 = score_vitals_row(cleaned, on_scale_2=scale_2, overlay=False)
@@ -1152,6 +1223,8 @@ def _record_observation_txn(
                     "news2": news2,
                     "schedule": obs_schedule(news2),
                     "replayed": True,
+                    "source": source,
+                    "illegible": list(illegible_fields),
                 }
             if existing is not None:
                 # Same observation time, DIFFERENT values: a correction or a
@@ -1161,7 +1234,7 @@ def _record_observation_txn(
                 logger.warning(
                     "nurse obs: patient %s already has a %s reading at %s with different "
                     "values (vitals %s) — charting the new set as a correction",
-                    patient_id, OBS_SOURCE, stored_at, superseded_id,
+                    patient_id, source, stored_at, superseded_id,
                 )
 
         # ``overlay=False`` — MANDATORY here, not a preference: we are inside an
@@ -1182,13 +1255,14 @@ def _record_observation_txn(
             """INSERT INTO vitals
                    (patient_id, timestamp, heart_rate, systolic_bp, diastolic_bp,
                     spo2, temperature, respiratory_rate, consciousness, on_oxygen,
-                    source)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    source, entered_at, illegible)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (patient_id, stored_at, cleaned["heart_rate"],
              cleaned["systolic_bp"], cleaned["diastolic_bp"], cleaned["spo2"],
              cleaned["temperature"], cleaned["respiratory_rate"],
-             cleaned["consciousness"], int(cleaned["on_oxygen"]),
-             OBS_SOURCE),
+             cleaned["consciousness"],
+             None if cleaned["on_oxygen"] is None else int(cleaned["on_oxygen"]),
+             source, entered_at, illegible_text),
         )
         vitals_id = cur.lastrowid
 
@@ -1212,8 +1286,10 @@ def _record_observation_txn(
             outcome="success",
             db=db,
             summary_message=(
-                f"Nurse observation set recorded for {patient_id} "
-                f"({news2_description(news2)}) by {actor_id}"
+                (f"Nurse observation set recorded for {patient_id} "
+                 if source == OBS_SOURCE else
+                 f"Observation set copied from the paper sheet for {patient_id} ")
+                + f"({news2_description(news2)}) by {actor_id}"
             ),
             actor_user_id=actor_id,
             target_type="vitals",
@@ -1222,11 +1298,13 @@ def _record_observation_txn(
             metadata={
                 "vitals_id": vitals_id,
                 "observed_at": stored_at,
+                "entered_at": entered_at,
+                "illegible": list(illegible_fields),
                 "news2": news2["raw_news2"],
                 "level": news2["level"],
                 "single_param_3": news2["single_param_3"],
                 "spo2_scale": news2["spo2_scale"],
-                "source": OBS_SOURCE,
+                "source": source,
                 "idempotency_key": idempotency_key,
                 "supersedes_vitals_id": superseded_id,
                 **{k: cleaned[k] for k in OBS_RANGES},
@@ -1244,7 +1322,7 @@ def _record_observation_txn(
     # this set's one page. `news2` IS score_vitals_row on the values just
     # inserted, with the patient's scale.
     if is_latest:
-        _push_vitals_update(patient_id, observed_at, cleaned, news2)
+        _push_vitals_update(patient_id, observed_at, cleaned, news2, source=source)
 
     # Post-commit, non-raising: opening a sepsis bundle at NEWS2>=7 is documented
     # in sepsis_bundle_service as safe to call from any risk path, and a
@@ -1309,7 +1387,7 @@ def _record_observation_txn(
     try:
         from services import escalation_service
         escalation_service.evaluate_observation(
-            patient_id, news2, vitals_id=vitals_id, source=OBS_SOURCE,
+            patient_id, news2, vitals_id=vitals_id, source=source,
             actor_id=actor_id, observed_at=observed_at, notify=False,
         )
     except Exception as e:
@@ -1326,6 +1404,9 @@ def _record_observation_txn(
         "news2": news2,
         "schedule": obs_schedule(news2),
         "replayed": False,
+        "source": source,
+        "entered_at": entered_at,
+        "illegible": list(illegible_fields),
     }
     if superseded_id is not None:
         result["supersedes_vitals_id"] = superseded_id

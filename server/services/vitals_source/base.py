@@ -75,6 +75,12 @@ LABEL_NURSE_OBSERVATION = "nurse_manual"
 # the bot prune DELETES simulated rows, and a real admission set is not the
 # bot's to delete.
 LABEL_ADMISSION_VITALS = "clinician"
+# The Orb Ward Record's clerk lane (6 October 2026): a set the ward clerk copied
+# from the paper observation sheet, through the same nurse observation route
+# under vitals.transcribe. A person took it at the bedside, so it is MANUAL; its
+# timestamp is the time written on the sheet and vitals.entered_at is when it
+# was keyed.
+LABEL_CLERK_TRANSCRIBED = "clerk_transcribed"
 
 # Every value any part of Orb writes into `vitals.source`, mapped to its kind.
 # tests/test_vitals_source.py asserts this covers every literal the repo writes,
@@ -85,6 +91,7 @@ _LABEL_KIND: dict[str, SourceKind] = {
     LABEL_MANUAL_ENTRY: SourceKind.MANUAL,
     LABEL_NURSE_OBSERVATION: SourceKind.MANUAL,
     LABEL_ADMISSION_VITALS: SourceKind.MANUAL,
+    LABEL_CLERK_TRANSCRIBED: SourceKind.MANUAL,
     LABEL_SIMULATED: SourceKind.SIMULATOR,
     # ── pre-existing writers ──
     "llm_extracted": SourceKind.DERIVED,     # nervous_system_triggers: parsed from a signed note

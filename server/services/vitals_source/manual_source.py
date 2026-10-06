@@ -53,7 +53,7 @@ from __future__ import annotations
 import logging
 from typing import Optional, Sequence
 
-from services.clinical_time import to_utc_iso
+from services.clinical_time import to_utc_iso, utc_iso_now
 from services.ingestion_service import IngestionResult
 
 from .base import (
@@ -154,8 +154,15 @@ class ManualEntrySource(VitalsSource):
         *,
         idempotency_key: Optional[str] = None,
         taken_at: Optional[str] = None,
+        source: Optional[str] = None,
+        illegible: Optional[list] = None,
     ) -> dict:
         """Chart a nurse-entered observation set. Synchronous and FAIL-LOUD.
+
+        `source` is None for the nurse's own set (`observation_label`) and
+        LABEL_CLERK_TRANSCRIBED for a set the ward clerk copied from the paper
+        sheet; `illegible` names the readings the sheet showed but nobody could
+        read. Both pass straight through to the transaction.
 
         Wraps `nurse_shift_service._record_observation_txn` — one transaction
         holding the vitals row (source=`observation_label`), the risk_scores
@@ -173,7 +180,8 @@ class ManualEntrySource(VitalsSource):
         try:
             result = nurse_shift_service._record_observation_txn(
                 patient_id, actor_id, obs,
-                idempotency_key=idempotency_key, taken_at=taken_at)
+                idempotency_key=idempotency_key, taken_at=taken_at,
+                source=source, illegible=illegible)
         except Exception as e:
             self.stats.messages_rejected += 1
             self.stats.note_error(str(e))
@@ -237,8 +245,9 @@ class ManualEntrySource(VitalsSource):
             cur = db.execute(
                 """INSERT INTO vitals
                        (patient_id, timestamp, heart_rate, systolic_bp, diastolic_bp,
-                        spo2, temperature, respiratory_rate, consciousness, on_oxygen, source)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        spo2, temperature, respiratory_rate, consciousness, on_oxygen, source,
+                        entered_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 # The one stored spelling (services/clinical_time.py). The
                 # caller is Orb itself, so a naive value is UTC.
                 (patient_id, to_utc_iso(observed_at), values.get("HR"), values.get("SBP"),
@@ -246,7 +255,9 @@ class ManualEntrySource(VitalsSource):
                  values.get("RR"),
                  (str(consciousness).strip() or None) if consciousness is not None else None,
                  None if on_oxygen is None else (1 if on_oxygen else 0),
-                 self.admission_label),
+                 self.admission_label,
+                 # Migration 77: every keyed set records when it was keyed.
+                 utc_iso_now()),
             )
         except Exception as e:
             self.stats.messages_rejected += 1
