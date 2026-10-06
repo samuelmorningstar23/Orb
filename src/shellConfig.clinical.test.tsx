@@ -21,9 +21,10 @@ afterEach(() => {
 })
 
 describe('clinical switches', () => {
-  it('default to all on before the probe answers', () => {
+  it('default to all on, and the Ward Record profile off, before the probe answers', () => {
     expect(currentClinicalSwitches()).toEqual({
       scoringEnabled: true, lensEnabled: true, sepsisAutostart: true,
+      modelsEnabled: true, wardRecord: false,
     })
   })
 
@@ -34,15 +35,38 @@ describe('clinical switches', () => {
     }))
     expect(currentClinicalSwitches()).toEqual({
       scoringEnabled: false, lensEnabled: false, sepsisAutostart: true,
+      modelsEnabled: true, wardRecord: false,
     })
+  })
+
+  it('adopt the Ward Record profile and the models switch', async () => {
+    await refreshModuleFlags(healthFetch({
+      modules: {},
+      clinical: {
+        scoring_enabled: false, lens_enabled: false, sepsis_autostart: false,
+        models_enabled: false, ward_record: true,
+      },
+    }))
+    expect(currentClinicalSwitches()).toEqual({
+      scoringEnabled: false, lensEnabled: false, sepsisAutostart: false,
+      modelsEnabled: false, wardRecord: true,
+    })
+  })
+
+  it('leave the profile off and the models on for an older server that sends neither', async () => {
+    await refreshModuleFlags(healthFetch({ modules: {}, clinical: { scoring_enabled: false } }))
+    expect(currentClinicalSwitches().wardRecord).toBe(false)
+    expect(currentClinicalSwitches().modelsEnabled).toBe(true)
   })
 
   it('ignore a value that is not a strict boolean', async () => {
     await refreshModuleFlags(healthFetch({
-      modules: {}, clinical: { scoring_enabled: 'false', lens_enabled: 0 },
+      modules: {}, clinical: { scoring_enabled: 'false', lens_enabled: 0, ward_record: 'true', models_enabled: 0 },
     }))
     expect(currentClinicalSwitches().scoringEnabled).toBe(true)
     expect(currentClinicalSwitches().lensEnabled).toBe(true)
+    expect(currentClinicalSwitches().wardRecord).toBe(false)
+    expect(currentClinicalSwitches().modelsEnabled).toBe(true)
   })
 
   it('stay on when the probe fails', async () => {

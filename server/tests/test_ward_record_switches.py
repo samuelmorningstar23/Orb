@@ -168,8 +168,11 @@ def test_health_publishes_the_clinical_switches(monkeypatch):
     monkeypatch.setattr(config, "SCORING_ENABLED", False)
     monkeypatch.setattr(config, "LENS_ENABLED", False)
     monkeypatch.setattr(config, "SEPSIS_AUTOSTART", True)
+    monkeypatch.setattr(config, "MODELS_ENABLED", True)
+    monkeypatch.setattr(config, "WARD_RECORD", False)
     assert main.clinical_switches() == {
-        "scoring_enabled": False, "lens_enabled": False, "sepsis_autostart": True}
+        "scoring_enabled": False, "lens_enabled": False, "sepsis_autostart": True,
+        "models_enabled": True, "ward_record": False}
 
 
 # ── Autostart off ────────────────────────────────────────────────────────────

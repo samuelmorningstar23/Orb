@@ -473,6 +473,45 @@ SCORING_ENABLED = os.getenv("ORB_SCORING_ENABLED", "true").strip().lower() in ("
 # automatically; a clinician can still start a bundle by hand. Default on.
 SEPSIS_AUTOSTART = os.getenv("ORB_SEPSIS_AUTOSTART", "true").strip().lower() in ("1", "true", "yes", "on")
 
+# Whether any local model runs at all: Sage, Scribe drafting and its second
+# pass, Lens, Relay's ambient cards, Sage insights, the alert assessment, the
+# knowledge workers, speech transcription (Whisper) and every model warm-up at
+# boot. Off, services/ollama_gateway and the two provider seams refuse before
+# any request leaves this process, nothing warms a model at boot, and those
+# features' routes answer 404 "Switched off on this computer". For a site that
+# wants the models off without the whole Ward Record profile. Default on.
+MODELS_ENABLED = os.getenv("ORB_MODELS_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+
+# The Orb Ward Record profile (docs/fundraising/SALES_PLAN_2026-10.md section 3,
+# step 2): the ward's observation record and the monthly rounds file, with the
+# score switched off. One switch. On, it forces ORB_SCORING_ENABLED,
+# ORB_SEPSIS_AUTOSTART, ORB_LENS_ENABLED and ORB_MODELS_ENABLED off whatever
+# those variables say, the I-PASS handover answers 404, and the front end shows
+# only the screens Ward Record sells. main.py logs one boot line naming every
+# setting it forced. Default off.
+WARD_RECORD = os.getenv("ORB_WARD_RECORD", "false").strip().lower() in ("1", "true", "yes", "on")
+
+# The settings ORB_WARD_RECORD forced off, by variable name, for the boot line.
+WARD_RECORD_FORCED: tuple[str, ...] = ()
+if WARD_RECORD:
+    WARD_RECORD_FORCED = ("ORB_SCORING_ENABLED", "ORB_SEPSIS_AUTOSTART",
+                          "ORB_LENS_ENABLED", "ORB_MODELS_ENABLED")
+    SCORING_ENABLED = False
+    SEPSIS_AUTOSTART = False
+    LENS_ENABLED = False
+    MODELS_ENABLED = False
+
+
+def ward_record_boot_line() -> str | None:
+    """The one boot line for the Ward Record profile, or None when it is off.
+    Names every setting the profile forced and what each variable asked for."""
+    if not WARD_RECORD:
+        return None
+    asked = ", ".join(
+        f"{name}=false (the variable says {os.getenv(name, 'nothing')})"
+        for name in WARD_RECORD_FORCED)
+    return f"Orb Ward Record profile (ORB_WARD_RECORD) is on. Forced: {asked}."
+
 # The dev profile's cheap Scribe stages run on the fast 4B through Ollama, the
 # same as .env sets on the dev box. They used to default to an MLX path for
 # MedGemma 1.5 4B whose weights were never downloaded, so a fresh dev install

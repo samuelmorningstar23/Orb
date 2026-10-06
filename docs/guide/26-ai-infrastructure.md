@@ -320,6 +320,8 @@ Every LLM caller reads `OLLAMA_BASE_URL`, `LLM_MODEL`, `OLLAMA_KEEP_ALIVE` direc
 | `LENS_ENABLED` | `:288` | ON in dev, OFF in prod | Gates the Lens vision feature. Lens ships **no validated imaging model**, it is a general vision LLM writing reference prose, so it is demo-only unless an operator sets `ORB_LENS_ENABLED`. Asserted a bool by `test_tier1_small_closes.py:92`. When it is off the Lens screen says so before any upload and the analyse control is disabled. |
 | `SCORING_ENABLED` | beside `LENS_ENABLED` | ON | `ORB_SCORING_ENABLED=false` is the Orb Ward Record's scoring-off mode: observation sets are stored with no NEWS2, no `risk_scores` row, no escalation, no Relay alert and no sepsis bundle. |
 | `SEPSIS_AUTOSTART` | beside `LENS_ENABLED` | ON | `ORB_SEPSIS_AUTOSTART=false` stops a high NEWS2 opening a sepsis bundle by itself; starting one by hand still works. |
+| `MODELS_ENABLED` | beside `LENS_ENABLED` | ON | `ORB_MODELS_ENABLED=false` runs no local model: the gateway and the provider seams refuse, no warm-up at boot, and the model routes answer 404 "Switched off on this computer". |
+| `WARD_RECORD` | beside `LENS_ENABLED` | OFF | `ORB_WARD_RECORD=true` is the Orb Ward Record profile: forces `SCORING_ENABLED`, `SEPSIS_AUTOSTART`, `LENS_ENABLED` and `MODELS_ENABLED` off and logs one boot line naming them. |
 
 #### Correction/draft/verify model defaults (`:104-109`)
 

@@ -333,9 +333,14 @@ async def lifespan(app: FastAPI):
     # can see from the log which mode this computer is in.
     import config as _clinical_config
     logger.info("Clinical switches: scoring %s (ORB_SCORING_ENABLED), sepsis bundle "
-                "autostart %s (ORB_SEPSIS_AUTOSTART)",
+                "autostart %s (ORB_SEPSIS_AUTOSTART), models %s (ORB_MODELS_ENABLED)",
                 "on" if _clinical_config.SCORING_ENABLED else "off",
-                "on" if _clinical_config.SEPSIS_AUTOSTART else "off")
+                "on" if _clinical_config.SEPSIS_AUTOSTART else "off",
+                "on" if _clinical_config.MODELS_ENABLED else "off")
+    # ORB_WARD_RECORD: one line naming every setting the profile forced off.
+    _ward_record_line = _clinical_config.ward_record_boot_line()
+    if _ward_record_line:
+        logger.warning(_ward_record_line)
 
     # The patient discharge link is built on ORB_PUBLIC_APP_BASE_URL. In prod a
     # value a patient's phone cannot open (unset, not https, or this machine)
@@ -1256,14 +1261,18 @@ async def health():
 
 def clinical_switches() -> dict:
     """The clinical switches the front end hides screens by (Orb Ward Record):
-    ORB_SCORING_ENABLED, ORB_LENS_ENABLED and ORB_SEPSIS_AUTOSTART. Read from
-    config at call time. Three booleans, no PHI, safe on the unauthenticated
-    health endpoint. src/shellConfig.tsx currentClinicalSwitches() reads it."""
+    ORB_SCORING_ENABLED, ORB_LENS_ENABLED, ORB_SEPSIS_AUTOSTART,
+    ORB_MODELS_ENABLED and ORB_WARD_RECORD (the profile, which forces the other
+    four off). Read from config at call time. Five booleans, no PHI, safe on the
+    unauthenticated health endpoint. src/shellConfig.tsx
+    currentClinicalSwitches() reads it."""
     import config
     return {
         "scoring_enabled": bool(getattr(config, "SCORING_ENABLED", True)),
         "lens_enabled": bool(getattr(config, "LENS_ENABLED", False)),
         "sepsis_autostart": bool(getattr(config, "SEPSIS_AUTOSTART", True)),
+        "models_enabled": bool(getattr(config, "MODELS_ENABLED", True)),
+        "ward_record": bool(getattr(config, "WARD_RECORD", False)),
     }
 
 
