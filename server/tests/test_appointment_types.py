@@ -142,3 +142,26 @@ def test_the_badge_is_the_latest_vitals_and_the_sickest_comes_first():
     assert by_id[calm]["news2"] == 0 and by_id[calm]["acuity"] == "stable"
     # Nothing recorded is not stable, and has no number.
     assert by_id[none]["acuity"] is None and by_id[none]["news2"] is None
+
+
+def test_a_set_entered_in_error_is_not_the_badge():
+    """A vitals set marked entered in error (voided_at) is skipped by every
+    other vitals reader, the Vigil board included. The appointment badge read
+    the newest row whatever its state, so a voided peri-arrest set kept a
+    patient on the list as critical."""
+    day = _day(1)
+    pid = _patient("Voided Newest", vitals={"hr": 72, "sbp": 124, "spo2": 98, "temp": 36.8, "rr": 16})
+    with db_session() as db:
+        db.execute(
+            """INSERT INTO vitals (patient_id, timestamp, heart_rate, systolic_bp, diastolic_bp,
+                   spo2, temperature, respiratory_rate, consciousness, on_oxygen,
+                   voided_at, voided_by, void_reason)
+               VALUES (?, '2026-10-06T09:00:00+00:00', 135, 85, 50, 88, 39.5, 30, 'alert', 0,
+                       '2026-10-06T09:05:00+00:00', ?, 'Entered on the wrong patient')""",
+            (pid, DOCTOR),
+        )
+    _book(pid, day, "10:00")
+
+    from services.forecast_service import get_appointments
+    (row,) = [r for r in get_appointments(days_ahead=3) if r["patient_id"] == pid]
+    assert row["acuity"] == "stable" and row["news2"] == 0

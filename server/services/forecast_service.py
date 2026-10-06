@@ -964,7 +964,10 @@ def get_appointments(days_ahead: int = 7, department: str | None = None) -> list
             if pid in latest:
                 continue
             v = db.execute(
-                "SELECT * FROM vitals WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 1",
+                # A set marked entered in error (voided_at) is never the
+                # latest: every other vitals reader skips it, the board too.
+                "SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+                "ORDER BY timestamp DESC, id DESC LIMIT 1",
                 (pid,),
             ).fetchone()
             scale = db.execute(
@@ -1012,12 +1015,16 @@ def get_appointments(days_ahead: int = 7, department: str | None = None) -> list
         })
     # Within a day the sickest patient comes first, then by time: the nurse
     # planning the day sees who needs looking at before who comes earliest.
-    # Not scored sorts last in its day.
-    appointments.sort(key=lambda a: (
-        a["date"],
-        0 if a["news2"] is not None else 1,
-        -(a["news2"] or 0),
-        a["time"] or "",
-        a["patient_name"] or "",
-    ))
+    # "Sickest" is the Vigil board's own order (vigil_service.board_order:
+    # critical first, then NEWS2 high to low, then band), so a patient the
+    # overlay made critical at a lower aggregate is not listed below a higher
+    # stable score. Not scored sorts last in its day.
+    from services.vigil_service import board_order
+
+    def _day_order(a: dict) -> tuple:
+        news2, _ = scores.get(a["patient_id"], (None, None))
+        return (a["date"], *board_order(a["patient_id"], news2)[:4],
+                a["time"] or "", a["patient_name"] or "")
+
+    appointments.sort(key=_day_order)
     return appointments

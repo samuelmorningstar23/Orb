@@ -19,8 +19,12 @@ import { describe, expect, it, vi, afterEach } from 'vitest'
 import AppointmentsPanel from './AppointmentsPanel'
 import { formatClinicalDate, localDateKey } from '../../lib/datetime'
 
+// The signed-in role. Booking is offered only to a role holding patient.write.
+const session = vi.hoisted(() => ({ role: 'doctor' }))
+
 vi.mock('../../api/client', () => ({
   buildHeaders: () => ({}),
+  getUser: () => ({ id: 'U1', name: 'Test User', role: session.role }),
 }))
 
 const LONG_NAME = 'Lakshmi Venkatasubramanian'
@@ -220,5 +224,24 @@ describe('AppointmentsPanel score, tile and booking form', () => {
       patient_id: 'PAT-D', appointment_type: 'post_discharge_check',
       scheduled_date: localDateKey(), scheduled_time: '23:59', reason: 'Wound check',
     })
+  })
+})
+
+/* A nurse or an administrator can read the list but holds no patient.write, so
+   the server refuses the booking. The button is not offered to them. */
+describe('AppointmentsPanel booking is offered only to a role that can book', () => {
+  afterEach(() => { session.role = 'doctor' })
+
+  it('shows no Book appointment button to a nurse', async () => {
+    session.role = 'nurse'
+    serve([appt(localDateKey())])
+    await screen.findByText('Post-discharge checks')
+    expect(screen.queryByRole('button', { name: 'Book appointment' })).toBeNull()
+  })
+
+  it('shows it to a doctor', async () => {
+    session.role = 'doctor'
+    serve([appt(localDateKey())])
+    expect(await screen.findByRole('button', { name: 'Book appointment' })).toBeInTheDocument()
   })
 })

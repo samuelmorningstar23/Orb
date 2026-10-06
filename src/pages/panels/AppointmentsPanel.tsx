@@ -3,6 +3,7 @@ import { buildHeaders } from '../../api/client'
 import { sexShort } from '../../lib/demographics'
 import { formatClinicalClock, formatClinicalDate, localDateKey, parseUTC } from '../../lib/datetime'
 import { newId } from '../../lib/id'
+import { hasPermission, PATIENT_WRITE } from '../../lib/roles'
 
 const API = ''
 
@@ -239,6 +240,7 @@ export default function AppointmentsPanel() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [booking, setBooking] = useState(false)
+  const canBook = hasPermission(PATIENT_WRITE)
 
   const fetchAppointments = useCallback(async () => {
     try {
@@ -293,7 +295,10 @@ export default function AppointmentsPanel() {
         <h2 className="detail__section-title" style={{ fontSize: '1.4rem' }}>Booked appointments</h2>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', margin: 0 }}>Appointments booked for the next 7 days.</p>
-          {!booking && (
+          {/* Booking needs patient.write on the server. A nurse or an
+              administrator can read this list but would fill the form in only
+              to be refused, so the button is not offered to them. */}
+          {!booking && canBook && (
             <button type="button" className="btn-primary" onClick={() => setBooking(true)}>Book appointment</button>
           )}
         </div>
