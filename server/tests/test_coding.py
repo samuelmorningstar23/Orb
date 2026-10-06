@@ -231,3 +231,19 @@ def test_the_evidence_sentence_is_capped_and_keeps_the_term():
     sentence = coding_service.evidence_sentence("COPD", long)
     assert len(sentence) <= 240
     assert "COPD" in sentence
+
+
+def test_a_structured_scribe_note_gives_its_sentence_not_its_json():
+    import json
+    pid = _new_patient(diagnosis=None)
+    with db_session() as db:
+        db.execute(
+            "INSERT INTO scribe_notes (patient_id, author_id, raw_transcript, structured_note, status) "
+            "VALUES (?, 'DOC001', '', ?, 'signed')",
+            (pid, json.dumps({"subjective": "Breathless overnight.",
+                              "assessment": "COPD exacerbation, improving on nebulisers.",
+                              "plan": "Continue steroids."})))
+    result = coding_service.suggest_codes(pid)
+    copd = next(c for c in result["suggested_codes"] if c["system"] == "ICD10" and c["code"].startswith("J44"))
+    assert copd["evidence_sentence"] == "COPD exacerbation, improving on nebulisers."
+    assert copd["evidence_note_type"] == "scribe_note"

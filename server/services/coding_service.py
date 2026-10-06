@@ -273,10 +273,16 @@ def _load_patient_context(patient_id: str) -> dict:
             text = " ".join(t for t in (r["raw_transcript"], r["structured_note"]) if t)
             if text:
                 ctx["notes"].append(("scribe note", text))
+                # The structured note is JSON. The sentence quoted to the
+                # coder is read from its words, never from the JSON around
+                # them ('{"assessment": "COPD ...').
+                from services.note_text import note_plain_text
+                plain = "\n".join(t for t in (r["raw_transcript"],
+                                               note_plain_text(r["structured_note"])) if t)
                 ctx["note_sources"].append({
                     "label": "scribe note", "text": text, "note_id": r["id"],
                     "note_type": "scribe_note", "author_id": r["author_id"],
-                    "author": r["author_name"]})
+                    "author": r["author_name"], "evidence_text": plain})
 
         # Active medications — drive med→condition CDI inference.
         # `status != 'discontinued'` alone drops rows whose status is NULL
@@ -416,7 +422,9 @@ def suggest_codes(patient_id: str, use_llm: bool = False) -> dict:
                 continue
             evidence = f"Matched “{matched_term}” in {src_label}"
             where = {
-                "evidence_sentence": evidence_sentence(matched_term, src_text),
+                "evidence_sentence": (
+                    evidence_sentence(matched_term, (note or {}).get("evidence_text") or "")
+                    or evidence_sentence(matched_term, src_text)),
                 "evidence_source": src_label,
                 "evidence_note_id": note["note_id"] if note else None,
                 "evidence_note_type": note["note_type"] if note else None,
