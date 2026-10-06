@@ -137,13 +137,37 @@ function signedCount(n: number, sign: '+' | '-'): string {
   return n === 0 ? '0' : `${sign}${n}`
 }
 
+/* ── "Untrained model" ──
+   A projection and a count sat side by side in the same type, so "Beds
+   Available in 48h" read with the same authority as "Current Census". Every
+   figure the forecasting model produces carries this small tag; figures read
+   straight from the record (today's census, ward occupancy now) carry none.
+   While the model is untrained, forecast_service.predict_patient_los answers
+   with simple rules instead, which the title says. */
+const UNTRAINED_TITLE =
+  'A projection. The forecasting model is not trained yet, so this comes from simple rules, not from this hospital\'s own history.'
+
+function UntrainedTag() {
+  return (
+    <span className="forecast-untrained-tag" title={UNTRAINED_TITLE} style={{
+      marginLeft: 6, padding: '1px 6px', borderRadius: 4, fontSize: '0.65rem', fontWeight: 600,
+      letterSpacing: 0, textTransform: 'none', whiteSpace: 'nowrap', verticalAlign: 'middle',
+      color: 'var(--text-secondary)', border: '1px solid var(--border-glass)', background: 'var(--bg-glass)',
+    }}>
+      Untrained model
+    </span>
+  )
+}
+
 // ── Metric Card ──
-function MetricCard({ label, value, unit, accent, subtitle }: {
+function MetricCard({ label, value, unit, accent, subtitle, untrained = false }: {
   label: string; value: string | number; unit?: string; accent: string; subtitle?: string
+  /** True for a figure the forecasting model produced, not the record. */
+  untrained?: boolean
 }) {
   return (
     <div className="forecast-metric-card" style={{ '--accent': accent } as React.CSSProperties}>
-      <span className="forecast-metric-label">{label}</span>
+      <span className="forecast-metric-label">{label}{untrained && <UntrainedTag />}</span>
       <div className="forecast-metric-value">
         <span className="metric-mono" style={{ color: accent, fontSize: '1.8rem' }}>{value}</span>
         {unit && <span className="forecast-metric-unit">{unit}</span>}
@@ -360,25 +384,28 @@ export default function ForecastPanel() {
               value={summary?.beds_available_in_48h || 0}
               accent={summary && summary.beds_available_in_48h <= 2 ? 'var(--status-danger)' : 'var(--status-ok)'}
               subtitle="Projected availability"
+              untrained
             />
             <MetricCard
               label="7-Day Discharges"
               value={summary?.total_predicted_discharges_7d || 0}
               accent="var(--accent-amber)"
               subtitle={`${summary?.total_predicted_admissions_7d || 0} admissions predicted`}
+              untrained
             />
             <MetricCard
               label="Peak Day"
               value={summary?.peak_day || '—'}
               accent="var(--text-primary)"
               subtitle={`${summary?.peak_occupancy || 0} patients`}
+              untrained
             />
           </div>
 
           {/* 7-Day Occupancy Chart */}
           <div className="glass-card forecast-chart-card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 className="detail__section-title" style={{ margin: 0 }}>7-Day Occupancy Projection</h3>
+              <h3 className="detail__section-title" style={{ margin: 0 }}>7-Day Occupancy Projection<UntrainedTag /></h3>
               <div className="forecast-chart-legend" style={{ display: 'flex', flexWrap: 'wrap', gap: '16px' }}>
                 <span className="forecast-legend-item" style={legendItemStyle}><span className="forecast-legend-dot" style={{ ...legendDotStyle, background: 'var(--accent-amber)' }} /> Occupancy</span>
                 <span className="forecast-legend-item" style={legendItemStyle}><span className="forecast-legend-dot" style={{ ...legendDotStyle, background: 'var(--status-ok)' }} /> Admissions</span>
@@ -596,7 +623,7 @@ export default function ForecastPanel() {
                     </div>
                     {proj && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        <span style={{ fontSize: '0.68rem', textTransform: 'uppercase' as const, letterSpacing: '0.8px', color: 'var(--text-muted)' }}>48h</span>
+                        <span style={{ fontSize: '0.68rem', textTransform: 'uppercase' as const, letterSpacing: '0.8px', color: 'var(--text-muted)' }}>48h<UntrainedTag /></span>
                         <span className="metric-mono" style={{ color: willFreeUp ? 'var(--status-ok)' : 'var(--text-secondary)' }}>
                           {proj.projected_occupied}/{data.total}
                           {willFreeUp && ' ↓'}
@@ -653,8 +680,8 @@ export default function ForecastPanel() {
                 <span style={{ flex: 2 }}>Patient</span>
                 <span>Ward/Bed</span>
                 <span>Days In</span>
-                <span>Est. Remaining</span>
-                <span>Discharge Prob.</span>
+                <span>Est. Remaining<UntrainedTag /></span>
+                <span>Discharge Prob.<UntrainedTag /></span>
                 <span>Trajectory</span>
               </div>
 

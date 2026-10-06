@@ -94,3 +94,39 @@ describe('ForecastPanel honesty and legibility', () => {
     expect(screen.getByRole('tab', { name: 'Ward Capacity' }).getAttribute('aria-selected')).toBe('true')
   })
 })
+
+/* 2026-10-06: every figure the forecasting model produces says "Untrained
+   model"; figures read from the record (today's census) carry no tag. */
+describe('ForecastPanel untrained model labels', () => {
+  const tagIn = (label: string) => {
+    const card = screen.getByText(label, { exact: false, selector: '.forecast-metric-label' })
+    return card.querySelector('.forecast-untrained-tag')?.textContent ?? null
+  }
+
+  it('tags the model figures and leaves the census alone', async () => {
+    stubForecastApi()
+    render(<ForecastPanel />)
+    await screen.findByText('7-Day Occupancy Projection', { exact: false })
+    expect(tagIn('Current Census')).toBeNull()
+    expect(tagIn('Beds Available in 48h')).toBe('Untrained model')
+    expect(tagIn('7-Day Discharges')).toBe('Untrained model')
+    expect(tagIn('Peak Day')).toBe('Untrained model')
+    const chartTitle = screen.getByText('7-Day Occupancy Projection', { exact: false })
+    expect(chartTitle.querySelector('.forecast-untrained-tag')).toBeTruthy()
+    expect(chartTitle.querySelector('.forecast-untrained-tag')?.getAttribute('title'))
+      .toContain('not trained yet')
+  })
+})
+
+describe('ForecastPanel discharge board labels', () => {
+  it('tags the discharge probability and remaining days, not days in', async () => {
+    stubForecastApi()
+    render(<ForecastPanel />)
+    await screen.findByText('7-Day Occupancy Projection', { exact: false })
+    await act(async () => { fireEvent.click(screen.getByRole('tab', { name: /Discharge Board/ })) })
+    const prob = await screen.findByText('Discharge Prob.', { exact: false })
+    expect(prob.querySelector('.forecast-untrained-tag')?.textContent).toBe('Untrained model')
+    expect(screen.getByText('Est. Remaining', { exact: false }).querySelector('.forecast-untrained-tag')).toBeTruthy()
+    expect(screen.getByText('Days In').querySelector('.forecast-untrained-tag')).toBeNull()
+  })
+})
