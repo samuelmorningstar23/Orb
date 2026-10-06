@@ -446,6 +446,43 @@ def _to_dict(row, now: datetime | None = None) -> dict:
     # The single field a board should sort on: an unanswered chain is the only
     # kind that can kill somebody.
     out["awaiting_acknowledgement"] = out["status"] == "open"
+    # Scoring switched off (ORB_SCORING_ENABLED, the Orb Ward Record): a chain
+    # stored before the switch is still listed, so it can be closed with a
+    # reason, but its stored NEWS2, band and drivers are not sent.
+    if not _scoring_enabled():
+        out.update({f: None for f in _ESCALATION_SCORE_FIELDS})
+        out["drivers"] = []
+    return out
+
+
+#: A chain's stored score fields, left out while scoring is switched off.
+_ESCALATION_SCORE_FIELDS = ("news2", "peak_news2", "level", "single_param_3", "drivers_json")
+
+#: Event types whose stored detail sentence names the score that raised them.
+_SCORED_EVENT_TYPES = frozenset({"raised", "reopened", "observation"})
+
+
+def _event_dict(e) -> dict:
+    """One recorded step of a chain, as get_escalation returns it. With scoring
+    switched off the stored score is not sent: no NEWS2, no scored sentence and
+    no drivers. The step itself (what happened, to whom, when) stays."""
+    metadata = json.loads(e["metadata_json"]) if e["metadata_json"] else None
+    out = {
+        "seq": e["seq"], "event_type": e["event_type"], "tier": e["tier"],
+        "tier_role": e["tier_role"], "target_user_id": e["target_user_id"],
+        "target_description": e["target_description"],
+        "actor_user_id": e["actor_user_id"], "actor_name": e["actor_name"],
+        "actor_role": e["actor_role"], "news2": e["news2"],
+        "detail": e["detail"], "occurred_at": e["occurred_at"],
+        "metadata": metadata,
+    }
+    if not _scoring_enabled():
+        out["news2"] = None
+        if out["event_type"] in _SCORED_EVENT_TYPES:
+            out["detail"] = None
+        if isinstance(metadata, dict):
+            out["metadata"] = {k: v for k, v in metadata.items()
+                               if k not in ("drivers", "single_param_3")}
     return out
 
 
@@ -894,7 +931,14 @@ def advance_due(*, now: datetime | None = None, limit: int = 500) -> list[dict]:
     human has it, so the ladder stops. It does not close the chain (see
     ``resolve``) and it does not stop a WORSE observation re-opening it (see
     ``evaluate_observation``).
+
+    SCORING SWITCHED OFF (ORB_SCORING_ENABLED, the Orb Ward Record): no tier
+    moves and nothing is posted. A chain opened before the switch stays where
+    it is, on the record, rather than paging a registrar with a score this
+    computer no longer works out.
     """
+    if not _scoring_enabled():
+        return []
     ts = _now(now)
     moved: list[dict] = []
     with db_session() as db:
@@ -1183,6 +1227,9 @@ def list_escalations(*, department: str | None = None, patient_id: str | None = 
             f"WHERE {PATIENT_DEPARTMENT_SQL} = ?)")
         params.append(department)
 
+    # Worst first by the stored peak score, unless scoring is switched off:
+    # then the order says nothing about a score, oldest unanswered first.
+    by_score = "e.peak_news2 DESC," if _scoring_enabled() else ""
     with db_session() as db:
         rows = db.execute(
             f"""SELECT e.*, p.name AS patient_name, p.bed AS patient_bed,
@@ -1193,7 +1240,7 @@ def list_escalations(*, department: str | None = None, patient_id: str | None = 
                   LEFT JOIN users u ON u.id = e.target_user_id
                   LEFT JOIN users ack ON ack.id = e.acknowledged_by
                  WHERE {' AND '.join(where)}
-                 ORDER BY (e.status = 'open') DESC, e.peak_news2 DESC,
+                 ORDER BY (e.status = 'open') DESC, {by_score}
                           e.raised_at ASC
                  LIMIT ?""",
             (*params, limit),
@@ -1248,15 +1295,7 @@ def get_escalation(escalation_id: str, *, include_events: bool = True,
                     WHERE ev.escalation_id = ? ORDER BY ev.seq ASC""",
                 (escalation_id,),
             ).fetchall()
-            out["events"] = [{
-                "seq": e["seq"], "event_type": e["event_type"], "tier": e["tier"],
-                "tier_role": e["tier_role"], "target_user_id": e["target_user_id"],
-                "target_description": e["target_description"],
-                "actor_user_id": e["actor_user_id"], "actor_name": e["actor_name"],
-                "actor_role": e["actor_role"], "news2": e["news2"],
-                "detail": e["detail"], "occurred_at": e["occurred_at"],
-                "metadata": json.loads(e["metadata_json"]) if e["metadata_json"] else None,
-            } for e in evs]
+            out["events"] = [_event_dict(e) for e in evs]
     return out
 
 

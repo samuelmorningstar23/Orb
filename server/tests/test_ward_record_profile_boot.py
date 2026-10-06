@@ -61,6 +61,14 @@ def test_no_route_shows_a_band_stored_before_the_profile(ward_record_boot):
     assert not ward_record_boot["marker_leaks"], _report(ward_record_boot["marker_leaks"])
 
 
+def test_a_chain_stored_before_the_profile_is_listed_without_its_score_and_does_not_climb(
+        ward_record_boot):
+    # Listed, so it can still be closed with a reason; the marker check above
+    # proves its stored drivers and sentence are not sent.
+    assert ward_record_boot["escalations_listed"] == 1
+    assert ward_record_boot["escalation_tier"] == 1
+
+
 def test_the_background_lanes_ran_clean_under_the_profile(ward_record_boot):
     assert not ward_record_boot["lane_errors"], _report(ward_record_boot["lane_errors"])
 

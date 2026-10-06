@@ -57,6 +57,9 @@ os.environ.setdefault("ORB_ADT", "1")
 os.environ.setdefault("ORB_INGESTION_MODE", "hybrid")
 
 MARKER = "WRPROBE STORED BAND MARKER"
+#: The stored row's score, as distinctive as its driver text: a route that
+#: sends the stored score or band without the drivers still carries this.
+SCORE_MARKER = "0.987654321"
 WARD = "WRPROBE WARD"
 DEPT = "General Medicine"
 ROLES = ("admin", "doctor", "nurse", "ward_clerk", "pharmacist")
@@ -201,9 +204,29 @@ def _seed() -> dict:
             # show it while scoring is off.
             db.execute(
                 "INSERT INTO risk_scores (patient_id, timestamp, score, level, drivers) "
-                "VALUES (?, ?, 0.9, 'critical', ?)",
+                f"VALUES (?, ?, {SCORE_MARKER}, 'critical', ?)",
                 (pid, format_utc(now - timedelta(minutes=30)), json.dumps([MARKER])),
             )
+        # An escalation chain opened before the profile was switched on, its
+        # tier already overdue: no route may send its stored score, and no
+        # sweep may climb it.
+        db.execute(
+            """INSERT INTO clinical_escalations (id, patient_id, status, news2, peak_news2,
+                   level, drivers_json, current_tier, max_tier, tier_role, tier_label,
+                   tier_entered_at, tier_due_at, raised_at, updated_at)
+               VALUES ('WRP-ESC-1', ?, 'open', 15, 15, 'critical', ?, 1, 3, 'nurse',
+                       'Nurse in charge', ?, ?, ?, ?)""",
+            (pids[0], json.dumps([MARKER]), format_utc(now - timedelta(hours=2)),
+             format_utc(now - timedelta(hours=1)), format_utc(now - timedelta(hours=2)),
+             format_utc(now - timedelta(hours=2))),
+        )
+        db.execute(
+            """INSERT INTO escalation_events (escalation_id, seq, event_type, tier, news2,
+                   detail, metadata_json, occurred_at)
+               VALUES ('WRP-ESC-1', 1, 'raised', 1, 15, ?, ?, ?)""",
+            (f"NEWS2 15 {MARKER} crossed the escalation threshold",
+             json.dumps({"drivers": [MARKER]}), format_utc(now - timedelta(hours=2))),
+        )
         db.execute(
             "INSERT INTO ward_observation_settings (ward, interval_minutes, grace_minutes, set_by, set_at) "
             "VALUES (?, 240, 30, ?, ?)",
@@ -218,6 +241,7 @@ def _path_values(seed: dict, role: str) -> dict:
         "patient_id": pid, "pid": pid, "ward": WARD, "ward_name": WARD,
         "department": DEPT, "dept": DEPT, "user_id": seed["users"][role],
         "admission_id": "WRP-ADM-1", "mrn": "WRP-MRN-1",
+        "escalation_id": "WRP-ESC-1",
     }
 
 
@@ -322,7 +346,8 @@ def main() -> None:
                 if resp.status_code >= 500:
                     out["server_errors"].append(
                         f"{role} GET {url}: {resp.status_code} {resp.text[:300]}")
-                if MARKER in resp.text and route.path not in EXPORTS_OF_STORED_DATA:
+                if ((MARKER in resp.text or SCORE_MARKER in resp.text)
+                        and route.path not in EXPORTS_OF_STORED_DATA):
                     out["marker_leaks"].append(f"{role} GET {url}")
                 for call in vigil_service.SWITCHED_OFF_CALLS[before:]:
                     out["scoring_calls"].append(f"{role} GET {url}: {call}")
@@ -342,6 +367,17 @@ def main() -> None:
             except Exception:  # noqa: BLE001
                 detail = r.text[:80]
             out["spot"][path.replace(pid, "{patient_id}")] = [r.status_code, detail]
+
+        # The stored chain: still listed (so it can be closed with a reason),
+        # and its tier where it was unless scoring is on.
+        r = client.get(f"/api/vigil/patients/{pid}/escalations", headers=doctor)
+        out["escalations_listed"] = (len(r.json().get("escalations", []))
+                                     if r.status_code == 200 else r.status_code)
+        from database import db_session
+        with db_session() as db:
+            row = db.execute("SELECT current_tier FROM clinical_escalations "
+                             "WHERE id = 'WRP-ESC-1'").fetchone()
+        out["escalation_tier"] = row["current_tier"] if row else None
 
         # Anything a background loop scored while the probe ran.
         attributed = sum(1 for c in out["scoring_calls"])

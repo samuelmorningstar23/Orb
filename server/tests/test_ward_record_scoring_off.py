@@ -370,3 +370,53 @@ def test_the_alert_assessment_routes_are_switched_off_with_scoring_off(monkeypat
     doctor = _user("doctor")
     r = client.get("/api/relay/sage_assessments/nothing", headers=_auth(doctor, "doctor"))
     assert r.status_code == 404 and r.json()["detail"] == "Switched off on this computer"
+
+
+# ── Review, 7 October 2026: a chain opened before the switch ─────────────────
+# advance_due climbed open chains on the clock with scoring off, so a chain
+# opened while scoring was on kept paging the next tier, with its stored NEWS2
+# in the Relay post, after the computer was switched to the Ward Record.
+
+def test_an_open_chain_does_not_climb_with_scoring_off(monkeypatch):
+    from services import escalation_service as esc
+    _scoring(monkeypatch, True)
+    pid = _patient(f"SOF Chain {uuid.uuid4().hex[:6]}", stored_band=False)
+    t0 = datetime.now(timezone.utc)
+    news2 = vigil_service.compute_news2(
+        _CRITICAL["heart_rate"], _CRITICAL["systolic_bp"], _CRITICAL["respiratory_rate"],
+        _CRITICAL["temperature"], _CRITICAL["spo2"], "alert", False)
+    chain = esc.evaluate_observation(pid, news2, now=t0, notify=False)
+    assert chain is not None
+    tier = esc.get_escalation(chain["id"])["current_tier"]
+
+    _scoring(monkeypatch, False)
+    assert esc.advance_due(now=t0 + timedelta(days=1)) == []
+    assert esc.get_escalation(chain["id"])["current_tier"] == tier
+
+    # Control: the same chain climbs once scoring is back on.
+    _scoring(monkeypatch, True)
+    esc.advance_due(now=t0 + timedelta(days=1))
+    assert esc.get_escalation(chain["id"])["current_tier"] > tier
+
+
+def test_a_stored_chain_is_listed_without_its_score_with_scoring_off(monkeypatch):
+    from services import escalation_service as esc
+    _scoring(monkeypatch, True)
+    pid = _patient(f"SOF Chain {uuid.uuid4().hex[:6]}", stored_band=False)
+    news2 = vigil_service.compute_news2(
+        _CRITICAL["heart_rate"], _CRITICAL["systolic_bp"], _CRITICAL["respiratory_rate"],
+        _CRITICAL["temperature"], _CRITICAL["spo2"], "alert", False)
+    chain = esc.evaluate_observation(pid, news2, notify=False)
+    on = esc.get_escalation(chain["id"])
+    assert on["peak_news2"] and on["drivers"]
+    assert any(e["news2"] for e in on["events"])
+
+    _scoring(monkeypatch, False)
+    for got in (esc.get_escalation(chain["id"]), esc.patient_escalations(pid)[0]):
+        assert got["id"] == chain["id"] and got["status"] == "open"
+        assert got["news2"] is None and got["peak_news2"] is None
+        assert got["level"] is None and got["drivers"] == [] and got["drivers_json"] is None
+    events = esc.get_escalation(chain["id"])["events"]
+    assert events and all(e["news2"] is None for e in events)
+    assert all("NEWS2" not in (e["detail"] or "") for e in events)
+    assert all("drivers" not in (e["metadata"] or {}) for e in events)
