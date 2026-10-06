@@ -105,15 +105,17 @@ def _install_model_tripwires() -> None:
     httpx.AsyncClient.send = _async_send
     httpx.Client.send = _sync_send
 
-    real_urlopen = urllib.request.urlopen
+    # Every urllib request goes through OpenerDirector.open, urlopen and a
+    # built opener alike (ops_health_service builds its own, without a proxy).
+    real_open = urllib.request.OpenerDirector.open
 
-    def _urlopen(url, *a, **k):
+    def _open(self, url, *a, **k):
         target = getattr(url, "full_url", url)
         if _is_ollama(target):
             _model_call(f"urllib {target}")
-        return real_urlopen(url, *a, **k)
+        return real_open(self, url, *a, **k)
 
-    urllib.request.urlopen = _urlopen
+    urllib.request.OpenerDirector.open = _open
 
 
 def _install_gateway_tripwires() -> None:

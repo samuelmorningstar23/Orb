@@ -281,3 +281,31 @@ def test_the_live_scribe_stream_does_not_start(models_off, monkeypatch):
     asyncio.run(scribe_stream.handle_start_session("sid-ms", {}))
     assert sent == [("scribe:error", {"error": OFF})]
     assert scribe_stream._get_session("sid-ms") is None
+
+
+# ── The operations status page (review, 7 October 2026) ──────────────────────
+# /api/ops/status probed Ollama's /api/ps on every read through its own urllib
+# opener, which the profile probe's urlopen trip wire never saw, and then
+# reported "the medical AI engine is not answering" as Urgent on a computer
+# where the models are switched off on purpose.
+
+def test_the_ops_status_page_does_not_ask_ollama_with_the_models_off(models_off, monkeypatch):
+    from services import ops_health_service
+    monkeypatch.setattr(ops_health_service, "_probe_models",
+                        lambda *a, **k: pytest.fail("the status page asked Ollama"))
+    check = ops_health_service._check_models()
+    assert check["status"] == ops_health_service.OK
+    assert "switched off on this computer" in check["summary"]
+    models = [c for c in ops_health_service.build_status()["checks"] if c["key"] == "models"]
+    assert models and models[0]["status"] == ops_health_service.OK
+
+
+def test_the_ops_status_page_still_asks_ollama_with_the_models_on(monkeypatch):
+    from services import ops_health_service
+    monkeypatch.setattr(config, "MODELS_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "WARD_RECORD", False, raising=False)
+    asked = []
+    monkeypatch.setattr(ops_health_service, "_probe_models", lambda *a, **k: asked.append(1) or {
+        "reachable": False, "configured": ["m"], "loaded": [], "not_loaded": ["m"]})
+    assert ops_health_service._check_models()["status"] == ops_health_service.URGENT
+    assert asked == [1]

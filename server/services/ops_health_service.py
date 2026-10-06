@@ -587,7 +587,32 @@ def _configured_models() -> list[str]:
     return [m for m in dict.fromkeys(models) if m]
 
 
+def _models_switched_off() -> bool:
+    """True when the models are switched off on this computer
+    (ORB_MODELS_ENABLED off, or the Orb Ward Record profile). Read through
+    services.model_switch, the one reader; from the environment when this
+    module runs standalone and the server cannot be imported."""
+    try:
+        from services.model_switch import models_enabled
+        return not models_enabled()
+    except Exception:
+        on = ("1", "true", "yes", "on")
+        return (_env("ORB_WARD_RECORD", "false").lower() in on
+                or _env("ORB_MODELS_ENABLED", "true").lower() not in on)
+
+
 def _check_models() -> dict:
+    # Switched off on this computer: Ollama is not asked at all, and a model
+    # that is not running is the expected state, not a fault.
+    if _models_switched_off():
+        return _check(
+            "models", "Medical AI", OK,
+            "The medical AI is switched off on this computer. Nothing is sent "
+            "to it and nothing is loaded. Charts, observations and the rest of "
+            "Orb work normally.",
+            detail={"models_enabled": False, "reachable": None,
+                    "configured": [], "loaded": [], "not_loaded": []},
+        )
     info = _probe_models()
     detail = dict(info)
 
