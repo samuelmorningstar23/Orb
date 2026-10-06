@@ -278,12 +278,16 @@ def _patient(name, bed, dept=DEPT):
 
 
 def _retire(*pids):
-    """A name outlives a discharge and the matchers read discharged patients
-    too, so a seed is renamed rather than left for later tests to trip on."""
+    """A name and a bed outlive a discharge, and the matchers read discharged
+    patients too, so a seed is renamed and loses its bed rather than being left
+    for later tests to trip on. The name has no ordinary word in it: the old
+    "Name Bounds Retired Probe" matched "name" in any later question, and the
+    kept bare beds "1".."12" matched inside "bed 9917" (an out-of-department
+    refusal in test_sage_patient_phrasing when this file ran first)."""
     with db_session() as db:
         for pid in pids:
-            db.execute("UPDATE patients SET name = 'Name Bounds Retired Probe', status = 'discharged' "
-                       "WHERE id = ?", (pid,))
+            db.execute("UPDATE patients SET name = 'Qzxbounds Vvqretired', bed = NULL, "
+                       "status = 'discharged' WHERE id = ?", (pid,))
 
 
 def _oracle_matches(name, text):
@@ -382,7 +386,7 @@ def _timed(query, user, history=None):
 def test_a_512kb_bed_question_is_answered_in_seconds():
     """The measured case, ten times longer: 7.4 s at 50,000 characters before."""
     user = _user(dept="Name Bounds Bed Ward")
-    pids = [_patient(f"Bedside Probe{chr(65 + i)} Kumaraswamy", str(i + 1), dept="Name Bounds Bed Ward")
+    pids = [_patient(f"Qzxbed{chr(97 + i)} Kumaraswamy", str(i + 1), dept="Name Bounds Bed Ward")
             for i in range(12)]
     try:
         query = ("bed 7 " * (BIG // 6)).strip()
