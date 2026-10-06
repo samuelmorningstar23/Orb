@@ -44,6 +44,33 @@ OPD_ARM_WHITELIST: dict[tuple[str, str], str] = {
         "consultations (ruling OPD-N2 extent ii). Read-only, opd.consult, audited "
         "with the arm that let the reader in."
     ),
+    ("GET", "/api/opd/patients/{patient_id}/consultations"): (
+        "The OPD consultation notes in full (opd-10): every clinic's signed notes "
+        "(ruling OPD-N2 extent ii) and the reader's own clinic's drafts, with their "
+        "addenda. Read-only, opd.consult, audited with the arm that let the reader in. "
+        "OPD vitals are shown as typed, never scored."
+    ),
+    ("GET", "/api/registration/patients/{patient_id}"): (
+        "The registration record (opd-4), registration.read, audited as "
+        "registration_record_viewed with the arm; no chart data, no allergies. A reader "
+        "let in by an OPD visit sees no date of birth, contact, address, next of kin, "
+        "identity document or ABHA (the OPD record view's line)."
+    ),
+    ("PATCH", "/api/registration/patients/{patient_id}"): (
+        "A reasoned demographic correction (opd-4) against row_version: fields need "
+        "registration.write, the UHID the administrator; through an OPD visit the hidden "
+        "details cannot be corrected. Writes patients identity columns, "
+        "patient_demographics and the append-only change log, audited in-transaction."
+    ),
+    ("GET", "/api/registration/patients/{patient_id}/changes"): (
+        "The append-only identity change history of one registration (opd-4), "
+        "registration.read, audited as registration_changes_viewed with the arm; values "
+        "of hidden details are removed for a reader let in by an OPD visit."
+    ),
+    ("GET", "/api/registration/patients/{patient_id}/card"): (
+        "The UHID card print data (opd-4): UHID, name, age and sex only, "
+        "registration.read, audited as uhid_card_printed with the arm."
+    ),
 }
 
 #: Route modules that may carry the arm on a non-GET route (the design's

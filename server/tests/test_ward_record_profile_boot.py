@@ -63,3 +63,53 @@ def test_no_route_shows_a_band_stored_before_the_profile(ward_record_boot):
 
 def test_the_background_lanes_ran_clean_under_the_profile(ward_record_boot):
     assert not ward_record_boot["lane_errors"], _report(ward_record_boot["lane_errors"])
+
+
+# ── Models off (6 October 2026) ──────────────────────────────────────────────
+# The probe makes every way to a model fail and records it: services/
+# ollama_gateway post and stream, any httpx or urllib request to the Ollama
+# address (the provider seams, the warm-up and residency pings, config's model
+# lookup at import), and the knowledge worker pool. Whisper and the in-process
+# embedder refuse through services/model_switch before they load.
+
+@pytest.fixture(scope="module")
+def models_off_boot():
+    return run_probe({"ORB_MODELS_ENABLED": "false"})
+
+
+def test_no_model_is_called_under_the_profile(ward_record_boot):
+    assert not ward_record_boot["model_calls"], _report(ward_record_boot["model_calls"])
+
+
+def test_the_models_switch_alone_boots_with_scoring_on(models_off_boot):
+    assert models_off_boot["profile"] == {"ward_record": False, "scoring": True, "models": False}
+    assert models_off_boot["calls"] > 300
+
+
+def test_no_model_is_called_with_the_models_switched_off(models_off_boot):
+    assert not models_off_boot["model_calls"], _report(models_off_boot["model_calls"])
+
+
+def test_no_route_answers_500_with_the_models_switched_off(models_off_boot):
+    assert not models_off_boot["server_errors"], _report(models_off_boot["server_errors"])
+    assert not models_off_boot["lane_errors"], _report(models_off_boot["lane_errors"])
+
+
+@pytest.mark.parametrize("path", [
+    "/api/sage/ward-brief", "/api/sage/insights", "/api/scribe/asr/status",
+    "/api/vigil/patients/{patient_id}/timeline-projection",
+    "/api/relay/channels/none/sage_actions",
+])
+def test_the_model_features_answer_switched_off(models_off_boot, ward_record_boot, path):
+    for boot in (models_off_boot, ward_record_boot):
+        assert boot["spot"][path] == [404, "Switched off on this computer"], (path, boot["spot"][path])
+
+
+def test_the_handover_is_switched_off_only_under_the_profile(models_off_boot, ward_record_boot):
+    path = "/api/ipass/{patient_id}/draft"
+    assert ward_record_boot["spot"][path] == [404, "The handover is switched off on this computer"]
+    assert models_off_boot["spot"][path][0] == 200
+
+
+def test_the_model_status_chip_is_told_the_models_are_off(ward_record_boot):
+    assert ward_record_boot["spot"]["/api/health/models"][0] == 200

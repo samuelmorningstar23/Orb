@@ -1378,6 +1378,15 @@ def sync_discharge_turnarounds(
     insert is attempted and `DBIntegrityError` is swallowed as "already done".
     `source_ref` is the `discharge_summaries.id` — one row per discharge event,
     so a patient readmitted and discharged again correctly gets a second task.
+    An end of stay the beds and admissions module recorded with no summary (a
+    death, a LAMA, an absconded closure; adt-8c) is keyed on its own discharge
+    movement id instead ('MOV-...', which never collides with a summary id).
+
+    ── WHICH BED (adt-8c) ──────────────────────────────────────────────────────
+    The bed of the stay that ENDED (services/stay_times.py), by its master bed
+    id when it has one, else its typed ward and bed. Never the patient's
+    current labels, which after a readmission name the NEW bed. A bed a later
+    admission holds by master bed id is not flipped to vacant_dirty.
 
     (`DBIntegrityError` from db_backend, never `sqlite3.IntegrityError`: sqlcipher3
     raises its own hierarchy and the stdlib class is dead code on the shipping
@@ -1405,6 +1414,8 @@ def sync_discharge_turnarounds(
     unmatched_wards: dict[str, int] = {}
     scanned = 0
 
+    from services import stay_times
+
     with db_session() as db:
         units = db.execute(
             "SELECT id, unit_code, ward, bed_label, state, state_since, is_isolation_room "
@@ -1415,8 +1426,12 @@ def sync_discharge_turnarounds(
         # trailing space is not a different bed.
         by_ward_bed: dict[tuple[str, str], dict] = {}
         by_code: dict[str, dict] = {}
+        by_id: dict[str, dict] = {}
+        admission_bed_ids = "bed_id" in {
+            r[1] for r in db.execute("PRAGMA table_info(admissions)").fetchall()}
         for u in units:
             unit = _row(u)
+            by_id[unit["id"]] = unit
             by_code[_norm_key(unit["unit_code"])] = unit
             label = unit.get("bed_label") or unit.get("unit_code")
             by_ward_bed[(_norm_key(unit["ward"]), _norm_key(label))] = unit
@@ -1436,7 +1451,7 @@ def sync_discharge_turnarounds(
         # included. So SQL narrows on the DATE prefix only (one day wide, always
         # inclusive) and Python does the real comparison with `_parse_ts`.
         discharges = db.execute(
-            """SELECT ds.id AS discharge_id, ds.discharged_at,
+            """SELECT ds.id AS discharge_id, ds.patient_id, ds.discharged_at,
                       p.ward AS patient_ward, p.bed AS patient_bed
                  FROM discharge_summaries ds
                  JOIN patients p ON p.id = ds.patient_id
@@ -1446,9 +1461,37 @@ def sync_discharge_turnarounds(
             ((cutoff.date() - timedelta(days=1)).isoformat(),),
         ).fetchall()
 
+        # KEYED ON THE ENDED STAY, NOT ON THE PATIENT (adt-8c). Each discharge
+        # is matched to the bed of the admission it ended
+        # (stay_times.admission_for_summary). It used to take the patient's
+        # CURRENT ward and bed, so a patient readmitted inside the lookback
+        # had the old discharge mapped onto their new bed: a turnaround task
+        # raised on the bed they were lying in, and that bed flipped from
+        # occupied to waiting to be cleaned. The patient's own labels are used
+        # only when no admission row exists for them at all (records older
+        # than admissions), exactly as before.
+        events: list[dict] = []
         for d in discharges:
             row = _row(d)
-            discharged_at = _parse_ts(row.get("discharged_at"))
+            ended = stay_times.admission_for_summary(db, {
+                "id": row["discharge_id"], "patient_id": row["patient_id"],
+                "discharged_at": row["discharged_at"]})
+            events.append({"source_ref": str(row["discharge_id"]),
+                           "ended_at": row.get("discharged_at"), "admission": ended,
+                           "patient_ward": row.get("patient_ward"),
+                           "patient_bed": row.get("patient_bed")})
+        # Ends the beds and admissions module recorded with no discharge
+        # summary (a death, a LAMA, an absconded closure) vacate a bed too.
+        # Keyed on the end's own movement id, so each end is one task and a
+        # summary-backed end (keyed on its summary id above) is never two.
+        # None exist with ORB_ADT off.
+        for end in stay_times.summary_less_ends(
+                db, since=(cutoff - timedelta(days=1)).isoformat()):
+            events.append({"source_ref": str(end["movement_id"]), "ended_at": end["ended_at"],
+                           "admission": end, "patient_ward": None, "patient_bed": None})
+
+        for event in events:
+            discharged_at = _parse_ts(event.get("ended_at"))
             # An UNPARSEABLE timestamp is included, not skipped. A spurious
             # cleaning task is visible and cancellable; a discharge this module
             # silently ignored is invisible, and invisible is the failure mode
@@ -1456,14 +1499,32 @@ def sync_discharge_turnarounds(
             if discharged_at is not None and discharged_at < cutoff:
                 continue
             scanned += 1
-            source_ref = str(row["discharge_id"])
-            ward = row.get("patient_ward") or ""
-            bed = row.get("patient_bed") or ""
+            source_ref = event["source_ref"]
+            ended = event["admission"]
+            bed_id = None
+            if ended is not None and (ended.get("bed_id") or str(ended.get("bed") or "").strip()):
+                ward = ended.get("ward") or ""
+                bed = ended.get("bed") or ""
+                bed_id = ended.get("bed_id")
+            elif ended is None or (
+                    event.get("patient_bed")
+                    and (stay_times.latest_admission(db, ended["patient_id"]) or {}).get("id")
+                    == ended.get("id")):
+                # No admission row, or an ended stay that recorded no bed and
+                # is still the patient's latest: the patient's own labels, as
+                # this sweep always read them (they cannot name a later bed).
+                ward = event.get("patient_ward") or ""
+                bed = event.get("patient_bed") or ""
+            else:
+                # The ended stay recorded no bed and a later stay exists:
+                # nothing of the ended one to clean.
+                ward, bed = ended.get("ward") or "", ""
 
             unit = (
-                by_ward_bed.get((_norm_key(ward), _norm_key(bed)))
-                or by_code.get(_norm_key(bed))
-                or by_code.get(_norm_key(f"{ward}/{bed}"))
+                (by_id.get(bed_id) if bed_id else None)
+                or (by_ward_bed.get((_norm_key(ward), _norm_key(bed))) if bed else None)
+                or (by_code.get(_norm_key(bed)) if bed else None)
+                or (by_code.get(_norm_key(f"{ward}/{bed}")) if bed else None)
             )
             if unit is None:
                 unmatched += 1
@@ -1475,14 +1536,19 @@ def sync_discharge_turnarounds(
             # departing admission carry isolation precautions? A housekeeper sent
             # into an isolation room without knowing is an infection-control harm
             # and the PPE choice depends on it. The precaution TEXT is not copied.
-            iso = db.execute(
-                """SELECT isolation_precautions FROM admissions
-                    WHERE patient_id = (SELECT patient_id FROM discharge_summaries WHERE id = ?)
-                    ORDER BY CASE status WHEN 'discharged' THEN 0 ELSE 1 END, id DESC
-                    LIMIT 1""",
-                (row["discharge_id"],),
-            ).fetchone()
-            iso_text = (iso["isolation_precautions"] if iso else None) or ""
+            # Read from the stay that ended; for a patient with no admission
+            # row, the query this sweep always used.
+            if ended is not None:
+                iso_text = ended.get("isolation_precautions") or ""
+            else:
+                iso = db.execute(
+                    """SELECT isolation_precautions FROM admissions
+                        WHERE patient_id = (SELECT patient_id FROM discharge_summaries WHERE id = ?)
+                        ORDER BY CASE status WHEN 'discharged' THEN 0 ELSE 1 END, id DESC
+                        LIMIT 1""",
+                    (source_ref,),
+                ).fetchone()
+                iso_text = (iso["isolation_precautions"] if iso else None) or ""
             terminal = bool(str(iso_text).strip()) or bool(unit.get("is_isolation_room"))
             clean_type = "terminal" if terminal else "standard"
 
@@ -1514,7 +1580,15 @@ def sync_discharge_turnarounds(
             created += 1
             # Vacating the unit is best-effort and MUST NOT undo the task: a bed
             # that is already dirty, being cleaned, or out of service is not moved.
-            if unit["state"] == "occupied":
+            # Nor is a bed a later admission already holds by its master bed id
+            # (beds and admissions module): its occupant is real, and the record
+            # of the earlier departure is the task alone.
+            held_now = admission_bed_ids and db.execute(
+                "SELECT 1 FROM admissions WHERE bed_id = ? AND status = 'active' "
+                "AND id <> ? LIMIT 1",
+                (unit["id"], (ended or {}).get("admission_id") or (ended or {}).get("id") or ""),
+            ).fetchone() is not None
+            if unit["state"] == "occupied" and not held_now:
                 try:
                     _apply_transition(
                         db, unit, "vacant_dirty",

@@ -171,6 +171,12 @@ async def handle_start_session(sid, data=None):
     if not await _require_authenticated(sid):
         await sio.emit("scribe:error", {"error": "unauthenticated"}, to=sid)
         return
+    # Speech transcription is a model: none starts while the models are
+    # switched off (ORB_MODELS_ENABLED, or the Orb Ward Record).
+    from services.model_switch import SWITCHED_OFF_DETAIL, models_enabled
+    if not models_enabled():
+        await sio.emit("scribe:error", {"error": SWITCHED_OFF_DETAIL}, to=sid)
+        return
     data = data or {}
     patient_id = data.get("patient_id", "")
     hints = data.get("hints", "")

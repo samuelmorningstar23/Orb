@@ -122,7 +122,12 @@ def transcribe_audio(audio_path: str, apply_correction: bool = True, hints: str 
         2. If daemon unavailable, fall back to subprocess worker
         3. Apply RxNorm phonetic correction (if enabled)
         4. Apply LLM correction (if enabled and transcript is long enough)
+
+    Refused (ModelsSwitchedOff) while the models are switched off: Whisper is
+    a model too (ORB_MODELS_ENABLED, or the Orb Ward Record).
     """
+    from services.model_switch import refuse_when_models_off
+    refuse_when_models_off("Whisper transcription")
     asr_cfg = SCRIBE["asr"]
     lang = _resolve_language(language)
 
@@ -149,7 +154,10 @@ def transcribe_audio(audio_path: str, apply_correction: bool = True, hints: str 
 
 
 def _transcribe_via_daemon(audio_path: str, hints: str = "", language: str = "en") -> str | None:
-    """Try transcription via warm ZMQ daemon. Returns None if daemon unavailable."""
+    """Try transcription via warm ZMQ daemon. Returns None if daemon unavailable.
+    Refused while the models are switched off, like transcribe_audio."""
+    from services.model_switch import refuse_when_models_off
+    refuse_when_models_off("Whisper transcription (daemon)")
     try:
         from config import VOICE
         if not VOICE["daemon"]["enabled"]:
@@ -199,7 +207,10 @@ def _transcribe_via_daemon(audio_path: str, hints: str = "", language: str = "en
 
 
 def _transcribe_via_subprocess(audio_path: str, hints: str, asr_cfg: dict, language: str = "en") -> str:
-    """Original subprocess-based transcription (fallback path)."""
+    """Original subprocess-based transcription (fallback path).
+    Refused while the models are switched off, like transcribe_audio."""
+    from services.model_switch import refuse_when_models_off
+    refuse_when_models_off("Whisper transcription (worker)")
     try:
         server_dir = os.path.dirname(os.path.dirname(WORKER_SCRIPT))
         cmd = [

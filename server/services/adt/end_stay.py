@@ -40,11 +40,44 @@ lands there and nowhere else; it adds no NEWS2 and no bundle gate (pinned by
 an AST test). Open escalation chains are LISTED in the response and never
 closed (R009 held).
 
+REOPEN (adt-8b, W4-B). A stay whose end was recorded in error (a death on the
+wrong patient, a LAMA keyed against the wrong bed) is reopened by
+POST /api/adt/admissions/{id}/reopen: a doctor (discharge.generate) inside the
+ended admission's department, with a typed reason and the MRN typed back.
+Only an end with NO discharge summary can be reopened; a routine discharge
+with a summary is corrected by a new admission, as it always was. In ONE
+transaction, reopen_stay_on:
+
+  * restores admissions.status 'active' and patients.status 'admitted', and
+    clears the admission's discharged_at, discharge_type and discharged_by
+    (the end they described stays in the ledger and the audit trail);
+  * keeps the same bed when nobody else holds it, is not retired and is not
+    switched off; otherwise the patient is awaiting a bed (bed cleared, ward
+    kept), and the response says so;
+  * writes a 'correction' movement pointing at the discharge movement
+    (corrects_movement_id), so every reader of the ledger knows that end is
+    void; the original rows are never changed or deleted;
+  * voids (stamps, never deletes) the stay's NABH disposition, which every
+    indicator then skips;
+  * restores the portal login only when the end deactivated it (the user id
+    the end recorded in the movement's detail_json);
+  * lists the care bundles the end cancelled, without restoring them: a
+    bundle is restarted by a clinician who decides it still applies;
+  * audits clinical_access 'stay_reopened' (and security
+    'patient_portal_login_restored' when a login comes back), fail-closed.
+
+It is refused, before anything is written, when the stay is active, when it
+was not ended through Beds and admissions, when a summary was written for it,
+when the patient has another active admission or a later stay, when the MRN
+typed does not match, and when no reason is typed.
+
 Every *_on function takes the caller's connection and opens no session; the
-public end_stay() opens the one immediate session for POST /end.
+public end_stay() and reopen_stay() open the one immediate session each route
+needs.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -75,6 +108,7 @@ __all__ = [
     "adt_on", "discharge_preconditions", "close_admission_on", "open_escalations_on",
     "check_read_back", "require_reason", "discharge_route_type", "record_end_on",
     "end_stay_on", "end_stay", "patient_for_admission",
+    "REOPEN_REASON_PREFIX", "live_end_movement_on", "reopen_stay_on", "reopen_stay",
 ]
 
 #: Every end type the module records (migration 58's vocabulary).
@@ -648,3 +682,336 @@ def end_stay(admission_id: str, *, end_type: str, actor: dict, confirm_mrn: Any,
                           "Nothing was recorded; reload and try again.",
                           code="write_conflict") from exc
 
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Reopen a stay whose end was recorded in error (adt-8b, W4-B)
+# ═════════════════════════════════════════════════════════════════════════════
+
+#: The start of the reason on every reopen's correction movement.
+REOPEN_REASON_PREFIX = "Stay reopened: its end was recorded in error"
+
+
+def live_end_movement_on(db, admission_id: str) -> Optional[dict]:
+    """The admission's latest 'discharge' movement that no reopen has
+    corrected, with its detail_json parsed into 'detail', or None. Latest by
+    when it was written (rowid), never by its back-timeable moved_at."""
+    row = db.execute(
+        """SELECT * FROM patient_movements m
+            WHERE m.admission_id = ? AND m.movement_type = 'discharge'
+              AND NOT EXISTS (SELECT 1 FROM patient_movements c
+                               WHERE c.corrects_movement_id = m.id)
+            ORDER BY m.rowid DESC LIMIT 1""",
+        (admission_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    out = dict(row)
+    try:
+        detail = json.loads(out.get("detail_json") or "null")
+    except (TypeError, ValueError):
+        detail = None
+    out["detail"] = detail if isinstance(detail, dict) else {}
+    return out
+
+
+def _summary_for_stay_on(db, admission: dict) -> Optional[int]:
+    """The id of a discharge summary written for this stay (at or after its
+    start and before the patient's next admission), or None."""
+    start = admission.get("admitted_at") or admission.get("created_at")
+    if not start:
+        return None
+    row = db.execute(
+        """SELECT ds.id FROM discharge_summaries ds
+            WHERE ds.patient_id = ? AND ds.discharged_at IS NOT NULL
+              AND julianday(ds.discharged_at) >= julianday(?)
+              AND NOT EXISTS (
+                  SELECT 1 FROM admissions nx
+                   WHERE nx.patient_id = ds.patient_id AND nx.id <> ?
+                     AND julianday(COALESCE(nx.admitted_at, nx.created_at)) > julianday(?)
+                     AND julianday(COALESCE(nx.admitted_at, nx.created_at))
+                         <= julianday(ds.discharged_at))
+            ORDER BY ds.id ASC LIMIT 1""",
+        (admission["patient_id"], start, admission["id"], start),
+    ).fetchone()
+    return int(row["id"]) if row is not None else None
+
+
+def _bed_reserved_on(db, bed_id: str) -> bool:
+    """An active reservation holds the bed (bed_reservations arrives with
+    adt-12; until then nothing is reserved)."""
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'bed_reservations'"
+                  ).fetchone() is None:
+        return False
+    return db.execute(
+        "SELECT 1 FROM bed_reservations WHERE bed_id = ? AND status = 'active' LIMIT 1", (bed_id,)
+    ).fetchone() is not None
+
+
+def _typed_holder_on(db, admission_id: str, ward_text: Any, bed_text: Any) -> bool:
+    """Another active admission recorded at this typed ward and bed."""
+    if not _text(bed_text):
+        return False
+    return db.execute(
+        """SELECT 1 FROM admissions
+            WHERE status = 'active' AND id <> ?
+              AND LOWER(TRIM(COALESCE(ward, ''))) = LOWER(TRIM(?))
+              AND LOWER(TRIM(COALESCE(bed, ''))) = LOWER(TRIM(?))
+            LIMIT 1""",
+        (admission_id, _text(ward_text) or "", _text(bed_text)),
+    ).fetchone() is not None
+
+
+def _bed_for_reopen_on(db, admission: dict) -> dict:
+    """Whether the reopened stay can take its own bed back.
+
+    {retaken, awaiting, why}: retaken when the stay had a bed and it is still
+    free (nobody else holds it, by bed id or by typed text; not retired, not
+    switched off, not reserved); awaiting when it had none, or when it is not
+    free, with `why` naming the reason. A bed housekeeping records out of
+    service is still taken back: the patient never left it, and the record is
+    housekeeping's to correct."""
+    aid = admission["id"]
+    bed_id = admission.get("bed_id")
+    if bed_id:
+        unit = db.execute("SELECT * FROM housekeeping_units WHERE id = ?", (bed_id,)).fetchone()
+        if unit is None:
+            return {"retaken": False, "awaiting": True, "why": "bed_not_found"}
+        unit = dict(unit)
+        if unit.get("retired_at"):
+            return {"retaken": False, "awaiting": True, "why": "bed_retired"}
+        if not unit.get("is_active"):
+            return {"retaken": False, "awaiting": True, "why": "bed_inactive"}
+        held = db.execute(
+            "SELECT 1 FROM admissions WHERE bed_id = ? AND status = 'active' AND id <> ? LIMIT 1",
+            (bed_id, aid),
+        ).fetchone() is not None
+        ward = db.execute("SELECT code FROM wards WHERE id = ?", (unit.get("ward_id"),)).fetchone()
+        if held or (ward is not None and _typed_holder_on(db, aid, ward["code"], unit.get("bed_label"))):
+            return {"retaken": False, "awaiting": True, "why": "bed_occupied"}
+        if _bed_reserved_on(db, bed_id):
+            return {"retaken": False, "awaiting": True, "why": "bed_reserved"}
+        return {"retaken": True, "awaiting": False, "why": None,
+                "out_of_service": unit.get("state") == "out_of_service"}
+    if _text(admission.get("bed")):
+        if _typed_holder_on(db, aid, admission.get("ward"), admission.get("bed")):
+            return {"retaken": False, "awaiting": True, "why": "bed_occupied"}
+        from services.adt.core import match_location_on
+
+        match = match_location_on(db, admission.get("ward"), admission.get("bed"))
+        if match["bed"] is not None and db.execute(
+            "SELECT 1 FROM admissions WHERE bed_id = ? AND status = 'active' AND id <> ? LIMIT 1",
+            (match["bed"]["id"], aid),
+        ).fetchone() is not None:
+            return {"retaken": False, "awaiting": True, "why": "bed_occupied"}
+        return {"retaken": True, "awaiting": False, "why": None, "out_of_service": False}
+    return {"retaken": False, "awaiting": True, "why": "no_bed_recorded"}
+
+
+_REOPEN_BED_WORDS = {
+    "bed_occupied": "Another patient now lies in that bed",
+    "bed_retired": "That bed has been retired in bed setup",
+    "bed_inactive": "That bed is switched off in bed setup",
+    "bed_reserved": "That bed is reserved for another patient",
+    "bed_not_found": "That bed is no longer in bed setup",
+    "no_bed_recorded": "No bed was recorded for this stay",
+}
+
+
+def reopen_stay_on(
+    db, *, admission_id: str, actor: Optional[dict], confirm_mrn: Any, reason: Any,
+    idempotency_key: Optional[str] = None, request_meta: Optional[dict] = None,
+) -> dict:
+    """Reopen one ended stay on the caller's connection (the caller holds the
+    outermost immediate session). Every check runs before the first write;
+    see REOPEN in the module docstring for what it writes."""
+    from services import nabh_service
+
+    adm = db.execute("SELECT * FROM admissions WHERE id = ?", (admission_id,)).fetchone()
+    if adm is None:
+        raise AdtNotFound("No admission with that id", code="admission_not_found")
+    admission = dict(adm)
+    patient_id = admission["patient_id"]
+    if admission.get("status") == "active":
+        raise AdtConflict("This stay has not ended, so there is nothing to reopen.",
+                          code="admission_active")
+    found = db.execute("SELECT * FROM patients WHERE id = ?", (patient_id,)).fetchone()
+    patient = dict(found) if found is not None else None
+    check_read_back(patient, confirm_mrn)
+    clean_reason = _text(reason, 2000)
+    if not clean_reason:
+        raise AdtError("Type why the end of this stay was recorded in error. It is part of "
+                       "the record.", code="reason_required")
+    end = live_end_movement_on(db, admission_id)
+    if end is None:
+        raise AdtConflict(
+            "This stay was not ended through Beds and admissions, so it cannot be reopened "
+            "here. A discharge recorded another way is corrected by a new admission.",
+            code="no_recorded_end")
+    summary_id = end.get("discharge_summary_id") or _summary_for_stay_on(db, admission)
+    if summary_id:
+        raise AdtConflict(
+            "A discharge summary was written for this stay. A discharge with a summary is "
+            "corrected by a new admission, not reopened.",
+            code="summary_on_file", summary_id=summary_id)
+    if db.execute(
+        "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' AND id <> ? LIMIT 1",
+        (patient_id, admission_id),
+    ).fetchone() is not None:
+        raise AdtConflict(
+            "This patient already has an active stay. Reopening this one would give them two.",
+            code="patient_has_active_admission")
+    start = admission.get("admitted_at") or admission.get("created_at")
+    if start and db.execute(
+        """SELECT 1 FROM admissions WHERE patient_id = ? AND id <> ?
+              AND julianday(COALESCE(admitted_at, created_at)) > julianday(?) LIMIT 1""",
+        (patient_id, admission_id, start),
+    ).fetchone() is not None:
+        raise AdtConflict(
+            "This patient has a later stay on file, so this one cannot be reopened. Ask the "
+            "records desk to correct the record.",
+            code="later_stay_on_file")
+
+    actor_id = (actor or {}).get("id")
+    place = _bed_for_reopen_on(db, admission)
+    new_bed_id = admission.get("bed_id") if place["retaken"] else None
+    new_bed = admission.get("bed") if place["retaken"] else None
+    try:
+        reopened = db.execute(
+            """UPDATE admissions
+                  SET status = 'active', discharged_at = NULL, discharge_type = NULL,
+                      discharged_by = NULL, bed_id = ?, bed = ?
+                WHERE id = ? AND status <> 'active'""",
+            (new_bed_id, new_bed, admission_id),
+        )
+    except DBIntegrityError as exc:
+        raise AdtConflict("That bed was just taken by another admission. Reload and try again.",
+                          code="bed_occupied") from exc
+    if reopened.rowcount == 0:
+        raise AdtConflict("The stay changed while this was being recorded. Reload and try again.",
+                          code="state_changed")
+    db.execute(
+        "UPDATE patients SET status = 'admitted' WHERE id = ? AND status IN ('discharged', 'transferred')",
+        (patient_id,),
+    )
+    # The patients mirror holds the current admission's place, which is this
+    # one again.
+    db.execute("UPDATE patients SET ward = ?, bed = ? WHERE id = ?",
+               (admission.get("ward"), new_bed, patient_id))
+
+    detail_end = end["detail"]
+    voided = nabh_service.void_stay_dispositions_on(
+        db, admission_id=admission_id, disposition_id=detail_end.get("disposition_id"),
+        voided_by=actor_id, reason=f"{REOPEN_REASON_PREFIX}: {clean_reason}")
+
+    portal_user = detail_end.get("portal_login_deactivated")
+    portal_restored = False
+    if portal_user:
+        restored = db.execute(
+            "UPDATE users SET is_active = 1 WHERE id = ? AND role = 'patient' "
+            "AND COALESCE(is_active, 1) = 0",
+            (portal_user,),
+        )
+        portal_restored = restored.rowcount > 0
+
+    bundle_ids = [b for b in (detail_end.get("bundles_cancelled") or []) if b is not None]
+    bundles: list[dict] = []
+    if bundle_ids:
+        marks = ", ".join("?" for _ in bundle_ids)
+        bundles = [dict(r) for r in db.execute(
+            f"SELECT id, bundle_type, status FROM care_bundles WHERE id IN ({marks}) ORDER BY id",
+            tuple(bundle_ids),
+        ).fetchall()]
+
+    restored_location = {"department": admission.get("department"), "ward": admission.get("ward"),
+                         "bed": new_bed, "ward_id": admission.get("ward_id"), "bed_id": new_bed_id}
+    detail = {
+        "reopen": True,
+        "corrected_end_type": admission.get("discharge_type"),
+        "corrected_discharged_at": admission.get("discharged_at"),
+        "corrected_discharged_by": admission.get("discharged_by"),
+        "corrected_admission_status": admission.get("status"),
+        "bed_retaken": place["retaken"],
+        "awaiting_bed": place["awaiting"],
+        "bed_not_retaken": place["why"],
+        "previous_bed_id": admission.get("bed_id"),
+        "previous_bed": admission.get("bed"),
+        "dispositions_voided": voided,
+        "portal_login_restored": portal_user if portal_restored else None,
+        "bundles_not_restored": bundle_ids,
+    }
+    actor_name = None
+    if actor_id:
+        name_row = db.execute("SELECT name FROM users WHERE id = ?", (actor_id,)).fetchone()
+        actor_name = name_row["name"] if name_row else None
+    movement = record_movement_on(
+        db, patient_id=patient_id, admission_id=admission_id, movement_type="correction",
+        reason=f"{REOPEN_REASON_PREFIX}. {clean_reason}", moved_by=actor_id,
+        moved_by_name=actor_name, to_location=restored_location,
+        corrects_movement_id=end["id"], idempotency_key=idempotency_key, detail=detail,
+    )
+    audit_on(
+        db, category="clinical_access", action="stay_reopened",
+        summary=(f"Stay {admission_id} reopened: its end "
+                 f"({TYPE_WORDS.get(admission.get('discharge_type') or '', 'type not stated')}) "
+                 "was recorded in error"),
+        actor=actor, patient_id=patient_id, target_type="admission", target_id=admission_id,
+        request_meta=request_meta,
+        metadata={"movement_id": movement["id"], "corrects_movement_id": end["id"],
+                  "reason": clean_reason, **{k: v for k, v in detail.items() if k != "reopen"}},
+    )
+    if portal_restored:
+        audit_on(
+            db, category="security", action="patient_portal_login_restored",
+            summary=f"Portal login {portal_user} restored: stay {admission_id} reopened",
+            actor=actor, patient_id=patient_id, target_type="user", target_id=portal_user,
+            request_meta=request_meta, metadata={"admission_id": admission_id,
+                                                 "movement_id": movement["id"]},
+        )
+    return {
+        "status": "reopened",
+        "replayed": False,
+        "admission_id": admission_id,
+        "patient_id": patient_id,
+        "movement_id": movement["id"],
+        "corrects_movement_id": end["id"],
+        "corrected_end_type": admission.get("discharge_type"),
+        "corrected_discharged_at": admission.get("discharged_at"),
+        "ward": admission.get("ward"),
+        "ward_id": admission.get("ward_id"),
+        "bed": new_bed,
+        "bed_id": new_bed_id,
+        "bed_retaken": place["retaken"],
+        "awaiting_bed": place["awaiting"],
+        "bed_not_retaken": place["why"],
+        "bed_not_retaken_words": _REOPEN_BED_WORDS.get(place["why"] or ""),
+        "bed_out_of_service": bool(place.get("out_of_service")),
+        "dispositions_voided": voided,
+        "portal_login_restored": portal_restored,
+        "bundles_not_restored": bundles,
+    }
+
+
+def reopen_stay(admission_id: str, *, actor: dict, confirm_mrn: Any, reason: Any,
+                idempotency_key: Optional[str] = None,
+                request_meta: Optional[dict] = None) -> dict:
+    """POST /api/adt/admissions/{id}/reopen: one immediate session. A replayed
+    Idempotency-Key returns what the first call recorded and writes nothing."""
+    try:
+        with db_session(immediate=True) as db:
+            prior = movement_for_key(db, idempotency_key)
+            if prior is not None:
+                if (prior.get("admission_id") != admission_id
+                        or prior.get("movement_type") != "correction"
+                        or not (prior.get("detail") or {}).get("reopen")):
+                    raise AdtConflict("That Idempotency-Key was already used for something else",
+                                      code="idempotency_key_reused")
+                return {"status": "reopened", "replayed": True, "admission_id": admission_id,
+                        "patient_id": prior.get("patient_id"), "movement_id": prior.get("id"),
+                        "corrects_movement_id": prior.get("corrects_movement_id")}
+            return reopen_stay_on(db, admission_id=admission_id, actor=actor,
+                                  confirm_mrn=confirm_mrn, reason=reason,
+                                  idempotency_key=idempotency_key, request_meta=request_meta)
+    except DBIntegrityError as exc:
+        raise AdtConflict("The reopen clashed with a record written at the same moment. Nothing "
+                          "was recorded; reload and try again.", code="write_conflict") from exc

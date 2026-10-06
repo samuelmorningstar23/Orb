@@ -236,6 +236,14 @@ def _installed_model_names() -> "list[str] | None":
     global _installed_cache
     if _installed_cache is not ...:
         return _installed_cache  # type: ignore[return-value]
+    # Models switched off (ORB_MODELS_ENABLED=false, or ORB_WARD_RECORD=true):
+    # Ollama is not asked, even at import. Read from the environment here
+    # because the switches themselves are defined further down this file.
+    def _flag(name: str, default: str) -> bool:
+        return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "on")
+    if _flag("ORB_WARD_RECORD", "false") or not _flag("ORB_MODELS_ENABLED", "true"):
+        _installed_cache = None
+        return None
     try:
         import json as _json
         import urllib.request
@@ -1123,6 +1131,16 @@ FEATURE_FLAGS = {
     "lab_critical_interfaced": "ORB_LAB_CRITICAL_INTERFACED",
     # Laboratory reports in the patient portal (LIS-R11).
     "lab_portal_reports": "ORB_LAB_PORTAL_REPORTS",
+    # The medication-order store in record mode (medorders, decision A2): the
+    # chart, Sage and Scribe lanes write each drug through med_orders, and every
+    # bedside and pharmacy rule stays as it is today. Turning it on also adopts
+    # the existing chart drugs at boot (services/medorders/adoption.py).
+    "med_order_store": "ORB_MED_ORDER_STORE",
+    # The medication-order lifecycle: sign, verify, hold, resume and stop on the
+    # order itself. Needs ORB_MED_ORDER_STORE; this file refuses to load with
+    # the lifecycle on and the store off. Switching it off after use fails
+    # closed: held drugs stay ungivable (ruling MO-R9).
+    "med_order_lifecycle": "ORB_MED_ORDER_LIFECYCLE",
 }
 
 # The failure mode for an NDPS register write that fails during a dispense
@@ -1142,6 +1160,7 @@ FEATURE_PREREQUISITES = {
     "ndps_register": (("module", "pharmacy-store"),
                       ("setting", "ORB_PHARMACY_NDPS_ON_FAILURE")),
     "lab_analyser_listener": (("module", "lab"),),
+    "med_order_lifecycle": (("feature", "med_order_store"),),
 }
 
 # Feature id -> the constant that holds its switch. Each constant is the
@@ -1160,10 +1179,13 @@ _FEATURE_CONSTANTS = {
     "oru_order_link": "ORU_ORDER_LINK_ENABLED",
     "lab_critical_interfaced": "LAB_CRITICAL_INTERFACED_ENABLED",
     "lab_portal_reports": "LAB_PORTAL_REPORTS_ENABLED",
+    "med_order_store": "MED_ORDER_STORE_ENABLED",
+    "med_order_lifecycle": "MED_ORDER_LIFECYCLE_ENABLED",
 }
 
 _PREREQUISITE_WORDS = {
     ("feature", "registration"): "ORB_REGISTRATION is off",
+    ("feature", "med_order_store"): "ORB_MED_ORDER_STORE is off",
     ("module", "frontdesk"): "the front desk module is off (ORB_FRONTDESK=0)",
     ("module", "adt"): "ORB_ADT is off",
     ("module", "pharmacy-store"): "ORB_PHARMACY_STORE is off",
@@ -1227,6 +1249,21 @@ RESULT_CORRECTIONS_ENABLED = _FEATURE_REQUESTED["result_corrections"]
 ORU_ORDER_LINK_ENABLED = _FEATURE_REQUESTED["oru_order_link"]
 LAB_CRITICAL_INTERFACED_ENABLED = _FEATURE_REQUESTED["lab_critical_interfaced"]
 LAB_PORTAL_REPORTS_ENABLED = _FEATURE_REQUESTED["lab_portal_reports"]
+MED_ORDER_STORE_ENABLED = _FEATURE_REQUESTED["med_order_store"]
+MED_ORDER_LIFECYCLE_ENABLED = _FEATURE_REQUESTED["med_order_lifecycle"] and MED_ORDER_STORE_ENABLED
+
+# The lifecycle decides who may give a drug (a held order is never given) on
+# top of the order store's records. Without the store there is nothing for it
+# to decide on, and quietly running with half of it would leave a site
+# believing holds and pharmacist sign-off were enforced when they were not. So
+# this combination is refused outright, before the server starts, rather than
+# logged and ignored like the other features' missing prerequisites.
+if _FEATURE_REQUESTED["med_order_lifecycle"] and not MED_ORDER_STORE_ENABLED:
+    raise ValueError(
+        "ORB_MED_ORDER_LIFECYCLE is on but ORB_MED_ORDER_STORE is off. The "
+        "medication-order lifecycle needs the order store: set "
+        "ORB_MED_ORDER_STORE=1 as well, or switch ORB_MED_ORDER_LIFECYCLE off."
+    )
 
 
 def feature_flag_problems() -> dict[str, list[str]]:

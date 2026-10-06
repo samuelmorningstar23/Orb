@@ -29,11 +29,14 @@ import {
   currentModuleFlags,
   refreshModuleFlags,
   subscribeModuleFlags,
+  switchedOffTab,
+  useClinicalSwitches,
   FEATURE_TAB_IDS,
   HOSPITAL_MODULE_IDS,
   type Tab,
 } from '../shellConfig'
 import ModuleOffNotice from '../components/ModuleOffNotice'
+import NotInWardRecord from '../components/NotInWardRecord'
 import SageFloatingAssistant from '../components/sage/SageFloatingAssistant'
 import CommandPalette from '../components/CommandPalette'
 import KeyboardShortcuts from '../components/KeyboardShortcuts'
@@ -170,6 +173,9 @@ export default function ClinicianShell() {
   useSyncExternalStore(subscribeModuleFlags, currentModuleFlags)
   useSyncExternalStore(subscribeModuleFlags, currentFeatureFlags)
   useSyncExternalStore(subscribeModuleFlags, currentHealthProbe)
+  /* The Orb Ward Record profile and the models switch take tabs off the rail
+     too, so the rail re-derives when the probe reports them. */
+  const clinical = useClinicalSwitches()
   useEffect(() => { void refreshModuleFlags() }, [])
   /* One role input, one answer: everything role-dependent in this component
      comes through shellConfig. `user.role` must not appear in the JSX below —
@@ -200,10 +206,27 @@ export default function ClinicianShell() {
      then triggered. On a first visit that is a blank frame where the panel
      should be. Both setState calls batch, so this is one render, and the
      panel mounts in the same one that moves the tab. */
+  /* A direct visit to a screen the Orb Ward Record profile takes off the rail
+     (an address like /dashboard/sage, a shortcut, another panel's link) shows
+     the plain "Not part of Orb Ward Record" page instead of being ignored.
+     Kept as the REQUEST, and judged against the switches on every render, so
+     an address opened before the health probe answers is still caught. Any
+     move on the rail clears it. */
+  const [requestedTab, setRequestedTab] = useState<string | null>(() => {
+    const m = typeof window !== 'undefined'
+      ? window.location.pathname.match(/\/dashboard\/([^/?#]+)/)
+      : null
+    return m ? decodeURIComponent(m[1]) : null
+  })
   const setActiveTab = useCallback((tab: Tab) => {
     setVisitedTabs(prev => (prev.has(tab) ? prev : new Set(prev).add(tab)))
     setActiveTabState(tab)
+    setRequestedTab(null)
   }, [])
+  const offProfileTab = switchedOffTab(user?.role, user?.department, requestedTab, clinical)
+  /* A role whose whole rail the profile takes away (the pharmacist: Pharmacy,
+     the Verify Queue and Sage are not part of it) gets the same page. */
+  const offProfileRail = clinical.wardRecord && accessibleTabs.length === 0
   /* When the rail changes under the open tab (the health probe answered after
      first paint and switched an opt-in module on or a module off), and the open
      tab is no longer on it, move to the landing tab. Adjusted during render,
@@ -247,6 +270,8 @@ export default function ClinicianShell() {
     const handleGotoTab = (e: Event) => {
       const tab = (e as CustomEvent).detail?.tab as Tab | undefined
       if (tab && accessibleTabs.includes(tab)) setActiveTab(tab)
+      // Off the rail only because of the Ward Record profile: say so.
+      else if (tab) setRequestedTab(tab)
     }
     let replaying = false
     const handleOpenPatient = (e: Event) => {
@@ -571,6 +596,12 @@ export default function ClinicianShell() {
         </header>
 
         <section className="shell__body">
+          {(offProfileTab || (offProfileRail && !moduleOffNotice)) && (
+            <NotInWardRecord screen={offProfileTab ? t(`nav.${offProfileTab}`) : null} />
+          )}
+          {/* Hidden, not unmounted, behind that page: the open panels keep
+              their state for when the visitor moves back onto the rail. */}
+          <div style={{ display: offProfileTab ? 'none' : 'contents' }}>
           <Suspense fallback={<div className="orb-panel-loading">Loading panel...</div>}>
           {/* The doctor home. `DoctorHomePanel` is null until its module is in
               the build, and shellConfig drops 'today' from every tab list in
@@ -730,6 +761,7 @@ export default function ClinicianShell() {
             <ModuleOffNotice subject={moduleOffNotice.subject} state={moduleOffNotice.state} />
           )}
                   </Suspense>
+          </div>
         </section>
       </main>
 
@@ -757,7 +789,10 @@ export default function ClinicianShell() {
           never reach a tab this role has no permission for. */}
       <KeyboardShortcuts accessibleTabs={accessibleTabs} onGoto={handleShortcutGoto} />
 
-      {floatingSage && <SageFloatingAssistant activeTab={activeTab} />}
+      {/* Never on the Outpatients tab (opd-8): an outpatient on screen must not
+          become a Sage view_context patient, so the assistant is not offered
+          there at all (docs/his_design/opd.json, critique item 9). */}
+      {floatingSage && activeTab !== 'opd' && <SageFloatingAssistant activeTab={activeTab} />}
     </div>
     </SageRuntimeProvider>
     </ActiveViewProvider>

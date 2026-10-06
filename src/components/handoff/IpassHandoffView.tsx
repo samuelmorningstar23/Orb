@@ -204,7 +204,7 @@ export function IpassHandoffView({ patientId, patientName, setPageTitle = false 
   }
 
   const s = draft.sections;
-  const severityColor = SEVERITY_COLOR[s.illness_severity.severity] || 'var(--text-muted)';
+  const severityColor = (s.illness_severity.severity && SEVERITY_COLOR[s.illness_severity.severity]) || 'var(--text-muted)';
 
   // `ipass-print-layout` is the print reveal root (src/print.css hides every
   // element on the page at print time except the named layouts). Without it
@@ -254,7 +254,9 @@ export function IpassHandoffView({ patientId, patientName, setPageTitle = false 
         </p>
       )}
 
-      {/* I — Illness Severity */}
+      {/* I — Illness Severity. No section at all while scoring is switched
+          off on this computer: the server drafts no severity (null). */}
+      {s.illness_severity.severity != null && (
       <Section tag="I" title="Illness Severity">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
           <span
@@ -284,6 +286,7 @@ export function IpassHandoffView({ patientId, patientName, setPageTitle = false 
           </div>
         )}
       </Section>
+      )}
 
       {/* P — Patient Summary */}
       <Section tag="P" title="Patient Summary">
@@ -384,12 +387,18 @@ export function IpassHandoffView({ patientId, patientName, setPageTitle = false 
           RR {vitalWhole(s.situation_awareness.latest_vitals.respiratory_rate, '--')},{' '}
           Temp {vitalTemperature(s.situation_awareness.latest_vitals.temperature, '--')}°C
         </p>
-        <p style={{ margin: '0 0 4px' }}><strong>Contingency planning</strong></p>
-        <ul style={{ margin: 0, paddingLeft: 20 }}>
-          {s.situation_awareness.contingencies.map((c, i) => (
-            <li key={i}>{c}</li>
-          ))}
-        </ul>
+        {/* No contingency heading over an empty list: with scoring switched
+            off the server drafts no NEWS2 contingency lines. */}
+        {s.situation_awareness.contingencies.length > 0 && (
+          <>
+            <p style={{ margin: '0 0 4px' }}><strong>Contingency planning</strong></p>
+            <ul style={{ margin: 0, paddingLeft: 20 }}>
+              {s.situation_awareness.contingencies.map((c, i) => (
+                <li key={i}>{c}</li>
+              ))}
+            </ul>
+          </>
+        )}
       </Section>
 
       {/* THE AI-DRAFTED SUPPLEMENT — Sage's four-section assessment.

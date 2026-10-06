@@ -1,0 +1,499 @@
+/* OpdPanel.css: Orb "Quiet Clinical" (flat), the Outpatients tab.
+ *
+ * The same rules as FrontDeskPanel.css:
+ *  * no `opacity` for state; quiet things use a quieter token, disabled
+ *    controls the flat --btn-disabled-* trio;
+ *  * status fills use --status-x, small status text --status-x-text, text on a
+ *    fill --status-on-fill;
+ *  * tap targets 24px minimum, --tap-min under `pointer: coarse`;
+ *  * token numbers use tabular figures;
+ *  * nothing on this screen colours a vital: OPD vitals are plain text
+ *    (rulings OPD-S3 and OPD-S6). The only status colour is the queue
+ *    priority, which is about the queue, not the patient's physiology.
+ *
+ * Everything is namespaced `.opd-`.
+ */
+
+.opd-panel {
+  gap: var(--space-5);
+  font-family: var(--font-family);
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+.opd-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.opd-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.opd-subtitle {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.opd-header__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* ── Layout ─────────────────────────────────────────────────────────────── */
+
+.opd-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+@media (max-width: 960px) {
+  .opd-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.opd-queue {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.opd-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  min-width: 0;
+}
+
+.opd-card__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.opd-count {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--bg-glass);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.opd-list,
+.opd-plain-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.opd-plain-list li {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* ── Queue rows ─────────────────────────────────────────────────────────── */
+
+.opd-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+}
+
+.opd-row--selected {
+  border-color: var(--border-focus);
+  background: var(--bg-glass);
+}
+
+.opd-row__open {
+  flex: 1 1 260px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  min-width: 0;
+  padding: var(--space-1);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.opd-row__open:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.opd-token {
+  flex: 0 0 auto;
+  min-width: 2.5rem;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+  font-size: var(--text-md);
+  font-weight: 650;
+  text-align: center;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.opd-row__who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.opd-row__name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.opd-row__meta {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.opd-row__complaint {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.opd-row__side {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+.opd-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.opd-wait,
+.opd-room {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--bg-glass);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* Queue priority: about the line, not the patient's physiology. Emergency is a
+   solid fill with on-fill ink; every other category is quiet text. */
+.opd-priority {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.opd-priority--emergency {
+  background: var(--status-danger);
+  color: var(--status-on-fill);
+}
+
+.opd-priority--other {
+  background: var(--bg-glass);
+  color: var(--status-warn-text);
+}
+
+/* A take gave this patient a new token: the number on their slip is another
+   patient's in this line. Warning text on the quiet chip, like a priority. */
+.opd-token-was {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--bg-glass);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  color: var(--status-warn-text);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* ── Record ─────────────────────────────────────────────────────────────── */
+
+.opd-record {
+  min-height: 240px;
+}
+
+.opd-record__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.opd-record__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.opd-record__name {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.opd-block,
+.opd-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.opd-subhead {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.opd-line {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.opd-empty,
+.opd-hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.opd-hint {
+  font-size: var(--text-xs);
+}
+
+.opd-error {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  border-left: 4px solid var(--status-danger);
+  font-size: var(--text-sm);
+  color: var(--status-danger-text);
+}
+
+.opd-notice {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  border-left: 4px solid var(--status-info);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+/* ── Buttons and fields ─────────────────────────────────────────────────── */
+
+.opd-btn {
+  min-height: 32px;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 550;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.opd-btn:hover:not(:disabled) {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+}
+
+.opd-btn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.opd-btn--primary {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+  color: var(--btn-primary-text);
+}
+
+.opd-btn--primary:hover:not(:disabled) {
+  background: var(--btn-gradient-hover);
+  border-color: var(--btn-gradient-hover);
+}
+
+.opd-btn--quiet {
+  background: transparent;
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.opd-btn--quiet:hover:not(:disabled) {
+  background: var(--bg-glass);
+  color: var(--text-primary);
+}
+
+.opd-btn:disabled {
+  background: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-border);
+  color: var(--btn-disabled-text);
+  cursor: not-allowed;
+}
+
+.opd-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.opd-field label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.opd-field select,
+.opd-field textarea {
+  min-height: 36px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  width: 100%;
+  max-width: 100%;
+}
+
+.opd-field textarea {
+  resize: vertical;
+}
+
+.opd-field select:focus-visible,
+.opd-field textarea:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.opd-field select:disabled,
+.opd-field textarea:disabled {
+  background: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-border);
+  color: var(--btn-disabled-text);
+}
+
+/* ── Modal (portalled to body) ──────────────────────────────────────────── */
+
+.opd-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  /* A scrim, not a de-emphasis: it darkens what is behind the dialog, and no
+     text is painted on it. */
+  background: var(--scrim);
+}
+
+.opd-modal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: min(480px, 100%);
+  max-height: calc(100vh - 2 * var(--space-4));
+  overflow-y: auto;
+  padding: var(--space-5);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+}
+
+.opd-modal__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.opd-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+/* ── Coarse pointer (tablet in the consulting room) ─────────────────────── */
+
+@media (pointer: coarse) {
+  .opd-btn,
+  .opd-field select,
+  .opd-field textarea {
+    min-height: var(--tap-min);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .opd-btn {
+    transition: none;
+  }
+}

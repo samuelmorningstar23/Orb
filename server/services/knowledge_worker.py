@@ -275,6 +275,12 @@ _MAX_POOL_RESTARTS = 2
 
 def _ensure_pool() -> ProcessPoolExecutor:
     global _pool
+    # Models switched off (ORB_MODELS_ENABLED, or the Orb Ward Record): no
+    # worker starts. KnowledgeWorkerError, so every caller takes its lexical
+    # fallback as it does for any worker failure.
+    from services.model_switch import models_enabled
+    if not models_enabled():
+        raise KnowledgeWorkerError("the knowledge workers are switched off on this computer")
     if _pool is not None:
         return _pool
     with _pool_lock:

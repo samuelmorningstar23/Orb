@@ -457,11 +457,13 @@ export type FeatureFlagId =
   | 'oru_order_link'
   | 'lab_critical_interfaced'
   | 'lab_portal_reports'
+  | 'med_order_store'
+  | 'med_order_lifecycle'
 
 export const FEATURE_FLAG_IDS: readonly FeatureFlagId[] = [
   'registration', 'opd', 'adt_strict_locations', 'pharmacy_ward_stock', 'ndps_register',
   'lab_analyser_listener', 'result_quarantine', 'result_corrections', 'oru_order_link',
-  'lab_critical_interfaced', 'lab_portal_reports',
+  'lab_critical_interfaced', 'lab_portal_reports', 'med_order_store', 'med_order_lifecycle',
 ]
 
 export const DEFAULT_FEATURE_FLAGS: Readonly<Record<FeatureFlagId, boolean>> =
@@ -1383,6 +1385,35 @@ const ROLE_CONFIG: Record<string, ShellRoleConfig> = {
   },
 }
 
+/* ── The Orb Ward Record rail ──────────────────────────────────────────────
+ *
+ * With ORB_WARD_RECORD on (clinical.ward_record on /api/health) the rail shows
+ * only what Orb Ward Record sells (SALES_PLAN_2026-10.md section 3, step 2):
+ * the ward list and chart, with no scores (vigil); observation entry (the
+ * nurse's shift); the clerk's observations view and the beds, inside Beds,
+ * which still needs ORB_ADT; and Admin, which then shows only the Ward Record
+ * sections (Data, Users, the audit log, the Flight Recorder, the Trust
+ * Center). Downtime is a page of its own, opened from the chart. Every other
+ * tab is hidden, and a direct visit to one shows the plain "Not part of Orb
+ * Ward Record" page instead (ClinicianShell).
+ *
+ * With only the models switched off (ORB_MODELS_ENABLED), the three model
+ * tabs go: their every route answers 404 "Switched off on this computer".
+ */
+export const WARD_RECORD_TAB_IDS: readonly Tab[] = ['vigil', 'shift', 'adt', 'admin']
+
+/** The tabs that are a model, hidden while the models are switched off. */
+export const MODEL_TAB_IDS: readonly Tab[] = ['sage', 'scribe', 'lens']
+
+/** True when `id` is a screen these clinical switches take off the rail. */
+export function hiddenByClinicalSwitches(
+  id: Tab,
+  clinical: Readonly<ClinicalSwitches> = currentClinicalSwitches(),
+): boolean {
+  if (clinical.wardRecord && !WARD_RECORD_TAB_IDS.includes(id)) return true
+  return !clinical.modelsEnabled && MODEL_TAB_IDS.includes(id)
+}
+
 /** An unknown or absent role gets the smallest honest surface, never a blank
  *  shell: the ward board and messages, which is what it has always got. */
 const FALLBACK_CONFIG: ShellRoleConfig = {
@@ -1463,6 +1494,7 @@ export function getRoleConfig(
   installed: Readonly<Record<HospitalModuleId, boolean>> = hospitalModuleInstalled,
   features: Readonly<Record<FeatureFlagId, boolean>> = currentFeatureFlags(),
   featureInstalled: Readonly<Record<FeatureTabId, boolean>> = featureTabInstalled,
+  clinical: Readonly<ClinicalSwitches> = currentClinicalSwitches(),
 ): ShellRoleConfig {
   const key = normalizeRole(role)
   const base = ROLE_CONFIG[key] ?? FALLBACK_CONFIG
@@ -1489,6 +1521,8 @@ export function getRoleConfig(
        panel is in the build. */
     .filter(entry => !isFeatureTabId(entry.id)
       || (features[FEATURE_TAB_FLAG[entry.id]] === true && featureInstalled[entry.id] === true))
+    /* The Orb Ward Record profile and the models switch (see above). */
+    .filter(entry => !hiddenByClinicalSwitches(entry.id, clinical))
   const home = tabs.some(entry => entry.id === base.home) ? base.home : tabs[0]?.id ?? 'vigil'
   return { ...base, tabs, home }
 }
@@ -1506,9 +1540,32 @@ export function getAccessibleTabs(
   installed: Readonly<Record<HospitalModuleId, boolean>> = hospitalModuleInstalled,
   features: Readonly<Record<FeatureFlagId, boolean>> = currentFeatureFlags(),
   featureInstalled: Readonly<Record<FeatureTabId, boolean>> = featureTabInstalled,
+  clinical: Readonly<ClinicalSwitches> = currentClinicalSwitches(),
 ): Tab[] {
-  return getRoleConfig(role, department, modules, installed, features, featureInstalled)
+  return getRoleConfig(role, department, modules, installed, features, featureInstalled, clinical)
     .tabs.map(entry => entry.id)
+}
+
+/**
+ * The tab a direct visit asked for, when the Orb Ward Record profile (or the
+ * models switch) is what keeps it off this account's rail: the shell then
+ * shows the "Not part of Orb Ward Record" page instead of ignoring the visit.
+ * Null when the tab is on the rail, when the role would not have it anyway,
+ * or when `requested` names no tab.
+ */
+export function switchedOffTab(
+  role: string | null | undefined,
+  department: string | undefined,
+  requested: string | null | undefined,
+  clinical: Readonly<ClinicalSwitches> = currentClinicalSwitches(),
+): Tab | null {
+  if (!requested || !TAB_BY_ID.has(requested as Tab)) return null
+  const tab = requested as Tab
+  if (!hiddenByClinicalSwitches(tab, clinical)) return null
+  const unswitched = { ...clinical, wardRecord: false, modelsEnabled: true }
+  const wouldHave = getAccessibleTabs(role, department, currentModuleFlags(), hospitalModuleInstalled,
+    currentFeatureFlags(), featureTabInstalled, unswitched)
+  return wouldHave.includes(tab) ? tab : null
 }
 
 /**
@@ -1560,7 +1617,13 @@ export function getModuleOffNotice(
 /** False when the role's experience carries no floating Sage assistant (the
  *  HIS roles, which hold no sage.query). Every other role keeps it exactly as
  *  before. */
-export function offersFloatingSage(role: string | null | undefined): boolean {
+export function offersFloatingSage(
+  role: string | null | undefined,
+  clinical: Readonly<ClinicalSwitches> = currentClinicalSwitches(),
+): boolean {
+  // Sage is a model: no floating orb while the models (or the Ward Record
+  // profile, which switches them off) say so.
+  if (clinical.wardRecord || !clinical.modelsEnabled) return false
   return (ROLE_CONFIG[normalizeRole(role)] ?? FALLBACK_CONFIG).floatingSage !== false
 }
 

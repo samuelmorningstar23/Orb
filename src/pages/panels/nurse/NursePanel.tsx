@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import {
   getShiftBoard,
@@ -12,11 +12,13 @@ import MedRoundSheet from './MedRoundSheet'
 import News2Badge from '../../../components/News2Badge'
 import ObsEntrySheet from './ObsEntrySheet'
 import OutcomeCaptureSheet from './OutcomeCaptureSheet'
+import SamplesSheet from './SamplesSheet'
 import { allergyBlocked } from './allergyBlock'
 import { clockTime, missedSlotsCount, obsLabel, relativeMinutes, shiftDate } from './time'
 import { news2Description } from '../../../lib/news2'
 import { rovingTabKeyDown } from '../../../lib/tablist'
-import { HELIX_RECEIVE, hasPermission } from '../../../lib/roles'
+import { HELIX_RECEIVE, LAB_COLLECT, hasPermission } from '../../../lib/roles'
+import { currentModuleFlags, subscribeModuleFlags } from '../../../shellConfig'
 import { useOfflineSnapshot } from '../../../hooks/useOfflineSnapshot'
 import { useNow } from '../../../hooks/useNow'
 import { useVisiblePolling } from '../../../hooks/useVisiblePolling'
@@ -62,15 +64,22 @@ import './NursePanel.css'
        a shape (§6.1/§6.4).
    ═══════════════════════════════════════════════════ */
 
-type View = 'tasks' | 'patients' | 'deliveries' | 'handover' | 'shift'
+type View = 'tasks' | 'patients' | 'deliveries' | 'samples' | 'handover' | 'shift'
 /** Tab order for the roving-tabindex keyboard pattern; must match the strip.
  *  Deliveries is gated on `helix.receive` rather than on this panel's role,
  *  so an account that reaches nurse mode without the grant is not offered a
- *  tab whose every request would 403 (lib/roles.ts). */
-const nurseViews = (): readonly View[] =>
-  hasPermission(HELIX_RECEIVE)
-    ? (['tasks', 'patients', 'deliveries', 'handover', 'shift'] as const)
-    : (['tasks', 'patients', 'handover', 'shift'] as const)
+ *  tab whose every request would 403 (lib/roles.ts).
+ *
+ *  Samples (lis-8) needs `lab.collect` AND the laboratory module on this site
+ *  (/api/health modules.lab, off by default): with the module off there is no
+ *  tab, and the strip is exactly what it was. */
+const nurseViews = (labOn: boolean): readonly View[] => {
+  const views: View[] = ['tasks', 'patients']
+  if (hasPermission(HELIX_RECEIVE)) views.push('deliveries')
+  if (labOn && hasPermission(LAB_COLLECT)) views.push('samples')
+  views.push('handover', 'shift')
+  return views
+}
 
 /** A single thing the nurse owes, flattened out of the per-patient board. */
 interface Task {
@@ -96,6 +105,21 @@ const STALE_TICK_MS = 30_000
 const STALE_AFTER_MIN = 3
 const VERY_STALE_AFTER_MIN = 10
 
+/** The obs task's second line. With a score: its band and the minimum
+ *  interval. With scoring switched off (the Orb Ward Record): the ward's fixed
+ *  interval, or what to do when the ward has none. Never a band. */
+function obsTaskDetail(p: ShiftBoard['patients'][number]): string {
+  const every = (m: number) => (m >= 60 ? `every ${Math.round(m / 60)} hours` : `every ${m} minutes`)
+  if (p.obs_band == null) {
+    if (p.obs_interval_minutes == null) return p.obs_due_note ?? ''
+    return `Ward interval, ${every(p.obs_interval_minutes)}`
+  }
+  const minutes = p.obs_interval_minutes ?? 0
+  return `${p.obs_band} · minimum ${
+    minutes >= 60 ? `${Math.round(minutes / 60)}-hourly` : `${minutes}-minutely`
+  }`
+}
+
 function buildTasks(board: ShiftBoard | null): Task[] {
   if (!board) return []
   const tasks: Task[] = []
@@ -108,11 +132,7 @@ function buildTasks(board: ShiftBoard | null): Task[] {
       overdue: p.obs_overdue,
       dueSoon: p.obs_due_soon,
       title: 'Observations',
-      detail: `${p.obs_band} · minimum ${
-        p.obs_interval_minutes >= 60
-          ? `${Math.round(p.obs_interval_minutes / 60)}-hourly`
-          : `${p.obs_interval_minutes}-minutely`
-      }`,
+      detail: obsTaskDetail(p),
     })
     for (const m of p.medications) {
       // PRN, continuous and unschedulable orders are real, but they are not
@@ -188,9 +208,12 @@ export default function NursePanel() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [view, setView] = useState<View>('tasks')
-  // Computed once per mount: the grant comes from the stored session, which does
-  // not change while the panel is open.
-  const views = useMemo(() => nurseViews(), [])
+  // The grants come from the stored session, which does not change while the
+  // panel is open; the laboratory module flag can arrive after mount (the
+  // shell's /api/health probe), so the strip follows it.
+  const modules = useSyncExternalStore(subscribeModuleFlags, currentModuleFlags)
+  const labOn = modules.lab === true
+  const views = useMemo(() => nurseViews(labOn), [labOn])
 
   const [obsFor, setObsFor] = useState<NursePatientCard | null>(null)
   const [roundFor, setRoundFor] = useState<{ patient: NursePatientCard; medId: number | null } | null>(null)
@@ -315,8 +338,10 @@ export default function NursePanel() {
     const label = [
       task.patient.name,
       task.patient.bed ? `bed ${task.patient.bed}` : null,
-      news2Description(task.patient.news2),
-      simulated ? 'scored from simulated vitals' : null,
+      // No score at all while scoring is switched off: the label says nothing
+      // about one, rather than "NEWS2 not recorded".
+      board?.scoring_enabled === false ? null : news2Description(task.patient.news2),
+      simulated ? (board?.scoring_enabled === false ? 'simulated vitals' : 'scored from simulated vitals') : null,
       `${task.title}${task.detail ? `: ${task.detail}` : ''}`,
       lateness(task),
       task.med?.missed_slots ? `${missedSlotsCount(task.med.missed_slots)} not charted` : null,
@@ -535,14 +560,19 @@ export default function NursePanel() {
       {board && (
         <div className="nurse-totals">
           <span className="nurse-totals__lead">{board.totals.patients} patients</span>
-          <span className={chipTone(board.totals.critical, 'danger')}>
-            <span className="nurse-total__value">{board.totals.critical}</span>
-            <span className="nurse-total__label">critical</span>
-          </span>
-          <span className={chipTone(board.totals.elevated, 'warn')}>
-            <span className="nurse-total__value">{board.totals.elevated}</span>
-            <span className="nurse-total__label">elevated</span>
-          </span>
+          {/* Band counts are a score: no chip at all while scoring is off. */}
+          {board.totals.critical != null && (
+            <span className={chipTone(board.totals.critical, 'danger')}>
+              <span className="nurse-total__value">{board.totals.critical}</span>
+              <span className="nurse-total__label">critical</span>
+            </span>
+          )}
+          {board.totals.elevated != null && (
+            <span className={chipTone(board.totals.elevated, 'warn')}>
+              <span className="nurse-total__value">{board.totals.elevated}</span>
+              <span className="nurse-total__label">elevated</span>
+            </span>
+          )}
           <span className={chipTone(board.totals.obs_overdue, 'danger')}>
             <span className="nurse-total__value">{board.totals.obs_overdue}</span>
             {/* A screen reader hears the whole unit, not the ward abbreviation. */}
@@ -583,6 +613,7 @@ export default function NursePanel() {
           ['tasks', `Due now${queuedTasks ? ` (${queuedTasks})` : ''}`],
           ['patients', `My patients${board ? ` (${board.totals.patients})` : ''}`],
           ['deliveries', 'Deliveries'],
+          ['samples', 'Samples'],
           ['handover', 'Handover'],
           ['shift', 'End of shift'],
         ] as [View, string][]).filter(([id]) => views.includes(id)).map(([id, label]) => (
@@ -668,7 +699,10 @@ export default function NursePanel() {
           {soonTasks.length > 0
             && renderTaskSection('soon', 'Due within 30 minutes', soonTasks, 'warn')}
           <p className="nurse-footnote">
-            Observation intervals follow the RCP NEWS2 escalation table. Medication due times are derived
+            {board?.scoring_enabled === false
+              ? "Observation due times follow the ward's fixed interval, set in Admin. "
+              : 'Observation intervals follow the RCP NEWS2 escalation table. '}
+            Medication due times are derived
             from each order's frequency and the last charted dose. Orb holds no prescriber-authored
             administration schedule.
           </p>
@@ -715,8 +749,12 @@ export default function NursePanel() {
                   {p.vitals_source === 'simulated' && (
                     // Honesty label: the NEWS2 above is scored from simulated
                     // readings, and they do not count as obs taken.
-                    <li>Simulated vitals: the score above is not from this patient</li>
+                    <li>{board.scoring_enabled === false
+                      ? 'Simulated vitals: not from this patient'
+                      : 'Simulated vitals: the score above is not from this patient'}</li>
                   )}
+                  {/* Scoring off and the ward has no interval: say what to do. */}
+                  {p.obs_due_note && <li className="patient-card__due-note">{p.obs_due_note}</li>}
                   <li className={p.obs_overdue ? 'is-late' : ''}>
                     {obsLabel(p.last_obs_at, p.obs_minutes_until_due)}
                     {/* Orb Ward Record: a wrong set is struck out with a reason,
@@ -779,6 +817,14 @@ export default function NursePanel() {
       {view === 'deliveries' && views.includes('deliveries') && (
         <div className="nurse-section" id="nurse-panel-deliveries" role="tabpanel" aria-labelledby="nurse-tab-deliveries">
           <DeliveriesSheet />
+        </div>
+      )}
+
+      {/* NOT gated on `board` either: the samples list is its own ward-scoped
+          read, and a failed shift board must not hide a STAT sample. */}
+      {view === 'samples' && views.includes('samples') && (
+        <div className="nurse-section" id="nurse-panel-samples" role="tabpanel" aria-labelledby="nurse-tab-samples">
+          <SamplesSheet />
         </div>
       )}
 

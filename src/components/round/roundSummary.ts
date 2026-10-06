@@ -168,7 +168,21 @@ export function currentIssues(
   }
 
   const n = card.news2
-  if (!n) {
+  // Scoring switched off on this computer (the Orb Ward Record): the board
+  // sends no band at all (obs_band null), so no NEWS2 line is drawn and a
+  // missing score is not a finding. Only a patient with no set at all is.
+  const scoringOff = card.obs_band == null
+  if (scoringOff) {
+    if (!card.last_obs_at) {
+      issues.push({
+        id: 'no-obs',
+        severity: 'warning',
+        label: 'No observations recorded',
+        detail: 'This patient has no observation set on the record. That is missing data, not a normal result.',
+        source: 'observation',
+      })
+    }
+  } else if (!n) {
     issues.push({
       id: 'no-obs',
       severity: 'warning',

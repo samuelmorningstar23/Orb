@@ -280,14 +280,14 @@ sequenceDiagram
 **Why `honour_acks` matters:** `False` (preview) means a supplied acknowledgement is **ignored**. A preview must never quietly consume an override, the clinician sees the severe alert, and the override happens on apply, once, with the order.
 **Breaks if you change it:** re-implementing the allergy screen here instead of calling `enforce_medication_safety` creates a second enforcement point that will drift from CPOE's. Setting `honour_acks=True` on preview means a clinician's override is spent on a screen that wrote nothing.
 
-#### `preview_set`: `order_sets_service.py:894`
+#### `preview_set`: `order_sets_service.py:900`
 **Signature:** `(patient_id, set_id, *, actor_id, selections=None) -> dict`
 **Does:** What applying this set to this patient would do, and what would stop it. Writes no orders.
 **On screen:** the entire detail pane. `items` → the item list; `blocked` → the note under the Apply button; `would_apply` → whether Apply is enabled; `unknown_codes` → the amber terminology note; `recent_application` (`recent_application`, `:816`) → a warning, never a block, that this set was already applied to this patient inside the recent window (a Sepsis Six applied twice in two minutes is two sets of STAT drafts); `patient` (`patient_banner`, `:864`) → who the gates ran for, with their active allergies, so the name on the Apply button is the patient the verdicts belong to.
 **Why it exists:** it runs the **same** gates apply runs, so the preview and the apply cannot disagree about whether an item is safe.
 **Breaks if you change it:** any divergence between this and `apply_set`'s screening produces the worst possible user experience, a green preview followed by a refused apply.
 
-#### `apply_set`: `order_sets_service.py:925`
+#### `apply_set`: `order_sets_service.py:931`
 **Signature:** `(patient_id, set_id, *, actor_id, actor_role=None, selections=None) -> dict`
 **Does:** Creates the real, individual, **draft** orders for a set. **All or nothing.**
 **On screen:** success → *"Applied for <patient>: N draft orders created and audited."* (`src/components/orders/OrderSetsPanel.tsx:579-585`), plus an amber note when the set held medications saying they are not sent to the ward or pharmacy and must be prescribed from the patient chart (`:586-594`); the applications history list refreshes, and the new drafts appear in the Orders tab with `draft` status chips. Failure → the "Nothing was ordered." block.
@@ -303,14 +303,14 @@ sequenceDiagram
 **Breaks if you change it:** creating orders `active` removes the human commit step and makes a half-finished apply dangerous. Writing the ledger after the orders leaves orphan orders. Screening item-by-item as you write produces the fix-one-restart loop step 3 exists to prevent.
 **Gotchas, stated honestly in the docstring (`:950-954`):** between the screen in step 3 and the write in step 4 there is a sub-millisecond window in which another connection could chart a new allergy. The bedside eMAR closes that window because a dose is the last line of defence; an order is not administered for minutes to hours, and its own administration re-screens.
 
-#### `_audit_set`: `order_sets_service.py:1082`
+#### `_audit_set`: `order_sets_service.py:1089`
 **Signature:** `(*, outcome, action_type, patient_id, set_def, actor_id, actor_role, verdicts, order_ids, application_id) -> None`
 **Does:** Writes the one event that says a **protocol** was applied, naming its orders.
 **On screen:** appears in the Admin panel's Audit Logs tab with action type `order_set_applied` or `order_set_blocked`, and a summary reading e.g. *"Order set 'Sepsis Six (1-hour bundle)' (sepsis_six) success for P001: 9 order(s), 2 safety alert(s). Guideline: Surviving Sepsis Campaign 2021"*.
 **Why it exists:** deliberately **in addition to**, never instead of, the per-order `order_events` row and the per-drug `clinical_safety` rows the medication gate already wrote. A reviewer asking "why are there eight orders at 02:14?" needs the answer "the sepsis bundle, by Dr X, citing SSC 2021"; a reviewer asking "was this drug screened?" needs the drug-level row. **Neither answers the other.**
 **Breaks if you change it:** the category is `clinical_record`, an established category, so an order set shows up in the same filter a reviewer already runs, and deliberately **not** one of the fail-closed categories, because a failed audit row must not un-write orders that are already on the chart. That is also why the whole call is wrapped in `try/except` (`:1099`). Making it fail-closed would roll back a protocol that is already partly on the chart.
 
-#### `list_applications`: `order_sets_service.py:1153`
+#### `list_applications`: `order_sets_service.py:1160`
 **Signature:** `(patient_id, limit=50) -> list[dict]`; limit clamped to 1–200
 **Does:** Protocols applied to this patient, newest first. **PHI, callers scope.**
 **On screen:** the "Already applied to this patient" section at the bottom of the panel (`src/components/orders/OrderSetsPanel.tsx:619-634`), one line per application: set name, applied-at timestamp, applied-by, order count.

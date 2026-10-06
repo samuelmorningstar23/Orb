@@ -292,7 +292,7 @@ There is no classical computer-vision model, no bounding boxes, no trained imagi
 **Change guide:** the "latest analysis" race this section used to set as an exercise is now implemented in the code, read it as a worked answer, not a task. `stream_analysis` emits the created row id as a final JSON event before `[DONE]` (`lens_routes.py:169-172`); `analyzeLensImage` captures it and returns `{ text, analysisId }` rather than a bare string (`client.ts:1637,1645-1661`); the panel stores it and files against it (`LensPanel.tsx:74,90`). If you extend the stream further, keep that shape: any other SSE consumer of `/analyze` must tolerate a non-text event, and `parseSSEData` can merge multi-line events, so the metadata event must stay single-line JSON.
 **Gotchas:** `analyses[0]` is whatever row is globally newest, a concurrent colleague's upload or a simulation-bot insert (`bot_service.py:526,728` writes the same table) can win the race, silently assigning the wrong report to the patient. See Discrepancies.
 
-### `filteredPatients`: `src/pages/panels/LensPanel.tsx:108`
+### `filteredPatients`: `src/pages/panels/LensPanel.tsx:120`
 **Signature:** derived `const` → `{id,name,bed}[]`
 **Does:** Case-insensitive substring filter of the patient list by name or bed for the search dropdown.
 **How it works:** Plain `Array.filter` on every render (lines 108-111), matching the search term against both `name` and `bed`, no memoization, fine at ward-sized lists.

@@ -114,6 +114,8 @@ from routes.pharmacy_store import router as pharmacy_store_router
 from routes.opd_routes import router as opd_router
 from routes.registration_routes import router as registration_router
 from routes.schedule_routes import router as schedule_router
+# The medication-order store's package (wave 4), behind ORB_MED_ORDER_STORE.
+from routes.medorders import router as medorders_router
 
 
 # Import WebSocket and Bots
@@ -401,12 +403,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Failed to register event bus triggers: %s", e)
 
+    # ORB_MODELS_ENABLED off (or the Orb Ward Record): no model lane starts at
+    # boot. Read once here; services/model_switch.py is the one reader.
+    from services.model_switch import models_enabled as _models_enabled
+    _models_on = _models_enabled()
+    if not _models_on:
+        logger.warning("Models switched off on this computer (ORB_MODELS_ENABLED or "
+                       "ORB_WARD_RECORD): no model is warmed and the ward narrator, Sage "
+                       "insights, the knowledge workers and the voice agent do not start.")
+
     # Situational-awareness ward narrator (event-driven; deterministic floor +
     # debounced local-LLM narrative at background priority)
     try:
         from services.sage_narrator_service import register_narrator, ward_narrator
-        register_narrator()
-        lifespan_tasks.append(_spawn(ward_narrator.idle_loop()))
+        if _models_on:
+            register_narrator()
+            lifespan_tasks.append(_spawn(ward_narrator.idle_loop()))
     except Exception as e:
         logger.warning("Failed to start ward narrator: %s", e)
 
@@ -424,6 +436,15 @@ async def lifespan(app: FastAPI):
         init_helix_db()
     except Exception as e:
         logger.warning("Helix DB init failed (non-fatal): %s", e)
+
+    # ── Medication-order store (ORB_MED_ORDER_STORE, default off) ──
+    # With the store on, give every chart medication that has no order one
+    # (medorders-2). HERE, at boot, and never on a GET: SQLite has one writer.
+    # A no-op with the switch off; never raises (a failure is logged and the
+    # unadopted rows keep today's behaviour). Off the event loop, batch by batch.
+    from database import run_db as _run_db
+    from services.medorders.adoption import boot_adoption
+    await _run_db(boot_adoption)
 
     # Fold the hospital's own formulary into Sage's deterministic mutation gate,
     # so "stop the Dolo" / "hold the Monocef" trip the lock the same way "stop
@@ -479,7 +500,8 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Clinical knowledge base init failed (non-fatal): %s", e)
 
-    lifespan_tasks.append(_spawn(_init_knowledge_background()))
+    if _models_on:
+        lifespan_tasks.append(_spawn(_init_knowledge_background()))
     
     # Pre-load BOTH inference tiers into unified memory so first queries are
     # fast, and keep them there. ORB_OLLAMA_KEEP_ALIVE=-1 tells Ollama never to
@@ -682,8 +704,9 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.debug("keep-warm ping skipped: %s", e)
 
-    lifespan_tasks.append(_spawn(warmup_models()))
-    lifespan_tasks.append(_spawn(keep_warm_loop()))
+    if _models_on:
+        lifespan_tasks.append(_spawn(warmup_models()))
+        lifespan_tasks.append(_spawn(keep_warm_loop()))
 
     # Pre-load the CfC risk checkpoints + forecast LSTM in the background:
     # their lazy first load (3× torch.load + MPS device init) was measured at
@@ -699,7 +722,8 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.debug("torch model warmup skipped (non-fatal): %s", e)
 
-    lifespan_tasks.append(_spawn(warmup_torch_models()))
+    if _models_on:
+        lifespan_tasks.append(_spawn(warmup_torch_models()))
     
     # Pre-load MedGemma 4B voice agent into Apple Silicon Unified Memory
     async def warmup_voice_agent():
@@ -713,10 +737,13 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Voice agent warmup failed (non-fatal): %s", e)
     
-    lifespan_tasks.append(_spawn(warmup_voice_agent()))
+    if _models_on:
+        lifespan_tasks.append(_spawn(warmup_voice_agent()))
 
-    # Start Sage proactive surveillance (always-on — real analysis over live data)
-    lifespan_tasks.append(_spawn(proactive_sweep()))
+    # Start Sage proactive surveillance (always-on — real analysis over live data).
+    # Sage insights are a model feature: off with the models.
+    if _models_on:
+        lifespan_tasks.append(_spawn(proactive_sweep()))
     lifespan_tasks.append(_spawn(downtime_snapshot_sweep()))
     lifespan_tasks.append(_spawn(sage_provenance_prune_sweep()))
 
@@ -1012,14 +1039,22 @@ app.middleware("http")(audit_mutations)
 
 
 # ── Register route modules ──
+# ORB_MODELS_ENABLED off (or the Orb Ward Record): Sage, Sage insights and
+# Lens are model features, and every route of theirs answers 404 "Switched off
+# on this computer" before it reads anything (services/model_switch.py). The
+# model routes inside other routers (Scribe drafting, Relay's ambient cards,
+# the alert assessment, the expected course, the patient portal's questions)
+# carry the same dependency themselves.
+from services.model_switch import require_models_on as _require_models_on
+
 app.include_router(auth_router)
 app.include_router(vigil_router)
 app.include_router(relay_router)
-app.include_router(sage_router)
-app.include_router(sage_proactive_router)
+app.include_router(sage_router, dependencies=[Depends(_require_models_on)])
+app.include_router(sage_proactive_router, dependencies=[Depends(_require_models_on)])
 app.include_router(scribe_router)
 app.include_router(bridge_router)
-app.include_router(lens_router)
+app.include_router(lens_router, dependencies=[Depends(_require_models_on)])
 app.include_router(forecast_router)
 app.include_router(surgery_router)
 app.include_router(ingestion_router)
@@ -1076,6 +1111,7 @@ app.include_router(pharmacy_store_router)
 app.include_router(opd_router)
 app.include_router(registration_router)
 app.include_router(schedule_router)
+app.include_router(medorders_router)
 
 # ── Serve uploaded media (PHI) behind authentication ──
 # SECURITY: uploads contain medical images (Lens) and consultation audio
@@ -1327,6 +1363,11 @@ async def health_models(user: dict = Depends(get_current_user)):
     deployment metadata, not for anonymous callers."""
     import httpx
     from config import OLLAMA_BASE_URL, LLM_MODEL, AMBIENT_LLM_MODEL
+    from services.model_switch import models_enabled
+    if not models_enabled():
+        # Switched off on this computer: nothing is asked of Ollama, and the
+        # chip has no tier to report.
+        return {"ollama_reachable": False, "models_enabled": False, "models": []}
     configured = list(dict.fromkeys([LLM_MODEL, AMBIENT_LLM_MODEL]))
     loaded: dict = {}
     reachable = True
@@ -1343,6 +1384,7 @@ async def health_models(user: dict = Depends(get_current_user)):
         reachable = False
     return {
         "ollama_reachable": reachable,
+        "models_enabled": True,
         "models": [
             {
                 "model": name,
@@ -1448,7 +1490,7 @@ def _resolve_configured_model(name: str) -> str:
     return name
 
 
-@app.post("/api/health/models/load")
+@app.post("/api/health/models/load", dependencies=[Depends(_require_models_on)])
 async def load_model(req: ModelActionRequest, user: dict = Depends(require_permission("admin.overview"))):
     """Pull a configured tier into memory and pin it (keep_alive from config)."""
     import httpx
@@ -1483,7 +1525,7 @@ async def load_model(req: ModelActionRequest, user: dict = Depends(require_permi
     return {"status": "loaded", "model": model}
 
 
-@app.post("/api/health/models/unload")
+@app.post("/api/health/models/unload", dependencies=[Depends(_require_models_on)])
 async def unload_model(req: ModelActionRequest, user: dict = Depends(require_permission("admin.overview"))):
     """Evict a configured tier from memory.
 

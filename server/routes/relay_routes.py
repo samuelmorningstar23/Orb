@@ -218,7 +218,15 @@ def add_member(
         raise _membership_error(exc)
 
 
-@router.get("/channels/{channel_id}/sage_memory")
+def _ambient_switched_on() -> None:
+    """Relay's ambient cards and room memory come from a model reading the
+    case room: 404 while the models are switched off (ORB_MODELS_ENABLED, or
+    the Orb Ward Record). Declared above the first route that uses it."""
+    from services.model_switch import require_models_on
+    require_models_on()
+
+
+@router.get("/channels/{channel_id}/sage_memory", dependencies=[Depends(_ambient_switched_on)])
 def get_sage_memory(
     channel_id: str,
     user: dict = Depends(require_permission("relay.read")),
@@ -252,7 +260,7 @@ def get_sage_memory(
         }
 
 
-@router.get("/channels/{channel_id}/sage_actions")
+@router.get("/channels/{channel_id}/sage_actions", dependencies=[Depends(_ambient_switched_on)])
 def get_sage_actions(
     channel_id: str,
     user: dict = Depends(require_permission("relay.read")),
@@ -440,7 +448,7 @@ def _confirm_and_hand_off(action_id, channel_id, req, user):
     return action_dict, handoff_dict, package_for
 
 
-@router.post("/channels/{channel_id}/sage_actions/{action_id}/transition")
+@router.post("/channels/{channel_id}/sage_actions/{action_id}/transition", dependencies=[Depends(_ambient_switched_on)])
 async def transition_sage_action(
     channel_id: str,
     action_id: str,
@@ -631,9 +639,12 @@ async def post_message(
     # see the message appear live without refreshing.
     await sio.emit("message:new", result, room=channel_id)
 
-    # Sage Ambient: passive observation (no UI output, independent pipeline)
-    from services.sage_ambient_service import sage_ambient_observe
-    background_tasks.add_task(sage_ambient_observe, channel_id, result["id"])
+    # Sage Ambient: passive observation (no UI output, independent pipeline).
+    # Not while the models are switched off (ORB_MODELS_ENABLED, Ward Record).
+    from services.model_switch import models_enabled
+    if models_enabled():
+        from services.sage_ambient_service import sage_ambient_observe
+        background_tasks.add_task(sage_ambient_observe, channel_id, result["id"])
 
     room_fit = await _run_room_fit(channel, visible_channels, msg, result, user)
     if room_fit:
@@ -1155,7 +1166,7 @@ class ConfirmAgenticRequest(BaseModel):
     # required to re-submit after a 428 from the medication safety gate.
     safety_ack: Optional[dict] = None
 
-@router.get("/channels/{channel_id}/sage_actions/{action_id}/pre_flight")
+@router.get("/channels/{channel_id}/sage_actions/{action_id}/pre_flight", dependencies=[Depends(_ambient_switched_on)])
 def pre_flight_sage_action(
     channel_id: str,
     action_id: str,
@@ -1401,7 +1412,7 @@ def _persist_confirmation(action_id, user, delegation_hash, correlation_id,
     return order_id
 
 
-@router.post("/channels/{channel_id}/sage_actions/{action_id}/confirm_agentic")
+@router.post("/channels/{channel_id}/sage_actions/{action_id}/confirm_agentic", dependencies=[Depends(_ambient_switched_on)])
 async def confirm_agentic_action(
     channel_id: str,
     action_id: str,

@@ -219,44 +219,44 @@ sequenceDiagram
 
 ### File: `server/config.py`: the five knobs
 
-#### `LLM_MODEL` / `_resolve_llm_model`: `config.py:258` / `:177`
+#### `LLM_MODEL` / `_resolve_llm_model`: `config.py:269` / `:249`
 **Signature:** `str` / `(preferred: str) -> str`
 **Does:** Names the careful tier. Falls back to any installed medgemma variant if the configured tag is not pulled, matching on the **base name**.
 **On screen:** it is the model name printed inside every provenance banner, "Fast mode is on, but this one needed the careful model (**medgemma:27b**)", and the `27B` chip in the header AI panel.
 **Breaks if you change it:** modules do `from config import LLM_MODEL` **by value**, so this must resolve at import. Making it lazy means a missing model 404s every AI feature with no visible error.
 
-#### `AMBIENT_LLM_MODEL`: `config.py:264`
+#### `AMBIENT_LLM_MODEL`: `config.py:283`
 **Signature:** `str`, defaults to `LLM_MODEL`
 **Does:** The cheap tier for non-interactive background work.
 **On screen:** nothing directly, but it is the **second** candidate in the fast-tier fallback chain (`:191-193`), so on a site that declared an ambient tier, thinking-OFF quietly rides on the model the operator already chose.
 **Breaks if you change it:** point it at a model that is not pulled and thinking-OFF resolves to it anyway when Ollama is unreachable (`:192`, `installed is None`), and every fast turn 404s.
 
-#### `THINKING_DEFAULT_ON`: `config.py:287`
+#### `THINKING_DEFAULT_ON`: `config.py:306`
 **Signature:** `bool`, from `ORB_THINKING_DEFAULT`, default `"on"`
 **Does:** What an absent or unparseable flag resolves to.
 **On screen:** nothing renders it. It is the value every non-Sage caller silently gets, the ward narrator, background summarisers, the Scribe demographics extraction.
 **Breaks if you change it:** setting it off means an old client, a scripted caller or a dropped JSON field quietly downgrades a clinician's answer to the model that is wrong 40% of the time on drug recall. The floor still stands above it (`test_thinking_mode.py:85-92`), but the general lane goes fast by default for everybody, including callers that have no toggle to notice it.
 
-#### `THINKING_FAST_MODE_ENABLED`: `config.py:293`
+#### `THINKING_FAST_MODE_ENABLED`: `config.py:312`
 **Signature:** `bool`, from `ORB_FAST_MODE_ENABLED`, default true
 **Does:** The panic switch. Off pins every Sage turn to the careful model regardless of what any client sends.
 **On screen:** **nothing today.** The server honours it (`fast_mode_available`, `:390`), but the composer still renders the toggle and the clinician still sees "Fast". See discrepancy 1.
 **Breaks if you change it:** turning it off is the correct response to a site deciding the fast lane is not for them, but until the availability flag reaches the UI, the ward will believe fast mode is on and be quietly served careful answers.
 
-#### `_resolve_fast_model`: `config.py:298`
+#### `_resolve_fast_model`: `config.py:317`
 **Signature:** `(preferred: str) -> str`
 **Does:** Picks the model that serves thinking-OFF, erring toward the careful one: preferred if pulled → a distinct ambient tier → otherwise `LLM_MODEL`.
 **On screen:** the model name in the fast-answer banner, and the `4B` chip in the header AI panel.
 **Gotchas, this is the subtle one:** matching is **exact on the tag**, unlike `_resolve_llm_model`, which matches the base name. Base-name matching here would happily return `"medgemma:4b"` on a box that only has `medgemma:27b` pulled, and every fast turn would 404 (`:218-221`).
 **Breaks if you change it:** invert the fallback direction, degrade to *anything smaller* rather than to the careful model, and an unavailable fast tier turns into either a 404 or a wrong answer. Both are worse than a slow correct one.
 
-#### `THINKING_FAST_MODEL`: `config.py:327`
+#### `THINKING_FAST_MODEL`: `config.py:346`
 **Signature:** `str`, from `ORB_FAST_MODEL`, default `medgemma:4b`
 **Does:** The fast tier's resolved name.
 **On screen:** printed inside the fast-answer banner (`thinkingMode.ts:172`).
 **Breaks if you change it:** when this equals `LLM_MODEL`, `fast_mode_available()` goes False and the whole toggle becomes inert, by design, but see discrepancy 1 for what the clinician sees.
 
-#### `FAST_MODE_SAFETY_FLOOR`: `config.py:339`
+#### `FAST_MODE_SAFETY_FLOOR`: `config.py:350`
 **Signature:** `bool`, from `ORB_FAST_MODE_SAFETY_FLOOR`, default `"1"` → **on**
 **Does:** Arms the floor. Setting it to `0` makes fast mode answer everything, including dosing and patient questions.
 **On screen:** stamped out as `safety_floor_enabled` on every answer's provenance, and persisted per turn, but **nothing in the UI reads it**. A ward cannot tell from the screen whether the floor is armed.
@@ -513,7 +513,7 @@ The module header states why the store exists at all: the toggle lives in the co
 
 ### File: `src/api/client.ts`: putting the flag on the wire
 
-#### `querySage`'s `thinking` parameter: `src/api/client.ts:1482`, parameter at `:1104-1112`, body at `:1127-1131`
+#### `querySage`'s `thinking` parameter: `src/api/client.ts:1491`, parameter at `:1104-1112`, body at `:1127-1131`
 **Signature:** `thinking?: boolean`; body sends `thinking: thinking ?? true`
 **Does:** Sends the flag explicitly on every Sage request.
 **On screen:** nothing directly.

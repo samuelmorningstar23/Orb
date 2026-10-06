@@ -16,6 +16,7 @@ import UsersPanel from './admin/UsersPanel'
 import DataPanel from './admin/DataPanel'
 import RosterImport from './admin/RosterImport'
 import ProvenanceReview from './admin/ProvenanceReview'
+import { useClinicalSwitches } from '../../shellConfig'
 
 type AdminTab = 'overview' | 'scorecard' | 'audit' | 'trace' | 'provenance' | 'ingestion' | 'security' | 'alerts' | 'models' | 'impact' | 'trust' | 'flight' | 'users' | 'roster' | 'data'
 
@@ -91,8 +92,21 @@ const ADMIN_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
 /** The one region every sub-tab swaps. Stable so `aria-controls` never dangles. */
 const ADMIN_PANEL_ID = 'admin-subpanel'
 
+/** Under the Orb Ward Record profile (ORB_WARD_RECORD) Admin shows only what
+ *  Ward Record sells, in this order: the Ward Record section in Data (ward
+ *  intervals and the monthly rounds file), users, the audit log (and the trace
+ *  it opens), the Flight Recorder and the Trust Center. */
+const WARD_RECORD_ADMIN_TABS: readonly AdminTab[] = ['data', 'users', 'audit', 'trace', 'flight', 'trust']
+
 export default function AdminPanel() {
-  const [activeTab, setActiveTab] = useState<AdminTab>('overview')
+  const { wardRecord } = useClinicalSwitches()
+  const visibleTabs = wardRecord
+    ? WARD_RECORD_ADMIN_TABS.flatMap(id => ADMIN_TABS.filter(t => t.id === id))
+    : ADMIN_TABS
+  const [chosenTab, setActiveTab] = useState<AdminTab>(wardRecord ? 'data' : 'overview')
+  // A section the profile hides is never shown, even if it was open when the
+  // switches arrived: the first section on the list opens instead.
+  const activeTab: AdminTab = visibleTabs.some(t => t.id === chosenTab) ? chosenTab : visibleTabs[0].id
   const [traceCorrelationId, setTraceCorrelationId] = useState<string | null>(null)
 
   const handleTraceClick = (correlationId: string) => {
@@ -108,7 +122,7 @@ export default function AdminPanel() {
      pattern. Same pattern, same helper (lib/tablist), rather than a second
      dialect of the same idea living one directory away. */
   const handleTabKeyDown = rovingTabKeyDown(
-    ADMIN_TABS.map(t => t.id),
+    visibleTabs.map(t => t.id),
     activeTab,
     setActiveTab,
     id => `admin-tab-${id}`,
@@ -124,7 +138,7 @@ export default function AdminPanel() {
         aria-orientation="horizontal"
         onKeyDown={handleTabKeyDown}
       >
-        {ADMIN_TABS.map(tab => (
+        {visibleTabs.map(tab => (
           <button
             key={tab.id}
             type="button"

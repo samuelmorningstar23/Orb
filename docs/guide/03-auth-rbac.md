@@ -235,7 +235,7 @@ silently reopens the hole cookies were given the check for. Knock-on: the Socket
 **Change guide:** *worked example, add an export permission:* add `REPORT_EXPORT = "report.export"` beside `:212`, grant it in `ROLE_PERMISSIONS["admin"]`, then guard the new route with `user=Depends(require_permission("report.export"))`. Knock-on: the Trust Center RBAC matrix picks it up automatically; add a `test_rbac.py` case pinning that doctors get 403.
 **Gotchas:** routes pass string literals, not the constants, so a typo in a route (`"patient.readall"`) fails *closed* (nobody has it), safe but confusing to debug.
 
-### `ROLE_PERMISSIONS`: `server/permissions.py:271`
+### `ROLE_PERMISSIONS`: `server/permissions.py:278`
 **Signature:** `dict[str, set[str]]`.
 **Does:** the entire authorization policy of Orb, as data.
 **How it works:** six role keys (`doctor` `:222`, `nurse` `:241`, `pharmacist` `:271`, `admin` `:288`, `patient` `:326`, `cashier` `:336`) map to permission sets; `"clinician"` is aliased to the doctor set at `:342` (same object, so a change to one is a change to both).
@@ -304,7 +304,7 @@ The policy's shape: doctors are the only role that can *sign* (notes, discharges
 **Change guide:** *worked example, add a `lab_tech` role:* add `"lab_tech": {VITALS_READ, ORDER_READ}` beside `cashier` (`:336`); also add the string to `STORABLE_ROLES` in `server/roles.py`, the single authority the `users.role` CHECK constraint is rendered from (`server/database.py:38`, `:870`), and add a users-rebuild migration, since SQLite cannot alter CHECK constraints, and add `'lab_tech'` to the frontend `UserRole` union (`src/App.tsx:11`). Footgun: forgetting the CHECK change makes user creation fail at INSERT, not at login.
 **Gotchas:** an unknown role gets `set()` from every lookup, unknown roles fail closed. The `clinician` alias shares the *same set object* as `doctor`; mutate one and you mutate both.
 
-### `has_permission` / `has_all_permissions` / `get_permissions_for_role`: `server/permissions.py:463,354,360`
+### `has_permission` / `has_all_permissions` / `get_permissions_for_role`: `server/permissions.py:473,354,360`
 **Signature:** `(role, permission) → bool` / `(role, *permissions) → bool` / `(role) → set[str]` (a defensive `.copy()`).
 **Does:** pure lookup helpers over `ROLE_PERMISSIONS` for non-HTTP contexts.
 **How it works:** set membership with `.get(role, set())` so unknown roles are empty.
@@ -314,7 +314,7 @@ The policy's shape: doctors are the only role that can *sign* (notes, discharges
 **Change guide:** none usually, change the map, not the helpers.
 **Gotchas:** none noteworthy.
 
-### `require_permission`: `server/permissions.py:867`
+### `require_permission`: `server/permissions.py:876`
 **Signature:** `(*permissions: str) → async dependency (request, user) → dict`
 **Does:** the canonical route guard: requires the user to hold **all** listed permissions, audit-logging any denial.
 **How it works:** 1. The factory captures `permissions` in a closure and returns `_checker` (`:176`). 2. `_checker` declares two dependencies of its own, the raw `Request` (for path/method/IP/user-agent in the audit record) and `get_current_user`, demonstrating that FastAPI dependencies chain (`:176-179`). 3. Compute `missing = [p for p in permissions if p not in ROLE_PERMISSIONS.get(role, set())]` (`:180-182`). 4. If anything is missing, write a `permission_denied` audit event with category `authorization`, outcome `denied`, a fresh correlation UUID, and metadata listing required/missing permissions (`:186-203`), then raise 403 with the structured body `{"error":"permission_denied","message":...,"required":[...],"missing":[...]}` (`:205-213`). 5. Otherwise return the user dict, which becomes the handler's `user` argument.
@@ -324,7 +324,7 @@ The policy's shape: doctors are the only role that can *sign* (notes, discharges
 **Change guide:** *worked example, protect a new endpoint:* `@router.get("/reports") async def reports(user=Depends(require_permission("audit.read", "forecast.read"))): ...`, note ALL listed permissions are required (AND, not OR); to express OR you would add a new combined permission to the map instead. Watch out: calling `require_permission("x")` *evaluates the factory at import time*; the checker runs per-request.
 **Gotchas:** the interpolated f-string at `:209` has no placeholders (harmless lint noise). Denials cost an audit INSERT per hit, a scanning attacker writes a lot of audit rows, which is arguably the point.
 
-### `require_patient_self`: `server/permissions.py:1270`
+### `require_patient_self`: `server/permissions.py:1332`
 **Signature:** `() → async dependency (request, user) → dict`
 **Does:** restricts an endpoint to users whose role is `patient`, for the Bridge portal's self-scoped routes.
 **How it works:** 1. Returns `_checker` depending on `Request` + `get_current_user` (`:233-236`). 2. If `role != "patient"`, audit-log a denial with reason `patient_role_required` and raise 403 (`:239-259`). 3. Otherwise return the user dict; the *route* then scopes its queries by `user["id"]`, ownership is enforced by the caller using the returned identity, not by this dependency.
@@ -406,7 +406,7 @@ The policy's shape: doctors are the only role that can *sign* (notes, discharges
 **Change guide:** *worked example, mandate MFA for all doctors:* deploy with `ORB_MFA_REQUIRED_ROLES=doctor` (`server/config.py:50-52`). Knock-on: every non-enrolled doctor's login now returns 403 `mfa_enrollment_required`, but the shipped frontend has no enrollment screen or TOTP prompt (see Discrepancies), so ship the client flow first; the Trust Center adoption panel (`src/pages/panels/admin/TrustCenter.tsx:216-226`) will show the mandate.
 **Gotchas:** it is a `def` (sync) handler, FastAPI runs it in a threadpool, which is what makes the module-level dict mutation tolerable under one process. The `from services import mfa_service` at `:148` is unused in this function body (only `consume_totp` is used); harmless dead import.
 
-### `get_me`: `server/main.py:1227`: `GET /api/auth/me`
+### `get_me`: `server/main.py:1257`: `GET /api/auth/me`
 
 > **Moved, and the old bug is gone.** Earlier editions documented a `pass`-bodied stub at
 > `server/routes/auth_routes.py:228` that shadowed the real handler and would have 500'd on
@@ -567,7 +567,7 @@ These are **Pydantic models**, Python classes whose typed fields FastAPI uses to
 **Talks to:** `login`'s MFA gate (`server/routes/auth_routes.py:497-498`), `mfa_enroll_confirm` (`:673`), `mfa_disable` (`:709`), and the compliance report's `_mfa_adoption` (`server/services/compliance_service.py:106`).
 **Gotchas:** the default is *empty*, MFA is opt-in per user unless an operator sets the env var.
 
-### `DEPLOYMENT_PROFILE`: `server/config.py:11-15`
+### `DEPLOYMENT_PROFILE`: `server/config.py:22-26`
 **Signature:** `str`, `"prod"` by default; `is_dev = DEPLOYMENT_PROFILE == "dev"`.
 **Does:** the master dev/prod switch, resolved and validated at the very top of the module so every later guard can rely on it. It is rejected outright unless it is `dev` or `prod` (`:12-15`). In auth it controls the JWT-secret fail-closed guard (`:54`) and the localhost rate-limit exemption at `server/routes/auth_routes.py:64-66`. Elsewhere it flips demo mode, Lens gating, and model defaults, `is_dev` is derived at `:275` and the reasoning is recorded at `:271-274` (other guides).
 **Why it exists:** defaulting to `prod` means the *safe* profile is the one you get by forgetting to configure anything.

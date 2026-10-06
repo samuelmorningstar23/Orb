@@ -278,6 +278,23 @@ MODULE_TABLES: dict[str, tuple[str, ...]] = {
     "result quarantine": (
         "result_quarantine",
     ),
+    # ── migration 61 (server/migrations_his/m0061_med_order_store.py) ──
+    # The medication-order store: one row per medication order and its
+    # append-only ledger of who prescribed, verified, held, stopped and gave
+    # it. Empty until a site switches ORB_MED_ORDER_STORE on. A restore that
+    # came back without them would lose which drugs are on hold and who
+    # signed and verified each order.
+    "medication orders": (
+        "med_orders", "med_order_events",
+    ),
+    # ── migration 62 (server/migrations_his/m0062_opd_consultations.py) ──
+    # The outpatient consultation note for each OPD visit, signed and then
+    # final, and its append-only addenda. Empty until a site switches ORB_OPD
+    # on. A restore that came back without them would lose what the clinic
+    # doctor found, diagnosed and advised, and who signed it.
+    "outpatient consultations": (
+        "opd_consultations", "opd_consultation_addenda",
+    ),
 }
 
 ALL_MIGRATED_TABLES: tuple[str, ...] = tuple(

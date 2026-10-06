@@ -415,7 +415,9 @@ def test_the_record_carries_extent_ii_and_never_the_second_factor(staff, opd_on)
     assert by_clinic[DEPT_B]["chief_complaint"] is None
     assert "Opdscope ortho desk complaint" not in text
 
-    assert body["consultations"] == [] and body["consultations_available"] is False
+    # opd-10 (migration 62) built the consultation record: the list is there,
+    # empty for a patient with no signed note (tests/test_opd_consultation.py).
+    assert body["consultations"] == [] and body["consultations_available"] is True
     assert body["access"]["arm"] == "opd_visit"
     assert body["access"]["visit_id"] == own_visit
     assert body["access"]["scope_until"] == (hospital_today() + timedelta(days=7)).isoformat()

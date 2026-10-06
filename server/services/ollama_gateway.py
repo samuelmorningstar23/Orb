@@ -44,6 +44,7 @@ from services.ai_governance import (
     hash_prompt,
     record_inference_async,
 )
+from services.model_switch import ModelsSwitchedOff, refuse_when_models_off  # noqa: F401
 
 # How often a yielding request re-checks the lane. A clinician's turn waits at
 # most this long for the background request to let go.
@@ -115,7 +116,12 @@ async def post(client, path: str, payload: dict, *, purpose: str,
     Returns the httpx response untouched, so callers keep their own status and
     parsing. `yield_to_clinician` is for P3 background work only: see the
     module docstring.
+
+    With the models switched off (ORB_MODELS_ENABLED, or the Orb Ward Record)
+    it raises ModelsSwitchedOff before any request, and writes no audit row:
+    no inference happened.
     """
+    refuse_when_models_off(f"ollama_gateway.post {purpose}")
     t0 = time.monotonic()
     outcome, detail = "error", None
     try:
@@ -155,7 +161,11 @@ async def stream(client, path: str, payload: dict, *, purpose: str,
     The row is written when the block exits. A reader that stops early (a
     client closing the page) still got tokens from the model, so that is
     recorded as served, with the early close noted.
+
+    Refused with ModelsSwitchedOff, and no row written, while the models are
+    switched off (see post()).
     """
+    refuse_when_models_off(f"ollama_gateway.stream {purpose}")
     t0 = time.monotonic()
     outcome, detail = "error", None
     try:

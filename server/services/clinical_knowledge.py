@@ -69,6 +69,11 @@ def _local_snapshot_or_name(model_name: str) -> str:
 
 def _get_embedder():
     global _embed_model
+    # Models switched off (ORB_MODELS_ENABLED, or the Orb Ward Record): the
+    # embedder is never loaded. A RuntimeError, like the isolation guard
+    # below, so search degrades to lexical only.
+    from services.model_switch import refuse_when_models_off
+    refuse_when_models_off("knowledge embedder")
     if _embed_model is not None:
         return _embed_model
     # Guard against reintroducing the GIL-starvation bug: with isolation on,
@@ -548,6 +553,11 @@ def init_knowledge_base():
     if os.getenv("ORB_SKIP_KNOWLEDGE_BASE", "").lower() in ("1", "true", "yes"):
         print("  ⏭  Knowledge base init skipped (ORB_SKIP_KNOWLEDGE_BASE)")
         return
+    # Models switched off (ORB_MODELS_ENABLED, or the Orb Ward Record): nothing
+    # is embedded, so no embedder or knowledge worker starts.
+    from services.model_switch import models_enabled
+    if not models_enabled():
+        return
 
     fingerprint = _corpus_fingerprint()
 
@@ -783,6 +793,10 @@ def _get_cross_encoder():
     whenever a cross-encoder is not present (the case in the dev venv).
     """
     global _cross_encoder, _cross_encoder_checked
+    # Models switched off: no reranker is loaded; the lexical path ranks.
+    from services.model_switch import models_enabled
+    if not models_enabled():
+        return None
     if _cross_encoder_checked:
         return _cross_encoder
     # Same in-process guard as the embedder: with isolation on, the reranker

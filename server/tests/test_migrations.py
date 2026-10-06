@@ -497,16 +497,22 @@ def test_migration_49_creates_exactly_what_helix_schema_creates(tmp_path):
     HELIX_SCHEMA stays in step with every later migration that adds a Helix
     column (services/helix_db.init_helix_db), so the frozen 49 shape is
     compared after those migrations have run on top of it: 54, the pharmacy
-    store schema. Its procurement parts are skipped on this Helix-only file."""
+    store schema, and 61, the medication-order store's supply link. Their
+    non-Helix parts are skipped on this Helix-only file. Migration 61's index
+    on the link is the one Helix index HELIX_SCHEMA deliberately lacks (it is
+    created by the migration and by a column-guarded step of init_helix_db)."""
     import sqlite3
 
     from migrations_his.m0049_helix_tables_in_runner import MIGRATION as M49
     from migrations_his.m0054_pharmacy_store_schema import MIGRATION as M54
+    from migrations_his.m0061_med_order_store import HELIX_MED_ORDER_INDEX
+    from migrations_his.m0061_med_order_store import MIGRATION as M61
     from services.helix_db import HELIX_SCHEMA
 
     by_runner = sqlite3.connect(str(tmp_path / "runner.db"))
     M49.apply(by_runner)
     M54.apply(by_runner)
+    M61.apply(by_runner)
     by_runner.commit()
     by_schema = sqlite3.connect(str(tmp_path / "schema.db"))
     by_schema.executescript(HELIX_SCHEMA)
@@ -514,7 +520,8 @@ def test_migration_49_creates_exactly_what_helix_schema_creates(tmp_path):
         assert _shape(by_runner, table) == _shape(by_schema, table), table
     idx = lambda c: {r[0] for r in c.execute(  # noqa: E731
         "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_helix%'").fetchall()}
-    assert idx(by_runner) == idx(by_schema) == _HELIX_INDEXES
+    assert idx(by_runner) - {HELIX_MED_ORDER_INDEX[0]} == idx(by_schema) == _HELIX_INDEXES
+    assert HELIX_MED_ORDER_INDEX[0] in idx(by_runner)
     by_runner.close()
     by_schema.close()
 

@@ -21,6 +21,33 @@ export interface StockLot {
  *  inventory scale (lots hold up to about 200). */
 export const LOW_STOCK_THRESHOLD = 30
 
+/** A drug master row may carry the pharmacy store's reorder level, in the
+ *  same units the shelf is counted in. null or absent means nobody set one. */
+export interface ReorderLevelSource {
+  reorder_level_units?: number | null
+}
+
+/** The server's reorder level for this medicine, or null when it should not
+ *  be used: the pharmacy store module is off (`useServerLevels` false), or no
+ *  level is set. A level nobody set is never read as 0. */
+export function serverReorderLevel(
+  item: ReorderLevelSource,
+  useServerLevels: boolean,
+): number | null {
+  if (!useServerLevels) return null
+  const level = item.reorder_level_units
+  return typeof level === 'number' && Number.isInteger(level) && level >= 0 ? level : null
+}
+
+/** Low but not out. With a server reorder level: at or below it (the
+ *  pharmacy store's reorder rule). Without one: under LOW_STOCK_THRESHOLD,
+ *  exactly as before the pharmacy store existed. */
+export function isLowStock(qty: number, item: ReorderLevelSource, useServerLevels: boolean): boolean {
+  if (qty <= 0) return false
+  const level = serverReorderLevel(item, useServerLevels)
+  return level === null ? qty < LOW_STOCK_THRESHOLD : qty <= level
+}
+
 export type LotState = 'expired' | 'undated' | 'empty' | 'soon' | 'ok'
 
 /** The YYYY-MM-DD part of a stored expiry, or null. */

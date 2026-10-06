@@ -1,0 +1,262 @@
+/* SamplesSheet.css: the ward Samples view and the laboratory's phlebotomy
+ * list (lis-8), Orb "Quiet Clinical" (flat).
+ *
+ *  - No `opacity` for any state; quiet text is a quieter token.
+ *  - Status is a rule on an ordinary surface (STAT, refusals, recollection),
+ *    never a tinted fill behind small text; small status text uses the
+ *    --status-x-text tokens.
+ *  - Tap targets are at least 24px, and 44px under `pointer: coarse`.
+ *  - Its own stylesheet: the laboratory panel mounts it without the nurse
+ *    panel's styles.
+ */
+
+.samples {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.samples__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.samples__title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.samples__scope {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.samples__ward-title {
+  margin: 6px 0 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.samples__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.samples__patient {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.samples__patient--stat {
+  border-left: 3px solid var(--status-danger);
+}
+
+.samples__who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.samples__name {
+  font-weight: 600;
+}
+
+.samples__meta {
+  color: var(--text-secondary);
+}
+
+.samples__tubes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.samples__tube {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.samples__tube-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.samples__tube-line {
+  color: var(--text-secondary);
+}
+
+.samples__priority {
+  font-weight: 700;
+  color: var(--status-danger-text);
+}
+
+.samples__priority--urgent {
+  color: var(--status-warn-text);
+}
+
+.samples__recollect {
+  color: var(--status-warn-text);
+  font-weight: 600;
+}
+
+.samples__identity {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-info);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.samples__identity-hint {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.samples__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.samples__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.samples__label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.samples__input {
+  min-height: 36px;
+  padding: 6px 10px;
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+}
+
+.samples__input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.samples__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.samples__btn {
+  min-height: 32px;
+  padding: 4px 14px;
+  font: inherit;
+  font-weight: 600;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-glass);
+  background: var(--bg-glass);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.samples__btn:hover:not(:disabled) {
+  background: var(--bg-glass-hover);
+}
+
+.samples__btn--primary {
+  color: var(--btn-primary-text);
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+}
+
+.samples__btn--primary:hover:not(:disabled) {
+  background: var(--btn-gradient-hover);
+}
+
+.samples__btn:disabled {
+  color: var(--btn-disabled-text);
+  background: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+.samples__btn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .samples__btn,
+  .samples__input {
+    min-height: 44px;
+  }
+}
+
+.samples__note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-info);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  line-height: 1.5;
+}
+
+.samples__note--error {
+  border-left-color: var(--status-danger);
+}
+
+.samples__note--warn {
+  border-left-color: var(--status-warn);
+}
+
+.samples__note--ok {
+  border-left-color: var(--status-ok);
+}
+
+.samples__empty {
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}

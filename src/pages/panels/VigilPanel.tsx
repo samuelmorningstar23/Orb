@@ -181,7 +181,7 @@ export default function VigilPanel({ role }: { role?: string | null }) {
   // ORB_SCORING_ENABLED off (the Orb Ward Record): the server sends no NEWS2
   // and orders the board by ward then bed, so the board keeps that order
   // instead of re-sorting every row by a score that is not there.
-  const { scoringEnabled } = useClinicalSwitches()
+  const { scoringEnabled, modelsEnabled } = useClinicalSwitches()
   const [outcomeCaptureOpen, setOutcomeCaptureOpen] = useState(false)
   const canRecordOutcome = hasPermission(OUTCOME_RECORD, role)
 
@@ -411,14 +411,20 @@ export default function VigilPanel({ role }: { role?: string | null }) {
           <span className="orb-metric-value metric-mono">{metric(admitted)}</span>
           <span className="orb-metric-label" title="Patients admitted under your department">Admitted · My Dept</span>
         </div>
-        <div className="orb-metric-card glass-card">
-          <span className="orb-metric-value orb-metric-value--warn metric-mono">{metric(elevated)}</span>
-          <span className="orb-metric-label">Elevated</span>
-        </div>
-        <div className="orb-metric-card glass-card">
-          <span className="orb-metric-value orb-metric-value--danger metric-mono">{metric(critical)}</span>
-          <span className="orb-metric-label">Critical</span>
-        </div>
+        {/* Band counts are a score: no tile at all while scoring is switched
+            off on this computer (a "0 Critical" would read as a finding). */}
+        {scoringEnabled && (
+          <div className="orb-metric-card glass-card">
+            <span className="orb-metric-value orb-metric-value--warn metric-mono">{metric(elevated)}</span>
+            <span className="orb-metric-label">Elevated</span>
+          </div>
+        )}
+        {scoringEnabled && (
+          <div className="orb-metric-card glass-card">
+            <span className="orb-metric-value orb-metric-value--danger metric-mono">{metric(critical)}</span>
+            <span className="orb-metric-label">Critical</span>
+          </div>
+        )}
         {showOccupancy && (
           <div className="orb-metric-card glass-card">
             {/* The percentage is the SERVER'S, copied not recomputed, so this
@@ -443,9 +449,11 @@ export default function VigilPanel({ role }: { role?: string | null }) {
         )}
       </div>
 
-      <WardBriefCard />
+      {/* Sage's brief and insights are model features about scores: neither
+          is asked for while the scores or the models are switched off. */}
+      {scoringEnabled && modelsEnabled && <WardBriefCard />}
 
-      <SageInsightsFeed />
+      {modelsEnabled && <SageInsightsFeed />}
 
       <div className="orb-section">
         <div className="orb-section-header">
@@ -770,7 +778,7 @@ const TREND_CLASS: Record<string, string> = {
    whole, and every reader of "the patient now" reads it.
    The pair holds the chart payload's own objects: a stored set (or a tick the
    chart appended to its trend) and the score that came with it. */
-type LiveObservation = { patientId: string; vital: ChartVitalSet | null; risk: PatientRisk }
+type LiveObservation = { patientId: string; vital: ChartVitalSet | null; risk: PatientRisk | null }
 
 /** One vitals set on the chart: a stored row from GET /vigil/patients/{id},
  *  or a `vitals:update` tick appended to the trend. A tick from the
@@ -785,7 +793,9 @@ interface VitalsTick extends ChartVitalSet {
   timestamp: string
   consciousness: string
   on_oxygen: boolean
-  risk: PatientRisk
+  /** Null while scoring is switched off on this computer (the Orb Ward
+   *  Record): every lane then pushes the set with no score. */
+  risk: PatientRisk | null
 }
 
 /** The chart as this view holds it: the GET response, with live ticks
@@ -882,6 +892,11 @@ function BarCellHead({ label, score }: { label: string; score: BarScore }) {
    src/lib/roles.ts treats an explicit null as "holds nothing" — a distinction
    a storage read cannot make. */
 function PatientDetailView({ patientId, role, onBack }: { patientId: string; role?: string | null; onBack: () => void }) {
+  /* The Orb Ward Record's switches. Scoring off: the chart carries risk null
+     and every badge, gauge, band colour and breakdown below draws nothing.
+     Models off: no screen asks a model (the expected course). The profile
+     itself: the handover is switched off. */
+  const { scoringEnabled, modelsEnabled, wardRecord } = useClinicalSwitches()
   const [liveData, setData] = useState<ChartData | null>(null)
   const [loading, setLoading] = useState(true)
   // Why the chart is empty. A stale patient id (a reseed regenerates every
@@ -1085,10 +1100,13 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
   const loadProjection = useCallback(() => {
     setProjection(null)
     setProjectionFailed(false)
+    // The expected course is a model's draft: not asked for while the models
+    // are switched off (the server answers 404 then anyway).
+    if (!modelsEnabled) return
     getTimelineProjection(patientId)
       .then(p => { setProjection(p); setProjectionFailed(false) })
       .catch(() => setProjectionFailed(true))
-  }, [patientId])
+  }, [patientId, modelsEnabled])
 
   // eMAR history drives the per-med "Given HH:MM" chips; refreshed on load and
   // after each recorded administration.
@@ -1158,8 +1176,10 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
         // A set with no score cannot be shown: the bar would have to pair it
         // with an older observation's NEWS2. Both server emitters always send
         // one, so a tick without it is malformed and is dropped whole, trend
-        // array included.
-        if (!newVital.risk || typeof newVital.risk !== 'object') return
+        // array included. With scoring switched off (the Orb Ward Record)
+        // every tick carries risk null, and the set is shown with no score.
+        if (scoringEnabled && (!newVital.risk || typeof newVital.risk !== 'object')) return
+        if (!scoringEnabled && newVital.risk != null) return
 
         // Never step back. A tick strictly OLDER than the pair on screen (a
         // backdated manual set, a late delivery) is history, not "now". The
@@ -1196,7 +1216,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
     };
     socket.on('vitals:update', onVitals);
     return () => { socket.off('vitals:update', onVitals); }
-  }, [patientId])
+  }, [patientId, scoringEnabled])
 
   const handleDischarge = async () => {
     setDischarging(true)
@@ -1642,14 +1662,18 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
           )}
         </div>
 
-        {/* Bed + Risk Badge — NEWS2 aggregate + band, not a percentage. */}
-        <div className={`command-bar__bed-badge command-bar__bed-badge--${risk.level}`}>
+        {/* Bed + Risk Badge — NEWS2 aggregate + band, not a percentage.
+            With no score (scoring switched off) the badge is the bed alone:
+            no band colour, no number, no dash. */}
+        <div className={`command-bar__bed-badge command-bar__bed-badge--${risk ? risk.level : 'none'}`}>
           <span className="command-bar__bed-label">BED {patient.bed}</span>
           {/* The title carries what the visible text cannot: the Scale 2 and
               single-parameter-3 notes, in the badge's one shared sentence. */}
-          <span className="command-bar__risk-pct" title={`${news2Description(risk)}. NEWS2 aggregate (RCP NEWS2 chart), not a validated probability`}>
-            {typeof risk.raw_news2 === 'number' ? `NEWS2 ${risk.raw_news2} · ` : ''}{risk.level.toUpperCase()}
-          </span>
+          {risk && (
+            <span className="command-bar__risk-pct" title={`${news2Description(risk)}. NEWS2 aggregate (RCP NEWS2 chart), not a validated probability`}>
+              {typeof risk.raw_news2 === 'number' ? `NEWS2 ${risk.raw_news2} · ` : ''}{risk.level.toUpperCase()}
+            </span>
+          )}
         </div>
 
         {/* Diagnosis & Comorbidities (comorbidity tags only when genuinely recorded) */}
@@ -1785,9 +1809,12 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
             </button>
           </div>
           <div className="command-bar__group" role="group" aria-label="Hand over">
-            <button className="command-bar__btn" onClick={() => window.open(`/handoff/${patientId}`, '_blank')} title="Auto-drafted I-PASS shift handoff">
-              <Icon name="handoff" size={13} /> Handoff
-            </button>
+            {/* The handover is switched off under the Orb Ward Record. */}
+            {!wardRecord && (
+              <button className="command-bar__btn" onClick={() => window.open(`/handoff/${patientId}`, '_blank')} title="Auto-drafted I-PASS shift handoff">
+                <Icon name="handoff" size={13} /> Handoff
+              </button>
+            )}
             <button className="command-bar__btn" onClick={() => window.open(`/downtime/${patientId}`, '_blank')} title="Read-only offline downtime snapshot">
               <Icon name="offline" size={13} /> Downtime
             </button>
@@ -1817,22 +1844,37 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
       {/* The component's own Projection type has `expected_los_days?: number`,
           while the server sends null for no estimate; it already renders null
           as no estimate (`!= null`), so the assertion only bridges the types. */}
-      <ClinicalCourseTimeline projection={projection as ComponentProps<typeof ClinicalCourseTimeline>['projection']} failed={projectionFailed} onRetry={loadProjection} />
+      {modelsEnabled && (
+        <ClinicalCourseTimeline projection={projection as ComponentProps<typeof ClinicalCourseTimeline>['projection']} failed={projectionFailed} onRetry={loadProjection} />
+      )}
 
       {/* Risk Assessment & Lab Trends */}
       <div className="detail__row">
         <div className="detail__risk-panel glass-card">
-          <h3 className="detail__section-title">Why this score</h3>
-          <div className="detail__risk-top-section" style={{ display: 'flex', gap: '16px', alignItems: 'center', marginBottom: '8px', marginTop: '8px' }}>
-            <div className="detail__risk-gauge" style={{ margin: 0, flexShrink: 0 }}>
-              <RiskGauge score={risk.score} level={risk.level} rawNews2={risk.raw_news2} />
-            </div>
-            <div className="detail__risk-drivers" style={{ flex: 1, marginTop: 0, maxHeight: 'none', overflowY: 'visible' }}>
-              {risk.drivers?.map((d: string, i: number) => (
-                <div key={i} className="detail__driver" style={{ marginBottom: '4px' }}>{d}</div>
-              ))}
-            </div>
-          </div>
+          {/* Scoring switched off: no heading about a score, no gauge and no
+              drivers, only the server's sentence saying why. */}
+          {risk ? (
+            <>
+              <h3 className="detail__section-title">Why this score</h3>
+              <div className="detail__risk-top-section" style={{ display: 'flex', gap: '16px', alignItems: 'center', marginBottom: '8px', marginTop: '8px' }}>
+                <div className="detail__risk-gauge" style={{ margin: 0, flexShrink: 0 }}>
+                  <RiskGauge score={risk.score} level={risk.level} rawNews2={risk.raw_news2} />
+                </div>
+                <div className="detail__risk-drivers" style={{ flex: 1, marginTop: 0, maxHeight: 'none', overflowY: 'visible' }}>
+                  {risk.drivers?.map((d: string, i: number) => (
+                    <div key={i} className="detail__driver" style={{ marginBottom: '4px' }}>{d}</div>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <h3 className="detail__section-title">Observations</h3>
+              {data.risk_off_reason && (
+                <p className="detail__score-off" data-testid="chart-score-off" style={{ color: 'var(--text-secondary)', margin: '8px 0' }}>{data.risk_off_reason}</p>
+              )}
+            </>
+          )}
           {/* ── The 6-hour trend, and what it is a trend OF ──
                  `trend.trend` is a comparison of the last 6 hours of vitals
                  against the 6 before them. It has a FOURTH value —
@@ -1864,7 +1906,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
                  rendered over it would print "every measured vital is in the
                  normal range" about a patient nobody has measured. Absent and
                  normal are not the same finding. ── */}
-          {!tier1OnScreen
+          {!tier1OnScreen && risk
             && Array.isArray(risk.breakdown) && risk.breakdown.length > 0
             && typeof risk.raw_news2 === 'number' && (
             <News2Drivers
@@ -2019,7 +2061,9 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
                   <div><strong>Diagnosis:</strong> {patient.diagnosis || 'Not documented'}</div>
                   <div><strong>Ward:</strong> {patient.ward} · Bed {patient.bed}</div>
                   <div><strong>Admitted:</strong> {formatUTCDate(patient.admission_date)}</div>
-                  <div><strong>Current NEWS2:</strong> {risk.level}{typeof risk.raw_news2 === 'number' ? ` (score ${risk.raw_news2})` : ''}</div>
+                  {risk && (
+                    <div><strong>Current NEWS2:</strong> {risk.level}{typeof risk.raw_news2 === 'number' ? ` (score ${risk.raw_news2})` : ''}</div>
+                  )}
                 </div>
                 {dischargeAdvisory && typeof dischargeAdvisory === 'object' && (
                   <div data-testid="discharge-billing-advisory" style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8, border: `1px solid ${dischargeAdvisory.advisory_status === 'clear' ? 'var(--border-subtle)' : 'var(--status-warn)'}`, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>

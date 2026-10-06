@@ -28,6 +28,7 @@ logger = logging.getLogger("orb.forecast")
 from database import get_db, db_session
 from models.forecast_lstm import OrbForecastLSTM, load_model, INPUT_DIM
 from services.hospital_time import hospital_today, local_day_bounds_utc
+from services.stay_times import count_summary_less_ends, stay_start_sql
 
 # ── Singleton model instance ──
 _model: OrbForecastLSTM | None = None
@@ -453,19 +454,26 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
             # datetime() normalises both before the comparison. The bounds are a
             # UTC WINDOW, not a date: a hospital-local day straddles two UTC
             # dates everywhere east or west of Greenwich.
+            # A stay begins at its recorded arrival (admitted_at, which the
+            # beds and admissions module may back-time) else when the row was
+            # written (services/stay_times.py). With ORB_ADT off admitted_at is
+            # always NULL, so this counts exactly what it always counted.
             admissions_today = db.execute(
-                "SELECT COUNT(*) AS c FROM admissions "
-                "WHERE datetime(created_at) >= ? AND datetime(created_at) < ?",
+                "SELECT COUNT(*) AS c FROM admissions a "
+                f"WHERE datetime({stay_start_sql('a')}) >= ? "
+                f"AND datetime({stay_start_sql('a')}) < ?",
                 (start_s, end_s),
             ).fetchone()["c"]
-            # discharge_summaries is the Orb-native discharge EVENT record —
-            # patients.status carries no timestamp, and admissions.discharged_at
-            # is populated only for imported history (see migrations _m15).
+            # discharge_summaries is the Orb-native discharge EVENT record:
+            # patients.status carries no timestamp. Ends the beds and
+            # admissions module recorded with no summary (a death, a LAMA, an
+            # absconded closure) are discharge events too, and only
+            # stay_times knows them (none exist with ORB_ADT off).
             discharges_today = db.execute(
                 "SELECT COUNT(*) AS c FROM discharge_summaries "
                 "WHERE datetime(discharged_at) >= ? AND datetime(discharged_at) < ?",
                 (start_s, end_s),
-            ).fetchone()["c"]
+            ).fetchone()["c"] + count_summary_less_ends(db, since=start_s, until=end_s)
 
     n_patients = len(patients)
 

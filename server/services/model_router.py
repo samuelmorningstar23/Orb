@@ -73,6 +73,12 @@ async def probe_residency(timeout: float = 2.0) -> frozenset[str] | None:
     "everything is evicted".
     """
     global _ps_cache
+    # Models switched off (ORB_MODELS_ENABLED, or the Orb Ward Record): Ollama
+    # is not asked. None reads as "cannot tell", and every ambient caller then
+    # skips its optional work.
+    from services.model_switch import models_enabled
+    if not models_enabled():
+        return None
     now = time.monotonic()
     if _ps_cache and now - _ps_cache[0] < _PS_TTL_SECONDS:
         return _ps_cache[1]

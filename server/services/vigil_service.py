@@ -182,7 +182,14 @@ def compute_cfc_risk(patient_id: str) -> dict | None:
     (9: vitals + AVPU + age); models trained on a richer schema (e.g. sepsis+labs)
     are skipped until matching feature assembly exists. Returns None if no model
     runs or data is insufficient.
+
+    None, and nothing loaded, while the models are switched off
+    (ORB_MODELS_ENABLED, or the Orb Ward Record): the overlay is a learned
+    model, and the NEWS2 baseline stands alone.
     """
+    from services.model_switch import models_enabled
+    if not models_enabled():
+        return None
     if not _load_cfc_models():
         return None
 

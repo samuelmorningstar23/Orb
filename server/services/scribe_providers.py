@@ -12,6 +12,9 @@ from abc import ABC, abstractmethod
 
 import httpx
 from config import OLLAMA_BASE_URL
+# ORB_MODELS_ENABLED off (or the Orb Ward Record): every provider refuses
+# before it loads or asks a model (services/model_switch.py).
+from services.model_switch import refuse_when_models_off
 
 
 class LLMProvider(ABC):
@@ -77,6 +80,7 @@ class OllamaProvider(LLMProvider):
         purpose: str = "scribe_draft",
     ) -> str:
         """Synchronous Ollama call (used by correction stage in subprocess context)."""
+        refuse_when_models_off("Scribe Ollama generate")
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -114,6 +118,7 @@ class OllamaProvider(LLMProvider):
         purpose: str = "scribe_draft",
     ) -> str:
         """Async non-streaming Ollama call."""
+        refuse_when_models_off("Scribe Ollama agenerate")
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -151,6 +156,7 @@ class OllamaProvider(LLMProvider):
         purpose: str = "scribe_draft",
     ) -> AsyncGenerator[str, None]:
         """Async streaming Ollama call. Yields content tokens."""
+        refuse_when_models_off("Scribe Ollama agenerate_stream")
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -207,6 +213,7 @@ class MLXProvider(LLMProvider):
         purpose: str = "scribe_draft",
     ) -> str:
         """Synchronous, non-streaming in-process MLX generation."""
+        refuse_when_models_off("Scribe MLX generate")
         try:
             from services.voice_agent_service import get_voice_agent
             agent = get_voice_agent()
@@ -251,6 +258,7 @@ class MLXProvider(LLMProvider):
         purpose: str = "scribe_draft",
     ) -> str:
         """Async non-streaming generation running on thread executor."""
+        refuse_when_models_off("Scribe MLX agenerate")
         import asyncio
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
@@ -279,6 +287,7 @@ class MLXProvider(LLMProvider):
         Acquires UMSQ GPU lock at PRIORITY_SCRIBE (2) — user-initiated but
         yields to Sage voice if both are queued simultaneously.
         """
+        refuse_when_models_off("Scribe MLX agenerate_stream")
         try:
             from services.voice_agent_service import get_voice_agent
             agent = get_voice_agent()

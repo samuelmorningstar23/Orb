@@ -561,6 +561,12 @@ def _next_token(db, *, visit_date: str, department: str, doctor_id: Optional[str
     visits are counted in MAX() on purpose: reusing a cancelled patient's token
     number the same morning means two people were called by the same number, and
     the queue display is the only instruction most OPD patients get.
+
+    The unassigned line (no doctor) also counts the numbers a doctor's take
+    moved out of it (OPD mode, opd_queue_service.assign_visit): that patient
+    still holds a slip with the number, so it is spent the same way. With no
+    take that day, which is always so with the 'opd' feature off, it adds
+    nothing and the numbering is exactly as before.
     """
     row = db.execute(
         """SELECT MAX(token_number) AS top FROM opd_visits
@@ -568,8 +574,11 @@ def _next_token(db, *, visit_date: str, department: str, doctor_id: Optional[str
               AND COALESCE(doctor_id, '') = COALESCE(?, '')""",
         (visit_date, department, doctor_id),
     ).fetchone()
-    top = (row["top"] if row else None) or 0
-    return int(top) + 1
+    top = int((row["top"] if row else None) or 0)
+    if not doctor_id:
+        from services.opd_queue_service import taken_unassigned_top
+        top = max(top, taken_unassigned_top(db, visit_date=visit_date, department=department))
+    return top + 1
 
 
 def _raise_consultation_charge(
@@ -833,7 +842,12 @@ def register_opd_visit(
 
 
 def _serialize_visit(db, row, *, now: Optional[datetime] = None) -> dict:
-    """API shape for one visit, including its live waiting time."""
+    """API shape for one visit, including its live waiting time.
+
+    In OPD mode (opd-8) the visit also carries its queue fields (priority,
+    room, skipped, call count, cancel code, disposition) from
+    opd_queue_service.queue_fields. With the feature off the keys are exactly
+    the ones the desk always returned."""
     if row is None:
         return {}
     data = _visit_api_dict(row)
@@ -844,6 +858,14 @@ def _serialize_visit(db, row, *, now: Optional[datetime] = None) -> dict:
     data["patient_sex"] = patient["sex"] if patient else None
     data["waiting_minutes"] = _waiting_minutes(data, now=now)
     data["consultation_minutes"] = _consultation_minutes(data, now=now)
+    if opd_mode():
+        from services.opd_queue_service import queue_fields, reissued_tokens
+        data.update(queue_fields(row))
+        # The token on the patient's slip when a doctor's take changed it
+        # (opd_queue_service.assign_visit); None when it never changed.
+        visit_id = str(data.get("id") or "")
+        data["previous_token_number"] = (
+            reissued_tokens(db, [visit_id]).get(visit_id) if data.get("doctor_id") else None)
     return data
 
 
@@ -931,12 +953,29 @@ def list_opd_queue(
             params,
         ).fetchall()
 
+        # OPD mode (opd-8): each visit carries its queue fields, and within one
+        # doctor's queue the order is the seeing order (in the room, then waiting
+        # by priority then token, skipped after them). Off, nothing changes.
+        queue_mode = opd_mode()
+        reissued: dict = {}
+        if queue_mode:
+            from services import opd_queue_service as oq
+            # The visits a doctor took under a new token: the desk must see the
+            # number on the patient's slip is no longer theirs.
+            reissued = oq.reissued_tokens(db, [r["id"] for r in rows if r["doctor_id"]])
+
     visits: list[dict] = []
     for r in rows:
         data = _visit_api_dict(r)
         data["waiting_minutes"] = _waiting_minutes(data, now=now)
         data["consultation_minutes"] = _consultation_minutes(data, now=now)
+        if queue_mode:
+            data.update(oq.queue_fields(r))
+            data["previous_token_number"] = reissued.get(str(r["id"]))
         visits.append(data)
+    if queue_mode:
+        visits.sort(key=lambda v: (v["department"], v.get("doctor_name") or "",
+                                   *oq.queue_sort_key(v)))
 
     queues: list[dict] = []
     index: dict[tuple, int] = {}
@@ -962,12 +1001,22 @@ def list_opd_queue(
         # different facts and a 0 would read as the second.
         q["longest_wait_minutes"] = max(waits) if waits else None
 
-    return {
+    result = {
         "visit_date": day,
         "department": department,
         "queues": queues,
         "total": len(visits),
     }
+    if queue_mode:
+        # What the desk's queue screen needs to offer the OPD-mode actions,
+        # and how often it re-reads until live desk nudges land (opd-9b).
+        result.update({
+            "opd_mode": True,
+            "poll_seconds": int(getattr(config, "OPD_QUEUE_POLL_SECONDS", 30) or 30),
+            "priorities": [{"code": c, "label": lab} for c, lab in oq.priority_categories()],
+            "cancel_reasons": [{"code": c, "label": lab} for c, lab in oq.CANCEL_REASON_CODES],
+        })
+    return result
 
 
 def get_opd_visit(visit_id: str) -> Optional[dict]:
@@ -1010,6 +1059,14 @@ def start_opd_consultation(
             "UPDATE opd_visits SET status = 'in_consultation', called_at = ? WHERE id = ?",
             (_now(), visit_id),
         )
+        if opd_mode():
+            # opd-8: the call is counted, and calling a skipped patient in
+            # ends the skip. Migration 50's columns; untouched with OPD off.
+            db.execute(
+                "UPDATE opd_visits SET call_count = COALESCE(call_count, 0) + 1, "
+                "skipped_at = NULL WHERE id = ?",
+                (visit_id,),
+            )
         updated = db.execute(
             "SELECT * FROM opd_visits WHERE id = ?", (visit_id,)
         ).fetchone()
@@ -1028,8 +1085,19 @@ def complete_opd_visit(
     raise_charge: bool = True,
     notes: Optional[str] = None,
     on_done: Optional[Callable[[Any, dict, dict], None]] = None,
+    disposition: Optional[str] = None,
+    before_complete: Optional[Callable[[Any, Any], None]] = None,
 ) -> dict:
     """Finish the consultation and raise the consultation charge.
+
+    Two keywords used only by the OPD consultation route (opd-10), both inert
+    by default:
+      * `disposition` is written to opd_visits.disposition and disposition_at
+        (migration 50) when THIS call completes the visit; a replay never
+        rewrites it. The route validates the vocabulary.
+      * `before_complete(db, row)` runs inside the immediate transaction before
+        anything is written, and only when the visit is not yet completed. It
+        raises to refuse (the OPD-N8 rule: a signed note, or a reason).
 
     The charge is raised HERE and not at registration because a patient who
     registers and leaves before being seen has not been consulted. Idempotent on
@@ -1058,6 +1126,8 @@ def complete_opd_visit(
 
         now = _now()
         already_complete = row["status"] == "completed"
+        if not already_complete and before_complete is not None:
+            before_complete(db, row)
         if not already_complete:
             db.execute(
                 """UPDATE opd_visits
@@ -1068,6 +1138,11 @@ def complete_opd_visit(
                     WHERE id = ?""",
                 (now, now, _clean(notes, _MAX_REASON_LEN), visit_id),
             )
+            if disposition:
+                db.execute(
+                    "UPDATE opd_visits SET disposition = ?, disposition_at = ? WHERE id = ?",
+                    (disposition, now, visit_id),
+                )
 
         charge: Optional[ConsultationCharge] = None
         if raise_charge:
@@ -1110,6 +1185,7 @@ def cancel_opd_visit(
     reason: str,
     cancelled_by: Optional[str] = None,
     on_done: Optional[Callable[[Any, dict, dict], None]] = None,
+    reason_code: Optional[str] = None,
 ) -> dict:
     """Cancel a visit (no-show, left without being seen). Soft: the row stays.
 
@@ -1117,11 +1193,22 @@ def cancel_opd_visit(
     EVERY successful call, so the route's audit row commits with the cancel. A
     repeat cancel of an already cancelled visit is called too, with facts
     {"replay": True}: the flag-off path audits every call.
+
+    `reason_code` (OPD mode, opd-8) is one of
+    opd_queue_service.CANCEL_REASON_CODES and is stored in
+    opd_visits.cancel_reason_code; 'left_without_being_seen' is the LWBS code.
+    A cancel never raises a charge, coded or not: the consultation is charged
+    at completion only.
     """
     ensure_frontdesk_schema()
     clean_reason = _clean(reason, _MAX_REASON_LEN)
     if not clean_reason:
         raise FrontDeskError("A cancellation reason is required")
+    code = (reason_code or "").strip().lower() or None
+    if code is not None:
+        from services.opd_queue_service import CANCEL_REASON_CODES
+        if code not in dict(CANCEL_REASON_CODES):
+            raise FrontDeskError(f"{reason_code!r} is not a cancellation reason code")
     with db_session(immediate=True) as db:
         row = db.execute("SELECT * FROM opd_visits WHERE id = ?", (visit_id,)).fetchone()
         if row is None:
@@ -1142,6 +1229,11 @@ def cancel_opd_visit(
             "cancel_reason = ? WHERE id = ?",
             (_now(), clean_reason, visit_id),
         )
+        if code is not None:
+            db.execute(
+                "UPDATE opd_visits SET cancel_reason_code = ? WHERE id = ?",
+                (code, visit_id),
+            )
         updated = db.execute(
             "SELECT * FROM opd_visits WHERE id = ?", (visit_id,)
         ).fetchone()

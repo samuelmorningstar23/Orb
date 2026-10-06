@@ -118,6 +118,7 @@ __all__ = [
     "validate_abha_address",
     "format_abha_number",
     "record_abha",
+    "record_abha_on",
     "correct_abha",
     "get_abha",
     "list_abha",
@@ -766,6 +767,44 @@ def record_abha(
     `department` is the CALLER'S scope (permissions.department_scope), used only
     to decide whether a duplicate refusal may name the other patient. None is
     the hospital-wide convention, as in ``list_abha``.
+
+    Opens its own session; ``record_abha_on`` is the same write on a caller's
+    connection.
+    """
+    with db_session() as db:
+        return record_abha_on(
+            db,
+            patient_id=patient_id,
+            abha_number=abha_number,
+            abha_address=abha_address,
+            source=source,
+            recorded_by=recorded_by,
+            notes=notes,
+            is_primary=is_primary,
+            department=department,
+        )
+
+
+def record_abha_on(
+    db,
+    *,
+    patient_id: str,
+    abha_number: Optional[str] = None,
+    abha_address: Optional[str] = None,
+    source: str = "counter_keyed",
+    recorded_by: Optional[str] = None,
+    notes: Optional[str] = None,
+    is_primary: bool = True,
+    department: Optional[str] = None,
+) -> dict:
+    """``record_abha`` on the CALLER'S connection, inside the caller's
+    transaction. It never opens, commits or rolls back a session, so the
+    registration desk (opd-4) records the ABHA a new patient presented in the
+    same transaction as the patient itself: either both exist or neither does.
+
+    Identical rules to ``record_abha``, and the same promise: IT IS UNVERIFIED.
+    ALWAYS. There is no parameter here either by which a caller could record a
+    verified identity; the only way to 'verified' is ``record_verification``.
     """
     number_check = validate_abha_number(abha_number) if _clean(abha_number) else None
     address_check = validate_abha_address(abha_address) if _clean(abha_address) else None
@@ -787,86 +826,85 @@ def record_abha(
     number = number_check.normalised if number_check else None
     address = address_check.normalised if address_check else None
 
-    with db_session() as db:
-        _require_patient(db, patient_id)
+    _require_patient(db, patient_id)
 
-        # A live ABHA already attached to a DIFFERENT patient is a merge error and
-        # a PHI hazard: two people would share a national health id inside one
-        # hospital. Refused with the conflict named, so the desk resolves it
-        # rather than the database rejecting it with an index name.
-        for column, value, label in (
-            ("abha_number", number, "ABHA number"),
-            ("abha_address", address, "ABHA address"),
-        ):
-            if not value:
-                continue
-            clash = db.execute(
-                f"SELECT id, patient_id FROM abha_identities "
-                f"WHERE {column} = ? AND status = 'active'",
-                (value,),
-            ).fetchone()
-            if clash is not None:
-                if clash["patient_id"] == patient_id:
-                    raise IdentityError(
-                        f"That {label} is already recorded for this patient "
-                        f"(record #{clash['id']})."
-                    )
-                # Named, so the desk can find the other chart and resolve it.
-                # Only inside the caller's own scope: naming a patient on a ward
-                # the caller cannot see would be a disclosure, so out of scope
-                # the refusal stays anonymous.
-                other = _clash_patient_line(db, clash["patient_id"], department)
-                where = f"{other}; record #{clash['id']}" if other else f"record #{clash['id']}"
-                # The desk has no correct or withdraw control yet, so the
-                # refusal names what a person can do today, not an edit the
-                # screen cannot make.
+    # A live ABHA already attached to a DIFFERENT patient is a merge error and
+    # a PHI hazard: two people would share a national health id inside one
+    # hospital. Refused with the conflict named, so the desk resolves it
+    # rather than the database rejecting it with an index name.
+    for column, value, label in (
+        ("abha_number", number, "ABHA number"),
+        ("abha_address", address, "ABHA address"),
+    ):
+        if not value:
+            continue
+        clash = db.execute(
+            f"SELECT id, patient_id FROM abha_identities "
+            f"WHERE {column} = ? AND status = 'active'",
+            (value,),
+        ).fetchone()
+        if clash is not None:
+            if clash["patient_id"] == patient_id:
                 raise IdentityError(
-                    f"That {label} is already recorded against a different "
-                    f"patient ({where}). One ABHA belongs to one person. Check "
-                    "the number against the patient's ABHA card. If the other "
-                    "record is the mistake, this screen cannot correct or "
-                    "withdraw it yet: contact Orb support."
+                    f"That {label} is already recorded for this patient "
+                    f"(record #{clash['id']})."
                 )
-
-        if is_primary:
-            db.execute(
-                "UPDATE abha_identities SET is_primary = 0, updated_at = ? "
-                "WHERE patient_id = ? AND status = 'active'",
-                (_utc_now_str(), patient_id),
-            )
-
-        try:
-            cur = db.execute(
-                """INSERT INTO abha_identities
-                     (patient_id, abha_number, abha_address, verification_status,
-                      is_primary, status, source, notes, recorded_by,
-                      created_at, updated_at)
-                   VALUES (?,?,?,'unverified',?,'active',?,?,?,?,?)""",
-                (
-                    patient_id, number, address, 1 if is_primary else 0, source,
-                    _clean(notes), recorded_by, _utc_now_str(), _utc_now_str(),
-                ),
-            )
-        except DBIntegrityError as exc:
-            # The partial-unique indexes are the backstop for a race the SELECT
-            # above cannot close. Never catch stdlib sqlite3 here: on the
-            # shipping encrypted DB sqlcipher3 raises its own hierarchy.
+            # Named, so the desk can find the other chart and resolve it.
+            # Only inside the caller's own scope: naming a patient on a ward
+            # the caller cannot see would be a disclosure, so out of scope
+            # the refusal stays anonymous.
+            other = _clash_patient_line(db, clash["patient_id"], department)
+            where = f"{other}; record #{clash['id']}" if other else f"record #{clash['id']}"
+            # The desk has no correct or withdraw control yet, so the
+            # refusal names what a person can do today, not an edit the
+            # screen cannot make.
             raise IdentityError(
-                "That ABHA is already recorded against an active patient record."
-            ) from exc
+                f"That {label} is already recorded against a different "
+                f"patient ({where}). One ABHA belongs to one person. Check "
+                "the number against the patient's ABHA card. If the other "
+                "record is the mistake, this screen cannot correct or "
+                "withdraw it yet: contact Orb support."
+            )
 
-        identity_id = int(cur.lastrowid)
-        _write_event(
-            db,
-            entity_type="abha_identity",
-            entity_id=identity_id,
-            patient_id=patient_id,
-            event_type="recorded",
-            to_status="unverified",
-            detail=f"ABHA recorded ({dict(IDENTITY_SOURCES).get(source, source)})",
-            actor_id=recorded_by,
+    if is_primary:
+        db.execute(
+            "UPDATE abha_identities SET is_primary = 0, updated_at = ? "
+            "WHERE patient_id = ? AND status = 'active'",
+            (_utc_now_str(), patient_id),
         )
-        row = _row(_load_identity(db, identity_id))
+
+    try:
+        cur = db.execute(
+            """INSERT INTO abha_identities
+                 (patient_id, abha_number, abha_address, verification_status,
+                  is_primary, status, source, notes, recorded_by,
+                  created_at, updated_at)
+               VALUES (?,?,?,'unverified',?,'active',?,?,?,?,?)""",
+            (
+                patient_id, number, address, 1 if is_primary else 0, source,
+                _clean(notes), recorded_by, _utc_now_str(), _utc_now_str(),
+            ),
+        )
+    except DBIntegrityError as exc:
+        # The partial-unique indexes are the backstop for a race the SELECT
+        # above cannot close. Never catch stdlib sqlite3 here: on the
+        # shipping encrypted DB sqlcipher3 raises its own hierarchy.
+        raise IdentityError(
+            "That ABHA is already recorded against an active patient record."
+        ) from exc
+
+    identity_id = int(cur.lastrowid)
+    _write_event(
+        db,
+        entity_type="abha_identity",
+        entity_id=identity_id,
+        patient_id=patient_id,
+        event_type="recorded",
+        to_status="unverified",
+        detail=f"ABHA recorded ({dict(IDENTITY_SOURCES).get(source, source)})",
+        actor_id=recorded_by,
+    )
+    row = _row(_load_identity(db, identity_id))
 
     return _decorate_identity(row, verifications=[])
 

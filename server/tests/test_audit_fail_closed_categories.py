@@ -86,9 +86,9 @@ def emitted_categories(root: Path = SERVER_ROOT) -> dict[str, list[str]]:
 # this list may only shrink. A name that is still unemitted after its increment
 # shipped is the dead-guard failure this file exists for, so check it then.
 _PRE_REGISTERED = {
-    "patient_identity": "opd-4 registration_service (W4-A)",
     # patient_movement left this list with its writer: services/adt/core.py
-    # (adt-3, W3-B, 4 October 2026).
+    # (adt-3, W3-B, 4 October 2026). patient_identity left with its writer:
+    # services/registration_service.py (opd-4, W4-A, 4 October 2026).
 }
 
 

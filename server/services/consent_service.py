@@ -697,6 +697,11 @@ _RETENTION_SOURCES: dict[str, list[tuple[str, str, str]]] = {
         # Pharmacy store (grn-15). The NDPS register is NOT here: its live rows
         # are kept by law, see ERASURE_RETAINED_TABLES.
         ("pharmacy_ward_returns", "patient_id", "created_at"),
+        # The medication-order store (migration 61). Deleted with the rest of
+        # the medication record on an erasure (ruling MO-R13 (a)), so neither
+        # table is in ERASURE_RETAINED_TABLES.
+        ("med_orders", "patient_id", "created_at"),
+        ("med_order_events", "patient_id", "created_at"),
     ],
     "imaging": [
         ("lens_analyses", "patient_id", "created_at"),

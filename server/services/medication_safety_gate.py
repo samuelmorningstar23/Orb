@@ -77,6 +77,7 @@ def _audit(
     entry_point: str,
     safety: dict,
     ack_reason: Optional[str] = None,
+    exclude_med_id: Optional[int] = None,
     prescriber: Optional[dict] = None,
 ) -> None:
     """Audit the screen/override on the hash chain. Clinical-safety events are
@@ -110,6 +111,10 @@ def _audit(
                 "dose_check": dose_check,
                 "ack_refused": safety.get("ack_refused"),
                 "override_reason": ack_reason,
+                # Only when the caller excluded the order's own chart row from
+                # the interaction screen, so every other row reads as before.
+                **({"excluded_medication_id": exclude_med_id}
+                   if exclude_med_id is not None else {}),
                 # Only on an override: who cleared it, by id and by name. For an
                 # allergy or dose block this is always a prescriber.
                 **({"override_by": prescriber} if prescriber else {}),
@@ -299,6 +304,7 @@ def enforce_medication_safety(
     dose: Optional[str] = None,
     route: Optional[str] = None,
     actor_role: Optional[str] = None,
+    exclude_med_id: Optional[int] = None,
     order_prescriber_id: Optional[str] = None,
 ) -> dict:
     """Screen ``drug_name`` for ``patient_id`` and enforce the gate.
@@ -313,6 +319,13 @@ def enforce_medication_safety(
     ``actor_role`` is what decides whether a written reason may clear a dose
     block. A caller that omits the role can never clear one.
 
+    ``exclude_med_id`` is the chart row of the drug being screened, when that
+    drug is already on the chart (a medication order being signed, verified or
+    resumed: its ward row is active). Without it the drug is screened against
+    itself, and every anticoagulant raises a false severe alert against its own
+    row. It narrows ONLY the interaction screen: the allergy match and the dose
+    guard are unchanged. None, the default, screens exactly as before.
+
     ``order_prescriber_id`` is passed only by the pharmacy steps on an order
     that already exists. A severe allergy block there clears for a
     non-prescriber only when that prescriber's own override of the same
@@ -320,7 +333,11 @@ def enforce_medication_safety(
     the pharmacist then confirms a prescriber's decision rather than making one.
     """
     try:
-        safety = check_medication_safety(patient_id, drug_name)
+        if exclude_med_id is None:
+            safety = check_medication_safety(patient_id, drug_name)
+        else:
+            safety = check_medication_safety(patient_id, drug_name,
+                                             exclude_med_id=exclude_med_id)
     except Exception as e:
         logger.error("[SafetyGate] screen failed for %s/%s at %s: %s",
                      patient_id, drug_name, entry_point, e)
@@ -336,7 +353,8 @@ def enforce_medication_safety(
             "coverage_note": "Drug-safety screening is unavailable: do not assume this order was checked.",
         }
         _audit(outcome="failure", action_type="drug_safety_screen", patient_id=patient_id,
-               drug_name=drug_name, actor_id=actor_id, entry_point=entry_point, safety=failed)
+               drug_name=drug_name, actor_id=actor_id, entry_point=entry_point, safety=failed,
+               exclude_med_id=exclude_med_id)
         if not interactive:
             raise MedicationSafetyBlocked(failed, "drug-safety screen unavailable")
         raise HTTPException(
@@ -397,13 +415,15 @@ def enforce_medication_safety(
                 safety = {**safety, "ack_refused": ack_refused}
         if not interactive:
             _audit(outcome="denied", action_type=block_verb, patient_id=patient_id,
-                   drug_name=drug_name, actor_id=actor_id, entry_point=entry_point, safety=safety)
+                   drug_name=drug_name, actor_id=actor_id, entry_point=entry_point, safety=safety,
+                   exclude_med_id=exclude_med_id)
             raise MedicationSafetyBlocked(
                 safety, "dose guard block on a non-interactive path" if dose_only
                 else "severe drug-safety alert on a non-interactive path")
         if not acknowledged:
             _audit(outcome="denied", action_type=block_verb, patient_id=patient_id,
-                   drug_name=drug_name, actor_id=actor_id, entry_point=entry_point, safety=safety)
+                   drug_name=drug_name, actor_id=actor_id, entry_point=entry_point, safety=safety,
+                   exclude_med_id=exclude_med_id)
             raise HTTPException(
                 status_code=428,
                 detail={
@@ -424,7 +444,7 @@ def enforce_medication_safety(
             prescriber["confirms_prescriber_override"] = confirms
         _audit(outcome="partial_success", action_type=override_verb, patient_id=patient_id,
                drug_name=drug_name, actor_id=actor_id, entry_point=entry_point, safety=safety,
-               ack_reason=ack_reason, prescriber=prescriber)
+               ack_reason=ack_reason, exclude_med_id=exclude_med_id, prescriber=prescriber)
         override = {"by": actor_id, "by_name": prescriber["display_name"], "reason": ack_reason}
         safety = {**safety, "override": override}
         if dose_blocked:
@@ -432,5 +452,6 @@ def enforce_medication_safety(
         return safety
 
     _audit(outcome="success", action_type="drug_safety_screen", patient_id=patient_id,
-           drug_name=drug_name, actor_id=actor_id, entry_point=entry_point, safety=safety)
+           drug_name=drug_name, actor_id=actor_id, entry_point=entry_point, safety=safety,
+           exclude_med_id=exclude_med_id)
     return safety

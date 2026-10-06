@@ -77,7 +77,13 @@ CREATE TABLE IF NOT EXISTS helix_patient_med_orders (
     -- 'delivered' row means it predates migration 35.
     received_by TEXT REFERENCES users(id),
     received_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Migration 61 (medication-order store): the medication order this supply
+    -- request belongs to; NULL on every row written before the store, and on
+    -- every row while ORB_MED_ORDER_STORE is off. No CHECK and no REFERENCES
+    -- (med_orders is never an FK parent). Its index is created by migration 61
+    -- and by the column-guarded step in init_helix_db, never in this script.
+    med_order_id TEXT
 );
 
 -- Helix: Pharmacy Verifications
@@ -154,6 +160,24 @@ def init_helix_db():
         _migrate_helix_orders(conn)
         _migrate_stock_movements(conn)
         conn.executescript(HELIX_SCHEMA)
+        _index_med_order_link(conn)
+
+
+def _index_med_order_link(conn):
+    """The supply-to-order link's index (migration 61), created only when the
+    column is there.
+
+    Deliberately NOT a line of HELIX_SCHEMA: that script runs with
+    executescript, and on a legacy helix_patient_med_orders that predates the
+    column a CREATE INDEX naming it would abort every statement after it. The
+    index definition is migration 61's own, so the two can never disagree."""
+    import migrations  # noqa: F401  (collects migrations_his before a file is imported)
+    from migrations_his.m0061_med_order_store import HELIX_MED_ORDER_INDEX, create_index_sql
+
+    name, table, columns, where, unique = HELIX_MED_ORDER_INDEX
+    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if set(columns) <= cols:
+        conn.execute(create_index_sql(name, table, columns, where, unique))
 
 
 def _migrate_helix_orders(conn):

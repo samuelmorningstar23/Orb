@@ -14,6 +14,9 @@ interface ModelStatus {
 
 interface ModelsHealth {
   ollama_reachable: boolean
+  /** False when the models are switched off on this computer
+   *  (ORB_MODELS_ENABLED, or the Orb Ward Record). */
+  models_enabled?: boolean
   models: ModelStatus[]
 }
 
@@ -110,6 +113,9 @@ export default function AiStatusChip() {
   }
 
   if (!health) return null
+  // Models switched off on this computer: there is no AI to report on, so
+  // the header carries no chip (not an "engine unreachable" warning).
+  if (health.models_enabled === false) return null
 
   const allWarm = health.ollama_reachable && health.models.every(m => m.warm)
   const statusText = sageStatusText(health)

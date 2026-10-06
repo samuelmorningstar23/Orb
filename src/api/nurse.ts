@@ -114,10 +114,17 @@ export interface NursePatientCard {
   last_obs_source?: string | null;
   /** The vitals row behind last_obs_at, for "Entered in error". */
   last_obs_vitals_id?: number | null;
-  obs_interval_minutes: number;
-  obs_band: string;
-  obs_response: string;
+  /** Null while scoring is switched off and the ward has no interval set. */
+  obs_interval_minutes: number | null;
+  /** Null while scoring is switched off (the Orb Ward Record): no band and no
+   *  response line, the due time is the ward's fixed interval. */
+  obs_band: string | null;
+  obs_response: string | null;
   obs_due_at: string | null;
+  /** 'news2', or 'ward_interval' while scoring is switched off. */
+  obs_due_source?: 'news2' | 'ward_interval' | null;
+  /** Set while scoring is off and the ward has no interval: what to do. */
+  obs_due_note?: string | null;
   obs_minutes_until_due: number | null;
   obs_overdue: boolean;
   obs_due_soon: boolean;
@@ -131,11 +138,14 @@ export interface NursePatientCard {
 export interface ShiftBoard {
   generated_at: string;
   department: string | null;
+  /** False while scoring is switched off on this computer (the Ward Record). */
+  scoring_enabled?: boolean;
   patients: NursePatientCard[];
   totals: {
     patients: number;
-    critical: number;
-    elevated: number;
+    /** Null while scoring is switched off: band counts are a score. */
+    critical: number | null;
+    elevated: number | null;
     obs_overdue: number;
     meds_overdue: number;
     meds_allergy_blocked?: number;

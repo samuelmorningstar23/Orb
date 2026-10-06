@@ -7,8 +7,10 @@ both (no session is 401, and every route is 404 while the module is off).
 Built in adt-8a (W3-B):
   POST /admissions/{admission_id}/end       discharge.generate plus scope, typed MRN read-back (confirm_mrn)
 
-Still to come (adt-8b, W4-B):
-  POST /admissions/{admission_id}/reopen    discharge.generate plus scope, reason and confirm_mrn
+Built in adt-8b (W4-B):
+  POST /admissions/{admission_id}/reopen    discharge.generate plus scope through the ENDED
+                                            admission's own department, reason and confirm_mrn;
+                                            only an end with no discharge summary
 
 No ADT permission ends a stay. Death, LAMA and DAMA stay doctor-only (ruling
 ADT-S3, strictest option): discharge.generate is held by the doctor alone, so
@@ -32,7 +34,7 @@ from permissions import DISCHARGE_GENERATE, department_scope, patient_in_scope, 
 from database import db_session
 from services.adt import end_stay as adt_end
 from services.adt.core import AdtError, http_detail
-from services.audit_service import log_audit_event
+from services.audit_service import AuditWriteError, log_audit_event
 
 router = APIRouter()
 
@@ -122,3 +124,80 @@ def end_admission(
         )
     except AdtError as err:
         raise HTTPException(status_code=err.http_status, detail=http_detail(err))
+
+
+class ReopenIn(BaseModel):
+    #: Why the end was recorded in error. Required; it is part of the record.
+    reason: str
+    #: The patient's MRN, typed back from the wristband. Refused on mismatch.
+    confirm_mrn: str
+
+
+def _scoped_ended_admission(admission_id: str, user: dict, request: Request) -> dict:
+    """The admission, or 404 when it does not exist or its OWN department is
+    not the caller's. Scope follows the ended admission (design adt-8b), not
+    whichever stay is the patient's latest, so a doctor can reopen only a
+    stay their department treated. The out-of-scope attempt is audited
+    before the 404."""
+    found = adt_end.patient_for_admission(admission_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Admission not found")
+    dept = department_scope(user)
+    if dept is None or (found.get("department") or "") == dept:
+        return found
+    log_audit_event(
+        correlation_id=str(uuid.uuid4()),
+        event_category="authorization",
+        action_type="patient_scope_denied",
+        outcome="denied",
+        summary_message=(f"Admission {admission_id} belongs to {found.get('department')}, "
+                         f"outside the caller's department ({dept})"),
+        actor_user_id=user.get("id"),
+        actor_role=user.get("role"),
+        patient_id=found["patient_id"],
+        target_type="admission",
+        target_id=str(admission_id),
+        request_path=request.url.path,
+        http_method=request.method,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        metadata={"department": dept, "scope_source": "ended_admission"},
+    )
+    raise HTTPException(status_code=404, detail="Admission not found")
+
+
+@router.post("/admissions/{admission_id}/reopen")
+def reopen_admission(
+    admission_id: str,
+    body: ReopenIn,
+    request: Request,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    user: dict = Depends(require_permission(DISCHARGE_GENERATE)),
+):
+    """Reopen a stay whose end was recorded in error. The MRN must be typed
+    back (409 read_back_mismatch writes nothing) and a reason given. Only an
+    end with no discharge summary is reopened (409 summary_on_file
+    otherwise). Restores the stay, takes its bed back when free (else the
+    patient awaits a bed), writes a correction movement pointing at the
+    discharge movement, voids the NABH disposition, restores a portal login
+    the end deactivated, lists the bundles the end cancelled without
+    restoring them, and audits clinical_access 'stay_reopened', in one
+    transaction."""
+    _scoped_ended_admission(admission_id, user, request)
+    try:
+        return adt_end.reopen_stay(
+            admission_id,
+            actor=user,
+            confirm_mrn=body.confirm_mrn,
+            reason=body.reason,
+            idempotency_key=idempotency_key,
+            request_meta=_meta(request),
+        )
+    except AdtError as err:
+        raise HTTPException(status_code=err.http_status, detail=http_detail(err))
+    except AuditWriteError:
+        raise HTTPException(status_code=503, detail={
+            "error": "audit_unavailable",
+            "message": "The record of this correction could not be written, so nothing was "
+                       "changed. Try again in a moment.",
+        })

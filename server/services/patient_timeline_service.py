@@ -155,6 +155,11 @@ class _Source:
     # ts_col. A stream with a shared reader that owns its ordering (lab
     # results: services/lab_observations.py) passes that reader's.
     order_sql: str = ""
+    # A config feature id (config.feature_enabled) the stream belongs to.
+    # Blank means always on. A stream whose feature is off is left out of the
+    # rail AND the count, exactly as if its table did not exist, so a site
+    # that never switches the feature on sees the timeline it always had.
+    feature: str = ""
 
     @property
     def base_table(self) -> str:
@@ -378,6 +383,53 @@ def _r_discharge(r: dict) -> dict:
     }
 
 
+_OPD_VISIT_STATUS_WORDS = {
+    "waiting": "waiting",
+    "in_consultation": "in consultation",
+    "completed": "seen",
+}
+
+
+def _r_opd_visit(r: dict) -> dict:
+    """An outpatient visit (opd-10). Which clinic, which doctor, and how it
+    stands; the desk's free-text complaint is not repeated here."""
+    bits = [b for b in (
+        r.get("doctor_name"),
+        _OPD_VISIT_STATUS_WORDS.get((r.get("visit_status") or "").lower()),
+    ) if b]
+    return {
+        "title": f"Outpatient visit: {r.get('department') or 'clinic'}",
+        "detail": " · ".join(bits),
+        "severity": "info",
+        "badge": "OPD",
+    }
+
+
+def _r_opd_consultation(r: dict) -> dict:
+    """A signed outpatient consultation note (opd-10): its diagnoses and plan.
+    The vitals typed into it are not shown on the rail, and nothing about
+    them is scored or banded."""
+    diagnoses: list[str] = []
+    raw = r.get("diagnoses_json")
+    if raw:
+        try:
+            loaded = json.loads(raw)
+            if isinstance(loaded, list):
+                diagnoses = [str(d.get("text")) for d in loaded
+                             if isinstance(d, dict) and d.get("text")]
+        except (ValueError, TypeError):
+            diagnoses = []
+    detail = "; ".join(diagnoses)
+    if r.get("plan"):
+        detail = f"{detail} · Plan: {r['plan']}" if detail else f"Plan: {r['plan']}"
+    return {
+        "title": f"Outpatient note signed: {r.get('department') or 'clinic'}",
+        "detail": _clip(detail),
+        "severity": "info",
+        "badge": "OPD",
+    }
+
+
 SOURCES: tuple[_Source, ...] = (
     _Source(
         kind="admission",
@@ -542,6 +594,34 @@ SOURCES: tuple[_Source, ...] = (
         select_cols=("ds.summary AS summary", "u.name AS actor_name"),
         render=_r_discharge,
     ),
+    # ── Outpatients (opd-10), only while the 'opd' feature is on ──
+    # The visit: registered at the desk, cancelled visits left out.
+    _Source(
+        kind="opd_visit",
+        from_sql="opd_visits ov LEFT JOIN users u ON u.id = ov.registered_by",
+        patient_col="ov.patient_id",
+        ts_col="ov.registered_at",
+        id_col="ov.id",
+        select_cols=("ov.department AS department", "ov.doctor_name AS doctor_name",
+                     "ov.status AS visit_status", "u.name AS actor_name"),
+        where_sql="ov.status != 'cancelled'",
+        render=_r_opd_visit,
+        feature="opd",
+    ),
+    # The signed consultation note: diagnoses and plan, never its vitals.
+    # A draft is not a record yet and is not on the rail.
+    _Source(
+        kind="opd_consultation",
+        from_sql="opd_consultations oc LEFT JOIN users u ON u.id = oc.signed_by",
+        patient_col="oc.patient_id",
+        ts_col="oc.signed_at",
+        id_col="oc.id",
+        select_cols=("oc.department AS department", "oc.diagnoses_json AS diagnoses_json",
+                     "oc.plan AS plan", "u.name AS actor_name"),
+        where_sql="oc.status = 'signed'",
+        render=_r_opd_consultation,
+        feature="opd",
+    ),
 )
 
 KINDS: tuple[str, ...] = tuple(s.kind for s in SOURCES)
@@ -578,7 +658,16 @@ def available_sources(db, sources: Optional[tuple[_Source, ...]] = None) -> tupl
         ).fetchall()
     }
     return tuple(s for s in (sources if sources is not None else SOURCES)
-                 if s.base_table in names)
+                 if s.base_table in names and _feature_on(s.feature))
+
+
+def _feature_on(feature: str) -> bool:
+    """A stream with no feature is always on; otherwise ask config at call
+    time (the outpatient streams follow the 'opd' feature)."""
+    if not feature:
+        return True
+    import config
+    return config.feature_enabled(feature)
 
 
 def _count_union_sql(patient_filter: str,

@@ -142,7 +142,7 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 **On screen:** these four constants are what the clinician sees as the buttons on each order card in the Orders tab, the `→ active` / `→ in progress` / `→ completed` forward button, the `+ Result` button (only for `lab`/`imaging`), and the `Cancel` button (hidden once the order is terminal). The card is rendered at `src/components/orders/OrdersPanel.tsx:306-377`.
 **Gotchas:** The DB `CHECK (status IN (...))` is a *second* source of truth for the allowed status *values* (not transitions). The two can drift; keep them aligned.
 
-#### `_now`: `server/services/orders_service.py:67`
+#### `_now`: `server/services/orders_service.py:97`
 **Signature:** `() -> str`
 **Does:** Returns the current UTC time as an ISO-8601 string.
 **How it works:** `datetime.now(timezone.utc).isoformat()`.
@@ -151,7 +151,7 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 **Talks to:** used by `_record_event`, `create_order`, `transition_order`, `add_result`.
 **Gotchas:** These Python-side ISO strings are written into `created_at`/`updated_at`/`result_at`, but the DB columns also have `DEFAULT CURRENT_TIMESTAMP` (`server/database.py:819-820`) which SQLite renders as `"YYYY-MM-DD HH:MM:SS"` (space, no `+00:00`). So `order_events.created_at` (always set by `_now`) and any DB-defaulted column can differ in *format*. Not a bug today, but do not assume a single timestamp format across all order columns.
 
-#### `_is_legal_transition`: `server/services/orders_service.py:71`
+#### `_is_legal_transition`: `server/services/orders_service.py:116`
 **Signature:** `(from_status, to_status) -> bool`
 **Does:** True iff `to_status` is in the allowed-exit list for `from_status`.
 **How it works:** `to_status in LEGAL_TRANSITIONS.get(from_status, [])`, unknown `from_status` yields `[]`, so it safely returns False.
@@ -159,7 +159,7 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 **Talks to:** `LEGAL_TRANSITIONS`.
 **Gotchas:** none noteworthy.
 
-#### `_record_event`: `server/services/orders_service.py:75`
+#### `_record_event`: `server/services/orders_service.py:120`
 **Signature:** `(conn, order_id, prior_status, new_status, actor_id, reason) -> None`
 **Does:** Inserts one audit row into `order_events`.
 **How it works:** Parameterised `INSERT` (`?` placeholders, no string interpolation, so no SQL injection) with `_now()` as the timestamp.
@@ -168,7 +168,7 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 **Talks to:** called by `create_order` (with `prior_status=None`), `transition_order`, `add_result`. Reuses the *caller's* `conn` so the event and the state change commit atomically in one `db_session()`.
 **Gotchas:** It takes the open `conn` rather than opening its own, critical, because if it opened a second connection the event could commit while the status update rolled back. Do not "refactor" it to open its own session.
 
-#### `create_order`: `server/services/orders_service.py:103`
+#### `create_order`: `server/services/orders_service.py:148`
 **Signature:** `(patient_id, order_type, description, *, code=None, code_system=None, priority="routine", ordered_by=None, source="clinician", detail=None, status="draft", pre_persist_gate=None) -> dict`
 **Does:** Validates and inserts a new order plus its first `order_events` row, returning the stored row as a dict.
 **How it works:**
@@ -184,40 +184,42 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 **Change guide:** *Worked example, add a `medication` free-text option:* today `medication` is not in `CODELESS_ORDER_TYPES`, so a med order always needs a code. To allow free-text meds, add `"medication"` to `CODELESS_ORDER_TYPES` (`:46`); knock-on: the panel's `CODELESS` set (`src/components/orders/OrdersPanel.tsx:65`) must match or the form will still demand a code; watch out that you have now removed the safety guarantee that every med is coded. *Worked example, default new orders to `active`:* pass `status="active"` from the route, or change the default at `:88`; knock-on: the `order_events` "order created" row will record `new_status="active"` and the panel's first forward button will target `in_progress`.
 **Gotchas:** `code_system` is stored uppercased (`:146`) but `code` is stored verbatim, LOINC codes like `2524-7` are case-neutral, but if you ever add a case-sensitive local code system, lookups will be case-sensitive on `code`. The `ValueError`s are caught by the route and turned into HTTP 400; nothing here logs, so a rejected create is silent server-side.
 
-#### `transition_order`: `server/services/orders_service.py:186`
+#### `transition_order`: `server/services/orders_service.py:231`
 **Signature:** `(order_id, to_status, actor_id=None, detail=None) -> dict`
 **Does:** Performs one guarded, idempotent status change and records the event.
 **How it works:**
-1. Reject an unknown `to_status` not in `LEGAL_TRANSITIONS` (`:165-166`).
-2. Load the order; `ValueError` if missing (`:169-171`).
-3. **Idempotency:** if already at `to_status`, return the row unchanged with no event (`:176-177`).
-4. **Legality:** reject if `_is_legal_transition(current, to_status)` is False, with a message listing the allowed exits (`:180-184`).
-5. **Resultable guard:** reject `to_status == "resulted"` for non-lab/imaging types (`:187-191`).
-6. `UPDATE` status + `updated_at`, `_record_event`, re-select, return (`:193-199`).
+1. Reject an unknown `to_status` not in `LEGAL_TRANSITIONS` (`:245-246`).
+2. Open an `IMMEDIATE` transaction (`db_session(immediate=True)`, `:248`) and load the order; `ValueError` if missing (`:249-251`).
+3. **Laboratory guard (lis-7):** any move other than to `active` on an order the laboratory manages raises `OrderManagedByLab` (`:253-255`), which the route maps to 409. "Managed" means the order has `lab_order_items` rows (`is_lab_managed`, `:101`), keyed on the order and never on `ORB_LAB`. The guard runs before the idempotency rule, so a stale tab replaying the current status is refused too.
+4. **Idempotency:** if already at `to_status`, return the row unchanged with no event (`:260-261`).
+5. **Legality:** reject if `_is_legal_transition(current, to_status)` is False, with a message listing the allowed exits (`:264-268`).
+6. **Resultable guard:** reject `to_status == "resulted"` for non-lab/imaging types (`:271-275`).
+7. `UPDATE` status + `updated_at`, `_record_event`, re-select (`:277-282`). After the commit, a move to `active` hands a lab order to the laboratory through `_after_lab_activation` (`:284-285`), which does nothing unless `ORB_LAB` is on.
 **Why it exists:** The one legal way to move an order forward or cancel it. Idempotency means a double-clicked button or a retried request is harmless.
 **On screen:** this is the `→ active` / `→ in progress` / `→ completed` button and the `Cancel` button on an order card in the Orders tab. Pressing one calls the panel's `transition()` (`src/components/orders/OrdersPanel.tsx:144`), which re-fetches the list, so the status chip on the card changes colour a beat later.
 **Data in/out:** in = ids + target status; out = updated order dict. Raises `ValueError` on unknown order / illegal transition / bad target.
 **Talks to:** `db_session`, `_is_legal_transition`, `_record_event`. Called by `orders_routes.transition_order` and the panel's `transition()` (`src/components/orders/OrdersPanel.tsx:144`).
 **Change guide:** To make cancellation require a reason, thread `detail` through as mandatory here and in `TransitionRequest` (`server/routes/orders_routes.py:38`); knock-on: the panel already collects an optional reason in the inline cancel-confirm row (`src/components/orders/OrdersPanel.tsx:339-365`) and passes it as `detail` via `confirmCancel` (`:162-167`), but it sends `undefined` when the field is left blank, so a mandatory `detail` would start rejecting blank-reason cancels.
-**Gotchas:** The whole read-check-write sequence runs inside one `db_session()` (`:168`), but there is no `SELECT … FOR UPDATE` (SQLite doesn't support it), two concurrent transitions on the same order could interleave. In practice SQLite's connection-level locking serialises writers, but do not assume this generalises if the store is swapped.
+**Gotchas:** The whole read-check-write sequence runs inside one `IMMEDIATE` transaction (`:248`), so the laboratory-guard read and the write cannot interleave with the laboratory taking the order in. That makes `transition_order` an outermost session: never call it from inside another write transaction. The laboratory moves its own orders with `transition_in_conn` (`:370`), which takes the caller's transaction and is called only from `lab_order_service` (pinned by `server/tests/test_lab_order_guard.py`).
 
-#### `add_result`: `server/services/orders_service.py:237`
+#### `add_result`: `server/services/orders_service.py:293`
 **Signature:** `(order_id, result_text, actor_id=None) -> dict`
 **Does:** Attaches result text to a lab/imaging order and moves it to `resulted`. A result is written **once**.
 **How it works:**
-1. Require non-blank `result_text` (`:219-220`).
-2. Open an `IMMEDIATE` transaction (`db_session(immediate=True)`, `:225`), so the "already resulted?" read and the write are one transaction and two concurrent results cannot both see `in_progress`. Load the order; `ValueError` if missing (`:226-228`).
-3. Reject non-resultable order types (`:230-234`).
-4. If the order is already `resulted`: the same text again is an idempotent no-op returning the order untouched (an offline replay); different text raises `OrderAlreadyResulted` (`:49`, `:236-243`), "A result is never overwritten; chart a correction as a clinical note."
-5. Otherwise, if the current status can't legally reach `resulted`, reject ("must be 'active' or 'in_progress' first") (`:244-248`).
-6. `UPDATE result_text, result_at=now, status='resulted', updated_at` (`:250-254`) and write the `order_events` row (`:255`).
-**Why it exists:** Results are a specialised transition that also carries a payload; bundling the payload write and the status move keeps them atomic. It used to accept an already-resulted order and overwrite the value with no event, so a stale tab could replace a lab value a clinician had already acted on (docstring at `:209-217`).
+1. Require non-blank `result_text` (`:309-310`).
+2. Open an `IMMEDIATE` transaction (`db_session(immediate=True)`, `:315`), so the "already resulted?" read and the write are one transaction and two concurrent results cannot both see `in_progress`. Load the order; `ValueError` if missing (`:316-318`).
+3. **Laboratory guard (lis-7):** an order the laboratory manages refuses any free-text result with `OrderManagedByLab` (`:320-322`), whatever the text; its results arrive from the laboratory.
+4. Reject non-resultable order types (`:324-328`).
+5. If the order is already `resulted`: the same text again is an idempotent no-op returning the order untouched (an offline replay); different text raises `OrderAlreadyResulted` (`:73`, `:330-337`), "A result is never overwritten; chart a correction as a clinical note."
+6. Otherwise, if the current status can't legally reach `resulted`, reject ("must be 'active' or 'in_progress' first") (`:338-342`).
+7. `UPDATE result_text, result_at=now, status='resulted', updated_at` (`:344-348`) and write the `order_events` row (`:349`).
+**Why it exists:** Results are a specialised transition that also carries a payload; bundling the payload write and the status move keeps them atomic. It used to accept an already-resulted order and overwrite the value with no event, so a stale tab could replace a lab value a clinician had already acted on (docstring at `:294-307`).
 **On screen:** the `+ Result` button on a lab/imaging order card. It opens an inline result box on the card (`openResult` / `saveResult`, `src/components/orders/OrdersPanel.tsx:226`, `:232`); on success the card gains a `Result: …` line (`:419-420`) and its chip turns to `resulted`. On failure the typed text stays in the box and the reason shows above the list.
 **Data in/out:** in = order id + text; out = updated order dict with `result_text`/`result_at` set.
-**Talks to:** `db_session`, `_is_legal_transition`, `_record_event`. Called by `orders_routes.add_result`, which maps `OrderAlreadyResulted` to **409**.
+**Talks to:** `db_session`, `_is_legal_transition`, `_record_event`. Called by `orders_routes.add_result`, which maps `OrderAlreadyResulted` and `OrderManagedByLab` to **409**.
 **Gotchas:** `OrderAlreadyResulted` subclasses `ValueError`, so a caller that only catches `ValueError` still refuses (with 400 instead of 409). Orb has no amended-result workflow yet.
 
-#### `list_orders`: `server/services/orders_service.py:295`
+#### `list_orders`: `server/services/orders_service.py:436`
 **Signature:** `(patient_id, status=None) -> list[dict]`
 **Does:** Returns a patient's orders newest-first, optionally filtered by status.
 **How it works:** Two parameterised `SELECT … ORDER BY created_at DESC` branches (with/without a `status` filter).
@@ -226,13 +228,13 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 **Talks to:** `db_session`. Called by `orders_routes.list_patient_orders`.
 **Gotchas:** Ordering by `created_at DESC` relies on those timestamps being comparable strings; ISO-8601 UTC sorts lexicographically correctly, so this is fine as long as the format stays consistent.
 
-#### `get_order`: `server/services/orders_service.py:311`
+#### `get_order`: `server/services/orders_service.py:452`
 **Signature:** `(order_id) -> dict | None`
 **Does:** Fetch one order or `None`.
 **Talks to:** `db_session`. Called by `get_order`, `get_order_events` routes (as an existence check).
 **Gotchas:** none noteworthy.
 
-#### `get_order_events`: `server/services/orders_service.py:317`
+#### `get_order_events`: `server/services/orders_service.py:458`
 **Signature:** `(order_id) -> list[dict]`
 **Does:** Returns the order's audit trail oldest-first (`ORDER BY id ASC`).
 **Why it exists:** Powers the events route and is read by guide 30-flight-recorder for the audit scrub.
@@ -289,25 +291,25 @@ This file is bigger than this chapter's scope. Routes `:95-205` are the **order 
 **On screen:** the order list in the Orders tab. The panel calls it from `loadOrders()` (`src/components/orders/OrdersPanel.tsx:158`) on mount and after every action.
 **Talks to:** `orders_service.list_orders`.
 
-#### `get_order` (route): `server/routes/orders_routes.py:403` (decorator) / `:404` (`def`)
+#### `get_order` (route): `server/routes/orders_routes.py:414` (decorator) / `:415` (`def`)
 **Signature:** `GET /api/orders/{order_id}` (perm `ORDER_READ`) → `{order}` or 404.
 **How it works:** `_order_in_scope_or_404` (`:434`) loads the order and answers 404 "Order not found" both when it does not exist and when its patient sits outside the caller's ward (a 403 would confirm the order exists); then `log_phi_read` writes an `order_viewed` audit row (`:412-416`).
 **Talks to:** `orders_service.get_order`, `department_scope`, `patient_in_scope`, `log_phi_read`.
 **Gotchas:** The order id is a surrogate that hides the patient from the path guard, which is why the scope is resolved through the order. No UI caller in scope; it exists for direct API use.
 
-#### `get_order_events` (route): `server/routes/orders_routes.py:420` (decorator) / `:421` (`def`)
+#### `get_order_events` (route): `server/routes/orders_routes.py:431` (decorator) / `:432` (`def`)
 **Signature:** `GET /api/orders/{order_id}/events` (perm `ORDER_READ`) → `{events:[…]}` or 404.
 **How it works:** Same `_order_in_scope_or_404` check (`:423`), then returns the events and audits an `order_events_viewed` read with the event count (`:425-430`).
 **Talks to:** `orders_service.get_order`, `get_order_events`, `log_phi_read`.
 
-#### `transition_order` (route): `server/routes/orders_routes.py:478` (decorator) / `:479` (`def`)
+#### `transition_order` (route): `server/routes/orders_routes.py:499` (decorator) / `:500` (`def`)
 **Signature:** `POST /api/orders/{order_id}/transition` (perm `ORDER_WRITE`) → `{status:"success", order}`
 **Does:** Wrapper: ward-scopes the order (`_scope_by_order`, `:451`, `:481`), injects `actor_id=user["id"]`, calls the service, translates `ValueError`→400.
 **On screen:** the `→ next` and `Cancel`/`Confirm cancel` buttons on an order card.
 **Talks to:** `orders_service.transition_order`. Called by the panel's `transition()` (`src/components/orders/OrdersPanel.tsx:200`).
 **Gotchas:** `_scope_by_order` is deliberately silent for an unknown order id, so that case keeps the service's existing 400; an out-of-ward order is a 404 "Order not found".
 
-#### `add_result` (route): `server/routes/orders_routes.py:494` (decorator) / `:495` (`def`)
+#### `add_result` (route): `server/routes/orders_routes.py:519` (decorator) / `:520` (`def`)
 **Signature:** `POST /api/orders/{order_id}/result` (perm `ORDER_WRITE`) → `{status:"success", order}`
 **Does:** Wrapper over `orders_service.add_result` with the same ward scope (`:497`), actor injection and error translation: `OrderAlreadyResulted` → **409** (`:505-508`; the request is well-formed, the order's state refuses it), any other `ValueError` → 400.
 **On screen:** the `+ Result` button on a lab/imaging order card.
@@ -332,14 +334,14 @@ Terms: a **React hook** is a function starting with `use…` that lets a compone
 **On screen:** `CHIP_CLASS` is the coloured status pill on the right of every order card, slate `draft`, blue `active`, amber `in progress`, green `completed`, purple `resulted`, red `cancelled`.
 **Gotchas:** If the backend adds a status but `CHIP_CLASS` lacks it, the chip renders with no colour class (`|| ''` fallback at `:452`), i.e. an unstyled pill, a silent visual bug, not a crash.
 
-#### `nextStatus`: `src/components/orders/OrdersPanel.tsx:91`
+#### `nextStatus`: `src/components/orders/OrdersPanel.tsx:104`
 **Signature:** `(order) -> string | null`
 **Does:** Returns the single "forward" status for the `→` button (draft→active→in_progress→completed), else `null`.
 **How it works:** A `switch` on `order.status`; `resulted`/`cancelled`/`completed` fall through to `null` (no forward button).
 **Why it exists:** Encodes the *happy-path* chain only; branching to `resulted`/`cancelled` is handled by separate buttons.
 **Gotchas:** This is a **third** encoding of the transition graph (after `LEGAL_TRANSITIONS` and the DB `CHECK`). It intentionally omits `active→resulted` because that path is the `+ Result` button's job, not the forward button's.
 
-#### `OrdersPanel` (default export): `src/components/orders/OrdersPanel.tsx:100`
+#### `OrdersPanel` (default export): `src/components/orders/OrdersPanel.tsx:245`
 **Signature:** `({ patientId?: string }) -> JSX`
 **Does:** The whole panel, surface switch, patient selection, order list, action buttons, inline result entry, printing, and toggling the create form.
 **How it works:**
@@ -357,7 +359,7 @@ Terms: a **React hook** is a function starting with `use…` that lets a compone
 **Breaks if:** you collapse the load-failure branch back into the empty state. The copy is explicit that a display failure is not an empty chart, merging them invites a clinician to re-enter orders that already exist.
 **Gotchas:** There is **no optimistic update**, every action round-trips then refetches, so the UI is a beat behind on slow networks. Result entry used to be a browser `prompt()` that named no patient and lost the text on any slip, and errors used `alert()`; both are gone (the comments at `:120-128`).
 
-#### `CreateOrderForm`: `src/components/orders/OrdersPanel.tsx:542`
+#### `CreateOrderForm`: `src/components/orders/OrdersPanel.tsx:718`
 **Signature:** `({ patientId, patient, onCreated, onCancel }) -> JSX`
 **Does:** The inline create form with live terminology validation and the medication drug-safety modal.
 **How it works:**

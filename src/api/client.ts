@@ -965,9 +965,13 @@ export interface ChartLabObservation {
 /** GET /vigil/patients/{id}: the whole chart in one read. */
 export interface PatientDetail {
   patient: ChartPatientRecord;
-  risk: PatientRisk;
+  /** Null while scoring is switched off on this computer (ORB_SCORING_ENABLED,
+   *  the Orb Ward Record); `risk_off_reason` then says why, in words. */
+  risk: PatientRisk | null;
+  risk_off_reason?: string | null;
   trend: VitalsTrend;
-  obs_schedule: ObsSchedule;
+  /** Null while scoring is switched off: no schedule from a score. */
+  obs_schedule: ObsSchedule | null;
   lab_observations: ChartLabObservation[];
   problems: { problem: string; icd10_code: string | null; onset_date: string | null; source: string }[];
   site_name: string | null;
@@ -2421,7 +2425,10 @@ export async function getAdministrations(patientId: string): Promise<Administrat
 export type StoryType =
   | 'admission' | 'alert' | 'vitals' | 'note' | 'scribe' | 'imaging'
   | 'medication' | 'order' | 'administration' | 'discharge'
-  | 'observation' | 'bundle' | 'problem' | 'allergy' | 'order_event';
+  | 'observation' | 'bundle' | 'problem' | 'allergy' | 'order_event'
+  /* Outpatient visits and signed outpatient notes (opd-10), on the story only
+     while the server's 'opd' feature is on. */
+  | 'opd_visit' | 'opd_consultation';
 
 export interface StoryEvent {
   timestamp: string | null;

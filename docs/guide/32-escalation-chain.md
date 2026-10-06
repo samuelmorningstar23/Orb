@@ -229,7 +229,7 @@ The module docstring (`:1-88`) is required reading and is not repeated here in f
 **Why it exists:** `clinical_access` is one of the **fail-closed** audit categories (guide 05), so an escalation state change that cannot be audited does not commit. Same rule the eMAR and the observation write already hold.
 **Breaks if you change it:** wrapping the call in `try/except` turns a fail-closed audit into a best-effort one, and a clinical act with no trail is not a clinical act anyone can defend afterwards.
 
-#### `evaluate_observation`: `escalation_service.py:505`
+#### `evaluate_observation`: `escalation_service.py:512`
 **Signature:** `(patient_id, news2, *, vitals_id=None, source=None, actor_id=None, observed_at=None, now=None, notify=None) -> dict | None`
 **Does:** The entry point for any vitals path. Given the dict `compute_news2` returned, it raises a new chain, extends an existing one, or does nothing. Returns the chain or `None`.
 **On screen:** nothing today (no component calls the escalation API). Its **indirect** on-screen effect is real: the Relay case room gets a `🔺 ESCALATION [TIER n]` message, which appears in the Messages panel (`src/pages/panels/RelayPanel.tsx`) like any other message in that channel.
@@ -267,7 +267,7 @@ On the last tier (`climbs=False`, no timeout) the fourth line reads "This alert 
 **Breaks if you change it:** call it inside the `db_session()` in `evaluate_observation` and every raise deadlocks against its own write lock. Let it raise and a Relay outage starts throwing away escalations.
 **Gotchas:** **this is not a page.** Orb has no bleep, pager, phone or push channel. If nobody has Orb open, the escalation is visible but not intrusive. A patient with no case room logs an ERROR (`:795-801`) and the escalation exists on the board only, which is why there needing to *be* a board matters.
 
-#### `advance_due`: `escalation_service.py:872`
+#### `advance_due`: `escalation_service.py:884`
 **Signature:** `(*, now=None, limit=500) -> list[dict]`
 **Does:** Advances every open chain whose current tier has timed out. Returns the chains that moved.
 **On screen:** nothing today. It is called on every `GET /api/vigil/escalations` (`vigil_routes.py:1042`), so once a board exists, simply looking at it ticks the clock. Each advance also posts a fresh Relay message.
@@ -280,19 +280,19 @@ Notifications are sent after the session closes (`:878`).
 **Breaks if you change it:** collapse phases 1–3 into a single loop that writes as it walks, and a chain acknowledged mid-sweep gets a permanent, false "escalated past you" entry in its append-only history. Add a department filter and unattended wards stop escalating.
 **Gotchas:** acknowledged chains are skipped entirely, acknowledgement is precisely the signal that a human has it.
 
-#### `_load_policy`: `escalation_service.py:982`
+#### `_load_policy`: `escalation_service.py:994`
 **Signature:** `(row) -> list[dict]`
 **Does:** Returns the ladder a given chain climbs, preferring the `policy_json` snapshot taken when it was raised.
 **On screen:** nothing.
 **Why it exists:** A site that edits its timings mid-shift must not retroactively change why an old escalation advanced when it did.
 **Breaks if you change it:** always using the live policy makes historical `tier_advanced` timings unexplainable after any config edit.
 
-#### `EscalationNotFound`: `escalation_service.py:1005`
+#### `EscalationNotFound`: `escalation_service.py:1017`
 **Signature:** `class EscalationNotFound(LookupError)`
 **Does:** Raised for an unknown chain id. Routes turn it into 404, never 403.
 **Breaks if you change it:** a 403 confirms the escalation exists, which is itself a disclosure about a patient the caller may not be entitled to know about.
 
-#### `acknowledge`: `escalation_service.py:1009`
+#### `acknowledge`: `escalation_service.py:1021`
 **Signature:** `(escalation_id, user, *, note=None, now=None) -> dict`
 **Does:** Records "I have seen this and I am dealing with it", who and when, and stops the tier ladder.
 **On screen:** would drive the acknowledged state on a board (`acknowledged_by_name` is joined in `list_escalations`, `:1085`). No component calls it today.
@@ -300,14 +300,14 @@ Notifications are sent after the session closes (`:878`).
 **Why it exists:** Acknowledged is not finished. The chain stays on the board until somebody says what was done.
 **Breaks if you change it:** make acknowledge also set `status='resolved'` and you have rebuilt the dismiss button this whole feature exists to abolish. Leave `tier_due_at` set and the ladder keeps climbing past a human who already took the alert.
 
-#### `RESOLUTION_CATEGORIES`: `escalation_service.py:1072`
+#### `RESOLUTION_CATEGORIES`: `escalation_service.py:1084`
 **Signature:** module-level tuple of seven strings
 **Does:** `reviewed_treated`, `reviewed_no_change`, `escalated_to_icu`, `artefact`, `patient_discharged` (closed from the discharge screen, with its reason), `patient_died`, `other`.
 **On screen:** would populate a dropdown in a resolve dialog.
 **Gotchas:** **unknown values are accepted and stored**, `resolve` does not validate against this tuple. Refusing a clinician's wording is how a resolution box fills with "other".
 **Breaks if you change it:** the pilot scorecard counts outcomes by category; renaming a member orphans historical rows.
 
-#### `resolve`: `escalation_service.py:1085`
+#### `resolve`: `escalation_service.py:1097`
 **Signature:** `(escalation_id, user, *, reason, category=None, now=None) -> dict`
 **Does:** Closes the chain, with a mandatory reason.
 **On screen:** would remove the chain from the default board view (`include_resolved=False`). No component calls it today.
@@ -315,7 +315,7 @@ Notifications are sent after the session closes (`:878`).
 **Why it exists:** A resolve button with no reason is a dismiss button, and a dismiss button is how a deterioration alert becomes noise a ward learns to clear without reading. The reason is also the only artefact telling the next reviewer whether the escalation worked.
 **Breaks if you change it:** drop the minimum-length check and the field fills with "." and "ok". Note a chain can be resolved **without** ever being acknowledged, the `was_acknowledged: False` metadata is how you find those afterwards.
 
-#### `list_escalations`: `escalation_service.py:1145`
+#### `list_escalations`: `escalation_service.py:1157`
 **Signature:** `(*, department=None, patient_id=None, include_resolved=False, limit=200, now=None) -> list[dict]`
 **Does:** The board query. Returns chains inside one department's ward boundary, joined to patient name/bed/ward/status, target name, and acknowledger name.
 **On screen:** this is exactly the payload a board would render, one row per chain with the patient's name and bed, the tier label, `target_description`, `age_minutes`, and a colour driven by `awaiting_acknowledgement`.
@@ -323,14 +323,14 @@ Notifications are sent after the session closes (`:878`).
 **Why it exists:** The board answers one question: "what has not been answered yet".
 **Breaks if you change it:** scope on `e.raised_in_department` instead and a patient who transfers ward mid-admission drops off the new ward's board while staying on the old one's, the chain becomes invisible to the people now caring for them. Default `include_resolved=True` and the board fills with closed chains.
 
-#### `get_escalation`: `escalation_service.py:1205`
+#### `get_escalation`: `escalation_service.py:1217`
 **Signature:** `(escalation_id, *, include_events=True, now=None) -> dict | None`
 **Does:** One chain plus its whole recorded history, oldest step first.
 **On screen:** would drive a detail drawer: the chain header plus a timeline of `raised → observation → tier_advanced → acknowledged → resolved` with actor names.
 **How it works:** one row query with three `LEFT JOIN`s for names, then `SELECT … FROM escalation_events … ORDER BY seq ASC` (`:1135`) joined to `users.name` as `actor_name`. Each event's `metadata_json` is parsed back to a dict.
 **Breaks if you change it:** ordering events by `occurred_at` instead of `seq` reorders a multi-tier advance, because `advance_due` deliberately backdates each step's `occurred_at` to when that timeout actually passed (`:854`, `s_entered`). `seq` is the only stable order.
 
-#### `patient_escalations`: `escalation_service.py:1251`
+#### `patient_escalations`: `escalation_service.py:1263`
 **Signature:** `(patient_id, *, include_resolved=True, limit=50, now=None) -> list[dict]`
 **Does:** Every escalation for one patient, for the chart, not the board. Defaults to including resolved ones.
 **On screen:** would drive an "escalation history" section of the patient chart in `VigilPanel`'s detail view.
@@ -338,12 +338,12 @@ Notifications are sent after the session closes (`:878`).
 **Why it exists:** The caller owns the ward check (the route uses `require_patient_access`). Deliberately no department parameter, so there is no second, divergent scope derivation in the system.
 **Breaks if you change it:** add a department filter here and you now have two places that decide ward boundaries, which will drift.
 
-#### `_scan_max_rows`: `escalation_service.py:1266`
+#### `_scan_max_rows`: `escalation_service.py:1278`
 **Signature:** `() -> int` (env `ORB_ESCALATION_SCAN_MAX_ROWS`, default 1000, floor 1)
 **Does:** Hard cap on how many `vitals` rows one scan reads.
 **Breaks if you change it:** set it too low on a busy ward and the newest-first window never reaches a deteriorating patient whose last observation is older than the cap.
 
-#### `scan_new_observations`: `escalation_service.py:1273`
+#### `scan_new_observations`: `escalation_service.py:1285`
 **Signature:** `(*, department=None, now=None) -> list[dict]`
 **Does:** The safety net. Raises chains for qualifying observations that **nothing dispatched**, deriving them from the `vitals` table alone.
 **On screen:** nothing directly, but this is what makes a chain exist at all today. Its side effects (a Relay message per new chain) are visible in the Messages panel.
@@ -359,7 +359,7 @@ Notifications are sent after the session closes (`:878`).
 - Turn it back into a query per admitted patient and a 40-bed ward polled by a dozen tablets becomes thousands of SQLCipher round trips a minute for nothing.
 **Gotchas:** it is a **safety net, not the mechanism**. Latency is the gap between sweeps. It is bounded to the caller's department when given one, so a hospital-wide governance account reading a board does not manufacture clinical state across every ward it can see.
 
-#### `sweep`: `escalation_service.py:1435`
+#### `sweep`: `escalation_service.py:1454`
 **Signature:** `(*, department=None, now=None) -> dict`
 **Does:** One tick of the whole mechanism: `advance_due` then `scan_new_observations`. Returns `{advanced, raised, swept_at, department}`.
 **On screen:** nothing, it returns **counts only, no PHI**, which is what makes it safe to expose to an ops caller, safe to log, and safe to poll from a cron line.
@@ -373,19 +373,19 @@ The section header comment (`:952-975`) states two rules worth keeping. **Every 
 
 And the permission model: reading is `alert.read`; acknowledging and resolving require `alert.read` **and** `vitals.write`, which resolves to `{doctor, clinician, nurse}`. An administrator can see an unanswered deterioration and cannot silently clear it. The header is honest that this combination stands in for a dedicated `escalation.acknowledge` permission that does not exist yet.
 
-#### `EscalationAcknowledgeIn`: `vigil_routes.py:1095`
+#### `EscalationAcknowledgeIn`: `vigil_routes.py:1122`
 **Signature:** `class EscalationAcknowledgeIn(BaseModel)`, one optional field, `note: str | None`
 **Does:** The acknowledge request body.
 **On screen:** would be a free-text "note" box in an acknowledge dialog.
 **Why it exists:** It deliberately carries **no patient id**. The chain names the patient; letting a request name one is the caller-named-scope hole `server/tests/test_caller_named_patient_scope.py` exists to catch.
 **Breaks if you add a `patient_id`:** you have reintroduced a class of bug the test suite specifically hunts.
 
-#### `EscalationResolveIn`: `vigil_routes.py:1102`
+#### `EscalationResolveIn`: `vigil_routes.py:1129`
 **Signature:** `class EscalationResolveIn(BaseModel)`, `reason: str` (required), `category: str | None`
 **Does:** The resolve request body. `reason` being required at the Pydantic layer means a missing reason is a 422 before the handler runs; a *blank* reason is a 400 from the service.
 **Breaks if you make `reason` optional:** the dismiss button returns.
 
-#### `_escalation_or_404`: `vigil_routes.py:1107`
+#### `_escalation_or_404`: `vigil_routes.py:1134`
 **Signature:** `(escalation_id, user, include_events=True) -> dict`
 **Does:** Loads a chain and proves the caller's ward owns its patient.
 **On screen:** the difference between a detail drawer opening and a "not found" state.

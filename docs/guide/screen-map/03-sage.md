@@ -690,7 +690,7 @@ model produced detail sections.
 # 7. The composer
 
 Rendered by `src/components/sage/SageComposer.tsx`, mounted at
-`src/pages/panels/SagePanel.tsx:878-890`. It sits below the message list, inside
+`src/pages/panels/SagePanel.tsx:845-858`. It sits below the message list, inside
 `.sage-composer-wrapper` (`Sage.css:316-321`) which is centred on the same reading column.
 
 ### The text box
@@ -833,11 +833,11 @@ access…" (`:582-584`) before any error text is shown.
 ### Floating voice HUD ("Listening... 0:07")
 **Where:** a small elevated card pinned 100px from the bottom and 40px from the right edge of the
 main area, over the message list.
-**Rendered by:** `src/pages/panels/SagePanel.tsx:892-899`, inline styles, `zIndex: 10`. First
+**Rendered by:** `src/pages/panels/SagePanel.tsx:862-869`, inline styles, `zIndex: 10`. First
 line: `Listening... {formatTime(voiceElapsed)}` while recording, `Transcribing...` while
-transcribing (`:895`).
-**Data from:** `voiceElapsed` ticked once a second by the interval at `SagePanel.tsx:655`;
-`formatTime` at `:780` renders `m:ss`.
+transcribing (`:865`).
+**Data from:** `voiceElapsed` ticked once a second by the interval at `SagePanel.tsx:651`;
+`formatTime` at `:743` renders `m:ss`.
 **Mount condition (`:892`):** `voiceMode && (voiceRecording || voiceTranscribing) && !isLanding`
 so it only exists once a conversation has started; on the landing screen the status text at
 `:849` does this job instead.

@@ -12,6 +12,7 @@ displayed as an agreed slot. Migration 28 carries the stranded rows across.
 """
 from fastapi import APIRouter, Depends, Request, HTTPException
 from fastapi.responses import StreamingResponse
+from services.model_switch import require_models_on as _require_models_on
 from permissions import require_patient_self
 from services.bridge_service import (
     answer_patient_question,
@@ -38,6 +39,7 @@ from services.discharge_service import (
 )
 from services.vital_charting import as_charted
 from services.lens_service import REVIEWED_IMAGING_SQL
+from services.stay_times import latest_admission, summary_less_ends
 from datetime import datetime
 import json
 
@@ -190,7 +192,9 @@ def patient_vitals(user: dict = Depends(require_patient_self())):
     return {"vitals": status.get("vitals", {})}
 
 
-@router.post("/ask")
+# The patient's questions are answered by a model: 404 "Switched off on this
+# computer" while the models are off (ORB_MODELS_ENABLED, or the Orb Ward Record).
+@router.post("/ask", dependencies=[Depends(_require_models_on)])
 async def patient_ask(request: Request, user: dict = Depends(require_patient_self())):
     """Patient asks a question — responds in simple language.
     
@@ -371,8 +375,26 @@ def patient_discharge(user: dict = Depends(require_patient_self())):
                ORDER BY discharged_at DESC, id DESC LIMIT 1""",
             (patient_id,),
         ).fetchone()
+        # A stay can end with no summary (the beds and admissions module
+        # records some ends that way, adt-8c). "Not available yet" would then
+        # promise a summary that is never coming. Only the latest stay is
+        # asked, and only when no summary is on file at all.
+        ended_without_summary = None
+        if not summary:
+            latest = latest_admission(db, patient_id)
+            if latest is not None and latest.get("status") != "active":
+                ended_without_summary = next(
+                    (e for e in summary_less_ends(db, patient_id=patient_id)
+                     if e["admission_id"] == latest["id"]), None)
 
     if not summary:
+        if ended_without_summary:
+            return {
+                "discharge_summary": None,
+                "message": ("Your hospital stay has ended. No discharge summary was written for "
+                            "it in Orb. Ask the hospital for a copy of your discharge papers."),
+                "discharged_at": ended_without_summary["ended_at"],
+            }
         return {"discharge_summary": None, "message": "No discharge summary available yet."}
 
     timeline = None

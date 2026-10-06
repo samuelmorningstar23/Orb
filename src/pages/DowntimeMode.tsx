@@ -30,6 +30,7 @@ import { bloodPressure, vitalTemperature, vitalWhole } from '../lib/vitals';
 import { formatClinicalDate, formatClinicalDateTime } from '../lib/datetime';
 import { useOfflineSnapshot } from '../hooks/useOfflineSnapshot';
 import OfflineBanner from '../components/OfflineBanner';
+import { refreshModuleFlags, useClinicalSwitches } from '../shellConfig';
 import './DowntimeMode.css';
 
 interface DowntimeModeProps {
@@ -138,6 +139,12 @@ function labValue(r: { value_numeric?: number | null; value_text?: string | null
 }
 
 export default function DowntimeMode({ patientId: patientIdProp }: DowntimeModeProps) {
+  /* Scoring switched off on this computer (the Orb Ward Record): no NEWS2
+     badge, no drivers line and no escalation field, even from a copy saved on
+     this device before it was switched off. */
+  const { scoringEnabled } = useClinicalSwitches();
+  // Opened in a tab of its own, so it asks /api/health for the switches itself.
+  useEffect(() => { void refreshModuleFlags(); }, []);
   const params = useParams<{ patientId?: string }>();
   const patientId = patientIdProp || params.patientId || '';
 
@@ -356,10 +363,10 @@ export default function DowntimeMode({ patientId: patientIdProp }: DowntimeModeP
           {/* Code status and open escalation: the first two questions at a
               crash call, so they sit right under the allergies. */}
           <section className="dt-section">
-            <h2 className="dt-section-title">Code status and escalation</h2>
+            <h2 className="dt-section-title">{scoringEnabled ? 'Code status and escalation' : 'Code status'}</h2>
             <div className="dt-demo-grid">
               <div><span className="dt-k">Code status</span><span className="dt-v dt-v--strong">{codeStatusText(snap)}</span></div>
-              <div>
+              {scoringEnabled && <div>
                 <span className="dt-k">Escalation</span>
                 <span className="dt-v">
                   {escalations === undefined
@@ -374,7 +381,7 @@ export default function DowntimeMode({ patientId: patientIdProp }: DowntimeModeP
                         </span>
                       ))}
                 </span>
-              </div>
+              </div>}
             </div>
           </section>
 
@@ -382,7 +389,7 @@ export default function DowntimeMode({ patientId: patientIdProp }: DowntimeModeP
           <section className="dt-section">
             <h2 className="dt-section-title">
               Latest vitals
-              {snap.news2?.raw_news2 != null && (
+              {scoringEnabled && snap.news2?.raw_news2 != null && (
                 <span className={levelClass(snap.news2.level)}>
                   NEWS2 {snap.news2.raw_news2} · {snap.news2.level || '—'}
                   {/* 2026-10-02: unmarked, a Scale 2 "NEWS2 0" beside SpO₂ 90% is
@@ -405,7 +412,7 @@ export default function DowntimeMode({ patientId: patientIdProp }: DowntimeModeP
                   <div className="dt-vital"><span className="dt-vital__v">{snap.latest_vitals.consciousness ? consciousnessText(snap.latest_vitals.consciousness) : '—'}</span><span className="dt-vital__k">ACVPU</span></div>
                 </div>
                 <div className="dt-meta">Recorded {fmt(snap.latest_vitals.timestamp)}</div>
-                {snap.news2?.drivers && snap.news2.drivers.length > 0 && (
+                {scoringEnabled && snap.news2?.drivers && snap.news2.drivers.length > 0 && (
                   <div className="dt-drivers">Drivers: {snap.news2.drivers.join(' · ')}</div>
                 )}
               </>

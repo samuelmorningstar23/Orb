@@ -8,6 +8,9 @@ import uuid
 import json
 from datetime import datetime, timezone
 from fastapi.responses import StreamingResponse
+# The pre-operative risk stream is drafted by a model: 404 "Switched off on
+# this computer" while the models are off (services/model_switch.py).
+from services.model_switch import require_models_on as _require_models_on
 from services.audit_service import log_audit_event
 from services.scribe_service import save_scribe_note
 from services.surgery_service import (
@@ -1066,7 +1069,7 @@ def acknowledge_emergency_surgery(surgery_id: str, request: Request,
     return {"status": "success", "surgery_id": surgery_id}
 
 
-@router.get("/{surgery_id}/risk")
+@router.get("/{surgery_id}/risk", dependencies=[Depends(_require_models_on)])
 async def surgery_risk_assessment(surgery_id: str, request: Request,
                                   user: dict = Depends(require_permission("surgery.read"))):
     """Stream the MedGemma surgical risk assessment as SSE — the frontend reads this

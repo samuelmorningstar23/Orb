@@ -86,6 +86,9 @@ vi.mock('./panels/DietaryPanel.tsx', () => marker('dietary'))
 vi.mock('./panels/BiomedicalPanel.tsx', () => marker('biomedical'))
 vi.mock('./panels/NabhPanel.tsx', () => marker('nabh'))
 vi.mock('./panels/AbdmPanel.tsx', () => marker('abdm'))
+// adt-4a (W4-B) installed the Beds panel; like every other module panel here
+// it is a marker, so the rail is asserted without loading the real board.
+vi.mock('./panels/BedBoardPanel.tsx', () => marker('adt'))
 
 import ClinicianShell from './ClinicianShell'
 import {

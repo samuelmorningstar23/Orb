@@ -26,6 +26,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from database import db_session
+from services.stay_times import summary_less_ends_sql
 
 logger = logging.getLogger("orb.impact")
 
@@ -380,10 +381,19 @@ def compute_impact(assumptions: dict | None = None) -> dict:
         })
 
         # ── 4. Throughput (LOS + discharge reconciliation) ──────────────────
+        # Every discharge event in the period: the summaries, plus the ends
+        # the beds and admissions module recorded with no summary (a death, a
+        # LAMA, an absconded closure; none exist with ORB_ADT off), which
+        # only services/stay_times.py knows.
         discharge_recons = _count(
             db,
             "SELECT COUNT(*) FROM discharge_summaries "
             "WHERE julianday(discharged_at) >= julianday(?)",
+            (cutoff,),
+        ) + _count(
+            db,
+            f"SELECT COUNT(*) FROM ({summary_less_ends_sql()}) e "
+            "WHERE julianday(e.ended_at) >= julianday(?)",
             (cutoff,),
         )
         # Average length of stay from historical admissions (discharged only).

@@ -6,10 +6,12 @@
  * Counts are named by the pack ("tablets", "vials"), never "units": on heparin
  * and insulin a unit is a dose, so "40 units" read as a dose on the shelf.
  */
-import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { cleanup, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it } from 'vitest'
 import HelixFormulary from './HelixFormulary'
 import { localDateKey } from '../../lib/datetime'
+import { resetModuleFlags, setModuleFlags } from '../../shellConfig'
+import { isLowStock, serverReorderLevel } from './stock'
 
 function daysFromNow(n: number): string {
   const d = new Date()
@@ -73,5 +75,59 @@ describe('HelixFormulary', () => {
     const odd = [{ id: 'MED-X', name: 'Something', generic_name: 'Something', form: 'Lozenge', strength: '' }]
     render(<HelixFormulary catalog={odd} inventory={[{ ...lot('LOT-X', 12, daysFromNow(400), 1), medication_id: 'MED-X' }]} />)
     expect(screen.getByText('12 packs')).toBeInTheDocument()
+  })
+})
+
+/**
+ * Pharmacy store reorder levels (grn-9). The drug master's reorder level
+ * replaces the fixed 30 only while the pharmacy store module is on; with it
+ * off the screen reads exactly as before, whatever levels are stored, and a
+ * level nobody set is never read as 0.
+ */
+describe('HelixFormulary reorder level', () => {
+  // Unmount first, so resetting the flags notifies no mounted screen.
+  afterEach(() => { cleanup(); resetModuleFlags() })
+
+  const levelled = [{ ...catalog[0], reorder_level_units: 100 }]
+
+  it('ignores a stored level while the pharmacy store is off', () => {
+    render(<HelixFormulary catalog={levelled} inventory={[lot('LOT-1', 50, daysFromNow(400), 1)]} />)
+    expect(screen.getByText('In Stock')).toBeInTheDocument()
+  })
+
+  it('reads low at or below the server level while the pharmacy store is on', () => {
+    setModuleFlags({ 'pharmacy-store': true })
+    render(<HelixFormulary catalog={levelled} inventory={[lot('LOT-1', 100, daysFromNow(400), 1)]} />)
+    expect(screen.getByText('Low Stock')).toBeInTheDocument()
+  })
+
+  it('keeps the fixed 30 when the store is on but no level is set', () => {
+    setModuleFlags({ 'pharmacy-store': true })
+    const unset = [{ ...catalog[0], reorder_level_units: null }]
+    const { unmount } = render(<HelixFormulary catalog={unset} inventory={[lot('LOT-1', 29, daysFromNow(400), 1)]} />)
+    expect(screen.getByText('Low Stock')).toBeInTheDocument()
+    unmount()
+    render(<HelixFormulary catalog={unset} inventory={[lot('LOT-2', 30, daysFromNow(400), 1)]} />)
+    expect(screen.getByText('In Stock')).toBeInTheDocument()
+  })
+
+  it('an explicit level of 0 is a real level, and out of stock stays out', () => {
+    setModuleFlags({ 'pharmacy-store': true })
+    const zero = [{ ...catalog[0], reorder_level_units: 0 }]
+    const { unmount } = render(<HelixFormulary catalog={zero} inventory={[lot('LOT-1', 5, daysFromNow(400), 1)]} />)
+    expect(screen.getByText('In Stock')).toBeInTheDocument()
+    unmount()
+    render(<HelixFormulary catalog={levelled} inventory={[]} />)
+    expect(screen.getByText('Out of Stock')).toBeInTheDocument()
+  })
+
+  it('the helpers never read an unset level as 0', () => {
+    expect(serverReorderLevel({ reorder_level_units: null }, true)).toBeNull()
+    expect(serverReorderLevel({}, true)).toBeNull()
+    expect(serverReorderLevel({ reorder_level_units: 40 }, false)).toBeNull()
+    expect(serverReorderLevel({ reorder_level_units: 40 }, true)).toBe(40)
+    expect(isLowStock(29, {}, false)).toBe(true)
+    expect(isLowStock(30, {}, false)).toBe(false)
+    expect(isLowStock(0, { reorder_level_units: 40 }, true)).toBe(false)
   })
 })

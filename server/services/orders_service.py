@@ -24,6 +24,20 @@ on, the order is handed to services/lab_order_service AFTER the commit that
 activated it. The hand-off never raises and never changes what these
 functions return: a laboratory failure cannot undo or delay the order. With
 ORB_LAB off nothing is imported and nothing else happens.
+
+Orders the laboratory manages (lis-7). Once intake has written
+lab_order_items for an order, the laboratory owns its lifecycle FOR LIFE,
+whatever ORB_LAB says now: transition_order refuses every move except to
+'active' (an idempotent no-op by then) and add_result refuses outright, both
+with OrderManagedByLab, which the route answers with 409. The laboratory moves
+the order itself through the two conn-taking helpers below
+(transition_in_conn, set_lab_result_text_in_conn), which keep the legality
+check and the order_events row but not the guard, and which only
+services/lab_order_service may call. Without this a ward could complete,
+result or cancel an order behind the laboratory's back, and a 'completed'
+order is billed (billing_service._COMPLETED_ORDER_STATUSES) before any test
+was run. Orders with no laboratory items (a bedside test, an order activated
+while the laboratory was off, an unmapped code) keep the free-text path.
 """
 import json
 import logging
@@ -64,8 +78,39 @@ class OrderAlreadyResulted(ValueError):
     """
 
 
+#: What a ward sees when it tries to move an order the laboratory manages.
+LAB_MANAGED_MESSAGE = (
+    "This order is managed by the laboratory. Results arrive from the laboratory; "
+    "cancel it from the laboratory request."
+)
+
+
+class OrderManagedByLab(ValueError):
+    """A manual status change or free-text result on an order the laboratory
+    manages (it has lab_order_items). A ValueError subclass so any caller
+    that only knows "bad request" still refuses; the route maps it to 409."""
+
+    def __init__(self, message: str = LAB_MANAGED_MESSAGE):
+        super().__init__(message)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def is_lab_managed(conn, order_id: str) -> bool:
+    """Does the laboratory manage this order? Keyed on lab_order_items
+    existing for it, never on ORB_LAB, so switching the module off can never
+    hand a half-processed order back to the free-text path. A database
+    without the laboratory tables manages nothing."""
+    try:
+        return conn.execute(
+            "SELECT 1 FROM lab_order_items WHERE order_id = ? LIMIT 1", (order_id,)
+        ).fetchone() is not None
+    except Exception as exc:  # sqlite3 or sqlcipher3 OperationalError
+        if "no such table" in str(exc).lower():
+            return False
+        raise
 
 
 def _is_legal_transition(from_status: str, to_status: str) -> bool:
@@ -187,16 +232,27 @@ def transition_order(order_id: str, to_status: str, actor_id: str | None = None,
                      detail: str | None = None) -> dict:
     """Guarded, idempotent state transition.
 
-    Raises ValueError for an unknown order or an illegal transition.
-    Transitioning to the current status is a no-op success (no event written).
+    Raises ValueError for an unknown order or an illegal transition, and
+    OrderManagedByLab for any move other than to 'active' on an order the
+    laboratory manages (lis-7), checked before the idempotency rule so a
+    stale tab's replay is refused too. Transitioning to the current status is
+    otherwise a no-op success (no event written).
+
+    IMMEDIATE (lis-7): the "does the laboratory manage it?" read and the write
+    are one transaction, so an order the laboratory takes in at the same
+    instant cannot also be moved by hand.
     """
     if to_status not in LEGAL_TRANSITIONS:
         raise ValueError(f"Unknown target status: {to_status}")
 
-    with db_session() as conn:
+    with db_session(immediate=True) as conn:
         order = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
         if not order:
             raise ValueError(f"Order {order_id} not found")
+
+        # ── The laboratory's own orders (lis-7) ──
+        if to_status != "active" and is_lab_managed(conn, order_id):
+            raise OrderManagedByLab()
 
         current = order["status"]
 
@@ -246,6 +302,9 @@ def add_result(order_id: str, result_text: str, actor_id: str | None = None) -> 
         same submission), returning the order untouched;
       * different text raises OrderAlreadyResulted. Orb has no amended-result
         workflow yet, so a correction must be charted, never overwritten.
+
+    An order the laboratory manages (lis-7) raises OrderManagedByLab whatever
+    the text: its results arrive from the laboratory.
     """
     if not result_text or not result_text.strip():
         raise ValueError("result_text is required")
@@ -257,6 +316,10 @@ def add_result(order_id: str, result_text: str, actor_id: str | None = None) -> 
         order = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
         if not order:
             raise ValueError(f"Order {order_id} not found")
+
+        # The laboratory reports its own orders (lis-7): no free text, ever.
+        if is_lab_managed(conn, order_id):
+            raise OrderManagedByLab()
 
         if order["order_type"] not in RESULTABLE_ORDER_TYPES:
             raise ValueError(
@@ -286,6 +349,84 @@ def add_result(order_id: str, result_text: str, actor_id: str | None = None) -> 
         _record_event(conn, order_id, current, "resulted", actor_id, "result attached")
         row = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
     return dict(row)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  THE LABORATORY'S OWN HELPERS (lis-7)
+# ══════════════════════════════════════════════════════════════════════════
+# Only services/lab_order_service calls these (tests/test_lab_order_guard.py
+# fails any other caller). Each takes the caller's open write transaction,
+# never opens or commits one, keeps the state machine's legality rules and
+# writes the order_events row, and skips the laboratory guard, because the
+# laboratory is the one party allowed past it.
+
+def _require_transaction(conn) -> None:
+    if not getattr(conn, "in_transaction", False):
+        raise RuntimeError(
+            "The laboratory's order helpers need the caller's write transaction: open "
+            "it with db_session(immediate=True) and pass that connection.")
+
+
+def transition_in_conn(conn, order_id: str, to_status: str, *, actor_id: str | None = None,
+                       detail: str | None = None) -> dict:
+    """transition_order for the laboratory, on its own transaction. Same
+    legality rules and order_events row; no guard and no activation hook (the
+    laboratory never activates an order). Moving to the current status is a
+    no-op that writes nothing."""
+    _require_transaction(conn)
+    if to_status not in LEGAL_TRANSITIONS:
+        raise ValueError(f"Unknown target status: {to_status}")
+    order = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+    if not order:
+        raise ValueError(f"Order {order_id} not found")
+    current = order["status"]
+    if current == to_status:
+        return dict(order)
+    if not _is_legal_transition(current, to_status):
+        raise ValueError(
+            f"Illegal transition: {current} -> {to_status}. "
+            f"Allowed from '{current}': {LEGAL_TRANSITIONS.get(current, [])}"
+        )
+    if to_status == "resulted" and order["order_type"] not in RESULTABLE_ORDER_TYPES:
+        raise ValueError(
+            f"Cannot set status 'resulted' for order_type '{order['order_type']}'.")
+    conn.execute("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?",
+                 (to_status, _now(), order_id))
+    _record_event(conn, order_id, current, to_status, actor_id, detail)
+    return dict(conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone())
+
+
+def set_lab_result_text_in_conn(conn, order_id: str, result_text: str, *,
+                                actor_id: str | None = None,
+                                detail: str = "reported by the laboratory") -> dict:
+    """Mark an order 'resulted' with the laboratory's fixed result text, on
+    the laboratory's own transaction. The text names no accession and no
+    version, so an amended laboratory result never makes it stale.
+
+    The same text again is a no-op; a different text already on the order
+    (a free-text result written before the guard existed) raises
+    OrderAlreadyResulted, exactly as add_result would."""
+    _require_transaction(conn)
+    if not result_text or not result_text.strip():
+        raise ValueError("result_text is required")
+    order = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+    if not order:
+        raise ValueError(f"Order {order_id} not found")
+    if order["order_type"] not in RESULTABLE_ORDER_TYPES:
+        raise ValueError(f"Cannot result order_type '{order['order_type']}'.")
+    current = order["status"]
+    if current == "resulted":
+        if (order["result_text"] or "") == result_text:
+            return dict(order)
+        raise OrderAlreadyResulted("This order already has a different result.")
+    if not _is_legal_transition(current, "resulted"):
+        raise ValueError(f"Cannot result an order whose status is '{current}'.")
+    now = _now()
+    conn.execute(
+        "UPDATE orders SET result_text = ?, result_at = ?, status = 'resulted', updated_at = ? "
+        "WHERE id = ?", (result_text, now, now, order_id))
+    _record_event(conn, order_id, current, "resulted", actor_id, detail)
+    return dict(conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone())
 
 
 # ══════════════════════════════════════════════════════════════════════════

@@ -340,7 +340,7 @@ The docstring (`:1-22`) states the two rules: **no invented clinical scoring** (
 **Why the empty list is so tightly constrained:** it returns empty **only** when the server actually scored the patient and found nothing. An empty list on a clinical screen reads as "nothing wrong", and the product has already been bitten by this once (`src/components/errorStates.test.tsx`).
 **Breaks if you change it:** return `[]` when `card` is null and a patient the ward board did not carry renders as "No active issues", a confident all-clear derived from a missing row. Re-derive NEWS2 here instead of passing the server's through and you get a second, subtly different implementation that disagrees with the nurse's screen at 3am. Pinned by `roundSummary.test.ts:127-226`.
 
-#### `decisionsToday`: `src/components/round/roundSummary.ts:253`
+#### `decisionsToday`: `src/components/round/roundSummary.ts:267`
 **Signature:** `(card, insights, hasPlanToday) -> RoundDecision[]`
 **Does:** What this round has to decide.
 **On screen:** the **third column**. Three sources:
@@ -351,14 +351,14 @@ The docstring (`:1-22`) states the two rules: **no invented clinical scoring** (
 **Why it is deliberately short:** a list of "consider reviewing" items is noise at a bedside. Only concrete, actionable things get a line.
 **Breaks if you change it:** derive `hasPlanToday` internally from the story and the "No plan documented today yet" line stays on screen for several seconds after the doctor saved her plan, which teaches her the save did not work.
 
-#### `documentedToday`: `src/components/round/roundSummary.ts:302`
+#### `documentedToday`: `src/components/round/roundSummary.ts:316`
 **Signature:** `(story, now) -> boolean`
 **Does:** Has a `note` or `scribe` event been written for this patient today?
 **On screen:** it is the **only** thing that removes the "No plan documented today yet" line from the third column.
 **Why doses and orders do not count (stated at `:298-301`):** treating a patient is not the same as reviewing one, and conflating them silences the prompt on **exactly the patients who are being managed but not seen**.
 **Breaks if you change it:** widen `DOCUMENTATION_TYPES` to include `medication` or `order` and the round stops asking for a plan on the sickest patients on the ward, who are the ones with the most orders. Pinned by `roundSummary.test.ts:279-292`.
 
-#### `admissionDay`: `src/components/round/roundSummary.ts:313`
+#### `admissionDay`: `src/components/round/roundSummary.ts:327`
 **Signature:** `(admissionDate, now) -> number | null`
 **Does:** Ward day number, admission date is **day 1**, counted the way a whiteboard counts it.
 **On screen:** the "Day 4" segment of the patient header meta line (`src/components/round/RoundSummaryView.tsx:123`). Null renders nothing at all rather than "Day null".
@@ -494,14 +494,14 @@ The docstring (`:1-21`) states the PHI posture: transcription is **always** the 
 **Why `releaseMic('round')` matters:** the microphone is a single shared resource arbitrated by `SageRuntimeContext` (`claimMic` at `src/contexts/SageRuntimeProvider.tsx:18`). Failing to release it means Sage's voice input is dead for the rest of the session with no error anyone can act on.
 **Breaks if you change it:** drop the track stop and the browser keeps the mic open, a hot microphone on a ward, carried from bed to bed.
 
-#### `appendToDraft`: `RoundDictation.tsx:88`
+#### `appendToDraft`: `RoundDictation.tsx:81`
 **Signature:** `(text) -> void`
 **Does:** Appends a transcript to the existing draft on a new line, via `draftRef` so it reads the current value rather than a stale closure.
 **On screen:** the text that appears in the "Plan for today" textarea after a dictation.
 **Why append and not replace:** a doctor dictates in bursts, one sentence, look at the chart, another sentence. Replacing would delete the first.
 **Breaks if you change it:** read `draft` from props instead of `draftRef` and a second dictation overwrites the first, because the callback captured the empty string.
 
-#### `runTranscription`: `RoundDictation.tsx:95`
+#### `runTranscription`: `RoundDictation.tsx:88`
 **Signature:** `async (blob) -> void`
 **Does:** Sends the audio to the local Whisper endpoint with the patient's name and diagnosis as hints, and appends the transcript.
 **On screen:** "Transcribing on this appliance…" (`:296`), then either text in the box, or the amber error block.
@@ -509,14 +509,14 @@ The docstring (`:1-21`) states the PHI posture: transcription is **always** the 
 **Why the failure message names the held recording:** `lastBlobRef` (`:72`) keeps the audio so a failed transcription can be retried without asking the doctor to say it all again, "the single most infuriating way to lose a ward round".
 **Breaks if you change it:** pass `skipCorrection = true` (the third argument, currently `false` at `:99`) and the transcript loses the accuracy pass. Discard `lastBlobRef` on failure and the Retry button at `:318-326` has nothing to retry, so it renders and does nothing.
 
-#### `stopRecording`: `RoundDictation.tsx:114`
+#### `stopRecording`: `RoundDictation.tsx:107`
 **Signature:** `() -> void`
 **Does:** Stops the recorder, assembles the chunks into one `audio/webm` blob, and either rejects it as too short or sends it to transcription.
 **On screen:** the button flips from "Stop · 0:47" back to "Transcribing…", the red recording dot vanishes.
 **The 800-byte floor (`:122`):** below that, "That recording was too short to transcribe.", a mis-tap should say so rather than produce a silent failed request.
 **Breaks if you change it:** remove the floor and every accidental double-tap costs a round trip to Whisper and returns an empty transcript, which reads to the doctor as "the microphone is broken".
 
-#### `startRecording`: `RoundDictation.tsx:143`
+#### `startRecording`: `RoundDictation.tsx:135`
 **Signature:** `async () -> void`
 **Does:** Claims the mic, gets a stream, starts a `MediaRecorder`, and starts the timer.
 **On screen:** the button turns red and becomes "Stop · 0:00"; "Recording" with a pulsing dot appears. No text appears while the doctor speaks; the transcript arrives when she stops.

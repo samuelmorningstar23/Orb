@@ -92,6 +92,10 @@ class OllamaChatProvider(ChatProvider):
     async def astream_chat(
         self, messages: list[dict], options: dict | None = None
     ) -> AsyncGenerator[str, None]:
+        # ORB_MODELS_ENABLED off (or the Orb Ward Record): refused before any
+        # request leaves this process (services/model_switch.py).
+        from services.model_switch import refuse_when_models_off
+        refuse_when_models_off("Sage chat (OllamaChatProvider)")
         opts = options or {}
         # ~4 chars/token is close enough to tell a cache hit from a miss; the
         # authoritative prefilled count comes back from Ollama on the done chunk.

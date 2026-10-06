@@ -78,21 +78,55 @@ AUDIT. Each intake writes one clinical_access event (fail-closed) inside its
 transaction: an intake whose audit row cannot be written commits nothing, and
 the hook records an 'intake_failed' exception for the sweep to retry.
 
-This module writes only lab_ tables. It never changes orders.status: that is
-lis-7's guard and lifecycle, through orders_service's helpers.
+Intake writes only lab_ tables and never changes orders.status.
+
+THE ORDER LIFECYCLE (lis-7, below). An order with lab_order_items is the
+laboratory's for life, whatever ORB_LAB says: orders_service refuses a manual
+status change or free-text result on it (OrderManagedByLab, 409). Only this
+module moves it, through orders_service.transition_in_conn and
+set_lab_result_text_in_conn on its own transaction, and always through
+reconcile_order_status, the completion rule (ruling LIS-R16, option a):
+  * every item cancelled: the order is cancelled, so it never bills;
+  * at least one item released and every other released or cancelled: the
+    order is resulted, with the fixed LAB_RESULT_TEXT (no accession, no
+    version, so an amendment never makes it stale);
+  * a rejected item with no recollect or cancel decision: the order stays
+    in_progress and the laboratory's list carries 'rejected_no_decision';
+  * otherwise in_progress once any specimen is collected, else active.
+  An order already moved outside the laboratory (a manual completion from
+  before the guard) is never forced: the laboratory's own write still commits,
+  and an 'order_state_conflict' exception and an error log say so.
+cancel_order is the one way a ward or the laboratory cancels such an order:
+it cancels every test not yet released, withdraws their unreleased results,
+cancels specimens left with nothing on them and keeps released results.
+
+COLLECTION (lis-8, below). The ward Samples view and the laboratory's
+phlebotomy list read list_collection (department accounts see their own
+department only). Labels print one patient at a time, only after the person
+at the bedside has typed the patient's UHID and name and both match the
+record (ruling LIS-R6, strictest option until it is confirmed), and each
+print is counted (label_print_count, label_printed_at), which also closes the
+tube to later merges. collect_specimen needs the same two identifiers and a
+printed label, refuses back-dating while the site limit is 0 (the shipped
+default) and never allows more than BACKDATE_CEILING_MINUTES, and writes the
+specimen, its items, each order's move to in_progress, the order_events rows,
+the specimen event and the clinical_access audit row in ONE immediate
+transaction: an audit row that cannot be written leaves nothing collected.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from database import db_session
-from services import lab_accession, lab_module
+from services import lab_accession, lab_module, orders_service
 from services.audit_service import log_audit_event
-from services.clinical_time import parse_to_utc, utc_iso_now
+from services.clinical_time import parse_to_utc, to_utc_iso, utc_iso_now
 
 logger = logging.getLogger("orb.lab.intake")
 
@@ -743,3 +777,867 @@ async def _intake_sweep_loop() -> None:
 
 
 lab_module.register_loop("intake-sweep", _intake_sweep_loop, states=("on",))
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Refusals the routes turn into HTTP answers (lis-7, lis-8)
+# ════════════════════════════════════════════════════════════════════════════
+
+class LabOrderError(Exception):
+    """A refusal with a machine code, a sentence for the screen, the HTTP
+    status the route answers with, and any extra fields for the body."""
+
+    def __init__(self, code: str, message: str, *, status: int = 409, **extra: Any):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status = status
+        self.extra = extra
+
+
+class _IdentityRefused(Exception):
+    """Internal: the two identifiers did not both match. Raised inside the
+    write transaction so it rolls back; the caller audits the refusal on a
+    transaction of its own and raises LabOrderError."""
+
+    def __init__(self, checks: dict, patient_id: str, specimen_ids: list[str]):
+        super().__init__("identity not confirmed")
+        self.checks = checks
+        self.patient_id = patient_id
+        self.specimen_ids = specimen_ids
+
+
+def _not_found(what: str = "Specimen") -> LabOrderError:
+    # The same answer for "no such thing" and "not on your ward", so the
+    # refusal confirms nothing (the scoping law: 404, never 403).
+    return LabOrderError("not_found", f"{what} not found", status=404)
+
+
+def _placeholders(values) -> str:
+    return ", ".join("?" for _ in values)
+
+
+def _chunks(values: list, size: int = 400):
+    for start in range(0, len(values), size):
+        yield values[start:start + size]
+
+
+def _audit(conn, *, category: str, action: str, outcome: str, summary: str,
+           actor: dict, target_type: str, target_id: Any, patient_id: Optional[str],
+           metadata: dict, request_meta: Optional[dict]) -> None:
+    """One audit row on the caller's transaction (db=conn), so the change and
+    its record land together or not at all. target_id is always text."""
+    meta = dict(request_meta or {})
+    log_audit_event(
+        correlation_id=str(uuid.uuid4()),
+        event_category=category,
+        action_type=action,
+        outcome=outcome,
+        db=conn,
+        summary_message=summary,
+        actor_user_id=(actor or {}).get("id"),
+        actor_role=(actor or {}).get("role"),
+        target_type=target_type,
+        target_id=str(target_id),
+        patient_id=patient_id,
+        request_path=meta.get("request_path"),
+        http_method=meta.get("http_method"),
+        ip_address=meta.get("ip_address"),
+        user_agent=meta.get("user_agent"),
+        metadata=metadata,
+    )
+
+
+def _scope_metadata(dept: Optional[str]) -> dict:
+    """What permissions.log_phi_read records about the reader's scope."""
+    return {"department": dept, "hospital_wide": dept is None,
+            "scope_source": "authenticated_user"}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  The order lifecycle (lis-7)
+# ════════════════════════════════════════════════════════════════════════════
+
+#: What a laboratory-reported order says on the Orders screen. Fixed: no
+#: accession and no version, so an amended laboratory result never makes it
+#: stale and one order spanning several tubes reads the same.
+LAB_RESULT_TEXT = ("Reported in the laboratory system. Open the laboratory report "
+                   "for values.")
+
+#: Item statuses that mean a specimen has been taken from the patient.
+_COLLECTED_OR_LATER = ("collected", "received", "resulted", "tech_validated", "released",
+                       "rejected")
+#: Item statuses a cancellation leaves alone.
+_FINISHED_ITEM_STATUSES = ("released", "cancelled")
+#: Result statuses not yet released, which a cancellation withdraws.
+_UNRELEASED_RESULT_STATUSES = ("entered", "tech_validated")
+#: Order statuses the CPOE state machine never leaves.
+_TERMINAL_ORDER_STATUSES = ("completed", "resulted", "cancelled")
+#: Specimen statuses a cancellation leaves as they are: already cancelled, or
+#: a rejection, which stays on the record as what happened.
+_SPECIMEN_KEEP_ON_CANCEL = ("cancelled", "rejected")
+
+#: Each item status in the ward's words, and the order the summary lists them.
+WARD_ITEM_WORDS = {
+    "released": "Reported",
+    "received": "In the laboratory",
+    "resulted": "In the laboratory",
+    "tech_validated": "In the laboratory",
+    "collected": "Collected",
+    "awaiting_collection": "Waiting for collection",
+    "rejected": "Rejected, recollection needed",
+    "cancelled": "Cancelled",
+}
+_SUMMARY_ORDER = ("Reported", "In the laboratory", "Collected", "Waiting for collection",
+                  "Rejected, recollection needed", "Cancelled")
+
+_INTAKE_WORDS = {
+    "unmapped_code": "The laboratory could not take this order in: its code is not in the "
+                     "laboratory catalogue. The laboratory has been told.",
+    "intake_failed": "Not taken into the laboratory yet. Orb retries it automatically; if "
+                     "this stays, call the laboratory.",
+}
+
+
+def order_target_status(item_statuses: list[str]) -> Optional[str]:
+    """The completion rule (ruling LIS-R16, option a): what an order's status
+    should be, given its items' statuses. None for an order with no items.
+    Pure."""
+    if not item_statuses:
+        return None
+    if all(s == "cancelled" for s in item_statuses):
+        return "cancelled"
+    if any(s == "rejected" for s in item_statuses):
+        # A rejected tube blocks completion until it is recollected or cancelled.
+        return "in_progress"
+    if (any(s == "released" for s in item_statuses)
+            and all(s in _FINISHED_ITEM_STATUSES for s in item_statuses)):
+        return "resulted"
+    if any(s in _COLLECTED_OR_LATER for s in item_statuses):
+        return "in_progress"
+    return "active"
+
+
+def _sync_rejected_exception(conn, order_id: str, *, rejected: bool, actor_id: Optional[str],
+                             now: str) -> None:
+    """Keep the laboratory's 'Rejected, no decision' entry true: one open row
+    while the order has a rejected item, closed once none is left."""
+    if rejected:
+        _add_exception(conn, "rejected_no_decision", order_id,
+                       "A specimen for this order was rejected. Recollect it or cancel the test.")
+        return
+    conn.execute(
+        "UPDATE lab_exceptions SET resolved_by = ?, resolved_at = ?, resolution = ? "
+        "WHERE order_id = ? AND kind = 'rejected_no_decision' AND resolved_at IS NULL",
+        (actor_id or "system", now, "Recollected or cancelled", order_id))
+
+
+def reconcile_order_status(conn, order_id: str, *, actor_id: Optional[str] = None,
+                           reason: Optional[str] = None) -> dict:
+    """Bring orders.status in line with the order's laboratory items, on the
+    caller's write transaction. Never raises because of the order's state: a
+    laboratory step (collection, release, cancellation) must commit even when
+    the order was moved outside the laboratory, which is then recorded as an
+    open 'order_state_conflict' exception and logged as an error.
+
+    Returns {previous, status, target, changed, conflict}."""
+    order = conn.execute(
+        "SELECT id, status FROM orders WHERE id = ?", (order_id,)).fetchone()
+    if order is None:
+        return {"previous": None, "status": None, "target": None, "changed": False,
+                "conflict": False}
+    current = order["status"]
+    statuses = [r[0] for r in conn.execute(
+        "SELECT status FROM lab_order_items WHERE order_id = ?", (order_id,)).fetchall()]
+    target = order_target_status(statuses)
+    out = {"previous": current, "status": current, "target": target, "changed": False,
+           "conflict": False}
+    if target is None:
+        return out
+    now = utc_iso_now()
+    _sync_rejected_exception(conn, order_id, rejected="rejected" in statuses,
+                             actor_id=actor_id, now=now)
+    if target == current:
+        return out
+    if target == "active":
+        # Never backwards: an order in progress stays in progress.
+        return out
+    if current in _TERMINAL_ORDER_STATUSES:
+        return _order_state_conflict(conn, order_id, out, current, target)
+    try:
+        if target == "resulted":
+            moved = orders_service.set_lab_result_text_in_conn(
+                conn, order_id, LAB_RESULT_TEXT, actor_id=actor_id,
+                detail=reason or "reported by the laboratory")
+        else:
+            moved = orders_service.transition_in_conn(
+                conn, order_id, target, actor_id=actor_id, detail=reason)
+    except ValueError:
+        return _order_state_conflict(conn, order_id, out, current, target)
+    out.update(status=moved["status"], changed=True)
+    return out
+
+
+def _order_state_conflict(conn, order_id: str, out: dict, current: str, target: str) -> dict:
+    logger.error(
+        "Laboratory order %s is '%s' on the Orders screen but its laboratory tests say "
+        "'%s'; it was changed outside the laboratory. The laboratory's own change stands.",
+        order_id, current, target)
+    _add_exception(
+        conn, "order_state_conflict", order_id,
+        f"The order shows '{current.replace('_', ' ')}' on the Orders screen, but its "
+        f"laboratory tests say '{target.replace('_', ' ')}'. It was changed outside the "
+        "laboratory; check it.")
+    out["conflict"] = True
+    return out
+
+
+def cancel_order(order_id: str, *, actor: dict, reason: str, dept: Optional[str],
+                 request_meta: Optional[dict] = None) -> dict:
+    """Cancel an order the laboratory manages, whoever asks (the ward with
+    order.write, or the laboratory with lab.receive), in ONE immediate
+    transaction:
+      * every test not yet released is cancelled, with the reason and who;
+      * its entered or technically validated results are withdrawn;
+      * a specimen left with no live test is cancelled (a rejected one keeps
+        its rejection), so the bench stops; one that keeps tests records
+        which were cancelled;
+      * released results are kept, and the order is reconciled: all
+        cancelled gives cancelled (never billed), some released gives
+        resulted;
+      * the clinical_access audit row lands in the same transaction.
+    Served while the module drains (ruling LIS-R21): finishing work includes
+    cancelling it. `dept` is the caller's department_scope (None means
+    hospital-wide); an order outside it is 'not found'."""
+    from permissions import patient_in_scope
+
+    reason = (reason or "").strip()
+    if not reason:
+        raise LabOrderError("reason_required", "Say why the laboratory order is cancelled.",
+                            status=422)
+    reason = reason[:500]
+    actor_id = (actor or {}).get("id")
+    with db_session(immediate=True) as conn:
+        if not _tables_present(conn):
+            raise LabOrderError("not_lab_managed", "The laboratory does not manage this order. "
+                                "Cancel it from the Orders screen.")
+        order = conn.execute(
+            "SELECT id, patient_id, order_type, description, status FROM orders WHERE id = ?",
+            (order_id,)).fetchone()
+        if order is None or not patient_in_scope(conn, order["patient_id"], dept):
+            raise _not_found("Order")
+        order = dict(order)
+        items = [dict(r) for r in conn.execute(
+            "SELECT id, test_id, specimen_id, status FROM lab_order_items WHERE order_id = ? "
+            "ORDER BY id", (order_id,)).fetchall()]
+        if not items:
+            raise LabOrderError("not_lab_managed", "The laboratory does not manage this order. "
+                                "Cancel it from the Orders screen.")
+        open_items = [i for i in items if i["status"] not in _FINISHED_ITEM_STATUSES]
+        if not open_items:
+            if all(i["status"] == "cancelled" for i in items):
+                # A replay of a cancellation that already happened.
+                return {"order": dict(conn.execute("SELECT * FROM orders WHERE id = ?",
+                                                   (order_id,)).fetchone()),
+                        "already_cancelled": True, "cancelled_items": 0,
+                        "withdrawn_results": 0, "kept_released": 0,
+                        "cancelled_specimens": []}
+            raise LabOrderError("nothing_to_cancel", "Every test on this order has been "
+                                "reported. There is nothing left to cancel.")
+
+        now = utc_iso_now()
+        item_ids = [i["id"] for i in open_items]
+        conn.execute(
+            f"UPDATE lab_order_items SET status = 'cancelled', cancelled_reason = ?, "
+            f"cancelled_by = ?, updated_at = ? WHERE id IN ({_placeholders(item_ids)})",
+            (reason, actor_id, now, *item_ids))
+
+        withdrawn = [dict(r) for r in conn.execute(
+            f"SELECT id, status, patient_id FROM lab_results "
+            f"WHERE order_item_id IN ({_placeholders(item_ids)}) "
+            f"AND status IN ({_placeholders(_UNRELEASED_RESULT_STATUSES)})",
+            (*item_ids, *_UNRELEASED_RESULT_STATUSES)).fetchall()]
+        for result in withdrawn:
+            conn.execute("UPDATE lab_results SET status = 'withdrawn', amend_reason = ? "
+                         "WHERE id = ?", ("Order cancelled", result["id"]))
+            conn.execute(
+                "INSERT INTO lab_result_events (result_id, patient_id, event_type, actor, "
+                "occurred_at, before_json, after_json) VALUES (?, ?, 'withdrawn', ?, ?, ?, ?)",
+                (result["id"], result["patient_id"], actor_id, now,
+                 json.dumps({"status": result["status"]}),
+                 json.dumps({"status": "withdrawn", "reason": "Order cancelled",
+                             "cancel_reason": reason})))
+
+        actor_role = (actor or {}).get("role")
+        cancelled_specimens: list[str] = []
+        for specimen_id in sorted({i["specimen_id"] for i in open_items if i["specimen_id"]}):
+            specimen = conn.execute("SELECT status, patient_id FROM lab_specimens WHERE id = ?",
+                                    (specimen_id,)).fetchone()
+            if specimen is None:
+                continue
+            live = int(conn.execute(
+                "SELECT COUNT(*) FROM lab_order_items WHERE specimen_id = ? "
+                "AND status != 'cancelled'", (specimen_id,)).fetchone()[0])
+            tests = [i["test_id"] for i in open_items if i["specimen_id"] == specimen_id]
+            if live == 0 and specimen["status"] not in _SPECIMEN_KEEP_ON_CANCEL:
+                conn.execute("UPDATE lab_specimens SET status = 'cancelled', updated_at = ? "
+                             "WHERE id = ?", (now, specimen_id))
+                cancelled_specimens.append(specimen_id)
+                event, words = "cancelled", "Specimen cancelled: every test on it was cancelled"
+            else:
+                event, words = "items_cancelled", "Tests on this specimen were cancelled"
+            _specimen_event(conn, specimen_id, specimen["patient_id"], event,
+                            actor_id=actor_id, actor_role=actor_role, now=now,
+                            detail=f"{words}. Reason: {reason}",
+                            metadata={"order_id": order_id, "tests": tests, "reason": reason})
+
+        reconciled = reconcile_order_status(
+            conn, order_id, actor_id=actor_id,
+            reason=f"Cancelled through the laboratory request: {reason}")
+        kept = sum(1 for i in items if i["status"] == "released")
+        _audit(conn, category="clinical_access", action="lab_order_cancelled",
+               outcome="success",
+               summary=(f"Laboratory order cancelled: {len(open_items)} test(s) cancelled, "
+                        f"{kept} reported test(s) kept"),
+               actor=actor, target_type="order", target_id=order_id,
+               patient_id=order["patient_id"],
+               metadata={"reason": reason, "cancelled_items": [i["test_id"] for i in open_items],
+                         "withdrawn_results": [r["id"] for r in withdrawn],
+                         "kept_released": kept, "cancelled_specimens": cancelled_specimens,
+                         "order_status": {"from": reconciled["previous"],
+                                          "to": reconciled["status"]},
+                         "conflict": reconciled["conflict"]},
+               request_meta=request_meta)
+        after = dict(conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone())
+    # Cancelling closes open work; a draining module may now be finished.
+    lab_module.refresh_drain_state()
+    return {"order": after, "already_cancelled": False, "cancelled_items": len(open_items),
+            "withdrawn_results": len(withdrawn), "kept_released": kept,
+            "cancelled_specimens": cancelled_specimens}
+
+
+def _summary_text(counts: dict[str, int]) -> str:
+    total = sum(counts.values())
+    parts = [f"{counts[w]} {w.lower()}" for w in _SUMMARY_ORDER if counts.get(w)]
+    noun = "test" if total == 1 else "tests"
+    return f"{total} {noun}: " + ", ".join(parts) if parts else f"{total} {noun}"
+
+
+def annotate_orders(conn, orders: list[dict]) -> list[dict]:
+    """Add the laboratory's view to each order of a list, in place.
+
+    Every order gains lab_managed (does the laboratory manage it, keyed on
+    lab_order_items, never on ORB_LAB). A managed order gains `lab`: its
+    tests with their status in the ward's words, counts, a one-line summary,
+    the number rejected, and who cancelled it when every test was cancelled.
+    A laboratory order the laboratory could not take in gains `lab_intake`
+    with the reason in plain words. A database without the laboratory tables
+    marks nothing managed."""
+    for order in orders:
+        order["lab_managed"] = False
+    if not orders or not _tables_present(conn):
+        return orders
+    by_id = {o["id"]: o for o in orders}
+    lab_ids = [o["id"] for o in orders if o.get("order_type") == "lab"]
+    if not lab_ids:
+        return orders
+    items: dict[str, list[dict]] = {}
+    for chunk in _chunks(lab_ids):
+        for r in conn.execute(
+                f"""SELECT i.order_id, i.id, i.test_id, i.status, i.specimen_id,
+                           i.cancelled_reason, i.updated_at, t.name, t.short_name,
+                           u.name AS cancelled_by_name
+                    FROM lab_order_items i
+                    LEFT JOIN lab_tests t ON t.id = i.test_id
+                    LEFT JOIN users u ON u.id = i.cancelled_by
+                    WHERE i.order_id IN ({_placeholders(chunk)})
+                    ORDER BY i.order_id, i.id""", tuple(chunk)).fetchall():
+            items.setdefault(r["order_id"], []).append(dict(r))
+    for order_id, rows in items.items():
+        counts: dict[str, int] = {}
+        tests = []
+        for r in rows:
+            words = WARD_ITEM_WORDS.get(r["status"], "In the laboratory")
+            counts[words] = counts.get(words, 0) + 1
+            tests.append({"test_id": r["test_id"], "name": r["name"] or r["test_id"],
+                          "short_name": r["short_name"], "status": r["status"],
+                          "status_text": words, "specimen_id": r["specimen_id"]})
+        cancelled = None
+        if rows and all(r["status"] == "cancelled" for r in rows):
+            latest = max(rows, key=lambda r: (r["updated_at"] or "", r["id"]))
+            cancelled = {"by_name": latest["cancelled_by_name"], "at": latest["updated_at"],
+                         "reason": latest["cancelled_reason"]}
+        order = by_id[order_id]
+        order["lab_managed"] = True
+        order["lab"] = {"tests": tests, "counts": counts, "summary": _summary_text(counts),
+                        "rejected": sum(1 for r in rows if r["status"] == "rejected"),
+                        "cancelled": cancelled}
+    unmanaged = [oid for oid in lab_ids if oid not in items]
+    for chunk in _chunks(unmanaged):
+        for r in conn.execute(
+                f"""SELECT order_id, kind FROM lab_exceptions
+                    WHERE order_id IN ({_placeholders(chunk)}) AND resolved_at IS NULL
+                      AND kind IN ('unmapped_code', 'intake_failed')
+                    ORDER BY id""", tuple(chunk)).fetchall():
+            order = by_id.get(r["order_id"])
+            if order is not None and "lab_intake" not in order:
+                order["lab_intake"] = {"kind": r["kind"], "message": _INTAKE_WORDS[r["kind"]]}
+    return orders
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Collection (lis-8)
+# ════════════════════════════════════════════════════════════════════════════
+
+#: The longest a collection may ever be back-dated, whatever the site sets
+#: (ruling LIS-R6 recommends up to 2 hours with a reason). The site setting
+#: config.LAB_COLLECTION_BACKDATE_MINUTES ships at 0, which refuses any
+#: back-dating until Samuel confirms the ruling.
+BACKDATE_CEILING_MINUTES = 120
+#: Clock difference tolerated for a collection time a little in the future.
+_FUTURE_SKEW = timedelta(seconds=60)
+#: The most specimens one label print may cover.
+MAX_LABELS_PER_PRINT = 20
+#: The most rows the collection list returns.
+COLLECTION_LIST_CAP = 500
+
+IDENTITY_MATCH = "match"
+IDENTITY_NO_MATCH = "no_match"
+IDENTITY_NOT_GIVEN = "not_given"
+IDENTITY_NOT_ON_RECORD = "not_on_record"
+
+_PRIORITY_RANK_SQL = "CASE s.priority WHEN 'stat' THEN 0 WHEN 'urgent' THEN 1 ELSE 2 END"
+
+
+def backdate_limit_minutes() -> int:
+    """How far back a collection time may be set at this site: the site
+    setting, never above BACKDATE_CEILING_MINUTES. 0 (the shipped default)
+    refuses any back-dating."""
+    import config
+    try:
+        value = int(getattr(config, "LAB_COLLECTION_BACKDATE_MINUTES", 0) or 0)
+    except (TypeError, ValueError):
+        value = 0
+    return max(0, min(value, BACKDATE_CEILING_MINUTES))
+
+
+def _uhid_key(value: Any) -> str:
+    return re.sub(r"\s+", "", str(value or "")).upper()
+
+
+def _name_key(value: Any) -> list[str]:
+    return sorted(re.findall(r"[0-9a-z]+", str(value or "").lower()))
+
+
+def collection_identity_checks(patient: dict, identity: Optional[dict]) -> dict[str, str]:
+    """The two identifiers the person at the bedside typed, against the
+    record: the UHID (patients.mrn, spaces and case ignored) and the name
+    (case, punctuation and word order ignored). Pure. Each is 'match',
+    'no_match', 'not_given' or, for a record with no UHID, 'not_on_record'.
+    No stored value is ever returned."""
+    identity = identity if isinstance(identity, dict) else {}
+    out: dict[str, str] = {}
+    typed_uhid = _uhid_key(identity.get("uhid"))
+    record_uhid = _uhid_key(patient.get("mrn"))
+    if not typed_uhid:
+        out["uhid"] = IDENTITY_NOT_GIVEN
+    elif not record_uhid:
+        out["uhid"] = IDENTITY_NOT_ON_RECORD
+    else:
+        out["uhid"] = IDENTITY_MATCH if typed_uhid == record_uhid else IDENTITY_NO_MATCH
+    typed_name = _name_key(identity.get("name"))
+    if not typed_name:
+        out["name"] = IDENTITY_NOT_GIVEN
+    else:
+        out["name"] = (IDENTITY_MATCH if typed_name == _name_key(patient.get("name"))
+                       else IDENTITY_NO_MATCH)
+    return out
+
+
+def identity_confirmed(checks: dict[str, str]) -> bool:
+    """Both identifiers given and both match the record."""
+    return checks.get("uhid") == IDENTITY_MATCH and checks.get("name") == IDENTITY_MATCH
+
+
+def _require_identity_payload(identity: Any) -> dict:
+    if not isinstance(identity, dict) or not any(
+            str(identity.get(k) or "").strip() for k in ("uhid", "name")):
+        raise LabOrderError(
+            "identity_required",
+            "Check two identifiers first: type the UHID from the wristband and the "
+            "patient's name.", status=422)
+    return identity
+
+
+def _audit_identity_refusal(refusal: _IdentityRefused, *, actor: dict, step: str,
+                            request_meta: Optional[dict]) -> None:
+    """Record a refused identity check, on a transaction of its own (the
+    refused step's transaction has rolled back). Fail-closed: if this row
+    cannot be written, AuditWriteError reaches the route."""
+    with db_session() as conn:
+        _audit(conn, category="clinical_access", action="lab_collection_identity_refused",
+               outcome="failure",
+               summary=f"Specimen {step} refused: the two identifiers did not both match",
+               actor=actor, target_type="lab_specimen",
+               target_id=",".join(refusal.specimen_ids)[:200],
+               patient_id=refusal.patient_id,
+               metadata={"step": step, "checks": refusal.checks,
+                         "specimens": refusal.specimen_ids},
+               request_meta=request_meta)
+
+
+def _identity_refusal_error(checks: dict) -> LabOrderError:
+    return LabOrderError(
+        "identity_not_confirmed",
+        "The identifiers do not both match this patient's record. Check the wristband "
+        "and ask the patient again. Nothing was printed or recorded.",
+        status=409, checks=checks)
+
+
+def _collection_rows(conn, where: str, params: tuple, *, limit: int) -> list[dict]:
+    from permissions import PATIENT_DEPARTMENT_SQL
+
+    return [dict(r) for r in conn.execute(
+        f"""SELECT s.id, s.patient_id, s.specimen_type_code, s.container, s.priority,
+                   s.status, s.planned_at, s.label_print_count, s.label_printed_at,
+                   s.rejection_code, s.rejection_note, s.created_at,
+                   st.display AS specimen_display, st.container_colour_name,
+                   p.name AS patient_name, p.mrn, p.bed, p.ward,
+                   {PATIENT_DEPARTMENT_SQL} AS department
+            FROM lab_specimens s
+            JOIN patients p ON p.id = s.patient_id
+            LEFT JOIN lab_specimen_types st ON st.code = s.specimen_type_code
+            WHERE {where}
+            ORDER BY {_PRIORITY_RANK_SQL}, COALESCE(p.ward, ''), COALESCE(p.bed, ''),
+                     p.name COLLATE NOCASE, julianday(s.planned_at), s.id
+            LIMIT ?""", params + (limit,)).fetchall()]
+
+
+def _specimen_tests(conn, specimen_ids: list[str], statuses: tuple[str, ...]) -> dict:
+    out: dict[str, list[dict]] = {}
+    for chunk in _chunks(specimen_ids):
+        for r in conn.execute(
+                f"""SELECT i.specimen_id, i.id AS item_id, i.order_id, i.test_id, i.status,
+                           t.name, t.short_name
+                    FROM lab_order_items i
+                    LEFT JOIN lab_tests t ON t.id = i.test_id
+                    WHERE i.specimen_id IN ({_placeholders(chunk)})
+                      AND i.status IN ({_placeholders(statuses)})
+                    ORDER BY i.id""", (*chunk, *statuses)).fetchall():
+            out.setdefault(r["specimen_id"], []).append({
+                "item_id": r["item_id"], "order_id": r["order_id"], "test_id": r["test_id"],
+                "status": r["status"], "name": r["name"] or r["test_id"],
+                "short_name": r["short_name"] or r["name"] or r["test_id"]})
+    return out
+
+
+def _collection_entry(row: dict, tests: list[dict]) -> dict:
+    return {
+        "id": row["id"],
+        "patient": {"id": row["patient_id"], "name": row["patient_name"], "mrn": row["mrn"],
+                    "bed": row["bed"], "ward": row["ward"], "department": row["department"]},
+        "specimen_type_code": row["specimen_type_code"],
+        "specimen_display": row["specimen_display"] or row["specimen_type_code"],
+        "container": row["container"],
+        "container_colour_name": row["container_colour_name"],
+        "priority": row["priority"],
+        "status": row["status"],
+        "planned_at": row["planned_at"],
+        "label_print_count": int(row["label_print_count"] or 0),
+        "label_printed_at": row["label_printed_at"],
+        "recollection_needed": row["status"] == "rejected",
+        "rejection_code": row["rejection_code"],
+        "rejection_note": row["rejection_note"],
+        "tests": tests,
+    }
+
+
+def list_collection(conn, *, dept: Optional[str], limit: int = COLLECTION_LIST_CAP) -> list[dict]:
+    """Specimens waiting to be collected, STAT first, then by ward, bed and
+    patient, plus rejected specimens whose tests wait for a recollection
+    ('Recollection needed', informational until lis-9 builds the decision).
+
+    `dept` is the caller's permissions.department_scope(user) and is required:
+    a department account (a ward nurse or doctor) sees only patients in its
+    department, by the same predicate as patient_in_scope, filtered in SQL
+    before the LIMIT; None (the laboratory and phlebotomy roles) is the
+    hospital-wide phlebotomy list."""
+    if not _tables_present(conn):
+        return []
+    from permissions import scope_patient_ids_sql
+
+    limit = max(1, min(int(limit or COLLECTION_LIST_CAP), COLLECTION_LIST_CAP))
+    where = ("((s.status = 'planned' AND EXISTS (SELECT 1 FROM lab_order_items i "
+             "WHERE i.specimen_id = s.id AND i.status = 'awaiting_collection')) "
+             "OR (s.status = 'rejected' AND EXISTS (SELECT 1 FROM lab_order_items i "
+             "WHERE i.specimen_id = s.id AND i.status = 'rejected')))")
+    params: tuple = ()
+    if dept is not None:
+        scope_sql, scope_params = scope_patient_ids_sql(dept)
+        where += f" AND s.patient_id IN ({scope_sql})"
+        params = tuple(scope_params)
+    rows = _collection_rows(conn, where, params, limit=limit)
+    tests = _specimen_tests(conn, [r["id"] for r in rows], ("awaiting_collection", "rejected"))
+    return [_collection_entry(r, tests.get(r["id"], [])) for r in rows]
+
+
+def _scoped_specimens(conn, specimen_ids: list[str], dept: Optional[str]) -> list[dict]:
+    """The named specimens with their patient, or 404 when any is missing or
+    outside the caller's department (one answer for both)."""
+    from permissions import patient_in_scope
+
+    rows = _collection_rows(conn, f"s.id IN ({_placeholders(specimen_ids)})",
+                            tuple(specimen_ids), limit=len(specimen_ids))
+    found = {r["id"]: r for r in rows}
+    out = []
+    for specimen_id in specimen_ids:
+        row = found.get(specimen_id)
+        if row is None or not patient_in_scope(conn, row["patient_id"], dept):
+            raise _not_found()
+        out.append(row)
+    return out
+
+
+def _awaiting(conn, specimen_id: str) -> list[dict]:
+    return _specimen_tests(conn, [specimen_id], ("awaiting_collection",)).get(specimen_id, [])
+
+
+def print_labels(specimen_ids: list, *, actor: dict, identity: Any, dept: Optional[str],
+                 request_meta: Optional[dict] = None) -> dict:
+    """Print the labels for one patient's planned specimens, after the two
+    identifiers match (ruling LIS-R6, strictest option: confirm on screen
+    before labels print, and no batch pre-printing until the ruling is
+    confirmed).
+
+    Each print is counted on the specimen (label_print_count, and
+    label_printed_at the first time), which also closes the tube to later
+    merges, writes a 'label_printed' specimen event, and is audited as
+    phi_access 'lab_labels_printed' in the same transaction (a label carries
+    the name and UHID). Returns {labels, printed_at}."""
+    ids = []
+    for value in specimen_ids or []:
+        text = str(value or "").strip()
+        if text and text not in ids:
+            ids.append(text)
+    if not ids:
+        raise LabOrderError("no_specimens", "Choose the samples to print labels for.",
+                            status=422)
+    if len(ids) > MAX_LABELS_PER_PRINT:
+        raise LabOrderError("too_many_specimens",
+                            f"Print at most {MAX_LABELS_PER_PRINT} labels at a time.", status=422)
+    identity = _require_identity_payload(identity)
+    try:
+        with db_session(immediate=True) as conn:
+            if not _tables_present(conn):
+                raise _not_found()
+            rows = _scoped_specimens(conn, ids, dept)
+            patients = {r["patient_id"] for r in rows}
+            if len(patients) != 1:
+                raise LabOrderError("one_patient_at_a_time",
+                                    "Print one patient's labels at a time, at the bedside.",
+                                    status=422)
+            for row in rows:
+                if row["status"] != "planned":
+                    raise LabOrderError("specimen_not_planned",
+                                        "This sample is no longer waiting for collection.",
+                                        specimen_id=row["id"], specimen_status=row["status"])
+            awaiting = {r["id"]: _awaiting(conn, r["id"]) for r in rows}
+            for row in rows:
+                if not awaiting[row["id"]]:
+                    raise LabOrderError("nothing_to_collect",
+                                        "Every test on this sample was cancelled.",
+                                        specimen_id=row["id"])
+            patient = {"name": rows[0]["patient_name"], "mrn": rows[0]["mrn"]}
+            checks = collection_identity_checks(patient, identity)
+            if not identity_confirmed(checks):
+                raise _IdentityRefused(checks, rows[0]["patient_id"], ids)
+
+            now = utc_iso_now()
+            actor_id = (actor or {}).get("id")
+            labels = []
+            for row in rows:
+                print_number = int(row["label_print_count"] or 0) + 1
+                conn.execute(
+                    "UPDATE lab_specimens SET label_print_count = ?, "
+                    "label_printed_at = COALESCE(label_printed_at, ?), updated_at = ? "
+                    "WHERE id = ? AND status = 'planned'",
+                    (print_number, now, now, row["id"]))
+                _specimen_event(conn, row["id"], row["patient_id"], "label_printed",
+                                actor_id=actor_id, actor_role=(actor or {}).get("role"),
+                                now=now,
+                                detail=("Label printed" if print_number == 1
+                                        else f"Label printed again (print {print_number})"),
+                                metadata={"print_number": print_number, "identity": checks})
+                labels.append({
+                    "specimen_id": row["id"],
+                    "patient": {"name": row["patient_name"], "mrn": row["mrn"],
+                                "bed": row["bed"], "ward": row["ward"]},
+                    "specimen_display": row["specimen_display"] or row["specimen_type_code"],
+                    "container": row["container"],
+                    "container_colour_name": row["container_colour_name"],
+                    "priority": row["priority"],
+                    "tests": [t["short_name"] for t in awaiting[row["id"]]],
+                    "print_number": print_number,
+                })
+            _audit(conn, category="phi_access", action="lab_labels_printed", outcome="success",
+                   summary=f"Specimen labels printed ({len(labels)})",
+                   actor=actor, target_type="lab_specimen", target_id=",".join(ids)[:200],
+                   patient_id=rows[0]["patient_id"],
+                   metadata={**_scope_metadata(dept), "specimens": ids,
+                             "print_numbers": {l["specimen_id"]: l["print_number"]
+                                               for l in labels},
+                             "identity": checks},
+                   request_meta=request_meta)
+    except _IdentityRefused as refusal:
+        _audit_identity_refusal(refusal, actor=actor, step="label print",
+                                request_meta=request_meta)
+        raise _identity_refusal_error(refusal.checks)
+    return {"labels": labels, "printed_at": now}
+
+
+def _collection_instant(collected_at: Any, backdate_reason: Any, *, now: datetime,
+                        activated: list[str]) -> tuple[str, int, Optional[str]]:
+    """(collected_at in the canonical spelling, minutes back-dated, reason).
+    No time given means now. A given time is refused while the site limit is
+    0 (the shipped default, ruling LIS-R6 held), and otherwise must carry its
+    time zone, not be in the future, not be older than the limit, not be
+    before the order was placed, and carry a reason when it is earlier than
+    now."""
+    text = str(collected_at or "").strip()
+    if not text:
+        return to_utc_iso(now), 0, None
+    limit = backdate_limit_minutes()
+    if limit == 0:
+        raise LabOrderError(
+            "backdating_refused",
+            "The collection time is recorded as now. Setting an earlier time is switched "
+            "off on this site.", status=422, limit_minutes=0)
+    try:
+        if not re.search(r"(?:[zZ]|[+-]\d{2}:?\d{2})$", text):
+            raise ValueError("no time zone")
+        when = parse_to_utc(text)
+    except (TypeError, ValueError):
+        raise LabOrderError("bad_collected_at",
+                            "Give the collection time as a date and time with its time zone.",
+                            status=422)
+    if when > now + _FUTURE_SKEW:
+        raise LabOrderError("collected_in_future", "The collection time is in the future.",
+                            status=422)
+    when = min(when, now)
+    minutes = int((now - when).total_seconds() // 60)
+    if now - when > timedelta(minutes=limit):
+        raise LabOrderError(
+            "backdating_refused",
+            f"A collection time can be set at most {limit} minutes back on this site.",
+            status=422, limit_minutes=limit)
+    reason = str(backdate_reason or "").strip()[:500] or None
+    if when < now and reason is None:
+        raise LabOrderError("backdate_reason_required",
+                            "Say why the collection time is earlier than now.", status=422)
+    for instant in activated:
+        placed = _instant(instant)
+        if placed is not None and when < placed:
+            raise LabOrderError("before_order",
+                                "The collection time is before the test was ordered.",
+                                status=422)
+    return to_utc_iso(when), minutes, reason
+
+
+def collect_specimen(specimen_id: str, *, actor: dict, identity: Any, dept: Optional[str],
+                     collected_at: Any = None, backdate_reason: Any = None,
+                     collection_location: Any = None,
+                     request_meta: Optional[dict] = None) -> dict:
+    """Record a specimen as collected, in ONE immediate transaction: the
+    specimen, its waiting tests, each order's move to in_progress (through
+    orders_service.transition_in_conn, with its order_events row), the
+    specimen event and the clinical_access audit row. An audit row that cannot
+    be written leaves nothing collected.
+
+    Needs the two identifiers (UHID and name, both matching the record), a
+    printed label, and a specimen still waiting for collection. The time is
+    now unless the site allows back-dating (it does not by default)."""
+    identity = _require_identity_payload(identity)
+    actor_id = (actor or {}).get("id")
+    try:
+        with db_session(immediate=True) as conn:
+            if not _tables_present(conn):
+                raise _not_found()
+            row = _scoped_specimens(conn, [str(specimen_id or "").strip()], dept)[0]
+            if row["status"] != "planned":
+                raise LabOrderError(
+                    "specimen_not_planned",
+                    ("This sample is already recorded as collected." if row["status"] == "collected"
+                     else "This sample is no longer waiting for collection."),
+                    specimen_id=row["id"], specimen_status=row["status"])
+            awaiting = _awaiting(conn, row["id"])
+            if not awaiting:
+                raise LabOrderError("nothing_to_collect",
+                                    "Every test on this sample was cancelled.",
+                                    specimen_id=row["id"])
+            if int(row["label_print_count"] or 0) < 1:
+                raise LabOrderError("labels_not_printed",
+                                    "Print the label at the bedside before recording the "
+                                    "sample as collected.", specimen_id=row["id"])
+            order_ids = sorted({t["order_id"] for t in awaiting})
+            activated = [a for a in (activation_instant(conn, oid) for oid in order_ids) if a]
+            now_dt = datetime.now(timezone.utc)
+            when, minutes_back, reason = _collection_instant(
+                collected_at, backdate_reason, now=now_dt, activated=activated)
+            checks = collection_identity_checks(
+                {"name": row["patient_name"], "mrn": row["mrn"]}, identity)
+            if not identity_confirmed(checks):
+                raise _IdentityRefused(checks, row["patient_id"], [row["id"]])
+
+            now = utc_iso_now()
+            location = str(collection_location or "").strip()[:120] or None
+            identity_record = {"uhid": checks["uhid"], "name": checks["name"],
+                               "checked_by": actor_id, "checked_at": now}
+            cur = conn.execute(
+                """UPDATE lab_specimens
+                   SET status = 'collected', collected_at = ?, collected_by = ?,
+                       collection_location = ?, identity_check_json = ?,
+                       collection_backdate_reason = ?, updated_at = ?
+                   WHERE id = ? AND status = 'planned'""",
+                (when, actor_id, location, json.dumps(identity_record), reason, now, row["id"]))
+            if cur.rowcount != 1:
+                raise LabOrderError("specimen_not_planned",
+                                    "This sample is no longer waiting for collection.",
+                                    specimen_id=row["id"])
+            item_ids = [t["item_id"] for t in awaiting]
+            conn.execute(
+                f"UPDATE lab_order_items SET status = 'collected', updated_at = ? "
+                f"WHERE id IN ({_placeholders(item_ids)}) AND status = 'awaiting_collection'",
+                (now, *item_ids))
+            _specimen_event(conn, row["id"], row["patient_id"], "collected",
+                            actor_id=actor_id, actor_role=(actor or {}).get("role"), now=now,
+                            detail=("Specimen collected" if not minutes_back
+                                    else f"Specimen collected {minutes_back} minutes before "
+                                         f"it was recorded. Reason: {reason}"),
+                            metadata={"collected_at": when, "minutes_back": minutes_back,
+                                      "location": location, "identity": checks,
+                                      "tests": [t["test_id"] for t in awaiting]})
+            orders = []
+            for order_id in order_ids:
+                outcome = reconcile_order_status(conn, order_id, actor_id=actor_id,
+                                                 reason=f"Specimen {row['id']} collected")
+                orders.append({"id": order_id, "status": outcome["status"],
+                               "conflict": outcome["conflict"]})
+            _audit(conn, category="clinical_access", action="lab_specimen_collected",
+                   outcome="success",
+                   summary=(f"Specimen collected: {len(awaiting)} test(s)"
+                            + (f", time set {minutes_back} minutes back" if minutes_back else "")),
+                   actor=actor, target_type="lab_specimen", target_id=row["id"],
+                   patient_id=row["patient_id"],
+                   metadata={"orders": order_ids, "items": [t["test_id"] for t in awaiting],
+                             "collected_at": when, "minutes_back": minutes_back,
+                             "backdate_reason": reason, "location": location,
+                             "identity": checks},
+                   request_meta=request_meta)
+            specimen = dict(conn.execute("SELECT * FROM lab_specimens WHERE id = ?",
+                                         (row["id"],)).fetchone())
+    except _IdentityRefused as refusal:
+        _audit_identity_refusal(refusal, actor=actor, step="collection",
+                                request_meta=request_meta)
+        raise _identity_refusal_error(refusal.checks)
+    specimen.pop("identity_check_json", None)
+    return {"specimen": specimen, "items_collected": len(awaiting), "orders": orders}

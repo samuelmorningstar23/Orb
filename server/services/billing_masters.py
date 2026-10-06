@@ -80,12 +80,26 @@ __all__ = [
     "resolve_patient_payer",
     "financial_year_for",
     "next_document_number",
+    "SeriesNotConfigured",
+    "allocate_series_number",
+    "verhoeff_check_digit",
+    "verhoeff_valid",
     "ensure_default_masters",
 ]
 
 
 class MasterDataError(ValueError):
     """Bad reference data supplied by a caller (unknown treatment, blank code)."""
+
+
+class SeriesNotConfigured(MasterDataError):
+    """allocate_series_number(require_configured=True) on a series a site has
+    not configured yet. A number that is printed on a card for life must never
+    come from a placeholder series (the UHID, opd-4)."""
+
+    def __init__(self, series_code: str):
+        self.series_code = series_code
+        super().__init__(f"document series {series_code!r} is not configured on this site")
 
 
 # ── Resolution results ───────────────────────────────────────────────────────
@@ -703,6 +717,155 @@ def next_document_number(series_code: str, *, when: Optional[date | str] = None)
         "sequence": sequence,
         "financial_year": fy,
         "is_configured": configured,
+    }
+
+
+# ── Check digits ─────────────────────────────────────────────────────────────
+# Verhoeff's dihedral-group scheme catches every single-digit error and every
+# transposition of adjacent digits, which a plain mod-10 sum does not. It is the
+# check digit a UHID series carries (migration 50 seeds check_digit='verhoeff'):
+# a hospital number is read aloud and typed at counters for decades.
+
+_VERHOEFF_D = (
+    (0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
+    (1, 2, 3, 4, 0, 6, 7, 8, 9, 5),
+    (2, 3, 4, 0, 1, 7, 8, 9, 5, 6),
+    (3, 4, 0, 1, 2, 8, 9, 5, 6, 7),
+    (4, 0, 1, 2, 3, 9, 5, 6, 7, 8),
+    (5, 9, 8, 7, 6, 0, 4, 3, 2, 1),
+    (6, 5, 9, 8, 7, 1, 0, 4, 3, 2),
+    (7, 6, 5, 9, 8, 2, 1, 0, 4, 3),
+    (8, 7, 6, 5, 9, 3, 2, 1, 0, 4),
+    (9, 8, 7, 6, 5, 4, 3, 2, 1, 0),
+)
+_VERHOEFF_P = (
+    (0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
+    (1, 5, 7, 6, 2, 8, 3, 0, 9, 4),
+    (5, 8, 0, 3, 7, 9, 6, 1, 4, 2),
+    (8, 9, 1, 6, 0, 4, 3, 5, 2, 7),
+    (9, 4, 5, 3, 1, 2, 6, 8, 7, 0),
+    (4, 2, 8, 6, 5, 7, 3, 9, 0, 1),
+    (2, 7, 9, 3, 8, 0, 6, 4, 1, 5),
+    (7, 0, 4, 6, 9, 1, 3, 2, 5, 8),
+)
+_VERHOEFF_INV = (0, 4, 3, 2, 1, 5, 6, 7, 8, 9)
+
+
+def _digits_only(text: str) -> str:
+    text = str(text or "")
+    if not text or not text.isdigit() or not text.isascii():
+        raise ValueError("a Verhoeff check digit is computed over ASCII digits only")
+    return text
+
+
+def verhoeff_check_digit(digits: str) -> str:
+    """The Verhoeff check digit to append to `digits` (a string of 0-9)."""
+    c = 0
+    for i, ch in enumerate(reversed(_digits_only(digits))):
+        c = _VERHOEFF_D[c][_VERHOEFF_P[(i + 1) % 8][int(ch)]]
+    return str(_VERHOEFF_INV[c])
+
+
+def verhoeff_valid(number: str) -> bool:
+    """True when the last digit of `number` is its Verhoeff check digit."""
+    try:
+        digits = _digits_only(number)
+    except ValueError:
+        return False
+    if len(digits) < 2:
+        return False
+    c = 0
+    for i, ch in enumerate(reversed(digits)):
+        c = _VERHOEFF_D[c][_VERHOEFF_P[i % 8][int(ch)]]
+    return c == 0
+
+
+_CHECK_DIGIT_SCHEMES = {"verhoeff": verhoeff_check_digit}
+
+
+def allocate_series_number(db, series_code: str, *, when: Optional[date | str] = None,
+                           require_configured: bool = False) -> dict:
+    """Allocate the next number in a series on the CALLER'S connection.
+
+    The connection must already hold a write transaction (the caller opened
+    db_session(immediate=True)), so the counter moves in the same transaction
+    as the document that carries the number: a rolled-back registration hands
+    its UHID back, and two desks registering at the same second serialise on
+    the write lock instead of both reading 41. This function never commits and
+    never opens a session (next_document_number, which does, is unchanged).
+
+    A series with resets_yearly = 1 behaves exactly like next_document_number:
+    the financial year restarts the sequence and is part of the number. A
+    series with resets_yearly = 0 (the UHID, migration 50) never resets and
+    never embeds a year: the number is prefix + zero-padded sequence (+ check
+    digit) + suffix, and a sequence wider than the pad simply grows.
+
+    `require_configured` refuses a series the site has not configured with
+    SeriesNotConfigured, before anything moves. A number that is printed on a
+    card for life must not come from a placeholder series.
+
+    Returns {series_code, number, sequence, financial_year (None when the
+    series never resets), is_configured, check_digit}.
+    """
+    if not getattr(db, "in_transaction", False):
+        raise RuntimeError(
+            "allocate_series_number needs the caller's open write transaction "
+            "(db_session(immediate=True)); it never opens or commits one itself"
+        )
+    row = db.execute(
+        "SELECT * FROM document_number_series WHERE series_code = ?", (series_code,)
+    ).fetchone()
+    if row is None:
+        raise MasterDataError(f"unknown document series {series_code!r}")
+    keys = set(row.keys())
+    configured = int(row["is_configured"] or 0)
+    if require_configured and not configured:
+        raise SeriesNotConfigured(series_code)
+    resets_yearly = int(row["resets_yearly"]) if "resets_yearly" in keys and row["resets_yearly"] is not None else 1
+    scheme = (row["check_digit"] or None) if "check_digit" in keys else None
+    if scheme is not None and scheme not in _CHECK_DIGIT_SCHEMES:
+        # Fail closed: a number issued without the check digit the series
+        # promises would validate nowhere.
+        raise MasterDataError(f"series {series_code!r} names an unknown check digit {scheme!r}")
+    prefix = row["prefix"] or ""
+    suffix = row["suffix"] or ""
+    width = int(row["pad_width"] or 6)
+
+    if resets_yearly:
+        fy = financial_year_for(when)
+        if (row["financial_year"] or "") != fy:
+            sequence = 1
+            db.execute(
+                "UPDATE document_number_series SET financial_year = ?, next_number = 2, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (fy, int(row["id"])),
+            )
+        else:
+            sequence = int(row["next_number"])
+            db.execute(
+                "UPDATE document_number_series SET next_number = next_number + 1, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (int(row["id"]),),
+            )
+        body = f"{fy}-{str(sequence).zfill(width)}"
+    else:
+        fy = None
+        sequence = int(row["next_number"])
+        db.execute(
+            "UPDATE document_number_series SET next_number = next_number + 1, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (int(row["id"]),),
+        )
+        body = str(sequence).zfill(width)
+    if scheme is not None:
+        body += _CHECK_DIGIT_SCHEMES[scheme](str(sequence).zfill(width))
+    return {
+        "series_code": series_code,
+        "number": f"{prefix}{body}{suffix}",
+        "sequence": sequence,
+        "financial_year": fy,
+        "is_configured": configured,
+        "check_digit": scheme,
     }
 
 

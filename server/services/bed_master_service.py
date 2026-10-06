@@ -62,13 +62,25 @@ unlinked admission or a doubled bed.
     unless the bed manager asks to adopt them, which links the existing row and
     keeps its cleaning state, ledger and open tasks.
 
+THE BED BOARD (adt-4a). bed_board derives each bed's status from the admission
+that holds it, housekeeping's record and the movement ledger, in the design's
+precedence (occupancy and reservation above out of service; a bed vacated
+after its last clean needs cleaning whatever housekeeping says; wards whose
+cleaning is not tracked read 'Vacant, cleaning not tracked'). awaiting_bed
+lists active admissions with no bed and those with typed bed text not linked
+to the master, never merged. available_beds is the picker's read. The section
+at the end of this file states the rules.
+
 PATIENT DATA. The master edits read no patient: reference checks count
 admissions and patients by ward and bed text and return counts only. Master
 edits are audited as category 'facilities' (design section 9) inside the same
 transaction, with a bed_master_events row beside each. The reconciliation is
 the exception: it lists admission and patient ids against typed places (no
 name, no MRN), so reading it writes a fail-closed phi_access audit naming the
-patient ids, and each link writes a fail-closed patient_movement audit.
+patient ids, and each link writes a fail-closed patient_movement audit. The
+bed board and the awaiting list name patients only inside the caller's
+department scope, and a read that names anybody writes one fail-closed
+phi_access audit with their ids; available_beds names nobody.
 
 Every function is plain sync and opens its own sessions; routes call it from
 plain def handlers.
@@ -80,6 +92,7 @@ import logging
 import re
 import string
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
 from database import db_session
@@ -87,7 +100,7 @@ from db_backend import DBIntegrityError
 from migrations_his.m0053_adt_bed_master import FACILITY_CODE, ROOM_TYPES, WARD_TYPES
 from services import housekeeping_service as hk
 from services.audit_service import log_audit_event
-from services.clinical_time import utc_iso_now
+from services.clinical_time import format_utc, parse_to_utc, utc_iso_now
 
 logger = logging.getLogger("orb.bed_master")
 
@@ -107,6 +120,13 @@ __all__ = [
     "reconciliation_report",
     "link_admissions",
     "mark_register_complete",
+    "BOARD_STATUSES",
+    "FREE_STATUSES",
+    "OCCUPIED_STATUSES",
+    "VACATING_MOVEMENT_TYPES",
+    "bed_board",
+    "available_beds",
+    "awaiting_bed",
 ]
 
 #: One registration call registers at most this many beds. A ward is rarely
@@ -1649,3 +1669,613 @@ def mark_register_complete(ward_id: str, data: dict | None = None, *, actor: dic
                target_type="ward", target_id=ward_id, request_meta=request_meta, metadata=detail)
         row = db.execute("SELECT * FROM wards WHERE id = ?", (ward_id,)).fetchone()
     return _ward_out(row, covering)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  The bed board, awaiting a bed, and available beds (adt-4a, W4-B)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# A BED'S STATUS IS DERIVED, NEVER STORED (design section 4). Occupancy comes
+# from the admission (an active admission holding bed_id, or typed ward and bed
+# text that names the bed); cleaning comes from housekeeping read together with
+# the movement ledger. In this precedence, first match wins:
+#
+#   1. occupied (on leave, absconded): an active admission holds the bed. When
+#      housekeeping says out_of_service the tile still shows the occupant and
+#      says 'bed reported out of service' (critique C2: a marker must never
+#      hide a patient). This sits ABOVE retired on purpose: retire_bed refuses
+#      an occupied bed, so the pair cannot arise through the writers, and if it
+#      ever did the patient is what the board must show.
+#   2. reserved (an active bed_reservations row, once adt-12 creates the table),
+#      with the same out-of-service marker.
+#   3. retired beds leave the board (retire_bed says so); a switched-off bed is
+#      shown as switched off.
+#   4. out_of_service.
+#   5. needs_cleaning when housekeeping says vacant_dirty, or says occupied and
+#      nobody occupies the bed, or says vacant_ready while the bed's latest
+#      vacating movement is NEWER than its latest event into vacant_ready
+#      (critique C3: a bed vacated before housekeeping caught up never reads
+#      available, and no sync is needed for that).
+#   6. cleaning (cleaning_in_progress).
+#   7. available (vacant_ready and no newer vacating movement).
+#
+# CLEANING NOT TRACKED. While ORB_HOUSEKEEPING is off, or the ward's
+# cleaning_tracked is 0, rules 4 to 7 read 'Vacant, cleaning not tracked' and
+# raise no clean-related warning: a site without housekeeping would otherwise
+# see every bed as needing a clean.
+#
+# IDENTITY. A tile names its occupant (name, MRN, treating department, 'Boarder
+# from <department>') only when that patient is inside the caller's department
+# scope (permissions.department_scope, the one derivation). Any other occupied
+# tile says 'Occupied', or 'Boarder' when the patient is treated by another
+# department than the ward's, and carries no patient field at all. A read that
+# names anybody writes ONE fail-closed phi_access audit with the patient ids,
+# inside the read's own session (no audit, no board); a read that names nobody
+# writes none.
+#
+# WHICH WARDS. An account with no department (a hospital-wide administrator)
+# sees every ward. A department account sees its department's wards and any
+# ward where one of its own patients lies as a boarder; any other ward id is
+# 404, never 403.
+
+#: status -> (words, tone). The board prints `status_words` as the server
+#: wrote them and styles by `tone`, so a later status (a leave or reservation
+#: state) needs no client change. Sentence case, plain words.
+BOARD_STATUSES: dict[str, tuple[str, str]] = {
+    "occupied": ("Occupied", "occupied"),
+    "occupied_on_leave": ("Occupied, patient on leave", "occupied"),
+    "occupied_absconded": ("Occupied, patient absconded", "attention"),
+    "boarder": ("Boarder", "occupied"),
+    "reserved": ("Reserved", "held"),
+    "switched_off": ("Switched off in bed setup", "off"),
+    "out_of_service": ("Out of service", "off"),
+    "needs_cleaning": ("Needs cleaning", "attention"),
+    "cleaning": ("Being cleaned", "progress"),
+    "available": ("Available", "ready"),
+    "vacant_untracked": ("Vacant, cleaning not tracked", "neutral"),
+}
+
+#: Statuses a new patient could be placed in without a clean being skipped.
+FREE_STATUSES = frozenset({"available", "vacant_untracked"})
+
+#: Statuses that mean a patient lies in the bed.
+OCCUPIED_STATUSES = frozenset({"occupied", "occupied_on_leave", "occupied_absconded", "boarder"})
+
+#: Movement types that can take a patient OUT of a bed. A movement whose
+#: destination is the same bed (a department-only transfer) vacates nothing.
+VACATING_MOVEMENT_TYPES: tuple[str, ...] = (
+    "discharge", "transfer", "bed_change", "bed_swap", "correction", "location_linked",
+)
+
+_OUT_OF_SERVICE_MARKER = "Bed reported out of service"
+
+
+def _board_words(status: str) -> str:
+    return BOARD_STATUSES.get(status, (status.replace("_", " ").capitalize(), "neutral"))[0]
+
+
+def _board_tone(status: str) -> str:
+    return BOARD_STATUSES.get(status, ("", "neutral"))[1]
+
+
+def _cleaning_tracked(ward: dict) -> bool:
+    """Housekeeping tracks this ward's cleaning: the module is on AND the
+    ward says so. Read at call time."""
+    import config
+
+    return bool(getattr(config, "HOUSEKEEPING_ENABLED", False)) and bool(ward.get("cleaning_tracked"))
+
+
+_UNIX_EPOCH_JD = 2440587.5
+
+
+def _jd(value: Any) -> Optional[float]:
+    """The julian day of any stored spelling (what SQLite's julianday() gives),
+    or None when blank or unreadable. A stored time with no offset is UTC."""
+    if value in (None, ""):
+        return None
+    try:
+        when = parse_to_utc(value)
+    except (TypeError, ValueError):
+        return None
+    return when.timestamp() / 86400.0 + _UNIX_EPOCH_JD
+
+
+def _jd_text(jd: Optional[float]) -> Optional[str]:
+    """A julian day in the canonical UTC spelling, or None."""
+    if jd is None:
+        return None
+    return format_utc(datetime.fromtimestamp((jd - _UNIX_EPOCH_JD) * 86400.0, tz=timezone.utc))
+
+
+def _minutes_since(jd: Optional[float], now_jd: float) -> Optional[int]:
+    if jd is None:
+        return None
+    return max(0, int(round((now_jd - jd) * 24 * 60)))
+
+
+def _in(values: Iterable[Any]) -> tuple[str, tuple]:
+    vals = tuple(values)
+    return ", ".join("?" for _ in vals) or "NULL", vals
+
+
+def _visible_wards(db, dept: Optional[str]) -> list[dict]:
+    """Every ward this caller's board may show (see WHICH WARDS above)."""
+    wards = [dict(r) for r in db.execute("SELECT * FROM wards ORDER BY LOWER(code)").fetchall()]
+    if dept is None:
+        return wards
+    from permissions import scope_patient_ids_sql
+
+    scope_sql, scope_params = scope_patient_ids_sql(dept)
+    holding = {r["ward_id"] for r in db.execute(
+        f"""SELECT DISTINCT ward_id FROM admissions
+             WHERE status = 'active' AND ward_id IS NOT NULL AND patient_id IN ({scope_sql})""",
+        scope_params,
+    ).fetchall()}
+    key = dept.casefold()
+    return [w for w in wards
+            if (w.get("department") or "").casefold() == key or w["id"] in holding]
+
+
+def _occupants_on(db, wards: list[dict], beds: list[dict]) -> dict[str, list[dict]]:
+    """bed id -> the active admissions lying in it: by bed_id, else by typed
+    ward and bed text naming exactly that ward code and bed label."""
+    by_bed: dict[str, list[dict]] = {}
+    if not beds:
+        return by_bed
+    marks, ids = _in(b["id"] for b in beds)
+    for row in db.execute(
+        f"""SELECT id, patient_id, department, ward, bed, ward_id, bed_id, presence_status,
+                   presence_since, admitted_at, created_at
+              FROM admissions WHERE status = 'active' AND bed_id IN ({marks})""",
+        ids,
+    ).fetchall():
+        adm = dict(row)
+        adm["linked"] = True
+        by_bed.setdefault(adm["bed_id"], []).append(adm)
+    codes = {_key(w["code"]): w for w in wards}
+    labels = {(b["ward_id"], _key(b.get("bed_label") or "")): b["id"] for b in beds}
+    ward_marks, ward_keys = _in(codes)
+    for row in db.execute(
+        f"""SELECT id, patient_id, department, ward, bed, ward_id, bed_id, presence_status,
+                   presence_since, admitted_at, created_at
+              FROM admissions
+             WHERE status = 'active' AND bed_id IS NULL AND COALESCE(TRIM(bed), '') <> ''
+               AND LOWER(TRIM(COALESCE(ward, ''))) IN ({ward_marks})""",
+        ward_keys,
+    ).fetchall():
+        adm = dict(row)
+        ward = codes.get(_key(" ".join(str(adm.get("ward") or "").split())))
+        if ward is None:
+            continue
+        bed_id = labels.get((ward["id"], _key(" ".join(str(adm.get("bed") or "").split()))))
+        if bed_id is None:
+            continue
+        adm["linked"] = False
+        by_bed.setdefault(bed_id, []).append(adm)
+    return by_bed
+
+
+def _reserved_beds(db, bed_ids: Iterable[str]) -> set[str]:
+    """Beds an active reservation holds. bed_reservations arrives with adt-12;
+    until then nothing is reserved."""
+    ids = tuple(bed_ids)
+    if not ids or not _table_columns(db, "bed_reservations"):
+        return set()
+    marks, params = _in(ids)
+    return {r[0] for r in db.execute(
+        f"SELECT DISTINCT bed_id FROM bed_reservations WHERE status = 'active' AND bed_id IN ({marks})",
+        params,
+    ).fetchall()}
+
+
+def _last_ready_jd(db, beds: list[dict]) -> dict[str, float]:
+    """bed id -> julian day of its latest housekeeping event into vacant_ready."""
+    if not beds:
+        return {}
+    marks, ids = _in(b["id"] for b in beds)
+    return {r[0]: float(r[1]) for r in db.execute(
+        f"""SELECT unit_id, MAX(julianday(occurred_at)) FROM housekeeping_unit_events
+             WHERE to_state = 'vacant_ready' AND unit_id IN ({marks}) GROUP BY unit_id""",
+        ids,
+    ).fetchall() if r[1] is not None}
+
+
+def _last_vacated_jd(db, wards: list[dict], beds: list[dict]) -> dict[str, float]:
+    """bed id -> julian day of its latest vacating movement: by from_bed_id,
+    or, for a movement written before the bed was linked, by its typed ward
+    and bed text. A movement into the same bed vacates nothing."""
+    out: dict[str, float] = {}
+    if not beds or not _table_columns(db, "patient_movements"):
+        return out
+    types_marks, types = _in(VACATING_MOVEMENT_TYPES)
+    marks, ids = _in(b["id"] for b in beds)
+    for bed_id, jd in db.execute(
+        f"""SELECT from_bed_id, MAX(julianday(moved_at)) FROM patient_movements
+             WHERE from_bed_id IN ({marks}) AND movement_type IN ({types_marks})
+               AND (to_bed_id IS NULL OR to_bed_id <> from_bed_id)
+             GROUP BY from_bed_id""",
+        ids + types,
+    ).fetchall():
+        if jd is not None:
+            out[bed_id] = float(jd)
+    codes = {_key(w["code"]): w for w in wards}
+    labels = {(b["ward_id"], _key(b.get("bed_label") or "")): b["id"] for b in beds}
+    ward_marks, ward_keys = _in(codes)
+    for ward_text, bed_text, jd in db.execute(
+        f"""SELECT LOWER(TRIM(from_ward)), LOWER(TRIM(from_bed)), MAX(julianday(moved_at))
+              FROM patient_movements
+             WHERE from_bed_id IS NULL AND movement_type IN ({types_marks})
+               AND LOWER(TRIM(COALESCE(from_ward, ''))) IN ({ward_marks})
+               AND NOT (LOWER(TRIM(COALESCE(to_ward, ''))) = LOWER(TRIM(COALESCE(from_ward, '')))
+                        AND LOWER(TRIM(COALESCE(to_bed, ''))) = LOWER(TRIM(COALESCE(from_bed, ''))))
+             GROUP BY 1, 2""",
+        types + ward_keys,
+    ).fetchall():
+        ward = codes.get(ward_text or "")
+        bed_id = labels.get((ward["id"], bed_text or "")) if ward else None
+        if bed_id is not None and jd is not None:
+            out[bed_id] = max(out.get(bed_id, 0.0), float(jd))
+    return out
+
+
+def _derive_status(bed: dict, ward: dict, *, occupied: bool, presence: Optional[str],
+                   reserved: bool, ready_jd: Optional[float], vacated_jd: Optional[float],
+                   state_jd: Optional[float]) -> tuple[str, list[str], Optional[float]]:
+    """(status, markers, since julian day) in the precedence above, for a bed
+    whose occupant identity is decided by the caller."""
+    state = bed.get("state")
+    markers: list[str] = []
+    if occupied or reserved:
+        if state == "out_of_service":
+            markers.append(_OUT_OF_SERVICE_MARKER)
+        if occupied:
+            status = {"on_leave": "occupied_on_leave",
+                      "absconded": "occupied_absconded"}.get(presence or "", "occupied")
+            return status, markers, None
+        return "reserved", markers, None
+    if not bed.get("is_active"):
+        return "switched_off", markers, None
+    if not _cleaning_tracked(ward):
+        if state == "out_of_service":
+            return "out_of_service", markers, state_jd
+        return "vacant_untracked", markers, None
+    if state == "out_of_service":
+        return "out_of_service", markers, state_jd
+    last_ready = ready_jd if ready_jd is not None else (state_jd if state == "vacant_ready" else None)
+    if state == "vacant_dirty":
+        return "needs_cleaning", markers, state_jd
+    if state == "occupied":
+        # Housekeeping still says occupied, but nobody lies in the bed.
+        return "needs_cleaning", markers, vacated_jd if vacated_jd is not None else state_jd
+    if state == "cleaning_in_progress":
+        return "cleaning", markers, state_jd
+    if state == "vacant_ready":
+        # julianday() keeps milliseconds, so a departure and a clean stamped
+        # in the same millisecond compare equal. A tie reads as needing a
+        # clean: when the order cannot be told, the bed is not offered as
+        # clean.
+        if vacated_jd is not None and (last_ready is None or vacated_jd >= last_ready):
+            return "needs_cleaning", markers, vacated_jd
+        return "available", markers, state_jd
+    return "needs_cleaning", markers, state_jd
+
+
+def _scope_filter(db, patient_ids: Iterable[str], dept: Optional[str]) -> set[str]:
+    """The ids among `patient_ids` inside `dept` (all of them for None)."""
+    ids = tuple({p for p in patient_ids if p})
+    if not ids:
+        return set()
+    if dept is None:
+        return set(ids)
+    from permissions import PATIENT_DEPARTMENT_SQL
+
+    marks, params = _in(ids)
+    return {r[0] for r in db.execute(
+        f"SELECT p.id FROM patients p WHERE p.id IN ({marks}) AND {PATIENT_DEPARTMENT_SQL} = ?",
+        params + (dept,),
+    ).fetchall()}
+
+
+def _board_on(db, *, wards: list[dict], dept: Optional[str], identity: bool) -> dict:
+    """Tiles for `wards` on the caller's connection. With identity False no
+    patient field is ever read or returned (the available-beds read)."""
+    now_jd = _jd(datetime.now(timezone.utc))
+    ward_ids = [w["id"] for w in wards]
+    beds: list[dict] = []
+    if ward_ids:
+        marks, ids = _in(ward_ids)
+        beds = [dict(r) for r in db.execute(
+            f"""SELECT u.id, u.unit_code, u.ward_id, u.room_id, u.room, u.bed_label, u.bed_class,
+                       u.is_isolation_room, u.is_temporary, u.is_active, u.retired_at, u.state,
+                       u.state_since, r.code AS room_code, r.name AS room_name,
+                       COALESCE(r.is_isolation, 0) AS room_is_isolation
+                  FROM housekeeping_units u LEFT JOIN ward_rooms r ON r.id = u.room_id
+                 WHERE u.ward_id IN ({marks})""",
+            ids,
+        ).fetchall()]
+    occupants = _occupants_on(db, wards, beds)
+    reserved = _reserved_beds(db, (b["id"] for b in beds))
+    ready = _last_ready_jd(db, beds)
+    vacated = _last_vacated_jd(db, wards, beds)
+    in_scope = _scope_filter(db, (a["patient_id"] for who in occupants.values() for a in who), dept) \
+        if identity else set()
+    names: dict[str, dict] = {}
+    if in_scope:
+        marks, ids = _in(in_scope)
+        names = {r["id"]: dict(r) for r in db.execute(
+            f"SELECT id, name, mrn FROM patients WHERE id IN ({marks})", ids).fetchall()}
+
+    by_ward = {w["id"]: w for w in wards}
+    tiles_by_ward: dict[str, list[dict]] = {w["id"]: [] for w in wards}
+    shown: list[str] = []
+    for bed in sorted(beds, key=lambda b: (b["ward_id"], _natural_key(b.get("bed_label") or ""))):
+        ward = by_ward[bed["ward_id"]]
+        who = sorted(occupants.get(bed["id"], []), key=lambda a: (not a["linked"], a["id"]))
+        if bed.get("retired_at") and not who:
+            continue
+        holder = who[0] if who else None
+        status, markers, since_jd = _derive_status(
+            bed, ward, occupied=holder is not None,
+            presence=holder.get("presence_status") if holder else None,
+            reserved=bed["id"] in reserved, ready_jd=ready.get(bed["id"]),
+            vacated_jd=vacated.get(bed["id"]), state_jd=_jd(bed.get("state_since")))
+        occupant = None
+        hidden = False
+        if holder is not None:
+            boarder = bool(ward.get("department")) and \
+                (holder.get("department") or "").casefold() != (ward.get("department") or "").casefold()
+            if holder["patient_id"] in in_scope:
+                person = names.get(holder["patient_id"], {})
+                occupant = {
+                    "admission_id": holder["id"],
+                    "patient_id": holder["patient_id"],
+                    "name": person.get("name"),
+                    "mrn": person.get("mrn"),
+                    "department": holder.get("department"),
+                    "boarder": boarder,
+                    "boarder_from": holder.get("department") if boarder else None,
+                    "presence_status": holder.get("presence_status"),
+                    "linked": holder["linked"],
+                }
+                if holder["patient_id"] not in shown:
+                    shown.append(holder["patient_id"])
+                since_jd = _jd(holder.get("admitted_at") or holder.get("created_at"))
+            else:
+                hidden = True
+                # Nothing about a patient outside the caller's scope: not the
+                # name, not the stay, not whether they are on leave.
+                status = "boarder" if boarder else "occupied"
+            if not holder["linked"]:
+                markers.append("Not linked to bed setup")
+            if len(who) > 1:
+                markers.append(f"{len(who)} admissions are recorded in this bed")
+            if bed.get("retired_at"):
+                markers.append("Retired bed")
+        words = _board_words(status)
+        if markers and markers[0] == _OUT_OF_SERVICE_MARKER and status != "out_of_service":
+            words = f"{words}, bed reported out of service"
+        isolation = bool(bed.get("is_isolation_room")) or bool(bed.get("room_is_isolation"))
+        tiles_by_ward[bed["ward_id"]].append({
+            "bed_id": bed["id"],
+            "unit_code": bed["unit_code"],
+            "bed_label": bed.get("bed_label"),
+            "ward_id": bed["ward_id"],
+            "room_id": bed.get("room_id"),
+            "room": bed.get("room_code") or bed.get("room"),
+            "room_name": bed.get("room_name"),
+            "bed_class": bed.get("bed_class"),
+            "isolation": isolation,
+            "temporary": bool(bed.get("is_temporary")),
+            "status": status,
+            "status_words": words,
+            "tone": _board_tone(status),
+            "markers": markers,
+            "free": status in FREE_STATUSES,
+            "housekeeping_state": bed.get("state") if _cleaning_tracked(ward) else None,
+            "since": _jd_text(since_jd),
+            "minutes_in_state": _minutes_since(since_jd, now_jd),
+            "occupant": occupant,
+            "occupant_hidden": hidden,
+        })
+
+    out_wards = []
+    for ward in wards:
+        tiles = tiles_by_ward[ward["id"]]
+        counts: dict[str, int] = {"beds": len(tiles)}
+        for tile in tiles:
+            counts[tile["status"]] = counts.get(tile["status"], 0) + 1
+        counts["free"] = sum(1 for t in tiles if t["free"])
+        counts["occupied_total"] = sum(1 for t in tiles if t["status"] in OCCUPIED_STATUSES)
+        out_wards.append({
+            "id": ward["id"],
+            "code": ward["code"],
+            "name": ward.get("name"),
+            "department": ward.get("department"),
+            "ward_type": ward.get("ward_type"),
+            "is_active": bool(ward.get("is_active")),
+            "cleaning_tracked": _cleaning_tracked(ward),
+            "register_complete": bool(ward.get("register_complete")),
+            "counts": counts,
+            "tiles": tiles,
+        })
+    return {"wards": out_wards, "patient_ids": shown}
+
+
+def _ward_choice(ward: dict) -> dict:
+    return {"id": ward["id"], "code": ward["code"], "name": ward.get("name"),
+            "department": ward.get("department"), "is_active": bool(ward.get("is_active"))}
+
+
+def _phi_read_audit(db, actor: dict, action: str, summary: str, *, patient_ids: list[str],
+                    target_type: str, target_id: str, request_meta: dict | None,
+                    metadata: dict | None = None) -> None:
+    """One fail-closed phi_access line naming the patients a read showed,
+    inside the read's own session."""
+    meta = request_meta or {}
+    log_audit_event(
+        correlation_id=str(uuid.uuid4()),
+        event_category="phi_access",
+        action_type=action,
+        outcome="success",
+        db=db,
+        summary_message=summary,
+        actor_user_id=(actor or {}).get("id"),
+        actor_role=(actor or {}).get("role"),
+        target_type=target_type,
+        target_id=str(target_id),
+        request_path=meta.get("request_path"),
+        http_method=meta.get("http_method"),
+        ip_address=meta.get("ip_address"),
+        user_agent=meta.get("user_agent"),
+        metadata={"patient_ids": patient_ids[:300], "patient_count": len(patient_ids),
+                  **(metadata or {})},
+    )
+
+
+def bed_board(*, actor: dict, ward_id: str | None = None,
+              request_meta: dict | None = None) -> dict:
+    """The bed board: every bed on the caller's wards (or on one of them) with
+    its derived status, minutes in that status, isolation and temporary
+    markers, the bed class, and the occupant when the caller may see them.
+    Counts per ward. A ward the caller may not see is 404."""
+    from permissions import department_scope
+
+    dept = department_scope(actor)
+    hk.ensure_housekeeping_schema()
+    with db_session() as db:
+        visible = _visible_wards(db, dept)
+        if ward_id:
+            chosen = [w for w in visible if w["id"] == ward_id]
+            if not chosen:
+                raise BedMasterNotFound("No ward with that id on your bed board", code="ward_not_found")
+        else:
+            chosen = [w for w in visible if w.get("is_active")]
+        board = _board_on(db, wards=chosen, dept=dept, identity=True)
+        # A switched-off ward with nobody in it has nothing to show.
+        if not ward_id:
+            board["wards"] = [w for w in board["wards"]
+                              if w["is_active"] or w["counts"].get("occupied_total")]
+        if board["patient_ids"]:
+            _phi_read_audit(
+                db, actor, "bed_board_viewed",
+                f"Bed board viewed: {len(board['patient_ids'])} patients named",
+                patient_ids=board["patient_ids"],
+                target_type="ward" if ward_id else "bed_board",
+                target_id=ward_id or "all", request_meta=request_meta,
+                metadata={"department": dept, "ward_ids": [w["id"] for w in board["wards"]]})
+    return {
+        "generated_at": utc_iso_now(),
+        "department": dept,
+        "ward_id": ward_id,
+        "ward_choices": [_ward_choice(w) for w in visible if w.get("is_active")],
+        "wards": board["wards"],
+        "status_words": {k: v[0] for k, v in BOARD_STATUSES.items()},
+    }
+
+
+def available_beds(*, actor: dict, ward_id: str | None = None) -> dict:
+    """Beds a patient could be placed in now, for a picker: status available,
+    or vacant on a ward whose cleaning is not tracked. Beds waiting for or
+    under a clean are listed apart, with whether the clean is a terminal one,
+    so a picker can say why. No patient data: nothing here is audited."""
+    hk.ensure_housekeeping_schema()
+    with db_session() as db:
+        wards = [dict(r) for r in db.execute(
+            "SELECT * FROM wards WHERE is_active = 1" + (" AND id = ?" if ward_id else "")
+            + " ORDER BY LOWER(code)", (ward_id,) if ward_id else ()).fetchall()]
+        if ward_id and not wards:
+            raise BedMasterNotFound("No ward with that id is set up", code="ward_not_found")
+        board = _board_on(db, wards=wards, dept=None, identity=False)
+        terminal: set[str] = set()
+        bed_ids = [t["bed_id"] for w in board["wards"] for t in w["tiles"]]
+        if bed_ids:
+            marks, ids = _in(bed_ids)
+            terminal = {r[0] for r in db.execute(
+                f"""SELECT DISTINCT unit_id FROM housekeeping_tasks
+                     WHERE status IN ('open', 'in_progress') AND clean_type = 'terminal'
+                       AND unit_id IN ({marks})""", ids).fetchall()}
+
+    def _entry(ward: dict, tile: dict) -> dict:
+        return {"bed_id": tile["bed_id"], "unit_code": tile["unit_code"],
+                "bed_label": tile["bed_label"], "ward_id": ward["id"], "ward_code": ward["code"],
+                "ward_department": ward["department"], "room": tile["room"],
+                "bed_class": tile["bed_class"], "isolation": tile["isolation"],
+                "temporary": tile["temporary"], "status": tile["status"],
+                "status_words": tile["status_words"], "markers": tile["markers"],
+                "terminal_clean": tile["bed_id"] in terminal}
+
+    free: list[dict] = []
+    not_ready: list[dict] = []
+    for ward in board["wards"]:
+        for tile in ward["tiles"]:
+            if tile["free"]:
+                free.append(_entry(ward, tile))
+            elif tile["status"] in ("needs_cleaning", "cleaning"):
+                not_ready.append(_entry(ward, tile))
+    return {"ward_id": ward_id, "beds": free, "not_ready": not_ready,
+            "status_words": {k: v[0] for k, v in BOARD_STATUSES.items()}}
+
+
+def awaiting_bed(*, actor: dict, ward_id: str | None = None,
+                 request_meta: dict | None = None) -> dict:
+    """Active admissions in the caller's scope with no master bed, as two
+    lists that are never merged:
+
+      awaiting  no bed text and no bed_id: nobody has said where they lie.
+      unlinked  bed text with no bed_id: they lie somewhere a person typed,
+                not yet linked to bed setup. Each says why (no such ward or
+                bed in setup, a retired bed, a bed claimed by more than one
+                admission, or 'matches' a bed a bed manager can link).
+
+    Names and MRNs are shown, so a read that lists anybody writes one
+    fail-closed phi_access audit with the patient ids."""
+    from permissions import department_scope
+
+    dept = department_scope(actor)
+    hk.ensure_housekeeping_schema()
+    with db_session() as db:
+        report = _reconcile_on(db, ward_id=ward_id, dept=dept)
+        unlinked = [dict(e) for e in report["unlinked"]]
+        unlinked += [dict(e, reason="matches_bed") for e in report["matched"]]
+        for doubled in report["doubled"]:
+            for e in doubled["admissions"]:
+                if e.get("bed_id") is None:
+                    unlinked.append(dict(e, reason="doubled_bed"))
+        awaiting = [dict(e) for e in report["awaiting"]]
+        everyone = [e["patient_id"] for e in awaiting + unlinked]
+        people: dict[str, dict] = {}
+        stays: dict[str, dict] = {}
+        if everyone:
+            marks, ids = _in(set(everyone))
+            people = {r["id"]: dict(r) for r in db.execute(
+                f"SELECT id, name, mrn FROM patients WHERE id IN ({marks})", ids).fetchall()}
+            adm_marks, adm_ids = _in({e["admission_id"] for e in awaiting + unlinked})
+            stays = {r["id"]: dict(r) for r in db.execute(
+                f"SELECT id, admitted_at, created_at FROM admissions WHERE id IN ({adm_marks})",
+                adm_ids).fetchall()}
+        reason_words = {
+            "awaiting_bed": "No bed recorded yet",
+            "ward_not_in_setup": "The typed ward is not in bed setup",
+            "bed_not_in_setup": "The typed bed is not in bed setup",
+            "bed_retired": "The typed bed is retired in bed setup",
+            "doubled_bed": "Another admission is recorded in the same bed",
+            "matches_bed": "Matches a bed in setup; a bed manager can link it",
+        }
+        for entry in awaiting + unlinked:
+            person = people.get(entry["patient_id"], {})
+            stay = stays.get(entry["admission_id"], {})
+            entry["name"] = person.get("name")
+            entry["mrn"] = person.get("mrn")
+            entry["since"] = stay.get("admitted_at") or stay.get("created_at")
+            entry["reason_words"] = reason_words.get(entry.get("reason") or "", None)
+        shown = list(dict.fromkeys(everyone))
+        if shown:
+            _phi_read_audit(
+                db, actor, "awaiting_bed_viewed",
+                f"Awaiting a bed and unlinked admissions viewed: {len(shown)} patients",
+                patient_ids=shown, target_type="ward" if ward_id else "bed_board",
+                target_id=ward_id or "all", request_meta=request_meta,
+                metadata={"department": dept, "awaiting": len(awaiting), "unlinked": len(unlinked)})
+    return {"ward_id": ward_id, "awaiting": awaiting, "unlinked": unlinked,
+            "counts": {"awaiting": len(awaiting), "unlinked": len(unlinked)}}

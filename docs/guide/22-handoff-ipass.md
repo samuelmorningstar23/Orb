@@ -180,7 +180,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** to show the MEWS score when NEWS2 is absent it already falls back to `raw_mews` (`:911`); to change the amber/red/green colours edit the frontend `SEVERITY_COLOR`, not here.
 **Gotchas:** `drivers` may be `None` from the risk service; `risk.get("drivers", []) or []` (`:912`) guards that.
 
-#### `_build_patient_summary`: `server/services/ipass_service.py:940` (the "P")
+#### `_build_patient_summary`: `server/services/ipass_service.py:948` (the "P")
 **Signature:** `(patient, problems, allergies) → dict`
 **Does:** compose demographics + diagnosis + active problems + allergies.
 **How it works:** computes age, builds `problem_labels` and `allergy_labels` (`"substance (reaction)"`), a demographic string, and a full-sentence `text`. With no allergy rows the sentence reads `NO_ALLERGIES_RECORDED`, "No allergies recorded. Confirm with the patient." (`:72`, `:956-957`), never "NKDA": NKDA is a clinician's assertion that the patient was asked, and an empty `patient_allergies` is also every patient nobody asked.
@@ -189,7 +189,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** rendered by both the plain-text renderer and the React P-section.
 **Gotchas:** `allergies` **can be an empty list** downstream (it used to be `allergy_labels or ["NKDA"]`); an empty list means none recorded, and the UI words that state itself. Do not reintroduce a default.
 
-#### `_build_action_list`: `server/services/ipass_service.py:980` (the "A")
+#### `_build_action_list`: `server/services/ipass_service.py:988` (the "A")
 **Signature:** `(meds, bundles, risk) → dict`
 **Does:** assemble active meds + open care bundles + a derived "outstanding items" to-do list.
 **How it works:**
@@ -203,7 +203,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** to add a monitoring instruction for `stable` sick-ish patients, add an `elif level == "stable"` branch near `:1017`; knock-on: the empty-list fallback at `:1019` would then rarely fire. Watch out: bundle element `state` strings come from `_decorate` (`server/services/sepsis_bundle_service.py:137-142`), only `overdue`/`pending` are treated as outstanding; if you add a new element state there, update this filter too.
 **Gotchas:** depends on the exact string values `"overdue"`/`"pending"`; a typo silently drops items.
 
-#### `_contingencies`: `server/services/ipass_service.py:1093`
+#### `_contingencies`: `server/services/ipass_service.py:1102`
 **Signature:** `(risk: dict) → list[str]`
 **Does:** derive "if X then Y" escalation instructions, one line per vital that scored on the NEWS2 chart.
 **How it works:** reads `risk['breakdown']` and keeps every row with points above 0 (`:1100-1101`), so a vital that scored gets its line whatever the drivers list kept. Oxygenation comes first: a scoring SpO2 row or a scoring "Supplemental O2" row adds the SpO2 line. Then systolic BP, heart rate and temperature, then ACVPU (`_ACVPU_LINE`, `:1080`), then respiratory rate. `_vital_line` (`:1084`) picks the low or high line by which side of the zero-scoring band (`_ZERO_BAND`, `:1055`) the charted value sits on, and `_VITAL_LINES` (`:1064`) holds the text: each number is the first charted value the RCP chart scores 3 on that side, so the sheet and the Vigil bar call the same reading red. The four directions with no line of their own give the RCP red-score response (`_URGENT_REVIEW`, `:1050`); temperature has no 3-point band above normal, so the fever line names no number. If nothing scored (or there is no breakdown), it emits a generic line keyed to the risk level (`:1131`). **SpO2 Scale 2 (2026-10-02):** when `risk['spo2_scale'] == 2` (`:1110`) the SpO2 line uses the patient's 88-92% target ("If SpO2 falls below 88% ... titrate O2 to this patient's 88-92% target") instead of the Scale 1 line, and a scoring SpO2 above 92 on oxygen adds "If SpO2 stays above this patient's 88-92% target on oxygen ..., reduce O2 to target" first. The comment block above the tables (`:1029-1049`, ruled 2026-10-03) records why the old driver keyword match was replaced: it lost the direction ("(hr" matched bradycardia, "sbp" matched hypertension) and could drop a vital the drivers list had cut.
@@ -213,7 +213,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** to add a contingency for a new breakdown parameter, add its zero-scoring band to `_ZERO_BAND` and its low/high lines to `_VITAL_LINES`, then add it to the parameter loop in `_contingencies`. Watch out: `test_ipass_news2_contingency.py` sweeps `compute_news2` and fails if a number in a line stops being where the 3 points start, and `test_build_ipass_...` asserts every contingency `startswith("if ")` (`server/tests/test_ipass.py:144`), keep the "If " prefix.
 **Gotchas:** the lines depend on the exact breakdown `parameter` strings from the scorer ("Systolic BP", "Heart rate", "Consciousness (ACVPU)", "SpO2 (Scale 2)"); a renamed parameter silently drops its line. The generic fallback prevents an empty list.
 
-#### `_build_situation_awareness`: `server/services/ipass_service.py:1141` (the first "S")
+#### `_build_situation_awareness`: `server/services/ipass_service.py:1150` (the first "S")
 **Signature:** `(vitals, trend, risk) → dict`
 **Does:** report latest vitals, the shift trend, whether the patient is actively deteriorating, and the contingency list.
 **How it works:** takes `vitals[-1]` as latest; `active_deterioration` is true if level is critical/elevated *or* `trend=='deteriorating'` (`:1145`); builds `trend_detail` from `hr_delta`/`sbp_delta`/`spo2_delta` (`:1158-1163`); formats a vitals sentence via `_num`; calls `_contingencies`.
@@ -222,7 +222,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** consumes `get_vitals_trend` deltas (`server/services/vigil_service.py:932`).
 **Gotchas:** if `get_vitals_trend` returned only `{"trend":"insufficient_data", "reason": ...}` (its no-data paths, `server/services/vigil_service.py:974`, `:978`), the delta keys are absent and `trend_detail` prints the trend service's own reason ("no earlier vitals to compare against"), or "insufficient recent data" when it gave none (`:1164-1169`): the reason tells the oncoming nurse this is a newly arrived patient rather than a broken feed.
 
-#### `_build_synthesis`: `server/services/ipass_service.py:1200` (the second "S")
+#### `_build_synthesis`: `server/services/ipass_service.py:1211` (the second "S")
 **Signature:** `(patient, severity: str) → dict`
 **Does:** produce the receiver read-back placeholder.
 **How it works:** returns a fixed sentence asking the receiver to read back the severity, the action list and the contingency plans, then record outstanding questions, their name and the time, plus `read_back_required=True`, `confirmed=False` and `prompts` = `READ_BACK_PROMPTS` ("Outstanding questions", "Confirmed by", "Time", `:77`). The plain-text render prints one labelled line per prompt, left open for the receiver's pen.
@@ -231,7 +231,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `build_ipass` (passes in the already-computed severity).
 **Gotchas:** despite the module docstring's claim that "an optional best-effort LLM synthesis line can be layered on top" (`:14`), **no LLM is ever invoked**, this section is 100% static. See Discrepancies.
 
-#### `_render_plain_text`: `server/services/ipass_service.py:1218`
+#### `_render_plain_text`: `server/services/ipass_service.py:1230`
 **Signature:** `(sections, patient, generated_at) → str`
 **Does:** flatten the five section dicts into a monospace, printable/copy-pasteable text block.
 **How it works:** appends header lines (title, patient, MRN, "Auto-drafted … Window: last 12h"), then one block per I-PASS letter, iterating meds (an unverified med carries `(AI-extracted, awaiting pharmacist verification)`, `UNVERIFIED_MED_LABEL`, `:976`), bundles, outstanding items and contingencies, and ends with the read-back prompts as open labelled lines.
@@ -240,7 +240,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** the string is returned as `plain_text` and rendered verbatim in `IpassHandoffView` (`src/components/handoff/IpassHandoffView.tsx:295`).
 **Gotchas:** the section headers (`"ILLNESS SEVERITY"`, `"SYNTHESIS BY RECEIVER"`, …) are asserted by `test_plain_text_contains_all_section_headers` (`server/tests/test_ipass.py:150`), renaming a header breaks that test.
 
-#### `build_ipass`: `server/services/ipass_service.py:1294` (public entry point)
+#### `build_ipass`: `server/services/ipass_service.py:1309` (public entry point)
 **Signature:** `(patient_id: str, window_hours=12, *, include_assessment=True) → dict`
 **Does:** orchestrate the whole draft assembly.
 **How it works:**
@@ -258,7 +258,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** *Worked example, add a "recent notes" section to the handoff.* Right now `recent_notes` is fetched but only counted. To surface it: (a) write a `_build_recent_documentation(recent_notes)` builder returning `{text, notes[]}`; (b) add it to the `sections` dict at `:1347`; (c) add a block in `_render_plain_text`; (d) add the field to `IpassSections` in `src/api/ipass.ts:140` and a `<Section>` in `IpassHandoffView`. Knock-on: `test_build_ipass_has_all_five_sections_populated` iterates a fixed 5-key list (`server/tests/test_ipass.py:109`), extend it. Footgun: keep the deterministic-only contract; do not call an LLM inside `build_ipass` or you reintroduce hallucination risk and the "safe when Ollama is down" guarantee breaks.
 **Gotchas:** the two try/except blocks are the reason a partially-configured system (no CfC models, no bundles) still returns a usable draft rather than a 500.
 
-#### `save_ipass_handoff`: `server/services/ipass_service.py:1387`
+#### `save_ipass_handoff`: `server/services/ipass_service.py:1406`
 **Signature:** `(patient_id, author_id, content) → int`
 **Does:** persist a handoff draft as a `scribe_notes` row.
 **How it works:** accepts either the `build_ipass` dict *or* a plain string. From a dict it takes `source_summary`→`raw_transcript` and `plain_text`→`structured_note`, with JSON-of-sections and default-string fallbacks so the note is never empty (`:1400-1407`). Calls `save_scribe_note(note_format="handoff", status="draft", ai_generated=True)` and returns the new note id.
@@ -268,7 +268,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** to store the structured JSON instead of plain text, swap what goes into `structured_note`, but the round-trip readers (`get_recent_handoffs`, and `test_save_..._persists` which asserts `"I-PASS" in structured_note`, `server/tests/test_ipass.py:176`) expect the rendered text.
 **Gotchas:** raises `ValueError` for a non-dict/non-str `content`, which the route turns into HTTP 400 (`server/routes/ipass_routes.py:50`).
 
-#### `get_recent_handoffs`: `server/services/ipass_service.py:1424`
+#### `get_recent_handoffs`: `server/services/ipass_service.py:1443`
 **Signature:** `(patient_id, limit=10) → list[dict]`
 **Does:** list saved handoff notes for a patient (`note_format='handoff'`, newest first).
 **How it works:** one parameterised `SELECT … LEFT JOIN users … ORDER BY created_at DESC, id DESC LIMIT ?`, so each note carries `author_name` (the incoming nurse reads a name, not a user id) and `id` breaks a same-second tie.
@@ -281,7 +281,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 
 > Router prefix `APIRouter(prefix="/api/ipass", tags=["ipass"])` (`server/routes/ipass_routes.py:21`), registered by `app.include_router(ipass_router)` (`server/main.py:316`). So every path below is under `/api/ipass`.
 
-#### `get_draft`: `server/routes/ipass_routes.py:44`
+#### `get_draft`: `server/routes/ipass_routes.py:57`
 **Signature:** `GET /api/ipass/{patient_id}/draft`, `Depends(require_permission("vitals.read"))` → `IpassDraft`
 **Does:** return a freshly assembled I-PASS draft.
 **How it works:** calls `build_ipass(patient_id)`; a `ValueError` (unknown patient) becomes HTTP 404 (`:32`).
@@ -290,7 +290,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `build_ipass`; RBAC `require_permission` (guide 03-auth-rbac). Called by `getIpassDraft` (`src/api/ipass.ts:216`).
 **Gotchas:** requires `vitals.read`, not a bespoke handoff permission, reusing an existing capability. A `patient`-role JWT would be rejected both here (no permission) and at the route guard in `AppRoot.tsx:186`.
 
-#### `save_draft`: `server/routes/ipass_routes.py:63`
+#### `save_draft`: `server/routes/ipass_routes.py:76`
 **Signature:** `POST /api/ipass/{patient_id}/save`, body `{content}`, `Depends(require_permission("scribe.create_draft"))` → `{id,status,note_format}`
 **Does:** persist the draft and write an audit event.
 **How it works:** rejects missing `content` with 400 (`:46`); calls `save_ipass_handoff(patient_id, user["id"], content)` (400 on `ValueError`); then `log_audit_event(...)` with category `scribe`, action `ipass_handoff_saved`, capturing actor, path, method, client IP (`:53`); returns `{id, status:"draft", note_format:"handoff"}`.
@@ -300,7 +300,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** to require a distinct `handoff.create` permission, define it in `permissions.py` and swap the dependency here; knock-on: every role that should save handoffs must be granted it, or Save silently 403s in the panel.
 **Gotchas:** it saves whatever `content` the client posts (`IpassHandoffView` posts the exact `draft` it received, `src/components/handoff/IpassHandoffView.tsx:95`), so a tampered client could persist arbitrary text. It is gated by `scribe.create_draft` and audited, which is the mitigating control.
 
-#### `recent_handoffs`: `server/routes/ipass_routes.py:176`
+#### `recent_handoffs`: `server/routes/ipass_routes.py:189`
 **Signature:** `GET /api/ipass/{patient_id}/recent`, `Depends(require_permission("vitals.read"))` → `{handoffs: [...]}`
 **Does:** list recent saved handoffs.
 **How it works:** wraps `get_recent_handoffs(patient_id)` in `{"handoffs": …}`.
@@ -327,7 +327,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 
 ### src/pages/HandoffPage.tsx
 
-#### `HandoffPage`: `src/pages/HandoffPage.tsx:5`
+#### `HandoffPage`: `src/pages/HandoffPage.tsx:14`
 **Signature:** React component, no props → JSX
 **Does:** read `:patientId` from the URL and render `IpassHandoffView`, or a "No patient specified" fallback.
 **How it works:** `useParams()` (React Router hook that returns URL path params); guards missing id.

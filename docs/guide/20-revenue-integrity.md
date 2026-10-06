@@ -130,7 +130,7 @@ These four tables *are* the "AI". They are curated by hand, not learned. Everyth
 
 ---
 
-### `_term_matches`: `server/services/coding_service.py:286`
+### `_term_matches`: `server/services/coding_service.py:308`
 **Signature:** `(term: str, text: str) → bool`
 **Does:** whole-token, case-insensitive substring test.
 **How it works:** builds the regex `(?<![A-Za-z0-9])` + `re.escape(term)` + `(?![A-Za-z0-9])` and searches case-insensitively. The look-behind/look-ahead assertions require the term not be flanked by an alphanumeric, so short abbreviations like "MI", "AKI", "AF" match as standalone words but not inside "MIchael" or "leAF".
@@ -141,7 +141,7 @@ These four tables *are* the "AI". They are curated by hand, not learned. Everyth
 
 ---
 
-### `_emit_code`: `server/services/coding_service.py:295`
+### `_emit_code`: `server/services/coding_service.py:351`
 **Signature:** `(system: str, code: str, display_fallback: str) → dict | None`
 **Does:** validates a candidate code against the loaded terminology and returns a normalised code dict, or `None` if the code is unknown.
 **How it works:**
@@ -155,7 +155,7 @@ These four tables *are* the "AI". They are curated by hand, not learned. Everyth
 
 ---
 
-### `suggest_codes`: `server/services/coding_service.py:309`  *(the public entry point)*
+### `suggest_codes`: `server/services/coding_service.py:365`  *(the public entry point)*
 **Signature:** `(patient_id: str, use_llm: bool = False) → dict`
 **Does:** the whole feature, suggest codes, flag CDI gaps, estimate reimbursement, deterministically.
 **How it works (the four passes):**
@@ -182,7 +182,7 @@ These four tables *are* the "AI". They are curated by hand, not learned. Everyth
 
 ---
 
-### `_add_suggestion` (nested closure in `suggest_codes`): `server/services/coding_service.py:340`
+### `_add_suggestion` (nested closure in `suggest_codes`): `server/services/coding_service.py:401`
 **Signature:** `(system, code, display_fallback, evidence, confidence) → (system, code) | None`
 **Does:** validate-and-dedupe a candidate into the `suggestions` dict, keeping the highest-confidence hit per `(system, code)`.
 **How it works:** calls `_emit_code`; if valid, computes `key=(system,code)`; writes/overwrites the entry only when there's no existing hit or the new confidence is higher; stores `{**emitted, evidence, confidence: round(confidence,2)}`.
@@ -192,7 +192,7 @@ These four tables *are* the "AI". They are curated by hand, not learned. Everyth
 
 ---
 
-### `_llm_available`: `server/services/coding_service.py:505`
+### `_llm_available`: `server/services/coding_service.py:581`
 **Signature:** `() → bool`
 **Does:** reports whether a local LLM (Ollama / MedGemma) is reachable.
 **How it works:** unconditionally returns `False` today; the `try/except` is scaffolding for a future health probe.
@@ -201,7 +201,7 @@ These four tables *are* the "AI". They are curated by hand, not learned. Everyth
 
 ---
 
-### `_llm_refine`: `server/services/coding_service.py:518`
+### `_llm_refine`: `server/services/coding_service.py:594`
 **Signature:** `(patient_id, ctx, result) → dict`
 **Does:** the optional LLM-refinement hook; a marked no-op unless an LLM is wired.
 **How it works:** if `_llm_available()` is false (always, today), it sets `result["meta"]["llm"] = "unavailable, deterministic result returned unchanged"` and returns `result` untouched; the real re-rank/de-dupe/CDI-query-drafting code is a stub below.
@@ -241,13 +241,13 @@ The file first declares TypeScript `interface`s mirroring the server JSON exactl
 **Change guide:** to show paise, drop `maximumFractionDigits: 0` at `:62`.
 **Gotchas:** the `en-IN` locale is what produces lakh/crore grouping; switching the locale silently changes the grouping while keeping the ₹ symbol.
 
-### `prettyType`: `RevenueIntegrityPanel.tsx:64`
+### `prettyType`: `RevenueIntegrityPanel.tsx:86`
 **Signature:** `(t: string) → string`
 **Does:** turns a snake_case flag type (`uncoded_condition_from_medication`) into Title Case ("Uncoded Condition From Medication") for the flag chip.
 **How it works:** replaces `_` with spaces, then upper-cases the first letter of each word via a regex.
 **Gotchas:** none noteworthy.
 
-### `RevenueIntegrityPanel` (default export): `RevenueIntegrityPanel.tsx:67`
+### `RevenueIntegrityPanel` (default export): `RevenueIntegrityPanel.tsx:89`
 **Signature:** `({ patientId?: string }) → JSX`
 **Does:** the whole panel, patient selection, fetch, and rendering of codes / CDI flags / reimbursement.
 **How it works:**

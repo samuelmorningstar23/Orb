@@ -36,6 +36,12 @@ from services.patient_name_rule import PatientNameError
 from database import run_db
 from config import UPLOAD_DIR, SCRIBE
 
+# Scribe's model routes (transcription, drafting and the second pass, and the
+# speech engine's status) answer 404 "Switched off on this computer" while the
+# models are switched off (ORB_MODELS_ENABLED, or the Orb Ward Record). Reading,
+# editing and signing a note stay open.
+from services.model_switch import require_models_on
+
 router = APIRouter(prefix="/api/scribe", tags=["scribe"])
 
 # Upload size cap for audio (memory-exhaustion DoS guard; mirrors Lens's image cap).
@@ -321,7 +327,7 @@ def reconcile_stale_pending_verifications():
 # Transcription Endpoints
 # ═══════════════════════════════════════════════════
 
-@router.post("/transcribe")
+@router.post("/transcribe", dependencies=[Depends(require_models_on)])
 async def transcribe(
     audio: UploadFile = File(...),
     hints: str = Form(default=""),
@@ -394,7 +400,7 @@ async def transcribe(
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 
-@router.post("/transcribe-chunk")
+@router.post("/transcribe-chunk", dependencies=[Depends(require_models_on)])
 async def transcribe_chunk(
     audio: UploadFile = File(...),
     chunk_index: int = Form(default=0),
@@ -454,7 +460,7 @@ async def transcribe_chunk(
 # Structuring Endpoint (with async verification)
 # ═══════════════════════════════════════════════════
 
-@router.post("/structure")
+@router.post("/structure", dependencies=[Depends(require_models_on)])
 async def structure(
     data: dict,
     user: dict = Depends(require_permission("scribe.create_draft")),
@@ -677,7 +683,7 @@ def get_note_verification(note_id: int, user: dict = Depends(require_permission(
 # Retry Verification Endpoint
 # ═══════════════════════════════════════════════════
 
-@router.post("/notes/{note_id}/verify")
+@router.post("/notes/{note_id}/verify", dependencies=[Depends(require_models_on)])
 async def retry_verification(
     note_id: int,
     user: dict = Depends(require_permission("scribe.edit_draft")),
@@ -1083,7 +1089,7 @@ def _asr_daemon_responds() -> bool:
         return False
 
 
-@router.get("/asr/status")
+@router.get("/asr/status", dependencies=[Depends(require_models_on)])
 def asr_status(user: dict = Depends(require_permission("scribe.create_draft"))):
     """Honest availability of the transcription engine on THIS appliance.
 
@@ -1238,7 +1244,7 @@ def quick_admit(data: dict, user: dict = Depends(require_permission("patient.wri
     return result
 
 
-@router.get("/daemon/status")
+@router.get("/daemon/status", dependencies=[Depends(require_models_on)])
 async def daemon_status(
     user: dict = Depends(require_permission("scribe.read_all")),
 ):

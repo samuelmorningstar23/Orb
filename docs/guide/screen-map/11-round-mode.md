@@ -820,23 +820,23 @@ indicator; the local Whisper transcript is the only text, and it arrives when th
 
 ### "Retry transcription"
 **Where:** inside the error box, at the right.
-**Rendered by:** `RoundDictation.tsx:318-326`, shown only when `lastBlobRef.current` holds audio
+**Rendered by:** `RoundDictation.tsx:274-282`, shown only when `lastBlob` holds audio
 and nothing is transcribing.
-**Data from:** `lastBlobRef` (`:72`), set at `:125` before the first attempt.
+**Data from:** `lastBlob` state (`:68`), set at `:117` before the first attempt.
 **API:** `POST /api/scribe/transcribe` again with the same blob.
 **Change this →** it exists so a failed transcription does not force the doctor to say it all again
-(`:70-71`). It disappears the moment you move to another bed, because the component is remounted.
+(`:66-67`). It disappears the moment you move to another bed, because the component is remounted.
 
 ### "Plan for today": the textarea and its label
 **Where:** the bottom half of the dictation block.
-**Rendered by:** `RoundDictation.tsx:330-340`. Label at `:331`; textarea at `:332-339` with
-`rows={3}`, `spellCheck`, and the placeholder *"Dictated text appears here. Edit it before saving, 
-it is a draft, not a signature."* (`:336`).
+**Rendered by:** `RoundDictation.tsx:286-296`. Label at `:287`; textarea at `:288-295` with
+`rows={3}`, `spellCheck`, and the placeholder *"Dictated text appears here. Edit it before saving: 
+it is a draft, not a signature."* (`:292`).
 **Data from:** `draft` = `drafts[currentPatient.id] ?? ''` (`RoundPanel.tsx:540`; state at `:114`).
-`onChange` → `onDraftChange` (`RoundDictation.tsx:335`) → `RoundPanel.tsx:541-544`, which also
+`onChange` → `onDraftChange` (`RoundDictation.tsx:291`) → `RoundPanel.tsx:541-544`, which also
 resets that patient's `saveState` to `'idle'`.
-**How the transcript gets in:** `runTranscription` (`RoundDictation.tsx:95-112`) calls
-`transcribeAudio(blob, hints, false)` and `appendToDraft` (`:88-93`) joins it to any existing text
+**How the transcript gets in:** `runTranscription` (`RoundDictation.tsx:88-105`) calls
+`transcribeAudio(blob, hints, false)` and `appendToDraft` (`:81-86`) joins it to any existing text
 with a newline.
 **API:** `POST /api/scribe/transcribe`, `src/api/client.ts:1086-1108`, multipart with the blob
 plus `hints`.
@@ -847,18 +847,18 @@ thread (`:351-357`) into `services/scribe_service.transcribe_audio` (`:91-113`),
 daemon first, subprocess worker as fallback, then RxNorm/LLM correction.
 **Hints:** `hints={`${currentPatient.name}. ${currentPatient.diagnosis}`}` (`RoundPanel.tsx:539`), 
 name and diagnosis, sent to the on-appliance endpoint that already holds this patient
-(`RoundDictation.tsx:38-40`).
+(`RoundDictation.tsx:36-38`).
 **Change this →** **the draft is never persisted to disk.** It lives in React state only
 (`RoundPanel.tsx:114`), by the rule stated at `RoundPanel.tsx:28-30` and
-`RoundDictation.tsx:18-21`. A page reload loses it, which is exactly what the hand-on screen warns
+`RoundDictation.tsx:16-18`. A page reload loses it, which is exactly what the hand-on screen warns
 about (§9). Style `Round.css:890-911`.
 
 ### "Save plan to chart" / "Saving…"
 **Where:** bottom-left of the dictation block.
-**Rendered by:** `RoundDictation.tsx:343-350`. Label flips to "Saving…" at `:349`;
-`disabled={busy || draft.trim() === ''}` (`:347`, `busy` at `:259`).
+**Rendered by:** `RoundDictation.tsx:299-306`. Label flips to "Saving…" at `:305`;
+`disabled={busy || draft.trim() === ''}` (`:303`, `busy` at `:221`).
 **Data from:** `saveState` = `saveStates[currentPatient.id] ?? 'idle'` (`RoundPanel.tsx:546`;
-type at `RoundDictation.tsx:34`). `onSave` → `savePlan(currentPatient.id)` (`RoundPanel.tsx:545`).
+type at `RoundDictation.tsx:32`). `onSave` → `savePlan(currentPatient.id)` (`RoundPanel.tsx:545`).
 **API:** `POST /api/vigil/patients/{id}/notes` via `addClinicalNote(patientId, text, 'Ward Round')`
 (`RoundPanel.tsx:302`; `ROUND_DOC_TYPE` at `:75`; client at `src/api/client.ts:1319-1330`, which
 sends `{content, doc_type, title: 'Manual Entry'}`).
@@ -874,14 +874,14 @@ happen: the button's neighbour reads "Saved to the chart", the textarea **emptie
 and shows the new note.
 
 ### "Saved to the chart"
-**Rendered by:** `RoundDictation.tsx:351-353`, `role="status"`, green `--status-ok-text`
+**Rendered by:** `RoundDictation.tsx:307-309`, `role="status"`, green `--status-ok-text`
 (`Round.css:920-924`).
 **Data from:** `saveState === 'saved'` (`RoundPanel.tsx:303`).
 **Change this →** it clears the moment you type again, because `onDraftChange` resets the state to
 `'idle'` (`RoundPanel.tsx:543`).
 
-### The inline save error: "… The text is still here: try again."
-**Rendered by:** `RoundDictation.tsx:354-358`, `role="alert"`.
+### The inline save error: "… The text is still here. Try again."
+**Rendered by:** `RoundDictation.tsx:310-314`, `role="alert"`.
 **Data from:** `saveError` = `saveErrors[patientId]` (`RoundPanel.tsx:547`), set at `:323`.
 **The offline case is special.** `savePlan` calls `assertOnlineForWrite('save this plan')`
 **before** the request (`RoundPanel.tsx:301`), so with no connection the message is

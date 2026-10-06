@@ -443,3 +443,112 @@ body > .medlist-print-layout {
     margin: 4px 0 16px;
   }
 }
+
+/* ==========================================================================
+   Specimen labels (lis-8, ruling LIS-R15)
+   ==========================================================================
+   SpecimenLabelPrintView portals .specimen-label-print-layout to <body>. It
+   prints on a thermal label printer, one 50 x 25 mm label per tube, so it has
+   its own named page with no margin instead of the A4 page above, and stays
+   in normal flow (a named page only applies to boxes in the flow). The app
+   shell is taken out of the flow entirely while labels print, so the first
+   page is a label, never an empty A4 sheet. A site with another label size
+   gets a page rule from the view itself. */
+body > .specimen-label-print-layout {
+  display: none;
+}
+
+@page specimen-label {
+  size: 50mm 25mm;
+  margin: 0;
+}
+
+@media print {
+  body > .specimen-label-print-layout {
+    display: block;
+  }
+
+  body:has(> .specimen-label-print-layout) > #root {
+    display: none !important;
+  }
+
+  .specimen-label-print-layout,
+  .specimen-label-print-layout * {
+    visibility: visible !important;
+  }
+
+  .specimen-label-print-layout {
+    position: static !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-family: Arial, Helvetica, sans-serif;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .specimen-label-print-layout * {
+    color: #000000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .specimen-label {
+    page: specimen-label;
+    break-after: page;
+    box-sizing: border-box;
+    width: 50mm;
+    height: 25mm;
+    padding: 1mm 2mm;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    font-size: 6.5pt;
+    line-height: 1.15;
+  }
+
+  .specimen-label:last-child {
+    break-after: auto;
+  }
+
+  .specimen-label__top {
+    display: flex;
+    justify-content: space-between;
+    gap: 2mm;
+    font-size: 7.5pt;
+  }
+
+  .specimen-label__name,
+  .specimen-label__line,
+  .specimen-label__tests {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .specimen-label__stat {
+    flex: none;
+    font-weight: 700;
+    border: 0.3mm solid #000000;
+    padding: 0 1mm;
+  }
+
+  .specimen-label__barcode {
+    display: block;
+    width: 100%;
+    height: 8mm;
+  }
+
+  .specimen-label__accession {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 8pt;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-align: center;
+  }
+}

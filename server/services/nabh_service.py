@@ -121,6 +121,7 @@ from db_backend import DBIntegrityError  # sqlcipher3 raises its OWN hierarchy:
 # so `except sqlite3.IntegrityError` is DEAD CODE whenever ORB_DB_ENCRYPTION_KEY
 # is set — i.e. in the shipping config. Guarded by tests/test_db_exception_aliases.
 from services.billing_masters import next_document_number
+from services.stay_times import stay_start_sql, summary_less_ends
 
 logger = logging.getLogger("orb.nabh")
 
@@ -1039,6 +1040,41 @@ def list_dispositions(*, period_start: Optional[str] = None,
         return _work(conn)
 
 
+def void_stay_dispositions_on(conn, *, admission_id: str, disposition_id: Optional[int] = None,
+                              voided_by: Optional[str], reason: str) -> list[int]:
+    """Void, never delete, the live dispositions that describe the end of one
+    stay, on the caller's connection (adt-8b: a stay reopened because its end
+    was recorded in error). Returns the ids voided.
+
+    Voided: every live row keyed to this admission, and the row the end of
+    stay linked (`disposition_id`) when it carries no other admission. A
+    voided row keeps its disposition, time and author as evidence; every
+    indicator and list skips it (voided_at IS NOT NULL). Writes no audit: the
+    reopen audits the whole correction in the same transaction. Returns []
+    on a database without migration 59's columns."""
+    cols = {r[1] for r in conn.execute(
+        "PRAGMA table_info(nabh_discharge_dispositions)").fetchall()}
+    if not {"voided_at", "voided_by", "void_reason"} <= cols:
+        return []
+    why = (" ".join(str(reason or "").split()) or "stay reopened")[:2000]
+    rows = conn.execute(
+        "SELECT id FROM nabh_discharge_dispositions WHERE voided_at IS NULL "
+        "AND (admission_id = ? OR (id = ? AND admission_id IS NULL)) ORDER BY id",
+        (admission_id, disposition_id if disposition_id is not None else -1),
+    ).fetchall()
+    now = _iso(_now())
+    voided: list[int] = []
+    for row in rows:
+        done = conn.execute(
+            "UPDATE nabh_discharge_dispositions SET voided_at = ?, voided_by = ?, "
+            "void_reason = ?, updated_at = ? WHERE id = ? AND voided_at IS NULL",
+            (now, voided_by, why, now, row["id"]),
+        )
+        if done.rowcount:
+            voided.append(int(row["id"]))
+    return voided
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # INDICATOR SCAFFOLDING
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1843,6 +1879,16 @@ def _escalation_ack_compliance(db, start: datetime, end: datetime,
     return _finalise(indicator)
 
 
+def _summary_less_ends_in(db, start: datetime, end: datetime,
+                          ward: Optional[str]) -> list[dict]:
+    """Ends of stay inside [start, end) that the beds and admissions module
+    recorded with no discharge summary (services/stay_times.py, adt-8c),
+    reopened ones excluded. A ward filter takes the ward the ended stay was
+    recorded on. Empty with ORB_ADT off: no such end exists."""
+    rows = summary_less_ends(db, since=_iso(start), until=_iso(end))
+    return _ward_filter(rows, ward)
+
+
 def _disposition_base(db, start: datetime, end: datetime, ward: Optional[str]) -> dict:
     """The shared, coverage-gated denominator for mortality and LAMA.
 
@@ -1864,6 +1910,10 @@ def _disposition_base(db, start: datetime, end: datetime, ward: Optional[str]) -
         + " WHERE " + _in_window("s.discharged_at"),
         (*ward_params, _iso(start), _iso(end)),
     ).fetchone()[0])
+    # Ends the beds and admissions module recorded with no summary are
+    # discharge events too (adt-8c); a ward filter takes the ward the ended
+    # stay was on. None exist with ORB_ADT off.
+    observed += len(_summary_less_ends_in(db, start, end, ward))
 
     recorded = len(rows)
     pool = max(recorded, observed)
@@ -1942,6 +1992,18 @@ def _readmission(db, start: datetime, end: datetime, ward: Optional[str]) -> dic
         + " WHERE " + _in_window("s.discharged_at"),
         (*ward_params, _iso(start), _iso(end)),
     ).fetchall()]
+    # Ends the beds and admissions module recorded with no summary (adt-8c)
+    # are discharges this indicator follows up too, except a death: a patient
+    # who died cannot be re-admitted, and counting them as 'not re-admitted'
+    # would flatter the rate. Excluded by the recorded end type, never by
+    # guesswork. None exist with ORB_ADT off.
+    deaths_excluded = 0
+    for end_row in _summary_less_ends_in(db, start, end, ward):
+        if end_row.get("end_type") == "death":
+            deaths_excluded += 1
+            continue
+        discharges.append({"patient_id": end_row["patient_id"],
+                           "discharged_at": end_row["ended_at"]})
 
     # Admission events, from BOTH places Orb records one. `admissions` is the
     # modern path; `patients.admission_date` is the legacy one and is still
@@ -1949,9 +2011,13 @@ def _readmission(db, start: datetime, end: datetime, ward: Optional[str]) -> dic
     # re-admissions — a miss that biases this rate DOWNWARD, i.e. in the
     # hospital's favour, which is the direction a pack must never be wrong in.
     # De-duplicated to the minute so a re-admission recorded in both tables is
-    # one event, not two.
+    # one event, not two. A stay begins at its recorded arrival when the beds
+    # and admissions module recorded one (services/stay_times.py), else when
+    # the admission was written; with ORB_ADT off that is always created_at.
     events: dict[str, set[datetime]] = {}
-    for row in db.execute("SELECT patient_id, created_at FROM admissions").fetchall():
+    for row in db.execute(
+        f"SELECT a.patient_id, {stay_start_sql('a')} AS created_at FROM admissions a"
+    ).fetchall():
         when = _dt(row["created_at"])
         if when:
             events.setdefault(row["patient_id"], set()).add(when.replace(second=0, microsecond=0))
@@ -1996,6 +2062,8 @@ def _readmission(db, start: datetime, end: datetime, ward: Optional[str]) -> dic
         "eligible_discharges": eligible,
         "censored_discharges": censored,
     }
+    if deaths_excluded:
+        indicator["detail"]["deaths_excluded"] = deaths_excluded
 
     if not discharges:
         indicator["state"] = "not_collected"

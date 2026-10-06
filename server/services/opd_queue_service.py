@@ -1,0 +1,683 @@
+"""Outpatients: the consulting queue (opd-8, W4-F, 4 October 2026).
+
+The front desk registers a visit and issues a token (frontdesk_service). This
+module is what happens to the token after that, while the 'opd' feature is on
+(ORB_OPD, which also needs ORB_REGISTRATION and the front desk module):
+
+  * the doctor's own queue (list_my_queue), ordered by priority, then token;
+  * skip (the patient did not come when called), recall (a skipped patient is
+    back in the line at their token), assign (a doctor takes an unassigned
+    patient), and the desk's priority and room (update_queue_fields);
+  * calling a patient in is frontdesk_service.start_opd_consultation (the
+    'call' route is its alias), which in OPD mode also counts the call and
+    clears a skip;
+  * a content-free nudge, 'opd:queue_changed' {department}, pushed to the
+    clinic's socket room after every change, so an open doctor queue refetches
+    over its own scoped REST read (nudge_queue_changed). The payload is the
+    department and nothing else: the socket never carries a name, a token or a
+    visit id.
+
+PRIORITY (ruling OPD-N9, applied): a site list of categories, with a reason
+captured for anything other than 'normal', shown on the doctor's queue. The
+list is DEFAULT_PRIORITY_CATEGORIES unless the site sets
+config.OPD_PRIORITY_CATEGORIES (read at call time with getattr, because
+config.py belongs to another cluster this wave; the setting is listed as a
+follow-up in the build report). 'emergency' is seen first, every other
+non-normal category next, then normal; within a rank, by token. No order is
+invented between the social categories.
+
+CANCEL REASON CODES: a cancel in OPD mode may carry one of CANCEL_REASON_CODES.
+'left_without_being_seen' is the LWBS code the day summary counts (opd-18). A
+cancel never raises a charge: the consultation is charged at completion
+(frontdesk_service.complete_opd_visit), and a prepaid registration charge does
+not exist until opd-13.
+
+A TAKE CAN CHANGE THE TOKEN. The unassigned line and every doctor's line each
+number from 1 per day (frontdesk_service._next_token keys on the doctor), so a
+doctor taking an unassigned patient often finds that number already held in
+their own line; assign_visit then issues the next free one. The patient's slip
+still shows the old number, and in that doctor's line it now belongs to
+someone else. So the change is never silent: the take's answer carries
+token_changed and previous_token_number, and every OPD-mode visit (the desk's
+queue, the doctor's queue, each action's answer) carries previous_token_number
+for the rest of the day, read back by reissued_tokens from the take's audit
+row, which commits in the same transaction as the new token. For the same
+reason the take never lands on a number the doctor's line issued to a visit
+later cancelled, and the number it takes out of the unassigned line stays
+spent there (taken_unassigned_top, read by _next_token): the desk's next
+walk-in is never handed the number on a taken patient's slip.
+
+CONVENTIONS (the same as frontdesk_service): every function is plain sync and
+opens its own db_session; writes take db_session(immediate=True) so a
+read-then-write cannot interleave; `on_done(db, visit, facts)` runs inside the
+transaction on every successful call, a repeat included, so the route's audit
+row commits with the change and a repeat writes its own row too.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any, Callable, Iterable, Optional
+
+import config
+from database import db_session
+from services.audit_service import AuditWriteError
+from services.frontdesk_service import (
+    _CONSULTING_ROLES,
+    FrontDeskError,
+    _clean,
+    _consultation_minutes,
+    _hospital_day,
+    _next_token,
+    _now,
+    _serialize_visit,
+    _visit_api_dict,
+    _waiting_minutes,
+    ensure_frontdesk_schema,
+    opd_mode,
+)
+
+logger = logging.getLogger("orb.opd_queue")
+
+__all__ = [
+    "ASSIGN_AUDIT_ACTION",
+    "ASSIGN_AUDIT_PREFIX",
+    "CANCEL_REASON_CODES",
+    "COMPLETION_DISPOSITIONS",
+    "DEFAULT_PRIORITY_CATEGORIES",
+    "QUEUE_NUDGE_EVENT",
+    "QueueConflict",
+    "assign_visit",
+    "cancel_reason_label",
+    "list_my_queue",
+    "nudge_queue_changed",
+    "priority_categories",
+    "priority_label",
+    "priority_rank",
+    "queue_fields",
+    "queue_nudge_payload",
+    "queue_sort_key",
+    "recall_visit",
+    "reissued_tokens",
+    "skip_visit",
+    "taken_unassigned_top",
+    "update_queue_fields",
+]
+
+#: The socket event an open queue listens for. Content-free: see queue_nudge_payload.
+QUEUE_NUDGE_EVENT = "opd:queue_changed"
+
+#: The take's audit row: the assign route writes it in the take's transaction
+#: with correlation id f"{ASSIGN_AUDIT_PREFIX}-{visit id}", and reissued_tokens
+#: reads the token change back from it.
+ASSIGN_AUDIT_PREFIX = "opd-assign"
+ASSIGN_AUDIT_ACTION = "opd_visit_assigned"
+
+#: (code, label) in the order the desk offers them. 'normal' is always there.
+DEFAULT_PRIORITY_CATEGORIES: tuple[tuple[str, str], ...] = (
+    ("normal", "Normal"),
+    ("emergency", "Emergency"),
+    ("senior_citizen", "Senior citizen"),
+    ("pregnant", "Pregnant"),
+    ("differently_abled", "Differently abled"),
+)
+
+#: Why a visit was cancelled, as a code the day summary can count.
+CANCEL_REASON_CODES: tuple[tuple[str, str], ...] = (
+    ("left_without_being_seen", "Left without being seen"),
+    ("no_show", "Did not arrive"),
+    ("patient_request", "Patient asked to cancel"),
+    ("registered_in_error", "Registered in error"),
+    ("other", "Other"),
+)
+
+#: How a consultation ends (opd_visits.disposition, migration 50). 'admitted'
+#: is written only by the conversion to inpatient (opd-17a), never here.
+COMPLETION_DISPOSITIONS: tuple[tuple[str, str], ...] = (
+    ("home", "Home"),
+    ("follow_up", "Follow-up visit"),
+    ("referred_internal", "Referred to another clinic"),
+    ("referred_external", "Referred to another hospital"),
+)
+
+_MAX_PRIORITY_REASON_LEN = 200
+_MAX_ROOM_LEN = 40
+
+_UNSET: Any = object()
+
+
+class QueueConflict(FrontDeskError):
+    """A queue action that the visit's current state refuses (409)."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+# ── Vocabularies ─────────────────────────────────────────────────────────────
+
+def _humanise(code: str) -> str:
+    words = code.replace("_", " ").strip()
+    return words[:1].upper() + words[1:] if words else code
+
+
+def priority_categories() -> tuple[tuple[str, str], ...]:
+    """The site's priority list as (code, label), 'normal' first.
+
+    config.OPD_PRIORITY_CATEGORIES, when a site sets it, is a list of codes (or
+    one comma-separated string); unknown codes get a label made from the code.
+    Read at call time so a test or an operator restart sees the current list.
+    """
+    configured = getattr(config, "OPD_PRIORITY_CATEGORIES", None)
+    if not configured:
+        return DEFAULT_PRIORITY_CATEGORIES
+    if isinstance(configured, str):
+        codes = [c.strip().lower() for c in configured.split(",")]
+    else:
+        codes = [str(c).strip().lower() for c in configured]
+    known = dict(DEFAULT_PRIORITY_CATEGORIES)
+    out: list[tuple[str, str]] = [("normal", "Normal")]
+    for code in codes:
+        if code and code != "normal" and code not in dict(out):
+            out.append((code, known.get(code, _humanise(code))))
+    return tuple(out)
+
+
+def priority_label(code: Optional[str]) -> str:
+    code = (code or "normal").strip().lower() or "normal"
+    return dict(priority_categories()).get(code) or dict(DEFAULT_PRIORITY_CATEGORIES).get(
+        code) or _humanise(code)
+
+
+def priority_rank(code: Optional[str]) -> int:
+    """0 emergency, 1 any other category, 2 normal (or blank)."""
+    code = (code or "normal").strip().lower()
+    if code == "emergency":
+        return 0
+    if code in ("", "normal"):
+        return 2
+    return 1
+
+
+def cancel_reason_label(code: Optional[str]) -> Optional[str]:
+    if not code:
+        return None
+    return dict(CANCEL_REASON_CODES).get(code) or _humanise(code)
+
+
+def queue_fields(row) -> dict:
+    """The migration 50 queue columns, as OPD mode returns them on a visit.
+
+    Only called while the 'opd' feature is on; with it off the front desk's
+    API carries none of these (test_registration_opd_foundation pins that).
+    """
+    data = dict(row) if row is not None else {}
+    priority = (data.get("priority") or "normal").strip().lower() or "normal"
+    return {
+        "priority": priority,
+        "priority_label": priority_label(priority),
+        "priority_reason": data.get("priority_reason"),
+        "room": data.get("room"),
+        "call_count": int(data.get("call_count") or 0),
+        "skipped": bool(data.get("skipped_at")),
+        "skipped_at": data.get("skipped_at"),
+        "cancel_reason_code": data.get("cancel_reason_code"),
+        "cancel_reason_label": cancel_reason_label(data.get("cancel_reason_code")),
+        "disposition": data.get("disposition"),
+        "disposition_at": data.get("disposition_at"),
+    }
+
+
+_REISSUE_CHUNK = 400
+
+
+def reissued_tokens(db, visit_ids: Iterable[Any]) -> dict[str, int]:
+    """{visit id: the token it held before a doctor took it}, for the visits
+    whose take issued a new token (see assign_visit). Visits whose token never
+    changed are absent.
+
+    opd_visits has no column for it, so it is read back from the take's audit
+    row (ASSIGN_AUDIT_PREFIX), which commits in the same transaction as the new
+    token: no take changes a token without writing one. A visit is taken at
+    most once (assign_visit refuses an assigned visit), and a repeat's row says
+    replay, never token_changed, so the change is the one row that says so."""
+    ids = [str(v) for v in dict.fromkeys(visit_ids) if v]
+    found: dict[str, int] = {}
+    for start in range(0, len(ids), _REISSUE_CHUNK):
+        chunk = ids[start:start + _REISSUE_CHUNK]
+        marks = ",".join("?" for _ in chunk)
+        rows = db.execute(
+            f"SELECT target_id, metadata_json FROM audit_logs "
+            f"WHERE correlation_id IN ({marks}) AND action_type = ? "
+            f"AND target_type = 'opd_visit' ORDER BY id",
+            (*[f"{ASSIGN_AUDIT_PREFIX}-{i}" for i in chunk], ASSIGN_AUDIT_ACTION),
+        ).fetchall()
+        for r in rows:
+            try:
+                meta = json.loads(r["metadata_json"] or "{}")
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(meta, dict):
+                continue
+            previous = meta.get("previous_token_number")
+            if (meta.get("token_changed") is True and isinstance(previous, int)
+                    and not isinstance(previous, bool)):
+                found[str(r["target_id"])] = previous
+    return found
+
+
+def _as_token(value: Any) -> Optional[int]:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return None
+    return value
+
+
+def taken_unassigned_top(db, *, visit_date: str, department: str) -> int:
+    """The highest token a take moved out of this clinic's unassigned line on
+    this day; 0 when no take did.
+
+    frontdesk_service._next_token adds it to the unassigned line's own MAX.
+    A taken visit leaves that line (its doctor_id is set), but the slip in the
+    patient's hand still shows the number, so the number stays spent for the
+    rest of the day exactly as a cancelled visit's does: issuing it again
+    would give two people in one clinic the same slip.
+
+    Like reissued_tokens it reads the take's audit row, which commits in the
+    take's transaction (assign_visit refuses a take that writes none). Per
+    take: unassigned_token_number (recorded on every take since 4 October
+    2026); else, on a reissue recorded before that, previous_token_number;
+    else the visit's own token, which a take that kept the number still holds
+    and which a reissue only ever raised. A replay row spends nothing."""
+    rows = db.execute(
+        "SELECT v.token_number AS token_number, a.metadata_json AS metadata_json "
+        "FROM opd_visits v JOIN audit_logs a "
+        "ON a.correlation_id = ? || v.id AND a.action_type = ? "
+        "AND a.target_type = 'opd_visit' "
+        "WHERE v.visit_date = ? AND v.department = ? AND v.doctor_id IS NOT NULL",
+        (f"{ASSIGN_AUDIT_PREFIX}-", ASSIGN_AUDIT_ACTION, visit_date, department),
+    ).fetchall()
+    top = 0
+    for r in rows:
+        try:
+            meta = json.loads(r["metadata_json"] or "{}")
+        except (TypeError, ValueError):
+            meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+        if meta.get("replay") is True:
+            continue
+        number = _as_token(meta.get("unassigned_token_number"))
+        if number is None and meta.get("token_changed") is True:
+            number = _as_token(meta.get("previous_token_number"))
+        if number is None:
+            number = _as_token(r["token_number"])
+        if number is not None and number > top:
+            top = number
+    return top
+
+
+_STATUS_RANK = {"in_consultation": 0, "waiting": 1, "completed": 2, "cancelled": 3}
+
+
+def queue_sort_key(visit: dict) -> tuple:
+    """The seeing order: the patient in the room, then waiting patients by
+    priority then token, skipped patients after them, finished visits last."""
+    return (
+        _STATUS_RANK.get(visit.get("status") or "", 9),
+        1 if visit.get("skipped_at") else 0,
+        priority_rank(visit.get("priority")),
+        int(visit.get("token_number") or 0),
+        str(visit.get("id") or ""),
+    )
+
+
+# ── The live nudge ───────────────────────────────────────────────────────────
+
+def queue_nudge_payload(department: str) -> dict:
+    """What the socket carries: the clinic, and nothing else (no name, no token,
+    no visit id). A doctor's screen refetches its queue over scoped REST."""
+    return {"department": department}
+
+
+async def _emit_queue_changed(department: str) -> None:
+    from ws import realtime
+
+    payload = queue_nudge_payload(department)
+    # The rooms the socket layer already keeps: a vitals.read holder joins
+    # 'dept:<their department>' (or 'dept:__all__' with none), which is every
+    # doctor. Desk accounts get their own room in opd-9b; until then the desk
+    # polls every ORB_OPD_QUEUE_POLL_SECONDS.
+    await realtime.sio.emit(QUEUE_NUDGE_EVENT, payload, room=f"dept:{department}")
+    await realtime.sio.emit(QUEUE_NUDGE_EVENT, payload, room="dept:__all__")
+
+
+def nudge_queue_changed(department: Optional[str]) -> bool:
+    """Tell open queues in this clinic to refetch. After the change committed;
+    never raises; does nothing while the 'opd' feature is off."""
+    dept = (department or "").strip()
+    if not dept or not opd_mode():
+        return False
+    try:
+        from ws import realtime
+        return realtime.schedule_on_loop(
+            lambda: _emit_queue_changed(dept), f"{QUEUE_NUDGE_EVENT} for {dept}")
+    except Exception as exc:  # noqa: BLE001 - a nudge must never fail a write
+        logger.warning("%s not pushed: %s", QUEUE_NUDGE_EVENT, exc)
+        return False
+
+
+# ── Queue actions ────────────────────────────────────────────────────────────
+
+def _load(db, visit_id: str):
+    row = db.execute("SELECT * FROM opd_visits WHERE id = ?", (visit_id,)).fetchone()
+    if row is None:
+        raise FrontDeskError(f"No such OPD visit: {visit_id}")
+    return row
+
+
+def _reload(db, visit_id: str) -> dict:
+    return _serialize_visit(db, db.execute(
+        "SELECT * FROM opd_visits WHERE id = ?", (visit_id,)).fetchone())
+
+
+def _finish(db, visit_id: str, on_done, facts: dict) -> dict:
+    visit = _reload(db, visit_id)
+    if on_done is not None:
+        on_done(db, visit, facts)
+    return visit
+
+
+def skip_visit(
+    visit_id: str,
+    *,
+    actor_id: Optional[str] = None,
+    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
+) -> dict:
+    """The patient did not come when called: back to waiting, marked skipped.
+
+    From 'in_consultation' the call is undone (called_at cleared, so the
+    waiting time keeps counting; call_count keeps the history). From
+    'waiting' the visit is set aside. A repeat on a skipped visit changes
+    nothing and is reported as a replay.
+    """
+    ensure_frontdesk_schema()
+    with db_session(immediate=True) as db:
+        row = _load(db, visit_id)
+        status = row["status"]
+        if status not in ("waiting", "in_consultation"):
+            raise QueueConflict("visit_closed",
+                                f"Visit {visit_id} is {status} and cannot be skipped")
+        if status == "waiting" and row["skipped_at"]:
+            return _finish(db, visit_id, on_done, {"replay": True})
+        db.execute(
+            "UPDATE opd_visits SET status = 'waiting', skipped_at = ?, called_at = NULL "
+            "WHERE id = ?",
+            (_now(), visit_id),
+        )
+        logger.info("OPD visit %s skipped by %s", visit_id, actor_id)
+        return _finish(db, visit_id, on_done, {"replay": False, "from_status": status})
+
+
+def recall_visit(
+    visit_id: str,
+    *,
+    actor_id: Optional[str] = None,
+    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
+) -> dict:
+    """A skipped patient is back: they rejoin the line at their own token.
+
+    It does not call them in (that is the call action). A visit that is
+    waiting and not skipped is a replay.
+    """
+    ensure_frontdesk_schema()
+    with db_session(immediate=True) as db:
+        row = _load(db, visit_id)
+        if row["status"] != "waiting":
+            raise QueueConflict("not_waiting",
+                                f"Visit {visit_id} is {row['status']} and cannot be recalled")
+        if not row["skipped_at"]:
+            return _finish(db, visit_id, on_done, {"replay": True})
+        db.execute("UPDATE opd_visits SET skipped_at = NULL WHERE id = ?", (visit_id,))
+        logger.info("OPD visit %s recalled by %s", visit_id, actor_id)
+        return _finish(db, visit_id, on_done, {"replay": False})
+
+
+def assign_visit(
+    visit_id: str,
+    *,
+    doctor_id: str,
+    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
+) -> dict:
+    """A doctor takes an unassigned waiting patient of their own clinic.
+
+    The doctor must be an active consulting doctor of the visit's clinic (the
+    rule register_opd_visit applies). Tokens are numbered per doctor per day;
+    the patient keeps their token unless the doctor's series has already
+    issued that number today, in which case the next free token is issued.
+    A cancelled or left-without-being-seen visit's number counts as issued,
+    as it does in frontdesk_service._next_token: two people are never called
+    by one number the same morning.
+
+    The answer says which: token_changed (this call issued a new token) and
+    previous_token_number (the token on the patient's slip, when it is no
+    longer theirs; None otherwise). The facts, and so the audit row, say the
+    same, and a repeat answers previous_token_number again from that row, so
+    the screen that took the patient can tell the doctor and the desk.
+
+    THE SLIP'S NUMBER STAYS SPENT in the unassigned line. The take moves the
+    visit out of that line, and the line's next token is its own MAX plus 1,
+    so without more the desk's next walk-in would be handed the number on
+    this patient's slip. Every take's facts carry unassigned_token_number,
+    which taken_unassigned_top reads back from the audit row for _next_token.
+    `on_done` must therefore write that row (ASSIGN_AUDIT_PREFIX,
+    ASSIGN_AUDIT_ACTION) in this transaction: a take that leaves the number
+    unspent is refused with AuditWriteError and rolls back.
+    """
+    ensure_frontdesk_schema()
+    doctor = _clean(doctor_id, 120)
+    if not doctor:
+        raise FrontDeskError("A doctor is required")
+    with db_session(immediate=True) as db:
+        row = _load(db, visit_id)
+        if row["status"] != "waiting":
+            raise QueueConflict("not_waiting",
+                                f"Visit {visit_id} is {row['status']} and cannot be reassigned")
+        current = (row["doctor_id"] or "").strip()
+        if current == doctor:
+            visit = _finish(db, visit_id, on_done, {"replay": True})
+            visit["token_changed"] = False
+            visit["previous_token_number"] = reissued_tokens(db, [visit_id]).get(visit_id)
+            return visit
+        if current:
+            raise QueueConflict("already_assigned",
+                                "This patient is already in another doctor's queue")
+        drow = db.execute(
+            "SELECT name, role, TRIM(COALESCE(department, '')) AS department, "
+            "COALESCE(is_active, 1) AS active FROM users WHERE id = ?",
+            (doctor,),
+        ).fetchone()
+        clinic = (row["department"] or "").strip()
+        if (
+            drow is None
+            or drow["role"] not in _CONSULTING_ROLES
+            or not drow["active"]
+            or drow["department"].casefold() != clinic.casefold()
+        ):
+            raise QueueConflict("not_this_clinic",
+                                f"Only a consulting doctor of {clinic} can take this patient")
+        token = slip = int(row["token_number"])
+        # Every visit of the doctor's line today, cancelled ones included (the
+        # rule _next_token keeps), not only the live ones the unique index covers.
+        clash = db.execute(
+            "SELECT 1 FROM opd_visits WHERE visit_date = ? AND department = ? "
+            "AND doctor_id = ? AND token_number = ? AND id != ?",
+            (row["visit_date"], row["department"], doctor, token, visit_id),
+        ).fetchone()
+        facts: dict = {"replay": False, "token_changed": False,
+                       "unassigned_token_number": slip}
+        if clash is not None:
+            new_token = _next_token(db, visit_date=row["visit_date"],
+                                    department=row["department"], doctor_id=doctor)
+            facts.update(token_changed=True, previous_token_number=token,
+                         token_number=new_token)
+            token = new_token
+        db.execute(
+            "UPDATE opd_visits SET doctor_id = ?, doctor_name = ?, token_number = ? WHERE id = ?",
+            (doctor, drow["name"], token, visit_id),
+        )
+        logger.info("OPD visit %s assigned to %s", visit_id, doctor)
+        visit = _finish(db, visit_id, on_done, facts)
+        if taken_unassigned_top(db, visit_date=row["visit_date"],
+                                department=row["department"]) < slip:
+            raise AuditWriteError(
+                f"The take of OPD visit {visit_id} wrote no audit row, so token {slip} "
+                "could be issued again in the unassigned line; nothing was changed")
+        visit["token_changed"] = facts["token_changed"]
+        visit["previous_token_number"] = facts.get("previous_token_number")
+        return visit
+
+
+def update_queue_fields(
+    visit_id: str,
+    *,
+    priority: Any = _UNSET,
+    priority_reason: Any = _UNSET,
+    room: Any = _UNSET,
+    actor_id: Optional[str] = None,
+    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
+) -> dict:
+    """Set a waiting or in-consultation visit's priority and room.
+
+    A priority other than 'normal' needs a reason (ruling OPD-N9); setting
+    'normal' clears the reason. An empty room clears it. Only the fields
+    passed change; a call that changes nothing is a replay.
+    """
+    ensure_frontdesk_schema()
+    with db_session(immediate=True) as db:
+        row = _load(db, visit_id)
+        if row["status"] not in ("waiting", "in_consultation"):
+            raise QueueConflict("visit_closed",
+                                f"Visit {visit_id} is {row['status']} and cannot be changed")
+        changes: dict[str, Any] = {}
+        if priority is not _UNSET:
+            code = (str(priority or "").strip().lower()) or "normal"
+            if code not in dict(priority_categories()):
+                raise FrontDeskError(f"{priority!r} is not one of this site's queue priorities")
+            reason = _clean(priority_reason if priority_reason is not _UNSET
+                            else row["priority_reason"], _MAX_PRIORITY_REASON_LEN)
+            if code == "normal":
+                reason = None
+            elif not reason:
+                raise FrontDeskError("Give a reason for a priority other than normal")
+            changes["priority"] = code
+            changes["priority_reason"] = reason
+        elif priority_reason is not _UNSET:
+            raise FrontDeskError("A priority reason is set together with the priority")
+        if room is not _UNSET:
+            changes["room"] = _clean(room, _MAX_ROOM_LEN)
+        changed = {k: v for k, v in changes.items()
+                   if (row[k] if k in row.keys() else None) != v}
+        if not changed:
+            return _finish(db, visit_id, on_done, {"replay": True})
+        sets = ", ".join(f"{k} = ?" for k in changed)
+        db.execute(f"UPDATE opd_visits SET {sets} WHERE id = ?", (*changed.values(), visit_id))
+        logger.info("OPD visit %s queue fields %s set by %s", visit_id, sorted(changed), actor_id)
+        return _finish(db, visit_id, on_done, {"replay": False, "changed": sorted(changed)})
+
+
+# ── The doctor's own queue ───────────────────────────────────────────────────
+
+def _consultations_table(db) -> bool:
+    return db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'opd_consultations'"
+    ).fetchone() is not None
+
+
+def list_my_queue(
+    *,
+    doctor_id: str,
+    department: Optional[str],
+    visit_date: Optional[str] = None,
+) -> dict:
+    """Today's queue for one doctor, plus the clinic's unassigned patients.
+
+    `department` is permissions.department_scope(user), never a value the
+    request named; None (an account with no department) sees every clinic's
+    unassigned patients, as the desk queue does. Each visit carries what the
+    queue needs (name, UHID, age, sex, token, complaint, priority, room, wait)
+    and whether its consultation note is a draft or signed. Never vitals, a
+    score or a band.
+    """
+    ensure_frontdesk_schema()
+    day = _hospital_day(visit_date)
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    clauses = ["v.visit_date = ?", "v.status IN ('waiting', 'in_consultation', 'completed')",
+               "(v.doctor_id = ? OR v.doctor_id IS NULL)"]
+    params: list[Any] = [day, doctor_id]
+    if department is not None:
+        clauses.append("v.department = ?")
+        params.append(department)
+    with db_session() as db:
+        join = ""
+        note_col = "NULL AS consultation_status"
+        if _consultations_table(db):
+            join = "LEFT JOIN opd_consultations c ON c.visit_id = v.id"
+            note_col = "c.status AS consultation_status"
+        rows = db.execute(
+            f"""SELECT v.*, p.name AS patient_name, p.mrn AS patient_mrn,
+                       p.age AS patient_age, p.sex AS patient_sex, {note_col}
+                  FROM opd_visits v
+                  LEFT JOIN patients p ON p.id = v.patient_id
+                  {join}
+                 WHERE {' AND '.join(clauses)}""",
+            params,
+        ).fetchall()
+        # A taken patient whose slip shows an old token (see assign_visit).
+        # Only a taken visit can have one, and only an open one still matters.
+        reissued = reissued_tokens(db, [
+            r["id"] for r in rows
+            if (r["doctor_id"] or "") == doctor_id and r["status"] != "completed"])
+
+    current: list[dict] = []
+    waiting: list[dict] = []
+    skipped: list[dict] = []
+    unassigned: list[dict] = []
+    completed = 0
+    for r in rows:
+        data = _visit_api_dict(r)
+        data.update(queue_fields(r))
+        data["previous_token_number"] = reissued.get(str(r["id"]))
+        data["consultation_status"] = r["consultation_status"]
+        data["waiting_minutes"] = _waiting_minutes(data, now=now)
+        data["consultation_minutes"] = _consultation_minutes(data, now=now)
+        mine = (r["doctor_id"] or "") == doctor_id
+        if r["status"] == "completed":
+            completed += 1 if mine else 0
+            continue
+        if not mine:
+            if r["status"] == "waiting":
+                unassigned.append(data)
+            continue
+        if r["status"] == "in_consultation":
+            current.append(data)
+        elif r["skipped_at"]:
+            skipped.append(data)
+        else:
+            waiting.append(data)
+    for bucket in (current, waiting, skipped, unassigned):
+        bucket.sort(key=queue_sort_key)
+    return {
+        "visit_date": day,
+        "department": department,
+        "doctor_id": doctor_id,
+        "current": current,
+        "waiting": waiting,
+        "skipped": skipped,
+        "unassigned": unassigned,
+        "completed_count": completed,
+        "total": len(current) + len(waiting) + len(skipped) + len(unassigned),
+        "priorities": [{"code": c, "label": lab} for c, lab in priority_categories()],
+        "poll_seconds": int(getattr(config, "OPD_QUEUE_POLL_SECONDS", 30) or 30),
+    }

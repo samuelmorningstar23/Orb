@@ -925,11 +925,16 @@ export default function DoctorHomePanel() {
 
       <div className="today-grid">
         <div className="today-main">
-          <Section>
-            <SectionHeader id="today-deteriorating" label="Highest NEWS2 scores" unit={plural(deteriorating.length, 'patient')}
-              count={deteriorating.length} tone="danger" />
-            {deterioratingBody()}
-          </Section>
+          {/* Scoring switched off on this computer (the Orb Ward Record): no
+              NEWS2 section at all. Its empty state ("No patient is scoring
+              above threshold") would claim something nobody worked out. */}
+          {board?.scoring_enabled !== false && (
+            <Section>
+              <SectionHeader id="today-deteriorating" label="Highest NEWS2 scores" unit={plural(deteriorating.length, 'patient')}
+                count={deteriorating.length} tone="danger" />
+              {deterioratingBody()}
+            </Section>
+          )}
 
           <Section>
             <SectionHeader id="today-pending" label="Pending my decision" unit={plural(pendingCount, 'item')}

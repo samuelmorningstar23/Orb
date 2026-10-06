@@ -396,8 +396,19 @@ def list_patient_orders(
         require_patient_access(ORDER_READ, audit_action="patient_orders_viewed")
     ),
 ):
-    """List a patient's orders, optionally filtered by status."""
-    return {"orders": orders_service.list_orders(patient_id, status)}
+    """List a patient's orders, optionally filtered by status.
+
+    Each order also says whether the laboratory manages it (lab_managed,
+    lis-7) and, when it does, where each of its tests is (lab). A laboratory
+    order the laboratory could not take in carries lab_intake instead, so the
+    person who ordered it sees why. Read from the laboratory's tables whatever
+    ORB_LAB says now: an order the laboratory took in stays its for life."""
+    from services import lab_order_service
+
+    orders = orders_service.list_orders(patient_id, status)
+    with db_session() as db:
+        lab_order_service.annotate_orders(db, orders)
+    return {"orders": orders}
 
 
 @router.get("/{order_id}")
@@ -475,6 +486,16 @@ def _scope_by_order(order_id: str, user: dict) -> None:
             raise HTTPException(status_code=404, detail="Order not found")
 
 
+def _lab_managed_conflict(err: Exception) -> HTTPException:
+    """The 409 for a manual move or free-text result on an order the
+    laboratory manages (lis-7). The code lets a screen branch without reading
+    the sentence."""
+    return HTTPException(status_code=409, detail={
+        "error": "order_managed_by_lab",
+        "message": str(err) or orders_service.LAB_MANAGED_MESSAGE,
+    })
+
+
 @router.post("/{order_id}/transition")
 def transition_order(order_id: str, req: TransitionRequest, user=Depends(require_permission(ORDER_WRITE))):
     """Guarded, idempotent state transition for an order."""
@@ -487,6 +508,10 @@ def transition_order(order_id: str, req: TransitionRequest, user=Depends(require
             detail=req.detail,
         )
         return {"status": "success", "order": order}
+    except orders_service.OrderManagedByLab as e:
+        # lis-7: the laboratory owns this order's lifecycle whatever ORB_LAB
+        # says now. 409: the request is well-formed, the order refuses it.
+        raise _lab_managed_conflict(e)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -502,6 +527,8 @@ def add_result(order_id: str, req: ResultRequest, user=Depends(require_permissio
             actor_id=user["id"],
         )
         return {"status": "success", "order": order}
+    except orders_service.OrderManagedByLab as e:
+        raise _lab_managed_conflict(e)
     except orders_service.OrderAlreadyResulted as e:
         # 409, not 400: the request is well-formed, the ORDER is in a state that
         # refuses it. A stale tab showing '+ Result' lands here.

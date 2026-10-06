@@ -259,7 +259,8 @@ def main() -> None:
     out = {"profile": {"ward_record": config.WARD_RECORD, "scoring": config.SCORING_ENABLED,
                        "models": config.MODELS_ENABLED},
            "server_errors": [], "scoring_calls": [], "marker_leaks": [],
-           "model_calls": [], "lane_errors": [], "skipped_streams": [], "calls": 0}
+           "model_calls": [], "lane_errors": [], "skipped_streams": [], "calls": 0,
+           "spot": {}}
 
     with TestClient(app, raise_server_exceptions=False) as client:
         # The background lanes, run once by hand rather than waited for. Each
@@ -325,6 +326,21 @@ def main() -> None:
                     out["scoring_calls"].append(f"{role} GET {url}: {call}")
                 if time.monotonic() - t0 > 20:
                     out["lane_errors"].append(f"slow: {role} GET {url}")
+        # The model features and the handover, as the doctor sees them.
+        doctor = {"Authorization": f"Bearer {create_token(seed['users']['doctor'], 'doctor')}",
+                  "Host": "localhost"}
+        pid = seed["patients"][0]
+        for path in ("/api/sage/ward-brief", "/api/sage/insights", "/api/scribe/asr/status",
+                     f"/api/vigil/patients/{pid}/timeline-projection",
+                     "/api/relay/channels/none/sage_actions", f"/api/ipass/{pid}/draft",
+                     "/api/health/models"):
+            r = client.get(path, headers=doctor)
+            try:
+                detail = r.json().get("detail") if r.status_code >= 400 else None
+            except Exception:  # noqa: BLE001
+                detail = r.text[:80]
+            out["spot"][path.replace(pid, "{patient_id}")] = [r.status_code, detail]
+
         # Anything a background loop scored while the probe ran.
         attributed = sum(1 for c in out["scoring_calls"])
         if len(vigil_service.SWITCHED_OFF_CALLS) > attributed:

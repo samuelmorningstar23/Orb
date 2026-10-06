@@ -64,6 +64,8 @@ const TYPE_META: Record<StoryType, { label: string; color: string }> = {
   problem: { label: 'Problems', color: 'var(--text-secondary)' },
   allergy: { label: 'Allergies', color: 'var(--status-danger)' },
   discharge: { label: 'Discharge', color: 'var(--accent-text)' },
+  opd_visit: { label: 'Outpatient visits', color: 'var(--text-secondary)' },
+  opd_consultation: { label: 'Outpatient notes', color: 'var(--text-secondary)' },
 }
 
 function fmtTime(ts: string | null): string {

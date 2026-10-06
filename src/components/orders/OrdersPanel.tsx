@@ -1,10 +1,15 @@
-import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useState, type CSSProperties } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import styles from './Orders.module.css'
 import { apiFetch, createOrder, getPatients, isSafetyAckRequired, type MedicationSafety, type Patient, type SafetyAck } from '../../api/client'
+import { toLabError } from '../../api/lab'
+import { searchLabCatalogue, type LabCatalogueEntry } from '../../api/lab/master'
+import { cancelLabOrder, type LabOrderFields, type LabOrderSummary } from '../../api/lab/orders'
 import SafetyAlertModal from '../vigil/SafetyAlertModal'
 import PatientPicker from '../common/PatientPicker'
 import { useDataChanged } from '../../hooks/useDataChanged'
+import { formatClinicalDateTime } from '../../lib/datetime'
+import { currentModuleFlags, subscribeModuleFlags } from '../../shellConfig'
 import { MED_NOT_SENT, isMedicationOrder } from './medicationRouting'
 
 // Lazily loaded so the print-only Orders bundle is not pulled into the main
@@ -40,9 +45,17 @@ function OrdersViewSwitch({
 /**
  * Orders / CPOE-lite panel — lists a patient's orders with status chips and a
  * create-order form with live terminology code validation.
+ *
+ * LABORATORY ORDERS (lis-7). An order the laboratory has taken in
+ * (lab_managed on the list) is the laboratory's for life: it shows where each
+ * of its tests is instead of the next-status and "+ Result" buttons, which the
+ * server would refuse (409 order_managed_by_lab), and its Cancel goes through
+ * the laboratory's cancel with a required reason. While the laboratory module
+ * is on, a new laboratory order is chosen from the laboratory catalogue
+ * (never an ICD-10 code), which sets its code and shows the tube to collect.
  */
 
-interface Order {
+interface Order extends LabOrderFields {
   id: string
   patient_id: string
   order_type: string
@@ -95,6 +108,138 @@ function nextStatus(order: Order): string | null {
     case 'in_progress': return 'completed'
     default: return null
   }
+}
+
+const LAB_TEST_LIST_STYLE: CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '2px 12px',
+  margin: '4px 0 0',
+  padding: 0,
+  listStyle: 'none',
+}
+
+/** Where each test of a laboratory-managed order is, in the ward's words
+ *  (lis-7). The values themselves are on the laboratory report. */
+function LabOrderStatus({ summary }: { summary: LabOrderSummary }) {
+  const cancelled = summary.cancelled
+  return (
+    <div className={styles.result} role="group" aria-label="Laboratory status">
+      <div>Laboratory: {summary.summary}</div>
+      <ul style={LAB_TEST_LIST_STYLE}>
+        {summary.tests.map(test => (
+          <li key={test.test_id}>{test.short_name || test.name}: {test.status_text}</li>
+        ))}
+      </ul>
+      {summary.rejected > 0 && (
+        <div>
+          The laboratory rejected {summary.rejected === 1 ? 'a sample' : `${summary.rejected} samples`}:
+          {' '}it waits for a recollection or a cancel.
+        </div>
+      )}
+      {cancelled && (
+        <div>
+          Cancelled{cancelled.by_name ? ` by ${cancelled.by_name}` : ''}
+          {cancelled.at ? ` at ${formatClinicalDateTime(cancelled.at)}` : ''}
+          {cancelled.reason ? `: ${cancelled.reason}` : ''}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * The laboratory catalogue as a typeahead (lis-7), shown for a laboratory
+ * order while the module is on. Choosing a test sets its code and code system
+ * (LOINC or the laboratory's own), so an ICD-10 code can never be sent as a
+ * laboratory test, and shows the tube to collect. A bedside test says so: it
+ * stays on the ward and keeps the free-text result.
+ */
+function LabTestPicker({
+  selected, onSelect,
+}: { selected: LabCatalogueEntry | null; onSelect: (entry: LabCatalogueEntry | null) => void }) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<LabCatalogueEntry[]>([])
+  const [searching, setSearching] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const fid = useId()
+
+  useEffect(() => {
+    const term = query.trim()
+    if (selected || term.length < 2) return undefined
+    let live = true
+    const timer = setTimeout(() => {
+      setSearching(true)
+      searchLabCatalogue(term, 10).then(
+        res => { if (live) { setResults(res.tests ?? []); setError(null) } },
+        err => { if (live) { setResults([]); setError(toLabError(err).message) } },
+      ).finally(() => { if (live) setSearching(false) })
+    }, 250)
+    return () => { live = false; clearTimeout(timer) }
+  }, [query, selected])
+
+  if (selected) {
+    const tube = [selected.container, selected.specimen_display].filter(Boolean).join(', ')
+    return (
+      <div className={styles.field}>
+        <span className={styles.label}>Laboratory test</span>
+        <div className={styles.validateRow}>
+          <span className={styles.valid}>
+            {selected.name} ({selected.code_system} {selected.code})
+          </span>
+          <button type="button" className={styles.actionBtn} onClick={() => { onSelect(null); setQuery('') }}>
+            Change
+          </button>
+        </div>
+        <span className={styles.validateHint}>
+          {selected.performed_at === 'ward_poct'
+            ? 'Done on the ward: it does not go to the laboratory.'
+            : `Collect in: ${tube || 'tube not set in the catalogue'}`}
+          {selected.kind === 'panel' && selected.components?.length
+            ? `. Includes ${selected.components.map(c => c.short_name || c.name).filter(Boolean).join(', ')}.`
+            : ''}
+        </span>
+      </div>
+    )
+  }
+
+  const shown = query.trim().length >= 2 ? results : []
+  return (
+    <div className={styles.field}>
+      <label className={styles.label} htmlFor={`${fid}-lab`}>Laboratory test</label>
+      <input
+        id={`${fid}-lab`}
+        className={styles.input}
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+        placeholder="Search the laboratory catalogue, e.g. potassium"
+        autoComplete="off"
+        role="combobox"
+        aria-expanded={shown.length > 0}
+        aria-controls={`${fid}-lab-list`}
+      />
+      {searching && <span className={styles.validateHint}>Searching…</span>}
+      {error && <span className={styles.invalid}>{error}</span>}
+      {!searching && !error && query.trim().length >= 2 && shown.length === 0 && (
+        <span className={styles.validateHint}>No test in the laboratory catalogue matches.</span>
+      )}
+      {shown.length > 0 && (
+        <ul id={`${fid}-lab-list`} role="listbox" aria-label="Laboratory tests" style={{ listStyle: 'none', margin: '4px 0 0', padding: 0 }}>
+          {shown.map(entry => (
+            <li key={entry.id} role="option" aria-selected={false}>
+              <button type="button" className={styles.actionBtn} style={{ width: '100%', textAlign: 'left' }}
+                onClick={() => onSelect(entry)}>
+                {entry.name} · {entry.code_system} {entry.code}
+                {entry.performed_at === 'ward_poct'
+                  ? ' · done on the ward'
+                  : entry.container ? ` · ${entry.container}` : ''}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
 }
 
 export default function OrdersPanel({ patientId: patientIdProp }: Props) {
@@ -218,9 +363,33 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
 
   const confirmCancel = (order: Order) => {
     const reason = cancelReason.trim()
+    if (order.lab_managed) {
+      // The laboratory's cancel needs a reason: the bench reads it.
+      if (!reason) return
+      setCancelTarget(null)
+      setCancelReason('')
+      void cancelThroughLab(order, reason)
+      return
+    }
     setCancelTarget(null)
     setCancelReason('')
     transition(order, 'cancelled', reason || undefined)
+  }
+
+  /* lis-7: an order the laboratory manages is cancelled through the
+     laboratory, which cancels every test not yet reported and keeps the
+     reported ones. The Orders screen's own cancel would answer 409. */
+  const cancelThroughLab = async (order: Order, reason: string) => {
+    setActionError(null)
+    try {
+      await cancelLabOrder(order.id, reason)
+      loadOrders()
+    } catch (err) {
+      const failure = toLabError(err)
+      setActionError(`${order.description}: ${failure.isModuleDisabled
+        ? 'the laboratory module is switched off on this site, so the laboratory cannot cancel it. Call the laboratory.'
+        : failure.message || 'the order could not be cancelled.'}`)
+    }
   }
 
   const openResult = (order: Order) => {
@@ -394,8 +563,10 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
       ) : (
         <div className={styles.list}>
           {orders.map(order => {
-            const next = nextStatus(order)
-            const canResult = RESULTABLE.has(order.order_type) &&
+            // lis-7: the laboratory moves and reports its own orders.
+            const labManaged = order.lab_managed === true
+            const next = labManaged ? null : nextStatus(order)
+            const canResult = !labManaged && RESULTABLE.has(order.order_type) &&
               (order.status === 'active' || order.status === 'in_progress')
             const isTerminal = ['completed', 'resulted', 'cancelled'].includes(order.status)
             return (
@@ -418,6 +589,10 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
                   )}
                   {order.result_text && (
                     <div className={styles.result}>Result: {order.result_text}</div>
+                  )}
+                  {labManaged && order.lab && <LabOrderStatus summary={order.lab} />}
+                  {!labManaged && order.lab_intake && (
+                    <div className={styles.medNotSent} role="note">{order.lab_intake.message}</div>
                   )}
                   {resultTarget === order.id && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
@@ -474,14 +649,15 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
                             if (e.key === 'Escape') setCancelTarget(null)
                             if (e.key === 'Enter') confirmCancel(order)
                           }}
-                          placeholder="Reason (optional)"
+                          placeholder={labManaged ? 'Reason (required)' : 'Reason (optional)'}
                           aria-label={`Cancellation reason for ${order.description}`}
                           autoFocus
                           style={{ width: 150, padding: '6px 10px', fontSize: '0.8rem' }}
                         />
                         <button
                           className={styles.actionBtn}
-                          style={CONFIRM_CANCEL_BTN_STYLE}
+                          style={labManaged && !cancelReason.trim() ? undefined : CONFIRM_CANCEL_BTN_STYLE}
+                          disabled={labManaged && !cancelReason.trim()}
                           onClick={() => confirmCancel(order)}
                         >
                           Confirm cancel
@@ -557,11 +733,36 @@ function CreateOrderForm({ patientId, patient, onCreated, onCancel }: FormProps)
   const [safetyModal, setSafetyModal] = useState<{ safety: MedicationSafety; mode: 'blocking' | 'info'; orderId?: string } | null>(null)
   const [cancelling, setCancelling] = useState(false)
   const [cancelError, setCancelError] = useState<string | null>(null)
+  // lis-7: with the laboratory module on, a laboratory order is chosen from
+  // the laboratory catalogue instead of a free code (module off by default:
+  // the form is then exactly what it was).
+  const modules = useSyncExternalStore(subscribeModuleFlags, currentModuleFlags)
+  const labCatalogue = orderType === 'lab' && modules.lab === true
+  const [labTest, setLabTest] = useState<LabCatalogueEntry | null>(null)
 
   const needsCode = !CODELESS.has(orderType)
   // Each label names its control, so a screen reader announces "Priority"
   // on the select rather than an unnamed combo box.
   const fid = useId()
+
+  // The test name the picker last wrote into the description. Choosing a test
+  // always rewrites the description to that test, so an order can never be
+  // titled with one test while the laboratory receives the code of another.
+  // Change (or leaving the laboratory order type) clears the description
+  // again only while it is still exactly that name, so the clinician's own
+  // words are never wiped by a click that does not choose a test.
+  const [autoDescription, setAutoDescription] = useState<string | null>(null)
+
+  const chooseLabTest = (entry: LabCatalogueEntry | null) => {
+    setLabTest(entry)
+    if (entry) {
+      setDescription(entry.name)
+      setAutoDescription(entry.name)
+      return
+    }
+    if (autoDescription !== null && description === autoDescription) setDescription('')
+    setAutoDescription(null)
+  }
 
   const validateCode = async () => {
     if (!code.trim()) return
@@ -580,9 +781,10 @@ function CreateOrderForm({ patientId, patient, onCreated, onCancel }: FormProps)
 
   const canSubmit = useMemo(() => {
     if (!description.trim()) return false
+    if (labCatalogue) return labTest !== null
     if (needsCode) return valid === 'valid'
     return true
-  }, [description, needsCode, valid])
+  }, [description, needsCode, valid, labCatalogue, labTest])
 
   const submit = async (safetyAck?: SafetyAck) => {
     setError(null)
@@ -592,8 +794,9 @@ function CreateOrderForm({ patientId, patient, onCreated, onCancel }: FormProps)
         patient_id: patientId,
         order_type: orderType,
         description,
-        code: needsCode && code.trim() ? code.trim() : null,
-        code_system: needsCode && code.trim() ? codeSystem : null,
+        code: labCatalogue ? labTest?.code ?? null : needsCode && code.trim() ? code.trim() : null,
+        code_system: labCatalogue ? labTest?.code_system ?? null
+          : needsCode && code.trim() ? codeSystem : null,
         priority,
       }, safetyAck)
       // Sub-severe alerts (or an unscreened drug): the order was created, but
@@ -655,7 +858,7 @@ function CreateOrderForm({ patientId, patient, onCreated, onCancel }: FormProps)
             id={`${fid}-type`}
             className={styles.select}
             value={orderType}
-            onChange={e => { setOrderType(e.target.value); setValid('idle') }}
+            onChange={e => { setOrderType(e.target.value); setValid('idle'); chooseLabTest(null) }}
           >
             {ORDER_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
@@ -668,7 +871,13 @@ function CreateOrderForm({ patientId, patient, onCreated, onCancel }: FormProps)
         </div>
       </div>
 
-      {needsCode && (
+      {labCatalogue && (
+        <div className={styles.formRow}>
+          <LabTestPicker selected={labTest} onSelect={chooseLabTest} />
+        </div>
+      )}
+
+      {needsCode && !labCatalogue && (
         <div className={styles.formRow}>
           <div className={styles.field} style={{ maxWidth: 140 }}>
             <label className={styles.label} htmlFor={`${fid}-system`}>Code System</label>

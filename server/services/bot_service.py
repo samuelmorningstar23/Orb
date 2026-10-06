@@ -393,7 +393,10 @@ async def run_vitals_bot(sio):
     # whole API for its duration. refresh_all_predictions is pure sync
     # (forecast_service imports no asyncio; vram_guard is a sync
     # contextmanager), which is what makes it safe to hand to a worker.
-    if _cycle_counter % 120 == 0:
+    # The LSTM is a model: not run while the models are switched off
+    # (ORB_MODELS_ENABLED, or the Orb Ward Record).
+    from services.model_switch import models_enabled
+    if _cycle_counter % 120 == 0 and models_enabled():
         try:
             from services.forecast_service import refresh_all_predictions
             await run_db(refresh_all_predictions)

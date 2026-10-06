@@ -25,6 +25,10 @@ from services.vigil_service import (
 from services.medication_safety_gate import enforce_medication_safety
 from services.vitals_source.base import LABEL_SIMULATED
 from services.lens_service import decorate_analysis
+from services.stay_times import summary_less_ends_sql
+
+# The expected course is drafted by a model: 404 while the models are off.
+from services.model_switch import require_models_on
 
 router = APIRouter(prefix="/api/vigil", tags=["vigil"])
 
@@ -471,10 +475,20 @@ def list_discharged(
         # has_pending_charges keeps them there while anything is still unbilled
         # (an outpatient charge the stay's final bill does not sweep), so a
         # final bill cannot strand a leftover charge out of the desk's reach.
+        # The time a stay ended with no summary (the beds and admissions
+        # module records some ends that way, adt-8c) comes from
+        # services/stay_times.py, in the same UTC shape a summary's time is
+        # stored in, so the list sorts as one column. With ORB_ADT off there
+        # is no such end and the list is exactly what it was.
+        ended_without_summary = (
+            f"(SELECT datetime(e.ended_at) FROM ({summary_less_ends_sql()}) e "
+            "WHERE e.patient_id = p.id ORDER BY julianday(e.ended_at) DESC LIMIT 1)"
+        )
         patients = db.execute(
             f"""SELECT p.id, p.name, p.mrn, p.bed, p.ward, p.diagnosis,
                        p.age, p.sex, p.admission_date,
-                       ds.discharged_at, ds.summary,
+                       COALESCE(ds.discharged_at, {ended_without_summary}) AS discharged_at,
+                       ds.summary,
                        (SELECT a.id FROM admissions a WHERE a.patient_id = p.id
                          ORDER BY a.created_at DESC, a.rowid DESC LIMIT 1) AS admission_id,
                        EXISTS (SELECT 1 FROM invoices i
@@ -486,7 +500,7 @@ def list_discharged(
                 FROM patients p
                 LEFT JOIN discharge_summaries ds ON ds.patient_id = p.id
                 WHERE p.status = 'discharged' {dept_clause}
-                ORDER BY ds.discharged_at DESC
+                ORDER BY COALESCE(ds.discharged_at, {ended_without_summary}) DESC
                 LIMIT ? OFFSET ?""",
             dept_param + (limit, offset),
         ).fetchall()
@@ -1050,7 +1064,8 @@ def create_patient(
     raise HTTPException(status_code=410, detail=GHOST_PATIENT_ROUTE_RETIRED)
 
 
-@router.get("/patients/{patient_id}/timeline-projection")
+@router.get("/patients/{patient_id}/timeline-projection",
+            dependencies=[Depends(require_models_on)])
 async def get_patient_timeline_projection(
     patient_id: str,
     refresh: bool = False,

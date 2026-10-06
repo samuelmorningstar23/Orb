@@ -172,7 +172,7 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 
 ---
 
-#### `_serialize_med`: `server/services/pharmacy_verification_service.py:136`
+#### `_serialize_med`: `server/services/pharmacy_verification_service.py:151`
 **Signature:** `(row) -> dict`
 **Does:** Maps a raw `medications` DB row (joined with `patient_name`) into the pharmacist-facing JSON shape.
 **How it works:** Wraps the sqlite row in `dict(row)` then hand-picks/renames fields, note the column renames: DB `dosage` → JSON `dose`, DB `patient_name` → JSON `patient`, DB `prescriber_name` → JSON `prescriber` (`:144`, `:142`, `:157`).
@@ -184,7 +184,7 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 
 ---
 
-#### `list_pending_verification`: `server/services/pharmacy_verification_service.py:162`
+#### `list_pending_verification`: `server/services/pharmacy_verification_service.py:188`
 **Signature:** `() -> list[dict]`
 **Does:** Returns every AI/agentic med still awaiting verification, each annotated with its drug-safety alerts, worst severity and screening coverage.
 **How it works:**
@@ -199,7 +199,7 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 
 ---
 
-#### `_fetch_med`: `server/services/pharmacy_verification_service.py:205`
+#### `_fetch_med`: `server/services/pharmacy_verification_service.py:270`
 **Signature:** `(db, med_id: int) -> Row | None`
 **Does:** Reads a single med by id (with `m.*` and the joined `patient_name`) on a caller-supplied connection.
 **How it works:** One parameterised SELECT `WHERE m.id = ?`, returns `fetchone()` (a row or `None`).
@@ -211,7 +211,7 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 
 ---
 
-#### `verify_medication`: `server/services/pharmacy_verification_service.py:215`
+#### `verify_medication`: `server/services/pharmacy_verification_service.py:287`
 **Signature:** `(med_id: int, pharmacist_id: str, dosage: str|None=None, route: str|None=None, frequency: str|None=None, ack_reason: str|None=None) -> dict`
 **Does:** A pharmacist verifies an AI/agentic med, optionally correcting dose/route/frequency, and stamps who/when, **behind fail-closed safety gates**: the corrected dose goes through the dose guard, and a severe alert, or a screen that failed to run, blocks verification until the pharmacist supplies an `ack_reason`.
 **How it works:**
@@ -241,7 +241,7 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 
 ---
 
-#### `reject_medication`: `server/services/pharmacy_verification_service.py:383`
+#### `reject_medication`: `server/services/pharmacy_verification_service.py:496`
 **Signature:** `(med_id: int, pharmacist_id: str, reason: str) -> dict`
 **Does:** A pharmacist rejects an AI/agentic med: discontinue it and record who rejected it and why.
 **How it works:**
@@ -285,7 +285,7 @@ Router declared with `prefix="/api/pharmacy"` and tag `"Pharmacy Verification"` 
 
 ---
 
-#### `verify`: `server/routes/pharmacy_routes.py:54`
+#### `verify`: `server/routes/pharmacy_routes.py:82`
 **Signature:** `POST /api/pharmacy/{med_id}/verify`, body `VerifyRequest`, dep `require_permission("helix.write")` → `VerifyResult`
 **Does:** Verifies a med and audits the action.
 **How it works:**
@@ -301,7 +301,7 @@ Router declared with `prefix="/api/pharmacy"` and tag `"Pharmacy Verification"` 
 
 ---
 
-#### `reject`: `server/routes/pharmacy_routes.py:117`
+#### `reject`: `server/routes/pharmacy_routes.py:145`
 **Signature:** `POST /api/pharmacy/{med_id}/reject`, body `RejectRequest`, dep `require_permission("helix.write")` → `RejectResult`
 **Does:** Rejects a med and audits it.
 **How it works:** Mirror of `verify`: RBAC `helix.write`, call `reject_medication(med_id, pharmacist_id, reason)` with `ValueError`→400, then `log_audit_event(action_type="medication_reject", ...)` whose metadata carries the `reason`, `max_severity`, `safety_alert_count` (`:130-148`).
@@ -318,14 +318,14 @@ A **React component** (a function returning UI; React re-runs it whenever its **
 
 Surfaces, inputs and buttons use the Helix classes in `Helix.module.css` (`verifyPage`, `verifyTable`, `verifyInput`, `btnPrimary`, `btnDanger`, `reasonPanel`, ...), so the disabled-button tokens and the 44px coarse-pointer floor come from one stylesheet. Module helpers: `wardBed` (`:35`, "Ward 3, bed 12"), `orderedLine` (`:44`, "Ordered by Dr Mehta, 3 Oct 2026, 10:15 AM" through `formatClinicalDateTime`) and `isPlaceholder` (`:59`, blank or containing "REVIEW", the client mirror of the server's 422 rule).
 
-#### `severityColor`: `src/components/helix/PharmacyVerifyQueue.tsx:77`
+#### `severityColor`: `src/components/helix/PharmacyVerifyQueue.tsx:93`
 **Signature:** `(sev: string) -> string`
 **Does:** Maps an alert severity to a text colour token.
 **How it works:** `severe` → `--status-danger-text`, `moderate` → `--status-warn-text`, anything else (incl. `mild`) → `--text-muted`. The `-text` tokens, not the fill tokens, because these are 11-12px labels and the fill tokens fall short of contrast at that size.
 **Why it exists:** So a severe allergy reads red and a mild interaction is quiet, visual triage.
 **Gotchas:** `mild` and `none` both fall to the muted branch; there's no distinct mild colour. Matches the design intent (only moderate/severe should draw the eye).
 
-#### `SafetyAlerts` / `SafetyCell` / `ScreeningBadge`: `src/components/helix/PharmacyVerifyQueue.tsx:107` / `:137` / `:85`
+#### `SafetyAlerts` / `SafetyCell` / `ScreeningBadge`: `src/components/helix/PharmacyVerifyQueue.tsx:123` / `:137` / `:85`
 **Signature:** `SafetyAlerts({ alerts })`, `SafetyCell({ row })`, `ScreeningBadge({ label, color })` → JSX
 **Does:** `SafetyAlerts` renders the alert list, or a green "No alerts" when it is empty (`:108-110`); each alert shows `TYPE · SEVERITY` (uppercased) then the message, bold if `severe`. `SafetyCell` is the whole safety column: it adds an outlined coverage badge first, "Screening unavailable" for a failed screen, "Not screened" when the drug is outside the interaction knowledge base, "Partly screened" when other drugs on the chart are, with the `coverage_note` under it.
 **Why it exists:** The inline danger display that makes the queue a safety tool, not just a to-do list. A coverage gap must never render as a green "No alerts": with a failed screen the cell shows only the badge, and an unscreened drug lists only the allergy alerts it did get (`:156-162`).
@@ -333,14 +333,14 @@ Surfaces, inputs and buttons use the Helix classes in `Helix.module.css` (`verif
 **Talks to:** `SafetyCell` is rendered per row in the "Safety alerts" column; `SafetyAlerts` is reused inside the acknowledgement panel.
 **Gotchas:** `SafetyAlerts` uses the array index as the React `key` (`:115`). Safe here because the list is static per render (never reordered/filtered in place), but it would misbehave if alerts became individually editable.
 
-#### `SourceBadge`: `src/components/helix/PharmacyVerifyQueue.tsx:166`
+#### `SourceBadge`: `src/components/helix/PharmacyVerifyQueue.tsx:182`
 **Signature:** `({ source: string }) -> JSX`
 **Does:** Renders a pill badge for the provenance.
 **How it works:** `llm_extracted` → "Sage, from notes", `agentic` → "Sage action", else the raw string (`:182`).
 **Why it exists:** Tells the pharmacist at a glance whether Sage read the drug out of a note or a clinician confirmed a Sage action card.
 **Gotchas:** none noteworthy.
 
-#### `PharmacyVerifyQueue` (default export): `src/components/helix/PharmacyVerifyQueue.tsx:187`
+#### `PharmacyVerifyQueue` (default export): `src/components/helix/PharmacyVerifyQueue.tsx:203`
 **Signature:** `() -> JSX`
 **Does:** The whole queue screen: fetch, edit, verify (with an inline acknowledgement when the server answers 428), reject (with an inline reason).
 **State (`:188-195`):** `rows` (pending meds), `edits` (per-id `{dosage,route,frequency}` draft), `acks` (per-id acknowledgement panel: reason typed so far, the 428 safety screen and message), `rejects` (per-id reject reason typed so far), `loading`, `error`, `busyId` (the row currently mid-action, for disabling its buttons), `flash` (a transient success line).
@@ -375,19 +375,19 @@ Interfaces:
 - **`VerifyResult` (`:68`)** / **`RejectResult` (`:75`)**, the verify/reject response envelopes; `RejectResult` additionally carries `reason`.
 - **`SevereAckRequired` (`:85`)**, `{code: 'severe_ack_required', message, safety|null}`, the typed 428 outcome of a verify attempt.
 
-#### `getPendingVerifications`: `src/api/pharmacy.ts:92`
+#### `getPendingVerifications`: `src/api/pharmacy.ts:100`
 **Signature:** `() -> Promise<PendingMedication[]>`
 **Does:** GETs `/pharmacy/pending` and unwraps `.pending`.
 **Talks to:** `apiFetch`; called by `load`.
 **Gotchas:** Unwraps the `{pending: [...]}` envelope so callers get a bare array, keep the envelope key in sync with the route (`server/routes/pharmacy_routes.py:40`).
 
-#### `verifyMedication`: `src/api/pharmacy.ts:106`
+#### `verifyMedication`: `src/api/pharmacy.ts:114`
 **Signature:** `(medId: number, corrections?: {dosage?,route?,frequency?}, ackReason?: string) -> Promise<VerifyResult | SevereAckRequired>`
 **Does:** POSTs the corrections (and `ack_reason` when given) to `/api/pharmacy/{medId}/verify`.
 **How it works:** a raw `fetch` with the cookie session and `buildHeaders('POST')` (which adds the CSRF token), not `apiFetch`, because the shared wrapper flattens error bodies to a message string and would drop the 428 safety payload. A **428** is returned as a typed `SevereAckRequired` result, not thrown (`:119-127`), so the caller opens its acknowledgement panel; a 401 fires `orb:session-expired` like `apiFetch` does; any other error throws with the server's message.
 **Talks to:** `fetch`, `buildHeaders`; called by `onVerify`.
 
-#### `rejectMedication`: `src/api/pharmacy.ts:146`
+#### `rejectMedication`: `src/api/pharmacy.ts:154`
 **Signature:** `(medId: number, reason: string) -> Promise<RejectResult>`
 **Does:** POSTs `{reason}` to `/pharmacy/{medId}/reject`.
 **Talks to:** `apiFetch`; called by `onReject`.

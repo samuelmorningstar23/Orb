@@ -1,0 +1,557 @@
+/* BedBoardPanel.css: Orb "Quiet Clinical" (flat).
+ *
+ * The Beds panel, its Board view and its Awaiting a bed view (adt-4a). The
+ * views share this sheet because they share every primitive (tiles, rows,
+ * notes, buttons); a later view brings its own sheet if it needs more.
+ *
+ *  - No `opacity` for state anywhere. Quiet text is a quieter token.
+ *  - Status colour is a border on an ordinary surface, never a fill behind
+ *    text, so every word stays in the body text tokens. A tile's tone (sent
+ *    by the server) picks the border; an unknown tone is drawn neutral.
+ *  - Tap targets are at least 24px, and 44px under `pointer: coarse`.
+ *  - Wide content scrolls inside .bb-view, never the page.
+ */
+
+.bb-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 1240px;
+  margin: 0 auto;
+  width: 100%;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+}
+
+/* Header */
+
+.bb-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bb-title {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.bb-sub,
+.bb-status {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+/* Notices and notes */
+
+.bb-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-info);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.bb-notice--error {
+  border-left-color: var(--status-danger);
+}
+
+.bb-notice__body {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.bb-note {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.bb-note--warn {
+  padding: 8px 12px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-warn);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+/* Empty states */
+
+.bb-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 28px 24px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.bb-empty__title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.bb-empty__body {
+  margin: 0;
+  max-width: 64ch;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+/* Tabs */
+
+.bb-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 2px;
+}
+
+.bb-tab {
+  min-height: 32px;
+  padding: 7px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.bb-tab:hover {
+  background: var(--bg-glass);
+  color: var(--text-primary);
+}
+
+.bb-tab--on {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent-deep);
+  font-weight: 600;
+}
+
+.bb-tab:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -2px;
+}
+
+.bb-view {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+/* Buttons and fields */
+
+.bb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 7px 14px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 550;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bb-btn:hover {
+  background: var(--bg-glass-hover);
+}
+
+.bb-btn:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+.bb-btn:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+.bb-btn--small {
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: var(--text-xs);
+}
+
+.bb-btn--quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.bb-field {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--text-sm);
+}
+
+.bb-field__label {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.bb-select,
+.bb-input {
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+}
+
+.bb-select:focus-visible,
+.bb-input:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 1px;
+}
+
+/* Board */
+
+.bb-board {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.bb-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bb-updated {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.bb-action {
+  padding: 14px 16px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.bb-ward {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.bb-ward__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.bb-ward__title {
+  margin: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.bb-ward__name {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.bb-ward__dept {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.bb-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bb-count {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.bb-count__n {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.bb-room {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bb-room__title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.bb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A tile. The tone is the left border only; every word is body text. */
+
+.bb-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-left: 4px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.bb-tile--occupied { border-left-color: var(--status-info); }
+.bb-tile--attention { border-left-color: var(--status-warn); }
+.bb-tile--ready { border-left-color: var(--status-ok); }
+.bb-tile--progress { border-left-color: var(--status-warn); border-left-style: dashed; }
+.bb-tile--held { border-left-color: var(--accent-deep); }
+.bb-tile--off { border-left-color: var(--text-muted); border-left-style: dotted; }
+.bb-tile--neutral { border-left-color: var(--border-glass); }
+
+.bb-tile__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.bb-tile__label {
+  font-size: var(--text-md);
+  font-weight: 650;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.bb-tile__chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.bb-chip {
+  padding: 1px 6px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.bb-tile__status {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 550;
+  color: var(--text-primary);
+}
+
+.bb-tile__who {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: var(--text-sm);
+}
+
+.bb-tile__name {
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.bb-tile__mrn,
+.bb-tile__boarder,
+.bb-tile__since {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.bb-tile__markers {
+  margin: 0;
+  padding-left: 16px;
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+
+.bb-tile__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+/* Awaiting a bed */
+
+.bb-lists {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.bb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.bb-list__title {
+  margin: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.bb-list__n {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.bb-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bb-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+}
+
+.bb-row__main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  font-size: var(--text-sm);
+}
+
+.bb-row__name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.bb-row__mrn,
+.bb-row__dept {
+  color: var(--text-secondary);
+}
+
+.bb-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.bb-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-warn);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.bb-confirm__words {
+  margin: 0;
+  flex-basis: 100%;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+@media (pointer: coarse) {
+  .bb-tab,
+  .bb-btn,
+  .bb-btn--small,
+  .bb-select,
+  .bb-input { min-height: 44px; }
+}

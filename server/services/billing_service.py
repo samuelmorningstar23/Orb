@@ -1017,11 +1017,16 @@ def _candidate_view(cand: dict) -> dict:
 def _discharge_stamp(db, admission: dict) -> Optional[str]:
     """When a discharged admission ended, as stored (UTC), or None.
 
-    An imported encounter carries ``admissions.discharged_at``; an Orb-native
-    discharge leaves that NULL and timestamps its discharge summary instead
-    (migrations._m15 explains the split). The summary is the patient's first
-    one written at or after this admission began, so an earlier stay's
-    summary is never taken for this one."""
+    ``admissions.discharged_at`` first: an imported encounter carries it, and
+    since migration 58 (adt-8a) so does every end of stay the beds and
+    admissions module records with ORB_ADT on, including ends with no
+    discharge summary (a death, a LAMA, an absconded closure). An Orb-native
+    discharge with ORB_ADT off leaves it NULL and timestamps its discharge
+    summary instead. The summary is the patient's first one written at or
+    after this admission began, so an earlier stay's summary is never taken
+    for this one. services/stay_times.stay_end is the shared reader of the
+    same rule (it also bounds the summary by the next admission's start), and
+    its docstring corrects the migrations._m15 note, which predates ADT."""
     if admission.get("discharged_at"):
         return admission["discharged_at"]
     row = db.execute(

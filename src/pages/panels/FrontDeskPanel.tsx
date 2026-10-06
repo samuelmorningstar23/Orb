@@ -38,6 +38,14 @@
  * A desk-only account (the receptionist: registration.* and no chart) sees no
  * Transfers and is not offered Call in or Complete, which the server refuses
  * it; it reads the queue and the roster and marks no-shows.
+ *
+ * ── THE OPD QUEUE WITH THE 'opd' FEATURE (opd-8) ───────────────────────────
+ * When the server marks its queue answer opd_mode, the OPD queue section is
+ * ./frontdesk/QueueView.tsx: priority (with its reason), room and skipped, the
+ * desk's "Priority and room" and "Left without being seen" (a coded cancel, no
+ * charge), and a re-read every ORB_OPD_QUEUE_POLL_SECONDS until live desk
+ * nudges land (opd-9b). Calling in needs opd.consult; finishing a visit is on
+ * the doctor's Outpatients tab. Without the mark the queue below is unchanged.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
@@ -65,7 +73,8 @@ import {
 } from '../../api/frontdesk'
 import './FrontDeskPanel.css'
 import { formatClinicalDateTime } from '../../lib/datetime'
-import { PATIENT_READ_ALL, hasPermission, type Permission } from '../../lib/roles'
+import { OPD_CONSULT, PATIENT_READ_ALL, hasPermission, type Permission } from '../../lib/roles'
+import QueueView, { type OpdModeQueue } from './frontdesk/QueueView'
 import { currentFeatureFlags, subscribeModuleFlags } from '../../shellConfig'
 import {
   discoverFrontDeskViews,
@@ -78,12 +87,19 @@ type View = string
 
 /** Every installed desk view, read once at module load (the glob is compile-time). */
 const INSTALLED_DESK_VIEWS: readonly FrontDeskViewEntry[] = discoverFrontDeskViews(
-  import.meta.glob('./frontdesk/*View.tsx', { eager: true }),
+  /* QueueView.tsx is the built-in OPD queue's OPD-mode body (opd-8), not a
+     discovered section, so it is left out here and rendered below. */
+  import.meta.glob(['./frontdesk/*View.tsx', '!./frontdesk/QueueView.tsx'], { eager: true }),
 )
 
 /** The client permission mirror; a permission it does not list reads as not held. */
 function roleHolds(permission: string): boolean {
   return hasPermission(permission as Permission)
+}
+
+/** The server says the 'opd' feature is on by marking its queue answer. */
+function isOpdModeQueue(queue: OpdQueueResponse): queue is OpdQueueResponse & OpdModeQueue {
+  return (queue as { opd_mode?: unknown }).opd_mode === true
 }
 
 /** A patient on the caller's own ward, from the clinical board. The server
@@ -823,6 +839,17 @@ export default function FrontDeskPanel({
   // A patient admitted from the shell can be transferred without a page reload.
   useDataChanged(() => { void load() })
 
+  /* The OPD-mode queue's own re-read (opd-8): the queue alone, so its poll
+     does not also re-read the ward list and the transfer destinations. */
+  const refreshQueue = useCallback(async () => {
+    try {
+      const q = await fetchOpdQueue()
+      if (mounted.current) setQueue(q)
+    } catch (err) {
+      if (mounted.current) setError(errorText(err))
+    }
+  }, [])
+
   /**
    * Who the desk may book a visit with: the staff roster.
    *
@@ -931,7 +958,12 @@ export default function FrontDeskPanel({
               onRegistered={load}
             />
           )}
-          {queue && <OpdQueue queue={queue} onAction={load} canRunConsultation={!deskOnly} />}
+          {queue && (isOpdModeQueue(queue)
+            /* The server's 'opd' feature is on: priority, room, skipped and
+               the coded "left without being seen" (opd-8). Calling in needs
+               opd.consult; finishing is on the doctor's Outpatients tab. */
+            ? <QueueView queue={queue} onRefresh={refreshQueue} canCallIn={holds(OPD_CONSULT)} />
+            : <OpdQueue queue={queue} onAction={load} canRunConsultation={!deskOnly} />)}
         </div>
       )}
     </div>

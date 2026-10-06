@@ -138,16 +138,18 @@ export interface IpassPrepareResponse {
 }
 
 export interface IpassSections {
+  /** Every value null (and `text` null) while scoring is switched off on this
+   *  computer: the draft then carries no severity line. */
   illness_severity: {
-    severity: string;
+    severity: string | null;
     news2: number | null;
-    news2_level: string;
-    scoring_model: string;
+    news2_level: string | null;
+    scoring_model: string | null;
     /** 2 when the patient is scored on SpO2 Scale 2 (COPD, target 88–92%);
      *  1, null or absent means Scale 1. */
     spo2_scale?: number | null;
     drivers: string[];
-    text: string;
+    text: string | null;
   };
   patient_summary: {
     name: string | null;

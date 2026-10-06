@@ -1,6 +1,9 @@
+import { useSyncExternalStore } from 'react'
+
 import styles from './Helix.module.css'
 import { formatClinicalDate, localDateKey } from '../../lib/datetime'
-import { LOW_STOCK_THRESHOLD, expiryKey, formatPackCount, lotState, type LotState } from './stock'
+import { currentModuleFlags, subscribeModuleFlags } from '../../shellConfig'
+import { expiryKey, formatPackCount, isLowStock, lotState, type LotState } from './stock'
 
 interface CatalogItem {
   id: string
@@ -8,6 +11,10 @@ interface CatalogItem {
   generic_name: string
   form: string
   strength: string
+  /** The pharmacy store's reorder level for this drug (migration 54). Used
+   *  only while the pharmacy store module is on; null means none was set,
+   *  and the fixed threshold applies. */
+  reorder_level_units?: number | null
 }
 
 interface InventoryItem {
@@ -58,6 +65,10 @@ function LotLine({ lot, state, form }: { lot: InventoryItem; state: LotState; fo
 }
 
 export default function HelixFormulary({ catalog, inventory }: { catalog: CatalogItem[], inventory: InventoryItem[] }) {
+  // The server's per-drug reorder level replaces the fixed threshold only
+  // while the pharmacy store module is on; with it off the screen reads
+  // exactly as it always has, whatever levels are stored.
+  const storeOn = useSyncExternalStore(subscribeModuleFlags, currentModuleFlags)['pharmacy-store'] === true
   const today = localDateKey()
   const soon = new Date()
   soon.setDate(soon.getDate() + EXPIRY_WARNING_DAYS)
@@ -76,7 +87,7 @@ export default function HelixFormulary({ catalog, inventory }: { catalog: Catalo
     const unusableQty = lots
       .filter(l => (l.state === 'expired' || l.state === 'undated') && l.lot.quantity > 0)
       .reduce((sum, l) => sum + l.lot.quantity, 0)
-    const isLow = totalQty > 0 && totalQty < LOW_STOCK_THRESHOLD
+    const isLow = isLowStock(totalQty, item, storeOn)
     const isOut = totalQty === 0
     // Empty lots are history, not stock: an expired lot still holding units
     // stays listed, because someone has to take it off the shelf.

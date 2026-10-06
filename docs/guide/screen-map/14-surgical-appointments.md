@@ -826,7 +826,7 @@ hospital-local days, in the caller's department. Until 2026-10-03 the server pad
 three to five "appointments" a day drawn from admitted patients by a date-seeded random generator
 (random type, reason and clock time); the panel rendered them as bookings and counted them in every
 tile. That synthesis is gone: `get_appointments` returns rows from the `appointments` table only
-(`server/services/forecast_service.py:996`, docstring at `:997-1014`), and the panel keeps only rows
+(`server/services/forecast_service.py:914`, docstring at `:915-932`), and the panel keeps only rows
 tagged `source === 'booked'` (`src/pages/panels/AppointmentsPanel.tsx:85`), so a stale cached response cannot slip a
 generated row back in.
 
@@ -875,7 +875,7 @@ down".
 **Data from:** `appointments.filter(a => a.date === today).length` (`:136`), where
 `today = localDateKey()` (`:117`), the **local** calendar date (`src/lib/datetime.ts:210`).
 **Server:** each row's `date` is the booking's `scheduled_date`, and the window starts at
-`hospital_today()` (`server/services/forecast_service.py:1018`), the hospital-local date, so the
+`hospital_today()` (`server/services/forecast_service.py:936`), the hospital-local date, so the
 client and server now compare like with like. (The board used to mark Friday as TODAY while the
 header said Saturday, because the server's date was UTC; `localDateKey`'s docstring records it.)
 **Change this →** the number is `var(--accent-text)` at 1.8 rem.
@@ -890,16 +890,17 @@ caller passes `days`, but this panel never does.
 **Rendered by:** `:146-151`; subtitle "Latest risk score critical".
 **Data from:** the number of distinct `patient_id`s whose `acuity` is `critical` (`:120-122`):
 patients, not rows, so one critical patient booked on three days counts once.
-**Server:** `acuity` is the patient's latest `risk_scores.level`, read `ORDER BY timestamp DESC, id
-DESC` per booking (`server/services/forecast_service.py:1045-1048`), or `None` when the patient has
-never been scored (it is never defaulted to `stable`).
+**Server:** `acuity` is the NEWS2 band of the patient's latest vitals row, read `ORDER BY timestamp
+DESC, id DESC` per patient and scored by `vigil_service.score_vitals_row` on the patient's own SpO2
+scale (`server/services/forecast_service.py:966-989`), or `None` when the patient has no vitals (it
+is never defaulted to `stable`). It came off `risk_scores` on 6 October 2026.
 **Change this →** rendered in `var(--status-danger-text)`.
 
 ### Summary card: "Patient requests"
 **Rendered by:** `:152-157`; subtitle "Time still to confirm".
 **Data from:** rows whose `origin` is `patient` (`:123`), bookings a patient asked for through the
 portal rather than ones staff made.
-**Server:** `appointments.origin`, defaulting to `staff` (`server/services/forecast_service.py:1062`).
+**Server:** `appointments.origin`, defaulting to `staff` (`server/services/forecast_service.py:1011`).
 
 ### Empty state: "No appointments booked for the next 7 days."
 **Where:** In place of the board, under the four zeroed cards.
@@ -912,8 +913,9 @@ blank space.
 **Rendered by:** the grid at `:170` (`repeat(auto-fill, minmax(240px, 1fr))`), each column at
 `:177`.
 **Data from:** `grouped`, built at `:111-115` by reducing `appointments` on `a.date`, keyed in
-first-seen order, which is date-then-time order, because the service sorts before returning
-(`ORDER BY ap.scheduled_date, ap.scheduled_time, p.name`, `server/services/forecast_service.py:1040`).
+first-seen order, which is date order, because the service sorts before returning: by date, then
+within a day the highest NEWS2 first with patients not scored last, then time and name
+(`server/services/forecast_service.py:1016-1023`).
 **Change this →** columns **wrap** instead of scrolling sideways (the comment at `:167-169`: six
 fixed 240px columns overflowed a laptop screen behind a scrollbar that never showed, so later days
 were simply missing). A day with no bookings has no column; there is no Sunday skip any more.
@@ -960,14 +962,14 @@ stored 24-hour `HH:MM` into the clinical 12-hour form and returns anything it ca
 ### Acuity chip: "Critical" / "Elevated" / "Stable" / "Not scored"
 **Where:** Under the time, in the same gutter.
 **Rendered by:** `:223-229`. Text colour from `ACUITY_TEXT` (`:49-53`, the `-text` tokens, because the
-chip is small text) and a 12 % tint from `ACUITY_TINT` (`:54-58`). A patient with no risk score reads
+chip is small text) and a 12 % tint from `ACUITY_TINT` (`:54-58`). A patient with no vitals reads
 "Not scored" in muted text (`:207-209`, `:228`), never a green "Stable".
-**Server:** the patient's latest `risk_scores.level`, or `None`
-(`server/services/forecast_service.py:1045-1048`, `:1066`).
+**Server:** the NEWS2 band of the patient's latest vitals row, or `None`
+(`server/services/forecast_service.py:966-989`, `:1014`).
 
 ### Patient name
 **Rendered by:** `:235-237`, `nowrap` with ellipsis and the full name in `title`.
-**Data from:** `patients.name`, joined to the booking (`server/services/forecast_service.py:1024-1027`).
+**Data from:** `patients.name`, joined to the booking (`server/services/forecast_service.py:940-945`).
 
 ### Age + sex: "58M"
 **Rendered by:** `:238-240`, `{appt.age ?? ''}{sexShort(appt.sex, '')}`.
@@ -977,12 +979,12 @@ the explicit `''` fallback means an unrecorded sex prints the age alone.
 ### Appointment type: the bold line
 **Rendered by:** `:242-244`.
 **Data from:** `appointments.appointment_type`, defaulting to "Follow-up"
-(`server/services/forecast_service.py:1060`).
+(`server/services/forecast_service.py:1005`).
 
 ### Reason line
 **Rendered by:** `:245-249`, only when the booking has a reason; the smallest, faintest line on the
 row.
-**Data from:** `appointments.reason` (`server/services/forecast_service.py:1061`).
+**Data from:** `appointments.reason` (`server/services/forecast_service.py:1010`).
 
 ### Fields fetched but never shown
 `ward`, `bed`, `diagnosis` and `department` are on the `Appointment` interface

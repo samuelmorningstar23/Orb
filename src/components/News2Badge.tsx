@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
 import type { News2 } from '../api/nurse'
 import { news2Description } from '../lib/news2'
+import { useClinicalSwitches } from '../shellConfig'
 
 /**
  * The NEWS2 aggregate, shown as the integer the RCP escalation table is keyed
@@ -36,6 +37,11 @@ interface Props {
 }
 
 export default function News2Badge({ news2, size = 'sm', labelled = true }: Props) {
+  /* Scoring switched off on this computer (ORB_SCORING_ENABLED, the Orb Ward
+     Record): no badge at all. Not the "—" of a patient nobody has measured,
+     which would read as a score that is missing rather than one that is off. */
+  const { scoringEnabled } = useClinicalSwitches()
+  if (!scoringEnabled) return null
   if (!news2) {
     const none = news2Description(null)
     return (

@@ -329,7 +329,11 @@ class VoiceAgent:
         self._loaded = False
     
     def load(self):
-        """Load MedGemma 4B (+ QLoRA adapters if available) into Apple Silicon Unified Memory."""
+        """Load MedGemma 4B (+ QLoRA adapters if available) into Apple Silicon Unified Memory.
+        Refused while the models are switched off (ORB_MODELS_ENABLED, or the
+        Orb Ward Record)."""
+        from services.model_switch import refuse_when_models_off
+        refuse_when_models_off("voice agent load")
         if self._loaded:
             return
         

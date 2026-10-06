@@ -6,6 +6,11 @@
     POST   /api/frontdesk/opd/visits/{id}/start     call the patient in
     POST   /api/frontdesk/opd/visits/{id}/complete  finish + raise the charge
     POST   /api/frontdesk/opd/visits/{id}/cancel    no-show / left without being seen
+    POST   /api/frontdesk/opd/visits/{id}/call      OPD mode: call in (alias of start)
+    POST   /api/frontdesk/opd/visits/{id}/skip      OPD mode: did not come when called
+    POST   /api/frontdesk/opd/visits/{id}/recall    OPD mode: a skipped patient is back
+    POST   /api/frontdesk/opd/visits/{id}/assign    OPD mode: the doctor takes an unassigned patient
+    PATCH  /api/frontdesk/opd/visits/{id}           OPD mode: queue priority and room
     GET    /api/frontdesk/transfers/destinations    departments with clinical cover
     POST   /api/frontdesk/transfers                 move a patient between wards
     GET    /api/frontdesk/patients/{patient_id}/movements   movement history
@@ -79,6 +84,21 @@ inpatient chart). So in OPD mode:
     (replay true) in its transaction, as the flag-off path writes one per
     call; it opens no new scope, so it writes no 'opd_scope_opened'.
 With the feature off every route here behaves exactly as before.
+
+── THE CONSULTING QUEUE (opd-8, the 'opd' feature on) ──────────────────────
+  * calling a patient in and completing a consultation need opd.consult
+    (doctor and clinician): the administrator's frontdesk.write and the
+    receptionist's registration.* no longer run a consultation (403, audited);
+  * call (alias of start), skip, recall and assign need opd.consult; PATCH of
+    priority and room is the desk's write rule; every one is visit-scoped
+    (404 outside the caller's clinic) and audited in the visit's transaction;
+  * a cancel may carry a reason code ('left_without_being_seen' is LWBS) and
+    never raises a charge;
+  * visits carry their queue fields and the desk queue is in seeing order
+    (priority, then token); its response says how often to re-read
+    (ORB_OPD_QUEUE_POLL_SECONDS) until live desk nudges land (opd-9b);
+  * after every change the clinic's open doctor queues get a content-free
+    'opd:queue_changed' {department} on the socket (opd_queue_service).
 """
 from __future__ import annotations
 
@@ -104,6 +124,7 @@ from permissions import (
     require_permission,
     require_registration_desk,
 )
+from routes.opt_in_gates import require_opd_feature
 from services.audit_service import AuditWriteError, log_audit_event
 from services.frontdesk_service import (
     FrontDeskError,
@@ -120,6 +141,16 @@ from services.frontdesk_service import (
     register_opd_visit,
     start_opd_consultation,
     transfer_patient,
+)
+from services.opd_queue_service import (
+    ASSIGN_AUDIT_ACTION,
+    ASSIGN_AUDIT_PREFIX,
+    QueueConflict,
+    assign_visit,
+    nudge_queue_changed,
+    recall_visit,
+    skip_visit,
+    update_queue_fields,
 )
 
 router = APIRouter(prefix="/api/frontdesk", tags=["frontdesk"])
@@ -153,6 +184,16 @@ class CompleteVisitIn(BaseModel):
 
 class CancelVisitIn(BaseModel):
     reason: str
+    # OPD mode only (opd-8): one of opd_queue_service.CANCEL_REASON_CODES,
+    # e.g. 'left_without_being_seen'. Ignored while the 'opd' feature is off.
+    reason_code: str | None = None
+
+
+class QueueFieldsIn(BaseModel):
+    """PATCH body for a visit's queue fields (opd-8). Omitted fields stay."""
+    priority: str | None = None
+    priority_reason: str | None = None
+    room: str | None = None
 
 
 class TransferIn(BaseModel):
@@ -267,6 +308,19 @@ def require_desk_write():
 def _bad_request(err: FrontDeskError) -> HTTPException:
     """FrontDeskError is always caller error (bad ward, wrong state) → 422."""
     return HTTPException(status_code=422, detail=str(err))
+
+
+def _visit_in_department(visit_id: str, dept: str | None) -> dict:
+    """_visit_or_404 for a caller whose scope the ENDPOINT already derived
+    (opd-8): `dept` is permissions.department_scope(user), passed in so the
+    derivation is visible in the route itself (tests/test_nurse_write_scope.py
+    reads the endpoint for it). 404 for no such visit and for another clinic."""
+    visit = get_opd_visit(visit_id)
+    if visit is None:
+        raise HTTPException(status_code=404, detail="OPD visit not found")
+    if dept is not None and visit.get("department") != dept:
+        raise HTTPException(status_code=404, detail="OPD visit not found")
+    return visit
 
 
 def _visit_or_404(visit_id: str, user: dict) -> dict:
@@ -494,6 +548,77 @@ def _replay_conflict() -> HTTPException:
     )
 
 
+# ── OPD mode: the consulting doctor's actions (opd-8) ───────────────────────
+
+def _require_opd_consult(request: Request, user: dict) -> None:
+    """In OPD mode, calling a patient in, completing a consultation and the
+    doctor's queue actions need opd.consult (doctor and clinician only). The
+    administrator holds frontdesk.write and the receptionist registration.*,
+    and neither may run a consultation. The denial is audited like every
+    permission refusal. Sync: the handlers calling it are threadpooled."""
+    role = user.get("role", "")
+    if has_permission(role, OPD_CONSULT):
+        return
+    log_audit_event(
+        correlation_id=str(uuid.uuid4()),
+        event_category="authorization",
+        action_type="permission_denied",
+        outcome="denied",
+        summary_message="Running an outpatient consultation requires opd.consult",
+        actor_user_id=user.get("id"),
+        actor_role=role,
+        request_path=request.url.path,
+        http_method=request.method,
+        ip_address=request.client.host if request.client else None,
+        metadata={"required_permissions": [OPD_CONSULT], "opd_mode": True},
+    )
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error": "permission_denied",
+            "message": "Only a consulting doctor can do this.",
+            "required": [OPD_CONSULT],
+        },
+    )
+
+
+def _queue_conflict(err: QueueConflict) -> HTTPException:
+    return HTTPException(status_code=409, detail={"error": err.code, "message": str(err)})
+
+
+def _queue_action_audit(request: Request, user: dict, *, prefix: str, action_type: str,
+                        summary, metadata=None):
+    """The in-transaction clinical_record row for a queue action, written on
+    every successful call (a repeat says replay true)."""
+    return _visit_event_audit(
+        request, user, correlation_prefix=prefix,
+        action_type=action_type, summary=summary, metadata=metadata,
+    )
+
+
+def _call_in(visit_id: str, request: Request, user: dict, *, dept: str | None) -> dict:
+    """OPD mode: call a patient in (the start route and its 'call' alias).
+    The caller's opd.consult was checked first; the visit must be in the
+    caller's clinic, `dept` = department_scope(user) (404 otherwise). Audited
+    in the visit's transaction, then the clinic's open queues are nudged."""
+    _visit_in_department(visit_id, dept)
+    try:
+        visit = start_opd_consultation(
+            visit_id, called_by=user.get("id"),
+            on_done=_visit_event_audit(
+                request, user, correlation_prefix="opd-start",
+                action_type="opd_consultation_started",
+                summary=lambda v: f"OPD visit {v['id']} called in",
+            ),
+        )
+    except FrontDeskError as err:
+        raise _bad_request(err)
+    except AuditWriteError:
+        raise _audit_unavailable()
+    nudge_queue_changed(visit.get("department"))
+    return visit
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  OPD
 # ═════════════════════════════════════════════════════════════════════════════
@@ -601,7 +726,7 @@ def create_opd_visit(
         # A replay is bound to this patient and clinic and audited too.
         self_registered = has_permission(user.get("role", ""), OPD_CONSULT)
         try:
-            return register_opd_visit(
+            registered = register_opd_visit(
                 patient_id=patient_id,
                 department=department,
                 doctor_id=data.doctor_id,
@@ -626,6 +751,9 @@ def create_opd_visit(
             raise _bad_request(err)
         except AuditWriteError:
             raise _audit_unavailable()
+        # opd-8: the clinic's open queues refetch (content-free, after commit).
+        nudge_queue_changed(registered.get("department"))
+        return registered
 
     try:
         visit = register_opd_visit(
@@ -693,22 +821,14 @@ def start_visit(
     request: Request,
     user: dict = Depends(require_frontdesk_write()),
 ):
-    """Call the patient in — 'waiting' → 'in_consultation'."""
-    _visit_or_404(visit_id, user)
+    """Call the patient in: 'waiting' → 'in_consultation'.
+
+    In OPD mode this needs opd.consult (opd-8): the administrator's
+    frontdesk.write no longer runs a consultation."""
     if opd_mode():
-        try:
-            return start_opd_consultation(
-                visit_id, called_by=user.get("id"),
-                on_done=_visit_event_audit(
-                    request, user, correlation_prefix="opd-start",
-                    action_type="opd_consultation_started",
-                    summary=lambda v: f"OPD visit {v['id']} called in",
-                ),
-            )
-        except FrontDeskError as err:
-            raise _bad_request(err)
-        except AuditWriteError:
-            raise _audit_unavailable()
+        _require_opd_consult(request, user)
+        return _call_in(visit_id, request, user, dept=department_scope(user))
+    _visit_or_404(visit_id, user)
     try:
         visit = start_opd_consultation(visit_id, called_by=user.get("id"))
     except FrontDeskError as err:
@@ -746,8 +866,14 @@ def complete_visit(
     not priced the consultation item, the row is written UNPRICED
     (`rate_is_configured = 0`) rather than at ₹0 — see
     frontdesk_service._raise_consultation_charge.
+
+    In OPD mode this needs opd.consult (opd-8). The consultation route's own
+    completion, with a disposition and the signed-note rule (OPD-N8), is
+    POST /api/opd/visits/{visit_id}/complete (opd-10).
     """
     body = data or CompleteVisitIn()
+    if opd_mode():
+        _require_opd_consult(request, user)
     _visit_or_404(visit_id, user)
     if opd_mode():
         def _charge_summary(v: dict) -> str:
@@ -764,7 +890,7 @@ def complete_visit(
             }
 
         try:
-            return complete_opd_visit(
+            completed = complete_opd_visit(
                 visit_id,
                 completed_by=user.get("id"),
                 service_code=body.service_code,
@@ -780,6 +906,8 @@ def complete_visit(
             raise _bad_request(err)
         except AuditWriteError:
             raise _audit_unavailable()
+        nudge_queue_changed(completed.get("department"))
+        return completed
     try:
         visit = complete_opd_visit(
             visit_id,
@@ -825,25 +953,33 @@ def cancel_visit(
     request: Request,
     user: dict = Depends(require_desk_write()),
 ):
-    """No-show / left without being seen. Soft — the row is kept."""
+    """No-show / left without being seen. Soft: the row is kept.
+
+    In OPD mode (opd-8) the body may carry a reason_code; the LWBS code is
+    'left_without_being_seen'. A cancel never raises a charge."""
     _visit_or_404(visit_id, user)
     reason = (data.reason or "").strip()
     if not reason:
         raise HTTPException(status_code=422, detail="A cancellation reason is required")
     if opd_mode():
+        code = (data.reason_code or "").strip().lower() or None
         try:
-            return cancel_opd_visit(
+            cancelled = cancel_opd_visit(
                 visit_id, reason=reason, cancelled_by=user.get("id"),
+                reason_code=code,
                 on_done=_visit_event_audit(
                     request, user, correlation_prefix="opd-cancel",
                     action_type="opd_visit_cancelled",
                     summary=lambda v: f"OPD visit {v['id']} cancelled: {reason}",
+                    metadata=lambda v: {"reason_code": v.get("cancel_reason_code")},
                 ),
             )
         except FrontDeskError as err:
             raise _bad_request(err)
         except AuditWriteError:
             raise _audit_unavailable()
+        nudge_queue_changed(cancelled.get("department"))
+        return cancelled
     try:
         visit = cancel_opd_visit(visit_id, reason=reason, cancelled_by=user.get("id"))
     except FrontDeskError as err:
@@ -865,6 +1001,133 @@ def cancel_visit(
         ip_address=request.client.host if request.client else None,
     )
     return visit
+
+
+def _run_queue_action(visit_id: str, dept: str | None, action) -> dict:
+    """The shared shape of an OPD-mode queue action: the visit must be in the
+    caller's clinic (404), the service refuses a state that does not allow the
+    action (409) or bad input (422), a fail-closed audit outage rolls back
+    (503), and after the commit the clinic's open queues are nudged. `dept`
+    is department_scope(user), derived by the endpoint."""
+    _visit_in_department(visit_id, dept)
+    try:
+        visit = action()
+    except QueueConflict as err:
+        raise _queue_conflict(err)
+    except FrontDeskError as err:
+        raise _bad_request(err)
+    except AuditWriteError:
+        raise _audit_unavailable()
+    nudge_queue_changed(visit.get("department"))
+    return visit
+
+
+@router.post("/opd/visits/{visit_id}/call")
+def call_visit(
+    visit_id: str,
+    request: Request,
+    _opd: None = Depends(require_opd_feature),
+    user: dict = Depends(require_permission(OPD_CONSULT)),
+):
+    """OPD mode: call the patient in. The same as /start, under the name the
+    doctor's queue uses; counts the call and ends a skip."""
+    return _call_in(visit_id, request, user, dept=department_scope(user))
+
+
+@router.post("/opd/visits/{visit_id}/skip")
+def skip_opd_visit(
+    visit_id: str,
+    request: Request,
+    _opd: None = Depends(require_opd_feature),
+    user: dict = Depends(require_permission(OPD_CONSULT)),
+):
+    """OPD mode: the patient did not come when called. Back to waiting,
+    marked skipped, until recalled or called again."""
+    return _run_queue_action(visit_id, department_scope(user), lambda: skip_visit(
+        visit_id, actor_id=user.get("id"),
+        on_done=_queue_action_audit(
+            request, user, prefix="opd-skip", action_type="opd_visit_skipped",
+            summary=lambda v: f"OPD visit {v['id']} skipped (token {v['token_number']})",
+        ),
+    ))
+
+
+@router.post("/opd/visits/{visit_id}/recall")
+def recall_opd_visit(
+    visit_id: str,
+    request: Request,
+    _opd: None = Depends(require_opd_feature),
+    user: dict = Depends(require_permission(OPD_CONSULT)),
+):
+    """OPD mode: a skipped patient is back in the line at their own token."""
+    return _run_queue_action(visit_id, department_scope(user), lambda: recall_visit(
+        visit_id, actor_id=user.get("id"),
+        on_done=_queue_action_audit(
+            request, user, prefix="opd-recall", action_type="opd_visit_recalled",
+            summary=lambda v: f"OPD visit {v['id']} back in the queue (token {v['token_number']})",
+        ),
+    ))
+
+
+@router.post("/opd/visits/{visit_id}/assign")
+def assign_opd_visit(
+    visit_id: str,
+    request: Request,
+    _opd: None = Depends(require_opd_feature),
+    user: dict = Depends(require_permission(OPD_CONSULT)),
+):
+    """OPD mode: the signed-in doctor takes an unassigned patient of their own
+    clinic. The doctor is always the caller; nobody assigns another doctor.
+
+    The answer carries token_changed and previous_token_number: a take issues
+    a new token when the doctor's own line already holds the patient's, and
+    the slip in the patient's hand then shows a number that is someone else's.
+    The audit row below is where the queues read that change back from
+    (opd_queue_service.reissued_tokens), so its prefix and action are the
+    service's constants."""
+    return _run_queue_action(visit_id, department_scope(user), lambda: assign_visit(
+        visit_id, doctor_id=user.get("id") or "",
+        on_done=_queue_action_audit(
+            request, user, prefix=ASSIGN_AUDIT_PREFIX, action_type=ASSIGN_AUDIT_ACTION,
+            summary=lambda v: (f"OPD visit {v['id']} taken by {v.get('doctor_name')} "
+                               f"(token {v['token_number']})"),
+            metadata=lambda v: {"doctor_id": v.get("doctor_id")},
+        ),
+    ))
+
+
+@router.patch("/opd/visits/{visit_id}")
+def update_opd_visit_queue(
+    visit_id: str,
+    data: QueueFieldsIn,
+    request: Request,
+    _opd: None = Depends(require_opd_feature),
+    user: dict = Depends(require_desk_write()),
+):
+    """OPD mode: the desk (or a doctor) sets a visit's queue priority, with a
+    reason for anything but normal (ruling OPD-N9), and its room. Only the
+    fields the body names change."""
+    given = data.model_fields_set
+    kwargs: dict = {}
+    if "priority" in given:
+        kwargs["priority"] = data.priority
+    if "priority_reason" in given:
+        kwargs["priority_reason"] = data.priority_reason
+    if "room" in given:
+        kwargs["room"] = data.room
+    if not kwargs:
+        raise HTTPException(status_code=422, detail="Nothing to change")
+    return _run_queue_action(visit_id, department_scope(user), lambda: update_queue_fields(
+        visit_id, actor_id=user.get("id"), **kwargs,
+        on_done=_queue_action_audit(
+            request, user, prefix="opd-queue", action_type="opd_visit_queue_updated",
+            summary=lambda v: (f"OPD visit {v['id']} priority {v.get('priority')}"
+                               + (f", room {v['room']}" if v.get("room") else "")),
+            metadata=lambda v: {"priority": v.get("priority"),
+                                "priority_reason": v.get("priority_reason"),
+                                "room": v.get("room")},
+        ),
+    ))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
