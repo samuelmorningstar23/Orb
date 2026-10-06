@@ -69,7 +69,7 @@ def test_the_boot_line_names_every_forced_setting_and_what_it_asked_for():
         assert f"{name}=false" in line
     assert "ORB_SCORING_ENABLED=false (the variable says true)" in line
     assert "ORB_MODELS_ENABLED=false (the variable says nothing)" in line
-    assert "—" not in line and "–" not in line
+    assert "\u2014" not in line and "\u2013" not in line
 
 
 def test_models_can_be_switched_off_without_the_profile():

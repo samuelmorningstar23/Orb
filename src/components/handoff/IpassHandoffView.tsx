@@ -254,7 +254,7 @@ export function IpassHandoffView({ patientId, patientName, setPageTitle = false 
         </p>
       )}
 
-      {/* I — Illness Severity. No section at all while scoring is switched
+      {/* I, Illness Severity. No section at all while scoring is switched
           off on this computer: the server drafts no severity (null). */}
       {s.illness_severity.severity != null && (
       <Section tag="I" title="Illness Severity">

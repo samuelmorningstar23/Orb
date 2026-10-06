@@ -38,7 +38,7 @@ interface Props {
 
 export default function News2Badge({ news2, size = 'sm', labelled = true }: Props) {
   /* Scoring switched off on this computer (ORB_SCORING_ENABLED, the Orb Ward
-     Record): no badge at all. Not the "—" of a patient nobody has measured,
+     Record): no badge at all. Not the dash of a patient nobody has measured,
      which would read as a score that is missing rather than one that is off. */
   const { scoringEnabled } = useClinicalSwitches()
   if (!scoringEnabled) return null

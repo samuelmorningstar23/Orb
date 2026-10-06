@@ -1662,7 +1662,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
           )}
         </div>
 
-        {/* Bed + Risk Badge — NEWS2 aggregate + band, not a percentage.
+        {/* Bed + Risk Badge: NEWS2 aggregate + band, not a percentage.
             With no score (scoring switched off) the badge is the bed alone:
             no band colour, no number, no dash. */}
         <div className={`command-bar__bed-badge command-bar__bed-badge--${risk ? risk.level : 'none'}`}>

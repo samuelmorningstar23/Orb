@@ -740,7 +740,7 @@ async def lifespan(app: FastAPI):
     if _models_on:
         lifespan_tasks.append(_spawn(warmup_voice_agent()))
 
-    # Start Sage proactive surveillance (always-on — real analysis over live data).
+    # Start Sage proactive surveillance (always on: real analysis over live data).
     # Sage insights are a model feature: off with the models.
     if _models_on:
         lifespan_tasks.append(_spawn(proactive_sweep()))
