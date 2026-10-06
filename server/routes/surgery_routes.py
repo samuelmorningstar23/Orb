@@ -219,8 +219,10 @@ def get_surgery_schedule(
         for r in rows:
             pid = r["patient_id"]
             if pid not in latest_vitals:
+                # A set marked entered in error is never the latest, as on
+                # the board and every other vitals reader.
                 v = db.execute(
-                    "SELECT * FROM vitals WHERE patient_id = ? "
+                    "SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
                     "ORDER BY timestamp DESC, id DESC LIMIT 1",
                     (pid,),
                 ).fetchone()

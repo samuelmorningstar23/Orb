@@ -105,3 +105,28 @@ def test_the_who_checklist_names_the_attester():
         assert got["state"]["si_identity"]["by_name"] == "Dr Meera Sharma"
     finally:
         _cleanup(surgeon, [sick, blank], sids)
+
+
+def test_a_set_entered_in_error_is_not_the_band():
+    """The schedule read the newest vitals row whatever its state. A set marked
+    entered in error (voided_at) is skipped by every other vitals reader, the
+    Vigil board included, so it must not band a case here either."""
+    surgeon, sick, blank, sids = _world()
+    later = format_utc(datetime.now(timezone.utc) - timedelta(minutes=2))
+    try:
+        with db_session() as db:
+            db.execute(
+                """INSERT INTO vitals (patient_id, timestamp, heart_rate, systolic_bp, diastolic_bp,
+                       spo2, temperature, respiratory_rate, consciousness, on_oxygen,
+                       voided_at, voided_by, void_reason)
+                   VALUES (?, ?, 72, 124, 70, 98, 36.8, 16, 'alert', 0, ?, ?, 'Wrong patient')""",
+                (sick, later, later, surgeon),
+            )
+        headers = {"Authorization": f"Bearer {create_token(surgeon, 'doctor')}"}
+        resp = client.get("/api/surgery/schedule?days=1", headers=headers)
+        assert resp.status_code == 200, resp.text
+        cases = {s["patient_id"]: s for d in resp.json() for s in d["surgeries"]
+                 if s["id"] in sids}
+        assert cases[sick]["risk_level"] == "critical"
+    finally:
+        _cleanup(surgeon, [sick, blank], sids)
