@@ -263,12 +263,13 @@ def observations_to_fhir(patient_id: str, since: Optional[str] = None, db=None) 
         if since:
             rows = conn.execute(
                 "SELECT * FROM vitals WHERE patient_id = ? AND timestamp >= ? "
-                "ORDER BY timestamp DESC, id DESC",
+                "AND voided_at IS NULL ORDER BY timestamp DESC, id DESC",
                 (patient_id, since),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM vitals WHERE patient_id = ? ORDER BY timestamp DESC, id DESC",
+                "SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+                "ORDER BY timestamp DESC, id DESC",
                 (patient_id,),
             ).fetchall()
 

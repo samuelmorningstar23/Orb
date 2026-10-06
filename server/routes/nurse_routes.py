@@ -5,6 +5,7 @@ Three endpoints behind the ward-nurse home:
   GET  /api/nurse/board                       — the whole shift as tasks
   POST /api/nurse/patients/{id}/observations  — record a nurse-taken obs set
   POST /api/nurse/patients/{id}/news2-preview — score a set WITHOUT saving it
+  POST /api/nurse/observations/{id}/void       marks a set entered in error
 
 Everything else nurse mode does (administering a med, drafting a handoff) goes
 through the endpoints that already own those workflows — /api/emar and
@@ -31,6 +32,7 @@ from permissions import (
     VITALS_WRITE,
     department_scope,
     has_permission,
+    patient_in_scope_blocking,
     require_patient_access,
     require_permission,
 )
@@ -221,4 +223,63 @@ def record_observations(
         # "patient not found" is a 404; everything else is a validation failure.
         if "not found" in str(e):
             raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+class VoidRequest(BaseModel):
+    # Required: a set is never struck out without saying why.
+    reason: str
+
+
+@router.post("/observations/{vitals_id}/void")
+def void_observation(
+    vitals_id: int,
+    req: VoidRequest,
+    request: Request,
+    # vitals.write only: a nurse or doctor marks a set entered in error. The
+    # ward clerk (vitals.transcribe) keys sets but never strikes one out; a
+    # wrong copy goes back to the nurse in charge.
+    user: dict = Depends(require_permission("vitals.write")),
+):
+    """Mark a recorded observation set as entered in error, with a reason.
+
+    PATIENT SCOPE THROUGH THE ROW. The path names a vitals id, not a patient,
+    so the patient is read from the row and checked with the same derivation
+    require_patient_access uses (permissions.patient_in_scope_blocking). Out
+    of scope answers 404 exactly like an id that does not exist, after writing
+    the same `patient_scope_denied` row, so the route never confirms that a
+    set on another ward exists.
+    """
+    not_found = HTTPException(status_code=404, detail="Observation not found")
+    patient_id = nurse_shift_service.observation_patient(vitals_id)
+    if patient_id is None:
+        raise not_found
+    dept = department_scope(user)
+    if not patient_in_scope_blocking(patient_id, dept):
+        log_audit_event(
+            correlation_id=str(uuid.uuid4()),
+            event_category="authorization",
+            action_type="patient_scope_denied",
+            outcome="denied",
+            summary_message=(
+                f"Patient {patient_id} is outside the caller's department ({dept})"
+            ),
+            actor_user_id=user.get("id"),
+            actor_role=user.get("role"),
+            patient_id=patient_id,
+            request_path=request.url.path,
+            http_method=request.method,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            metadata={"department": dept, "scope_source": "authenticated_user",
+                      "vitals_id": vitals_id},
+        )
+        raise not_found
+    try:
+        return nurse_shift_service.void_observation(vitals_id, user["id"], req.reason)
+    except nurse_shift_service.ObservationNotFound:
+        raise not_found
+    except nurse_shift_service.ObservationAlreadyVoided as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))

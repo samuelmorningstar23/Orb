@@ -77,3 +77,12 @@ describe('PharmacyVerifyQueue row details', () => {
     expect(screen.getAllByText(/^Ordered by /)).toHaveLength(1)
   })
 })
+
+describe('PharmacyVerifyQueue names the people', () => {
+  it('names the ordering person from ordered_by_name', async () => {
+    (ROWS as unknown[]).push({ ...ROWS[1], id: 13, patient: 'Mina Das', ordered_by_name: 'Dr Neel Shah' })
+    render(<PharmacyVerifyQueue />)
+    expect(await screen.findByText('Ordered by Dr Neel Shah')).toBeInTheDocument()
+    ROWS.pop()
+  })
+})

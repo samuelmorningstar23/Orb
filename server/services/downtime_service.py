@@ -172,7 +172,7 @@ def capture_snapshot(patient_id: str, created_by: str = "auto") -> dict:
             """SELECT timestamp, heart_rate, systolic_bp, diastolic_bp, spo2,
                       temperature, respiratory_rate, consciousness, on_oxygen
                FROM vitals
-               WHERE patient_id = ?
+               WHERE patient_id = ? AND voided_at IS NULL
                ORDER BY timestamp DESC, id DESC LIMIT 1""",
             (patient_id,),
         ).fetchone()

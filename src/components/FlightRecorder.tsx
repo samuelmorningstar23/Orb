@@ -3,6 +3,7 @@ import { apiFetch } from '../api/client'
 import './FlightRecorder.css'
 import { formatClinicalDateTime } from '../lib/datetime'
 import { humaniseEnum } from '../lib/humanise'
+import { actorLabel } from '../lib/actorLabel'
 
 /**
  * A8 — Flight Recorder v1.
@@ -24,6 +25,8 @@ interface TimelineEvent {
   ts: string
   source: EventSource
   actor: string | null
+  /** The actor's name from users, read by the server now; null for a node or a user who is gone. */
+  actor_name?: string | null
   action: string | null
   target: string | null
   detail: string | null
@@ -273,7 +276,7 @@ export default function FlightRecorder() {
                   </div>
                   <dl className="fr-kv">
                     <dt>Time</dt><dd>{fmtTs(selected.ts)}</dd>
-                    <dt>Actor</dt><dd>{selected.actor || '—'}</dd>
+                    <dt>Actor</dt><dd>{actorLabel(selected.actor_name, selected.actor) || '—'}</dd>
                     <dt>Target</dt><dd>{selected.target || '—'}</dd>
                     <dt>Patient</dt><dd>{selected.patient_id || '—'}</dd>
                     <dt>Correlation</dt><dd className="fr-mono">{selected.correlation_id || '—'}</dd>

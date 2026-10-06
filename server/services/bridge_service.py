@@ -316,7 +316,8 @@ def get_patient_status_simple(user_id: str) -> dict:
     # by a different lane at a different time, so a portal could print SpO2 85%
     # under "This is a normal precaution".
     vitals = db.execute(
-        "SELECT * FROM vitals WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 1",
+        "SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+        "ORDER BY timestamp DESC, id DESC LIMIT 1",
         (patient["id"],),
     ).fetchone()
 

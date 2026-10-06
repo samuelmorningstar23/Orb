@@ -143,7 +143,7 @@ def build_patient_context(patient_id: Optional[str], user: dict) -> str:
 
         # Latest vitals
         vitals_row = db.execute(
-            "SELECT heart_rate, systolic_bp, diastolic_bp, spo2, temperature, respiratory_rate, timestamp FROM vitals WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 1",
+            "SELECT heart_rate, systolic_bp, diastolic_bp, spo2, temperature, respiratory_rate, timestamp FROM vitals WHERE patient_id = ? AND voided_at IS NULL ORDER BY timestamp DESC, id DESC LIMIT 1",
             (patient_id,),
         ).fetchone()
         if vitals_row:

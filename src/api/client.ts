@@ -2984,6 +2984,9 @@ export interface AuditLog {
   outcome: string;
   actor_user_id: string | null;
   actor_role: string | null;
+  /** The actor's name, read from users when the log is read (never stored in
+   *  the chain). Null when the user no longer exists. */
+  actor_name?: string | null;
   patient_id: string | null;
   source_type: string | null;
   summary_message: string | null;

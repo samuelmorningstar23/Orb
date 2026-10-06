@@ -213,7 +213,8 @@ def _read_moment(patient_id):
         if not pat or (pat["status"] or "") != "admitted":
             return None
         vits = [dict(v) for v in db.execute(
-            "SELECT * FROM vitals WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 4",
+            "SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+            "ORDER BY timestamp DESC, id DESC LIMIT 4",
             (patient_id,),
         ).fetchall()]
         before = None
@@ -226,7 +227,7 @@ def _read_moment(patient_id):
             if cutoff:
                 row = db.execute(
                     "SELECT * FROM vitals WHERE patient_id = ? AND timestamp <= ? "
-                    "ORDER BY timestamp DESC, id DESC LIMIT 1",
+                    "AND voided_at IS NULL ORDER BY timestamp DESC, id DESC LIMIT 1",
                     (patient_id, cutoff),
                 ).fetchone()
                 before = dict(row) if row else None

@@ -63,7 +63,7 @@ def _load_patient_bundle(patient_id: str):
         # vitals[0]. vitals.id is INTEGER PRIMARY KEY AUTOINCREMENT, which is
         # insertion order; timestamp stays the primary sort key.
         vitals = db.execute(
-            """SELECT * FROM vitals WHERE patient_id = ?
+            """SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL
                ORDER BY timestamp DESC, id DESC LIMIT 288""",
             (patient_id,),
         ).fetchall()
@@ -170,7 +170,7 @@ def _load_recent_vitals(patient_id: str, hours: int):
     db = get_db()
     try:
         return db.execute(
-            """SELECT * FROM vitals WHERE patient_id = ?
+            """SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL
                AND timestamp > ?
                ORDER BY timestamp ASC, id ASC""",
             (patient_id, cutoff),

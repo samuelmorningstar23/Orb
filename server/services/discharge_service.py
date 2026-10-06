@@ -360,7 +360,8 @@ def _draft_inputs(patient_id: str) -> Optional[dict]:
 
         # Latest vitals. id DESC: on a same-timestamp tie the later write (a correction) wins.
         latest_vitals = db.execute(
-            "SELECT * FROM vitals WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 1",
+            "SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+            "ORDER BY timestamp DESC, id DESC LIMIT 1",
             (patient_id,),
         ).fetchone()
 

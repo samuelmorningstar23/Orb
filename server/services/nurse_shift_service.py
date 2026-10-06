@@ -306,10 +306,10 @@ def _load_board_rows(department: str | None):
         vitals = db.execute(
             f"""SELECT v.* FROM vitals v
                 JOIN (SELECT patient_id, MAX(timestamp) AS ts
-                        FROM vitals WHERE patient_id IN ({marks})
+                        FROM vitals WHERE patient_id IN ({marks}) AND voided_at IS NULL
                        GROUP BY patient_id) latest
                   ON latest.patient_id = v.patient_id AND latest.ts = v.timestamp
-                WHERE v.patient_id IN ({marks})""",
+                WHERE v.patient_id IN ({marks}) AND v.voided_at IS NULL""",
             (*ids, *ids),
         ).fetchall()
         # A tie on timestamp (two rows at the same instant) yields two rows for
@@ -330,6 +330,7 @@ def _load_board_rows(department: str | None):
                                               ORDER BY v.timestamp DESC, v.id DESC) AS rn
                       FROM vitals v
                      WHERE v.patient_id IN ({marks}) AND v.source IN ({src_marks})
+                       AND v.voided_at IS NULL
                 ) WHERE rn = 1""",
             (*ids, *OBS_CLOCK_SOURCES),
         ).fetchall()
@@ -1411,3 +1412,92 @@ def _record_observation_txn(
     if superseded_id is not None:
         result["supersedes_vitals_id"] = superseded_id
     return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Entered in error (Orb Ward Record, 6 October 2026)
+# ─────────────────────────────────────────────────────────────────────────────
+class ObservationNotFound(LookupError):
+    """No vitals row with that id."""
+
+
+class ObservationAlreadyVoided(ValueError):
+    """The set was already marked entered in error."""
+
+
+def observation_patient(vitals_id: int) -> str | None:
+    """The patient a stored observation set belongs to, or None."""
+    with db_session() as db:
+        row = db.execute("SELECT patient_id FROM vitals WHERE id = ?", (vitals_id,)).fetchone()
+    return row["patient_id"] if row else None
+
+
+def void_observation(vitals_id: int, actor_id: str, reason: str) -> dict:
+    """Mark a stored observation set as entered in error.
+
+    The row is NEVER deleted or edited: voided_at, voided_by and void_reason
+    are set and every latest, window and trend reader skips it from then on
+    (each one filters `voided_at IS NULL`). The original values stay in the
+    table and in the audit chain, which is what the paper rule asks of a
+    correction: struck through and signed, still readable.
+
+    Writes, in one transaction, the three void columns and a fail-closed audit
+    row, the same pattern as the observation insert, so a set can never be
+    voided unaudited. A second void of the same set is refused rather than
+    overwriting the first reason.
+
+    The NEWS2 the set produced in risk_scores is left as it was: that table has
+    no link to the vitals row, and the board, the ward brief and Sage's insights
+    score the latest vitals, not risk_scores.
+    """
+    reason = (reason or "").strip()
+    if not reason:
+        raise ValueError("a reason is required")
+    if len(reason) > 500:
+        raise ValueError("the reason must be 500 characters or fewer")
+    voided_at = format_utc(_now())
+    with db_session() as db:
+        row = db.execute(
+            "SELECT id, patient_id, timestamp, source, voided_at FROM vitals WHERE id = ?",
+            (vitals_id,),
+        ).fetchone()
+        if row is None:
+            raise ObservationNotFound(f"observation {vitals_id} not found")
+        if row["voided_at"]:
+            raise ObservationAlreadyVoided("this set is already marked entered in error")
+        db.execute(
+            "UPDATE vitals SET voided_at = ?, voided_by = ?, void_reason = ? "
+            "WHERE id = ? AND voided_at IS NULL",
+            (voided_at, actor_id, reason, vitals_id),
+        )
+        log_audit_event(
+            correlation_id=str(uuid.uuid4()),
+            event_category="clinical_access",
+            action_type="observation_voided",
+            outcome="success",
+            db=db,
+            summary_message=(
+                f"Observation set {vitals_id} for {row['patient_id']} marked entered "
+                f"in error by {actor_id}"
+            ),
+            actor_user_id=actor_id,
+            target_type="vitals",
+            target_id=str(vitals_id),
+            patient_id=row["patient_id"],
+            metadata={
+                "vitals_id": vitals_id,
+                "observed_at": row["timestamp"],
+                "source": row["source"],
+                "voided_at": voided_at,
+                "reason": reason,
+            },
+        )
+    logger.info("observation %s for %s marked entered in error by %s",
+                vitals_id, row["patient_id"], actor_id)
+    return {
+        "vitals_id": vitals_id,
+        "patient_id": row["patient_id"],
+        "voided_at": voided_at,
+        "voided_by": actor_id,
+        "void_reason": reason,
+    }

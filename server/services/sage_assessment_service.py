@@ -773,7 +773,8 @@ def _tier1(db, patient_id: str) -> dict:
     from services.vigil_service import score_vitals_row
 
     rows = db.execute(
-        "SELECT * FROM vitals WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT ?",
+        "SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+        "ORDER BY timestamp DESC, id DESC LIMIT ?",
         (patient_id, _tier1_window()),
     ).fetchall()
     if not rows:
@@ -1443,7 +1444,8 @@ def _open_assessment(patient_id: str, message_id, lane: str,
         obs = db.execute(
             "SELECT timestamp, heart_rate, systolic_bp, respiratory_rate, temperature, "
             "       spo2, consciousness, on_oxygen "
-            "FROM vitals WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 6",
+            "FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+            "ORDER BY timestamp DESC, id DESC LIMIT 6",
             (patient_id,),
         ).fetchall()
         trend_lines = [_format_observation(r) for r in reversed(obs)]

@@ -102,3 +102,23 @@ describe('SecurityActivity', () => {
     expect(screen.getByLabelText('Outcome')).toBeTruthy()
   })
 })
+
+describe('the log shows names', () => {
+  it('renders the actor as "Name (id)" when the server resolved a name', async () => {
+    getAuditLogs.mockResolvedValue({
+      logs: [{ ...LOG, actor_user_id: 'D-101', actor_name: 'Dr Kavya Menon' }],
+      total: 1, limit: 25, offset: 0,
+    })
+    render(<AuditLogTable onTraceClick={() => {}} />)
+    expect(await screen.findByText('Dr Kavya Menon (D-101)')).toBeTruthy()
+  })
+
+  it('falls back to the id alone for a user who is gone', async () => {
+    getAuditLogs.mockResolvedValue({
+      logs: [{ ...LOG, actor_user_id: 'GONE-1', actor_name: null }],
+      total: 1, limit: 25, offset: 0,
+    })
+    render(<AuditLogTable onTraceClick={() => {}} />)
+    expect(await screen.findByText('GONE-1')).toBeTruthy()
+  })
+})

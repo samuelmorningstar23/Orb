@@ -117,7 +117,8 @@ def compute_patient_state(patient_id: str) -> dict | None:
         # Oldest→newest window of the last 8 vitals.
         vit_rows = db.execute(
             """SELECT heart_rate, spo2, respiratory_rate, temperature, timestamp
-               FROM vitals WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 8""",
+               FROM vitals WHERE patient_id = ? AND voided_at IS NULL
+               ORDER BY timestamp DESC, id DESC LIMIT 8""",
             (patient_id,),
         ).fetchall()
         risk_rows = db.execute(

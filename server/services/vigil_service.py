@@ -128,7 +128,7 @@ def _assemble_feature_sequence(patient_id: str, feature_order, mean, std):
         rows = db.execute(
             """SELECT heart_rate, spo2, temperature, systolic_bp, diastolic_bp,
                       respiratory_rate, consciousness, timestamp
-               FROM vitals WHERE patient_id = ?
+               FROM vitals WHERE patient_id = ? AND voided_at IS NULL
                ORDER BY timestamp DESC, id DESC LIMIT 24""",
             (patient_id,),
         ).fetchall()
@@ -860,6 +860,7 @@ def scored_admitted_patients(department: str | None) -> list[tuple]:
                     JOIN admissions a ON p.id = a.patient_id AND a.status = 'active'
                     JOIN vitals v ON v.id = (
                         SELECT v2.id FROM vitals v2 WHERE v2.patient_id = p.id
+                          AND v2.voided_at IS NULL
                         ORDER BY v2.timestamp DESC, v2.id DESC LIMIT 1
                     )
                     WHERE p.status = 'admitted' {scope_sql}""",
@@ -890,7 +891,7 @@ def get_patient_risk(patient_id: str) -> dict:
     """
     with db_session() as db:
         row = db.execute(
-            """SELECT * FROM vitals WHERE patient_id = ?
+            """SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL
                -- id DESC breaks a timestamp tie. Two readings CAN share an
                -- observation time (a corrected obs set re-charted at the same
                -- bedside time; two monitor messages in the same second), and
@@ -922,7 +923,8 @@ def is_latest_vitals_row(db, patient_id: str, vitals_id: int) -> bool:
     transaction, where its INSERT is visible.
     """
     row = db.execute(
-        "SELECT id FROM vitals WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 1",
+        "SELECT id FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+        "ORDER BY timestamp DESC, id DESC LIMIT 1",
         (patient_id,),
     ).fetchone()
     return row is not None and row["id"] == vitals_id
@@ -957,7 +959,7 @@ def get_vitals_trend(patient_id: str, hours: int = 6) -> dict:
         recent = db.execute(
             """SELECT AVG(heart_rate) as avg_hr, AVG(systolic_bp) as avg_sbp,
                       AVG(spo2) as avg_spo2, AVG(respiratory_rate) as avg_rr
-               FROM vitals WHERE patient_id = ?
+               FROM vitals WHERE patient_id = ? AND voided_at IS NULL
                AND timestamp > ?""",
             (patient_id, recent_cutoff),
         ).fetchone()
@@ -965,7 +967,7 @@ def get_vitals_trend(patient_id: str, hours: int = 6) -> dict:
         previous = db.execute(
             """SELECT AVG(heart_rate) as avg_hr, AVG(systolic_bp) as avg_sbp,
                       AVG(spo2) as avg_spo2, AVG(respiratory_rate) as avg_rr
-               FROM vitals WHERE patient_id = ?
+               FROM vitals WHERE patient_id = ? AND voided_at IS NULL
                AND timestamp BETWEEN ? AND ?""",
             (patient_id, prev_cutoff, recent_cutoff),
         ).fetchone()

@@ -2936,7 +2936,8 @@ def _fresh_risk_and_observations(db, patient_id: str) -> tuple[dict | None, list
             (patient_id,),
         ).fetchone()
         rows = db.execute(
-            "SELECT * FROM vitals WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 6",
+            "SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+            "ORDER BY timestamp DESC, id DESC LIMIT 6",
             (patient_id,),
         ).fetchall()
         if not rows:
@@ -2992,7 +2993,8 @@ def _authoritative_news2_line(db, patient_id: str, name: str | None = None) -> s
     """
     try:
         v = db.execute(
-            "SELECT * FROM vitals WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 1",
+            "SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+            "ORDER BY timestamp DESC, id DESC LIMIT 1",
             (patient_id,),
         ).fetchone()
         if not v:
@@ -3125,7 +3127,7 @@ def _assemble_patient_context(db, patient_id: str, dept: str | None) -> dict | N
         logger.debug("problem list unavailable for %s", patient_id, exc_info=True)
 
     # Vitals (last 6 for trend)
-    vitals = db.execute("SELECT * FROM vitals WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 6", (patient_id,)).fetchall()
+    vitals = db.execute("SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL ORDER BY timestamp DESC, id DESC LIMIT 6", (patient_id,)).fetchall()
     if vitals:
         context["completeness"]["has_vitals"] = True
         lines, trends = _vitals_context(vitals)
@@ -3580,10 +3582,10 @@ def get_relevant_context(query: str, user: dict, patient_id: str = None, history
                    v.spo2, v.temperature, v.respiratory_rate
             FROM vitals v
             INNER JOIN (SELECT patient_id, MAX(timestamp) AS max_ts
-                        FROM vitals GROUP BY patient_id) latest
+                        FROM vitals WHERE voided_at IS NULL GROUP BY patient_id) latest
             ON v.patient_id = latest.patient_id AND v.timestamp = latest.max_ts
             INNER JOIN patients p ON p.id = v.patient_id
-            WHERE p.status = 'admitted'
+            WHERE p.status = 'admitted' AND v.voided_at IS NULL
         """, dept)).fetchall():
             # MAX(timestamp) matches EVERY row at that time, so a same-timestamp
             # correction arrives beside the set it supersedes, in no promised

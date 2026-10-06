@@ -29,6 +29,8 @@ type QueueRow = PendingMedication & {
   bed?: string | null;
   prescriber?: string | null;
   started_at?: string | null;
+  /** The ordering person by name (the prescriber, or the note's author). */
+  ordered_by_name?: string | null;
 };
 
 /** "Ward 3, bed 12", or whichever half is known. */
@@ -42,7 +44,7 @@ function wardBed(row: QueueRow): string {
 
 /** "Ordered by Dr Mehta, 3 Oct 2026, 10:15 AM", or whichever half is known. */
 function orderedLine(row: QueueRow): string {
-  const who = (row.prescriber ?? '').trim();
+  const who = (row.ordered_by_name ?? row.prescriber ?? '').trim();
   const when = formatClinicalDateTime(row.started_at ?? null);
   if (who && when) return `Ordered by ${who}, ${when}`;
   if (who) return `Ordered by ${who}`;
@@ -259,7 +261,10 @@ export default function PharmacyVerifyQueue() {
       }
       setRows((prev) => prev.filter((r) => r.id !== row.id));
       closeAck(row.id);
-      setFlash(`Verified ${row.drug_name} for ${row.patient ?? 'patient'}`);
+      // Who checked it, by name, as the server recorded it.
+      const checker = (result.medication?.verified_by_name ?? '').trim();
+      setFlash(`Verified ${row.drug_name} for ${row.patient ?? 'patient'}`
+        + (checker ? `. Checked by ${checker}.` : ''));
     } catch (e) {
       setError((e instanceof Error ? e.message : '') || 'Verification failed');
     } finally {

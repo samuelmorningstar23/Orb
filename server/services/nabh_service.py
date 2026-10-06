@@ -1420,7 +1420,8 @@ def _inpatient_days_per_stay(db, start: datetime, horizon: datetime,
         times.sort()
     last_vital: dict[str, datetime] = {}
     for row in db.execute(
-        "SELECT patient_id, MAX(timestamp) AS t FROM vitals GROUP BY patient_id"
+        "SELECT patient_id, MAX(timestamp) AS t FROM vitals WHERE voided_at IS NULL "
+        "GROUP BY patient_id"
     ).fetchall():
         when = _dt(row["t"])
         if when:
@@ -1540,7 +1541,8 @@ def _inpatient_days(db, start: datetime, end: datetime, ward: Optional[str]) -> 
 
     last_vital: dict[str, datetime] = {}
     for row in db.execute(
-        "SELECT patient_id, MAX(timestamp) AS t FROM vitals GROUP BY patient_id"
+        "SELECT patient_id, MAX(timestamp) AS t FROM vitals WHERE voided_at IS NULL "
+        "GROUP BY patient_id"
     ).fetchall():
         when = _dt(row["t"])
         if when:

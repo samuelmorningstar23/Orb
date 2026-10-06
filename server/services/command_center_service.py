@@ -165,7 +165,7 @@ def _deteriorations(patients: list[dict]) -> list[dict]:
                 vrow = db.execute(
                     """SELECT heart_rate, systolic_bp, respiratory_rate, temperature,
                               spo2, consciousness, on_oxygen
-                       FROM vitals WHERE patient_id = ?
+                       FROM vitals WHERE patient_id = ? AND voided_at IS NULL
                        -- id DESC: a same-timestamp correction is the later write.
                        ORDER BY timestamp DESC, id DESC LIMIT 1""",
                     (p["id"],),

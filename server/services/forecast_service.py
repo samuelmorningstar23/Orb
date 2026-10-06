@@ -164,7 +164,7 @@ def extract_patient_features(patient_id: str, seq_len: int = 48) -> torch.Tensor
         vitals = db.execute(
             """SELECT heart_rate, systolic_bp, diastolic_bp, spo2, temperature,
                       respiratory_rate, timestamp
-               FROM vitals WHERE patient_id = ?
+               FROM vitals WHERE patient_id = ? AND voided_at IS NULL
                ORDER BY timestamp DESC, id DESC LIMIT ?""",
             (patient_id, seq_len),
         ).fetchall()

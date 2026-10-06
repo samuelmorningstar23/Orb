@@ -121,3 +121,19 @@ describe('flight recorder timeline rows', () => {
     rows.forEach((row) => expect(row.children).toHaveLength(6))
   })
 })
+
+describe('flight recorder actor', () => {
+  it('names the actor as "Name (id)" when the server resolved one', async () => {
+    apiFetch.mockImplementation((path: string) => {
+      if (path.startsWith('/flight-recorder/verify')) return Promise.resolve({ ok: true, broken_at: null, count: 1 })
+      if (path.startsWith('/flight-recorder/timeline')) {
+        return Promise.resolve({ events: [{ ...EVENTS[0], actor_name: 'Dr Asha Rao' }], count: 1 })
+      }
+      if (path.startsWith('/flight-recorder/event/')) return Promise.resolve({ source: 'audit', event: {} })
+      return Promise.reject(new Error(`unexpected ${path}`))
+    })
+    render(<FlightRecorder />)
+    // The only event is the one selected, so the detail pane shows it.
+    expect(await screen.findByText('Dr Asha Rao (DOC001)')).toBeTruthy()
+  })
+})

@@ -63,6 +63,9 @@ export interface VerifiedMedication {
   verified_by: string | null;
   verified_at: string | null;
   notes: string | null;
+  /** Who ordered it and who checked it, by name, read from users now. */
+  ordered_by_name?: string | null;
+  verified_by_name?: string | null;
 }
 
 export interface VerifyResult {

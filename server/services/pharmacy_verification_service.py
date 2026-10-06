@@ -156,6 +156,10 @@ def _serialize_med(row) -> dict:
         "bed": d.get("bed"),
         "prescriber": d.get("prescriber_name"),
         "started_at": d.get("started_at"),
+        # The people, by name, read from users now (the row keeps only ids).
+        # None when the user row is gone, never a guess.
+        "ordered_by_name": d.get("prescriber_name"),
+        "verified_by_name": d.get("verified_by_name"),
     }
 
 
@@ -174,10 +178,11 @@ def list_pending_verification() -> list[dict]:
             """SELECT m.id, m.patient_id, m.drug_name, m.dosage, m.route, m.frequency,
                       m.status, m.source, m.verified_by, m.verified_at, m.notes,
                       m.started_at, p.name AS patient_name, p.ward, p.bed,
-                      u.name AS prescriber_name
+                      u.name AS prescriber_name, v.name AS verified_by_name
                FROM medications m
                JOIN patients p ON p.id = m.patient_id AND p.status = 'admitted'
                LEFT JOIN users u ON u.id = m.prescribed_by
+               LEFT JOIN users v ON v.id = m.verified_by
                WHERE m.source IN ({placeholders})
                  AND m.verified_by IS NULL
                  AND m.status = 'active'
@@ -204,9 +209,12 @@ def list_pending_verification() -> list[dict]:
 
 def _fetch_med(db, med_id: int):
     return db.execute(
-        """SELECT m.*, p.name AS patient_name
+        """SELECT m.*, p.name AS patient_name,
+                  u.name AS prescriber_name, v.name AS verified_by_name
            FROM medications m
            LEFT JOIN patients p ON p.id = m.patient_id
+           LEFT JOIN users u ON u.id = m.prescribed_by
+           LEFT JOIN users v ON v.id = m.verified_by
            WHERE m.id = ?""",
         (med_id,),
     ).fetchone()

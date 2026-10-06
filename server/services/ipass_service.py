@@ -297,13 +297,15 @@ def _get_vitals_window(db, patient_id: str, cutoff_iso: str) -> list[dict]:
     reading the handoff prints and scores."""
     rows = db.execute(
         """SELECT * FROM vitals WHERE patient_id = ? AND timestamp >= ?
+             AND voided_at IS NULL
            ORDER BY timestamp ASC, id ASC""",
         (patient_id, cutoff_iso),
     ).fetchall()
     if rows:
         return [dict(r) for r in rows]
     latest = db.execute(
-        "SELECT * FROM vitals WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 1",
+        "SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+        "ORDER BY timestamp DESC, id DESC LIMIT 1",
         (patient_id,),
     ).fetchone()
     return [dict(latest)] if latest else []

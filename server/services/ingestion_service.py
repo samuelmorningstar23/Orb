@@ -220,7 +220,8 @@ def _persist_vitals_row(patient_raw_id, vital_events, event_id, source_label):
         # that decides which values get CARRIED FORWARD onto the new row, so a tie
         # resolved the wrong way copies a superseded observation into the present.
         latest = db.execute(
-            "SELECT * FROM vitals WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 1",
+            "SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+            "ORDER BY timestamp DESC, id DESC LIMIT 1",
             (patient_id,),
         ).fetchone()
 

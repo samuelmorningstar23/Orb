@@ -299,8 +299,9 @@ def _generate_vitals(now_ts, cycle_counter):
             """SELECT v.* FROM vitals v
                INNER JOIN (
                    SELECT patient_id, MAX(timestamp) as max_ts
-                   FROM vitals GROUP BY patient_id
-               ) latest ON v.patient_id = latest.patient_id AND v.timestamp = latest.max_ts"""
+                   FROM vitals WHERE voided_at IS NULL GROUP BY patient_id
+               ) latest ON v.patient_id = latest.patient_id AND v.timestamp = latest.max_ts
+               WHERE v.voided_at IS NULL"""
         ).fetchall():
             # MAX(timestamp) matches every tied row, in no promised order; carry
             # forward from the later write (higher id), i.e. a same-time correction.
@@ -1088,7 +1089,8 @@ def get_dynamic_finding(db, pid, scan_type):
     """
     latest_hr = 75
     vital = db.execute(
-        "SELECT heart_rate FROM vitals WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 1",
+        "SELECT heart_rate FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+        "ORDER BY timestamp DESC, id DESC LIMIT 1",
         (pid,)
     ).fetchone()
     if vital:

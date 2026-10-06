@@ -4,6 +4,7 @@ from typing import Optional
 
 from database import db_session
 from permissions import require_permission
+from services.actor_names import attach_actor_names
 
 router = APIRouter(prefix="/api/audit", tags=["audit"])
 
@@ -74,9 +75,11 @@ def get_audit_logs(
         count_query = query.replace("SELECT *", "SELECT COUNT(id) as total", 1).split(" ORDER BY")[0]
         count_params = params[:-2]
         total = db.execute(count_query, count_params).fetchone()["total"]
+        # The person, by name, read now: the chained row keeps only the id.
+        logs = attach_actor_names(db, [dict(r) for r in rows])
 
     return {
-        "logs": [dict(r) for r in rows],
+        "logs": logs,
         "total": total,
         "limit": limit,
         "offset": offset,

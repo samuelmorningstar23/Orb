@@ -1366,7 +1366,7 @@ def scan_new_observations(*, department: str | None = None,
             f"""SELECT v.*, p.on_scale_2 AS patient_on_scale_2
                   FROM vitals v
                   JOIN patients p ON p.id = v.patient_id
-                 WHERE p.status = 'admitted' AND v.timestamp >= ? {dept_sql}
+                 WHERE p.status = 'admitted' AND v.timestamp >= ? AND v.voided_at IS NULL {dept_sql}
                  ORDER BY v.id DESC LIMIT ?""",
             tuple(params),
         ).fetchall()

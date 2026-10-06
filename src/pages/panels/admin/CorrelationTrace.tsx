@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { getAuditLogs, type AuditLog } from '../../../api/client'
+import { actorLabel } from '../../../lib/actorLabel'
 import { OutcomeBadge } from './AdminBadges'
 import { AdminLoadingState, AdminErrorState, AdminEmptyState } from './AdminEmptyState'
 
@@ -120,7 +121,7 @@ export default function CorrelationTrace({ correlationId }: Props) {
                   <div className="admin-trace__meta">
                     {evt.patient_id && <span>Patient: {evt.patient_id}</span>}
                     {evt.target_type && <span>Target: {evt.target_type}</span>}
-                    {evt.actor_user_id && <span>Actor: {evt.actor_user_id}</span>}
+                    {evt.actor_user_id && <span>Actor: {actorLabel(evt.actor_name, evt.actor_user_id)}</span>}
                   </div>
                 </div>
               </div>

@@ -788,7 +788,8 @@ def _persist_extraction(note_id, patient_id, author_id, updates, med_starts, sto
             # (services/vitals_carry.py), else NULL, not assessed.
             from services.vitals_carry import carry_forward, dump_carried
             latest = db.execute(
-                "SELECT * FROM vitals WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 1",
+                "SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+                "ORDER BY timestamp DESC, id DESC LIMIT 1",
                 (patient_id,),
             ).fetchone()
             assessed, carried = carry_forward(latest, now, ["consciousness", "on_oxygen"])

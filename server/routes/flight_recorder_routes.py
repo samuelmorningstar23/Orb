@@ -8,7 +8,9 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from database import db_session
 from permissions import require_permission
+from services.actor_names import attach_actor_names
 from services.flight_recorder_service import (
     get_event_detail,
     get_timeline,
@@ -28,6 +30,10 @@ def timeline(
 ):
     """Unified, time-ordered replay stream (audit + events + order transitions)."""
     events = get_timeline(patient_id=patient_id, since=since, until=until, limit=limit)
+    # Names read now, never stored in the chain. An event bus row's actor is a
+    # source node, not a user, so it resolves to None.
+    with db_session() as db:
+        attach_actor_names(db, events, id_key="actor")
     return {"events": events, "count": len(events)}
 
 
@@ -52,4 +58,10 @@ def event_detail(
     detail = get_event_detail(event_id, source)
     if detail is None:
         raise HTTPException(status_code=404, detail="event not found")
+    event = detail.get("event")
+    if isinstance(event, dict):
+        id_key = "actor_user_id" if source == "audit" else "actor_id"
+        if id_key in event:
+            with db_session() as db:
+                attach_actor_names(db, [event], id_key=id_key)
     return detail

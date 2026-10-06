@@ -480,7 +480,7 @@ def patient_vitals_trends(user: dict = Depends(require_patient_self())):
     with db_session() as db:
         rows = db.execute(
             """SELECT timestamp, heart_rate, systolic_bp, spo2, temperature, respiratory_rate
-               FROM vitals WHERE patient_id = ?
+               FROM vitals WHERE patient_id = ? AND voided_at IS NULL
                -- id DESC: on a timestamp tie the later write is the correction,
                -- and after the reversal below it is the one that ends the series.
                ORDER BY timestamp DESC, id DESC LIMIT 48""",

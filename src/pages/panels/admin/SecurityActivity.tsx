@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { apiFetch, getAuditLogs, type AuditLog } from '../../../api/client'
+import { actorLabel } from '../../../lib/actorLabel'
 import { OutcomeBadge } from './AdminBadges'
 import { AdminLoadingState, AdminErrorState, AdminEmptyState } from './AdminEmptyState'
 import { AuditSummaryCell, FAILURES_AND_DENIALS, type AuditFacets } from './AuditLogTable'
@@ -133,7 +134,7 @@ export default function SecurityActivity() {
                   <td className="admin-td--mono admin-td--small">{formatClinicalDateTime(log.timestamp, { seconds: true })}</td>
                   <td className="admin-td--small">{humaniseEnum(log.action_type)}</td>
                   <td><OutcomeBadge outcome={log.outcome} /></td>
-                  <td className="admin-td--small">{log.actor_user_id || '—'}</td>
+                  <td className="admin-td--small">{actorLabel(log.actor_name, log.actor_user_id) || '—'}</td>
                   <td className="admin-td--small">{humaniseEnum(log.actor_role)}</td>
                   <td className="admin-td--mono admin-td--small">{log.ip_address || '—'}</td>
                   <td className="admin-td--small">{log.request_path || '—'}</td>
