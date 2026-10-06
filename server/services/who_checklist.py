@@ -161,7 +161,30 @@ def get_checklist_state(surgery_id: str) -> dict:
         ).fetchone()
     if not row:
         return {"error": "not_found"}
-    return summarize_state(who_raw(row))
+    return _with_attester_names(summarize_state(who_raw(row)))
+
+
+def _with_attester_names(result: dict) -> dict:
+    """Add `by_name` to each attested item: the attester's name from users,
+    resolved at READ time so the stored record stays the user id (the audit
+    trail's key) and a renamed account reads under its current name. The
+    checklist printed "Attested by DOC004". An id no longer on file gets no
+    name, and the screen falls back to the id rather than inventing one."""
+    state = result.get("state") or {}
+    ids = sorted({str(v.get("by")) for v in state.values()
+                  if isinstance(v, dict) and v.get("by")})
+    if not ids:
+        return result
+    marks = ",".join("?" for _ in ids)
+    with db_session() as db:
+        names = {
+            r["id"]: r["name"]
+            for r in db.execute(f"SELECT id, name FROM users WHERE id IN ({marks})", ids).fetchall()
+        }
+    for v in state.values():
+        if isinstance(v, dict) and v.get("by"):
+            v["by_name"] = names.get(str(v["by"]))
+    return result
 
 
 def set_item(surgery_id: str, item_id: str, checked: bool, actor_id: str) -> dict:

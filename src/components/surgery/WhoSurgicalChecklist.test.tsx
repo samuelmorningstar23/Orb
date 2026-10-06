@@ -180,3 +180,18 @@ describe('gating mirrors the backend exactly', () => {
     expect(screen.getByRole('checkbox', { name: /counts are correct/i })).toBeEnabled()
   })
 })
+
+/* 2026-10-06: the record printed "Attested by DOC004". The server now names
+   the attester at read time, and the line reads like a signature. */
+describe('attester names', () => {
+  it('prints the attester by name with the time', async () => {
+    getWhoChecklist.mockResolvedValue(state({
+      si_identity: { by: 'NUR001', by_name: 'Dr Meera Sharma', at: '2026-08-10T09:12:00+00:00' } as { by: string; at: string },
+    }))
+    render(<WhoSurgicalChecklist surgeryId="SURG1" />)
+    const time = new Date('2026-08-10T09:12:00+00:00')
+      .toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+    expect(await screen.findByText(`Attested by Dr Meera Sharma, ${time}`)).toBeInTheDocument()
+    expect(screen.queryByText(/NUR001/)).toBeNull()
+  })
+})

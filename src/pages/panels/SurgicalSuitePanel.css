@@ -555,6 +555,11 @@
   color: var(--text-secondary);
 }
 
+.suite__surgery-surgeon {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
 .suite__surgery-risk {
   font-size: 0.75rem;
   font-weight: 500;

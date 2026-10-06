@@ -237,3 +237,36 @@ describe('case header bed', () => {
     expect(await screen.findByText('Ravi Sharma')).toBeInTheDocument()
   })
 })
+
+/* 2026-10-06: the day list names the surgeon (the route always sent it), and
+   its band is the NEWS2 of the latest vitals with the number beside it. A
+   patient with nothing recorded is "not scored", never "stable". */
+describe('day list surgeon and score', () => {
+  it('shows the surgeon and the NEWS2 beside the band', async () => {
+    getSurgerySchedule.mockResolvedValue([{
+      date: '2026-08-11', day_label: 'Tuesday', is_today: true,
+      surgeries: [
+        {
+          id: 'S1', patient_id: 'P1', patient_name: 'Asha Rao', age: 61, sex: 'F', operating_room: 'OR-1',
+          procedure_name: 'Laparoscopic cholecystectomy', diagnosis: 'Gallstones',
+          scheduled_time: '09:00', estimated_duration_min: 90, status: 'scheduled',
+          risk_level: 'elevated', risk_score: 0.25, news2: 5, news2_complete: true,
+          surgeon_name: 'Dr. Meera Sharma', success_probability: null,
+        },
+        {
+          id: 'S2', patient_id: 'P2', patient_name: 'Kiran Das', age: 40, sex: 'M', operating_room: 'OR-2',
+          procedure_name: 'Hernia repair', diagnosis: 'Inguinal hernia',
+          scheduled_time: '11:00', estimated_duration_min: 60, status: 'scheduled',
+          risk_level: null, risk_score: null, news2: null, news2_complete: null,
+          surgeon_name: null, success_probability: null,
+        },
+      ],
+    }])
+    const { container } = render(<SurgicalSuitePanel />)
+    await waitFor(() => expect(container.querySelectorAll('.suite__day-card').length).toBe(1))
+    await act(async () => { (container.querySelector('.suite__day-card') as HTMLButtonElement).click() })
+    expect(await screen.findByText('Dr. Meera Sharma')).toBeInTheDocument()
+    const risks = Array.from(container.querySelectorAll('.suite__surgery-risk')).map(r => r.textContent)
+    expect(risks).toEqual(['◉ elevated · NEWS2 5', '○ not scored'])
+  })
+})

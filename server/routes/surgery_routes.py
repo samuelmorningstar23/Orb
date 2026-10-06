@@ -198,49 +198,72 @@ def get_surgery_schedule(
 
     scope_sql, scope_params = surgical_list_filter(user)
 
+    from services.vigil_service import score_vitals_row
+
     with db_session() as db:
         rows = db.execute(
             f"""SELECT s.*, p.name as patient_name, p.mrn, p.age, p.sex, u.name as surgeon_name,
-                      rs.level as risk_level, rs.score as risk_score
+                      p.on_scale_2 as patient_on_scale_2
                FROM surgeries s
                JOIN patients p ON s.patient_id = p.id
                LEFT JOIN users u ON s.surgeon_id = u.id
-               -- Latest risk row: id breaks an exact timestamp tie. The MAX(timestamp)
-               -- equality matched every tied row and listed the case twice.
-               LEFT JOIN risk_scores rs ON rs.id = (
-                   SELECT rs2.id FROM risk_scores rs2 WHERE rs2.patient_id = p.id
-                   ORDER BY rs2.timestamp DESC, rs2.id DESC LIMIT 1
-               )
                WHERE s.scheduled_date BETWEEN ? AND ?{scope_sql}
                ORDER BY s.scheduled_date ASC, s.scheduled_time ASC""",
             (today.isoformat(), end_date.isoformat()) + scope_params
         ).fetchall()
-
-        # Group by date
-        grouped: dict[str, list] = {}
+        # The band is the NEWS2 of each patient's LATEST VITALS row (id breaks
+        # a timestamp tie), the Vigil board's rule since 3 October. It came off
+        # risk_scores, which the simulator and the Scribe lane never write, and
+        # a patient with no risk row was printed "stable".
+        latest_vitals: dict[str, dict | None] = {}
         for r in rows:
-            d = r["scheduled_date"]
-            if d not in grouped:
-                grouped[d] = []
-            row_dict = dict(r)
-            # Surface risk to the Suite cards (default to 'stable' like the panel expects).
-            row_dict["risk_level"] = row_dict.get("risk_level") or "stable"
-            grouped[d].append(row_dict)
-        
-        # Build day-by-day schedule (include empty days)
-        schedule = []
-        for i in range(days):
-            day = today + timedelta(days=i)
-            day_str = day.isoformat()
-            schedule.append({
-                "date": day_str,
-                "day_label": day.strftime("%A"),
-                # SurgicalSuitePanel renders a 'Today' badge off this flag; the
-                # route never sent it, so the badge was unreachable and every
-                # day card in the week view looked alike.
-                "is_today": day == today,
-                "surgeries": grouped.get(day_str, []),
-            })
+            pid = r["patient_id"]
+            if pid not in latest_vitals:
+                v = db.execute(
+                    "SELECT * FROM vitals WHERE patient_id = ? "
+                    "ORDER BY timestamp DESC, id DESC LIMIT 1",
+                    (pid,),
+                ).fetchone()
+                latest_vitals[pid] = dict(v) if v else None
+
+    # Scored after the session closes: the CfC overlay reads the vitals history
+    # on its own connection.
+    on_scale_2 = {r["patient_id"]: bool(r["patient_on_scale_2"]) for r in rows}
+    scores = {
+        pid: score_vitals_row(v, patient_id=pid, on_scale_2=on_scale_2[pid])
+        for pid, v in latest_vitals.items()
+    }
+
+    # Group by date
+    grouped: dict[str, list] = {}
+    for r in rows:
+        d = r["scheduled_date"]
+        if d not in grouped:
+            grouped[d] = []
+        row_dict = dict(r)
+        row_dict.pop("patient_on_scale_2", None)
+        news2 = scores.get(r["patient_id"])
+        # None when nothing is recorded: "not scored", never a default band.
+        row_dict["risk_level"] = news2["level"] if news2 else None
+        row_dict["risk_score"] = news2["score"] if news2 else None
+        row_dict["news2"] = news2["raw_news2"] if news2 else None
+        row_dict["news2_complete"] = news2.get("complete") if news2 else None
+        grouped[d].append(row_dict)
+
+    # Build day-by-day schedule (include empty days)
+    schedule = []
+    for i in range(days):
+        day = today + timedelta(days=i)
+        day_str = day.isoformat()
+        schedule.append({
+            "date": day_str,
+            "day_label": day.strftime("%A"),
+            # SurgicalSuitePanel renders a 'Today' badge off this flag; the
+            # route never sent it, so the badge was unreachable and every
+            # day card in the week view looked alike.
+            "is_today": day == today,
+            "surgeries": grouped.get(day_str, []),
+        })
 
     # Audited only when PHI actually left — same rule as the Vigil patient board
     # (routes/vigil_routes.py): this endpoint is polled by every open Surgical

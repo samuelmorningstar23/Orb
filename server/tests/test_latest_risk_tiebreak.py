@@ -459,7 +459,21 @@ def test_surgery_service_lists_the_case_once_at_the_correction(surgery_world):
 
 
 def test_surgery_routes_list_the_case_once_at_the_correction(surgery_world):
+    """The schedule's band is the NEWS2 of the latest VITALS row since
+    2026-10-06 (the Vigil board's rule), so its tie is a vitals tie: a benign
+    set and a peri-arrest correction at the same time, the correction the
+    higher id. The detail route below still reads the risk rows."""
     w = surgery_world
+    tie = format_utc(datetime.now(timezone.utc) - timedelta(minutes=5))
+    with db_session() as db:
+        _insert_vitals(db, w["pid"], tie)
+        db.execute(
+            """INSERT INTO vitals (patient_id, timestamp, heart_rate, systolic_bp,
+                                   diastolic_bp, spo2, temperature, respiratory_rate,
+                                   consciousness, on_oxygen)
+               VALUES (?, ?, 135, 85, 50, 88, 39.5, 30, 'alert', 0)""",
+            (w["pid"], tie),
+        )
     headers = {"Authorization": f"Bearer {create_token(w['surgeon'], 'doctor')}"}
     resp = client.get("/api/surgery/schedule?days=2", headers=headers)
     assert resp.status_code == 200, resp.text

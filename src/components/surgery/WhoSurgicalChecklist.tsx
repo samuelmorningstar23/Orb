@@ -19,12 +19,15 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import { getWhoChecklist, getWhoChecklistTemplate, setWhoChecklistItem, getUser } from '../../api/client'
+import { formatUTCTime } from '../../lib/datetime'
 import './WhoSurgicalChecklist.css'
 
 interface WhoTemplateItem { id: string; text: string }
 interface WhoTemplatePhase { id: string; label: string; when: string; items: WhoTemplateItem[] }
 interface WhoTemplate { version: string; phases: WhoTemplatePhase[] }
-interface WhoItemState { checked: boolean; by: string; at: string }
+/** `by` is the attester's user id (the record's key); `by_name` is their name,
+ *  resolved by the server at read time, or null when the account is gone. */
+interface WhoItemState { checked: boolean; by: string; by_name?: string | null; at: string }
 interface WhoChecklistState {
   version: string
   state: Record<string, WhoItemState>
@@ -32,10 +35,9 @@ interface WhoChecklistState {
   completed: boolean
 }
 
+/** The clinical "09:12 AM", the same form every other screen uses. */
 function formatAttestTime(at: string): string {
-  const d = new Date(at)
-  if (isNaN(d.getTime())) return ''
-  return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+  return formatUTCTime(at)
 }
 
 export default function WhoSurgicalChecklist({ surgeryId }: { surgeryId: string }) {
@@ -175,9 +177,11 @@ export default function WhoSurgicalChecklist({ surgeryId }: { surgeryId: string 
                       </span>
                       {isChecked && itemState && (
                         <span className="who-checklist__attest">
-                          Attested by {itemState.by}
+                          {/* "Attested by Dr Meera Sharma, 09:12 AM". The id only
+                              when the server could not name the account. */}
+                          Attested by {itemState.by_name || itemState.by}
                           {user && itemState.by === user.id ? ' (you)' : ''}
-                          {itemState.at ? ` · ${formatAttestTime(itemState.at)}` : ''}
+                          {itemState.at && formatAttestTime(itemState.at) ? `, ${formatAttestTime(itemState.at)}` : ''}
                         </span>
                       )}
                     </span>

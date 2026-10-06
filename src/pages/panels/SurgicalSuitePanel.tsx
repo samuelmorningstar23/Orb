@@ -54,8 +54,15 @@ interface SurgeryBrief {
   estimated_duration_min: number
   operating_room: string
   status: string
-  risk_level: string
+  /** The NEWS2 band of the patient's latest vitals (the Vigil board's rule),
+   *  or null when nothing is recorded: "not scored", never "stable". */
+  risk_level: string | null
   risk_score: number | null
+  /** The NEWS2 behind that band, and whether the set was complete. */
+  news2?: number | null
+  news2_complete?: boolean | null
+  /** The operating surgeon's name, as the users table holds it. */
+  surgeon_name?: string | null
   success_probability: number | null
 }
 
@@ -113,10 +120,19 @@ function formatDuration(mins: number) {
   return h > 0 ? `${h}h ${m > 0 ? m + 'm' : ''}` : `${m}m`
 }
 
-function riskColor(level: string) {
+function riskColor(level: string | null | undefined) {
+  if (level == null) return 'var(--text-muted)'
   if (level === 'critical') return 'var(--status-danger)'
   if (level === 'elevated') return 'var(--status-warn)'
   return 'var(--status-ok)'
+}
+
+/** "critical · NEWS2 9" from the latest vitals; "≥" for an incomplete set;
+ *  "not scored" when nothing is recorded. */
+function scheduleBand(s: Pick<SurgeryBrief, 'risk_level' | 'news2' | 'news2_complete'>): string {
+  if (!s.risk_level) return 'not scored'
+  if (typeof s.news2 !== 'number') return s.risk_level
+  return `${s.risk_level} · NEWS2 ${s.news2_complete === false ? '≥' : ''}${s.news2}`
 }
 
 function formatDate(dateStr: string) {
@@ -822,8 +838,11 @@ export default function SurgicalSuitePanel() {
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                       {s.patient_name} · {s.age}y/{s.sex}
                     </span>
+                    {s.surgeon_name && (
+                      <span className="suite__surgery-surgeon">{s.surgeon_name}</span>
+                    )}
                     <span className="suite__surgery-risk" style={{ color: riskColor(s.risk_level) }}>
-                      {s.risk_level === 'critical' ? '⬤' : s.risk_level === 'elevated' ? '◉' : '○'} {s.risk_level}
+                      {s.risk_level === 'critical' ? '⬤' : s.risk_level === 'elevated' ? '◉' : '○'} {scheduleBand(s)}
                     </span>
                     {successPct(s.success_probability) !== null && (
                       <span className="suite__surgery-success" style={{ color: successColor(successPct(s.success_probability)) }}>
