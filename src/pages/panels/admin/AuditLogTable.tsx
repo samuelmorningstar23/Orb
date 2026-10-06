@@ -221,7 +221,7 @@ export default function AuditLogTable({ onTraceClick }: Props) {
                   <td><span className="admin-category-chip">{humaniseEnum(log.event_category)}</span></td>
                   <td className="admin-td--small">{humaniseEnum(log.action_type)}</td>
                   <td><OutcomeBadge outcome={log.outcome} /></td>
-                  <td className="admin-td--small">{actorLabel(log.actor_name, log.actor_user_id) || '—'}</td>
+                  <td className="admin-td--small">{actorLabel(log.actor_name, log.actor_user_id) || 'Not recorded'}</td>
                   <td className="admin-td--mono admin-td--small">{log.patient_id || '—'}</td>
                   <AuditSummaryCell text={log.summary_message} />
                 </tr>

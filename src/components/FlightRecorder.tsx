@@ -276,7 +276,7 @@ export default function FlightRecorder() {
                   </div>
                   <dl className="fr-kv">
                     <dt>Time</dt><dd>{fmtTs(selected.ts)}</dd>
-                    <dt>Actor</dt><dd>{actorLabel(selected.actor_name, selected.actor) || '—'}</dd>
+                    <dt>Actor</dt><dd>{actorLabel(selected.actor_name, selected.actor) || 'Not recorded'}</dd>
                     <dt>Target</dt><dd>{selected.target || '—'}</dd>
                     <dt>Patient</dt><dd>{selected.patient_id || '—'}</dd>
                     <dt>Correlation</dt><dd className="fr-mono">{selected.correlation_id || '—'}</dd>
