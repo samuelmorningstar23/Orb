@@ -1,6 +1,6 @@
 # Sage bed and ward lookup: findings, 3 October 2026
 
-Status: open. Eight fixes were built between 3 and 6 October. All eight failed independent review and were backed out; main has the original substring bed matching (plus the shared ward rule, services/ward_reference.py). R026 is RULED (a) with D2 to D4, Q1 to Q3, A to F, G (the shipping bar) and H (orders). See "Attempt 8 review" for the closest result so far.
+Status: open. Nine fixes were built between 3 and 6 October. All nine failed independent review and were backed out; main has the original substring bed matching (plus the shared ward rule, services/ward_reference.py). R026 is RULED (a) with D2 to D4, Q1 to Q3, A to F, G (the shipping bar) and H (orders), and on 6 October Samuel chose to confirm another bed while a chart is open. See "Attempt 9 review": with a chart open, that rule held on every probe.
 
 ## The defect today
 
@@ -182,3 +182,20 @@ Also: "G.M.-103", "GM - 103" (dots or spaced dashes) answered from the open char
 The reviewer's pointer, checked against its own data: 91 of the 115 blocking rows contain she, her, he, him, his or their (the clinician is talking about the OPEN patient and the bed is someone in relation to her), and none of the 90 correct certain other-bed answers across the realistic sets contains one. The other 24: B7, B9, one-letter codes ("K4 is low, replace?", old code the same), dotted GM codes, "swapped from bed 12".
 
 Backed out by reverse patch on 6 October; the four files are byte-identical to HEAD (d2531f8). Code, tests, patches and both probe sets: docs/archive/bed-locator-attempt8-2026-10-04/ (probes_review8/ is the reviewer's).
+
+## Attempt 9 review (6 October): confirm another bed while a chart is open; did not ship
+
+Attempt 9 (plan, "Attempt 9") kept attempt 8's reader and added Samuel's structural rule: while a chart or the conversation's patient is open, a bed that is not that patient is asked about, and "yes" or "12" confirms. With a chart open it held completely: every earlier probe set (46 files) gave 0 regressions and 0 unlabelled wrong charts, and the realistic sets gave 0 wrong charts in 668 numbered-ward rows against the old code's 221. Asks: 25% overall with a chart open and 10% with nothing open, against the old code's 57%. "yes" opened the right chart, labelled, live and on reload, and an order after "yes" was drafted on the confirmed patient.
+
+It failed items 1 and 3 on the lanes the rule did not cover:
+- B-A, nothing open: attempt 8's reader decided, and the shapes that broke it came back written with nouns instead of she or he ("the husband in bed 12 has covid, should the wife be tested?", "ICU referral: bed 12, 60M, septic shock, can we accept?", "transferred from ICU (bed 12) yesterday", "same plan as for bed 12 for the new admission?"). About 26 phrasings where the old code asked opened bed 12 unlabelled, orders included.
+- B-B, the conversation's patient lapsed: the history anchor stops at any earlier turn holding a plain number ("lasix 40 iv bd, continue?"), so the rule had no referent and fell to B-A.
+- B-C, a negated reply: after the question, "not 12", "except 12", "nahi 12" were read as the bare-bed confirmation (the reply pattern allowed any word before the number) and opened bed 12.
+- B-D (rarer): a bed whose patient also matched by one name word ("Elvira Short" in "she is short of breath, her husband in bed 12 had flu") was never confirmed.
+Also: after "yes" confirmed bed 12 with bed 7 open, an unnamed follow-up order ("add kcl 20 mmol") went back to bed 7, labelled; the history walk could anchor on a bed that had only been asked about; the bare-bed reply pattern was quadratic on whitespace (8.8 s for 40,000 spaces); voice, which sends no history, can never reach another bed by number while a chart is open.
+
+Backed out by reverse patch on 6 October; the four files are byte-identical to HEAD (93d0d38). Code, tests, patches and both probe sets: docs/archive/bed-locator-attempt9-2026-10-06/ (probes_review9/ is the reviewer's).
+
+### What attempt 9 showed
+
+The structural rule works where it applies: with a chart open no phrasing produced a wrong chart, across nine reviewers' worth of probes. Every remaining failure is a place where Sage still trusted its own reading of a bed without asking: nothing open, a lapsed conversation patient, a reply read as a confirmation, a name word. Extending the same rule to every bed reading (a bed always needs confirming unless it is the open patient's own, or the reply is exactly that bed's label) closes all four by construction; the cost is the nothing-open ask rate rising to the chart-open level (about 25% overall on the realistic sets, still under the old code's 57%).

@@ -1,6 +1,6 @@
 # Sage bed lookup: build plan, 3 October 2026
 
-Status: RULED (R026 (a), D2 to D4, Q1 to Q3, A to F, G, H). Attempts 2 to 6 failed review and were backed out; main is dd5203b. Attempt 7 (attempt 6 plus the fixes below) was built on 4 October, failed review against ruling G and was backed out (see the findings doc, "Attempt 7 review"). Attempt 8 was measured, approved and built on 4 October (D3 kept for comma items), failed review on 6 October and was backed out (findings doc, "Attempt 8 review"). Next step: Samuel's call.
+Status: RULED (R026 (a), D2 to D4, Q1 to Q3, A to F, G, H). Attempts 2 to 6 failed review and were backed out; main has the original substring bed matching plus the shared ward rule. Attempt 7 (attempt 6 plus the fixes below) was built on 4 October, failed review against ruling G and was backed out (see the findings doc, "Attempt 7 review"). Attempt 8 was measured, approved and built on 4 October (D3 kept for comma items), failed review on 6 October and was backed out (findings doc, "Attempt 8 review"). Attempt 9 (confirm another bed while a chart is open) chosen by Samuel on 6 October, built, failed review the same day on the lanes it did not cover (nothing open, a lapsed conversation patient, "not 12" as a reply) and was backed out (findings doc, "Attempt 9 review"). Next step: Samuel's call.
 Reads with: docs/SAGE_BED_LOCATOR_FINDINGS_2026-10-03.md (the defect and why the first fix was backed out).
 
 ## The idea in one paragraph
@@ -255,3 +255,23 @@ Built in a scratch copy on main at e82bd24 (the ward-matcher work's services/war
 - Whitespace: every locator pattern that ran an optional character between two whitespace runs is possessive (`\s*+`), so long runs of spaces are linear (attempt 7: 15 s for "how is 12" plus 40,000 spaces; now 0.02 s).
 - A reloaded order turn keeps the label: the stored safe answer carries it (attempt 7 reloaded "Drafted request for ..." unlabelled).
 - Test file: tests/test_sage_bed_locator.py, section 26 holds every blocking row from the attempt 7 review (B1 on a numbered ward asks, on GM naming keeps the chart; B2; B3; recognised shapes stay certain; one-letter codes; whitespace timing; reload label). 716 tests; 514 fail on the code before this work. The ward-matcher work's tests/test_ward_reference.py needs four edits that land with this change (census for a ward on its own; the which-patient turn never reaches the model; a census turn is PHI; retired probe patients renamed so "ward" in a later question cannot match them).
+
+## Attempt 9 (6 October): confirm another bed while a chart is open
+
+Samuel's choice after attempt 8's review: while a chart is open, or the conversation is already about one patient, Sage never switches to ANOTHER bed on its own reading of the words. It asks instead ("Which patient do you mean? - Bed 12: <name>, ward <ward>. Reply "yes" for bed 12, or with another bed or name."), and "yes", "12" or "bed 12" confirms. Eight attempts at reading every phrasing each failed on phrasings no list covered, and every failure was the same event: another patient's chart opened in place of the open one. This removes that event for every phrasing, whatever the reader gets wrong.
+
+Rules:
+- Applies to beds read as CERTAIN (bed words, our codes, the patient in N) that are not the referent. The referent is the open chart (patient_id, in department) or, with none, the conversation's patient (the history anchor).
+- Not asked: a patient named by NAME, the open patient's own bed ("bed 7 potassium?" with bed 7 open), a reply to the which-patient question itself (that IS the confirmation), and turns with nothing open (no referent: the bed opens its chart as in attempt 8).
+- With NOTHING open, a question that speaks of a patient as she, he or they ("her husband in bed 12 has covid, should she be tested?") confirms another bed too: that patient is not the one in the bed. None of the realistic questions that rightly named another bed said she or he (attempt 8's review data), so this costs no extra questions there.
+- After the which-patient question, only a reply that is nothing but a bed ("12", "bed 12", "yes bed 12") is the confirmation; "no, she is next to bed 12" is asked again.
+- "yes" (and yeah, ok, correct, go ahead, haan...) confirms only a question with exactly ONE candidate; after a question with two it is asked again, as before. The answer after "yes" carries the "About <name>, bed <bed>:" label, since the clinician did not type the name.
+- A bed waiting to be confirmed is asked about before the census lane answers ("summary of bed 12" with bed 7 open).
+- The reader is attempt 8's (certain-side lists), so with nothing open the same reading decides, and with a chart open it decides only between asking and no match.
+Also fixed from attempt 8's review: our codes written with dots or a spaced dash ("G.M.-103", "GM - 103") are read again, as the old code did; labels of three or more runs ("ICU Bed N", 60 beds) are indexed by their first three runs (4 to 7 s at 512 KB before).
+
+Measured from attempt 8's review data before building: on the realistic sets about 90 of 560 answers were a certain other bed, so with a chart open those become one extra reply (about 16 points more asks overall, 40 to 50% on the bed-heavy sets). Every one of the 115 blocking rows from attempt 8's review was a certain other bed, so all of them become questions.
+
+### Attempt 9 as built (6 October)
+
+Built on main at 93d0d38 (the shared ward rule with generic and destination mentions) from attempt 8's code, then ported. tests/test_sage_bed_locator.py: 772 tests, 588 of the 769 before the last three fail on the code before this work; every reviewer-8 blocking row is a test. The ward-matcher session approved the same four edits to tests/test_ward_reference.py. Every reviewer probe set (46 files, attempts 2 to 8, attack sets included) re-run on the build: 0 regressions and 0 unlabelled wrong charts; asks 0 to 4% on everyday sets and 27 to 50% on the bed-heavy sets, as measured beforehand. Guard suite on main: 2,763 passed. Code, patches, probes: docs/archive/bed-locator-attempt9-2026-10-06/; pre-change copies: docs/archive/pre-bed-locator-a9-2026-10-06/.
