@@ -295,6 +295,15 @@ MODULE_TABLES: dict[str, tuple[str, ...]] = {
     "outpatient consultations": (
         "opd_consultations", "opd_consultation_addenda",
     ),
+    # ── migration 78 (the Orb Ward Record's rounds file) ──
+    # Each ward's observation interval and grace window, set in writing by the
+    # nursing superintendent, and the record of every monthly rounds file
+    # produced. A restore that came back without them would lose the interval
+    # every due time and every late round is counted against, and which file
+    # the quality coordinator was given.
+    "ward record": (
+        "ward_observation_settings", "ward_record_exports",
+    ),
 }
 
 ALL_MIGRATED_TABLES: tuple[str, ...] = tuple(
