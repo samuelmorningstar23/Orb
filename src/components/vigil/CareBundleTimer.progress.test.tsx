@@ -100,3 +100,41 @@ describe('CareBundleTimer progress', () => {
     expect(chip.textContent).toBe('0 of 6 done · not closed')
   })
 })
+
+/* The card says who opened the bundle. It used to print "Trigger: Manual
+   start" with no name, so a nurse arriving could not tell who started the
+   clock, or whether Orb had. */
+describe('CareBundleTimer opened by', () => {
+  const at = (ts: string) => new Date(ts.replace(' ', 'T') + 'Z')
+    .toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+
+  it('names the clinician for a manual start, and drops the default reason', async () => {
+    getPatientBundles.mockResolvedValue([bundle({
+      trigger_reason: 'Manual start', started_by_name: 'Dr Meera Sharma', trigger_news2: null,
+    })])
+    render(<CareBundleTimer patientId="P-1" />)
+    const line = await screen.findByTestId('bundle-opened-by')
+    expect(line.textContent).toBe(`Opened by Dr Meera Sharma, ${at('2026-10-03 09:56:53')}`)
+    expect(screen.queryByText(/Trigger:/)).toBeNull()
+  })
+
+  it('says Orb and the NEWS2 for an automatic start', async () => {
+    getPatientBundles.mockResolvedValue([bundle({
+      triggered_by: 'vigil_auto', source: 'vigil_auto', started_by_name: 'Orb',
+      trigger_reason: 'NEWS2 12, at or above 7', trigger_news2: 12,
+    })])
+    render(<CareBundleTimer patientId="P-1" />)
+    const line = await screen.findByTestId('bundle-opened-by')
+    expect(line.textContent).toBe(`Opened by Orb at NEWS2 12, ${at('2026-10-03 09:56:53')}`)
+  })
+
+  it('keeps a reason someone typed', async () => {
+    getPatientBundles.mockResolvedValue([bundle({
+      trigger_reason: 'Rigors and new confusion', started_by_name: 'Nurse Asha',
+    })])
+    render(<CareBundleTimer patientId="P-1" />)
+    const line = await screen.findByTestId('bundle-opened-by')
+    expect(line.textContent).toBe(
+      `Opened by Nurse Asha, ${at('2026-10-03 09:56:53')} · Reason: Rigors and new confusion`)
+  })
+})

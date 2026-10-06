@@ -171,7 +171,7 @@ def get_active_bundles(department: str | None = None) -> list[dict]:
                  ORDER BY triggered_at""",
             scope_params,
         ).fetchall()
-    return [_decorate(dict(r)) for r in rows]
+    return _decorate_all(rows)
 
 
 def get_bundles_for_patient(patient_id: str, active_only: bool = False) -> list[dict]:
@@ -181,7 +181,7 @@ def get_bundles_for_patient(patient_id: str, active_only: bool = False) -> list[
     q += " ORDER BY triggered_at DESC"
     with db_session() as db:
         rows = db.execute(q, (patient_id,)).fetchall()
-    return [_decorate(dict(r)) for r in rows]
+    return _decorate_all(rows)
 
 
 def _parse(ts) -> datetime | None:
@@ -193,8 +193,57 @@ def _parse(ts) -> datetime | None:
         return None
 
 
-def _decorate(row: dict) -> dict:
+# ── Who opened the bundle ────────────────────────────────────────────────────
+# The timer said "Trigger: Manual start" with no name, so a nurse arriving at
+# the bedside could not tell who had started the clock or whether Orb had. The
+# row stores `triggered_by` as a users.id for a clinician start and the marker
+# "vigil_auto" for an automatic one; the name is resolved here, at read time,
+# so a renamed account reads under its current name.
+
+_AUTO_STARTERS = {"vigil_auto"}
+_NEWS2_IN_REASON = re.compile(r"NEWS2\s+(\d+)")
+
+
+def _is_auto_start(row: dict) -> bool:
+    return (row.get("source") in _AUTO_STARTERS
+            or row.get("triggered_by") in _AUTO_STARTERS)
+
+
+def _starter_names(user_ids) -> dict[str, str]:
+    """users.id to display name for the ids given, one query. Unknown ids are
+    left out, and the caller prints no name rather than an id."""
+    ids = sorted({str(u) for u in user_ids if u and str(u) not in _AUTO_STARTERS})
+    if not ids:
+        return {}
+    marks = ",".join("?" for _ in ids)
+    with db_session() as db:
+        rows = db.execute(
+            f"SELECT id, name FROM users WHERE id IN ({marks})", ids,
+        ).fetchall()
+    return {r["id"]: r["name"] for r in rows if r["name"]}
+
+
+def _decorate_all(rows) -> list[dict]:
+    """`_decorate` for a list of rows, with the starters' names in one query."""
+    rows = [dict(r) for r in rows]
+    names = _starter_names(r.get("triggered_by") for r in rows)
+    return [_decorate(r, names=names) for r in rows]
+
+
+def _decorate(row: dict, names: dict[str, str] | None = None) -> dict:
     """Attach per-element status + overall compliance to a bundle row."""
+    # Read the stored criterion BEFORE it is reworded below: "NEWS2 12 (>=7)".
+    raw_reason = row.get("trigger_reason")
+    if _is_auto_start(row):
+        row["started_by_name"] = "Orb"
+        m = _NEWS2_IN_REASON.search(str(raw_reason or ""))
+        row["trigger_news2"] = int(m.group(1)) if m else None
+    else:
+        starter = row.get("triggered_by")
+        if names is None:
+            names = _starter_names([starter])
+        row["started_by_name"] = names.get(str(starter)) if starter else None
+        row["trigger_news2"] = None
     started = _parse(row.get("triggered_at")) or _now()
     now = _now()
     elapsed_min = (now - started).total_seconds() / 60.0

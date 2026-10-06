@@ -43,6 +43,15 @@ export interface CareBundle {
   bundle_type: string;
   triggered_at: string;
   trigger_reason: string | null;
+  /** users.id of the clinician who opened it, or "vigil_auto". */
+  triggered_by?: string | null;
+  /** "clinician" or "vigil_auto". */
+  source?: string | null;
+  /** Who opened the bundle, resolved at read time: the clinician's name, or
+   *  "Orb" for an automatic start. Null when the account is not on file. */
+  started_by_name?: string | null;
+  /** The NEWS2 that opened an automatic bundle, else null. */
+  trigger_news2?: number | null;
   status: BundleStatus;
   /** Minutes elapsed since triggered_at (server-computed, snapshot). */
   elapsed_min: number;

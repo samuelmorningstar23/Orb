@@ -67,3 +67,35 @@ def test_autostart_triggers_on_high_news2(patient):
     # idempotent: second call returns the same active bundle
     b2 = maybe_autostart(patient, {"raw_news2": 9})
     assert b2["id"] == b["id"]
+
+
+# ── Who opened the bundle (2026-10-06) ───────────────────────────────────────
+# The timer printed "Trigger: Manual start" with no name. The payload now says
+# who opened it, resolved from users at read time, and "Orb" with the NEWS2 for
+# an automatic start.
+
+def test_manual_start_names_the_clinician(patient):
+    uid = f"UBDL{uuid.uuid4().hex[:6].upper()}"
+    with db_session() as db:
+        db.execute("INSERT INTO users (id, name, role, password_hash) VALUES (?,?,?,?)",
+                   (uid, "Dr Meera Sharma", "doctor", "x"))
+    b = start_bundle(patient, triggered_by=uid, trigger_reason="Manual start")
+    assert b["started_by_name"] == "Dr Meera Sharma"
+    assert b["trigger_news2"] is None
+    # The idempotent second start and both list reads say the same.
+    assert start_bundle(patient, triggered_by=uid)["started_by_name"] == "Dr Meera Sharma"
+    listed = get_bundles_for_patient(patient)
+    assert [x["started_by_name"] for x in listed] == ["Dr Meera Sharma"]
+
+
+def test_unknown_starter_prints_no_id(patient):
+    b = start_bundle(patient, triggered_by="NO-SUCH-USER")
+    assert b["started_by_name"] is None
+
+
+def test_auto_start_is_orb_with_the_score(patient):
+    b = maybe_autostart(patient, {"raw_news2": 12})
+    assert b["started_by_name"] == "Orb"
+    assert b["trigger_news2"] == 12
+    # The stored criterion still reads as before.
+    assert b["trigger_reason"] == "NEWS2 12, at or above 7"

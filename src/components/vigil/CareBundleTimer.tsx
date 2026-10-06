@@ -20,7 +20,7 @@ import {
   type BundleElement,
   type BundleElementState,
 } from '../../api/bundles';
-import { formatUTCDateTime } from '../../lib/datetime';
+import { formatUTCDateTime, formatUTCTime } from '../../lib/datetime';
 import { useVisiblePolling } from '../../hooks/useVisiblePolling';
 
 const POLL_MS = 15_000;
@@ -96,6 +96,31 @@ const STALE_AFTER_SEC = 24 * 60 * 60;
 function isStale(triggeredAt: string, now: number): boolean {
   const startMs = parseTs(triggeredAt);
   return startMs != null && (now - startMs) / 1000 >= STALE_AFTER_SEC;
+}
+
+/** Who opened the bundle and when, in one line a nurse can read at a glance:
+ *  "Opened by Dr Meera Sharma, 04:49 PM" for a clinician, "Opened by Orb at
+ *  NEWS2 12, 04:49 PM" for an automatic start. The card used to say only
+ *  "Trigger: Manual start", so nobody could tell who had started the clock. */
+function openedByLine(bundle: Pick<CareBundle,
+  'triggered_at' | 'source' | 'triggered_by' | 'started_by_name' | 'trigger_news2'>): string {
+  const at = formatUTCTime(bundle.triggered_at);
+  const when = at ? `, ${at}` : '';
+  const auto = bundle.source === 'vigil_auto' || bundle.triggered_by === 'vigil_auto';
+  if (auto) {
+    const score = typeof bundle.trigger_news2 === 'number' ? ` at NEWS2 ${bundle.trigger_news2}` : '';
+    return `Opened by Orb${score}${when}`;
+  }
+  return `Opened by ${bundle.started_by_name || 'a member of staff'}${when}`;
+}
+
+/** The reason is worth a line of its own only when someone typed one. The
+ *  default "Manual start" and an automatic NEWS2 criterion are already said by
+ *  the opened-by line. */
+function typedReason(bundle: Pick<CareBundle, 'trigger_reason' | 'source' | 'triggered_by'>): string | null {
+  if (bundle.source === 'vigil_auto' || bundle.triggered_by === 'vigil_auto') return null;
+  const reason = (bundle.trigger_reason || '').trim();
+  return reason && reason.toLowerCase() !== 'manual start' ? reason : null;
 }
 
 // ── Live ticking elapsed timer (decoupled so only this node re-renders/sec) ──
@@ -358,19 +383,19 @@ export default function CareBundleTimer({ patientId }: CareBundleTimerProps) {
         </span>
       </div>
 
-      {bundle.trigger_reason && (
-        <div
-          style={{
-            fontSize: '0.74rem',
-            color: TEXT_SECONDARY,
-            marginBottom: 10,
-            paddingBottom: 8,
-            borderBottom: `1px solid ${BORDER_SUBTLE}`,
-          }}
-        >
-          Trigger: {bundle.trigger_reason}
-        </div>
-      )}
+      <div
+        data-testid="bundle-opened-by"
+        style={{
+          fontSize: '0.74rem',
+          color: TEXT_SECONDARY,
+          marginBottom: 10,
+          paddingBottom: 8,
+          borderBottom: `1px solid ${BORDER_SUBTLE}`,
+        }}
+      >
+        {openedByLine(bundle)}
+        {typedReason(bundle) && <> · Reason: {typedReason(bundle)}</>}
+      </div>
 
       {/* Element checklist — flows into columns on wide detail panels so the
           card fills the row instead of leaving a tall, narrow void. */}
