@@ -224,3 +224,41 @@ def test_every_vitals_reader_skips_voided_sets_or_says_why():
         "These read vitals without skipping sets marked entered in error "
         "(add AND voided_at IS NULL, or name them in DELIBERATELY_UNFILTERED "
         "with the reason):\n" + "\n".join(offenders))
+
+
+# ── 3. Scoring off: an admission set is stored, and no baseline score ────────
+
+def _admit_with_vitals():
+    from auth import hash_password
+    from services.admission_service import admit_patient
+    with db_session() as db:
+        db.execute(
+            "INSERT OR IGNORE INTO users (id, name, role, password_hash) VALUES (?,?,?,?)",
+            ("WRR-DOC", "Dr Ward Record Review", "doctor", hash_password("x")),
+        )
+    res = admit_patient(
+        {"name": "Ward Record Review Admission", "ward": "ICU",
+         "vitals": {"hr": 125, "bp_sys": 95, "spo2": 90, "temperature": 39.2, "rr": 26,
+                    "consciousness": "alert", "on_oxygen": False}},
+        {"id": "WRR-DOC", "name": "Dr Ward Record Review", "role": "doctor"},
+    )
+    pid = res["patient_id"]
+    with db_session() as db:
+        counts = (
+            db.execute("SELECT COUNT(*) FROM vitals WHERE patient_id = ?", (pid,)).fetchone()[0],
+            db.execute("SELECT COUNT(*) FROM risk_scores WHERE patient_id = ?", (pid,)).fetchone()[0],
+        )
+        db.execute("UPDATE patients SET status = 'discharged' WHERE id = ?", (pid,))
+        db.execute("UPDATE admissions SET status = 'discharged' "
+                   "WHERE patient_id = ? AND status = 'active'", (pid,))
+    return counts
+
+
+def test_scoring_off_an_admission_set_writes_no_baseline_score(monkeypatch):
+    monkeypatch.setattr(config, "SCORING_ENABLED", False)
+    assert _admit_with_vitals() == (1, 0)
+
+
+def test_scoring_on_an_admission_set_still_writes_its_baseline_score():
+    assert config.SCORING_ENABLED
+    assert _admit_with_vitals() == (1, 1)

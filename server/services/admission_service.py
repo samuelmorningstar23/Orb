@@ -84,6 +84,11 @@ class AdmissionInputError(ValueError):
     a single row is written; the admit route answers it with 400 and these words."""
 
 
+class _ScoringOff(Exception):
+    """Skips the baseline NEWS2 at admission while ORB_SCORING_ENABLED is off.
+    Raised and caught inside admit_patient only; never leaves this module."""
+
+
 ATTENDING_NOT_LISTED = "Choose an attending doctor from the list."
 DEPARTMENT_NOT_COVERED = (
     "Choose a department from the list. A department no doctor or nurse covers "
@@ -391,7 +396,14 @@ def admit_patient(data: dict, user: dict) -> dict:
             )
             # Inline an initial NEWS2 risk score so the patient shows a real risk in
             # Vigil immediately (the simulator bot won't seed a vitals-less patient).
+            # Not while scoring is switched off on this computer
+            # (ORB_SCORING_ENABLED, the Orb Ward Record): no score is computed,
+            # shown or logged, so the admission set is stored and nothing else,
+            # the same as the observation write path.
+            import config as _config
             try:
+                if not bool(getattr(_config, "SCORING_ENABLED", True)):
+                    raise _ScoringOff()
                 from services.vigil_service import score_vitals_row
                 # On the patient's recorded SpO2 scale, read back from the row
                 # inserted above on THIS connection. Admission has no Scale 2
@@ -423,6 +435,8 @@ def admit_patient(data: dict, user: dict) -> dict:
                     (patient_id, to_utc_iso(now), _risk["score"], _risk["level"],
                      json.dumps(_risk["drivers"])),
                 )
+            except _ScoringOff:
+                pass
             except Exception as e:
                 # Non-fatal: admission still succeeds without a seeded baseline
                 # risk score, but log it so the gap is visible rather than silent.
