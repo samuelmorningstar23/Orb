@@ -1,6 +1,6 @@
 # Sage bed and ward lookup: findings, 3 October 2026
 
-Status: open. Seven fixes were built on 3 and 4 October. All seven failed independent review and were backed out; main has the code of commit dd5203b (the 3 October bed matching plus the name-matcher change). R026 is RULED (a) with D2 to D4, Q1 to Q3, A to F, G (the shipping bar) and H (orders). See "Attempt 7 review" for the closest result so far and for why every attempt has failed the same way.
+Status: open. Eight fixes were built between 3 and 6 October. All eight failed independent review and were backed out; main has the original substring bed matching (plus the shared ward rule, services/ward_reference.py). R026 is RULED (a) with D2 to D4, Q1 to Q3, A to F, G (the shipping bar) and H (orders). See "Attempt 8 review" for the closest result so far.
 
 ## The defect today
 
@@ -165,3 +165,20 @@ Backed out by reverse patch the same evening; the three files are byte-identical
 Every attempt from 3 on put its closed lists on the NOT-A-BED side: units, counts, positions, place verbs and route words that make a number "not a bed" or "unsure". Anything missing from those lists stays a CERTAIN bed, so each word a reviewer finds that is not on a list ("hr", "cms", "noon", "ICU" before "bed") is a wrong chart, and the old code, which asks about nearly every digit, "got it right". Adding words shortens the tail but never closes it.
 
 The way out is to move the closed list to the CERTAIN side: a bed reference is certain only in shapes Sage recognises (the bed phrase is the subject of the question, "bed 12?", "how is bed 12", "bed 12 potassium?", "bed 12 HR 140", a list of beds), and every other shape is unsure, which means Sage asks when that bed is occupied and treats it as text when it is not. Then each missing word lands on "ask", which the bar counts as right wherever the old code asked, and never on a wrong chart. The cost is more questions on unusual phrasings, which has to be measured on the same realistic sets before it is built.
+
+## Attempt 8 review (6 October): the closed list on the certain side; did not ship
+
+Attempt 8 moved the closed lists to the CERTAIN side (plan, "Attempt 8"), built on the ward-matcher work's shared ward rule. 716 locator tests (514 fail on the old code) and 2,800 guard tests passed; every attempt 7 blocking row asks or keeps the chart; whitespace runs are linear (0.02 s for 40,000 spaces); reloaded order turns keep the label. On realistic traffic: 3 wrong charts in 342 numbered-ward questions and orders against the old code's 103, and 0 on Orb's GM naming.
+
+It failed items 1 and 3 of the bar: about 71 attack phrasings on a numbered ward where the old code asked and attempt 8 attached another patient's chart unlabelled, and every order tried in those shapes (11 of 11) was drafted on that patient. The certain-side lists still hold words with other meanings:
+- B4: a strong lead-in used in a sense that does not name the patient: "she was given the insulin meant for bed 12", "blood for bed 12 was hung on her by mistake", "the visitor of bed 12 gave her food", "she had bed 12 last admission", "hold bed 12 for her", "ICU has bed 12 free, can we shift her?".
+- B5: a joining word plus a recognised continuation: "she was in contact with bed 12, TB positive", "did she catch the flu from bed 12?", "bed 12 was shifted to ICU last night, how is she doing there?", "Came from ICU. Bed 12, on norad, wean now?".
+- B6: a relative or a measure plus in / on: "her husband in bed 12 has covid, should she be tested?", "her sugar in bed 12 was 300 before transfer".
+- B7: another unit's name before a bracket, colon or comma: "transferred from ICU (bed 12) yesterday", "ICU referral: bed 12, 60M, septic shock, can we accept?".
+- B8: our own ward written beside a PAST bed: "she was in ward 6 bed 12 till yesterday, old cultures?".
+- B9: "the patient in N" never checked what followed: "will review the patient in 20, what should I check first?", "the patient in 12 noon slot for echo".
+Also: "G.M.-103", "GM - 103" (dots or spaced dashes) answered from the open chart, labelled, where the old code found GM-103; a 60-bed ward storing "ICU Bed N", repeated to 512 KB, took 4 to 7 s (also in attempt 7). Attempt 7's code gives the same wrong chart on the B4 to B6 rows tested; reviews 6 and 7 never probed them.
+
+The reviewer's pointer, checked against its own data: 91 of the 115 blocking rows contain she, her, he, him, his or their (the clinician is talking about the OPEN patient and the bed is someone in relation to her), and none of the 90 correct certain other-bed answers across the realistic sets contains one. The other 24: B7, B9, one-letter codes ("K4 is low, replace?", old code the same), dotted GM codes, "swapped from bed 12".
+
+Backed out by reverse patch on 6 October; the four files are byte-identical to HEAD (d2531f8). Code, tests, patches and both probe sets: docs/archive/bed-locator-attempt8-2026-10-04/ (probes_review8/ is the reviewer's).
