@@ -502,6 +502,13 @@ def _audit(db, action_type: str, summary: str, escalation_id: str,
 # ═════════════════════════════════════════════════════════════════════════════
 #  Raising / extending a chain
 # ═════════════════════════════════════════════════════════════════════════════
+def _scoring_enabled() -> bool:
+    """ORB_SCORING_ENABLED, read at call time (nurse_shift_service.scoring_enabled
+    reads the same setting the same way)."""
+    import config
+    return bool(getattr(config, "SCORING_ENABLED", True))
+
+
 def evaluate_observation(
     patient_id: str,
     news2: dict,
@@ -530,7 +537,12 @@ def evaluate_observation(
     An observation BELOW the threshold does nothing at all — it neither raises
     nor closes anything. Improving vitals are not evidence that a human answered
     the alert, and resolution is a human act with a reason attached.
+
+    Raises nothing while scoring is switched off on this computer
+    (ORB_SCORING_ENABLED): no score is computed, so no chain may open on one.
     """
+    if not _scoring_enabled():
+        return None
     if not qualifies(news2):
         return None
 
@@ -1336,7 +1348,14 @@ def scan_new_observations(*, department: str | None = None,
     that calls ``evaluate_observation`` post-commit escalates immediately and this
     finds nothing left to do. Wiring the remaining writers is the fix; this makes
     the missing wiring survivable in the meantime.
+
+    SCORING SWITCHED OFF (ORB_SCORING_ENABLED, the Orb Ward Record): nothing
+    is scored, so nothing is raised. Without this the background sweep would
+    score every set the ward clerk keyed and open a chain, with its Relay post,
+    a minute after the write path had correctly raised nothing.
     """
+    if not _scoring_enabled():
+        return []
     ts = _now(now)
     cutoff = (ts - timedelta(minutes=_lookback_minutes())).isoformat()
     policy = tier_policy()
