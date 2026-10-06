@@ -15,6 +15,8 @@ const approveHelixOrder = vi.fn();
 vi.mock('../../api/client', () => ({
   approveHelixOrder: (...args: unknown[]) => approveHelixOrder(...args),
   isSafetyAckRequired: (e: unknown) => !!e && (e as { code?: string }).code === 'safety_ack_required',
+  // The signed-in pharmacist: the role decides who may clear an allergy block.
+  getUser: () => ({ id: 'PHA001', name: 'Priya Nair', role: 'pharmacist' }),
 }));
 
 import { SageMessage } from './SageMessage';
@@ -93,6 +95,30 @@ describe('Sage medication order card', () => {
     expect(approveHelixOrder).toHaveBeenLastCalledWith(expect.objectContaining({
       safety_ack: { acknowledged: true, reason: 'Allergy reviewed with haematology' },
     }));
+  });
+
+  it('offers no reason box on a severe allergy to someone who cannot prescribe', async () => {
+    const refusal = 'Only a prescriber can override an allergy block. Choose another medicine, or ask the prescriber.'
+    const ackErr = Object.assign(new Error(refusal), {
+      code: 'safety_ack_required',
+      status: 428,
+      safety: {
+        allergy_alerts: [{ severity: 'severe', message: 'Patient is allergic to Heparins.' }],
+        interaction_alerts: [],
+        override_requires_permission: 'medication.prescribe',
+        ack_refused: refusal,
+      },
+    });
+    approveHelixOrder.mockRejectedValueOnce(ackErr);
+    renderCard({ medication: 'Enoxaparin', dose: '40 mg', route: 'SC', frequency: 'OD' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send to pharmacy' }));
+    expect(await screen.findByText('Patient is allergic to Heparins.')).toBeInTheDocument();
+    expect(screen.getByText('Only a prescriber can override an allergy block.')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Reason for sending this order despite the alerts')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Acknowledge and send' })).toBeNull();
+    // The refusal is the heading, and is not listed a second time.
+    expect(screen.getAllByText(refusal)).toHaveLength(1);
   });
 
   it('shows a refusal in the server\'s words and keeps the order sendable', async () => {

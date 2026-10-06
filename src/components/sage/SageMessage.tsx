@@ -304,6 +304,7 @@ function SageDetailsExpander({ sections, defaultExpanded, sources, citationBasis
 
 // ─── Action Card Component ───
 import { approveHelixOrder, isSafetyAckRequired, type MedicationSafety } from '../../api/client';
+import { hasPermission, MEDICATION_PRESCRIBE } from '../../lib/roles';
 
 type OrderFields = { dose: string; route: string; frequency: string };
 
@@ -441,7 +442,13 @@ function SageActionCard({ actionState }: { actionState: SageActionState }) {
 
   const badge = getBadgeConfig();
   const sentLines = safetyLines(sentSafety);
-  const ackLines = safetyLines(ack?.safety ?? null);
+  // The heading already says the refusal when the server sent one; do not
+  // print it twice.
+  const ackLines = safetyLines(ack?.safety ?? null).filter(line => line !== ack?.message);
+  // A severe allergy clears only for a prescriber. The server names the
+  // permission; without it there is no reason box, only who can override.
+  const prescriberOnly = !!ack?.safety?.override_requires_permission
+    && !hasPermission(MEDICATION_PRESCRIBE);
   const isMedicationOrder = actionState.action_type === 'add_medication';
 
   return (
@@ -494,6 +501,18 @@ function SageActionCard({ actionState }: { actionState: SageActionState }) {
               {ackLines.map((line, i) => <li key={i}>{line}</li>)}
             </ul>
           )}
+          {prescriberOnly ? (
+            <>
+              <div style={{ fontSize: '0.8rem', color: 'var(--status-danger-text)' }}>
+                Only a prescriber can override an allergy block.
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button type="button" className="btn-glass" onClick={() => setAck(null)}>
+                  Close
+                </button>
+              </div>
+            </>
+          ) : (<>
           <textarea
             style={{ ...CARD_INPUT_STYLE, minHeight: 56, resize: 'vertical' }}
             value={ack.reason}
@@ -518,6 +537,7 @@ function SageActionCard({ actionState }: { actionState: SageActionState }) {
               Cancel
             </button>
           </div>
+          </>)}
         </div>
       )}
 
