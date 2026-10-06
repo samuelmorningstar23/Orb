@@ -38,6 +38,24 @@ THE RULE (ruled by Samuel 2026-10-04):
         ("Surgery ward", "6 ward"), but NOT for a short English word, because
         "in ward 6" and "on ward 6" are how wards are named, not an IN ward.
     Digits have no capitals, so a digit-only code counts only beside "ward".
+  * A mention that is GENERIC names no ward, whatever the code (ruled by
+    Samuel 2026-10-06). With bed locator attempt 8 every ICU mention gave the
+    ICU census: "What are the ICU admission criteria for DKA?", "ICU
+    delirium", "call the ICU team" and "Is he for ICU if he deteriorates?"
+    all put every ICU patient in the prompt. A mention is generic when a
+    LISTED cue sits beside it, in the same sentence:
+      - a noun after it that the code describes (_GENERIC_AFTER): "ICU
+        criteria", "ICU delirium", "ICU-acquired", "ICU-level", "the ICU
+        team", also across one linking noun ("ICU admission criteria");
+      - a NEED or a DESTINATION before it (_GENERIC_BEFORE): "needs ICU",
+        "call ICU", "should she go to ICU?", "is he for ICU?". The patient
+        being discussed is meant, so a pronoun resolves to them as usual
+        instead of to the ward's census;
+      - but not after a word saying someone already got there (_ARRIVED):
+        "admitted to ICU", "transfers to CCU", "came back to ICU" still ask
+        about who is there now.
+    The lists only REMOVE matches: a phrasing they do not cover names the
+    ward as before ("the mortality of septic shock in ICU" still does).
 
 Beds are NOT read here: bed matching is ruling R026's work
 (docs/SAGE_BED_LOCATOR_PLAN_2026-10-03.md). A ward code made of several
@@ -79,6 +97,40 @@ _WORD_MIN_LETTERS = 5
 
 #: Characters that end a sentence, for the mid-sentence capital sign.
 _SENTENCE_END = ".!?\n"
+
+#: A noun right after a ward code that the code only describes: the question
+#: is about criteria, a condition, a team or a policy, not the ward's patients.
+_GENERIC_AFTER = frozenset({
+    "criteria", "criterion", "delirium", "psychosis", "acquired", "level",
+    "levels", "team", "teams", "consult", "consults", "consultation",
+    "consultant", "consultants", "registrar", "registrars", "resident",
+    "residents", "fellow", "fellows", "intensivist", "intensivists", "nurse",
+    "nurses", "doctor", "doctors", "staff", "referral", "referrals", "outreach",
+    "protocol", "protocols", "guideline", "guidelines", "policy", "policies",
+    "bundle", "bundles", "mortality", "survival", "outcome", "outcomes", "trial",
+    "trials", "training", "rotation", "rotations", "course", "courses",
+    "availability",
+})
+
+#: Nouns that may sit between the code and a generic noun: "ICU admission
+#: criteria", "ICU bed availability". On their own they describe nothing.
+_LINKING = frozenset({"admission", "transfer", "discharge", "escalation", "triage", "bed"})
+
+#: A word right before a ward code that makes it a need or a destination for
+#: the patient being discussed ("needs ICU", "call ICU", "go to ICU", "for
+#: ICU", "an ICU bed"), not a question about who is on the ward.
+_GENERIC_BEFORE = frozenset({
+    "need", "needs", "needed", "needing", "require", "requires", "required",
+    "requiring", "call", "page", "bleep", "consult", "for", "to", "into", "an",
+})
+
+#: Before "to" or "into", a word saying someone already got there: "admitted
+#: to ICU", "transfers to CCU", "came back to ICU" ask about who is there now.
+_ARRIVED = frozenset({
+    "admitted", "transferred", "moved", "shifted", "sent", "went", "brought",
+    "returned", "taken", "came", "gone", "back", "admissions", "transfers",
+    "arrivals",
+})
 
 
 def _norm(token: str) -> str:
@@ -131,6 +183,29 @@ class _TextIndex:
             return True
         return False
 
+    def _together(self, a: int, b: int) -> bool:
+        """Are neighbouring tokens a < b in one sentence?"""
+        gap = self.text[self.begin[a] + len(self.raw[a]):self.begin[b]]
+        return not any(c in _SENTENCE_END for c in gap)
+
+    def generic(self, i: int, n: int) -> bool:
+        """Is the code at tokens i..i+n-1 used generically, by a listed cue
+        beside it in the same sentence (see the module docstring)?"""
+        toks = self.tokens
+        j = i + n
+        if j < len(toks) and self._together(j - 1, j):
+            if toks[j] in _GENERIC_AFTER:
+                return True
+            if (toks[j] in _LINKING and j + 1 < len(toks) and self._together(j, j + 1)
+                    and toks[j + 1] in _GENERIC_AFTER):
+                return True
+        k = i - 1
+        if k >= 0 and self._together(k, i) and toks[k] in _GENERIC_BEFORE:
+            arrived = (toks[k] in ("to", "into") and k > 0 and self._together(k - 1, k)
+                       and toks[k - 1] in _ARRIVED)
+            return not arrived
+        return False
+
 
 #: A turn reads at most four texts (the question and three earlier user turns).
 @functools.lru_cache(maxsize=4)
@@ -144,7 +219,10 @@ def ward_named_in(label, text: str) -> bool:
     Pass the question as the clinician typed it, not lower-cased: the signs
     for a one-word code read the case and the sentence position. A
     lower-cased text still finds every abbreviation and multi-part code, and
-    a word code beside "ward". An empty label names nothing.
+    a word code beside "ward". An empty label names nothing. A mention used
+    generically ("ICU admission criteria", "should she go to ICU?") names no
+    ward; each occurrence is judged on its own, and any one that counts is
+    enough.
     """
     want = _label_tokens(str(label) if label is not None else "")
     if not want:
@@ -152,11 +230,11 @@ def ward_named_in(label, text: str) -> bool:
     idx = _index(text or "")
     hit = idx.verdicts.get(want)
     if hit is None:
-        if len(want) == 1 and _needs_a_sign(want[0]):
-            hit = any(idx.signed(i, want[0]) for i in idx.starts.get(want[0], ()))
-        else:
-            n = len(want)
-            hit = any(tuple(idx.tokens[i:i + n]) == want
-                      for i in idx.starts.get(want[0], ()))
+        n = len(want)
+        needs_sign = n == 1 and _needs_a_sign(want[0])
+        hit = any(tuple(idx.tokens[i:i + n]) == want
+                  and (not needs_sign or idx.signed(i, want[0]))
+                  and not idx.generic(i, n)
+                  for i in idx.starts.get(want[0], ()))
         idx.verdicts[want] = hit
     return hit

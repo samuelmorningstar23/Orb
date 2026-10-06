@@ -99,10 +99,34 @@ WARD_TABLE = [
     ("6", "who is on ward 6", True),
     ("06", "who is on ward 6", True),
     ("6", "the 6 ward round is late", True),
-    # abbreviations stay case-blind, generic use included (a known residual)
+    # abbreviations stay case-blind
     ("ICU", "icu census", True),
-    ("ICU", "what are the ICU admission criteria", True),
     ("NICU", "nicu handover", True),
+    # a generic mention names no ward (ruled 2026-10-06): a listed noun after
+    # the code, or a need or destination before it
+    ("ICU", "What are the ICU admission criteria for DKA?", False),
+    ("ICU", "What is ICU delirium and how do we prevent it?", False),
+    ("ICU", "Explain ICU-acquired weakness", False),
+    ("ICU", "Should we call the ICU team for a NEWS2 of 7?", False),
+    ("ICU", "Is high-flow oxygen an ICU-level intervention?", False),
+    ("ICU", "Is there ICU bed availability tonight?", False),
+    ("ICU", "When does acute pancreatitis need ICU?", False),
+    ("ICU", "Is he for ICU if he deteriorates?", False),
+    ("CCU", "Should she go to CCU?", False),
+    ("Surgery", "Call the Surgery team about her wound", False),
+    # ...but someone who already got there is on the ward now
+    ("ICU", "Who was admitted to ICU today?", True),
+    ("CCU", "Any new admissions to CCU overnight?", True),
+    ("ICU", "Who came back to ICU overnight?", True),
+    ("ICU", "transferred into ICU this morning, how is he", True),
+    # ...and an ordinary reference still names it
+    ("ICU", "Any concerns in ICU tonight?", True),
+    ("ICU", "Which ICU patients are on vasopressors?", True),
+    ("ICU", "How is ICU doing?", True),
+    ("ICU", "ICU handover please", True),
+    ("ICU", "What do we need? ICU census.", True),      # the cue is in another sentence
+    # a phrasing the lists do not cover still names the ward (known residual)
+    ("ICU", "What is the mortality of septic shock in ICU?", True),
     # nothing names an empty label
     ("", "anything at all", False),
     (None, "anything at all", False),
@@ -124,6 +148,47 @@ def test_lower_cased_text_still_finds_every_ward_but_capitals():
     assert ward_named_in("Surgery", "who is on the surgery ward") is True
     assert ward_named_in("OR", "patient back from or") is False
     assert ward_named_in("Surgery", "any beds free on surgery") is False
+
+
+ICU_GENERIC = [
+    "What are the ICU admission criteria for DKA?",
+    "What is ICU delirium and how do we prevent it?",
+    "Explain ICU-acquired weakness",
+    "Should we call the ICU team for a NEWS2 of 7?",
+    "When does acute pancreatitis need ICU?",
+]
+ICU_REFERENCE = [
+    "Any concerns in ICU tonight?",
+    "Which ICU patients are on vasopressors?",
+    "Who was admitted to ICU today?",
+]
+
+
+def test_a_generic_icu_question_lists_no_icu_patient():
+    """Measured 2026-10-06 with bed locator attempt 8 live: every one of these
+    put both ICU patients in the prompt as the ICU census. A destination ("is
+    she for ICU?") now goes to the patient being discussed instead."""
+    dept = f"Ward Rule Intensive {uuid.uuid4().hex[:4]}"
+    icu = ["Qzxicuone Pallavaraman", "Qzxicutwo Thirukkovilur"]
+    pids = [_patient(n, "ICU", f"ICU-0{i + 1}", dept) for i, n in enumerate(icu)]
+    own = "Bhairavi Kandasamyputhur"
+    pids.append(_patient(own, "GM-9", "GM-901", dept))
+    user = _user(dept)
+    try:
+        for question in ICU_GENERIC:
+            context, *_rest, pctx, qscope = get_relevant_context(question, user, history=[])
+            assert not any(n in context for n in icu), (question, qscope)
+        for question in ICU_REFERENCE:
+            context, *_rest, pctx, qscope = get_relevant_context(question, user, history=[])
+            assert all(n in context for n in icu), (question, qscope)
+        history = [{"role": "user", "content": f"How is {own} doing?"},
+                   {"role": "assistant", "content": "Stable overnight."}]
+        context, *_rest, pctx, qscope = get_relevant_context(
+            "Is she for ICU if she deteriorates?", user, history=history)
+        assert pctx is not None and pctx["patient_id"] == pids[-1], qscope
+        assert not any(n in context for n in icu), qscope
+    finally:
+        _retire(*pids)
 
 
 # ── the classifier ───────────────────────────────────────────────────────────
