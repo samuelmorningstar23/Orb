@@ -131,3 +131,45 @@ describe('blocking mode: a dose the dose check stopped', () => {
     expect(screen.getByText('Not accepted: a dose override requires a clinical reason')).toBeTruthy()
   })
 })
+
+const ALLERGY_BLOCK: MedicationSafety = {
+  drug: 'Amoxicillin',
+  allergy_alerts: [{ severity: 'severe', message: 'Patient is allergic to amoxicillin (documented reaction: anaphylaxis).' }],
+  interaction_alerts: [],
+  max_severity: 'severe',
+  blocking: true,
+  interaction_screened: true,
+  coverage_note: null,
+}
+
+describe('blocking mode: a severe allergy is prescriber only', () => {
+  it('gives a nurse no reason box and says only a prescriber can override', () => {
+    signedIn = { id: 'N1', name: 'Nurse B', role: 'nurse' }
+    render(<SafetyAlertModal safety={ALLERGY_BLOCK} mode="blocking" onClose={() => {}} onAcknowledge={() => {}} />)
+    expect(screen.queryByLabelText('Clinical justification')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Acknowledge/ })).toBeNull()
+    expect(screen.getByText('Only a prescriber can override an allergy block.')).toBeTruthy()
+  })
+
+  it('lets a doctor write the reason', () => {
+    signedIn = { id: 'D1', name: 'Dr A', role: 'doctor' }
+    const onAcknowledge = vi.fn()
+    render(<SafetyAlertModal safety={ALLERGY_BLOCK} mode="blocking" onClose={() => {}} onAcknowledge={onAcknowledge} />)
+    expect(screen.queryByText('Only a prescriber can override an allergy block.')).toBeNull()
+    fireEvent.change(screen.getByLabelText('Clinical justification'), {
+      target: { value: 'Supervised desensitisation under the allergist' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Acknowledge/ }))
+    expect(onAcknowledge).toHaveBeenCalledWith('Supervised desensitisation under the allergist')
+  })
+
+  it('still lets a nurse acknowledge a severe interaction with no allergy behind it', () => {
+    signedIn = { id: 'N1', name: 'Nurse B', role: 'nurse' }
+    const interaction: MedicationSafety = {
+      ...ALLERGY_BLOCK, allergy_alerts: [],
+      interaction_alerts: [{ severity: 'severe', message: 'Warfarin with aspirin raises bleeding risk.' }],
+    }
+    render(<SafetyAlertModal safety={interaction} mode="blocking" onClose={() => {}} onAcknowledge={() => {}} />)
+    expect(screen.getByLabelText('Clinical justification')).toBeTruthy()
+  })
+})

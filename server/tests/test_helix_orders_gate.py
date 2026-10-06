@@ -146,7 +146,7 @@ def test_exact_name_match_is_case_insensitive_single_hit(pharmacist_hdr):
 
 
 # ── helix approve: safety gate ────────────────────────────────────────────────
-def test_helix_severe_allergy_428_then_ack_succeeds(pharmacist_hdr, patient):
+def test_helix_severe_allergy_428_and_a_pharmacist_cannot_override(pharmacist_hdr, patient):
     add_allergy(patient, "amoxicillin", reaction="anaphylaxis", severity="severe")
 
     resp = _approve(pharmacist_hdr, patient_id=patient)
@@ -156,21 +156,21 @@ def test_helix_severe_allergy_428_then_ack_succeeds(pharmacist_hdr, patient):
     assert detail["safety"]["max_severity"] == "severe"
     assert _helix_order_count([patient]) == 0, "blocked approve must not create an order"
 
+    # A pharmacist holds no medication.prescribe, so the acknowledgement is
+    # refused (prescriber only, 2026-10-06) and still nothing is written.
     resp = _approve(pharmacist_hdr, patient_id=patient,
                     safety_ack={"acknowledged": True, "reason": "desensitisation protocol"})
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["order"]["patient_id"] == patient
-    assert body["safety"]["override"]["reason"] == "desensitisation protocol"
-    assert _helix_order_count([patient]) == 1
+    assert resp.status_code == 428, resp.text
+    refused = resp.json()["detail"]["safety"]
+    assert refused["ack_refused"].startswith("Only a prescriber can override an allergy block.")
+    assert refused["override_requires_permission"] == "medication.prescribe"
+    assert _helix_order_count([patient]) == 0
     with db_session() as db:
-        log = db.execute(
-            "SELECT * FROM audit_logs WHERE action_type = 'drug_safety_override' "
-            "AND patient_id = ? ORDER BY timestamp DESC LIMIT 1",
-            (patient,),
-        ).fetchone()
-    assert log is not None, "override must land on the audit chain"
-    assert log["outcome"] == "partial_success"
+        overrides = db.execute(
+            "SELECT count(*) FROM audit_logs WHERE action_type = 'drug_safety_override' "
+            "AND patient_id = ?", (patient,),
+        ).fetchone()[0]
+    assert overrides == 0, "a refused acknowledgement is not an override"
 
 
 # ── CPOE: medication orders gated ─────────────────────────────────────────────

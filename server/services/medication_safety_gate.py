@@ -32,9 +32,17 @@ every single-order lane too. A dose BLOCK answers the same 428 with the
 verdict on ``safety.dose_check``, and clears only for an actor holding
 ``medication.prescribe`` with a reason ``validate_dose_override_reason``
 accepts: "ok" must not clear a 10x dose at order time any more than at the bed.
+
+AN ALLERGY BLOCK IS PRESCRIBER ONLY TOO (2026-10-06). A severe allergy alert
+clears only for an actor holding ``medication.prescribe``, exactly as the
+bedside interlock (routes/emar_routes.py) and the dose block above. Anyone else
+gets the same 428 with the refusal on ``safety.ack_refused``, and nothing is
+written. An override that does clear names the prescriber by id AND name in its
+audit entry, so the log reads as a person and not a number.
 """
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from typing import Any, Optional
@@ -45,6 +53,7 @@ from permissions import MEDICATION_PRESCRIBE, has_permission
 from services import drug_safety_service
 from services.audit_service import log_audit_event
 from services.drug_safety_service import check_medication_safety
+from database import db_session
 
 logger = logging.getLogger("orb.medication_safety_gate")
 
@@ -68,6 +77,7 @@ def _audit(
     entry_point: str,
     safety: dict,
     ack_reason: Optional[str] = None,
+    prescriber: Optional[dict] = None,
 ) -> None:
     """Audit the screen/override on the hash chain. Clinical-safety events are
     fail-open for auditing (the audit middleware still records the mutation) —
@@ -100,6 +110,9 @@ def _audit(
                 "dose_check": dose_check,
                 "ack_refused": safety.get("ack_refused"),
                 "override_reason": ack_reason,
+                # Only on an override: who cleared it, by id and by name. For an
+                # allergy or dose block this is always a prescriber.
+                **({"override_by": prescriber} if prescriber else {}),
             },
         )
     except Exception as e:  # pragma: no cover — audit must not block care
@@ -175,6 +188,89 @@ def _dose_ack_refusal(actor_role: Optional[str], ack_reason: str) -> Optional[st
     return None
 
 
+ALLERGY_ACK_REFUSAL = ("Only a prescriber can override an allergy block. "
+                       "Choose another medicine, or ask the prescriber.")
+
+
+def _severe_allergy(safety: dict) -> bool:
+    """True when a SEVERE allergy alert is one of the reasons this order blocks."""
+    return any((a or {}).get("severity") == "severe"
+               for a in (safety.get("allergy_alerts") or []))
+
+
+def _allergy_ack_refusal(actor_role: Optional[str]) -> Optional[str]:
+    """Why an acknowledgement may NOT clear a severe allergy block, or None.
+
+    The permission, never the role name, as for the dose block. A caller that
+    names no role can never clear one.
+    """
+    role = (actor_role or "").strip().lower()
+    if not role or not has_permission(role, MEDICATION_PRESCRIBE):
+        return ALLERGY_ACK_REFUSAL
+    return None
+
+
+def _prescriber_override_on_file(patient_id: str, prescriber_id: Optional[str],
+                                 allergy_ids: set) -> Optional[dict]:
+    """The prescriber's own audited override that already covers these allergies.
+
+    For the pharmacy steps on an order that already exists (verify, dispense):
+    the pharmacist is not overriding anything when the prescriber who wrote the
+    order already overrode this same allergy for this same patient, on the
+    chain. Returns that audit row's id and time, or None. ``prescriber_id``
+    must still hold ``medication.prescribe`` today, and every allergy blocking
+    now must appear, as severe, in that one override.
+    """
+    if not prescriber_id or not allergy_ids:
+        return None
+    try:
+        with db_session() as db:
+            user = db.execute("SELECT role FROM users WHERE id = ?",
+                              (prescriber_id,)).fetchone()
+            if not user or not has_permission((user["role"] or "").lower(),
+                                              MEDICATION_PRESCRIBE):
+                return None
+            rows = db.execute(
+                "SELECT id, timestamp, metadata_json FROM audit_logs "
+                "WHERE action_type = 'drug_safety_override' AND patient_id = ? "
+                "AND actor_user_id = ? ORDER BY id DESC LIMIT 50",
+                (patient_id, prescriber_id),
+            ).fetchall()
+    except Exception as e:  # a failed read carries nothing forward
+        logger.warning("[SafetyGate] override lookup failed for %s: %s", patient_id, e)
+        return None
+    for row in rows:
+        try:
+            meta = json.loads(row["metadata_json"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        covered = {a.get("allergy_id") for a in (meta.get("allergy_alerts") or [])
+                   if isinstance(a, dict) and a.get("severity") == "severe"}
+        if allergy_ids <= covered:
+            return {"audit_id": row["id"], "at": row["timestamp"],
+                    "prescriber_id": prescriber_id}
+    return None
+
+
+def _prescriber(actor_id: Optional[str], actor_role: Optional[str]) -> dict:
+    """Who cleared a block, by id, display name and role.
+
+    The name is read from users at override time; a missing user or a failed
+    read leaves the name None rather than blocking care.
+    """
+    name = None
+    if actor_id:
+        try:
+            with db_session() as db:
+                row = db.execute("SELECT name FROM users WHERE id = ?",
+                                 (actor_id,)).fetchone()
+            if row:
+                name = row["name"]
+        except Exception as e:  # pragma: no cover, audit detail only
+            logger.warning("[SafetyGate] could not read the name of %s: %s", actor_id, e)
+    return {"user_id": actor_id, "display_name": name, "role": actor_role}
+
+
 def enforce_medication_safety(
     patient_id: str,
     drug_name: str,
@@ -186,6 +282,7 @@ def enforce_medication_safety(
     dose: Optional[str] = None,
     route: Optional[str] = None,
     actor_role: Optional[str] = None,
+    order_prescriber_id: Optional[str] = None,
 ) -> dict:
     """Screen ``drug_name`` for ``patient_id`` and enforce the gate.
 
@@ -198,6 +295,12 @@ def enforce_medication_safety(
     ``dose`` / ``route`` switch on the dose guard (see the module note);
     ``actor_role`` is what decides whether a written reason may clear a dose
     block. A caller that omits the role can never clear one.
+
+    ``order_prescriber_id`` is passed only by the pharmacy steps on an order
+    that already exists. A severe allergy block there clears for a
+    non-prescriber only when that prescriber's own override of the same
+    allergies is already on the audit chain (``_prescriber_override_on_file``):
+    the pharmacist then confirms a prescriber's decision rather than making one.
     """
     try:
         safety = check_medication_safety(patient_id, drug_name)
@@ -249,6 +352,25 @@ def enforce_medication_safety(
         ack_reason = str((safety_ack or {}).get("reason") or "").strip()
         acknowledged = bool(safety_ack) and bool(ack_reason) and bool((safety_ack or {}).get("acknowledged"))
         ack_refused = None
+        allergy_blocked = _severe_allergy(safety)
+        if allergy_blocked:
+            # Named by the SERVER, as the dose block names it, so no screen
+            # hard-codes who may clear an allergy block.
+            safety = {**safety, "override_requires_permission": MEDICATION_PRESCRIBE}
+        confirms = None
+        if acknowledged and allergy_blocked:
+            # A severe allergy clears only for a prescriber, in every lane.
+            ack_refused = _allergy_ack_refusal(actor_role)
+            if ack_refused and order_prescriber_id:
+                confirms = _prescriber_override_on_file(
+                    patient_id, order_prescriber_id,
+                    {a.get("allergy_id") for a in safety.get("allergy_alerts") or []
+                     if a.get("severity") == "severe"})
+                if confirms:
+                    ack_refused = None
+            if ack_refused:
+                acknowledged = False
+                safety = {**safety, "ack_refused": ack_refused}
         if acknowledged and dose_blocked:
             # A dose block needs more than a non-empty reason: a prescriber, and
             # a reason that says why THIS dose is right.
@@ -277,10 +399,13 @@ def enforce_medication_safety(
                     "safety": safety,
                 },
             )
+        prescriber = _prescriber(actor_id, actor_role)
+        if confirms:
+            prescriber["confirms_prescriber_override"] = confirms
         _audit(outcome="partial_success", action_type=override_verb, patient_id=patient_id,
                drug_name=drug_name, actor_id=actor_id, entry_point=entry_point, safety=safety,
-               ack_reason=ack_reason)
-        override = {"by": actor_id, "reason": ack_reason}
+               ack_reason=ack_reason, prescriber=prescriber)
+        override = {"by": actor_id, "by_name": prescriber["display_name"], "reason": ack_reason}
         safety = {**safety, "override": override}
         if dose_blocked:
             safety["dose_check"] = {**safety["dose_check"], "override": override}

@@ -21,6 +21,9 @@ import './SafetyAlertModal.css'
  * The dose guard's verdict rides on `safety.dose_check` from every lane that
  * knew the dose. A dose block clears only for a prescriber; anyone else is
  * told who can, with no reason box to type into.
+ *
+ * A severe ALLERGY alert is the same: the server refuses anyone without
+ * medication.prescribe, so the screen offers them no reason box either.
  */
 interface Props {
   safety: MedicationSafety
@@ -110,9 +113,12 @@ export default function SafetyAlertModal({
   const doseFindings = doseCheck?.findings ?? []
   const doseBlocked = doseCheck?.decision === 'block'
   const severeScreen = safety.max_severity === 'severe'
+  // A severe allergy alert clears only for a prescriber, as the bedside does.
+  const allergyBlocked = blocking && allergyAlerts.some(a => a.severity === 'severe')
   // A dose block names the permission that clears it. Without it there is no
   // reason box: the next step is the prescriber, not a typed sentence.
-  const clearPermission = doseBlocked ? doseCheck?.override_requires_permission ?? MEDICATION_PRESCRIBE : null
+  const clearPermission = doseBlocked ? doseCheck?.override_requires_permission ?? MEDICATION_PRESCRIBE
+    : allergyBlocked ? MEDICATION_PRESCRIBE : null
   // A permission this screen does not know offers no box (fail closed).
   const mayAcknowledge = !clearPermission
     || (clearPermission === MEDICATION_PRESCRIBE && hasPermission(MEDICATION_PRESCRIBE))
@@ -190,13 +196,20 @@ export default function SafetyAlertModal({
 
           {blocking && !mayAcknowledge ? (
             <>
-              <p className="safety-modal__lede" role="alert">
-                Only a prescriber can authorise a dose the dose check stopped. Change the dose,
-                or ask the prescriber.
-              </p>
+              {allergyBlocked && (
+                <p className="safety-modal__lede" role="alert">
+                  Only a prescriber can override an allergy block.
+                </p>
+              )}
+              {doseBlocked && (
+                <p className="safety-modal__lede" role="alert">
+                  Only a prescriber can authorise a dose the dose check stopped. Change the dose,
+                  or ask the prescriber.
+                </p>
+              )}
               <div className="safety-modal__actions">
                 <button type="button" className="safety-btn safety-btn--primary" onClick={close}>
-                  Change the dose
+                  {doseBlocked ? 'Change the dose' : 'Close'}
                 </button>
               </div>
             </>

@@ -699,6 +699,7 @@ def screen_items(
     actor_id: Optional[str],
     entry_point: str,
     honour_acks: bool,
+    actor_role: Optional[str] = None,
 ) -> list[dict]:
     """Run EVERY gate on EVERY item and return one verdict per item.
 
@@ -743,6 +744,8 @@ def screen_items(
             verdict["medication_safety"] = enforce_medication_safety(
                 patient_id, item["drug_name"],
                 actor_id=actor_id, entry_point=entry_point, safety_ack=ack,
+                # Who may clear a severe allergy: a prescriber only.
+                actor_role=actor_role,
             )
         except HTTPException as e:
             detail = e.detail if isinstance(e.detail, dict) else {}
@@ -773,6 +776,9 @@ def screen_items(
                 " ".join(specifics) if specifics
                 else (detail.get("message") or str(e.detail))
             )
+            # An acknowledgement the gate refused says why, first.
+            if safety.get("ack_refused"):
+                verdict["block_reason"] = f"{safety['ack_refused']} {verdict['block_reason']}"
             verdicts.append(verdict)
             continue
         except MedicationSafetyBlocked as e:   # pragma: no cover — interactive here
@@ -971,7 +977,8 @@ def apply_set(
         )
 
     verdicts = screen_items(patient_id, items, actor_id=actor_id,
-                            entry_point="order_set.apply", honour_acks=True)
+                            entry_point="order_set.apply", honour_acks=True,
+                            actor_role=actor_role)
     blocked = [v for v in verdicts if v["blocked"]]
     if blocked:
         _audit_set(outcome="denied", action_type="order_set_blocked",

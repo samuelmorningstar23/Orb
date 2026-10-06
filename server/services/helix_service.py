@@ -484,7 +484,8 @@ def order_screen_target(order_id: str, substitute_medication_id: str | None = No
     """
     with db_session() as conn:
         order = conn.execute(
-            """SELECT id, patient_id, status, medication_id, substitute_medication_id, dosage
+            """SELECT id, patient_id, status, medication_id, substitute_medication_id, dosage,
+                      prescribed_by
                  FROM helix_patient_med_orders WHERE id = ?""",
             (order_id,),
         ).fetchone()
@@ -508,6 +509,7 @@ def order_screen_target(order_id: str, substitute_medication_id: str | None = No
             "screen_name": _screen_name(med),
             "is_substitute": med["id"] != order["medication_id"],
             "has_dose": bool((order["dosage"] or "").strip()),
+            "prescribed_by": order["prescribed_by"],
         }
 
 

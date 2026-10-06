@@ -287,6 +287,13 @@ def transition_order(order_id: str, req: TransitionRequest, user=Depends(require
             actor_id=user["id"],
             entry_point=f"helix.{req.target_status}",
             safety_ack=req.safety_ack,
+            # A severe allergy clears only for a prescriber, here as on every
+            # other lane. A pharmacist's acknowledgement is accepted only to
+            # confirm the prescriber's own override of the same allergy, already
+            # on the audit chain; never for a substitute the prescriber never saw.
+            actor_role=user.get("role"),
+            order_prescriber_id=(None if target.get("is_substitute")
+                                 else target.get("prescribed_by")),
         )
 
     try:
