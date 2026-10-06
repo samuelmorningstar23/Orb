@@ -20,7 +20,9 @@ THE RULES, FROM THE SPEC, IN ONE PLACE:
 * A round is DONE when a set's sheet time falls in
   [due minus half the grace, due plus grace].
 * It is LATE when the first set after the due time comes after due plus grace
-  but before the next due time.
+  but before the next due time. A set that also falls in the NEXT round's on
+  time window goes to the next round unless another set is there for it
+  (_kept_for_next_round).
 * It is MISSED when no set arrives before the next due time.
 * One set satisfies at most one due time.
 * Only sets a person copied or charted count: nurse_manual, clerk_transcribed,
@@ -606,6 +608,26 @@ def _load_sets(conn, patient_id: str, lo: datetime, hi: datetime, cols: set[str]
 #  The rounds
 # ═════════════════════════════════════════════════════════════════════════════
 
+def _kept_for_next_round(sets: list[dict], i: int, next_due: datetime,
+                         half: timedelta, grace: timedelta, end: datetime) -> bool:
+    """True when sets[i] is the only set in the NEXT round's on time window.
+
+    The late window of one round (up to the next due time) and the on time
+    window of the next (from half the grace before it) overlap. A set in that
+    overlap is a late round only when another set is there for the next round;
+    otherwise it is the next round done on time and this round is missed. Each
+    way one round is short; this way the file does not call an on time round
+    missed."""
+    if next_due >= end:
+        return False  # the patient left before the next round fell due
+    opens = next_due - half
+    if sets[i]["_at"] < opens:
+        return False
+    closes = next_due + grace
+    return not any(opens <= s["_at"] <= closes and s["_at"] < end
+                   for s in sets[i + 1:])
+
+
 def _rounds_for_segment(seg: dict, sets: list[dict], *, interval: timedelta,
                         grace: timedelta, period_start: datetime,
                         period_end: datetime, now: datetime) -> list[dict]:
@@ -633,7 +655,8 @@ def _rounds_for_segment(seg: dict, sets: list[dict], *, interval: timedelta,
         used: Optional[dict] = None
         if i < len(sets) and sets[i]["_at"] <= due + grace:
             outcome, used = "done", sets[i]
-        elif i < len(sets) and sets[i]["_at"] < cutoff:
+        elif i < len(sets) and sets[i]["_at"] < cutoff and \
+                not _kept_for_next_round(sets, i, due + interval, half, grace, end):
             outcome, used = "late", sets[i]
         elif not seg.get("open") and end <= due + grace:
             outcome = None  # left the ward inside the grace window
@@ -861,9 +884,10 @@ def header_lines(data: dict, *, reference: str, generated_at: str,
          "The first round is due one interval after the patient arrived on the ward, "
          "each next one an interval after the previous due time. Done: a set timed "
          "from half the grace window before the due time to the grace window after "
-         "it. Late: the first set after that, before the next due time. Missed: no "
-         "set before the next due time. One set counts for one round. Times are the "
-         "times written on the sheet."),
+         "it. Late: the first set after that, before the next due time, unless it is "
+         "the only set on time for the next round. Missed: no set before the next "
+         "due time. One set counts for one round. Times are the times written on "
+         "the sheet."),
         ("Patients shown as",
          "hospital patient number and bed" if data["include_patient_identifiers"]
          else "a number within this file and the bed (patient numbers left out)"),
