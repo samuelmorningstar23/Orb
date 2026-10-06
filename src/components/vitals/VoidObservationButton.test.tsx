@@ -45,11 +45,11 @@ describe('Entered in error', () => {
 
   it('says why when the server refuses', async () => {
     signIn('nurse')
-    voidObservation.mockRejectedValue(new Error('this set is already marked entered in error'))
+    voidObservation.mockRejectedValue(new Error('This set is already marked entered in error. Reload to see the record.'))
     render(<VoidObservationButton vitalsId={12} />)
     fireEvent.click(screen.getByRole('button', { name: /entered in error/i }))
     fireEvent.change(screen.getByLabelText('Why is this set wrong?'), { target: { value: 'typo' } })
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Mark entered in error' })) })
-    expect(screen.getByRole('alert').textContent).toBe('this set is already marked entered in error')
+    expect(screen.getByRole('alert').textContent).toBe('This set is already marked entered in error. Reload to see the record.')
   })
 })

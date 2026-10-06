@@ -1332,7 +1332,11 @@ const ROLE_CONFIG: Record<string, ShellRoleConfig> = {
   },
   /* The ward clerk (adt-17): reads the bed board and moves patients between
      beds of the same department. No chart, no transfer between departments
-     (ADT-S8), no leave or absconded (ADT-S7). Needs the 'adt' module. */
+     (ADT-S8), no leave or absconded (ADT-S7). Needs the 'adt' module.
+     The Orb Ward Record (6 October 2026): she also copies observation rounds
+     from the paper sheet in the Beds panel's Observations view
+     (src/pages/panels/adt/ObservationsView.tsx, gated on vitals.transcribe).
+     That view lives inside this one tab, so the rail stays as it is. */
   ward_clerk: {
     home: 'adt',
     tabs: [t('adt', 'hospital')],

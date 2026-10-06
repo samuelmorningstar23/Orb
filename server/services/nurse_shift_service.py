@@ -1492,9 +1492,9 @@ def void_observation(vitals_id: int, actor_id: str, reason: str) -> dict:
     """
     reason = (reason or "").strip()
     if not reason:
-        raise ValueError("a reason is required")
+        raise ValueError("Say why this set is wrong.")
     if len(reason) > 500:
-        raise ValueError("the reason must be 500 characters or fewer")
+        raise ValueError("Keep the reason to 500 characters or fewer.")
     voided_at = format_utc(_now())
     with db_session() as db:
         row = db.execute(
@@ -1504,7 +1504,8 @@ def void_observation(vitals_id: int, actor_id: str, reason: str) -> dict:
         if row is None:
             raise ObservationNotFound(f"observation {vitals_id} not found")
         if row["voided_at"]:
-            raise ObservationAlreadyVoided("this set is already marked entered in error")
+            raise ObservationAlreadyVoided(
+                "This set is already marked entered in error. Reload to see the record.")
         db.execute(
             "UPDATE vitals SET voided_at = ?, voided_by = ?, void_reason = ? "
             "WHERE id = ? AND voided_at IS NULL",
