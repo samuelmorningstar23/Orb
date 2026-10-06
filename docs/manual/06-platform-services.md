@@ -1342,20 +1342,15 @@ and set `trust_env` at none of them. A comment would not have held, those 30 sit
 drifted apart over months, so the rule is enforced here instead"
 (`server/tests/test_httpx_client_config.py:29-32`).
 
-And there is a deliberate exception with its own argument.
-`server/services/pulse_service.py` is the genuinely-external lane and must **not**
-get `trust_env=False`: "a hospital may require HTTP_PROXY to reach the internet at
-all and may pin a private CA via SSL_CERT_FILE, and silently breaking either would
-be worse than the hang" (`server/tests/test_httpx_client_config.py:41-45`). Its
-escape is an explicit `transport=`, which makes httpx skip the env-proxy lookup
-(`allow_env_proxies = trust_env and transport is None`) while leaving `trust_env=True`
-in force for TLS, so the resolution happens once per process instead of once per
-call (`server/tests/test_httpx_client_config.py:45-50`,
-`server/services/pulse_service.py:35-50`).
-
-That is a genuinely good piece of engineering: the same root cause, two different
-correct answers depending on the network lane, and a test that forces every new
-client to declare which lane it is on.
+Until 6 October 2026 there was one deliberate exception.
+`server/services/pulse_service.py` fetched weather, air quality, flu data and drug
+recalls from the internet, so it kept `trust_env=True` in case a hospital needed an
+HTTP proxy or a private CA to reach the internet at all. That lane is gone. Orb is
+strictly offline (ruling of 4 October 2026), and the Pulse rebuild of 6 October
+2026 replaced the feeds with a seasonal calendar built into Orb (R030 in
+`docs/RULINGS_NEEDED_2026-10.md`). There is no internet lane left to exempt, and
+any new client that reaches for the internet is a breach of the offline rule, not
+a second lane.
 
 ### 6.5.5 `select_chat_model`
 

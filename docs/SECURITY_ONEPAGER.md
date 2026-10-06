@@ -20,12 +20,11 @@ consultation audio sit in a separate directory.
 and it points at the local Ollama process. No cloud AI SDK is installed. Every
 inference is written to the audit chain with the model that served it. On
 4 October 2026 I ruled that Orb has no internet connection of any kind, and
-removed the outbound heartbeat and browser cloud dictation under that rule.
-One exception remains in this build, carrying no patient data:
-
-| Outbound | What leaves | Default |
-|---|---|---|
-| **Orb Pulse** (weather, air quality, openFDA recalls, CDC flu) | a latitude and longitude and public query filters; every call is logged | on; you can block it at the firewall with no loss of clinical function |
+removed the outbound heartbeat and browser cloud dictation under that rule. On
+6 October Pulse's public feeds (weather, air quality, US FDA recalls, US CDC
+flu) and its browser location lookup went too: Pulse now shows a seasonal
+calendar for your state that ships with Orb. There is no exception. Block all
+outbound traffic from the appliance at the firewall and nothing stops working.
 
 Dictation and spoken answers are on-device only. Browser cloud speech is not
 supported and cannot be switched on; the speech engine and its model are

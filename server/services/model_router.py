@@ -100,8 +100,10 @@ async def probe_residency(timeout: float = 2.0) -> frozenset[str] | None:
         #
         # Every other loopback client in server/ carries the same kwarg, and
         # tests/test_httpx_client_config.py fails the build if a new one doesn't.
-        # The genuinely-external lane (services/pulse_service.py) deliberately
-        # does NOT use trust_env=False — see the note there.
+        # There is no external lane any more: Orb is strictly offline, Pulse's
+        # internet feeds were removed on 6 October 2026, and that same test
+        # now fails the build if any server module calls a host that is not
+        # loopback.
         async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             resp = await client.get(f"{OLLAMA_BASE_URL}/api/ps")
             resp.raise_for_status()

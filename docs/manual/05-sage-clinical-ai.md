@@ -2837,8 +2837,10 @@ every Sage/Vigil/Lens/Scribe turn through `select_chat_model()`."
 
 The fix is enforced repository-wide: every loopback client carries the kwarg, and
 `server/tests/test_httpx_client_config.py` **fails the build if a new one does
-not**. The genuinely-external lane (`services/pulse_service.py`) deliberately does
-not. Turning a one-line footgun into a build-enforced invariant is the right
+not**. There is no external lane any more: Pulse's internet feeds were removed on
+6 October 2026 (Orb is strictly offline), and the same test now also fails if any
+server module calls a host that is not loopback. Turning a one-line footgun into a
+build-enforced invariant is the right
 response to a 3.5-hour outage.
 
 A 1-second TTL cache (`_PS_TTL_SECONDS`, `:34-35`) keeps a burst of router

@@ -49,7 +49,6 @@ function findNativeDialogs(source: string): { line: number; call: string }[] {
 /** Files that still hold emoji (owned by other work), with today's count. */
 const EMOJI_RATCHET: Record<string, number> = {
   'api/thinkingMode.ts': 3,
-  'components/PulseWidget.tsx': 23,
   'components/relay/AlertsSection.tsx': 1,
   'components/sage/SageComposer.tsx': 1,
   'components/sage/SageInsightsFeed.tsx': 1,

@@ -534,8 +534,7 @@ These live under `src/components/` and are reused across shells and panels.
 |---|---|
 | `Aurora.tsx` | Animated canvas background shown on the Login page. |
 | `OrbLogo.tsx` + `OrbLogo.css` | The Orb animated logo SVG. Accepts a `size` prop. Used in the sidebar, login card, and patient shell header. |
-| `PulseWidget.tsx` + `PulseWidget.css` | Real-time "system pulse" status chip in the clinician header. Polls backend health. |
-| `PulseDetail.tsx` | Expanded detail panel for PulseWidget. |
+| `PulseWidget.tsx` + `PulseWidget.css` | The Pulse panel in the clinician header: the season for the hospital's state and what is coming up, from `GET /api/pulse/season`. It is not a system-health chip and never polled backend health. |
 | `ClockWidget.tsx` + `ClockWidget.css` | Live digital clock displayed in the clinician header. |
 | `AdmitPatientModal.tsx` + `AdmitPatientModal.css` | Modal form for admitting a new patient. Calls `admitPatient()`. Opened by the "Admit Patient" button in ClinicianShell. |
 | `HandoffPrintView.tsx` | Print-optimized layout for a handoff report. Rendered inside VigilPanel and opened via `createPortal`. |
@@ -702,8 +701,7 @@ src/
 └── components/
     ├── Aurora.tsx                    Animated login background canvas
     ├── OrbLogo.tsx + OrbLogo.css     Orb logo SVG with size prop
-    ├── PulseWidget.tsx + .css        System health pulse chip in clinician header
-    ├── PulseDetail.tsx               Expanded pulse detail view
+    ├── PulseWidget.tsx + .css        Pulse season panel in clinician header
     ├── ClockWidget.tsx + .css        Live clock in clinician header
     ├── AdmitPatientModal.tsx + .css  Modal form: admit a new patient
     ├── HandoffPrintView.tsx          Print layout for handoff report (portal-rendered)

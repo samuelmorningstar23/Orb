@@ -62,7 +62,7 @@ change would alter behaviour. Samuel can overrule any of them.
 |---|---|---|
 | `src/components/AdmitPatientModal.tsx:545, 692` | "Triage Severity (1-5)", "Triage" | A clinical field the admitting clinician fills (the hospital's own triage category), not Orb claiming to triage. Renaming the field changes clinical vocabulary. |
 | `server/services/admission_service.py:472` | "High acuity admission (Triage n)" | Same field, echoed as a Sage risk flag. |
-| `server/services/pulse_service.py:585` | "Increase ED triage screening for ILI symptoms" | A Pulse recommendation about the ED's own triage desk. |
+| `server/services/pulse_service.py:585` | "Increase ED triage screening for ILI symptoms" | A Pulse recommendation about the ED's own triage desk. (Gone since 6 October 2026: the file was deleted with Pulse's internet feeds.) |
 | `server/services/bot_service.py:1101-1117` | "Orb Vision detects ...", "Orb Lens detects ...", "Orb AI detects ..." | Simulated imaging-report bot text in the simulation lane (`_create_report`). Lens is marked switched off on the site. Candidates for a rewrite or removal under the no-demo-scaffolding rule; not touched here because the lane's tests may pin them. |
 | `server/services/sage_assessment_service.py:1995, 2035` | "hospital operating system" inside two Sage system prompts | Model prompt text. Changing it changes model behaviour. |
 | `src/pages/panels/BiomedicalPanel.tsx:373` | "Orb is not the system of record for it here." | Shown only when the equipment module is switched off, and says Orb is NOT the record. |

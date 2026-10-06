@@ -110,7 +110,7 @@ The second flow is what the code calls Orb's **"nervous system"**: modules don't
 | **Ingestion** | The **front door for data**, parses HL7 / CSV / JSON from hospital systems into vitals and labs. | §7 |
 | **Helix** | **Pharmacy & medications**, formulary, orders, inventory, pharmacist sign-off. | §8 |
 | **Lens** | **Medical imaging** analysis (a vision-language model reads an image). | §8 |
-| **Pulse** | **Environmental / operational risk** (weather, air quality, recalls, flu season). | §8 |
+| **Pulse** | **Season and conditions**: a built-in seasonal calendar for the hospital's state, no internet. | §8 |
 | **Bridge** | The **patient-facing** portal/bot, with an emergency red-flag safety guardrail. | §8 |
 | **Relay** | Secure **care-team messaging**, the live channel other modules post alerts into. | §9 |
 | **Surgical Suite** | **Operating-room** scheduling and emergency surgery escalation. | §9 |

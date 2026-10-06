@@ -28,26 +28,26 @@ drifted apart over months — so the rule is enforced here instead.
 THE RULE
 --------
 Every `httpx.Client(...)` / `httpx.AsyncClient(...)` construction under server/
-must be explicit about its destination:
-
-  * LOOPBACK (Ollama at OLLAMA_BASE_URL, and anything else on 127.0.0.1 /
-    localhost / the appliance itself) -> pass `trust_env=False`. A proxy is
-    meaningless for loopback and Orb is a local-first appliance, so the OS
-    lookup is pure risk. This is the large majority, and it includes the site
-    that wedged (services/model_router.py:probe_residency).
-
-  * GENUINELY EXTERNAL -> the file must be listed in EXTERNAL_LANES below and
-    the construction must pass `transport=`. `trust_env=False` is deliberately
-    NOT the answer out there: a hospital may require HTTP_PROXY to reach the
-    internet at all and may pin a private CA via SSL_CERT_FILE, and silently
-    breaking either would be worse than the hang. Passing an explicit
-    `transport` is what makes httpx skip the env-proxy lookup
-    (`allow_env_proxies = trust_env and transport is None`, httpx/_client.py)
-    while leaving trust_env=True in force for TLS — so the resolution happens
-    ONCE per process instead of once per call.
+passes `trust_env=False`. Every one of them talks to loopback (Ollama at
+OLLAMA_BASE_URL, and anything else on 127.0.0.1 / localhost / the appliance
+itself), where a proxy is meaningless, so the OS lookup is pure risk. That
+includes the site that wedged (services/model_router.py:probe_residency).
 
 Top-level `httpx.get/post/...` calls are checked too: they build a throwaway
 Client internally and pay exactly the same cost.
+
+THE OFFLINE GUARD
+-----------------
+There used to be one exception, an "external lane" for Pulse's internet feeds
+(open-meteo, api.fda.gov, data.cdc.gov), which kept the hospital's proxy
+settings instead. Orb is strictly offline (standing rule, 4 October 2026), and
+on 6 October 2026 those feeds were removed with services/pulse_service.py.
+EXTERNAL_LANES is now empty and must stay empty, and a second scan below fails
+the build if any server module (tests and scripts/download_* excepted) makes a
+network call to a literal host that is not loopback: httpx, requests, aiohttp,
+urllib.request, websockets, any client's .get/.post/... A URL that is only
+data (the FHIR code-system names such as http://loinc.org) is not a call and
+is not flagged.
 
 WHAT THIS TEST DELIBERATELY DOES NOT REQUIRE
 --------------------------------------------
@@ -65,6 +65,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import re
 from pathlib import Path
 
 import pytest
@@ -75,15 +76,10 @@ SERVER_ROOT = Path(__file__).resolve().parent.parent
 SKIP_DIRS = {".venv", "__pycache__", "node_modules", ".git", "uploads", "corpus",
              "backups", "downtime_exports", "migrations"}
 
-# Files whose httpx clients genuinely leave the appliance. Listing a file here
-# is a claim that its destinations are on the public internet, and it swaps the
-# requirement from `trust_env=False` to `transport=` (resolve-once).
-EXTERNAL_LANES = {
-    "services/pulse_service.py":
-        "Open-Meteo / api.fda.gov / data.cdc.gov — inbound-only public feeds. "
-        "Uses _external_transport_kwargs(), which caches the env proxy map and "
-        "the SSL context for the process instead of resolving per call.",
-}
+# Files whose network calls leave the appliance. EMPTY, and a test below keeps
+# it empty: Orb is strictly offline. Pulse's internet feeds were the only entry
+# until 6 October 2026, when they were removed.
+EXTERNAL_LANES: dict[str, str] = {}
 
 CONSTRUCTORS = {"Client", "AsyncClient"}
 # Top-level convenience API — each of these builds a Client under the hood.
@@ -217,7 +213,15 @@ def test_the_scan_actually_finds_the_clients():
     # The site that actually wedged the loop must be in scope.
     assert "services/model_router.py" in files
     assert "services/sage_narrator_service.py" in files
-    assert "services/pulse_service.py" in files
+
+
+def test_there_is_no_external_lane():
+    """Orb is strictly offline. A file listed here would be a claim that some
+    server code is meant to reach the internet, and none is."""
+    assert EXTERNAL_LANES == {}, (
+        f"EXTERNAL_LANES lists {sorted(EXTERNAL_LANES)}. Orb is strictly offline: "
+        f"no server module may talk to anything but the appliance itself."
+    )
 
 
 @pytest.mark.parametrize(
@@ -229,21 +233,6 @@ def test_every_httpx_client_declares_its_network_lane(path, lineno, what, kwargs
     _refuse_if_the_file_moved(path)
     rel = path.relative_to(SERVER_ROOT).as_posix()
 
-    if rel in EXTERNAL_LANES:
-        assert "transport" in kwargs or splat, (
-            f"{rel}:{lineno} {what} is on the EXTERNAL lane but does not pass "
-            f"`transport=` (directly or via a **kwargs helper).\n"
-            f"  Reason on file: {EXTERNAL_LANES[rel]}\n"
-            f"  Without an explicit transport, httpx re-runs get_environment_proxies()\n"
-            f"  on the event loop for EVERY call — the macOS configd lookup that\n"
-            f"  wedged /api/health for 3.5 hours on 2026-08-01."
-        )
-        assert "trust_env" not in kwargs, (
-            f"{rel}:{lineno} must NOT set trust_env: this lane leaves the appliance, "
-            f"and a hospital's HTTPS_PROXY / SSL_CERT_FILE has to keep working."
-        )
-        return
-
     assert "trust_env" in kwargs or splat, (
         f"\n{rel}:{lineno} constructs {what} without `trust_env=False`.\n"
         f"\n"
@@ -254,9 +243,8 @@ def test_every_httpx_client_declares_its_network_lane(path, lineno, what, kwargs
         f"hours on 2026-08-01 and stopped /api/health answering at all.\n"
         f"\n"
         f"  * Talking to Ollama / localhost / the appliance? add `trust_env=False`.\n"
-        f"  * Genuinely leaving the hospital network? add this file to\n"
-        f"    EXTERNAL_LANES in {Path(__file__).name} and pass an explicit\n"
-        f"    `transport=` so the proxy lookup happens once, not per call.\n"
+        f"  * Leaving the hospital network? Orb does not: it is strictly offline,\n"
+        f"    and the offline guard in {Path(__file__).name} refuses it.\n"
     )
     if not splat:
         assert _trust_env_false(kwargs, path, lineno), (
@@ -265,62 +253,242 @@ def test_every_httpx_client_declares_its_network_lane(path, lineno, what, kwargs
         )
 
 
-def test_external_lane_resolves_proxy_configuration_only_once():
-    """The outbound lane must cache its proxy map, not re-query the OS per call."""
-    import httpx
-    import urllib.request
+# ═════════════════════════════════════════════════════════════════════════════
+#  The offline guard
+# ═════════════════════════════════════════════════════════════════════════════
+# Orb is strictly offline: no server module may call a host that is not the
+# appliance itself. This scan reads the source, never runs it, so it judges
+# only LITERAL hosts. A base URL taken from configuration (OLLAMA_BASE_URL) is
+# not a literal; its default is checked by the env-default test further down.
+#
+# A call is any of the verbs below on any object (httpx, requests, aiohttp,
+# urllib.request, websockets, or a client from `async with ... as client`)
+# whose URL argument is, or is assigned from, a string beginning with
+# http(s):// or ws(s)://. A URL that is never handed to a call is data (the
+# FHIR export names code systems such as http://loinc.org) and is ignored.
+_NETWORK_VERBS = ONESHOT_METHODS | {
+    "Client", "AsyncClient", "ClientSession", "Request", "urlopen", "urlretrieve",
+    "open", "connect", "ws_connect",
+}
+# The positional slots a URL can sit in: first, or second for
+# `request("GET", url)` / `stream("GET", url)`; plus these keywords.
+_URL_KEYWORDS = {"url", "base_url"}
+_URL_RE = re.compile(
+    r"^(?:https?|wss?)://(?:[^@/?#]*@)?(\[[^\]]*\]|[^/:?#\[\]]*)", re.IGNORECASE
+)
 
-    from services import pulse_service
 
-    pulse_service._env_proxy_map = None
-    pulse_service._external_ssl_context = None
+def _offline_files() -> list[Path]:
+    """Server modules the guard covers: everything but tests, and the model
+    and dataset download scripts an engineer runs by hand on a connected
+    machine before the appliance ships (scripts/download_*)."""
+    return [
+        p for p in _python_files()
+        if not (p.relative_to(SERVER_ROOT).parts[0] == "scripts"
+                and p.name.startswith("download_"))
+    ]
 
-    calls = {"n": 0}
-    real = urllib.request.getproxies
 
-    def counting():
-        calls["n"] += 1
-        return real()
+def _assignments(tree: ast.AST) -> dict[str, list[ast.AST]]:
+    """Every value assigned to each plain name, anywhere in the module.
 
-    import httpx._utils as httpx_utils
-    real_utils = httpx_utils.getproxies
-    httpx_utils.getproxies = counting
+    Module-wide rather than per scope on purpose: it can only over-report (a
+    `url` assigned in one function judged against a call in another), never
+    miss the `url = f"https://..."; client.get(url)` shape the old Pulse
+    fetchers used.
+    """
+    names: dict[str, list[ast.AST]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    names.setdefault(target.id, []).append(node.value)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) \
+                and node.value is not None:
+            names.setdefault(node.target.id, []).append(node.value)
+    return names
+
+
+def _url_prefixes(node: ast.AST, names: dict, depth: int = 0) -> list[tuple[str, bool]]:
+    """The literal text each possible value of `node` starts with, and whether
+    that text is the WHOLE value (False when an interpolation follows it)."""
+    if depth > 6:
+        return []
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [(node.value, True)]
+    if isinstance(node, ast.JoinedStr):
+        text = ""
+        for part in node.values:
+            if not isinstance(part, ast.Constant):
+                return [(text, False)]
+            text += str(part.value)
+        return [(text, True)]
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+        return [(t, False) for t, _ in _url_prefixes(node.left, names, depth + 1)]
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+            and node.func.attr == "format":
+        return [(t, False) for t, _ in _url_prefixes(node.func.value, names, depth + 1)]
+    if isinstance(node, ast.Name):
+        out: list[tuple[str, bool]] = []
+        for value in names.get(node.id, []):
+            out += _url_prefixes(value, names, depth + 1)
+        return out
+    return []
+
+
+def _is_loopback(host: str, complete: bool) -> bool:
+    import ipaddress
+
+    h = host.strip("[]").lower()
+    if not complete:
+        # The literal stops inside the host name (f"https://api.{tld}"). It is
+        # loopback only if it can only become loopback.
+        return h.startswith(("localhost", "127.", "::1"))
+    if h == "localhost" or h.endswith(".localhost"):
+        return True
     try:
-        clients = []
-        for _ in range(10):
-            clients.append(
-                httpx.AsyncClient(timeout=10, **pulse_service._external_transport_kwargs())
-            )
-        assert calls["n"] == 1, (
-            f"the outbound lane queried the OS proxy configuration {calls['n']} times "
-            f"for 10 clients; it must resolve once per process"
-        )
-        # And the lane still honours a proxy when one is configured.
-        assert all(isinstance(c, httpx.AsyncClient) for c in clients)
-    finally:
-        httpx_utils.getproxies = real_utils
-        pulse_service._env_proxy_map = None
-        pulse_service._external_ssl_context = None
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
 
 
-def test_external_lane_still_honours_hospital_proxy_and_no_proxy(monkeypatch):
-    """trust_env=False on the loopback clients must not have cost the outbound
-    lane its proxy support — that was the whole point of splitting them."""
-    import httpx
+def _off_appliance_calls(source: str, filename: str = "<src>") -> list[tuple[int, str, str]]:
+    """(line, verb, host) for every call to a literal host that is not loopback."""
+    tree = ast.parse(source, filename=filename)
+    names = _assignments(tree)
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        verb = func.attr if isinstance(func, ast.Attribute) else \
+            func.id if isinstance(func, ast.Name) else None
+        if verb not in _NETWORK_VERBS:
+            continue
+        candidates = list(node.args[:2]) + [
+            kw.value for kw in node.keywords if kw.arg in _URL_KEYWORDS
+        ]
+        for candidate in candidates:
+            for text, whole in _url_prefixes(candidate, names):
+                m = _URL_RE.match(text)
+                if not m or not m.group(1):
+                    continue  # not a URL, or the host itself is interpolated
+                host = m.group(1)
+                # The host is complete when something follows it in the
+                # literal (a port, a path) or the literal is the whole value.
+                complete = whole or len(m.group(0)) < len(text)
+                if not _is_loopback(host, complete):
+                    found.append((node.lineno, verb, host))
+    return sorted(set(found))
 
-    from services import pulse_service
 
-    monkeypatch.setattr(pulse_service, "_env_proxy_map", None)
-    monkeypatch.setattr(pulse_service, "_external_ssl_context", None)
-    monkeypatch.setenv("HTTPS_PROXY", "http://hospital-proxy.local:3128")
-    monkeypatch.setenv("NO_PROXY", "localhost,internal.hospital.example")
+def test_no_server_module_calls_a_host_off_the_appliance():
+    offenders = []
+    for path in _offline_files():
+        rel = path.relative_to(SERVER_ROOT).as_posix()
+        for lineno, verb, host in _off_appliance_calls(path.read_text(), rel):
+            offenders.append(f"  {rel}:{lineno}  {verb}(...) -> {host}")
+    assert not offenders, (
+        "\nOrb is strictly offline (standing rule, 4 October 2026): no connection "
+        "of any kind leaves the appliance. These calls name a host that is not "
+        "loopback:\n" + "\n".join(offenders) + "\n\n"
+        "If the URL is only data (a code-system name, a citation), keep it out of "
+        "any network call. If the code really needs that host, it does not belong "
+        "on the appliance."
+    )
 
-    client = httpx.AsyncClient(timeout=10, **pulse_service._external_transport_kwargs())
-    proxied = client._transport_for_url(httpx.URL("https://api.fda.gov/drug/enforcement.json"))
-    bypassed = client._transport_for_url(httpx.URL("https://internal.hospital.example/x"))
 
-    assert proxied is not client._transport, "public feed should route via HTTPS_PROXY"
-    assert bypassed is client._transport, "NO_PROXY host should bypass the proxy"
+def test_the_offline_scan_catches_what_it_must_and_nothing_else():
+    """The guard above passes vacuously if the scanner finds nothing. Hold it to
+    the shapes the removed Pulse code used, and to the data URLs it must leave
+    alone."""
+    flagged = """
+import httpx, requests, aiohttp, urllib.request, websockets
 
-    pulse_service._env_proxy_map = None
-    pulse_service._external_ssl_context = None
+async def weather(lat):
+    url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}"
+           f"&daily=weather_code")
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(url)
+
+def recalls():
+    return requests.get("https://api.fda.gov/drug/enforcement.json")
+
+def flu():
+    return urllib.request.urlopen("https://data.cdc.gov/resource/x.json")
+
+async def feed():
+    async with aiohttp.ClientSession() as session:
+        await session.post("https://example.org/ingest", json={})
+
+def oneshot():
+    return httpx.request("GET", "https://api.example.com/v1")
+
+def client():
+    return httpx.Client(base_url="https://partner.example.net", trust_env=False)
+
+async def sock():
+    return await websockets.connect("wss://stream.example.com/socket")
+
+def partial(tld):
+    return httpx.get(f"https://api.{tld}/x", trust_env=False)
+"""
+    hosts = {host for _, _, host in _off_appliance_calls(flagged)}
+    assert hosts == {
+        "api.open-meteo.com", "api.fda.gov", "data.cdc.gov", "example.org",
+        "api.example.com", "partner.example.net", "stream.example.com", "api.",
+    }, hosts
+
+    allowed = """
+import httpx, urllib.request
+from config import OLLAMA_BASE_URL
+
+LOINC = "http://loinc.org"
+SNOMED_SYSTEM = "http://snomed.info/sct"
+OLLAMA_URL = "http://localhost:11434/api/generate"
+
+def coding(code):
+    return {"system": LOINC, "code": code, "url": "https://hl7.org/fhir"}
+
+def lookup(table):
+    return table.get("status")
+
+async def ps():
+    async with httpx.AsyncClient(trust_env=False) as client:
+        await client.get(f"{OLLAMA_BASE_URL}/api/ps")
+        await client.get("http://127.0.0.1:8000/api/health")
+        await client.get("http://[::1]:11434/api/tags")
+        await client.get(f"http://localhost:{8000}/x")
+
+def generate():
+    return urllib.request.urlopen(urllib.request.Request(OLLAMA_URL))
+"""
+    assert _off_appliance_calls(allowed) == []
+
+
+def test_url_defaults_in_the_environment_are_loopback():
+    """`os.getenv("ORB_X_URL", "<default>")`: a default that names a host off
+    the appliance would make a fresh install reach out before anyone set it."""
+    offenders = []
+    for path in _offline_files():
+        rel = path.relative_to(SERVER_ROOT).as_posix()
+        tree = ast.parse(path.read_text(), filename=rel)
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in {"getenv", "get"} and len(node.args) >= 2):
+                continue
+            receiver = node.func.value
+            is_env = (isinstance(receiver, ast.Name) and receiver.id == "os") or (
+                isinstance(receiver, ast.Attribute) and receiver.attr == "environ")
+            if not is_env:
+                continue
+            for text, whole in _url_prefixes(node.args[1], {}):
+                m = _URL_RE.match(text)
+                if m and m.group(1):
+                    complete = whole or len(m.group(0)) < len(text)
+                    if not _is_loopback(m.group(1), complete):
+                        offenders.append(f"  {rel}:{node.lineno}  default {text!r}")
+    assert not offenders, (
+        "\nThese settings default to a host off the appliance. Orb is strictly "
+        "offline; a default must be loopback:\n" + "\n".join(offenders)
+    )

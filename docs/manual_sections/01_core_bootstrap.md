@@ -380,7 +380,7 @@ Each `include_router()` call registers all the URL paths defined in that module'
 | `admission_router` | `admission_routes.py` | Patient admission workflow |
 | `discharge_access_router` | `discharge_access_routes.py` | Patient access to the discharge summary |
 | `helix_router` | `helix_routes.py` | Helix pharmacy management |
-| `pulse_router` | `pulse_routes.py` | Pulse environmental/operational risk |
+| `pulse_router` | `pulse_routes.py` | Pulse season and conditions (`GET /api/pulse/season`) |
 | `clinical_records_router` | `clinical_records_routes.py` | Clinical record documents |
 | `bundle_router` | `bundle_routes.py` | Sepsis and other care bundles |
 | `ipass_router` | `ipass_routes.py` | I-PASS shift handover (and the full reasoned Sage assessment, §5.7) |

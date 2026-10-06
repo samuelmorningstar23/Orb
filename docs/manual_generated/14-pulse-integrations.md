@@ -11,92 +11,57 @@
 
 *The Appointments board: scheduled follow-ups, medication reviews, and post-discharge tasks.*
 
-Orb is a local-first system: the clinical record, the AI models, and the database all live on hospital hardware. This chapter covers every place where Orb touches the outside world, and the strict rules that govern each crossing:
+Orb is a local-first system: the clinical record, the AI models, and the database all live on hospital hardware. This chapter covers every place where data enters or leaves Orb, and the strict rules that govern each crossing:
 
-- **Orb Pulse**, a live environmental intelligence feed (weather, air quality, flu activity, drug recalls) that flows *into* Orb and never sends anything out.
+- **Pulse**, a seasonal calendar for the hospital's state, built into Orb. It makes no connection to anything outside the building.
 - **FHIR export**, standards-based export of a patient's record *out* of Orb, for EHR write-back and patient data portability.
 - **Clinical data ingestion**, the inbound interface that lets bedside monitors, lab systems, and other hospital software write real vitals and results *into* Orb.
 - **Appointments**, the shared scheduling layer that connects the patient portal's booking card to the clinician-facing schedule.
 
-The unifying principle: data about the world flows in freely; data about patients leaves only through audited, permission-gated, standards-based export.
+The unifying principle: Orb makes no internet connection of any kind. Data comes in only from systems inside the hospital, and data about patients leaves only through audited, permission-gated, standards-based export.
 
-### 14.1 Orb Pulse: environmental intelligence
+### 14.1 Pulse: season and conditions
 
 #### What Pulse is for
 
-Hospitals do not operate in a vacuum. A heat wave fills the wards with dehydrated elderly patients; a spike in air pollution brings asthma and COPD exacerbations; flu season strains respiratory isolation capacity; an FDA recall may affect a drug your pharmacy stocks. Orb Pulse pulls these public signals into one popover and translates them into concrete clinical alerts with recommended actions.
+Illness in India follows the seasons. The monsoon brings dengue, malaria and leptospirosis; summer brings heat illness; winter in the north brings bad air and chest infections. Pulse shows what usually rises in the hospital's state at this time of year, and what is coming up, so a ward, a pharmacy or a bed manager can plan ahead.
 
-Pulse is strictly **one-directional**. It pulls from free public data services and pushes nothing back. No patient identifier, vital sign, or clinical detail ever leaves the building through Pulse, the only things transmitted are the map coordinates used to fetch local weather and air quality.
+Pulse works from a seasonal calendar built into Orb. It makes no internet connection: no weather service, no air-quality feed, no flu feed, no drug-recall feed and no location lookup. Orb as a whole makes no internet connection of any kind.
 
 #### Opening Pulse
 
-Pulse lives in the header of the clinician shell, next to the notifications bell. Click the small heartbeat-line icon (its tooltip reads **"Orb Pulse, Environmental Intelligence"**). A translucent panel slides open over the workspace.
-
-When at least one environmental alert is active, the trigger icon carries a small colored badge, red for a high-severity alert, amber for moderate, so you can see at a glance that conditions warrant attention without opening the panel.
-
-To close the panel, click the icon again, click anywhere outside the panel, or press **Escape**. If you are inside a detail view, Escape first steps back to the main panel, then closes it.
-
-#### Location
-
-The first time you open Pulse, your browser asks for permission to share your location:
-
-1. If you **allow**, Pulse uses your coordinates, looks up the nearest city name, and shows it in the panel header (during lookup the header briefly reads **"Locating..."**).
-2. If you **decline** (or the browser has no location service), Pulse falls back to its configured default city.
-
-Your chosen location is remembered between sessions on that device. To refresh or change it, click the location label (with the map-pin icon) in the panel header, Pulse will re-request your position.
+Pulse lives in the header of the clinician shell, next to the notifications bell. Click the small heartbeat-line icon (its tooltip reads **"Pulse: season and conditions"**). A panel titled **Pulse**, with **Season and conditions** beneath, opens over the workspace. It reads the calendar afresh each time you open it; there is nothing to refresh, because the date only changes once a day. To close it, click the **X**, click the icon again, click anywhere outside the panel, or press **Escape**.
 
 #### Reading the panel
 
-The panel is organized top to bottom, most urgent first. Each section names its data source in small text on the right of its label.
+Under the title the panel names the place and today's date, for example **Maharashtra**, or **Maharashtra (Konkan)** when the calendar is kept for one zone of a state. Next it says whether a clinician has checked the calendar:
 
-| Section | Source label | What it shows |
-|---|---|---|
-| **Active Clinical Alerts** | Orb Pulse Engine | Alert cards generated from the feeds below. High-severity alerts carry a red warning triangle; moderate alerts an amber circle. When nothing is active you see "No active environmental alerts". |
-| **Weather** | Open-Meteo | Current temperature, conditions, "feels like" temperature and humidity, plus a seven-day forecast strip (day, icon, high/low). |
-| **Air Quality** | Open-Meteo AQI | The US Air Quality Index number, color-coded by category (Good, Moderate, Unhealthy for Sensitive Groups, Unhealthy, Very Unhealthy, Hazardous), with the current PM2.5 reading. |
-| **Flu Surveillance** | CDC FluView | The national influenza-like illness (ILI) rate and an activity level (minimal, low, moderate, high, very high). |
-| **Recent FDA Drug Recalls** | openFDA | The three most recent FDA drug enforcement actions: product, reason for recall, and classification. |
+- **"Draft: not yet reviewed by a clinician"** means nobody at your hospital has signed it off yet. Orb ships this way.
+- **"Reviewed by [name] on [date]"** appears once the hospital's clinical lead has reviewed it.
 
-The panel footer always reads **"Inbound only · Zero patient data transmitted"** and includes a **Refresh** button.
+| Section | What it shows |
+|---|---|
+| **This season** | One card for each entry in effect today for the hospital's state: a season, an environmental condition or a disease season. Each card shows a title (for example "South-west monsoon" or "Dengue season"), a **Peak now** tag when this is its peak, the period it usually runs ("June to September"), a short summary, a "Typically rises: ..." line naming the conditions that usually go up, and its sources, named in plain text. When nothing covers today the section says "Nothing in the calendar covers today." |
+| **Coming up** | Entries that start in the next 60 days, one line each: "Tomorrow: ..." or "In 12 days: ...". The section is left out when nothing is coming up. |
 
-#### Detail views
+The footer reads **"Built into Orb. Calendar compiled [date]."**
 
-Every card is clickable. Clicking opens a detail overlay with a back arrow in the top-left corner:
+#### Where the state comes from
 
-- **Weather Details**, full current readings (Humidity, Wind Speed, Pressure, Coordinates), the complete 7-Day Forecast, any Clinical Recommendations, and a source attribution link.
-- **Air Quality Details**, the AQI hero number and category, plus individual pollutant rows: PM2.5, PM10, Ozone, Nitrogen Dioxide, and Carbon Monoxide, with Clinical Recommendations when the index is elevated.
-- **Flu Surveillance Details**, the ILI percentage, Source, Surveillance Week, Year, and (when real CDC data is flowing) the number of Patients Surveyed.
-- **Alert Details**, for any clinical alert: the full message, Severity, Type, At-Risk Groups, and a checklist of Recommended Actions.
-- **Drug Recall Details**, the full product description, Reason for Recall, Recall Number, Status, Recalling Firm, Location, Report Date, and Initiation Date.
+Pulse uses the hospital's state (or union territory) as your administrator set it in the site settings: the `state` line under `[site]` in `site.toml`, for example `state = "Maharashtra"` or `state = "MH"`. Pulse never asks your browser for your location and never looks anything up. If the state has not been set, the panel shows **"State not set"** and asks for it instead of guessing; tell your administrator.
 
-Every detail view ends with a "Source:" badge linking to the originating public service, so you can verify the data yourself.
+#### Pulse and Forecast
 
-#### How clinical alerts are generated
+Forecast shows the current season as one line of context, for example "Season: South-west monsoon (peak), Dengue season". It does not change any forecast number (see the Forecast chapter).
 
-Pulse converts raw environmental readings into alerts using fixed clinical thresholds. Each alert names the at-risk patient groups and lists concrete recommended actions (for example, a heat advisory recommends increasing IV fluid monitoring for at-risk patients and increasing rounding frequency on geriatric wards).
+#### What Pulse does not do yet
 
-| Alert | Trigger | Severity |
-|---|---|---|
-| Heat Advisory | Temperature at or above 38 °C | Moderate; **high** at 42 °C or above |
-| Cold Advisory | Temperature at or below 5 °C | Moderate |
-| Storm Forecast | Rain showers or thunderstorms forecast within the next 3 days | Moderate; **high** for thunderstorms |
-| Dangerous Heat Index | Temperature at or above 32 °C combined with humidity at or above 70% | High |
-| Air Quality Alert | AQI above 100 | Moderate; **high** above 150 |
-| Influenza Surge | National ILI rate above 3.0% | Moderate; **high** above 5.0% |
+Pulse does not show today's weather, the air-quality index, flu activity or drug recalls. It shows what usually happens in a season, not what is happening this week. Two more stages are planned and neither is built:
 
-Alerts are sorted with high severity first, and the count drives the badge on the header icon.
+- **Stage 2.** A one-minute daily entry of official warnings (IMD heatwave warnings, the CPCB air-quality index) by a person the hospital names, and support for a weather and air-quality sensor on the hospital network.
+- **Stage 3.** Disease trends drawn from the hospital's own admissions, and the CDSCO drug-recall list checked against the pharmacy's stock.
 
-#### Refresh behavior and the flu fallback
-
-While the panel is open, Pulse refreshes itself automatically every 15 minutes; the **Refresh** button in the footer forces an immediate re-fetch. Behind the scenes each feed is cached to be a good citizen to the free public services: weather for 30 minutes, air quality and FDA recalls for one hour, and flu surveillance for 24 hours (the underlying data is weekly). If a feed is temporarily unreachable, Pulse quietly serves the last good data it has rather than showing an error.
-
-Flu surveillance has an explicit fallback: when the CDC service cannot be reached at all, Pulse substitutes a **seasonal estimate**, a typical ILI value for the current month of the year. This is clearly labeled: the popover shows "(seasonal estimate)" next to the ILI figure, and the detail view's Source row reads "Seasonal Estimate (CDC API unavailable)". A seasonal estimate is a climatological guess, not surveillance, treat it as background context only, and never as evidence of an actual surge.
-
-#### Privacy: the INBOUND_ONLY guarantee
-
-Every single external data pull that Pulse makes is written to an ingestion audit trail recording the timestamp, the source, the exact address queried, the outcome, and a cryptographic fingerprint of the response, and every entry is stamped with the direction **INBOUND_ONLY**. Administrators with audit access can review this trail to verify that the only information transmitted outward was a pair of map coordinates. The dashboard payload itself carries the statement "INBOUND_ONLY, zero patient data transmitted", and the panel footer restates it in plain language.
-
-The one nuance worth knowing: the city name shown in the header is resolved by sending your coordinates to a public map service (OpenStreetMap). Coordinates only, never anything about patients or users.
+One option is ruled out: a separate internet-connected box that fetches the weather and pushes it into Orb. That box would be a bridge from the internet into Orb, which the offline rule does not allow.
 
 ### 14.2 FHIR export: getting data out of Orb
 
@@ -257,11 +222,10 @@ The predicted schedule is planning scaffolding, not a source of truth, only entr
 
 | Symptom | Likely cause | What to do |
 |---|---|---|
-| Pulse shows the default city instead of yours | Location permission was declined, or the browser has no location service | Click the location label in the Pulse header to re-request; allow location access in your browser's site settings |
-| Pulse header stuck on "Locating..." | Slow or unavailable device location | Wait a few seconds; if it persists, the last saved or default location is used, click the location label to retry |
-| Flu section says "(seasonal estimate)" | The CDC service is unreachable | No action needed, but treat the figure as a monthly climatological estimate, not live surveillance |
-| A Pulse section is missing entirely | That feed returned no data and no cache exists yet | Click **Refresh**; the section reappears when the feed responds |
-| Pulse readings seem stale | Feeds are cached (weather 30 min; AQI and recalls 1 h; flu 24 h) | This is by design; **Refresh** re-checks, but data within its cache window is reused |
+| Pulse asks for the hospital's state | The `[site] state` setting is missing from `site.toml` | Ask an administrator to add it (the state or union territory, by name or two-letter code) and restart Orb |
+| Pulse shows "Draft: not yet reviewed by a clinician" | Nobody at this hospital has reviewed the seasonal calendar yet | Treat the cards as a starting point until the clinical lead has reviewed them |
+| Pulse says "The seasonal calendar could not be loaded." | The calendar file is missing or failed its checks at startup, or the server did not answer | Click **Try again**. If the message says the calendar is not installed or has errors, an administrator must fix the file (the server log lists each problem) and restart Orb |
+| Pulse has no weather, air-quality, flu or recall cards | Those internet feeds were removed; Orb makes no internet connection | Working as intended; see 14.1 |
 | Patient's "Download my record (FHIR)" shows an error | Transient failure assembling or downloading the bundle | Try again; if it persists, a clinician or administrator can perform the export and check the audit trail |
 | FHIR export refused for a clinician | The account lacks full patient-read permission | An administrator must grant the appropriate role; patients can only export their own record |
 | Device feed refused with a "disabled in simulation mode" message | The deployment is running in simulation mode | An administrator must switch the deployment to ingestion (or hybrid) mode |
@@ -275,10 +239,9 @@ The predicted schedule is planning scaffolding, not a source of truth, only entr
 
 ### Safety & limitations
 
-- **Pulse is situational awareness, not clinical guidance.** Its alerts are generated from fixed environmental thresholds and generic recommendations. They do not know your patients, your census, or your local epidemiology. Use them as a prompt for judgment, never as a substitute for it.
-- **The flu fallback is an estimate.** When CDC data is unavailable, the labeled seasonal estimate reflects a typical year, not this year. Do not base surge decisions on it.
-- **FDA recall cards are national enforcement actions.** A listed recall does not necessarily involve a lot your pharmacy holds. Always verify lot numbers with pharmacy before acting.
-- **Pulse never transmits patient data**, the audit trail proves it, entry by entry, each stamped INBOUND_ONLY. The only outbound information is the coordinates used for local weather, air quality, and city-name lookup.
+- **Pulse is background, not clinical guidance.** The calendar says what usually rises in a season in your state. It does not know your patients, your census, this year's weather or an outbreak happening now. Use it as a prompt for planning, never as evidence of a surge.
+- **The calendar is a draft until a clinician reviews it.** It ships marked "Draft: not yet reviewed by a clinician" and says "Reviewed by [name] on [date]" only after the hospital's clinical lead has been through it.
+- **Pulse makes no internet connection.** It fetches nothing and sends nothing; the calendar lives on the appliance.
 - **FHIR export is the only door out for PHI**, it requires authentication and authorization on every request, and it is fail-closed on auditing: no audit record, no export. AI-assisted content leaves Orb tagged as draft so downstream systems cannot mistake it for verified clinical fact.
 - **Ingestion is fail-safe by mode.** Production defaults exclude synthetic data; simulation mode excludes external writes. Confirm the mode after any redeployment.
 - **The ingestion API key is a patient-record credential.** Store it in the connected system's secret store, never in shared documents, and rotate it on staff or vendor changes.

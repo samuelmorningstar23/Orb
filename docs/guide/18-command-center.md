@@ -1,6 +1,8 @@
 # 18: Command Center and Pulse: the hospital-wide operational picture
 
-Orb has two "step back and look at the whole house" surfaces, and they are the subject of this guide. **Command Center** is a full-screen executive board, a single pane of glass for a CMO/COO (Chief Medical Officer / Chief Operating Officer) that shows live bed census, a ward acuity heatmap, active patient deteriorations, sepsis-bundle compliance, a 24-hour capacity forecast, downtime readiness, and today's operating-room load, all read-only and re-fetched on a 20-second timer. **Pulse** is a small ambient widget that lives in the app header and pulls the *outside world* in, weather, air quality, flu surveillance, and FDA drug recalls, turning those into clinical risk flags. The two share a design language and a permission gate but are otherwise independent: Command Center aggregates Orb's *own* database, while Pulse ingests *external* public APIs and never sends any patient data out.
+Orb has two "step back and look at the whole house" surfaces, and they are the subject of this guide. **Command Center** is a full-screen executive board, a single pane of glass for a CMO/COO (Chief Medical Officer / Chief Operating Officer) that shows live bed census, a ward acuity heatmap, active patient deteriorations, sepsis-bundle compliance, a 24-hour capacity forecast, downtime readiness, and today's operating-room load, all read-only and re-fetched on a 20-second timer. **Pulse** is a small panel in the app header that shows the season for the hospital's state: what usually rises at this time of year and what is coming up in the next 60 days, from a seasonal calendar that ships with Orb. The two share a design language and a permission gate but are otherwise independent: Command Center aggregates Orb's *own* database, while Pulse reads a calendar file. Neither makes any internet connection.
+
+Pulse was rebuilt on 6 October 2026 (ruling R030 in `docs/RULINGS_NEEDED_2026-10.md`), and the Pulse parts of this guide describe the new contract at file level. Line citations for the rebuilt Pulse files are not filled in yet.
 
 ---
 
@@ -8,34 +10,35 @@ Orb has two "step back and look at the whole house" surfaces, and they are the s
 
 **The problem Command Center solves.** Orb's clinical pillars (Vigil for vitals, Forecast for capacity, the sepsis-bundle tracker, the OR schedule) each own a slice of reality. A hospital administrator needs *one* screen that fuses those slices into an operational picture without drilling into each pillar. Command Center is a **pure read aggregator**: it never mutates state, so it is safe to poll frequently, and it composes read-only views over the existing services and the SQLite database (`server/services/command_center_service.py:8-18`).
 
-**The problem Pulse solves.** Clinical risk is not only internal. A 42 °C heat wave, an air-quality spike, a national flu surge, or a drug recall all change how a ward should be run today. Pulse ingests free public feeds and converts them into actionable "clinical flags," under a strict one-directional contract: *the world's data flows IN, patient data NEVER flows out* (`server/services/pulse_service.py:1-18`).
+**The problem Pulse solves.** Clinical load follows the seasons. Dengue, malaria and leptospirosis rise in the monsoon; heat illness rises in summer. Pulse shows the hospital what usually rises in its state now and in the next 60 days, from `server/site_config/seasonal_calendar.json`, for the state set as `[site] state` in `site.toml`. Until 6 October 2026 it pulled four live internet feeds (Open-Meteo weather and air quality, openFDA recalls, CDC FluView), located the user through browser geolocation and OpenStreetMap, and turned fixed weather thresholds into "clinical flags". The strictly-offline rule of 4 October 2026 and the ruling of 6 October removed all of that.
 
 **Key design choices to remember.**
 
 - **Consistent numbers.** Command Center reuses the *same* hardcoded bed capacities (`WARD_CAPACITY`) and ward-normalization helper (`_normalize_ward`) that the Forecast pillar uses, so occupancy math never disagrees across the platform (`server/services/command_center_service.py:29-35`).
 - **Degrade, never crash.** Every board section is wrapped in its own `try/except`; a failing subsystem returns zeros plus an `error` note and the rest of the board still renders (`server/services/command_center_service.py:8-14`).
-- **Poll, not push.** Neither surface uses sockets. Command Center polls every 20 s (`src/components/command/CommandCenter.tsx:22`); Pulse polls every 15 min while open (`src/components/PulseWidget.tsx:138`) and the server caches each feed for 30 min–24 h.
+- **Poll, not push.** Neither surface uses sockets. Command Center polls every 20 s (`src/components/command/CommandCenter.tsx:22`). Pulse has no live feed to poll: it reads `GET /api/pulse/season`, which answers from the calendar on the appliance.
 
 ```mermaid
 graph LR
   subgraph Frontend
     CC[CommandCenter.tsx]
-    PW[PulseWidget.tsx + PulseDetail.tsx]
+    PW[PulseWidget.tsx]
   end
   subgraph Backend
     CCR[command_center_routes]
     PR[pulse_routes]
     CCS[command_center_service]
-    PS[pulse_service]
+    PS[seasonal_calendar service]
   end
   CC -->|GET /api/command-center| CCR --> CCS
-  PW -->|GET /api/pulse/*| PR --> PS
+  PW -->|GET /api/pulse/season| PR --> PS
   CCS --> FC[forecast_service]
   CCS --> SB[sepsis_bundle_service]
   CCS --> DT[downtime_service]
   CCS --> VG[vigil_service NEWS2]
   CCS --> DB[(SQLite)]
-  PS -->|HTTP pull| EXT[Open-Meteo / CDC / openFDA]
+  PS --> CAL[(seasonal_calendar.json)]
+  PS --> SITE[site.toml state]
 ```
 
 Neighbor guides referenced below: **Auth & RBAC** (the `require_permission` gate and role→permission map), **Forecast** (owns `WARD_CAPACITY`, `_normalize_ward`, `predict_hospital_flow`), **Vigil** (owns `compute_news2`), **Sepsis bundles** (owns `get_active_bundles`), **Downtime** (owns `get_latest_snapshot`), **Database schema** (the `patients`, `risk_scores`, `vitals`, `surgeries` tables), and the **API client / shell** (owns `apiFetch` and the tab gating).
@@ -48,13 +51,14 @@ Neighbor guides referenced below: **Auth & RBAC** (the `require_permission` gate
 |---|---|---|
 | `server/services/command_center_service.py` | 406 | Pure-read aggregator; builds the whole house snapshot from the DB + neighbor services. |
 | `server/routes/command_center_routes.py` | 83 | One GET route exposing `house_snapshot()`, gated on `forecast.read`. |
-| `server/services/pulse_service.py` | 634 | Fetches + caches external feeds (weather, AQI, flu, FDA), derives clinical flags, keeps an ingestion audit log. |
-| `server/routes/pulse_routes.py` | 98 | Six GET routes over the Pulse service; five gated on `forecast.read`, audit-log on `audit.read`. |
+| `server/site_config/seasonal_calendar.json` | new 6 Oct | The built-in seasonal calendar: zones covering every state and union territory, their entries, and the calendar's clinician review status. |
+| `server/services/seasonal_calendar.py` | new 6 Oct | Reads the calendar for the configured state's zone: what is in effect today, what starts in the next 60 days. |
+| `server/services/india_states.py` | new 6 Oct | The one list of the 36 state and union-territory codes, shared by `site.toml` validation and the calendar. |
+| `server/routes/pulse_routes.py` | rebuilt 6 Oct | One GET route, `/api/pulse/season`, gated on `forecast.read`. |
 | `src/components/command/CommandCenter.tsx` | 308 | React board component: polls the snapshot every 20 s and renders KPIs, heatmap, deteriorations, forecast, OR table. |
 | `src/components/command/CommandCenter.css` | 286 | Glassmorphic board styling; theme-aware via CSS variables; heatmap intensity via `--heat`. |
-| `src/components/PulseWidget.tsx` | 410 | Header widget: geolocation, fetches `/pulse/dashboard`, renders alerts/weather/AQI/flu/recalls, opens detail views. |
-| `src/components/PulseWidget.css` | 848 | Floating glass panel + detail-overlay styling; light/dark theme forks. |
-| `src/components/PulseDetail.tsx` | 236 | Slide-in detail overlay for each Pulse section, with source attribution. |
+| `src/api/pulse.ts` | new 6 Oct | `fetchPulseSeason()` and the `PulseSeason` response types. |
+| `src/components/PulseWidget.tsx` (+ `.css`) | rebuilt 6 Oct | Header panel: "This season" cards, "Coming up", the review status, or a request for the state. |
 | `server/tests/test_command_center.py` | 183 | Unit tests for census/acuity aggregation, deterioration ordering, section presence, and the empty-DB zeros path. |
 
 ---
@@ -91,15 +95,14 @@ sequenceDiagram
   C->>C: render + schedule next poll in 20s
 ```
 
-### Flow 2: Pulse widget open + refresh
+### Flow 2: Pulse panel open
 
-1. The Pulse trigger button lives in the header and is rendered for *every* logged-in user (`src/pages/ClinicianShell.tsx:452`), there is **no** frontend role gate on the button itself.
-2. On first open the widget requests browser geolocation; on success it reverse-geocodes the coordinates to a city name by calling `nominatim.openstreetmap.org` *directly from the browser* (not through Orb's backend) and persists the location to `localStorage` (`src/components/PulseWidget.tsx:65-103`).
-3. `fetchPulse()` calls `apiFetch('/pulse/dashboard?lat=…&lon=…')` (`src/components/PulseWidget.tsx:113-126`).
-4. `pulse_dashboard` runs `require_permission("forecast.read")`, then `get_pulse_dashboard(lat, lon)` fires all four feeds concurrently with `asyncio.gather(..., return_exceptions=True)` (`server/routes/pulse_routes.py:30-40`, `server/services/pulse_service.py:592-597`).
-5. Each feed returns from its in-memory cache if fresh (weather 30 min, AQI 1 h, flu 24 h, FDA 1 h), else it does one outbound `httpx` GET, logs the pull to the audit log, and repopulates the cache (TTL constants at `server/services/pulse_service.py:115-118`; the weather feed's cache-hit / fetch / log cycle at `:167-260`).
-6. The dashboard merges every feed's `clinical_flags` into one `active_alerts` list sorted by severity, and returns it. The widget renders alerts + each section; clicking a section opens `PulseDetail` (`server/services/pulse_service.py:610-627`, `src/components/PulseWidget.tsx:236-383`).
-7. While open, a 15-minute interval re-runs `fetchPulse` (`src/components/PulseWidget.tsx:136-140`).
+1. The Pulse trigger button lives in the header and is rendered for every logged-in user; there is no frontend role gate on the button itself.
+2. Opening the panel calls `fetchPulseSeason()` (`src/api/pulse.ts`), which is `apiFetch('/pulse/season')`. The browser makes no other request: no geolocation, no map lookup.
+3. The route runs `require_permission("forecast.read")`, then reads the calendar for the zone of the configured `[site] state`.
+4. The response carries `active` (entries in effect today, each with `in_peak`), `upcoming` (entries starting in the next 60 days, with `starts_on` and `days_away`) and `calendar` (the review status). The panel renders "This season", "Coming up" and either "Draft: not yet reviewed by a clinician" or "Reviewed by [name] on [date]".
+5. If no state is set, `setup_needed` is true and the panel shows `setup_message`, asking for the state, instead of a guess.
+6. If the calendar file is missing or was refused at startup, the route answers 503 with `CalendarError.public_message`, and the panel shows "The seasonal calendar could not be loaded." with that sentence and a **Try again** button. Orb itself keeps running.
 
 ---
 
@@ -234,122 +237,16 @@ Router prefix `/api/command-center`, tag "Command Center" (`server/routes/comman
 
 ---
 
-### pulse_service.py
+### Pulse server side (rebuilt 6 October 2026)
 
-Module constants: default location Mumbai (`DEFAULT_LAT/LON/CITY`, `:107-109`); cache TTLs weather 1800 s, AQI 3600 s, CDC 86400 s, FDA 3600 s, plus `PULSE_REFRESH_INTERVAL=900` (`:115-119`); module-level caches and a `_pulse_log` audit list (`:121-135`). `OPENWEATHERMAP_API_KEY` (`:112`) and `_alerts_cache` (`:134`) are declared but unused (see Discrepancies).
+The old `pulse_service.py` functions (`fetch_weather`, `_generate_weather_clinical_flags`, `fetch_aqi`, `fetch_fda_recalls`, `fetch_cdc_flu_data`, `_classify_ili_level`, `_seasonal_flu_estimate`, `get_pulse_dashboard`, `_log_ingestion`, `_hash_response`, `get_ingestion_audit_log`), the outbound `_external_transport_kwargs`, and the routes `/api/pulse/dashboard`, `/weather`, `/aqi`, `/flu`, `/drug-recalls` and `/audit-log` are gone. What replaced them:
 
-Above all of that sits `_external_transport_kwargs` (`:64`), which builds the proxy/TLS settings every outbound `httpx` call uses. It is the one place that decides how this appliance is allowed to reach the public internet, a hospital that routes egress through a corporate proxy configures it here and nowhere else.
+- **`server/site_config/seasonal_calendar.json`**, the data. Zones that between them name every code in `services/india_states.py` exactly once; per zone, entries of kind `season`, `disease` or `environment`, each with `title`, `start`/`end` (`MM-DD`, may cross the new year), a peak, `summary`, `typically_rises` and `sources` (name, address, date read). The file carries its own review record: `status` `draft` until the pilot hospital's clinical lead reviews it, then `reviewed`, with `reviewed_by` and `reviewed_on`.
+- **`server/services/seasonal_calendar.py`**, reads the calendar for the configured state's zone and works out what is in effect today and what starts in the next 60 days.
+- **`server/routes/pulse_routes.py`**, one route: `GET /api/pulse/season`, gated on `forecast.read`.
+- **`[site] state`** in `site.toml`, validated in `site_config_service._resolve_state` against `india_states.resolve_state`: a name or code in any case, never a nearest match. An unknown value stops Orb at startup with a "Did you mean" hint.
 
-#### _log_ingestion: `server/services/pulse_service.py:142`
-**Signature:** `(source, url, status, data_hash="") → None`
-**Does:** Append one compliance-audit record for an external pull.
-**How it works:** build `{timestamp, source, url, status, data_hash, direction:"INBOUND_ONLY"}`, append to `_pulse_log`, and pop the oldest if the list exceeds 500.
-**Why it exists:** Proves the one-directional contract, every outbound pull is logged, and each entry is explicitly stamped inbound-only.
-**Data in/out:** call args → in-memory log entry.
-**Talks to:** called by every fetcher; surfaced via `get_ingestion_audit_log` → `/api/pulse/audit-log`.
-**Gotchas:** In-memory only, the log resets on server restart and is not shared across workers. Not durable audit storage.
-
-#### _hash_response: `server/services/pulse_service.py:158`
-**Signature:** `(data: str) → str`
-**Does:** Return the first 16 hex chars of the SHA-256 of a response body.
-**Why it exists:** A short integrity fingerprint for the audit trail without storing the payload.
-**Gotchas:** Truncated to 16 chars, a fingerprint, not a cryptographic commitment.
-
-#### fetch_weather: `server/services/pulse_service.py:167`
-**Signature:** `async (lat=DEFAULT_LAT, lon=DEFAULT_LON) → dict`
-**Does:** Fetch current conditions + a 7-day forecast from Open-Meteo, with clinical flags.
-**How it works:** 1) return the module cache if younger than 30 min; 2) build the Open-Meteo URL (no API key needed); 3) `httpx` GET (10 s timeout), `raise_for_status`, log the pull; 4) map WMO weather codes to descriptions; 5) build a 7-day `forecast` list; 6) `_generate_weather_clinical_flags`; 7) assemble `{current, forecast, clinical_flags, location, last_updated}`, cache, return; 8) on any error, log it and return the stale cache if present, else an empty shape with `error`.
-**Why it exists:** Open-Meteo is free, keyless, and global, a zero-cost universal weather source.
-**Data in/out:** lat/lon → weather dict consumed by `PulseWidget` and `PulseDetail`.
-**Talks to:** `api.open-meteo.com`; `_log_ingestion`, `_hash_response`, `_generate_weather_clinical_flags`.
-**Change guide:** To change the city default, edit `DEFAULT_LAT/LON` (`:107-108`), but the client passes explicit lat/lon so this only affects direct API calls with no params. To fetch 14 days, change `forecast_days=7` in the URL (`:186`) and the client forecast strip will render more days.
-**Gotchas:** The module docstring claims NWS/OpenWeatherMap; the code actually uses Open-Meteo (see Discrepancies). Cache is process-global, all users share one weather reading regardless of their own location once cached (see Discrepancies).
-
-#### _generate_weather_clinical_flags: `server/services/pulse_service.py:263`
-**Signature:** `(current: dict, forecast: list) → list`
-**Does:** Derive weather-driven clinical risk flags (heat advisory, cold advisory, storm warning, heat-index danger).
-**How it works:** thresholds on temperature (≥38 → heat, ≥42 → high; ≤5 → cold), a scan of the next 3 forecast days for weather codes ≥80 (storm; ≥95 → high), and a combined temp≥32 & humidity≥70 heat-index rule. Each flag carries `type/severity/icon/title/message/affected_conditions/recommended_actions`.
-**Why it exists:** Turns raw meteorology into ward-actionable guidance (which patient cohorts to watch, what to pre-position).
-**Data in/out:** current+forecast → list of flag dicts.
-**Talks to:** called by `fetch_weather`; flags flow into `active_alerts` and `PulseDetail`'s recommendation list.
-**Change guide:** To localise thresholds (e.g. a tropical hospital), edit the numeric cutoffs: heat `temp >= 38` with high at `>= 42` (`:270`, `:273`), cold `temp <= 5` (`:286`), storm `code >= 80` with high at `>= 95` (`:303`, `:306`), heat index `temp >= 32 and humidity >= 70` (`:320`). Worked example: lowering the heat threshold to 35 °C makes more days trip the advisory and raises `alert_count`, which changes the header badge colour.
-**Gotchas:** Defaults temp 25/humidity 50 when missing, so absent data never *raises* a false alarm. Storm scan `break`s after the first storm day, so only the nearest storm is flagged.
-
-#### fetch_aqi: `server/services/pulse_service.py:341`
-**Signature:** `async (lat, lon) → dict`
-**Does:** Fetch the US AQI + pollutants from Open-Meteo's air-quality API and derive a respiratory flag.
-**How it works:** cache (1 h) → GET → bucket the AQI into category+color (Good/Moderate/…/Hazardous) → if AQI>100 add an `AQI_ALERT` clinical flag → assemble `{aqi, category, color, pollutants, clinical_flags, last_updated}` → cache/return; error path returns stale cache or `{aqi:None, category:"Unavailable", …}`.
-**Why it exists:** Poor air quality directly raises risk for asthma/COPD/cardiac patients; this makes that visible.
-**Data in/out:** lat/lon → AQI dict (color drives the widget's value colour via `getAqiColorClass`, `src/components/PulseWidget.tsx:160-170`).
-**Talks to:** `air-quality-api.open-meteo.com`; audit log.
-**Gotchas:** `color` is a *semantic* name (green/yellow/orange/red/purple/maroon) mapped to CSS classes on the client, not a raw hex, keep the two maps in sync.
-
-#### fetch_fda_recalls: `server/services/pulse_service.py:429`
-**Signature:** `async (limit=10) → list`
-**Does:** Fetch recent FDA drug enforcement/recall actions from openFDA.
-**How it works:** cache (1 h) → GET `drug/enforcement.json?sort=report_date:desc&limit=…` → map each result to a trimmed record (product/reason truncated to 200 chars, classification, status, dates, firm, city/state) → cache/return; error → stale cache or `[]`.
-**Why it exists:** Surfaces drug safety actions that may affect the formulary.
-**Data in/out:** limit → list of recall dicts (rendered in the widget and `PulseDetail`'s `recall-*` view).
-**Talks to:** `api.fda.gov`; audit log.
-**Gotchas:** The docstring elsewhere claims recalls are "cross-referenced with patient medications", they are **not**; this is a plain recent-recalls feed with zero patient data involved (see Discrepancies).
-
-#### fetch_cdc_flu_data: `server/services/pulse_service.py:482`
-**Signature:** `async () → dict`
-**Does:** Fetch CDC influenza-like-illness (ILI) surveillance, falling back to a seasonal estimate.
-**How it works:** cache (24 h) → GET the CDC Socrata resource → if 200 with data, read the latest row's `weighted_ili`/`total_patients`, classify the activity level, and add a `FLU_SURGE` flag when ILI>3 % (>5 % → high) → cache/return; on non-200/exception/empty, fall through to `_seasonal_flu_estimate`.
-**Why it exists:** National flu pressure predicts local respiratory admissions; the fallback guarantees a sensible number even when CDC is unreachable.
-**Data in/out:** none → flu dict (`source, week, year, ili_percentage, total_patients, activity_level, clinical_flags, last_updated`).
-**Talks to:** `data.cdc.gov`; `_classify_ili_level`, `_seasonal_flu_estimate`; audit log.
-**Gotchas:** The success path returns *inside* the `if data:` block; an HTTP 200 with an empty array silently drops to the seasonal fallback. The widget shows "(seasonal estimate)" whenever `source` contains "Estimate" (`src/components/PulseWidget.tsx:358`).
-
-#### _classify_ili_level: `server/services/pulse_service.py:548`
-**Signature:** `(ili_pct: float) → str`
-**Does:** Bucket an ILI percentage into `minimal/low/moderate/high/very_high`.
-**Talks to:** used by both the live and fallback flu paths; the level string drives the flu colour class on the client (`src/components/PulseWidget.css:490-500`).
-**Gotchas:** none noteworthy.
-
-#### _seasonal_flu_estimate: `server/services/pulse_service.py:561`
-**Signature:** `() → dict`
-**Does:** Produce a plausible ILI figure from the current month (Northern-Hemisphere Dec–Feb peak).
-**How it works:** look up a per-month ILI table, classify it, and return the same shape as the live path but with `source="Seasonal Estimate (CDC API unavailable)"`.
-**Why it exists:** The board must never show a blank flu tile; a seasonal prior is better than nothing.
-**Gotchas:** Uses `datetime.now()` (naive/local) for the month, fine for a coarse monthly bucket, but note it is not the UTC clock used elsewhere. Hardcoded to the Northern Hemisphere; a Southern-Hemisphere deployment would see inverted seasonality.
-
-#### get_pulse_dashboard: `server/services/pulse_service.py:586`
-**Signature:** `async (lat, lon) → dict`
-**Does:** Aggregate all four feeds into the single payload the widget consumes.
-**How it works:** 1) `asyncio.gather(fetch_weather, fetch_aqi, fetch_cdc_flu_data, fetch_fda_recalls(5), return_exceptions=True)`, concurrent; 2) replace any feed that returned an `Exception` with its empty shape; 3) merge every feed's `clinical_flags` into `active_alerts` sorted by severity (high→moderate→low); 4) return `{weather, air_quality, flu_surveillance, drug_recalls, active_alerts, alert_count, last_refresh, data_direction}`.
-**Why it exists:** One round-trip for the whole widget; concurrency keeps the p95 latency near the slowest single feed, not their sum.
-**Data in/out:** lat/lon → the `PulseData` shape (`src/components/PulseWidget.tsx:17-25`).
-**Talks to:** all four fetchers; called by `pulse_dashboard` route.
-**Change guide:** To add a fifth feed (e.g. pollen), write its fetcher, add it to the `gather`, and extend the merge; the client renders any flags automatically since it just maps `active_alerts`.
-**Gotchas:** `return_exceptions=True` means a crashed feed never takes down the dashboard, but a feed that *returns* its own `{error:…}` shape (not an exception) still counts as "present" with empty flags.
-
-#### get_ingestion_audit_log: `server/services/pulse_service.py:632`
-**Signature:** `(limit=50) → list`
-**Does:** Return the last `limit` ingestion-audit entries.
-**Talks to:** `/api/pulse/audit-log` route (gated on `audit.read`).
-**Gotchas:** Returns a slice of the in-memory list; not persisted (see `_log_ingestion`).
-
----
-
-### pulse_routes.py
-
-Router prefix `/api/pulse`, tag "pulse" (`server/routes/pulse_routes.py:27`), registered at `server/main.py:696`. All five data routes gate on `require_permission("forecast.read")`; `/audit-log` gates on `audit.read`. Each data route wraps its service call in `try/except` and re-raises as HTTP 500 on failure.
-
-| Handler | Line | Method + path | Auth | Returns |
-|---|---|---|---|---|
-| `pulse_dashboard` | 31 | GET `/api/pulse/dashboard?lat&lon` | forecast.read | full dashboard |
-| `weather` | 44 | GET `/api/pulse/weather?lat&lon` | forecast.read | weather + 7-day |
-| `air_quality` | 57 | GET `/api/pulse/aqi?lat&lon` | forecast.read | AQI + pollutants |
-| `flu_surveillance` | 70 | GET `/api/pulse/flu` | forecast.read | CDC/seasonal ILI |
-| `drug_recalls` | 81 | GET `/api/pulse/drug-recalls?limit≤50` | forecast.read | recall list |
-| `audit_log` | 93 | GET `/api/pulse/audit-log?limit≤200` | audit.read | ingestion log |
-
-**How they work:** each async handler declares its query params with FastAPI `Query` defaults (lat 19.076, lon 72.8777), resolves the permission dependency, awaits the service function, and on exception raises `HTTPException(500, detail=…)`. `drug_recalls` caps `limit` at 50 and `audit_log` at 200 via `Query(le=…)`.
-**Why they exist:** A thin, individually-cacheable REST surface, the widget uses `/dashboard`, but the per-feed routes let other callers (or tests) pull one feed.
-**Talks to:** the matching `pulse_service` functions; `require_permission` (Auth/RBAC). `pulse_dashboard` is the only one the frontend currently calls (`src/components/PulseWidget.tsx:114-121`).
-**Gotchas:** The dashboard already swallows feed errors internally, so the route's 500 path is essentially unreachable for `/dashboard`; the per-feed routes can still 500 if their fetcher itself raises (it usually doesn't, fetchers return `error` shapes).
+**Change guide:** a calendar edit is a clinical change. If the calendar has been reviewed, an edit means a new review; update the review record in the same change. Do not add a feed, a geolocation call or a lookup service here: Orb is strictly offline, and a separate internet-connected box that pushes data in was ruled out on 6 October as a bridge from the internet into Orb.
 
 ---
 
@@ -393,52 +290,16 @@ Interfaces `WardCensus`/`HeatCell`/`Deterioration`/`ORCase`/`HouseSnapshot` (`:6
 
 ---
 
-### PulseWidget.tsx
+### PulseWidget.tsx (rebuilt 6 October 2026)
 
-`weatherEmoji` (`:33`) maps WMO codes to emoji; `DEFAULT_LOCATION` is Mumbai (`:43`).
-
-#### PulseWidget (default export): `src/components/PulseWidget.tsx:46`
-**Signature:** `() → JSX.Element`
-**Does:** The header widget, trigger button + a floating glass panel showing environmental intelligence.
-**How it works (key pieces):**
-- **State:** `isOpen`, `pulseData`, `loading`, `error`, `location` (lazy-initialised from `localStorage`), `geoStatus`, `detailView`, `selectedAlert`.
-- **`requestLocation`** (`:65`), a `useCallback` that checks `navigator.geolocation`, requests coordinates, reverse-geocodes via `nominatim.openstreetmap.org` for a city label, persists to `localStorage`, and sets `geoStatus`.
-- **Auto-locate** on first open (`:106-110`); **`fetchPulse`** (`:113`) calls `/pulse/dashboard?lat&lon`; **fetch on open/location change** (`:129-133`); **15-min auto-refresh while open** (`:136-140`); **Escape closes** detail then panel (`:143-154`).
-- **`getAqiColorClass`** (`:159`) maps the server's `color` name to a CSS class.
-- **Render:** trigger button with an alert badge (red default, amber when highest severity is "moderate"); on open, a backdrop + panel with active alerts, weather (+7-day strip), AQI, flu, and up to three FDA recalls; a footer reiterating "Inbound only · Zero patient data transmitted"; and a `PulseDetail` overlay when `detailView` is set.
-**Why it exists:** An ambient, always-available "outside world" panel that is cheap (cached feeds), private (no patient egress), and location-aware.
-**Data in/out:** `PulseData` (`:16-24`) → rendered panel. Persists `orb_pulse_location` in `localStorage`.
-**Talks to:** `GET /api/pulse/dashboard`; `nominatim.openstreetmap.org` (direct browser call); child `PulseDetail`. Rendered unconditionally in the header (`src/pages/ClinicianShell.tsx:452`).
-**Change guide:** To change the default city, edit `DEFAULT_LOCATION` at `:43` (and align the server default). To disable geolocation and always use the default, remove the auto-locate effect at `:106-110`. Worked example: a kiosk deployment might hardcode the hospital's coordinates and skip the `navigator.geolocation` prompt entirely.
-**Gotchas:** **Stale closure**, the Escape handler effect lists `[isOpen, detailView]` but calls `closePanel`/setters defined in the component body; because those setters are stable and it re-subscribes when `detailView` changes, it stays correct. The **`localStorage.getItem` initializer** runs `JSON.parse` with no try/catch, a corrupt stored value would throw at mount (see Discrepancies). The reverse-geocode call goes straight from the browser to OpenStreetMap, bypassing the backend's inbound-only audit log, it sends only coordinates, never patient data, but it is worth knowing the "all ingestion is logged" story has this client-side gap.
-
----
-
-### PulseDetail.tsx
-
-Small presentational helpers, then a `view`-switch component.
-
-#### SourceBadge / ActionItem / BackBtn / Row: `src/components/PulseDetail.tsx:13` / `:24` / `:33` / `:41`
-**Does:** Reusable bits, a "Source: <link>" attribution, a green-check recommendation row, a back-chevron button, and a label/value row (rendering `, ` for nullish values).
-**Why they exist:** Keep the five detail views terse and visually consistent.
-**Gotchas:** `Row` coalesces `undefined`→`, ` but not empty string; an empty string prints blank.
-
-#### PulseDetail (default export): `src/components/PulseDetail.tsx:48`
-**Signature:** `({ view, data, onBack }) → JSX.Element | null`
-**Does:** Render the expanded detail overlay for whichever section the user clicked.
-**How it works:** branches on `view`: `weather` (hero temp + humidity/wind/pressure/coords + 7-day rows + clinical recommendations), `aqi` (AQI hero + pollutant rows), `flu` (ILI hero + source/week/year), `alert` (the `_selectedAlert` passed in via `data`), and `recall-<idx>` (parses the index and shows the full recall record). Unknown `view` → `null`.
-**Why it exists:** Progressive disclosure, the compact widget stays scannable; details live one tap away with source links for provenance.
-**Data in/out:** `view` string + the `pulseData` object (with an injected `_selectedAlert`) → overlay JSX.
-**Talks to:** rendered by `PulseWidget` when `detailView` is set (`src/components/PulseWidget.tsx:397-404`); shares `PulseWidget.css`.
-**Change guide:** To add a detail view for a new feed, add a `if (view === 'pollen')` branch and a corresponding `openDetail('pollen')` trigger in the widget.
-**Gotchas:** `recall-<idx>` does `parseInt(view.split('-')[1])` and indexes `data.drug_recalls[idx]`; if the recalls array changed between opening the widget and clicking, the index could be stale, it guards with `if (!r) return null`.
+The header trigger and panel. It calls `fetchPulseSeason()` and renders the "This season" cards (title, period, a **Peak now** tag, summary, "Typically rises: ...", sources named as plain text), "Coming up", and the review status; with no state set it shows the request for one. The old pieces are gone: the browser geolocation request, the `nominatim.openstreetmap.org` reverse-geocode, the `orb_pulse_location` key in `localStorage`, the Mumbai default, the 15-minute refresh, the alert badge, the AQI colour map and the weather, AQI, flu, recall and alert detail views.
 
 ---
 
 ### CSS files (summary)
 
 - **CommandCenter.css** (239 lines), the board's glassmorphic look, keyed entirely off app CSS variables (`--bg-glass`, `--status-ok/warn/danger`, `--accent-gold`) so it is theme-aware. Notable: KPI cards use a `--kpi-accent` variable set by the tone class (`:74-76`); the heatmap cell background is a `linear-gradient` scaled by the `--heat` custom property injected from JS (`:146-150`); wide regions (heatmap, OR table) scroll inside their own `overflow-x:auto` containers so the page body never scrolls sideways (`:133,199`); a `@media (max-width:1000px)` block collapses the two-column grid to one (`:230-238`).
-- **PulseWidget.css** (923 lines), the floating panel (`position:fixed; top:64px; right:24px; width:380px`), glass blur, entry animations, and per-section styling, plus a full **detail-overlay** stylesheet (`.pulse-detail*`). Both light and dark are styled explicitly via `[data-theme="light"]` forks. AQI/flu colour classes are semantic (good/moderate/…); the alert badge has a glow keyframe.
+- **PulseWidget.css**, the floating panel and its season cards. Rebuilt with the panel on 6 October 2026; the AQI and flu colour classes and the alert-badge glow went with the feeds they styled.
 
 **Gotcha (both):** these lean on the design-token variables defined by the app shell/theme; if a token is missing the fallbacks (e.g. `rgba(255,255,255,0.04)`) assume a dark background, so a broken light theme could render low-contrast text.
 
@@ -454,7 +315,7 @@ Small presentational helpers, then a `view`-switch component.
 | `test_all_board_sections_present` | 79 | All seven sections plus `generated_at` exist, with the expected sub-keys on bundles/downtime/forecast/or_today. |
 | `test_empty_db_path_returns_zeros_without_crashing` | 93 | `_census_and_acuity([])`, `_deteriorations([])`, `_downtime_readiness([])`, `_empty_census()`, `_empty_acuity()` all return correctly-shaped zeros without raising. |
 
-**What they lock in:** the census/capacity consistency contract with Forecast, the acuity-partitions-census invariant, deterioration ordering, and the degrade-to-zeros guarantee. There is **no** test file for `pulse_service` in scope.
+**What they lock in:** the census/capacity consistency contract with Forecast, the acuity-partitions-census invariant, deterioration ordering, and the degrade-to-zeros guarantee. Pulse has no test in this file; its tests came with the 6 October 2026 rebuild.
 
 ---
 
@@ -465,18 +326,13 @@ Small presentational helpers, then a `view`-switch component.
 | Method | Full path | Auth permission | Purpose |
 |---|---|---|---|
 | GET | `/api/command-center` and `/api/command-center/` | `forecast.read` | Full house snapshot. |
-| GET | `/api/pulse/dashboard` | `forecast.read` | Combined environmental dashboard. |
-| GET | `/api/pulse/weather` | `forecast.read` | Weather + 7-day + flags. |
-| GET | `/api/pulse/aqi` | `forecast.read` | Air quality + pollutants. |
-| GET | `/api/pulse/flu` | `forecast.read` | CDC/seasonal ILI. |
-| GET | `/api/pulse/drug-recalls` | `forecast.read` | FDA recalls (limit ≤50). |
-| GET | `/api/pulse/audit-log` | `audit.read` | Ingestion audit trail (limit ≤200). |
+| GET | `/api/pulse/season` | `forecast.read` | The season for the hospital's state: in effect now, coming up in 60 days, review status. |
 
 **Socket events:** none. Both surfaces are HTTP poll only.
 
-**DB tables read** (never written by this subsystem): `patients`, `risk_scores`, `vitals`, `surgeries` (directly), plus `care_bundles` (via `sepsis_bundle_service`) and `patient_snapshots` (via `downtime_service`). Pulse touches **no** database tables, its "audit log" is in-memory.
+**DB tables read** (never written by this subsystem): `patients`, `risk_scores`, `vitals`, `surgeries` (directly), plus `care_bundles` (via `sepsis_bundle_service`) and `patient_snapshots` (via `downtime_service`). Pulse touches **no** database tables: it reads the calendar file and the `[site] state` setting.
 
-**Exported functions other code relies on:** `command_center_service.house_snapshot()` (used by the route and imported directly by the tests); `pulse_service.get_pulse_dashboard / fetch_weather / fetch_aqi / fetch_cdc_flu_data / fetch_fda_recalls / get_ingestion_audit_log` (imported by `pulse_routes`).
+**Exported functions other code relies on:** `command_center_service.house_snapshot()` (used by the route and imported directly by the tests); the seasonal calendar reader in `services/seasonal_calendar.py` (used by `pulse_routes`, and by Forecast for its one-line season context).
 
 **Contracts this subsystem consumes (owned elsewhere):**
 
@@ -509,26 +365,26 @@ Small presentational helpers, then a `view`-switch component.
 1. `command_center_service.py`, helpers (`_now`, `_parse_ts`, `_admitted_with_acuity`), then the section builders, then `house_snapshot` with per-section guards. Write `test_command_center.py` alongside.
 2. `command_center_routes.py`, one GET gated on `forecast.read`; register it in `main.py`.
 3. `CommandCenter.tsx` + `.css`, the poller and board; wire the `command` tab into the shell for `doctor`/`admin`.
-4. `pulse_service.py`, the four fetchers with in-memory caches + audit log, `_generate_weather_clinical_flags`, and `get_pulse_dashboard`.
-5. `pulse_routes.py`, six GETs; register in `main.py`.
-6. `PulseWidget.tsx` + `PulseDetail.tsx` + `.css`, the header widget and detail overlays; mount the widget in the header.
+4. `india_states.py`, `seasonal_calendar.json` (shipped as a draft) and `seasonal_calendar.py`; add `state` to the `[site]` schema in `site_config_service.py`.
+5. `pulse_routes.py`, one GET, `/api/pulse/season`; register in `main.py`.
+6. `src/api/pulse.ts` and `PulseWidget.tsx` + `.css`; mount the widget in the header.
 
 **Acceptance checks:**
 
 - Seed one admitted ICU patient with a `critical` risk score, call `house_snapshot()`, and confirm `census.total_admitted==1`, `total_capacity==32`, the ICU heatmap cell shows `critical>=1`, and the patient appears in `deteriorations` (this is exactly what `test_command_center.py` asserts). On an empty DB the snapshot returns all-zeros with no exception.
 - As a `doctor`, `GET /api/command-center/` returns 200 with all seven sections; as a `pharmacist` it returns 403. The board renders and updates its "Updated HH:MM:SS" every 20 s.
-- `GET /api/pulse/dashboard?lat=19.076&lon=72.8777` returns weather/air_quality/flu_surveillance/drug_recalls/active_alerts with `data_direction` = "INBOUND_ONLY …", and a subsequent `GET /api/pulse/audit-log` (as `admin`) lists the pulls just made.
+- With `state = "Maharashtra"` in `site.toml`, `GET /api/pulse/season` returns `active` and `upcoming` for Maharashtra's zone and `calendar.status` = `draft`. With no `state`, it returns `setup_needed: true`. With `state = "Maharastra"`, Orb refuses to start and suggests Maharashtra. With the network cable out, nothing changes.
 
 ---
 
 ## Discrepancies and open questions
 
-1. **Pulse docstring vs. implementation.** The module docstring advertises "NWS / OpenWeatherMap", "AirNow EPA", "NTP-synced timestamps", and "FDA drug recall alerts cross-referenced with patient medications" (`server/services/pulse_service.py:1-18`). In reality: weather and AQI both use **Open-Meteo** (`:178`, `:351`); timestamps are plain `datetime.now(timezone.utc)` with **no NTP sync**; and FDA recalls are **not** cross-referenced with any patient medications, the feed never touches patient data. The docstring is stale/aspirational.
-2. **Dead code in Pulse.** `OPENWEATHERMAP_API_KEY` (`:37`) and `_alerts_cache` (`:59`) are declared but never used.
+1. **Resolved 6 October 2026 (Pulse rebuild): the feeds this item describes are gone.** **Pulse docstring vs. implementation.** The module docstring advertises "NWS / OpenWeatherMap", "AirNow EPA", "NTP-synced timestamps", and "FDA drug recall alerts cross-referenced with patient medications" (`server/services/pulse_service.py:1-18`). In reality: weather and AQI both use **Open-Meteo** (`:178`, `:351`); timestamps are plain `datetime.now(timezone.utc)` with **no NTP sync**; and FDA recalls are **not** cross-referenced with any patient medications, the feed never touches patient data. The docstring is stale/aspirational.
+2. **Resolved 6 October 2026 (Pulse rebuild), the module is gone.** **Dead code in Pulse.** `OPENWEATHERMAP_API_KEY` (`:37`) and `_alerts_cache` (`:59`) are declared but never used.
 3. **Nurse can hit Command Center's API but has no tab.** `nurse` holds `forecast.read` (`server/permissions.py:117-133`) so `GET /api/command-center/` succeeds, yet the `command` tab is absent from a nurse's `getAccessibleTabs` (`src/pages/ClinicianShell.tsx:200`). Not a bug per se, but the backend gate is looser than the frontend intent, if Command Center is meant to be executive-only, the route should use a stricter permission than `forecast.read`.
 4. **Pulse button shows for roles that can't use it.** The trigger renders for every role (`src/pages/ClinicianShell.tsx:452`), but `pharmacist`/`patient` lack `forecast.read`, so opening it yields an error inside the panel rather than the button being hidden.
-5. **Client-side geocode bypasses the "all ingestion logged" story.** `PulseWidget` calls `nominatim.openstreetmap.org` directly from the browser (`src/components/PulseWidget.tsx:83-85`); that outbound request is not captured by the server's `_pulse_log`. Only coordinates are sent (no patient data), so the privacy contract holds, but the audit-log claim of covering *every* external pull has this gap.
-6. **Unguarded `JSON.parse` of `localStorage`.** The `location` state initializer parses `orb_pulse_location` with no try/catch (`src/components/PulseWidget.tsx:51-54`); a corrupted value would throw during render.
-7. **Process-global Pulse caches ignore per-user location.** The weather/AQI caches are module-level singletons keyed by nothing (`:47-51`); once user A caches Mumbai weather, user B requesting London within the TTL receives Mumbai's cached reading until it expires. Fine for a single-site deployment, wrong for multi-location use.
+5. **Resolved 6 October 2026 (Pulse rebuild): no geocode, no location of any kind.** **Client-side geocode bypasses the "all ingestion logged" story.** `PulseWidget` calls `nominatim.openstreetmap.org` directly from the browser (`src/components/PulseWidget.tsx:83-85`); that outbound request is not captured by the server's `_pulse_log`. Only coordinates are sent (no patient data), so the privacy contract holds, but the audit-log claim of covering *every* external pull has this gap.
+6. **Resolved 6 October 2026 (Pulse rebuild): the stored location is gone.** **Unguarded `JSON.parse` of `localStorage`.** The `location` state initializer parses `orb_pulse_location` with no try/catch (`src/components/PulseWidget.tsx:51-54`); a corrupted value would throw during render.
+7. **Resolved 6 October 2026 (Pulse rebuild): no caches, and the location is the hospital's, from `site.toml`.** **Process-global Pulse caches ignore per-user location.** The weather/AQI caches are module-level singletons keyed by nothing (`:47-51`); once user A caches Mumbai weather, user B requesting London within the TTL receives Mumbai's cached reading until it expires. Fine for a single-site deployment, wrong for multi-location use.
 8. **Vacuous 100 % sepsis compliance.** With no active bundles, `_bundles` reports `compliance_pct=100` (`server/services/command_center_service.py:196`), which the KPI paints green, this reads as "excellent" when it actually means "nothing is being tracked."
 9. **UTC "today" for the OR board.** `_or_today` uses the UTC calendar day (`:262`); for a hospital in a non-UTC timezone, late-evening cases can appear on the wrong board day.

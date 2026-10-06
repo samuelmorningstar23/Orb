@@ -171,8 +171,8 @@ export const SCRIPTS: DemoScript[] = [
   {
     id: 'pulse', title: 'Pulse', persona: 'doctor',
     steps: [
-      { caption: 'Pulse sits beside the ward: weather, air quality, flu surveillance and drug recalls, read from public feeds.', actions: [{ do: 'click', sel: '#nav-today' }, { do: 'wait', sel: '#panel-today' }, { do: 'click', sel: '#btn-pulse' }, { do: 'wait', sel: '.pulse-panel', timeout: 10_000 }] },
-      { caption: 'Inbound only: the one call out carries a map coordinate and no patient. Every call is logged, and the firewall can block it with no loss of clinical function.', actions: [{ do: 'sleep', ms: 800 }] },
+      { caption: 'Pulse shows the season the hospital is in, and what it usually brings to the wards, from a calendar for its state built into Orb.', actions: [{ do: 'click', sel: '#nav-today' }, { do: 'wait', sel: '#panel-today' }, { do: 'click', sel: '#btn-pulse' }, { do: 'wait', sel: '.pulse-panel', timeout: 10_000 }] },
+      { caption: 'Nothing comes from the internet. The calendar lives on this machine and says plainly whether a clinician has reviewed it.', actions: [{ do: 'sleep', ms: 800 }] },
     ],
   },
 ]

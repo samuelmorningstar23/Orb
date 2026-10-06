@@ -1,12 +1,17 @@
 /* ==========================================================================
-   Orb Pulse Widget — Environmental Intelligence Overlay
+   Pulse: season and conditions
    ==========================================================================
-   Floating panel triggered from the header. Flat "Quiet Clinical" surfaces:
-   opaque elevated panel, 1px hairline borders, semantic status colours only.
-   Sits above all content at z-index: 100. Themes automatically via tokens.
+   A panel opened from the header. Flat "Quiet Clinical" surfaces: an opaque
+   elevated panel, 1px hairline borders, status colours only where they carry
+   meaning (the draft label, the "Peak now" chip). Every colour is a theme
+   token, so light, dark and night restyle it from src/index.css.
+
+   Shared primitives used from src/pages/ClinicianShell.css: .orb-state (the
+   loading, empty and error blocks) and .orb-count-chip--info ("Peak now").
+   No opacity anywhere: state and de-emphasis are colour and weight.
    ========================================================================== */
 
-/* ─── Pulse Trigger Button ─── */
+/* ─── Trigger (header) ─── */
 .pulse-trigger {
   position: relative;
   width: 36px;
@@ -35,27 +40,6 @@
   border-color: color-mix(in srgb, var(--status-info) 28%, transparent);
 }
 
-/* Alert badge (dot) when there are active alerts */
-.pulse-trigger__badge {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--status-danger);
-  animation: pulse-badge-glow 2s infinite ease-in-out;
-}
-
-.pulse-trigger__badge--moderate {
-  background: var(--status-warn);
-}
-
-@keyframes pulse-badge-glow {
-  0%, 100% { opacity: 0.6; transform: scale(1); }
-  50% { opacity: 1; transform: scale(1.15); }
-}
-
 /* ─── Backdrop (click to close) ─── */
 .pulse-backdrop {
   position: fixed;
@@ -64,91 +48,143 @@
   background: transparent;
 }
 
-/* ─── Panel Container ─── */
+/* ─── Panel ─── */
 .pulse-panel {
   position: fixed;
   top: 64px;
   right: 24px;
-  width: 380px;
+  width: min(380px, calc(100vw - 32px));
   max-height: calc(100vh - 88px);
   z-index: 100;
-  border-radius: var(--radius-lg);
-  overflow: hidden;
   display: flex;
   flex-direction: column;
-
-  /* Flat elevated overlay */
+  overflow: hidden;
   background: var(--bg-elevated);
   border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
   box-shadow: var(--elev-3);
-
-  /* Entry animation */
-  animation: pulse-panel-enter 200ms ease-out;
+  animation: pulse-panel-enter 160ms ease-out;
   transform-origin: top right;
 }
 
+/* Movement only: the panel is opaque from its first frame. */
 @keyframes pulse-panel-enter {
-  from {
-    opacity: 0;
-    transform: translateY(-8px) scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
+  from { transform: translateY(-6px); }
+  to { transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-panel { animation: none; }
+}
+
+@media (max-width: 480px) {
+  .pulse-panel {
+    right: 16px;
+    left: 16px;
+    width: auto;
   }
 }
 
-/* ─── Panel Header ─── */
+/* ─── Header ─── */
 .pulse-panel__header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: var(--space-3);
   padding: 16px 16px 12px;
   border-bottom: 1px solid var(--border-subtle);
+}
+
+.pulse-panel__heading {
+  min-width: 0;
 }
 
 .pulse-panel__title {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-primary);
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 650;
+  line-height: 1.3;
   letter-spacing: -0.01em;
+  color: var(--text-primary);
 }
 
 .pulse-panel__title-icon {
   width: 18px;
   height: 18px;
+  flex-shrink: 0;
   color: var(--status-info-text);
 }
 
-.pulse-panel__location {
-  font-size: 0.7rem;
+/* Lines up under the word "Pulse", past the 18px icon and its 8px gap. */
+.pulse-panel__subtitle {
+  margin: 2px 0 0 26px;
+  font-size: var(--text-xs);
+  line-height: 1.4;
   color: var(--text-secondary);
-  font-weight: 400;
-  display: flex;
+}
+
+.pulse-panel__close {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
-  cursor: pointer;
-  padding: 3px 8px;
-  border-radius: var(--radius-full);
-  border: 1px solid transparent;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
-}
-
-.pulse-panel__location:hover {
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+  border-radius: var(--radius-sm);
   background: var(--bg-glass);
-  border-color: var(--border-glass);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-.pulse-panel__location svg {
-  width: 12px;
-  height: 12px;
-  opacity: 0.9;
+.pulse-panel__close:hover {
+  background: var(--bg-glass-hover);
+  color: var(--text-primary);
 }
 
-/* ─── Panel Body (scrollable) ─── */
+.pulse-panel__close svg {
+  width: 14px;
+  height: 14px;
+}
+
+@media (pointer: coarse) {
+  .pulse-panel__close {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* ─── State and date ─── */
+.pulse-panel__context {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.pulse-panel__place {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.pulse-panel__date {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Body (scrolls) ─── */
 .pulse-panel__body {
   flex: 1;
   overflow-y: auto;
@@ -158,95 +194,44 @@
   gap: 16px;
 }
 
-.pulse-panel__body::-webkit-scrollbar {
-  width: 4px;
+/* The shared state blocks are sized for a home column; this panel is 380px. */
+.orb-state.pulse-state {
+  padding: var(--space-3) var(--space-4);
+  max-width: none;
 }
 
-.pulse-panel__body::-webkit-scrollbar-thumb {
-  background: var(--border-glass);
-  border-radius: var(--radius-full);
-}
-
-/* ─── Alerts Section ─── */
-/* Clinical alerts are the highest-severity items in the panel and were the only
-   ones that hid their interactivity: no cursor, no hover, no transition, while
-   .pulse-weather__current, .pulse-aqi, .pulse-flu and .pulse-recall-item all
-   advertised theirs. Opening one reveals the message body, source and guidance. */
-.pulse-alert {
-  padding: 12px 14px;
-  border-radius: var(--radius-md);
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  cursor: pointer;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
-  animation: pulse-alert-enter 300ms ease-out;
-}
-
-.pulse-alert:hover {
-  border-color: var(--border-focus);
-}
-
-@keyframes pulse-alert-enter {
-  from { opacity: 0; transform: translateX(-4px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
-.pulse-alert--high {
-  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent);
-}
-
-.pulse-alert--moderate {
-  background: color-mix(in srgb, var(--status-warn) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--status-warn) 28%, transparent);
-}
-
-.pulse-alert__icon {
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-  font-size: 1rem;
-  flex-shrink: 0;
-}
-
-.pulse-alert--high .pulse-alert__icon {
-  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
-}
-
-.pulse-alert--moderate .pulse-alert__icon {
-  background: color-mix(in srgb, var(--status-warn) 10%, transparent);
-}
-
-.pulse-alert__content {
-  flex: 1;
-  min-width: 0;
-}
-
-.pulse-alert__title {
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 2px;
-}
-
-.pulse-alert__message {
-  font-size: 0.72rem;
-  color: var(--text-secondary);
+/* ─── Calendar status ───
+   The draft label is the panel's honesty line: a flat warn tint (12%, the
+   same recipe as .orb-count-chip--warn) with the text in the warn TEXT token,
+   never the fill token, so the small type keeps its contrast in every theme. */
+.pulse-calendar {
+  margin: 0;
+  font-size: var(--text-xs);
   line-height: 1.45;
 }
 
-/* ─── Weather Section ─── */
-.pulse-weather {
+.pulse-calendar--draft {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  color: var(--status-warn-text);
+  background: color-mix(in srgb, var(--status-warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 32%, transparent);
+}
+
+.pulse-calendar--reviewed {
+  color: var(--text-secondary);
+}
+
+/* ─── Sections ─── */
+.pulse-section {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-2);
 }
 
 .pulse-section-label {
+  margin: 0;
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--text-muted);
@@ -254,610 +239,99 @@
   letter-spacing: 0.06em;
 }
 
-.pulse-weather__current {
+/* ─── Season cards (read-only: no hover, no pointer) ─── */
+.pulse-season-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.pulse-season {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
   border-radius: var(--radius-md);
   background: var(--bg-glass);
   border: 1px solid var(--border-subtle);
-  cursor: pointer;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
-.pulse-weather__current:hover {
-  background: var(--bg-glass-hover);
-  border-color: var(--border-glass);
-}
-
-.pulse-weather__temp {
-  font-size: 2rem;
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  color: var(--text-primary);
-  line-height: 1;
-}
-
-.pulse-weather__temp span {
-  font-size: 1rem;
-  font-weight: 400;
-  color: var(--text-muted);
-}
-
-.pulse-weather__details {
+.pulse-season__head {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
 }
 
-.pulse-weather__desc {
-  font-size: 0.8rem;
+.pulse-season__title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1.3;
   color: var(--text-primary);
-  font-weight: 500;
 }
 
-.pulse-weather__meta {
-  font-size: 0.7rem;
+.pulse-season__peak {
+  flex-shrink: 0;
+}
+
+.pulse-season__period {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.4;
   color: var(--text-secondary);
 }
 
-/* Forecast row */
-.pulse-weather__forecast {
-  display: flex;
-  gap: 4px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-}
-
-.pulse-weather__forecast::-webkit-scrollbar {
-  height: 3px;
-}
-
-.pulse-weather__forecast::-webkit-scrollbar-thumb {
-  background: var(--border-glass);
-  border-radius: var(--radius-full);
-}
-
-.pulse-forecast-day {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  min-width: 56px;
-  background: var(--bg-glass);
-  border: 1px solid var(--border-subtle);
-  transition: background var(--transition-fast);
-}
-
-/* Deliberately NO :hover here. These tiles carry no handler, and painting a
-   hover fill on an inert element taught clinicians a rule the panel then broke
-   three tiles later — the AQI and Flu cards beside them ARE clickable. If the
-   day tiles ever get openDetail('weather') wired to them, restore the hover
-   together with the handler, not before. */
-
-.pulse-forecast-day__label {
-  font-size: 0.74rem;
-  color: var(--text-muted);
-  font-weight: 500;
-}
-
-.pulse-forecast-day__icon {
-  font-size: 1.1rem;
-  line-height: 1;
-}
-
-.pulse-forecast-day__temps {
-  display: flex;
-  gap: 4px;
-  font-size: 0.75rem;
-}
-
-.pulse-forecast-day__high {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.pulse-forecast-day__low {
-  color: var(--text-muted);
-}
-
-/* ─── AQI Section ─── */
-.pulse-aqi {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border-radius: var(--radius-md);
-  background: var(--bg-glass);
-  border: 1px solid var(--border-subtle);
-  cursor: pointer;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
-}
-
-/* --bg-glass, not --bg-glass-hover: the heavier hover fill lifts the backdrop
-   until .pulse-aqi__label (--text-muted) inside measures 3.98:1 in dark — below AA. The lighter fill still
-   marks the hover. Found by the hover-surface pass in
-   scripts/check-contrast.mjs (spec §10.2); it composites a state fill under
-   the DESCENDANT text it lands beneath, which is what the old gate could not see. */
-.pulse-aqi:hover {
-  background: var(--bg-glass);
-  border-color: var(--border-glass);
-}
-
-.pulse-aqi__value {
-  font-size: 1.5rem;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: -0.02em;
-}
-
-.pulse-aqi__info {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.pulse-aqi__category {
-  font-size: 0.78rem;
-  font-weight: 600;
+.pulse-season__summary {
+  margin: 2px 0 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
   color: var(--text-primary);
 }
 
-.pulse-aqi__label {
-  font-size: 0.75rem;
-  color: var(--text-muted);
+.pulse-season__rises {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-secondary);
 }
 
-/* AQI severity ramp — data-encoding colours from the status tokens.
-   The "orange" (unhealthy-for-sensitive-groups) step is a warn/danger mix to
-   keep the ramp monotonic; the top severities collapse onto status-danger,
-   with the category label carrying the exact level. */
-.pulse-aqi__value--good { color: var(--status-ok-text); }
-.pulse-aqi__value--moderate { color: var(--status-warn-text); }
-.pulse-aqi__value--orange { color: color-mix(in srgb, var(--status-warn) 50%, var(--status-danger)); }
-.pulse-aqi__value--red { color: var(--status-danger-text); }
-.pulse-aqi__value--purple { color: var(--status-danger-text); }
-.pulse-aqi__value--maroon { color: var(--status-danger-text); }
-
-/* ─── FDA Recalls ─── */
-.pulse-recalls {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+/* --text-secondary, not --text-muted: muted on the card's --bg-glass fill over
+   --bg-elevated measured 4.49:1 in dark (the visual audit, 6 Oct 2026). */
+.pulse-season__sources {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--text-secondary);
 }
 
-.pulse-recall-item {
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-glass);
-  border: 1px solid var(--border-subtle);
-  cursor: pointer;
-  transition: background var(--transition-fast);
+/* ─── Coming up ─── */
+.pulse-upcoming {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
-/* --bg-glass, not --bg-glass-hover: the heavier hover fill lifts the backdrop
-   until .pulse-recall-item__reason (--text-muted) inside measures 3.98:1 in dark — below AA. The lighter fill still
-   marks the hover. Found by the hover-surface pass in
-   scripts/check-contrast.mjs (spec §10.2); it composites a state fill under
-   the DESCENDANT text it lands beneath, which is what the old gate could not see. */
-.pulse-recall-item:hover {
-  background: var(--bg-glass);
-}
-
-.pulse-recall-item__product {
-  font-size: 0.72rem;
+.pulse-upcoming__item {
+  padding: 6px 0;
+  font-size: var(--text-xs);
+  line-height: 1.45;
   color: var(--text-primary);
-  font-weight: 500;
-  line-height: 1.3;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
-.pulse-recall-item__reason {
-  font-size: 0.74rem;
-  color: var(--text-muted);
-  margin-top: 2px;
-  display: -webkit-box;
-  -webkit-line-clamp: 1;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.pulse-recall-item__class {
-  display: inline-block;
-  font-size: 0.72rem;
-  font-weight: 600;
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  margin-top: 4px;
-  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
-  color: var(--status-danger-text);
-}
-
-/* ─── CDC Flu ─── */
-.pulse-flu {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border-radius: var(--radius-md);
-  background: var(--bg-glass);
-  border: 1px solid var(--border-subtle);
-  cursor: pointer;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
-}
-
-/* --bg-glass, not --bg-glass-hover: the heavier hover fill lifts the backdrop
-   until .pulse-flu__detail (--text-muted) inside measures 3.98:1 in dark — below AA. The lighter fill still
-   marks the hover. Found by the hover-surface pass in
-   scripts/check-contrast.mjs (spec §10.2); it composites a state fill under
-   the DESCENDANT text it lands beneath, which is what the old gate could not see. */
-.pulse-flu:hover {
-  background: var(--bg-glass);
-  border-color: var(--border-glass);
-}
-
-.pulse-flu__level {
-  font-size: 0.78rem;
-  font-weight: 600;
-  text-transform: capitalize;
-}
-
-.pulse-flu__level--minimal,
-.pulse-flu__level--low { color: var(--status-ok-text); }
-.pulse-flu__level--moderate { color: var(--status-warn-text); }
-.pulse-flu__level--high,
-.pulse-flu__level--very_high { color: var(--status-danger-text); }
-
-.pulse-flu__detail {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-}
-
-/* ─── Loading & Error ─── */
-.pulse-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 32px;
-  color: var(--text-muted);
-  font-size: 0.78rem;
-}
-
-.pulse-loading__spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid color-mix(in srgb, var(--status-info) 28%, transparent);
-  border-top-color: var(--status-info);
-  border-radius: 50%;
-  animation: pulse-spin 0.8s linear infinite;
-  margin-right: 10px;
-}
-
-@keyframes pulse-spin {
-  to { transform: rotate(360deg); }
-}
-
-.pulse-error {
-  padding: 16px;
-  text-align: center;
-  color: var(--text-muted);
-  font-size: 0.75rem;
+.pulse-upcoming__item:last-child {
+  border-bottom: none;
 }
 
 /* ─── Footer ─── */
 .pulse-panel__footer {
   padding: 8px 16px 10px;
   border-top: 1px solid var(--border-subtle);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.pulse-panel__footer-text {
-  font-size: 0.72rem;
-  color: var(--text-secondary);
-  opacity: 1;
-}
-
-.pulse-panel__footer-refresh {
-  font-size: 0.74rem;
-  color: var(--status-info-text);
-  cursor: pointer;
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
-  transition: background var(--transition-fast);
-  border: none;
-  background: none;
-}
-
-.pulse-panel__footer-refresh:hover {
-  background: color-mix(in srgb, var(--status-info) 10%, transparent);
-}
-
-/* ─── Dividers ─── */
-.pulse-divider {
-  height: 1px;
-  background: var(--border-subtle);
-  margin: 2px 0;
-}
-
-/* ─── No alerts state ─── */
-.pulse-no-alerts {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--status-ok) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--status-ok) 28%, transparent);
-  font-size: 0.75rem;
-  color: var(--status-ok-text);
-  font-weight: 500;
-}
-
-.pulse-no-alerts svg {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-}
-
-/* Alert cards clickable — hover deepens the status tint (no movement) */
-.pulse-alert {
-  cursor: pointer;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
-}
-
-.pulse-alert--high:hover {
-  background: color-mix(in srgb, var(--status-danger) 15%, transparent);
-}
-
-.pulse-alert--moderate:hover {
-  background: color-mix(in srgb, var(--status-warn) 15%, transparent);
-}
-
-/* ══════════════════════════════════════════════════════════════════════
-   DETAIL VIEW — opaque full-panel overlay
-   ══════════════════════════════════════════════════════════════════════ */
-
-.pulse-detail {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-elevated);
-  animation: pulse-detail-enter 200ms ease-out;
-}
-
-@keyframes pulse-detail-enter {
-  from { opacity: 0; transform: translateX(8px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
-/* Detail header with back button */
-.pulse-detail__header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 16px 12px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.pulse-detail__back {
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-  background: var(--bg-glass);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
-  flex-shrink: 0;
-}
-
-.pulse-detail__back:hover {
-  background: var(--bg-glass-hover);
-  color: var(--text-primary);
-}
-
-.pulse-detail__title {
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-/* Detail body */
-.pulse-detail__body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.pulse-detail__body::-webkit-scrollbar {
-  width: 4px;
-}
-
-.pulse-detail__body::-webkit-scrollbar-thumb {
-  background: var(--border-glass);
-  border-radius: var(--radius-full);
-}
-
-/* Detail metric rows */
-.pulse-detail__row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 12px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-glass);
-  border: 1px solid var(--border-subtle);
-}
-
-.pulse-detail__row-label {
-  font-size: 0.72rem;
-  color: var(--text-secondary);
-}
-
-.pulse-detail__row-value {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-/* Detail large hero value */
-.pulse-detail__hero {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 20px 0 10px;
-}
-
-.pulse-detail__hero-value {
-  font-size: 3rem;
-  font-weight: 700;
-  letter-spacing: -0.04em;
-  line-height: 1;
-  color: var(--text-primary);
-}
-
-.pulse-detail__hero-label {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  font-weight: 500;
-}
-
-.pulse-detail__hero-sub {
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  margin-top: 2px;
-}
-
-/* Detail actions/recommendations — quiet fill with an info-coloured icon */
-.pulse-detail__actions {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.pulse-detail__action {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-glass);
-  border: 1px solid var(--border-subtle);
-  font-size: 0.72rem;
-  color: var(--text-secondary);
+  font-size: var(--text-xs);
   line-height: 1.4;
-}
-
-.pulse-detail__action svg {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  margin-top: 1px;
-  color: var(--status-info-text);
-}
-
-/* Detail recall full card */
-.pulse-detail__recall-full {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 14px;
-  border-radius: var(--radius-md);
-  background: var(--bg-glass);
-  border: 1px solid var(--border-subtle);
-}
-
-.pulse-detail__recall-product {
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.35;
-}
-
-.pulse-detail__recall-field {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.pulse-detail__recall-field-label {
-  font-size: 0.74rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.pulse-detail__recall-field-value {
-  font-size: 0.72rem;
   color: var(--text-secondary);
-  line-height: 1.4;
 }
-
-/* ─── Source Attribution ─── */
-.pulse-source {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-glass);
-  border: 1px solid var(--border-subtle);
-  margin-top: auto;
-}
-
-.pulse-source svg {
-  width: 12px;
-  height: 12px;
-  color: var(--text-muted);
-  flex-shrink: 0;
-  opacity: 0.6;
-}
-
-.pulse-source__text {
-  font-size: 0.74rem;
-  color: var(--text-muted);
-  line-height: 1.3;
-}
-
-.pulse-source__link {
-  color: var(--status-info-text);
-  text-decoration: none;
-  font-weight: 500;
-}
-
-.pulse-source__link:hover {
-  text-decoration: underline;
-}
-
-/* ─── Section-level source inline ─── */
-.pulse-section-source {
-  font-size: 0.72rem;
-  color: var(--text-secondary);
-  opacity: 1;
-  font-weight: 400;
-  text-transform: none;
-  letter-spacing: normal;
-  margin-left: 6px;
-}
-
-/* Note: the former [data-theme="light"] overrides and contrast fixups are
-   gone — every colour above is a theme-aware token, so light and night
-   themes restyle this widget automatically from src/index.css. */

@@ -6,7 +6,9 @@ like code, and versioned like code.
 
 | File | What it configures | Loaded by |
 |---|---|---|
+| `site.example.toml` | The annotated template for `site.toml`: hospital name, timezone, state, departments, escalation ladder | `services/site_config_service.py` |
 | `order_sets.json` | Named order sets / protocols (sepsis, ACS, DKA, post-op, asthma) | `services/order_sets_service.py` |
+| `seasonal_calendar.json` | Pulse's seasonal calendar: seasons, environmental conditions and disease seasons for each zone of India, with sources | `services/seasonal_calendar.py` |
 
 ## Rules that apply to every file here
 
@@ -22,7 +24,18 @@ like code, and versioned like code.
    discharged-patient check, at the moment it is written, exactly as a
    hand-typed order does.
 
+## The one exception to rule 1: the seasonal calendar
+
+`seasonal_calendar.json` is reference material, not protocol, so a bad copy
+does not stop the server. It is still validated hard (every state in exactly
+one zone, real dates, every entry sourced) and refused whole if anything is
+wrong, but the refusal only turns Pulse off: the problem goes to the server
+log at startup, and Pulse tells staff the calendar is unavailable until the
+file is fixed and Orb restarted. A hospital's server must not go down over a
+note about the monsoon.
+
 ## Pointing Orb at a different file
 
-Set `ORB_ORDER_SETS_FILE` to an absolute path. Used by tests and by sites that
-keep their protocols in their own configuration-management repository.
+Set `ORB_ORDER_SETS_FILE` (order sets) or `ORB_SEASONAL_CALENDAR_FILE` (the
+seasonal calendar) to an absolute path. Used by tests and by sites that keep
+their configuration in their own configuration-management repository.

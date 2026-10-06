@@ -534,10 +534,13 @@ const FORECAST_HOSPITAL = (() => {
     daily_forecasts: days.map(([date, day_label, adm, dis, occ, pct], i) => ({
       date, day_label, predicted_admissions: adm, predicted_discharges: dis,
       predicted_occupancy: occ, occupancy_pct: pct, ward_breakdown: wards[i],
-      env_multiplier: i === 2 ? 1.15 : 1.0,
-      env_factors: i === 2 ? ['AQI 162 — respiratory admissions elevated'] : [],
-      env_icons: i === 2 ? ['smog'] : [],
     })),
+    // Context only (Pulse's built-in seasonal calendar); no number above is
+    // multiplied by it. Same entries, same order, as PULSE_SEASON.active.
+    season: [
+      { id: 'pre-monsoon-showers', title: 'Pre-monsoon showers', kind: 'season', in_peak: false },
+      { id: 'summer-heat', title: 'Summer heat', kind: 'environment', in_peak: true },
+    ],
     summary: {
       avg_occupancy: 26, peak_day: 'Tue May 26', peak_occupancy: 28,
       total_predicted_discharges_7d: 21, total_predicted_admissions_7d: 23,
@@ -1845,52 +1848,46 @@ function downtimeEnvelope(patientId, envId, createdAt) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PULSE dashboard (map-backend-api.md:201-203; field usage PulseWidget.tsx:
-// 238-381). AQI 162 'Unhealthy'; one 'high' severity weather alert.
+// PULSE season and conditions (GET /api/pulse/season, src/api/pulse.ts). Orb is
+// strictly offline: the built-in seasonal calendar for the hospital's state,
+// no live feeds. A draft calendar, so the honesty label shows; one entry at its
+// peak with "typically rises", one without; two entries coming up.
 // ═══════════════════════════════════════════════════════════════════════════
-const PULSE_DASHBOARD = {
-  weather: {
-    current: { temperature: 34.2, feels_like: 38.1, humidity: 62,
-      weather_code: 95, description: 'Thunderstorm' },
-    forecast: [
-      { day_label: 'Sat May 23', weather_code: 95, temp_max: 35, temp_min: 26 },
-      { day_label: 'Sun May 24', weather_code: 80, temp_max: 33, temp_min: 25 },
-      { day_label: 'Mon May 25', weather_code: 3, temp_max: 34, temp_min: 26 },
-      { day_label: 'Tue May 26', weather_code: 1, temp_max: 36, temp_min: 27 },
-      { day_label: 'Wed May 27', weather_code: 2, temp_max: 36, temp_min: 27 },
-    ],
-    clinical_flags: ['Heat stress risk for elderly patients', 'Storm may delay inter-facility transfers'],
-  },
-  air_quality: {
-    aqi: 162, category: 'Unhealthy', color: 'red',
-    pollutants: { pm2_5: 78.4, pm10: 142.0, o3: 31.2, no2: 44.8 },
-    clinical_flags: [
-      'Expect increased COPD/asthma exacerbations over 24-48h',
-      'Advise high-risk discharged patients to limit outdoor activity',
-    ],
-  },
-  flu_surveillance: {
-    source: 'CDC FluView (Seasonal Estimate)', week: 21, year: 2026,
-    ili_percentage: 3.8, total_patients: 12480, activity_level: 'moderate',
-    clinical_flags: ['ILI trending up 0.4% week-over-week'],
-    last_updated: t('06:00'),
-  },
-  drug_recalls: [
-    { product: 'Metformin HCl ER 750mg tablets', reason: 'NDMA impurity above acceptable intake limit',
-      classification: 'Class II', recall_date: '2026-05-18', firm: 'Generic Pharma Ltd' },
-    { product: 'Sodium chloride 0.9% injection 500ml', reason: 'Particulate matter observed in single lot',
-      classification: 'Class I', recall_date: '2026-05-20', firm: 'InfuCare Labs' },
+const PULSE_SOURCE_IMD = {
+  name: 'India Meteorological Department, climate normals',
+  url: 'https://mausam.imd.gov.in/', accessed: '2026-05-01',
+};
+const PULSE_SEASON = {
+  date: D,
+  state: { code: 'MH', name: 'Maharashtra' },
+  zone: { id: 'west', name: 'Western India' },
+  setup_needed: false,
+  setup_message: null,
+  calendar: { version: 1, status: 'draft', reviewed_by: null, reviewed_on: null, compiled_on: '2026-05-01' },
+  active: [
+    { id: 'pre-monsoon-showers', kind: 'season', title: 'Pre-monsoon showers',
+      start: '05-15', end: '06-10', in_peak: false, ends_on: '2026-06-10',
+      summary: 'Scattered evening thunderstorms in the weeks before the monsoon sets in.',
+      typically_rises: [], sources: [PULSE_SOURCE_IMD] },
+    { id: 'summer-heat', kind: 'environment', title: 'Summer heat',
+      start: '03-01', end: '06-10', in_peak: true, ends_on: '2026-06-10',
+      summary: 'Hot days and warm nights, hardest on older patients and outdoor workers.',
+      typically_rises: ['Heat exhaustion', 'Dehydration', 'Acute kidney injury'],
+      sources: [PULSE_SOURCE_IMD,
+        { name: 'National Programme on Climate Change and Human Health, heat action guidance',
+          url: 'https://ncdc.mohfw.gov.in/', accessed: '2026-05-01' }] },
   ],
-  active_alerts: [
-    { type: 'weather', severity: 'high', icon: 'storm',
-      title: 'Severe thunderstorm warning until 18:00',
-      message: 'Damaging winds and heavy rain expected. Possible power fluctuation — verify generator readiness and downtime snapshots.',
-      affected_conditions: ['Oxygen-dependent patients', 'Scheduled transfers'],
-      recommended_actions: ['Run downtime capture-all', 'Confirm generator fuel level', 'Hold non-urgent transfers'] },
+  upcoming: [
+    { id: 'sw-monsoon', kind: 'season', title: 'South-west monsoon',
+      start: '06-11', end: '09-30', in_peak: false, starts_on: '2026-06-11', days_away: 19,
+      summary: 'Heavy rain across the state, with waterlogging in towns.',
+      typically_rises: ['Leptospirosis', 'Malaria', 'Diarrhoeal illness'], sources: [PULSE_SOURCE_IMD] },
+    { id: 'leptospirosis', kind: 'disease', title: 'Leptospirosis season',
+      start: '07-01', end: '10-31', in_peak: false, starts_on: '2026-07-01', days_away: 39,
+      summary: 'Cases follow wading through flood water.',
+      typically_rises: ['Leptospirosis'],
+      sources: [{ name: 'National Centre for Disease Control', url: 'https://ncdc.mohfw.gov.in/', accessed: '2026-05-01' }] },
   ],
-  alert_count: 1,
-  last_refresh: t('09:12'),
-  data_direction: 'INBOUND_ONLY — zero patient data transmitted',
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2189,13 +2186,9 @@ function getFixture(path, params) {
     case '/api/bridge/discharge':
       return ok({ discharge_summary: null, message: 'No discharge summary available yet.' });
 
-    // pulse
-    case '/api/pulse/dashboard': return ok(PULSE_DASHBOARD);
-    case '/api/pulse/weather': return ok(PULSE_DASHBOARD.weather);
-    case '/api/pulse/aqi': return ok(PULSE_DASHBOARD.air_quality);
-    case '/api/pulse/flu': return ok(PULSE_DASHBOARD.flu_surveillance);
-    case '/api/pulse/drug-recalls': return ok(PULSE_DASHBOARD.drug_recalls);
-    case '/api/pulse/audit-log': return ok([]);
+    // pulse (the old feed routes /dashboard, /weather, /aqi, /flu,
+    // /drug-recalls and /audit-log are gone from the server: unmocked, they 404)
+    case '/api/pulse/season': return ok(PULSE_SEASON);
 
     // orders terminology (query-dependent)
     case '/api/orders/terminology/validate': {

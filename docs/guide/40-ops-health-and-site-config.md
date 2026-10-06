@@ -824,6 +824,7 @@ so adding a setting is one line rather than a new branch in a validator.
 |---|---|---|---|---|
 | `[site]` | `name` | text | **required** | The hospital's name. Appears on the status page so an engineer knows which appliance they are looking at. |
 | `[site]` | `timezone` | text | IANA name | How Orb reads a bedside timestamp that carries no offset. Becomes `ORB_HL7_DEFAULT_TZ`. |
+| `[site]` | `state` | text | an Indian state or union territory, by name or two-letter code, any case (`"Maharashtra"` or `"MH"`; codes in `services/india_states.py`) | Which part of the seasonal calendar Pulse shows (ruling of 6 October 2026). Absent: Pulse asks for it instead of guessing. `site.example.toml` ships with `state = "Maharashtra"`, so a copied template must be changed for any other state. An unknown value is a startup error with a "Did you mean" hint, never a nearest match. Orb never looks up a location. No environment variable: read as `SiteConfig.site_state`. |
 | `[[departments]]` | `name` | text | **required**, not a bed prefix, unique | A clinical service. **Every permission check keys on this string.** |
 | `[[departments]]` | `wards` | list of text | non-empty, each ward in one department only | Bed-number prefixes belonging to that service. |
 | `[escalation]` | `news2_threshold` | whole number | 1–20 | The NEWS2 score at which Orb starts an escalation. Ships at 5 (RCP "urgently inform the medical team"). |

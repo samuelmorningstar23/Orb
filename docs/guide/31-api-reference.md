@@ -90,7 +90,7 @@ Every file in scope. Line counts are approximate (from `wc -l`).
 | `routes/admin_routes.py` | 702 | Admin governance overview (24h aggregates). |
 | `routes/discharge_access_routes.py` | 46 | Public discharge-summary verification via token + DOB (patients, no JWT). |
 | `routes/helix_routes.py` | 167 | Pharmacy inventory, orders, order state machine. |
-| `routes/pulse_routes.py` | 98 | Environmental intelligence (weather, AQI, flu, FDA recalls). |
+| `routes/pulse_routes.py` | 35 | Pulse, season and conditions: one route over the built-in seasonal calendar (rebuilt 6 October 2026; the weather, AQI, flu and FDA recall routes are gone). |
 | `routes/clinical_records_routes.py` | 112 | Structured allergies, problem list, order-time medication safety pre-check. |
 | `routes/model_governance_routes.py` | 43 | AI model registry / provenance chips. |
 | `routes/bundle_routes.py` | 71 | Sepsis Six / deterioration care bundles. |
@@ -785,12 +785,9 @@ status to signal parse outcome**: 200 parsed/duplicate, 207 partial, 422 failed
 
 | Method | Path | Auth | Request | Response | Purpose | Handler |
 |---|---|---|---|---|---|---|
-| GET | `/api/pulse/dashboard` | perm: forecast.read | `?lat,lon` | dashboard | Full environmental dashboard. | `pulse_routes.py:30` |
-| GET | `/api/pulse/weather` | perm: forecast.read | `?lat,lon` | weather | Weather + forecast + risk flags. | `pulse_routes.py:43` |
-| GET | `/api/pulse/aqi` | perm: forecast.read | `?lat,lon` | AQI | Air quality + respiratory flags. | `pulse_routes.py:56` |
-| GET | `/api/pulse/flu` | perm: forecast.read | n/a | flu data | CDC ILI surveillance. | `pulse_routes.py:69` |
-| GET | `/api/pulse/drug-recalls` | perm: forecast.read | `?limit(≤50)` | recalls | FDA recall/enforcement. | `pulse_routes.py:80` |
-| GET | `/api/pulse/audit-log` | perm: audit.read | `?limit(≤200)` | ingestion audit | External-ingestion audit trail. | `pulse_routes.py:92` |
+| GET | `/api/pulse/season` | perm: forecast.read | n/a | `{date,state,zone,setup_needed,setup_message,calendar,active,upcoming}` | Season and conditions for the hospital's `[site] state`, from the built-in calendar: entries in effect today, entries starting in the next 60 days, the calendar's review status. 503 when the calendar file is missing or refused. | `pulse_routes.py:30` |
+
+The old `/api/pulse/dashboard`, `/weather`, `/aqi`, `/flu`, `/drug-recalls` and `/audit-log` routes were removed on 6 October 2026 with Pulse's internet feeds (Orb is strictly offline; ruling R030 in `docs/RULINGS_NEEDED_2026-10.md`). They are gone, not stubbed.
 
 **clinical_records_routes.py, `/api/patients`**
 

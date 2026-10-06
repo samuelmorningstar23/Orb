@@ -221,8 +221,8 @@ async function closeOverlays(page) {
     await cmdk.first().click({ position: { x: 12, y: VIEWPORT.height - 12 }, timeout: 3000 }).catch(() => {})
     await page.waitForSelector('.cmdk-overlay', { state: 'detached', timeout: 3000 }).catch(() => {})
   }
-  // The Pulse popover keeps a full-screen backdrop that swallows every click (Escape
-  // does not close it); clicking the backdrop itself is the only way out.
+  // The Pulse panel keeps a full-screen backdrop that swallows every click.
+  // Escape closes it too, but clicking the backdrop is the sure way out.
   const backdrop = page.locator('.pulse-backdrop')
   if (await backdrop.count()) {
     // the sidebar sits above the backdrop, so click well inside the main content area
@@ -306,9 +306,10 @@ const GALLERY = [
       }
       if (await page.locator('#btn-pulse').count()) {
         await page.click('#btn-pulse'); await page.waitForSelector('.pulse-panel', { timeout: 10_000 }).catch(() => {}); await settle(page, 600)
-        await page.waitForFunction(() => !/Fetching environmental data/.test(document.querySelector('.pulse-panel')?.textContent || ''), null, { timeout: 15_000 }).catch(() => {})
+        await page.waitForFunction(() => !/Loading the seasonal calendar/.test(document.querySelector('.pulse-panel')?.textContent || ''), null, { timeout: 15_000 }).catch(() => {})
         await settle(page, 400)
-        await shot(page, 'pulse-environmental', 'Orb Pulse: environmental intelligence')
+        // The file name stays pulse-environmental: the manuals and the gallery link to it.
+        await shot(page, 'pulse-environmental', 'Pulse: season and conditions')
         await closeOverlays(page)
       }
       await nav(page, 'round', '#panel-round'); await shot(page, 'ward-round', 'Ward Round: the round as a queue')

@@ -492,8 +492,11 @@ test_discharge_access.py test_ipass.py test_handoff.py` passes.
 hospital-wide picture, what-if simulation, and AI-assisted coding.
 
 **Files.** `forecast_service.py` + `models/forecast_lstm.py` + routes + panel;
-`command_center_service.py` + `pulse_service.py` + routes + `CommandCenter`/
-`PulseWidget`/`PulseDetail`; `capacity_sim_service.py` + routes + `CapacitySimulator`;
+`command_center_service.py` + routes + `CommandCenter`; Pulse as
+`seasonal_calendar.py` + `india_states.py` + `site_config/seasonal_calendar.json` +
+`pulse_routes.py` + `src/api/pulse.ts` + `PulseWidget` (rebuilt 6 October 2026 as a
+built-in seasonal calendar, no internet; the old `pulse_service.py` and
+`PulseDetail` are gone, ruling R030); `capacity_sim_service.py` + routes + `CapacitySimulator`;
 `coding_service.py` + routes + `RevenueIntegrityPanel`.
 
 **What to build.** (Deep dives: [13](./guide/13-forecast.md),

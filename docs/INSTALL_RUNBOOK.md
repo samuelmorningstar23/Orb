@@ -489,6 +489,34 @@ Keep `.env` at mode `600`:
 chmod 600 /opt/orb/.env
 ```
 
+**The site settings file.** Some settings live in
+`server/site_config/site.toml`, not in `.env`: the hospital's name, its
+timezone, its departments and wards, the escalation rule. `install.sh` does
+not create it. Start from the template:
+
+```bash
+cd /opt/orb/server/site_config
+cp site.example.toml site.toml
+```
+
+Under `[site]`, set the hospital's Indian state or union territory, by name or
+two-letter code, in any case. The template ships with `state = "Maharashtra"`;
+change it if the hospital is anywhere else, or Pulse will show Maharashtra's
+seasons:
+
+```toml
+[site]
+name = "..."
+state = "Maharashtra"    # or "MH"
+```
+
+Pulse uses it to show the season and what usually rises with it (ruling of
+6 October 2026). Without it Pulse asks for the state instead of guessing; Orb
+never looks up a location. A name Orb does not recognise is not matched to the
+nearest state: Orb refuses to start and prints the line, a "Did you mean" hint
+and the codes it knows (Odisha is `OR`, Telangana is `TG`). Orb reads
+`site.toml` once, at startup, so restart after editing it.
+
 ### 8.5 Confirm encryption is actually on
 
 Setting the key is not the same as the database being encrypted. If the
@@ -838,6 +866,7 @@ each line on the install record with a time and an initial.
 - [ ] One test observation ingested by API appears on a chart
 - [ ] Vigil shows a NEWS2 score for that patient
 - [ ] Sage answers a general clinical question, with citations
+- [ ] Pulse shows the season for this hospital's state (set in `site.toml`), not a request for the state
 - [ ] A downtime snapshot captures and prints, and a ward pack opens ([DRILLS.md](DRILLS.md))
 - [ ] Realtime works: two browsers open the ward board, a change in one appears in the other without a refresh
 - [ ] Discharge a test patient with a date of birth on file and release the summary: a QR code prints, it opens with no certificate warning on a phone on the patients' network agreed in section 7 (item 6), and **Save a copy** leaves a PDF on that phone that opens with Wi-Fi off. The startup log has no `ORB_PUBLIC_APP_BASE_URL` error. Where the link is switched off instead, the discharge shows "No secure link issued" with the paper reason, and the Trust Center row is green

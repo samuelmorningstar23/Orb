@@ -1,0 +1,1787 @@
+{
+  "version": 1,
+  "status": "draft",
+  "reviewed_by": null,
+  "reviewed_on": null,
+  "compiled_on": "2026-10-06",
+  "zones": [
+    {
+      "id": "north_plains",
+      "name": "North plains, Indo-Gangetic belt and Rajasthan",
+      "states": [
+        "DL",
+        "UP",
+        "BR",
+        "HR",
+        "PB",
+        "CH",
+        "RJ"
+      ]
+    },
+    {
+      "id": "himalayan",
+      "name": "Western Himalaya and hill states",
+      "states": [
+        "JK",
+        "LA",
+        "HP",
+        "UT"
+      ]
+    },
+    {
+      "id": "central",
+      "name": "Central India and Telangana",
+      "states": [
+        "MP",
+        "CT",
+        "TG"
+      ]
+    },
+    {
+      "id": "east",
+      "name": "East: Jharkhand, Odisha and West Bengal",
+      "states": [
+        "JH",
+        "OR",
+        "WB"
+      ]
+    },
+    {
+      "id": "north_east",
+      "name": "North-east and Sikkim",
+      "states": [
+        "AS",
+        "AR",
+        "MN",
+        "ML",
+        "MZ",
+        "NL",
+        "TR",
+        "SK"
+      ]
+    },
+    {
+      "id": "west",
+      "name": "West: Gujarat, Maharashtra, Goa and Konkan",
+      "states": [
+        "GJ",
+        "MH",
+        "GA",
+        "DH"
+      ]
+    },
+    {
+      "id": "south_west",
+      "name": "South-west: Kerala and Karnataka",
+      "states": [
+        "KL",
+        "KA"
+      ]
+    },
+    {
+      "id": "south_east_coast",
+      "name": "South-east coast with the north-east monsoon",
+      "states": [
+        "TN",
+        "PY",
+        "AP"
+      ]
+    },
+    {
+      "id": "islands",
+      "name": "Andaman, Nicobar and Lakshadweep islands",
+      "states": [
+        "AN",
+        "LD"
+      ]
+    }
+  ],
+  "entries": [
+    {
+      "id": "water-borne-monsoon",
+      "kind": "disease",
+      "title": "Water-borne illness in the rains",
+      "zones": [
+        "north_plains",
+        "himalayan",
+        "central",
+        "east",
+        "north_east",
+        "west",
+        "south_west",
+        "islands"
+      ],
+      "start": "05-01",
+      "end": "09-30",
+      "summary": "Across India, May to August account for over half of reported diarrhoeal disease outbreaks, and cholera outbreaks rise sharply with the monsoon, June to September. Typhoid and gastroenteritis are common in the monsoon.",
+      "typically_rises": [
+        "diarrhoeal illness",
+        "cholera",
+        "typhoid",
+        "gastroenteritis"
+      ],
+      "sources": [
+        {
+          "name": "Dandabathula et al., Impact assessment of Swachh Bharat Mission on acute diarrheal disease outbreaks (IDSP data 2010-2018), J Family Med Prim Care 2019",
+          "url": "https://doi.org/10.4103/jfmpc.jfmpc_144_19",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Muzembo et al., Cholera outbreaks in India, 2011-2020: a systematic review, Int J Environ Res Public Health 2022",
+          "url": "https://doi.org/10.3390/ijerph19095738",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCVBDC (MoHFW), National Guidelines for Clinical Management of Dengue Fever 2023",
+          "url": "https://ncvbdc.mohfw.gov.in/Doc/National%20Guidelines%20for%20Clinical%20Management%20of%20Dengue%20Fever%202023.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "influenza-monsoon-peak",
+      "kind": "disease",
+      "title": "Influenza, monsoon peak",
+      "zones": [
+        "north_plains",
+        "central",
+        "east",
+        "north_east",
+        "west",
+        "south_west"
+      ],
+      "start": "07-01",
+      "end": "09-30",
+      "summary": "Influenza circulates all year. Surveillance in Delhi, Lucknow, Nagpur, Pune, Kolkata, Dibrugarh and Alappuzha found the main peak in July to September, during the monsoon.",
+      "typically_rises": [
+        "influenza"
+      ],
+      "sources": [
+        {
+          "name": "Chadha et al. (ICMR-NIV), Dynamics of influenza seasonality at sub-regional levels in India and implications for vaccination timing, PLoS One 2015",
+          "url": "https://doi.org/10.1371/journal.pone.0124122",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Koul et al., Differences in influenza seasonality by latitude, northern India, Emerg Infect Dis 2014",
+          "url": "https://wwwnc.cdc.gov/eid/article/20/10/14-0431_article",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "je-endemic-districts",
+      "kind": "disease",
+      "title": "Japanese encephalitis season",
+      "zones": [
+        "north_plains",
+        "central",
+        "east",
+        "south_west",
+        "south_east_coast"
+      ],
+      "start": "07-01",
+      "end": "11-30",
+      "peak": {
+        "start": "09-01",
+        "end": "10-31"
+      },
+      "summary": "In districts where Japanese encephalitis is endemic (outside Assam), cases usually start in July and peak in September and October, with transmission continuing into the post-monsoon months.",
+      "typically_rises": [
+        "Japanese encephalitis",
+        "acute encephalitis syndrome"
+      ],
+      "sources": [
+        {
+          "name": "NCVBDC (MoHFW), Operational Guidelines, National Programme for Prevention and Control of JE/AES",
+          "url": "https://ncvbdc.mohfw.gov.in/Doc/JE-AES-Prevention-Control(NPPCJA).pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCVBDC, What is the extent of problem of Japanese Encephalitis in India and control activities of JE",
+          "url": "https://ncvbdc.mohfw.gov.in/index1.php?lang=1&level=2&sublinkid=5926&lid=3760",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "dengue-national",
+      "kind": "disease",
+      "title": "Dengue and chikungunya",
+      "zones": [
+        "central",
+        "west",
+        "north_east"
+      ],
+      "start": "07-01",
+      "end": "11-30",
+      "peak": {
+        "start": "09-01",
+        "end": "10-31"
+      },
+      "summary": "Dengue cases rise every year from July to November and peak after the monsoon; laboratory positivity is highest in September and October. Western and southern states also see cases all year. Chikungunya occurs mainly in the rainy season.",
+      "typically_rises": [
+        "dengue",
+        "chikungunya"
+      ],
+      "sources": [
+        {
+          "name": "NCVBDC (MoHFW), National Guidelines for Clinical Management of Dengue Fever 2023",
+          "url": "https://ncvbdc.mohfw.gov.in/Doc/National%20Guidelines%20for%20Clinical%20Management%20of%20Dengue%20Fever%202023.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Murhekar et al. (ICMR VRDL network), Epidemiology of dengue fever in India based on laboratory surveillance data 2014-2017, Int J Infect Dis 2019",
+          "url": "https://doi.org/10.1016/j.ijid.2019.01.004",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCVBDC (MoHFW), Guidelines for containment of chikungunya and dengue epidemic outbreaks",
+          "url": "https://ncvbdc.mohfw.gov.in/WriteReadData/l892s/GUIDELINES_FOR_CONTAINMENT_OF_DENGUE_FEVER%20_AND_CHIKUNGUNYA_EPIDEMICS.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "malaria-rainy-season",
+      "kind": "disease",
+      "title": "Malaria, rainy season",
+      "zones": [
+        "north_plains",
+        "west"
+      ],
+      "start": "07-01",
+      "end": "11-30",
+      "summary": "In most parts of India malaria cases are highest in the rainy season, from July to November.",
+      "typically_rises": [
+        "malaria"
+      ],
+      "sources": [
+        {
+          "name": "NCVBDC (MoHFW), National Strategic Plan: Malaria Elimination 2023-27",
+          "url": "https://ncvbdc.mohfw.gov.in/Doc/National-Strategic-Plan-Malaria-2023-27.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Data For India, Malaria in India (quotes the NCVBDC National Strategic Plan 2023-27 on seasonality), 17 December 2024",
+          "url": "https://www.dataforindia.com/malaria-in-india/",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "norwesters",
+      "kind": "environment",
+      "title": "Nor'wester thunderstorms",
+      "zones": [
+        "east",
+        "north_east"
+      ],
+      "start": "03-01",
+      "end": "05-31",
+      "summary": "Severe pre-monsoon thunderstorms, known locally as Kalbaisakhi, form over eastern and north-eastern India from March to May, bringing heavy showers, lightning, hail, squalls and dust storms.",
+      "typically_rises": [],
+      "sources": [
+        {
+          "name": "Tyagi, Sikka, Goyal and Bhowmick, A satellite based study of pre-monsoon thunderstorms (Nor'westers) over eastern India, MAUSAM 63(1), 2012 (IMD)",
+          "url": "https://mausamjournal.imd.gov.in/index.php/MAUSAM/article/download/1446/1282/5435",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "kfd-western-ghats",
+      "kind": "disease",
+      "title": "Kyasanur Forest Disease season",
+      "zones": [
+        "south_west",
+        "west"
+      ],
+      "start": "12-01",
+      "end": "06-30",
+      "peak": {
+        "start": "01-01",
+        "end": "04-30"
+      },
+      "summary": "In forest areas of the Western Ghats in Karnataka, Kerala, Goa and Maharashtra, Kyasanur Forest Disease occurs mainly in the dry months, December to June, with cases peaking from January to April.",
+      "typically_rises": [
+        "Kyasanur Forest Disease"
+      ],
+      "sources": [
+        {
+          "name": "Bohra et al., Kyasanur Forest Disease virus: epidemiological insights, Viruses 2025",
+          "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12390728/",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Oliveira et al., Geospatial clustering, seasonal trend and forecasting of Kyasanur Forest Disease in Goa, 2015-2018, Trop Med Health 2020",
+          "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC7187534/",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Kiran et al., Kyasanur Forest Disease outbreak and vaccination strategy, Shimoga District, 2013-2014, Emerg Infect Dis 2015",
+          "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC4285264/",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Murhekar et al. (ICMR), On the transmission pattern of Kyasanur Forest disease in India, Infect Dis Poverty 2015",
+          "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC4545326/",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "cyclones-post-monsoon",
+      "kind": "environment",
+      "title": "Cyclone season, post-monsoon",
+      "zones": [
+        "east",
+        "south_east_coast",
+        "west",
+        "islands"
+      ],
+      "start": "10-01",
+      "end": "12-31",
+      "peak": {
+        "start": "11-01",
+        "end": "11-30"
+      },
+      "summary": "October to December is the main cyclone season, peaking in November. Bay of Bengal storms outnumber Arabian Sea ones about 4 to 1. In this season most landfalls from 1971 to 2020 were on the Andhra Pradesh and Tamil Nadu coasts; on the west coast, Gujarat is most exposed.",
+      "typically_rises": [],
+      "sources": [
+        {
+          "name": "IMD RSMC New Delhi, Frequently Asked Questions on Tropical Cyclones and Marine Weather Services",
+          "url": "https://rsmcnewdelhi.imd.gov.in/images/pdf/faq.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Raj, Balachandran, Amudha and Geetha, Understanding and prediction of Indian northeast monsoon over the years, MAUSAM 76(1), 2025 (IMD)",
+          "url": "https://metnet.imd.gov.in/docs/mausamdocs/17619_F.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "cyclones-pre-monsoon",
+      "kind": "environment",
+      "title": "Cyclone season, pre-monsoon",
+      "zones": [
+        "east",
+        "south_east_coast",
+        "west",
+        "islands"
+      ],
+      "start": "04-15",
+      "end": "06-15",
+      "peak": {
+        "start": "05-01",
+        "end": "05-31"
+      },
+      "summary": "A second cyclone season comes before the monsoon, from late April to early June, with a secondary peak in May. Cyclones in May and June can be of severe intensity.",
+      "typically_rises": [],
+      "sources": [
+        {
+          "name": "IMD RSMC New Delhi, Frequently Asked Questions on Tropical Cyclones and Marine Weather Services",
+          "url": "https://rsmcnewdelhi.imd.gov.in/images/pdf/faq.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "np-pre-monsoon-heat",
+      "kind": "season",
+      "title": "Pre-monsoon heat",
+      "zones": [
+        "north_plains"
+      ],
+      "start": "03-15",
+      "end": "06-30",
+      "peak": {
+        "start": "05-01",
+        "end": "05-31"
+      },
+      "summary": "Heat waves are most likely from March to June, with May the peak month. Hot weather lasts until the monsoon arrives: mid June in Bihar, about 30 June in Delhi and Punjab, and about 8 July in west Rajasthan.",
+      "typically_rises": [
+        "heat exhaustion",
+        "heat stroke",
+        "heat cramps",
+        "dehydration"
+      ],
+      "sources": [
+        {
+          "name": "IMD, FAQ on Heat Wave",
+          "url": "https://internal.imd.gov.in/section/nhac/dynamic/FAQ_heat_wave.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCDC (MoHFW), Advisory for State Health Departments for Summer 2026, NPCCHH",
+          "url": "https://ncdc.mohfw.gov.in/uploads/pdf/1.%20Heat%20wave%20advisory%20for%20State%20Health%20department_2026.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "IMD, Normal dates of onset/progress and withdrawal of the southwest monsoon over India (Pai et al., CRS Research Report 3/2020)",
+          "url": "https://internal.imd.gov.in/press_release/20200515_pr_804.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "np-sw-monsoon",
+      "kind": "season",
+      "title": "South-west monsoon",
+      "zones": [
+        "north_plains"
+      ],
+      "start": "06-15",
+      "end": "10-10",
+      "summary": "The monsoon reaches east Bihar around 15 June and Delhi, Punjab, Haryana and east Rajasthan by about 30 June. It starts withdrawing from west Rajasthan around 17 September and leaves most of the region by 1 to 10 October.",
+      "typically_rises": [
+        "dengue",
+        "malaria",
+        "typhoid",
+        "gastroenteritis"
+      ],
+      "sources": [
+        {
+          "name": "IMD, Normal dates of onset/progress and withdrawal of the southwest monsoon over India (Pai et al., CRS Research Report 3/2020)",
+          "url": "https://internal.imd.gov.in/press_release/20200515_pr_804.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCVBDC (MoHFW), National Guidelines for Clinical Management of Dengue Fever 2023",
+          "url": "https://ncvbdc.mohfw.gov.in/Doc/National%20Guidelines%20for%20Clinical%20Management%20of%20Dengue%20Fever%202023.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "np-dengue",
+      "kind": "disease",
+      "title": "Dengue and chikungunya",
+      "zones": [
+        "north_plains"
+      ],
+      "start": "07-01",
+      "end": "11-30",
+      "peak": {
+        "start": "09-01",
+        "end": "10-31"
+      },
+      "summary": "Dengue cases usually start rising in July, peak in September and October and fall away by December. Chikungunya also occurs mainly in the rainy season.",
+      "typically_rises": [
+        "dengue",
+        "chikungunya"
+      ],
+      "sources": [
+        {
+          "name": "Singh and Chaturvedi, Temporal variation and geospatial clustering of dengue in Delhi, India 2015-2018, BMJ Open 2021",
+          "url": "https://doi.org/10.1136/bmjopen-2020-043848",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCVBDC (MoHFW), National Guidelines for Clinical Management of Dengue Fever 2023",
+          "url": "https://ncvbdc.mohfw.gov.in/Doc/National%20Guidelines%20for%20Clinical%20Management%20of%20Dengue%20Fever%202023.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCVBDC (MoHFW), Guidelines for containment of chikungunya and dengue epidemic outbreaks",
+          "url": "https://ncvbdc.mohfw.gov.in/WriteReadData/l892s/GUIDELINES_FOR_CONTAINMENT_OF_DENGUE_FEVER%20_AND_CHIKUNGUNYA_EPIDEMICS.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "np-hepatitis-a-e",
+      "kind": "disease",
+      "title": "Hepatitis A and E",
+      "zones": [
+        "north_plains"
+      ],
+      "start": "05-01",
+      "end": "10-31",
+      "summary": "In Uttar Pradesh hospital studies, hepatitis A peaked before the monsoon, in May and June, while hepatitis E occurred all year with outbreaks peaking in the monsoon and post-monsoon months.",
+      "typically_rises": [
+        "hepatitis A",
+        "hepatitis E"
+      ],
+      "sources": [
+        {
+          "name": "Gupta et al., Hepatitis A and E in rural northern India (AIIMS Raebareli), Front Public Health 2026",
+          "url": "https://doi.org/10.3389/fpubh.2026.1902419",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Hassaan et al., HEV prevalence, risk factors and outcomes in a tertiary care hospital of Uttar Pradesh (Aligarh), Iran J Microbiol 2026",
+          "url": "https://doi.org/10.18502/ijm.v18i2.21303",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "np-litchi-aes",
+      "kind": "disease",
+      "title": "Litchi-season AES, north Bihar",
+      "zones": [
+        "north_plains"
+      ],
+      "start": "05-15",
+      "end": "07-15",
+      "summary": "In Muzaffarpur, India's largest litchi-growing area in north Bihar, outbreaks of acute encephalopathy in children have been reported in many years. In 2014, cases linked to litchi toxins and low blood sugar were admitted from late May to mid July.",
+      "typically_rises": [
+        "acute encephalitis syndrome in children"
+      ],
+      "sources": [
+        {
+          "name": "Shrivastava et al. (NCDC and US CDC), Acute toxic encephalopathy and litchi consumption in an outbreak in Muzaffarpur, 2014, Lancet Glob Health 2017",
+          "url": "https://doi.org/10.1016/S2214-109X(17)30035-9",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "np-influenza-winter",
+      "kind": "disease",
+      "title": "Influenza, winter rise",
+      "zones": [
+        "north_plains"
+      ],
+      "start": "01-01",
+      "end": "03-31",
+      "summary": "Besides the monsoon peak, India often sees a second influenza rise from January to March. Rajasthan had a large influenza A(H1N1) surge in January and February 2015.",
+      "typically_rises": [
+        "influenza"
+      ],
+      "sources": [
+        {
+          "name": "Vashishtha and Kumar, Optimizing influenza vaccine protection in India, Indian Pediatrics 2025",
+          "url": "https://doi.org/10.1007/s13312-025-00119-0",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Sharma et al., Mortality due to influenza A(H1N1)pdm09 at a tertiary care hospital in Jaipur, January and February 2015, J Assoc Physicians India 2015",
+          "url": "https://pubmed.ncbi.nlm.nih.gov/26591168/",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "np-smog",
+      "kind": "environment",
+      "title": "Smog and poor air season",
+      "zones": [
+        "north_plains"
+      ],
+      "start": "10-01",
+      "end": "01-31",
+      "summary": "Air quality across the Indo-Gangetic plain usually worsens from October. Paddy stubble burning in Punjab, Haryana and the NCR districts of Uttar Pradesh adds smoke in October and November, and cold, still air traps pollution through December and January.",
+      "typically_rises": [
+        "breathing difficulty",
+        "asthma and bronchitis flare-ups"
+      ],
+      "sources": [
+        {
+          "name": "PIB (MoEFCC), Parliament question: Air pollution caused by stubble burning",
+          "url": "https://www.pib.gov.in/PressReleseDetailm.aspx?PRID=2076918&reg=48&lang=2",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Shankar and Gadi, Variation in air quality over Delhi region: a comparative study for 2019 and 2020, Aerosol Sci Eng 2022",
+          "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9122485/",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Centre for Science and Environment, Decoding winter air pollution in Indo-Gangetic Plain (analysis of CPCB monitoring data), January 2021",
+          "url": "https://cdn.cseindia.org/docs/Analysis-of-winter-pollution-in-igp.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "IMD, Press release: Seasonal outlook for the cold weather season, December 2025 to February 2026 (1 December 2025)",
+          "url": "https://mausam.imd.gov.in/Forecast/marquee_data/Outlook_for_cold_weather_season_Dec_2025.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCDC (MoHFW), Handbook for ASHA: Air pollution and its impact on health, 2024",
+          "url": "https://ncdc.mohfw.gov.in/uploads/pdf/air1.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "np-winter-cold",
+      "kind": "season",
+      "title": "Winter and cold waves",
+      "zones": [
+        "north_plains"
+      ],
+      "start": "12-01",
+      "end": "02-15",
+      "peak": {
+        "start": "12-15",
+        "end": "01-31"
+      },
+      "summary": "December and January are the coldest months in north India, and cold waves are most frequent over the north-west plains. Cold spells raise health risks for older people, children and people with chronic illness. Early-morning fog can disrupt travel.",
+      "typically_rises": [
+        "hypothermia",
+        "flu-like illness"
+      ],
+      "sources": [
+        {
+          "name": "IMD, FAQ on Cold Wave",
+          "url": "https://internal.imd.gov.in/section/nhac/dynamic/faq.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "IMD, Press release: Seasonal outlook for the cold weather season, December 2025 to February 2026 (1 December 2025)",
+          "url": "https://mausam.imd.gov.in/Forecast/marquee_data/Outlook_for_cold_weather_season_Dec_2025.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "hi-winter-cold",
+      "kind": "season",
+      "title": "Winter cold",
+      "zones": [
+        "himalayan"
+      ],
+      "start": "12-01",
+      "end": "02-28",
+      "peak": {
+        "start": "12-15",
+        "end": "01-31"
+      },
+      "summary": "December and January are the coldest months across northern India. In hill areas IMD declares a cold wave when the minimum temperature falls to 0°C or below. Wind chill adds to the risk.",
+      "typically_rises": [
+        "hypothermia",
+        "frostbite",
+        "chilblains",
+        "flu-like illness"
+      ],
+      "sources": [
+        {
+          "name": "IMD, FAQ on Cold Wave",
+          "url": "https://internal.imd.gov.in/section/nhac/dynamic/faq.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "IMD, Press release: Seasonal outlook for the cold weather season, December 2025 to February 2026 (1 December 2025)",
+          "url": "https://mausam.imd.gov.in/Forecast/marquee_data/Outlook_for_cold_weather_season_Dec_2025.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "hi-influenza-winter",
+      "kind": "disease",
+      "title": "Influenza, winter peak",
+      "zones": [
+        "himalayan"
+      ],
+      "start": "01-01",
+      "end": "03-31",
+      "summary": "In Kashmir influenza follows a temperate pattern and peaks from January to March, unlike the plains, where the main peak comes with the monsoon.",
+      "typically_rises": [
+        "influenza"
+      ],
+      "sources": [
+        {
+          "name": "Koul et al., Differences in influenza seasonality by latitude, northern India, Emerg Infect Dis 2014",
+          "url": "https://wwwnc.cdc.gov/eid/article/20/10/14-0431_article",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Chadha et al. (ICMR-NIV), Dynamics of influenza seasonality at sub-regional levels in India and implications for vaccination timing, PLoS One 2015",
+          "url": "https://doi.org/10.1371/journal.pone.0124122",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Padhi et al., Seasonality of influenza and optimizing timing of vaccination: systematic review and meta-analysis, Cureus 2025",
+          "url": "https://doi.org/10.7759/cureus.93607",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "hi-sw-monsoon",
+      "kind": "season",
+      "title": "South-west monsoon",
+      "zones": [
+        "himalayan"
+      ],
+      "start": "07-01",
+      "end": "09-30",
+      "summary": "The monsoon usually reaches Uttarakhand, Ladakh and most of Jammu and Kashmir by about 30 June and covers all of north-west India by about 8 July. It withdraws from the hill states by about 1 October.",
+      "typically_rises": [],
+      "sources": [
+        {
+          "name": "IMD, Normal dates of onset/progress and withdrawal of the southwest monsoon over India (Pai et al., CRS Research Report 3/2020)",
+          "url": "https://internal.imd.gov.in/press_release/20200515_pr_804.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "hi-scrub-typhus",
+      "kind": "disease",
+      "title": "Scrub typhus and leptospirosis",
+      "zones": [
+        "himalayan"
+      ],
+      "start": "07-01",
+      "end": "11-30",
+      "peak": {
+        "start": "08-01",
+        "end": "10-31"
+      },
+      "summary": "In Uttarakhand and Himachal Pradesh, scrub typhus is seen mostly from July to November, with most cases in August to October. In the Kangra area, leptospirosis also peaks in September and October.",
+      "typically_rises": [
+        "scrub typhus",
+        "leptospirosis"
+      ],
+      "sources": [
+        {
+          "name": "Bhargava et al., Scrub typhus in Uttarakhand and adjoining Uttar Pradesh: seasonality, clinical presentations and predictors of mortality, Indian J Med Res 2016",
+          "url": "https://doi.org/10.4103/ijmr.IJMR_1764_15",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Sharma, Kumar and Sood, Scrub typhus and leptospirosis in the hilly region of Himachal Pradesh, J Vector Borne Dis 2026",
+          "url": "https://doi.org/10.4103/jvbd.jvbd_377_25",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Rahi et al., DHR-ICMR Guidelines for diagnosis and management of rickettsial diseases in India, Indian J Med Res 2015",
+          "url": "https://doi.org/10.4103/0971-5916.159279",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "ce-pre-monsoon-heat",
+      "kind": "season",
+      "title": "Pre-monsoon heat",
+      "zones": [
+        "central"
+      ],
+      "start": "03-15",
+      "end": "06-30",
+      "peak": {
+        "start": "05-01",
+        "end": "05-31"
+      },
+      "summary": "Madhya Pradesh, Chhattisgarh and Telangana are among the heat wave prone states. Heat waves are most likely from March to June, peaking in May, until the monsoon arrives in mid to late June.",
+      "typically_rises": [
+        "heat exhaustion",
+        "heat stroke",
+        "heat cramps",
+        "dehydration"
+      ],
+      "sources": [
+        {
+          "name": "IMD, FAQ on Heat Wave",
+          "url": "https://internal.imd.gov.in/section/nhac/dynamic/FAQ_heat_wave.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCDC (MoHFW), Advisory for State Health Departments for Summer 2026, NPCCHH",
+          "url": "https://ncdc.mohfw.gov.in/uploads/pdf/1.%20Heat%20wave%20advisory%20for%20State%20Health%20department_2026.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "IMD, Normal dates of onset/progress and withdrawal of the southwest monsoon over India (Pai et al., CRS Research Report 3/2020)",
+          "url": "https://internal.imd.gov.in/press_release/20200515_pr_804.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "ce-sw-monsoon",
+      "kind": "season",
+      "title": "South-west monsoon",
+      "zones": [
+        "central"
+      ],
+      "start": "06-15",
+      "end": "10-15",
+      "summary": "The monsoon reaches Telangana and south Chhattisgarh by about 15 June and most of Madhya Pradesh by about 30 June. It withdraws from west Madhya Pradesh around 1 October and from Telangana and Chhattisgarh by about 15 October.",
+      "typically_rises": [
+        "malaria",
+        "dengue",
+        "typhoid",
+        "gastroenteritis"
+      ],
+      "sources": [
+        {
+          "name": "IMD, Normal dates of onset/progress and withdrawal of the southwest monsoon over India (Pai et al., CRS Research Report 3/2020)",
+          "url": "https://internal.imd.gov.in/press_release/20200515_pr_804.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCVBDC (MoHFW), National Guidelines for Clinical Management of Dengue Fever 2023",
+          "url": "https://ncvbdc.mohfw.gov.in/Doc/National%20Guidelines%20for%20Clinical%20Management%20of%20Dengue%20Fever%202023.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "ce-malaria",
+      "kind": "disease",
+      "title": "Malaria",
+      "zones": [
+        "central"
+      ],
+      "start": "06-15",
+      "end": "11-30",
+      "summary": "Malaria cases rise with the rains. Chhattisgarh's surveillance data for 2015 to 2023 show peaks in July and again in November, with the highest incidence in the Bastar and Surguja regions.",
+      "typically_rises": [
+        "malaria"
+      ],
+      "sources": [
+        {
+          "name": "Gahwai et al., Epidemiology of malaria in Chhattisgarh: IDSP surveillance data analysis 2015-2023, Trans R Soc Trop Med Hyg 2025",
+          "url": "https://doi.org/10.1093/trstmh/traf072",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCVBDC (MoHFW), National Strategic Plan: Malaria Elimination 2023-27",
+          "url": "https://ncvbdc.mohfw.gov.in/Doc/National-Strategic-Plan-Malaria-2023-27.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Data For India, Malaria in India (quotes the NCVBDC National Strategic Plan 2023-27 on seasonality), 17 December 2024",
+          "url": "https://www.dataforindia.com/malaria-in-india/",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "ce-winter-cold",
+      "kind": "season",
+      "title": "Winter and cold waves",
+      "zones": [
+        "central"
+      ],
+      "start": "12-01",
+      "end": "02-15",
+      "summary": "Madhya Pradesh, Chhattisgarh and Telangana are among the cold wave prone states. The most cold wave days are seen over the plains of north-west and adjoining central India, in the December to February winter.",
+      "typically_rises": [
+        "hypothermia",
+        "flu-like illness"
+      ],
+      "sources": [
+        {
+          "name": "IMD, FAQ on Cold Wave",
+          "url": "https://internal.imd.gov.in/section/nhac/dynamic/faq.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "IMD, Press release: Seasonal outlook for the cold weather season, December 2025 to February 2026 (1 December 2025)",
+          "url": "https://mausam.imd.gov.in/Forecast/marquee_data/Outlook_for_cold_weather_season_Dec_2025.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "ea-pre-monsoon-heat",
+      "kind": "season",
+      "title": "Pre-monsoon heat",
+      "zones": [
+        "east"
+      ],
+      "start": "03-15",
+      "end": "06-15",
+      "peak": {
+        "start": "05-01",
+        "end": "05-31"
+      },
+      "summary": "Jharkhand, Odisha and West Bengal are among the heat wave prone states. Heat waves are most likely from March to mid June, peaking in May, until the monsoon arrives around mid June.",
+      "typically_rises": [
+        "heat exhaustion",
+        "heat stroke",
+        "heat cramps",
+        "dehydration"
+      ],
+      "sources": [
+        {
+          "name": "IMD, FAQ on Heat Wave",
+          "url": "https://internal.imd.gov.in/section/nhac/dynamic/FAQ_heat_wave.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCDC (MoHFW), Advisory for State Health Departments for Summer 2026, NPCCHH",
+          "url": "https://ncdc.mohfw.gov.in/uploads/pdf/1.%20Heat%20wave%20advisory%20for%20State%20Health%20department_2026.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "IMD, Normal dates of onset/progress and withdrawal of the southwest monsoon over India (Pai et al., CRS Research Report 3/2020)",
+          "url": "https://internal.imd.gov.in/press_release/20200515_pr_804.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "ea-sw-monsoon",
+      "kind": "season",
+      "title": "South-west monsoon",
+      "zones": [
+        "east"
+      ],
+      "start": "06-15",
+      "end": "10-15",
+      "summary": "The monsoon covers most of West Bengal and Odisha by about 15 June and Jharkhand by about 20 June. It withdraws from Jharkhand around 10 October and from Odisha and the rest of the region by about 15 October.",
+      "typically_rises": [
+        "malaria",
+        "dengue",
+        "typhoid",
+        "gastroenteritis"
+      ],
+      "sources": [
+        {
+          "name": "IMD, Normal dates of onset/progress and withdrawal of the southwest monsoon over India (Pai et al., CRS Research Report 3/2020)",
+          "url": "https://internal.imd.gov.in/press_release/20200515_pr_804.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCVBDC (MoHFW), National Guidelines for Clinical Management of Dengue Fever 2023",
+          "url": "https://ncvbdc.mohfw.gov.in/Doc/National%20Guidelines%20for%20Clinical%20Management%20of%20Dengue%20Fever%202023.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "ea-malaria",
+      "kind": "disease",
+      "title": "Malaria",
+      "zones": [
+        "east"
+      ],
+      "start": "06-15",
+      "end": "11-30",
+      "peak": {
+        "start": "07-01",
+        "end": "09-30"
+      },
+      "summary": "In Kalahandi district of Odisha malaria occurs all year, but cases track rainfall and are highest in the peak rainy months, July to September. Nationally, malaria is highest from July to November.",
+      "typically_rises": [
+        "malaria"
+      ],
+      "sources": [
+        {
+          "name": "Panigrahi et al., Role of climatic factors on the perennial malaria cases in Kalahandi district of Odisha, J Vector Borne Dis 2025",
+          "url": "https://doi.org/10.4103/jvbd.jvbd_190_24",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCVBDC (MoHFW), National Strategic Plan: Malaria Elimination 2023-27",
+          "url": "https://ncvbdc.mohfw.gov.in/Doc/National-Strategic-Plan-Malaria-2023-27.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Data For India, Malaria in India (quotes the NCVBDC National Strategic Plan 2023-27 on seasonality), 17 December 2024",
+          "url": "https://www.dataforindia.com/malaria-in-india/",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "ea-dengue",
+      "kind": "disease",
+      "title": "Dengue",
+      "zones": [
+        "east"
+      ],
+      "start": "08-01",
+      "end": "11-30",
+      "summary": "In Kolkata about 90% of dengue cases fall in a yearly post-monsoon peak from August to November, two to three months after the heaviest rain. National data show the same post-monsoon rise.",
+      "typically_rises": [
+        "dengue"
+      ],
+      "sources": [
+        {
+          "name": "Rani Jena et al., Spatio-temporal distribution of dengue cases and vectors in Kolkata, 2017-2022, Emerging Microbes and Infections 2025",
+          "url": "https://doi.org/10.1080/22221751.2025.2493924",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCVBDC (MoHFW), National Guidelines for Clinical Management of Dengue Fever 2023",
+          "url": "https://ncvbdc.mohfw.gov.in/Doc/National%20Guidelines%20for%20Clinical%20Management%20of%20Dengue%20Fever%202023.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "ea-winter-cold",
+      "kind": "season",
+      "title": "Winter and cold waves",
+      "zones": [
+        "east"
+      ],
+      "start": "12-01",
+      "end": "02-15",
+      "summary": "West Bengal, Jharkhand and Odisha are among the cold wave prone states. Cold waves fall in the December to February winter.",
+      "typically_rises": [
+        "hypothermia",
+        "flu-like illness"
+      ],
+      "sources": [
+        {
+          "name": "IMD, FAQ on Cold Wave",
+          "url": "https://internal.imd.gov.in/section/nhac/dynamic/faq.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "IMD, Press release: Seasonal outlook for the cold weather season, December 2025 to February 2026 (1 December 2025)",
+          "url": "https://mausam.imd.gov.in/Forecast/marquee_data/Outlook_for_cold_weather_season_Dec_2025.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "ne-sw-monsoon",
+      "kind": "season",
+      "title": "South-west monsoon",
+      "zones": [
+        "north_east"
+      ],
+      "start": "06-01",
+      "end": "10-15",
+      "summary": "The monsoon reaches most of the north-east by about 5 June, among the earliest in India, and withdraws from the whole region by about 15 October.",
+      "typically_rises": [],
+      "sources": [
+        {
+          "name": "IMD, Normal dates of onset/progress and withdrawal of the southwest monsoon over India (Pai et al., CRS Research Report 3/2020)",
+          "url": "https://internal.imd.gov.in/press_release/20200515_pr_804.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "ne-malaria",
+      "kind": "disease",
+      "title": "Malaria",
+      "zones": [
+        "north_east"
+      ],
+      "start": "03-01",
+      "end": "10-31",
+      "peak": {
+        "start": "06-01",
+        "end": "09-30"
+      },
+      "summary": "In the north-eastern states the malaria transmission season starts early, around March. In Assam and Arunachal Pradesh just over half of all cases are reported in the monsoon months.",
+      "typically_rises": [
+        "malaria"
+      ],
+      "sources": [
+        {
+          "name": "NCVBDC (MoHFW), Operational Manual for Malaria Elimination in India 2016",
+          "url": "https://ncvbdc.mohfw.gov.in/WriteReadData/l892s/5232542721532941542.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Vavilala et al., Weather integrated malaria prediction system for northeast states of India (Assam, Arunachal Pradesh), Environ Sci Pollut Res 2022",
+          "url": "https://doi.org/10.1007/s11356-022-20642-y",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "ne-je-assam",
+      "kind": "disease",
+      "title": "Japanese encephalitis, Assam pattern",
+      "zones": [
+        "north_east"
+      ],
+      "start": "02-01",
+      "end": "09-30",
+      "peak": {
+        "start": "06-01",
+        "end": "08-31"
+      },
+      "summary": "Assam reports 30 to 50% of India's JE cases. Unlike other endemic states, cases start appearing from February and peak in July; in upper Assam cases cluster in the rainy months, June to August.",
+      "typically_rises": [
+        "Japanese encephalitis",
+        "acute encephalitis syndrome"
+      ],
+      "sources": [
+        {
+          "name": "NCVBDC (MoHFW), Operational Guidelines, National Programme for Prevention and Control of JE/AES",
+          "url": "https://ncvbdc.mohfw.gov.in/Doc/JE-AES-Prevention-Control(NPPCJA).pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCVBDC, What is the extent of problem of Japanese Encephalitis in India and control activities of JE",
+          "url": "https://ncvbdc.mohfw.gov.in/index1.php?lang=1&level=2&sublinkid=5926&lid=3760",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Medhi et al., Incidence of JE amongst AES cases in upper Assam districts 2012-2014, Indian J Med Res 2017",
+          "url": "https://doi.org/10.4103/ijmr.IJMR_1303_15",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "ne-scrub-typhus",
+      "kind": "disease",
+      "title": "Scrub typhus",
+      "zones": [
+        "north_east"
+      ],
+      "start": "07-01",
+      "end": "11-30",
+      "peak": {
+        "start": "08-01",
+        "end": "10-31"
+      },
+      "summary": "Mizoram and Meghalaya report the most scrub typhus in national surveillance data. In Mizoram cases peak from August to October.",
+      "typically_rises": [
+        "scrub typhus"
+      ],
+      "sources": [
+        {
+          "name": "Ramliana et al. (with IDSP Mizoram), Economic burden of scrub typhus among the Mizo of Mizoram, BMC Public Health 2025",
+          "url": "https://doi.org/10.1186/s12889-025-22302-5",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Narain et al., Epidemiological trends of scrub typhus in India based on IDSP data 2009-2018, Indian J Community Med 2026",
+          "url": "https://doi.org/10.4103/ijcm.ijcm_754_25",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "ne-winter-cold",
+      "kind": "season",
+      "title": "Winter and cold waves",
+      "zones": [
+        "north_east"
+      ],
+      "start": "12-01",
+      "end": "02-15",
+      "summary": "Sikkim, Assam and Tripura are among the cold wave prone states. Gangtok holds India's longest recorded cold wave spell, 17 days in December 1986.",
+      "typically_rises": [
+        "hypothermia",
+        "flu-like illness"
+      ],
+      "sources": [
+        {
+          "name": "IMD, FAQ on Cold Wave",
+          "url": "https://internal.imd.gov.in/section/nhac/dynamic/faq.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "IMD, Press release: Seasonal outlook for the cold weather season, December 2025 to February 2026 (1 December 2025)",
+          "url": "https://mausam.imd.gov.in/Forecast/marquee_data/Outlook_for_cold_weather_season_Dec_2025.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "we-pre-monsoon-heat",
+      "kind": "season",
+      "title": "Pre-monsoon heat",
+      "zones": [
+        "west"
+      ],
+      "start": "03-15",
+      "end": "06-15",
+      "peak": {
+        "start": "05-01",
+        "end": "05-31"
+      },
+      "summary": "Gujarat and parts of Maharashtra are among the heat wave prone areas. Heat waves are most likely from March to mid June, peaking in May, until the monsoon arrives.",
+      "typically_rises": [
+        "heat exhaustion",
+        "heat stroke",
+        "heat cramps",
+        "dehydration"
+      ],
+      "sources": [
+        {
+          "name": "IMD, FAQ on Heat Wave",
+          "url": "https://internal.imd.gov.in/section/nhac/dynamic/FAQ_heat_wave.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCDC (MoHFW), Advisory for State Health Departments for Summer 2026, NPCCHH",
+          "url": "https://ncdc.mohfw.gov.in/uploads/pdf/1.%20Heat%20wave%20advisory%20for%20State%20Health%20department_2026.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "we-sw-monsoon",
+      "kind": "season",
+      "title": "South-west monsoon",
+      "zones": [
+        "west"
+      ],
+      "start": "06-10",
+      "end": "10-15",
+      "summary": "The monsoon reaches Goa by about 10 June, Mumbai by about 15 June, south Gujarat by about 20 June and most of Gujarat by about 30 June. It withdraws from Gujarat around 1 October and from Maharashtra and Goa by about 15 October.",
+      "typically_rises": [
+        "leptospirosis",
+        "dengue",
+        "malaria",
+        "gastroenteritis"
+      ],
+      "sources": [
+        {
+          "name": "IMD, Normal dates of onset/progress and withdrawal of the southwest monsoon over India (Pai et al., CRS Research Report 3/2020)",
+          "url": "https://internal.imd.gov.in/press_release/20200515_pr_804.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCVBDC (MoHFW), National Guidelines for Clinical Management of Dengue Fever 2023",
+          "url": "https://ncvbdc.mohfw.gov.in/Doc/National%20Guidelines%20for%20Clinical%20Management%20of%20Dengue%20Fever%202023.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCDC (MoHFW), National Guidelines: Diagnosis, Case Management, Prevention and Control of Leptospirosis, 2015",
+          "url": "https://ncdc.mohfw.gov.in/uploads/pdf/lep4.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "we-leptospirosis",
+      "kind": "disease",
+      "title": "Leptospirosis",
+      "zones": [
+        "west"
+      ],
+      "start": "06-15",
+      "end": "11-15",
+      "summary": "Leptospirosis outbreaks are reported from coastal Gujarat and Maharashtra and from Dadra and Nagar Haveli and Daman and Diu, with cases in Goa. Cases start with the rains, decline as they recede, are more common post-monsoon, and floods can set off outbreaks.",
+      "typically_rises": [
+        "leptospirosis"
+      ],
+      "sources": [
+        {
+          "name": "NCDC (MoHFW), National Guidelines: Diagnosis, Case Management, Prevention and Control of Leptospirosis, 2015",
+          "url": "https://ncdc.mohfw.gov.in/uploads/pdf/lep4.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCDC, Programme for Prevention and Control of Leptospirosis",
+          "url": "https://ncdc.mohfw.gov.in/includes/About/CentresAndDivision/leptospirosis.php",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Pinto et al., Determinants of transmission of leptospirosis during the nonrainy season in a metro city in India (Mumbai), Indian J Public Health 2026",
+          "url": "https://doi.org/10.4103/ijph.ijph_919_24",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "we-winter-cold",
+      "kind": "season",
+      "title": "Winter and cold waves",
+      "zones": [
+        "west"
+      ],
+      "start": "12-01",
+      "end": "02-15",
+      "summary": "Gujarat and Maharashtra are among the cold wave prone states. Cold waves fall in the December to February winter, and older people, children and people with chronic illness are most at risk.",
+      "typically_rises": [
+        "hypothermia",
+        "flu-like illness"
+      ],
+      "sources": [
+        {
+          "name": "IMD, FAQ on Cold Wave",
+          "url": "https://internal.imd.gov.in/section/nhac/dynamic/faq.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "IMD, Press release: Seasonal outlook for the cold weather season, December 2025 to February 2026 (1 December 2025)",
+          "url": "https://mausam.imd.gov.in/Forecast/marquee_data/Outlook_for_cold_weather_season_Dec_2025.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "sw-pre-monsoon-heat",
+      "kind": "season",
+      "title": "Pre-monsoon heat",
+      "zones": [
+        "south_west"
+      ],
+      "start": "03-01",
+      "end": "05-31",
+      "summary": "Heat waves can occur from March until the monsoon arrives in early June. Parts of Karnataka are heat wave prone, and heat waves occasionally reach Kerala.",
+      "typically_rises": [
+        "heat exhaustion",
+        "heat stroke",
+        "heat cramps",
+        "dehydration"
+      ],
+      "sources": [
+        {
+          "name": "IMD, FAQ on Heat Wave",
+          "url": "https://internal.imd.gov.in/section/nhac/dynamic/FAQ_heat_wave.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCDC (MoHFW), Advisory for State Health Departments for Summer 2026, NPCCHH",
+          "url": "https://ncdc.mohfw.gov.in/uploads/pdf/1.%20Heat%20wave%20advisory%20for%20State%20Health%20department_2026.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "sw-sw-monsoon",
+      "kind": "season",
+      "title": "South-west monsoon",
+      "zones": [
+        "south_west"
+      ],
+      "start": "06-01",
+      "end": "10-15",
+      "summary": "The monsoon sets in over Kerala around 1 June, covers coastal and south interior Karnataka by about 5 June and most of Karnataka by about 10 June. It withdraws from north Karnataka by mid October.",
+      "typically_rises": [
+        "dengue",
+        "leptospirosis",
+        "typhoid",
+        "gastroenteritis"
+      ],
+      "sources": [
+        {
+          "name": "IMD, Normal dates of onset/progress and withdrawal of the southwest monsoon over India (Pai et al., CRS Research Report 3/2020)",
+          "url": "https://internal.imd.gov.in/press_release/20200515_pr_804.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCVBDC (MoHFW), National Guidelines for Clinical Management of Dengue Fever 2023",
+          "url": "https://ncvbdc.mohfw.gov.in/Doc/National%20Guidelines%20for%20Clinical%20Management%20of%20Dengue%20Fever%202023.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCDC (MoHFW), National Guidelines: Diagnosis, Case Management, Prevention and Control of Leptospirosis, 2015",
+          "url": "https://ncdc.mohfw.gov.in/uploads/pdf/lep4.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "sw-ne-monsoon",
+      "kind": "season",
+      "title": "North-east monsoon",
+      "zones": [
+        "south_west"
+      ],
+      "start": "10-15",
+      "end": "12-31",
+      "summary": "From mid October the north-east monsoon brings further rain to Kerala and south interior Karnataka, more than half of it in October. October to December gives Kerala about 17% of its yearly rain.",
+      "typically_rises": [],
+      "sources": [
+        {
+          "name": "Raj, Balachandran, Amudha and Geetha, Understanding and prediction of Indian northeast monsoon over the years, MAUSAM 76(1), 2025 (IMD)",
+          "url": "https://metnet.imd.gov.in/docs/mausamdocs/17619_F.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "sw-dengue",
+      "kind": "disease",
+      "title": "Dengue",
+      "zones": [
+        "south_west"
+      ],
+      "start": "05-01",
+      "end": "09-30",
+      "peak": {
+        "start": "06-01",
+        "end": "07-31"
+      },
+      "summary": "In Kerala dengue cases begin rising in May and peak during the monsoon, with the maximum in June and July. Southern states report dengue all year, and the peak month varies by state and year.",
+      "typically_rises": [
+        "dengue"
+      ],
+      "sources": [
+        {
+          "name": "Sophia et al. (IITM, ICMR-NITVAR, KUHS), Climate informed dengue prediction and future risk under a changing monsoon climate in Kerala, GeoHealth 2026",
+          "url": "https://doi.org/10.1029/2026GH001893",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCVBDC (MoHFW), National Guidelines for Clinical Management of Dengue Fever 2023",
+          "url": "https://ncvbdc.mohfw.gov.in/Doc/National%20Guidelines%20for%20Clinical%20Management%20of%20Dengue%20Fever%202023.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "The South First, South India has no single dengue season (analysis of NCVBDC monthly data), 19 August 2026",
+          "url": "https://thesouthfirst.com/health/south-india-has-no-single-dengue-season-it-differs-across-states/",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "sw-leptospirosis",
+      "kind": "disease",
+      "title": "Leptospirosis",
+      "zones": [
+        "south_west"
+      ],
+      "start": "06-01",
+      "end": "11-30",
+      "summary": "Leptospirosis is endemic in Kerala and coastal Karnataka. Cases start with the monsoon rains, decline as they recede, are more common post-monsoon, and floods can set off outbreaks.",
+      "typically_rises": [
+        "leptospirosis"
+      ],
+      "sources": [
+        {
+          "name": "NCDC (MoHFW), National Guidelines: Diagnosis, Case Management, Prevention and Control of Leptospirosis, 2015",
+          "url": "https://ncdc.mohfw.gov.in/uploads/pdf/lep4.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCDC, Programme for Prevention and Control of Leptospirosis",
+          "url": "https://ncdc.mohfw.gov.in/includes/About/CentresAndDivision/leptospirosis.php",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "sw-nipah-kerala",
+      "kind": "disease",
+      "title": "Nipah high-alert period, Kerala",
+      "zones": [
+        "south_west"
+      ],
+      "start": "04-01",
+      "end": "09-30",
+      "summary": "Kerala treats April to September as its Nipah high-alert period. Spillovers in Kerala since 2018 have mostly occurred in the monsoon and post-monsoon months, May to September. Cases remain rare.",
+      "typically_rises": [
+        "Nipah virus infection (rare)"
+      ],
+      "sources": [
+        {
+          "name": "WHO, Disease Outbreak News: Nipah virus disease, India, 25 June 2026",
+          "url": "https://www.who.int/emergencies/disease-outbreak-news/item/2026-DON609",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Apoorva and Singh, The Nipah virus threat in India: epidemiological trends, risk drivers, and lessons for pandemic preparedness, PLOS Pathogens 2026",
+          "url": "https://journals.plos.org/plospathogens/article?id=10.1371%2Fjournal.ppat.1014226",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "sw-hepatitis-a-e",
+      "kind": "disease",
+      "title": "Hepatitis A and E",
+      "zones": [
+        "south_west"
+      ],
+      "start": "06-01",
+      "end": "11-30",
+      "summary": "Kerala's statewide surveillance data show hepatitis A rising after the monsoon, and a Bengaluru hospital study found most hepatitis A and E cases from June to October.",
+      "typically_rises": [
+        "hepatitis A",
+        "hepatitis E"
+      ],
+      "sources": [
+        {
+          "name": "Mac et al., Delayed exposure to hepatitis A virus, with Kerala statewide surveillance data 2020-2024, BMC Infect Dis 2026",
+          "url": "https://doi.org/10.1186/s12879-026-13193-x",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Mahadevaiah et al., Prevalence of HAV and HEV in acute viral hepatitis at a teaching hospital in Bengaluru, J Family Med Prim Care 2025",
+          "url": "https://doi.org/10.4103/jfmpc.jfmpc_410_25",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "se-pre-monsoon-heat",
+      "kind": "season",
+      "title": "Pre-monsoon heat",
+      "zones": [
+        "south_east_coast"
+      ],
+      "start": "03-15",
+      "end": "06-15",
+      "peak": {
+        "start": "05-01",
+        "end": "05-31"
+      },
+      "summary": "Andhra Pradesh is heat wave prone and Tamil Nadu is affected at times. Heat waves are most likely from March to mid June, peaking in May.",
+      "typically_rises": [
+        "heat exhaustion",
+        "heat stroke",
+        "heat cramps",
+        "dehydration"
+      ],
+      "sources": [
+        {
+          "name": "IMD, FAQ on Heat Wave",
+          "url": "https://internal.imd.gov.in/section/nhac/dynamic/FAQ_heat_wave.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCDC (MoHFW), Advisory for State Health Departments for Summer 2026, NPCCHH",
+          "url": "https://ncdc.mohfw.gov.in/uploads/pdf/1.%20Heat%20wave%20advisory%20for%20State%20Health%20department_2026.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "se-sw-monsoon",
+      "kind": "season",
+      "title": "South-west monsoon",
+      "zones": [
+        "south_east_coast"
+      ],
+      "start": "06-01",
+      "end": "10-15",
+      "summary": "The monsoon reaches south Tamil Nadu around 1 June and all of coastal Andhra Pradesh by about 15 June. Tamil Nadu gets less rain in this season (about 317 mm) than in the north-east monsoon.",
+      "typically_rises": [],
+      "sources": [
+        {
+          "name": "IMD, Normal dates of onset/progress and withdrawal of the southwest monsoon over India (Pai et al., CRS Research Report 3/2020)",
+          "url": "https://internal.imd.gov.in/press_release/20200515_pr_804.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Raj, Balachandran, Amudha and Geetha, Understanding and prediction of Indian northeast monsoon over the years, MAUSAM 76(1), 2025 (IMD)",
+          "url": "https://metnet.imd.gov.in/docs/mausamdocs/17619_F.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "se-ne-monsoon",
+      "kind": "season",
+      "title": "North-east monsoon",
+      "zones": [
+        "south_east_coast"
+      ],
+      "start": "10-15",
+      "end": "12-31",
+      "peak": {
+        "start": "10-15",
+        "end": "11-30"
+      },
+      "summary": "The north-east monsoon usually sets in around 20 October and withdraws around 27 December. It is Tamil Nadu's main rainy season, bringing about 48% of its yearly rain. October and November are the wettest months.",
+      "typically_rises": [
+        "leptospirosis",
+        "scrub typhus",
+        "influenza"
+      ],
+      "sources": [
+        {
+          "name": "Raj, Balachandran, Amudha and Geetha, Understanding and prediction of Indian northeast monsoon over the years, MAUSAM 76(1), 2025 (IMD)",
+          "url": "https://metnet.imd.gov.in/docs/mausamdocs/17619_F.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Epidemiological profile of leptospirosis in Tamil Nadu, 2021-2024: an analysis of IDSP-IHIP programme data, Tamil Nadu J Public Health Med Res 4(2), 2024",
+          "url": "https://tnjphmr.com/article/pdf/580.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Varghese et al., Epidemiology and risk factors of scrub typhus in south India, Indian J Med Res 2016",
+          "url": "https://doi.org/10.4103/0971-5916.193292",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Chadha et al. (ICMR-NIV), Dynamics of influenza seasonality at sub-regional levels in India and implications for vaccination timing, PLoS One 2015",
+          "url": "https://doi.org/10.1371/journal.pone.0124122",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "se-dengue",
+      "kind": "disease",
+      "title": "Dengue",
+      "zones": [
+        "south_east_coast"
+      ],
+      "start": "07-01",
+      "end": "11-30",
+      "summary": "Dengue transmits all year in the south. In Tamil Nadu the highest month has fallen anywhere from July to November in recent years, so there is no single fixed peak.",
+      "typically_rises": [
+        "dengue"
+      ],
+      "sources": [
+        {
+          "name": "NCVBDC (MoHFW), National Guidelines for Clinical Management of Dengue Fever 2023",
+          "url": "https://ncvbdc.mohfw.gov.in/Doc/National%20Guidelines%20for%20Clinical%20Management%20of%20Dengue%20Fever%202023.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "The South First, South India has no single dengue season (analysis of NCVBDC monthly data), 19 August 2026",
+          "url": "https://thesouthfirst.com/health/south-india-has-no-single-dengue-season-it-differs-across-states/",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "se-scrub-typhus",
+      "kind": "disease",
+      "title": "Scrub typhus, cooler months",
+      "zones": [
+        "south_east_coast"
+      ],
+      "start": "09-01",
+      "end": "01-31",
+      "summary": "In Tamil Nadu and Andhra Pradesh, scrub typhus is most common in the cooler months, September to January. National surveillance data also show peaks from October to January.",
+      "typically_rises": [
+        "scrub typhus"
+      ],
+      "sources": [
+        {
+          "name": "Varghese et al., Epidemiology and risk factors of scrub typhus in south India, Indian J Med Res 2016",
+          "url": "https://doi.org/10.4103/0971-5916.193292",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Narain et al., Epidemiological trends of scrub typhus in India based on IDSP data 2009-2018, Indian J Community Med 2026",
+          "url": "https://doi.org/10.4103/ijcm.ijcm_754_25",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Rahi et al., DHR-ICMR Guidelines for diagnosis and management of rickettsial diseases in India, Indian J Med Res 2015",
+          "url": "https://doi.org/10.4103/0971-5916.159279",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "se-leptospirosis",
+      "kind": "disease",
+      "title": "Leptospirosis",
+      "zones": [
+        "south_east_coast"
+      ],
+      "start": "06-01",
+      "end": "12-31",
+      "summary": "Leptospirosis is endemic in nearly all districts of Tamil Nadu. State surveillance data for 2021 to 2024 show cases rising from June and climbing steadily until December, with the rains and floods, then falling.",
+      "typically_rises": [
+        "leptospirosis"
+      ],
+      "sources": [
+        {
+          "name": "Epidemiological profile of leptospirosis in Tamil Nadu, 2021-2024: an analysis of IDSP-IHIP programme data, Tamil Nadu J Public Health Med Res 4(2), 2024",
+          "url": "https://tnjphmr.com/article/pdf/580.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCDC (MoHFW), National Guidelines: Diagnosis, Case Management, Prevention and Control of Leptospirosis, 2015",
+          "url": "https://ncdc.mohfw.gov.in/uploads/pdf/lep4.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "se-influenza",
+      "kind": "disease",
+      "title": "Influenza, late-monsoon peak",
+      "zones": [
+        "south_east_coast"
+      ],
+      "start": "10-01",
+      "end": "11-30",
+      "summary": "In Chennai and Vellore influenza peaks in October and November, with the north-east monsoon, later than in most of India.",
+      "typically_rises": [
+        "influenza"
+      ],
+      "sources": [
+        {
+          "name": "Chadha et al. (ICMR-NIV), Dynamics of influenza seasonality at sub-regional levels in India and implications for vaccination timing, PLoS One 2015",
+          "url": "https://doi.org/10.1371/journal.pone.0124122",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Padhi et al., Seasonality of influenza and optimizing timing of vaccination: systematic review and meta-analysis, Cureus 2025",
+          "url": "https://doi.org/10.7759/cureus.93607",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "se-cholera",
+      "kind": "disease",
+      "title": "Cholera and diarrhoeal illness",
+      "zones": [
+        "south_east_coast"
+      ],
+      "start": "10-15",
+      "end": "01-31",
+      "peak": {
+        "start": "12-01",
+        "end": "01-31"
+      },
+      "summary": "In Tamil Nadu, cholera outbreaks have typically peaked in December and January, at the end of the north-east monsoon.",
+      "typically_rises": [
+        "cholera",
+        "diarrhoeal illness"
+      ],
+      "sources": [
+        {
+          "name": "Muzembo et al., Cholera outbreaks in India, 2011-2020: a systematic review, Int J Environ Res Public Health 2022",
+          "url": "https://doi.org/10.3390/ijerph19095738",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "is-sw-monsoon",
+      "kind": "season",
+      "title": "South-west monsoon",
+      "zones": [
+        "islands"
+      ],
+      "start": "05-22",
+      "end": "10-15",
+      "summary": "The monsoon reaches the Andaman and Nicobar Islands around 22 May, before mainland India, and sets in over Kerala, next to Lakshadweep, around 1 June. It retreats from India after mid October.",
+      "typically_rises": [],
+      "sources": [
+        {
+          "name": "IMD, Normal dates of onset/progress and withdrawal of the southwest monsoon over India (Pai et al., CRS Research Report 3/2020)",
+          "url": "https://internal.imd.gov.in/press_release/20200515_pr_804.pdf",
+          "accessed": "2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "is-leptospirosis",
+      "kind": "disease",
+      "title": "Leptospirosis, Andaman and Nicobar",
+      "zones": [
+        "islands"
+      ],
+      "start": "06-01",
+      "end": "11-30",
+      "summary": "Leptospirosis is endemic in the Andaman and Nicobar Islands, which have one of India's highest incidence rates. National guidance describes it as a rainy-season disease that starts with the rains and declines as they recede.",
+      "typically_rises": [
+        "leptospirosis"
+      ],
+      "sources": [
+        {
+          "name": "NCDC (MoHFW), National Guidelines: Diagnosis, Case Management, Prevention and Control of Leptospirosis, 2015",
+          "url": "https://ncdc.mohfw.gov.in/uploads/pdf/lep4.pdf",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "NCDC, Programme for Prevention and Control of Leptospirosis",
+          "url": "https://ncdc.mohfw.gov.in/includes/About/CentresAndDivision/leptospirosis.php",
+          "accessed": "2026-10-06"
+        },
+        {
+          "name": "Anand et al., Awareness and practices regarding leptospirosis in Andaman and Nicobar Islands, Cureus 2023",
+          "url": "https://doi.org/10.7759/cureus.44305",
+          "accessed": "2026-10-06"
+        }
+      ]
+    }
+  ]
+}

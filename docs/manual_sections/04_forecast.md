@@ -18,7 +18,7 @@ Before diving into the code, here are the key clinical concepts this module deal
 
 **Multi-task model**, One neural network that produces several different outputs simultaneously. Instead of training a separate model for LOS, one for discharge probability, one for acuity, etc., a single BiLSTM shares a common representation of the patient and then splits into separate "heads" for each output. This is efficient and often improves accuracy because the tasks share useful signal.
 
-**Hospital-level capacity forecasting**, Rolling up all individual patient predictions into aggregate numbers: how many beds will be occupied in each ward tomorrow, the day after, etc. This uses each patient's remaining LOS to estimate when discharges will happen, combined with a statistical model of future admissions calibrated to Indian hospital patterns and weather/environmental data from Orb Pulse.
+**Hospital-level capacity forecasting**, Rolling up all individual patient predictions into aggregate numbers: how many beds will be occupied in each ward tomorrow, the day after, etc. This uses each patient's remaining LOS to estimate when discharges will happen, combined with a statistical model of future admissions calibrated to Indian hospital patterns. It applies no weather or seasonal adjustment; the season from Pulse is shown as context only.
 
 ---
 
@@ -219,31 +219,13 @@ A lazy singleton loader. The first call to this function triggers `load_model()`
 
 ---
 
-#### Group 2: Pulse integration (`_get_environmental_multipliers`)
+#### Group 2: The season line (no adjustment)
 
-**`_get_environmental_multipliers(days_ahead: int = 7) -> list[dict]`**
+Until 6 October 2026 this group was `_get_environmental_multipliers`. It read the weather, air-quality and flu data that Pulse had fetched from the internet and multiplied expected admissions by hand-picked factors, stacked multiplicatively: for example ×1.20 for a maximum temperature of 42 °C or more ("cardiac/renal emergencies"), ×1.20 for a thunderstorm, ×1.35 for an ILI rate above 5 %. None of those factors was fitted to data. The function went with the internet feeds under the strictly-offline rule, and the ruling of 6 October 2026 (R030 in `docs/RULINGS_NEEDED_2026-10.md`) also turned down replacing it with seasonal guesses.
 
-Reads cached weather, AQI (air quality index), and flu surveillance data that was fetched by Orb Pulse (a separate service). Returns one dict per forecast day with:
-- `multiplier`, A number like 1.20, meaning "expect 20% more admissions today due to environmental factors"
-- `factors`, Human-readable explanation strings (e.g., "Thunderstorm (+20% trauma)")
-- `icons`, Icon keys for the frontend (e.g., "storm", "rain", "heat", "aqi", "flu")
+Forecast now applies **no weather or seasonal adjustment**. `_season_context(today)` calls `seasonal_calendar.season_context()` (§8), imported inside the function so the forecast never depends on the calendar loading, and `predict_hospital_flow` returns the result as `season`: today's active entries as `{id, title, kind, in_peak}`, shown as one line of context, for example "Season: South-west monsoon (peak), Dengue season". The list is empty when no state is set, the calendar is unusable, or nothing applies. No admission, discharge or occupancy figure depends on it.
 
-The logic stacks multipliers multiplicatively. For example, extreme heat (×1.20) combined with very poor air quality (×1.20) gives a multiplier of 1.44, a 44% admission surge above baseline. The thresholds are:
-
-| Signal | Threshold | Multiplier | Clinical rationale |
-|---|---|---|---|
-| Weather code ≥ 95 (thunderstorm) | n/a | ×1.20 | Trauma surge (accidents, falls) |
-| Weather code ≥ 80 (heavy rain) | n/a | ×1.10 | Trauma surge |
-| Max temp ≥ 42°C | Extreme heat | ×1.20 | Cardiac/renal emergencies |
-| Max temp ≥ 38°C | Heat advisory | ×1.10 | Cardiac |
-| Min temp ≤ 5°C | Cold snap | ×1.10 | Cardiac/respiratory |
-| AQI > 200 | Very Unhealthy | ×1.20 | Respiratory admissions |
-| AQI > 150 | Unhealthy | ×1.15 | |
-| AQI > 100 | Sensitive groups | ×1.05 | |
-| ILI% > 5.0 | Flu surge | ×1.35 | Respiratory surge |
-| ILI% > 3.0 | Elevated flu | ×1.15 | |
-
-If `pulse_service` is not importable (e.g., Pulse module not installed), all multipliers default to 1.0 silently.
+⚠️ **If you change this:** do not put a hand-picked seasonal or weather multiplier back. The ruling leaves room for one thing only: a seasonal factor fitted from the hospital's own admission history, once there is enough of it.
 
 ---
 
@@ -361,17 +343,17 @@ Produces the 7-day hospital flow forecast shown in the Forecast Panel. Results a
 
 4. **Per-patient predictions**, For each admitted patient, calls `_get_cached_or_predict(patient_id)` to get their predicted remaining LOS. This uses the cache table first and only triggers live inference if no cached prediction exists.
 
-5. **Environmental multipliers**, Calls `_get_environmental_multipliers(days_ahead)` to get a per-day multiplier from Pulse weather/AQI/flu data.
+5. **Season line**, Reads the current season from Pulse's calendar for the context line. It changes no number.
 
 6. **Daily forecast loop**, For each future day (1 through 7):
 
-   - **Admissions:** `avg_admission_rate × DOW_MULTIPLIERS[weekday] × env_multiplier`. The result is the Poisson *mean* (not a single random draw), this keeps the forecast stable across cache refreshes.
+   - **Admissions:** `avg_admission_rate × DOW_MULTIPLIERS[weekday]`. The result is the Poisson *mean* (not a single random draw), this keeps the forecast stable across cache refreshes.
    - **Discharges:** Counts patients whose `predicted_remaining_days` falls in the window `(day, day+1]`. Then applies two smoothing rules:
      - Cap at `n_patients // 3` (no more than a third of patients can leave in one day, prevents unrealistic spikes)
      - If no discharges were predicted and `day > 0`, floor to `max(1, n_patients * 0.08)`, about 8% base discharge rate to keep the curve plausible in sparse-data conditions. **This is explicitly labelled in the code as a demo placeholder, not a model output.**
    - **Occupancy:** `running_occupancy = previous_occupancy - discharges + admissions`, clamped to `[0, TOTAL_CAPACITY + 5]`.
    - **Ward breakdown:** Distributes projected occupancy proportionally to current ward distribution.
-   - Each day's entry includes `env_multiplier`, `env_factors`, and `env_icons` for the frontend to show environmental context.
+   - There are no per-day `env_multiplier`, `env_factors` or `env_icons` fields any more (removed 6 October 2026); the top-level `season` list is context only.
 
 7. **Summary statistics:** peak day and occupancy, average occupancy, total predicted 7-day discharges and admissions, beds available in 48 h.
 
@@ -610,7 +592,7 @@ When the script is run directly (`python3 scripts/train_forecast.py`):
 
 - Accepts optional `days` query parameter (default 7, capped at 14 by `min(days, 14)`).
 - Calls `predict_hospital_flow(days_ahead=...)`.
-- Returns the full forecast dict (current occupancy, 7-day daily forecasts with admissions/discharges/occupancy/ward breakdown/environmental factors, summary statistics).
+- Returns the full forecast dict (current occupancy, 7-day daily forecasts with admissions/discharges/occupancy/ward breakdown, `season` for context, summary statistics).
 - On error: 500 with `"Forecast error: <detail>"`.
 
 ---

@@ -588,17 +588,13 @@ the central claim of the product and it is enforced in the code rather than
 promised in a policy.
 
 **8.3 Then what does the appliance talk to on the internet?**
-*Implemented, and disclosed in full.* Two categories, neither carrying patient
-data:
+*Implemented.* Nothing. Orb makes no internet connection of any kind, inbound or
+outbound, and there is no exception. Block all outbound traffic from the
+appliance at your firewall and nothing in Orb stops working.
 
-- Environmental and public-health feeds: Open-Meteo (weather, air quality),
-  openFDA (drug recalls) and CDC influenza data. Outbound read-only requests
-  whose parameters are a latitude and longitude and public query filters. Every
-  call is logged. These can be blocked at your firewall with no loss of clinical
-  function.
-- Model weights, software packages and the speech model, downloaded once
-  before the appliance joins your network, never by the appliance during
-  operation.
+Model weights, software packages and the speech model are downloaded once
+during installation, before the appliance joins your network, and never by the
+appliance during operation.
 
 Browser-based cloud dictation is not supported and cannot be enabled. A
 browser's own speech recognition streams microphone audio to the browser
@@ -609,14 +605,19 @@ use on-device voices only. The speech engine and its model are installed with
 the appliance and never download anything: if the model is missing, voice is
 reported unavailable rather than fetched.
 
-Two things that used to reach the internet are gone, both removed on 4 October
-2026 under my ruling that Orb has no internet connection of any kind: the
-outbound operator heartbeat (5.7) and browser cloud dictation.
+Three things that used to reach the internet are gone, all under my ruling of
+4 October 2026 that Orb has no internet connection of any kind: the outbound
+operator heartbeat (5.7) and browser cloud dictation, removed on 4 October, and
+Pulse's public feeds, removed on 6 October. Pulse used to pull weather and air
+quality (Open-Meteo), US FDA drug recalls and US CDC flu data, and the browser
+looked up the user's location on openstreetmap.org. It now shows a seasonal
+calendar for your state that ships with Orb, and the state is a setting your
+team writes in the site configuration file, not a location lookup.
 
 **8.4 Does data cross a national border?**
 *Implemented.* No patient data leaves the appliance, so no patient data leaves
-India. The public feeds in 8.3 are outbound requests to overseas servers carrying
-no personal data.
+India. Nothing else leaves it either: the appliance makes no internet connection
+(8.3).
 
 **8.5 What happens to our data if we stop working with you?**
 *Implemented.* Nothing leaves. You own the hardware and the database file. I

@@ -190,7 +190,7 @@ Each answer's timing (retrieval, first token, total) is recorded in its metadata
 
 | Symptom | Likely cause | What to do |
 |---|---|---|
-| **"Connection failed. Ensure local models are running and responsive."** | The local model server is down or the model is not installed | Ask an administrator to check the AI service; the Pulse popover in the header shows system health |
+| **"Connection failed. Ensure local models are running and responsive."** | The local model server is down or the model is not installed | Ask an administrator to check the AI service |
 | First answer very slow, then fine | Model loading into memory after idle | Wait it out once; subsequent answers are faster |
 | Answer stops mid-sentence | You pressed Stop, or the model hit its output limit | Re-ask, or ask Sage to continue |
 | Sage lists several patients and asks which one | Your question matched more than one patient | Repeat with the full name or bed number |

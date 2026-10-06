@@ -54,11 +54,23 @@ interface DailyForecast {
  *  carries no admission/discharge predictions. */
 type ChartPoint = DailyForecast & { is_anchor?: boolean }
 
+/** One seasonal calendar entry active today (Pulse's built-in calendar for
+ *  the hospital's state). Context beside the numbers only: the server does not
+ *  multiply any projection by it. */
+interface SeasonContext {
+  id: string
+  title: string
+  kind: string
+  in_peak: boolean
+}
+
 interface HospitalForecast {
   current_occupancy: number
   total_capacity: number
   current_occupancy_pct: number
   daily_forecasts: DailyForecast[]
+  /** Empty when the hospital's state is not set or nothing is active today. */
+  season?: SeasonContext[]
   summary: {
     avg_occupancy: number
     peak_day: string
@@ -255,6 +267,11 @@ export default function ForecastPanel() {
   }
 
   const summary = hospitalData?.summary
+  // "Season: South-west monsoon (peak), Dengue season". One quiet line of
+  // context; it changes no number on this screen.
+  const seasonLine = (hospitalData?.season ?? [])
+    .map(s => (s.in_peak ? `${s.title} (peak)` : s.title))
+    .join(', ')
 
   return (
     <div className="orb-panel forecast-panel animate-fade-in">
@@ -275,6 +292,11 @@ export default function ForecastPanel() {
             Rule-based projections of length of stay, discharges and acuity, with live views of
             hospital census, ward capacity and discharge readiness. The forecasting model is not yet trained.
           </p>
+          {seasonLine && (
+            <p className="forecast-season-line" style={{ margin: '6px 0 0', fontSize: 'var(--text-sm)', lineHeight: 1.5, color: 'var(--text-secondary)' }}>
+              Season: {seasonLine}
+            </p>
+          )}
         </div>
       </div>
 

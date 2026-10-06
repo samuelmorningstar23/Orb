@@ -1,402 +1,340 @@
 /**
- * Orb Pulse Widget — Environmental Intelligence Overlay
- * 
- * Glassmorphic floating panel triggered from the header.
- * Requests geolocation access for location-specific data.
- * Displays: Weather, AQI, CDC Flu, FDA Recalls, Clinical Alerts.
- * 
- * Data flows IN only — zero patient data egress.
+ * Pulse: season and conditions.
+ *
+ * A panel opened from the header that says which season the hospital is in and
+ * what that season usually brings to the wards (the monsoon, dengue season,
+ * winter smog), from a seasonal calendar built into Orb for the hospital's
+ * Indian state.
+ *
+ * Orb is strictly offline (ruled 4 October 2026, Pulse rebuilt 6 October). The
+ * old panel showed live weather, air quality, US flu and FDA recall feeds,
+ * asked the browser for the device location and looked it up on a public map
+ * service, kept that location in localStorage and polled every 15 minutes. All
+ * of that is gone. The panel makes one request, GET /api/pulse/season, to the
+ * app's own server, each time it is opened. The date only changes once a day,
+ * so there is nothing to poll.
+ *
+ * The calendar is honest about itself: until a clinician has reviewed it, the
+ * panel says so above the cards, and sources are printed as names, never as
+ * links, because there is no internet to follow them to.
  */
-
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { apiFetch } from '../api/client'
-import PulseDetail, { type PulseData, type PulseClinicalFlag } from './PulseDetail'
-import { activatable } from '../lib/a11y'
+import { useEffect, useId, useState } from 'react'
+import {
+  fetchPulseSeason,
+  type ActiveSeasonEntry,
+  type PulseSeason,
+  type SeasonCalendarStatus,
+  type UpcomingSeasonEntry,
+} from '../api/pulse'
+import { useFocusTrap } from '../hooks/useFocusTrap'
+import { formatClinicalDateKey } from '../lib/datetime'
 import './PulseWidget.css'
 
-interface GeoLocation {
-  lat: number
-  lon: number
-  label: string
+const PANEL_ID = 'pulse-panel'
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+// February is 29 so that "02-29" parses; "02-28" also counts as its last day.
+const MONTH_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+interface MonthDay { month: number; day: number }
+
+function parseMonthDay(value: string): MonthDay | null {
+  const m = /^(\d{2})-(\d{2})$/.exec((value || '').trim())
+  if (!m) return null
+  const month = +m[1]
+  const day = +m[2]
+  if (month < 1 || month > 12 || day < 1 || day > MONTH_DAYS[month - 1]) return null
+  return { month, day }
 }
 
-// Weather code → emoji mapping (WMO codes)
-const weatherEmoji: Record<number, string> = {
-  0: '☀️', 1: '🌤️', 2: '⛅', 3: '☁️',
-  45: '🌫️', 48: '🌫️',
-  51: '🌦️', 53: '🌧️', 55: '🌧️',
-  61: '🌦️', 63: '🌧️', 65: '🌧️',
-  71: '🌨️', 73: '🌨️', 75: '❄️',
-  80: '🌦️', 81: '🌧️', 82: '⛈️',
-  95: '⛈️', 96: '⛈️', 99: '⛈️',
-}
+const isMonthEnd = (p: MonthDay) =>
+  p.day === MONTH_DAYS[p.month - 1] || (p.month === 2 && p.day === 28)
 
-const DEFAULT_LOCATION: GeoLocation = { lat: 19.076, lon: 72.8777, label: 'Mumbai' }
-
-export default function PulseWidget() {
-  const [isOpen, setIsOpen] = useState(false)
-  const [pulseData, setPulseData] = useState<PulseData | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [location, setLocation] = useState<GeoLocation>(() => {
-    const saved = localStorage.getItem('orb_pulse_location')
-    return saved ? JSON.parse(saved) : DEFAULT_LOCATION
-  })
-  const [geoStatus, setGeoStatus] = useState<'idle' | 'requesting' | 'granted' | 'denied'>('idle')
-  const [detailView, setDetailView] = useState<string | null>(null)
-  const [selectedAlert, setSelectedAlert] = useState<PulseClinicalFlag | null>(null)
-  const panelRef = useRef<HTMLDivElement>(null)
-
-  // Reset detail view when panel closes
-  const closePanel = () => { setIsOpen(false); setDetailView(null); setSelectedAlert(null) }
-  const openDetail = (view: string) => setDetailView(view)
-  const openAlertDetail = (alert: PulseClinicalFlag) => { setSelectedAlert(alert); setDetailView('alert') }
-
-  // ── Geolocation ──
-  const requestLocation = useCallback(() => {
-    if (!navigator.geolocation) {
-      setGeoStatus('denied')
-      return
-    }
-
-    setGeoStatus('requesting')
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const newLoc: GeoLocation = {
-          lat: position.coords.latitude,
-          lon: position.coords.longitude,
-          label: 'Current Location',
-        }
-
-        // Reverse geocode to get city name
-        try {
-          const resp = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?lat=${newLoc.lat}&lon=${newLoc.lon}&format=json&zoom=10`
-          )
-          if (resp.ok) {
-            const data = await resp.json()
-            const city = data.address?.city || data.address?.town || data.address?.county || 'Current Location'
-            newLoc.label = city
-          }
-        } catch {
-          // Keep "Current Location" as fallback
-        }
-
-        setLocation(newLoc)
-        localStorage.setItem('orb_pulse_location', JSON.stringify(newLoc))
-        setGeoStatus('granted')
-      },
-      () => {
-        setGeoStatus('denied')
-      },
-      { enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 }
-    )
-  }, [])
-
-  // Auto-request location on first open
-  useEffect(() => {
-    if (isOpen && geoStatus === 'idle') {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
-      requestLocation()
-    }
-  }, [isOpen, geoStatus, requestLocation])
-
-  // ── Fetch Pulse Data ──
-  const fetchPulse = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const data = await apiFetch<PulseData>(
-        `/pulse/dashboard?lat=${location.lat}&lon=${location.lon}`
-      )
-      setPulseData(data)
-    } catch (e) {
-      setError((e as { message?: string }).message || 'Failed to fetch environmental data')
-    } finally {
-      setLoading(false)
-    }
-  }, [location.lat, location.lon])
-
-  // Fetch when opened or location changes
-  useEffect(() => {
-    if (isOpen) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
-      fetchPulse()
-    }
-  }, [isOpen, fetchPulse])
-
-  // Auto-refresh every 15 min while open
-  useEffect(() => {
-    if (!isOpen) return
-    const interval = setInterval(fetchPulse, 15 * 60 * 1000)
-    return () => clearInterval(interval)
-  }, [isOpen, fetchPulse])
-
-  // Close on escape
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (detailView) { setDetailView(null); setSelectedAlert(null) }
-        else closePanel()
-      }
-    }
-    if (isOpen) {
-      document.addEventListener('keydown', handleKey)
-      return () => document.removeEventListener('keydown', handleKey)
-    }
-  }, [isOpen, detailView])
-
-  // Determine alert severity for badge
-  const highestSeverity = pulseData?.active_alerts?.[0]?.severity || null
-
-  const getAqiColorClass = (color: string) => {
-    const map: Record<string, string> = {
-      green: 'pulse-aqi__value--good',
-      yellow: 'pulse-aqi__value--moderate',
-      orange: 'pulse-aqi__value--orange',
-      red: 'pulse-aqi__value--red',
-      purple: 'pulse-aqi__value--purple',
-      maroon: 'pulse-aqi__value--maroon',
-    }
-    return map[color] || ''
+/**
+ * A calendar period in words: "June to September" when it runs over whole
+ * months, "15 October to 30 November" when it does not, "All year" when it
+ * covers every month. A period may run over the new year ("November to
+ * February"). An unreadable value is printed as sent rather than dropped.
+ */
+function periodInWords(start: string, end: string): string {
+  const s = parseMonthDay(start)
+  const e = parseMonthDay(end)
+  if (!s || !e) return `${start} to ${end}`
+  const month = (p: MonthDay) => MONTH_NAMES[p.month - 1]
+  if (s.day === 1 && isMonthEnd(e)) {
+    if (s.month === e.month) return month(s)
+    // Ends in the month before the one it starts in: every month is covered.
+    if (e.month === ((s.month + 10) % 12) + 1) return 'All year'
+    return `${month(s)} to ${month(e)}`
   }
+  if (s.month === e.month && s.day <= e.day) return `${s.day} to ${e.day} ${month(s)}`
+  return `${s.day} ${month(s)} to ${e.day} ${month(e)}`
+}
+
+/** "Tomorrow", "In 12 days". */
+function whenInWords(daysAway: number): string {
+  if (daysAway <= 0) return 'Today'
+  if (daysAway === 1) return 'Tomorrow'
+  return `In ${daysAway} days`
+}
+
+/** "Maharashtra", or "Maharashtra (Konkan)" when the calendar is kept for a
+ *  zone of the state rather than the whole of it. */
+function placeName(data: PulseSeason): string {
+  if (!data.state) return 'State not set'
+  if (data.zone && data.zone.name && data.zone.name !== data.state.name) {
+    return `${data.state.name} (${data.zone.name})`
+  }
+  return data.state.name
+}
+
+/** Anything other than "reviewed" reads as a draft: an unknown status must not
+ *  lose the label. */
+function CalendarStatus({ calendar }: { calendar: SeasonCalendarStatus }) {
+  if (calendar.status === 'reviewed') {
+    const by = calendar.reviewed_by ? ` by ${calendar.reviewed_by}` : ''
+    const on = calendar.reviewed_on ? ` on ${formatClinicalDateKey(calendar.reviewed_on)}` : ''
+    return <p className="pulse-calendar pulse-calendar--reviewed">Reviewed{by}{on}</p>
+  }
+  return (
+    <p className="pulse-calendar pulse-calendar--draft" role="note">
+      Draft: not yet reviewed by a clinician
+    </p>
+  )
+}
+
+function SeasonCard({ entry }: { entry: ActiveSeasonEntry }) {
+  const titleId = useId()
+  const rises = entry.typically_rises ?? []
+  const sources = entry.sources ?? []
+  return (
+    <li className="pulse-season" data-kind={entry.kind} aria-labelledby={titleId}>
+      <div className="pulse-season__head">
+        <h4 id={titleId} className="pulse-season__title">{entry.title}</h4>
+        {entry.in_peak && (
+          <span className="orb-count-chip orb-count-chip--info pulse-season__peak">Peak now</span>
+        )}
+      </div>
+      <p className="pulse-season__period">{periodInWords(entry.start, entry.end)}</p>
+      {entry.summary && <p className="pulse-season__summary">{entry.summary}</p>}
+      {rises.length > 0 && (
+        <p className="pulse-season__rises">Typically rises: {rises.join(', ')}</p>
+      )}
+      {sources.length > 0 && (
+        <p className="pulse-season__sources">
+          {sources.length === 1 ? 'Source' : 'Sources'}: {sources.map(s => s.name).join('; ')}
+        </p>
+      )}
+    </li>
+  )
+}
+
+function UpcomingList({ entries }: { entries: UpcomingSeasonEntry[] }) {
+  return (
+    <ul className="pulse-upcoming">
+      {entries.map(entry => (
+        <li key={entry.id} className="pulse-upcoming__item">
+          {whenInWords(entry.days_away)}: {entry.title}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function SeasonBody({ data }: { data: PulseSeason }) {
+  if (data.setup_needed) {
+    return (
+      <div className="orb-state orb-state--empty pulse-state" role="note">
+        <div className="orb-state__content">
+          <p className="orb-state__detail">
+            {data.setup_message || "The hospital's state has not been set, so there is no seasonal calendar to show."}
+          </p>
+        </div>
+      </div>
+    )
+  }
+  const active = data.active ?? []
+  const upcoming = data.upcoming ?? []
+  return (
+    <>
+      {data.calendar && <CalendarStatus calendar={data.calendar} />}
+
+      <section className="pulse-section" aria-labelledby="pulse-this-season">
+        <h3 id="pulse-this-season" className="pulse-section-label">This season</h3>
+        {active.length > 0 ? (
+          <ul className="pulse-season-list">
+            {active.map(entry => <SeasonCard key={entry.id} entry={entry} />)}
+          </ul>
+        ) : (
+          <div className="orb-state orb-state--empty pulse-state">
+            <div className="orb-state__content">
+              <p className="orb-state__detail">Nothing in the calendar covers today.</p>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {upcoming.length > 0 && (
+        <section className="pulse-section" aria-labelledby="pulse-coming-up">
+          <h3 id="pulse-coming-up" className="pulse-section-label">Coming up</h3>
+          <UpcomingList entries={upcoming} />
+        </section>
+      )}
+    </>
+  )
+}
+
+type Load =
+  | { kind: 'loading' }
+  | { kind: 'ready'; data: PulseSeason }
+  | { kind: 'error'; message: string | null }
+
+/** Mounted only while open, so the focus trap arms on open and lets go on
+ *  close (useFocusTrap needs its container to exist when it mounts), and each
+ *  opening reads the calendar afresh. */
+function PulsePanel({ onClose }: { onClose: () => void }) {
+  const panelRef = useFocusTrap<HTMLDivElement>(onClose)
+  const titleId = useId()
+  const subtitleId = useId()
+  const [load, setLoad] = useState<Load>({ kind: 'loading' })
+  const [attempt, setAttempt] = useState(0)
+
+  useEffect(() => {
+    let live = true
+    fetchPulseSeason().then(
+      data => { if (live) setLoad({ kind: 'ready', data }) },
+      (e: unknown) => {
+        if (!live) return
+        // The server's own sentence (a 503 says whether the calendar is missing
+        // or refused, and who can fix it). A browser network error ("Failed to
+        // fetch") has no status and says nothing a clinician can use.
+        const fromServer = e instanceof Error && typeof (e as { status?: unknown }).status === 'number'
+        setLoad({ kind: 'error', message: fromServer && e.message ? e.message : null })
+      },
+    )
+    return () => { live = false }
+  }, [attempt])
+
+  const retry = () => {
+    setLoad({ kind: 'loading' })
+    setAttempt(n => n + 1)
+  }
+
+  const data = load.kind === 'ready' ? load.data : null
 
   return (
     <>
-      {/* Trigger Button */}
-      <button
-        className={`pulse-trigger ${isOpen ? 'pulse-trigger--active' : ''}`}
-        onClick={() => isOpen ? closePanel() : setIsOpen(true)}
-        title="Orb Pulse: Environmental Intelligence"
-        id="btn-pulse"
+      <div className="pulse-backdrop" onClick={onClose} aria-hidden="true" />
+      <div
+        className="pulse-panel"
+        id={PANEL_ID}
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={subtitleId}
+        tabIndex={-1}
       >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-        </svg>
+        <div className="pulse-panel__header">
+          <div className="pulse-panel__heading">
+            <h2 id={titleId} className="pulse-panel__title">
+              <svg className="pulse-panel__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v4" />
+                <path d="M12 18v4" />
+                <path d="M4.93 4.93l2.83 2.83" />
+                <path d="M16.24 16.24l2.83 2.83" />
+                <path d="M2 12h4" />
+                <path d="M18 12h4" />
+              </svg>
+              Pulse
+            </h2>
+            <p id={subtitleId} className="pulse-panel__subtitle">Season and conditions</p>
+          </div>
+          <button type="button" className="pulse-panel__close" onClick={onClose} aria-label="Close Pulse">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M18 6 6 18" />
+              <path d="M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
 
-        {/* Alert badge */}
-        {pulseData && pulseData.alert_count > 0 && (
-          <span
-            className={`pulse-trigger__badge ${
-              highestSeverity === 'moderate' ? 'pulse-trigger__badge--moderate' : ''
-            }`}
-          />
-        )}
-      </button>
-
-      {/* Backdrop + Panel */}
-      {isOpen && (
-        <>
-          <div className="pulse-backdrop" onClick={closePanel} />
-          <div className="pulse-panel" ref={panelRef}>
-            {/* Header */}
-            <div className="pulse-panel__header">
-              <div className="pulse-panel__title">
-                <svg className="pulse-panel__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="4" />
-                  <path d="M12 2v4" />
-                  <path d="M12 18v4" />
-                  <path d="M4.93 4.93l2.83 2.83" />
-                  <path d="M16.24 16.24l2.83 2.83" />
-                  <path d="M2 12h4" />
-                  <path d="M18 12h4" />
-                </svg>
-                Orb Pulse
-              </div>
-              <button
-                className="pulse-panel__location"
-                onClick={requestLocation}
-                title="Click to update location"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
-                  <circle cx="12" cy="10" r="3" />
-                </svg>
-                {geoStatus === 'requesting' ? 'Locating...' : location.label}
-              </button>
-            </div>
-
-            {/* Body */}
-            <div className="pulse-panel__body">
-              {loading && !pulseData ? (
-                <div className="pulse-loading">
-                  <div className="pulse-loading__spinner" />
-                  Fetching environmental data...
-                </div>
-              ) : error && !pulseData ? (
-                <div className="pulse-error">{error}</div>
-              ) : pulseData ? (
-                <>
-                  {/* Active Alerts */}
-                  {pulseData.active_alerts.length > 0 ? (
-                    <>
-                      <div className="pulse-section-label">Active Clinical Alerts<span className="pulse-section-source">Orb Pulse Engine</span></div>
-                      {pulseData.active_alerts.map((alert, i) => (
-                        <div key={i} className={`pulse-alert pulse-alert--${alert.severity}`} {...activatable(() => openAlertDetail(alert), `Open alert detail: ${alert.title}`)}>
-                          <div className="pulse-alert__icon">
-                            {alert.severity === 'high' ? (
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--status-danger)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                                <line x1="12" y1="9" x2="12" y2="13" />
-                                <line x1="12" y1="17" x2="12.01" y2="17" />
-                              </svg>
-                            ) : (
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--status-warn)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <circle cx="12" cy="12" r="10" />
-                                <line x1="12" y1="8" x2="12" y2="12" />
-                                <line x1="12" y1="16" x2="12.01" y2="16" />
-                              </svg>
-                            )}
-                          </div>
-                          <div className="pulse-alert__content">
-                            <div className="pulse-alert__title">{alert.title}</div>
-                            <div className="pulse-alert__message">{alert.message}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </>
-                  ) : (
-                    <div className="pulse-no-alerts">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                        <polyline points="22 4 12 14.01 9 11.01" />
-                      </svg>
-                      No active environmental alerts
-                    </div>
-                  )}
-
-                  <div className="pulse-divider" />
-
-                  {/* Weather */}
-                  {pulseData.weather?.current?.temperature != null && (
-                    <div className="pulse-weather">
-                      <div className="pulse-section-label">Weather<span className="pulse-section-source">Open-Meteo</span></div>
-                      <div className="pulse-weather__current" {...activatable(() => openDetail('weather'), 'Open weather detail')}>
-                        <div className="pulse-weather__temp">
-                          {Math.round(pulseData.weather.current.temperature)}
-                          <span>°C</span>
-                        </div>
-                        <div className="pulse-weather__details">
-                          <div className="pulse-weather__desc">
-                            {weatherEmoji[pulseData.weather.current.weather_code] || '🌡️'}{' '}
-                            {pulseData.weather.current.description}
-                          </div>
-                          <div className="pulse-weather__meta">
-                            Feels like {Math.round(pulseData.weather.current.feels_like || 0)}°C
-                            {' · '}
-                            {pulseData.weather.current.humidity}% humidity
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* 7-day forecast strip */}
-                      {pulseData.weather.forecast?.length > 0 && (
-                        <div className="pulse-weather__forecast">
-                          {pulseData.weather.forecast.map((day, i: number) => (
-                            <div key={i} className="pulse-forecast-day">
-                              <span className="pulse-forecast-day__label">
-                                {i === 0 ? 'Today' : day.day_label?.split(' ')[0]}
-                              </span>
-                              <span className="pulse-forecast-day__icon">
-                                {weatherEmoji[day.weather_code] || '🌡️'}
-                              </span>
-                              <div className="pulse-forecast-day__temps">
-                                <span className="pulse-forecast-day__high">{Math.round(day.temp_max)}°</span>
-                                <span className="pulse-forecast-day__low">{Math.round(day.temp_min)}°</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="pulse-divider" />
-
-                  {/* Air Quality */}
-                  {pulseData.air_quality?.aqi != null && (
-                    <>
-                      <div className="pulse-section-label">Air Quality<span className="pulse-section-source">Open-Meteo AQI</span></div>
-                      <div className="pulse-aqi" {...activatable(() => openDetail('aqi'), 'Open air quality detail')}>
-                        <div className={`pulse-aqi__value ${getAqiColorClass(pulseData.air_quality.color)}`}>
-                          {pulseData.air_quality.aqi}
-                        </div>
-                        <div className="pulse-aqi__info">
-                          <div className="pulse-aqi__category">{pulseData.air_quality.category}</div>
-                          <div className="pulse-aqi__label">
-                            US AQI · PM2.5: {pulseData.air_quality.pollutants?.pm2_5?.toFixed(1) || '—'}
-                          </div>
-                        </div>
-                      </div>
-                    </>
-                  )}
-
-                  <div className="pulse-divider" />
-
-                  {/* CDC Flu */}
-                  {pulseData.flu_surveillance && (
-                    <>
-                      <div className="pulse-section-label">Flu Surveillance<span className="pulse-section-source">CDC FluView</span></div>
-                      <div className="pulse-flu" {...activatable(() => openDetail('flu'), 'Open flu surveillance detail')}>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-                        </svg>
-                        <div>
-                          <div className={`pulse-flu__level pulse-flu__level--${pulseData.flu_surveillance.activity_level}`}>
-                            {pulseData.flu_surveillance.activity_level?.replace('_', ' ')} Activity
-                          </div>
-                          <div className="pulse-flu__detail">
-                            ILI: {pulseData.flu_surveillance.ili_percentage}%
-                            {pulseData.flu_surveillance.source?.includes('Estimate') && ' (seasonal estimate)'}
-                          </div>
-                        </div>
-                      </div>
-                    </>
-                  )}
-
-                  {/* FDA Recalls */}
-                  {pulseData.drug_recalls?.length > 0 && (
-                    <>
-                      <div className="pulse-divider" />
-                      <div className="pulse-section-label">Recent FDA Drug Recalls<span className="pulse-section-source">openFDA</span></div>
-                      <div className="pulse-recalls">
-                        {pulseData.drug_recalls.slice(0, 3).map((recall, i) => (
-                          <div key={i} className="pulse-recall-item" {...activatable(() => openDetail(`recall-${i}`), `Open recall detail: ${recall.product}`)}>
-                            <div className="pulse-recall-item__product">{recall.product}</div>
-                            <div className="pulse-recall-item__reason">{recall.reason}</div>
-                            {recall.classification && (
-                              <span className="pulse-recall-item__class">{recall.classification}</span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </>
-              ) : null}
-            </div>
-
-            {/* Footer */}
-            <div className="pulse-panel__footer">
-              <span className="pulse-panel__footer-text">
-                Inbound only · Zero patient data transmitted
-              </span>
-              <button className="pulse-panel__footer-refresh" onClick={fetchPulse}>
-                Refresh
-              </button>
-            </div>
-
-            {/* Detail overlay */}
-            {detailView && pulseData && (
-              <PulseDetail
-                view={detailView}
-                data={{ ...pulseData, _selectedAlert: selectedAlert }}
-                onBack={() => { setDetailView(null); setSelectedAlert(null) }}
-              />
+        {data && (
+          <div className="pulse-panel__context">
+            <span className="pulse-panel__place">{placeName(data)}</span>
+            {data.date && (
+              <time className="pulse-panel__date" dateTime={data.date}>
+                {formatClinicalDateKey(data.date)}
+              </time>
             )}
           </div>
-        </>
-      )}
+        )}
+
+        <div className="pulse-panel__body">
+          {load.kind === 'loading' && (
+            <div className="orb-state orb-state--loading pulse-state" role="status">
+              <div className="orb-state__content">
+                <p className="orb-state__detail">Loading the seasonal calendar…</p>
+              </div>
+            </div>
+          )}
+          {load.kind === 'error' && (
+            <div className="orb-state orb-state--error pulse-state" role="alert">
+              <div className="orb-state__content">
+                <p className="orb-state__title">The seasonal calendar could not be loaded.</p>
+                {load.message && <p className="orb-state__detail">{load.message}</p>}
+                <div>
+                  <button type="button" className="btn-glass" onClick={retry}>Try again</button>
+                </div>
+              </div>
+            </div>
+          )}
+          {data && <SeasonBody data={data} />}
+        </div>
+
+        {data && !data.setup_needed && data.calendar?.compiled_on && (
+          <div className="pulse-panel__footer">
+            Built into Orb. Calendar compiled {formatClinicalDateKey(data.calendar.compiled_on)}.
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
+// The old Pulse saved the browser's location here. Nothing reads it now; drop it.
+const LEGACY_LOCATION_KEY = 'orb_pulse_location'
+
+export default function PulseWidget() {
+  const [isOpen, setIsOpen] = useState(false)
+  const close = () => setIsOpen(false)
+
+  useEffect(() => {
+    try { localStorage.removeItem(LEGACY_LOCATION_KEY) } catch { /* storage unavailable */ }
+  }, [])
+
+  return (
+    <>
+      <button
+        type="button"
+        className={`pulse-trigger ${isOpen ? 'pulse-trigger--active' : ''}`}
+        onClick={() => setIsOpen(open => !open)}
+        title="Pulse: season and conditions"
+        aria-label="Pulse: season and conditions"
+        aria-haspopup="dialog"
+        aria-expanded={isOpen}
+        aria-controls={isOpen ? PANEL_ID : undefined}
+        id="btn-pulse"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+        </svg>
+      </button>
+
+      {isOpen && <PulsePanel onClose={close} />}
     </>
   )
 }

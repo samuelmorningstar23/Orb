@@ -33,6 +33,7 @@ Neighbors: the **auth subsystem** (guide 03-auth-rbac) issues the JWT this clien
 | `src/api/downtime.ts` | 145 | Typed client for EHR downtime snapshots (`/api/downtime/*`). |
 | `src/api/ipass.ts` | 117 | Typed client for I-PASS shift-handoff endpoints (`/api/ipass/*`). |
 | `src/api/pharmacy.ts` | 151 | Typed client for pharmacist verification of AI-charted medications (`/api/pharmacy/*`). |
+| `src/api/pulse.ts` | 80 | Typed client for Pulse's one endpoint, `GET /api/pulse/season` (`fetchPulseSeason`, `PulseSeason`). Added 6 October 2026 when Pulse was rebuilt as a built-in seasonal calendar; before that `PulseWidget` called `apiFetch('/pulse/dashboard')` directly. |
 | `src/api/sse.test.ts` | 67 | Vitest unit tests for the SSE parsing helpers `readSSEEvents` and `parseSSEData`. |
 
 ## How it works
@@ -216,7 +217,7 @@ graph TD
 4. On success: `response.json()` parsed and returned as `T` (`:266-267`). Note `T` is a compile-time promise only, nothing validates the payload at runtime.
 **Why it exists:** One wrapper gives every call identical base-URL handling, cookie + CSRF attachment, session-expiry behavior, and RBAC error shaping. There is deliberately **no retry logic and no timeout** here: a failed request throws once, immediately; the only retry machinery in the client is the offline queue replay (which re-enters `apiFetch` per attempt).
 **Data in/out:** router-relative path + standard `RequestInit` → parsed JSON typed `T`; throws `Error` (possibly with `.status`, `.detail`, `.permissions`, `.mfaEnrollTicket`, or the `SafetyAckRequiredError` shape) on any non-2xx.
-**Talks to:** called by every wrapper in this file plus all four domain modules and several components that import it directly (`HelixPanel`, `ImpactDashboard`, `TrustCenter`, `ProvenanceChip`, `PulseWidget`, `RevenueIntegrityPanel`, `CapacitySimulator`, `CommandCenter`, `FlightRecorder`, `OrdersPanel`, found by grep); calls `buildHeaders`, `notifySessionExpired`.
+**Talks to:** called by every wrapper in this file plus all four domain modules and several components that import it directly (`HelixPanel`, `ImpactDashboard`, `TrustCenter`, `ProvenanceChip`, `RevenueIntegrityPanel`, `CapacitySimulator`, `CommandCenter`, `FlightRecorder`, `OrdersPanel`, found by grep); calls `buildHeaders`, `notifySessionExpired`.
 **Change guide, worked example (adding a new endpoint):** Suppose the backend gains `GET /api/vigil/patients/{id}/allergies`. 1. Add `export async function getPatientAllergies(patientId: string): Promise<Allergy[]> { return apiFetch(`/vigil/patients/${patientId}/allergies`); }` near the other Vigil wrappers (around `client.ts:614-652`). 2. Define the `Allergy` interface next to it. 3. Import it in the consuming panel. That is the entire client-side change, auth, errors, and base URL come free. Knock-on effects: none. Watch out: paths embedding user-supplied strings should use `encodeURIComponent` (only `bundles.ts:76` does this today, most `client.ts` wrappers interpolate raw ids).
 **Gotchas:** (1) `notifySessionExpired()` is typed `never` and throws, so the 401 branch never falls through to the JSON parse, the surviving error message is always `'Session expired'`, not the server's detail. (2) A *network-level* failure (server unreachable) rejects the raw `fetch` with a `TypeError` that bypasses all of this normalization, callers see a generic "Failed to fetch". (3) The generic `T` is unchecked at runtime; a backend shape change fails silently at the type level.
 
@@ -798,7 +799,7 @@ Purpose (header `:1-8`): the closed loop for AI-charted medications, list meds w
 
 | Export | Consumers |
 |---|---|
-| `apiFetch` | 10+ components call it directly (HelixPanel, ImpactDashboard, TrustCenter, ProvenanceChip, PulseWidget, RevenueIntegrityPanel, CapacitySimulator, CommandCenter, FlightRecorder, OrdersPanel) |
+| `apiFetch` | 10+ components call it directly (HelixPanel, ImpactDashboard, TrustCenter, ProvenanceChip, RevenueIntegrityPanel, CapacitySimulator, CommandCenter, FlightRecorder, OrdersPanel) |
 | `socket` | VigilPanel, RelayPanel, SurgicalSuitePanel, SageAmbientSidebar, SageInsightsFeed, `useStreamingTranscription` |
 | `getUser` / `setUser` / `setToken` / `clearToken` / `deauthenticateSocket` | `AppRoot.tsx:3` (session restore + logout) |
 | Types `Patient`, `Channel`, `Message`, `SageInsight`, `AuditLog`, `AuditFilters`, `SageAmbientMemory`, `SageAction` | panels and admin components |

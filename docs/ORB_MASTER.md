@@ -83,7 +83,7 @@ Orb's features are branded "pillars". Each sidebar tab maps to one pillar
 | **Pharmacy Verify** | Verify Queue | Pharmacist verification queue for medication orders | [15-pharmacy-verify](./guide/15-pharmacy-verify.md) |
 | **Orders / CPOE** | Orders | Computerized provider order entry with terminology validation | [16-orders-cpoe](./guide/16-orders-cpoe.md) |
 | **Surgical Suite** | Surgical Suite | Theatre board, WHO checklist, team alerts, emergency intake | [17-surgical-suite](./guide/17-surgical-suite.md) |
-| **Command Center** | Command | Hospital-wide operational KPIs; **Pulse** is its ambient header widget | [18-command-center](./guide/18-command-center.md) |
+| **Command Center** | Command | Hospital-wide operational KPIs; **Pulse** is its header panel: season and conditions for the hospital's state, from a built-in calendar, no internet | [18-command-center](./guide/18-command-center.md) |
 | **What-If Simulator** | Simulator | Capacity simulation, vary admissions/staffing, see projected strain | [19-capacity-simulator](./guide/19-capacity-simulator.md) |
 | **Revenue Integrity** | Revenue | AI-assisted clinical coding review | [20-revenue-integrity](./guide/20-revenue-integrity.md) |
 | **Admissions/Discharge** | Admit button + flows | Admit → ward → discharge lifecycle, discharge summaries, time-limited patient access links | [21-admissions-discharge](./guide/21-admissions-discharge.md) |

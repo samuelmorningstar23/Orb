@@ -12,7 +12,7 @@ section:
 |---|---|---|---|
 | Forecast | `forecast` | "Forecast" (`shellConfig.tsx:454`) | `ClinicianShell.tsx:562` |
 | Command Center | `command` | "Command" (`shellConfig.tsx:463`) | `ClinicianShell.tsx:527` |
-| Pulse |, (header icon, not a tab) | lightning-bolt button in the top bar | `ClinicianShell.tsx:452` |
+| Pulse |, (header icon, not a tab) | heartbeat-line button in the top bar | `ClinicianShell.tsx:541` |
 | Helix / Pharmacy | `helix` | "Pharmacy" (`shellConfig.tsx:374`) | `ClinicianShell.tsx:502` |
 | Pharmacist Verify Queue | `pharmacy-verify` | "Verify Queue" (`shellConfig.tsx:382`) | `ClinicianShell.tsx:507` |
 | Scribe | `scribe` | "Scribe" (`shellConfig.tsx:433`) | `ClinicianShell.tsx:552` |
@@ -469,131 +469,73 @@ zeroed tiles than this error page.
 
 # SCREEN 3: Pulse
 
-Pulse is an overlay, not a tab. Component: `src/components/PulseWidget.tsx` (default export
-line 46), detail sub-views in `src/components/PulseDetail.tsx`.
+Pulse is an overlay, not a tab: **Season and conditions** for the hospital's state, from the
+seasonal calendar built into Orb. Rebuilt on 6 October 2026 under the strictly-offline rule
+(ruling R030 in `docs/RULINGS_NEEDED_2026-10.md`). Component: `src/components/PulseWidget.tsx`;
+client call `src/api/pulse.ts::fetchPulseSeason`. Everything this screen used to show (alerts,
+weather, 7-day strip, AQI, flu, FDA recalls, the location button and the five detail overlays
+in `PulseDetail.tsx`, now deleted) is gone. Citations below are by function name because the
+rebuilt file was still settling when this was written.
 
-### Trigger button (lightning bolt)
-**Where:** the top bar of the clinician shell, between the AI status chip and the alert
-permission button.
-**Rendered by:** `PulseWidget.tsx:175-193` (`id="btn-pulse"`); mounted at
-`ClinicianShell.tsx:452`.
-**Change this →** clicking opens the panel; clicking again closes it and resets any open
-detail view (`closePanel`, line 61).
+### Trigger button (heartbeat line)
+**Where:** the top bar of the clinician shell, next to the alert permission button.
+**Rendered by:** `PulseWidget` (`id="btn-pulse"`, tooltip "Pulse: season and conditions");
+mounted at `ClinicianShell.tsx:541`.
+**Change this →** clicking toggles the panel. There is no badge: nothing in Pulse is an alert.
 
-### Alert badge on the trigger
-**Where:** a small dot on the corner of the bolt icon.
-**Rendered by:** `PulseWidget.tsx:186-192`.
-**Data from:** `pulseData.alert_count`; the modifier class uses
-`pulseData.active_alerts[0].severity` (`highestSeverity`, line 158).
-**Change this →** the dot only exists once `alert_count > 0`, which means **it never appears
-until the panel has been opened at least once**, the fetch only runs while `isOpen`
-(line 131). A `moderate` top alert gets the `--moderate` modifier; anything else uses the
-default (danger) styling.
+### Panel header: "Pulse" / "Season and conditions"
+**Where:** top of the panel, with an **X** close button on the right.
+**Rendered by:** `PulsePanel`. The panel is a modal dialog with a focus trap
+(`useFocusTrap`): Escape, the **X**, or a click on the backdrop closes it.
+**Change this →** the panel is mounted only while open, so every opening reads the calendar
+afresh. There is no polling and no Refresh button: the date changes once a day.
 
-### Panel header: "Orb Pulse" + location button
-**Where:** top of the slide-over panel.
-**Rendered by:** `PulseWidget.tsx:201-225`; the location button at 214–224.
-**Data from:** `location` state, seeded from `localStorage['orb_pulse_location']` and
-defaulting to Mumbai (`DEFAULT_LOCATION`, line 44).
-**Change this →** the button shows "Locating..." while the browser geolocation prompt is
-pending, otherwise the city label. Clicking calls `requestLocation` (line 66), which on
-success reverse-geocodes through `nominatim.openstreetmap.org` (line 83) to get a city name,
-persists it, and re-fetches the dashboard. A denied prompt leaves the label at the previous
-value and sets `geoStatus='denied'`, there is no visible error message.
+### Place and date line
+**Where:** under the header.
+**Rendered by:** `PulsePanel` via `placeName`.
+**Data from:** `state` and `zone` in the response, and `date` (the hospital's calendar day).
+**Change this →** shows "Maharashtra", or "Maharashtra (Konkan)" when the calendar is kept for
+one zone of a state; "State not set" when `[site] state` is missing.
 
-### Active Clinical Alerts list
-**Where:** first block in the panel body, under the "Active Clinical Alerts · Orb Pulse
-Engine" label.
-**Rendered by:** `PulseWidget.tsx:239-264`; each alert row at 242–263.
-**Data from:** `pulseData.active_alerts`.
-**API:** `GET /api/pulse/dashboard?lat=..&lon=..` (`PulseWidget.tsx:118`).
-**Server:** `pulse_routes.pulse_dashboard` (`server/routes/pulse_routes.py:31`) →
-`pulse_service.get_pulse_dashboard` (`server/services/pulse_service.py:586`), which fans out to
-weather, AQI, CDC flu and FDA recalls concurrently (line 592), collects every feed's
-`clinical_flags` into one list and sorts them high → moderate → low (lines 610–618).
-**Change this →** `high` alerts get the red triangle icon, everything else the amber circle
-(line 245). Clicking a row opens the Alert detail overlay. Each row is keyboard-activatable
-via the `activatable()` helper (line 243).
-**Empty state:** a green tick and "No active environmental alerts" (`PulseWidget.tsx:267-273`).
+### Review status
+**Rendered by:** `CalendarStatus`.
+**Data from:** `calendar.status`, `reviewed_by`, `reviewed_on`.
+**Change this →** "Draft: not yet reviewed by a clinician" for anything other than
+`reviewed`, so an unknown status cannot lose the label; "Reviewed by [name] on [date]" once
+the clinical lead has reviewed the calendar.
 
-### Weather block
-**Where:** below the alerts, under a "Weather · Open-Meteo" label.
-**Rendered by:** `PulseWidget.tsx:279-320`; the big temperature at 283–286, the description and
-"Feels like X°C · N% humidity" line at 288–296.
-**Data from:** `pulseData.weather.current`; the emoji comes from the WMO code map at line 34.
-**Server:** `pulse_service.fetch_weather` (`pulse_service.py:167`); the clinical flags it
-produces come from `_generate_weather_clinical_flags` (`pulse_service.py:263`).
-**Change this →** the whole block disappears if `weather.current.temperature` is null
-(the guard at line 279), which is exactly what happens when the upstream call throws, because
-`get_pulse_dashboard` substitutes `{"current": {}, ...}` on exception (`pulse_service.py:602`).
+### This season
+**Rendered by:** `SeasonBody` and `SeasonCard`, one card per entry in `active`.
+**API:** `GET /api/pulse/season` (`server/routes/pulse_routes.py::pulse_season`) →
+`server/services/seasonal_calendar.py::season_report`.
+**What each card shows:** the title; a **Peak now** chip when `in_peak`; the period in words
+(`periodInWords`: "June to September", "15 October to 30 November", "All year"); the summary;
+"Typically rises: ..."; and "Source:" or "Sources:" with names only, never links, because
+there is no internet to follow them to.
+**Empty state:** "Nothing in the calendar covers today."
 
-### 7-day forecast strip
-**Where:** a row of narrow day columns under the current weather.
-**Rendered by:** `PulseWidget.tsx:301-318`.
-**Change this →** the first column is labelled "Today"; the rest take the first token of the
-server's `day_label` (line 306). Each column shows the WMO emoji and high/low.
+### Coming up
+**Rendered by:** `UpcomingList`, from `upcoming` (entries that start within 60 days,
+`seasonal_calendar.UPCOMING_DAYS`).
+**Change this →** one line per entry, "Tomorrow: ..." or "In 12 days: ..." (`whenInWords`).
+The section is left out when the list is empty.
 
-### Air Quality block
-**Where:** under an "Air Quality · Open-Meteo AQI" label.
-**Rendered by:** `PulseWidget.tsx:325-340`; the big AQI number at 329–331, category and
-"US AQI · PM2.5: n" at 332–337.
-**Server:** `pulse_service.fetch_aqi` (`pulse_service.py:341`).
-**Change this →** the number's colour class is picked by `getAqiColorClass`
-(`PulseWidget.tsx:160`) from the server's `color` field, green/yellow/orange/red/purple/maroon
-map to the six `pulse-aqi__value--*` classes. An unrecognised colour falls through to no class
-at all (default text colour). The block hides entirely when `aqi` is null.
+### State not set
+**Rendered by:** `SeasonBody` when `setup_needed` is true.
+**Data from:** `setup_message`, which asks for `[site] state = "Maharashtra"` in `site.toml`.
+No guess, no geolocation.
 
-### Flu Surveillance block
-**Where:** under a "Flu Surveillance · CDC FluView" label.
-**Rendered by:** `PulseWidget.tsx:345-363`.
-**Server:** `pulse_service.fetch_cdc_flu_data` (`pulse_service.py:482`); the level string comes
-from `_classify_ili_level` (`pulse_service.py:548`) and, when the live feed is unavailable,
-from `_seasonal_flu_estimate` (`pulse_service.py:561`).
-**Change this →** the activity level renders with underscores replaced by spaces ("very high
-Activity"). When the source string contains "Estimate", the ILI line gains the suffix
-"(seasonal estimate)" (line 358), that is the visible tell that this is modelled, not measured.
+### Footer
+**Rendered by:** `PulsePanel`: "Built into Orb. Calendar compiled [date]." Hidden while the
+state is not set.
 
-### Recent FDA Drug Recalls
-**Where:** last block in the panel.
-**Rendered by:** `PulseWidget.tsx:366-382`; **only the first three** recalls are shown
-(`.slice(0, 3)` at line 371).
-**Server:** `pulse_service.fetch_fda_recalls` (`pulse_service.py:429`); the dashboard requests
-5 (`pulse_service.py:596`).
-**Change this →** each item shows product, reason and (if present) a classification pill.
-Clicking opens the recall detail overlay keyed by index (`recall-${i}`, line 372). The whole
-block disappears when the list is empty.
-
-### Panel footer: "Inbound only · Zero patient data transmitted" + Refresh
-**Rendered by:** `PulseWidget.tsx:388-395`.
-**Change this →** the Refresh button re-runs `fetchPulse` immediately; the panel also
-auto-refreshes every 15 minutes while open (line 139).
-
-### Pulse loading / error states
-**Rendered by:** `PulseWidget.tsx:229-235`, a spinner with "Fetching environmental data..."
-while `loading && !pulseData`, then the bare error string in `.pulse-error` if the request
-failed and nothing was ever loaded. Once data exists, a later failed refresh shows **nothing**
-the stale panel just stays put.
-
-### Detail overlays (Weather / AQI / Flu / Alert / Recall)
-**Where:** slide over the panel, with a back chevron in the header.
-**Rendered by:** `PulseDetail.tsx`, one branch per `view`: weather at line 49, aqi at 95,
-flu at 133, alert at 169, `recall-N` at 204. Mounted from `PulseWidget.tsx:398-404`.
-**What each shows:**
-- **Weather Details**, hero temp/description/feels-like (lines 59–63), then Humidity, Wind
-  Speed, Pressure, Coordinates rows (64–67), the 7-day list (69–76), and any clinical
-  recommendations flattened out of `clinical_flags[].recommended_actions` (78–87).
-- **Air Quality Details**, hero AQI + category, then PM2.5 / PM10 / Ozone / NO₂ / CO rows
-  (110–114) plus recommendations.
-- **Flu Surveillance Details**, hero ILI %, then Source, Surveillance Week, Year, and
-  "Patients Surveyed" (only when `total_patients > 0`, line 150).
-- **Alert Details**, the alert card again, plus Severity, Type, At-Risk Groups and
-  Recommended Actions (179–197).
-- **Drug Recall Details**, product + classification, Reason for Recall, then Recall Number,
-  Status, Recalling Firm, Location, Report Date, Initiation Date (223–228).
-**Change this →** every overlay ends with a `SourceBadge` (`PulseDetail.tsx:13`) linking out to
-the upstream provider. Escape backs out of a detail first and only closes the whole panel on a
-second press (`PulseWidget.tsx:145-149`). Any missing value renders as `, ` via the shared `Row`
-helper (`PulseDetail.tsx:44`).
+### Loading / error states
+**Rendered by:** `PulsePanel`: "Loading the seasonal calendar…" while loading; on failure
+"The seasonal calendar could not be loaded." with the server's sentence beneath and a
+**Try again** button. A missing or refused calendar file is a 503 from the route with
+`CalendarError.public_message` ("Pulse's seasonal calendar is not installed on this Orb..." or
+"... has errors, so Orb is not showing it. Ask the person who installed Orb to check it."). The
+technical detail (the file path and each problem) goes to the server log, not the ward screen.
 
 ---
 
@@ -1208,7 +1150,7 @@ ask your nurse or doctor directly." (line 287).
 
 - **Permission gate.** Forecast, Command Center and Pulse all sit behind the *same*
   `forecast.read` permission (`forecast_routes.py:36`, `command_center_routes.py:29`,
-  `pulse_routes.py:34`). That permission is held by nurses, which is why the two
+  `pulse_routes.py::pulse_season`). That permission is held by nurses, which is why the two
   identity-bearing surfaces, the Forecast discharge board and the Command Center
   deterioration list, carry their own department filter and PHI-read audit at the **route**
   layer rather than inside the service.
@@ -1236,12 +1178,13 @@ ask your nurse or doctor directly." (line 287).
 - `src/components/command/CommandCenter.tsx::readinessTone` → Downtime Readiness tile colour
 - `src/components/command/CommandCenter.tsx::heatIntensity` → heatmap cell background intensity
 - `src/components/command/CommandCenter.tsx::ageLabel` → "oldest 3.2h" snapshot age text
-- `src/components/PulseWidget.tsx::PulseWidget` → Pulse trigger button; Pulse alert badge; Pulse panel header; location button; Active Clinical Alerts list; no-alerts empty state; Weather block; 7-day forecast strip; Air Quality block; Flu Surveillance block; FDA Drug Recalls block; Pulse footer and Refresh; Pulse loading state; Pulse error state
-- `src/components/PulseWidget.tsx::getAqiColorClass` → AQI number colour
-- `src/components/PulseDetail.tsx::PulseDetail` → Weather Details overlay; Air Quality Details overlay; Flu Surveillance Details overlay; Alert Details overlay; Drug Recall Details overlay
-- `src/components/PulseDetail.tsx::SourceBadge` → source attribution line in every Pulse detail overlay
-- `src/components/PulseDetail.tsx::Row` → labelled value rows in Pulse detail overlays
-- `src/components/PulseDetail.tsx::ActionItem` → Clinical Recommendations checklist lines
+- `src/components/PulseWidget.tsx::PulseWidget` → Pulse trigger button
+- `src/components/PulseWidget.tsx::PulsePanel` → Pulse panel header and close; place and date line; Pulse footer; Pulse loading state; Pulse error state and Try again
+- `src/components/PulseWidget.tsx::CalendarStatus` → "Draft: not yet reviewed by a clinician" / "Reviewed by" line
+- `src/components/PulseWidget.tsx::SeasonBody` → This season section; Coming up section; "Nothing in the calendar covers today."; state-not-set message
+- `src/components/PulseWidget.tsx::SeasonCard` → season card title, Peak now chip, period, summary, Typically rises, Sources
+- `src/components/PulseWidget.tsx::UpcomingList` → Coming up lines
+- `src/api/pulse.ts::fetchPulseSeason` → the one Pulse request
 - `src/pages/panels/HelixPanel.tsx::HelixPanel` → Pharmacy Operations header; Overview/Patient Board/Formulary tabs; Helix loading state; "Pharmacy queue did not load" error block and Retry; Order Review modal mount
 - `src/components/helix/HelixDashboard.tsx::HelixDashboard` → Pending Review tile; Verified tile; Scheduled tile; In Transit tile; Delivered tile; Rejected tile; Pharmacist Work Queue table; queue-clear empty state; Fulfillment Pipeline table
 - `src/components/helix/HelixDashboard.tsx::MetricCard` → Helix Overview bento metric tiles
@@ -1304,15 +1247,10 @@ ask your nurse or doctor directly." (line 287).
 - `server/services/command_center_service.py::_forecast` → Capacity Forecast 24h strip
 - `server/services/command_center_service.py::_downtime_readiness` → Downtime Readiness tile; snapshot counts; oldest-snapshot age
 - `server/services/command_center_service.py::_or_today` → Operating Room Today table rows and count badge
-- `server/routes/pulse_routes.py::pulse_dashboard` → every Pulse panel section
-- `server/services/pulse_service.py::get_pulse_dashboard` → Active Clinical Alerts list and ordering; alert count badge
-- `server/services/pulse_service.py::fetch_weather` → Weather block; 7-day forecast strip; Weather Details overlay
-- `server/services/pulse_service.py::_generate_weather_clinical_flags` → weather-derived alerts and recommendations
-- `server/services/pulse_service.py::fetch_aqi` → Air Quality block; AQI colour; Air Quality Details overlay
-- `server/services/pulse_service.py::fetch_cdc_flu_data` → Flu Surveillance block; Flu Surveillance Details overlay
-- `server/services/pulse_service.py::_classify_ili_level` → flu activity level wording
-- `server/services/pulse_service.py::_seasonal_flu_estimate` → "(seasonal estimate)" suffix on the ILI line
-- `server/services/pulse_service.py::fetch_fda_recalls` → FDA Drug Recalls list; Drug Recall Details overlay
+- `server/routes/pulse_routes.py::pulse_season` → every Pulse panel section; the 503 error sentence
+- `server/services/seasonal_calendar.py::season_report` → place and date line; review status; This season cards and their order; Coming up lines; state-not-set message
+- `server/services/seasonal_calendar.py::CalendarError.public_message` → the sentence under "The seasonal calendar could not be loaded."
+- `server/site_config/seasonal_calendar.json` → every card's words, periods, peaks and sources; the review record
 - `server/routes/helix_routes.py::get_all_orders` → Helix metric tiles; Pharmacist Work Queue; Fulfillment Pipeline; Patient Medication Board
 - `server/routes/helix_routes.py::get_catalog` → Formulary rows; substitute chooser options
 - `server/routes/helix_routes.py::get_inventory` → Available Stock cell; Active Lots cell; patient-board stock pills

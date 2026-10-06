@@ -40,6 +40,15 @@ name = "Example General Hospital"
 # Default: whatever timezone the appliance's operating system is set to.
 timezone = "Asia/Kolkata"
 
+# The Indian state or union territory this hospital is in, by name or by its
+# two-letter code: "Maharashtra" or "MH", "Tamil Nadu" or "TN". Pulse uses it
+# to show this hospital's part of the seasonal calendar built into Orb: which
+# season it is here, and which illnesses typically rise in it. Nothing is
+# looked up on the internet; Orb never goes online. A name Orb does not
+# recognise stops startup, like any other mistake in this file.
+# Default: not set. Pulse then shows only a note asking for it.
+state = "Maharashtra"
+
 
 # ── Departments and wards ──────────────────────────────────────────────────
 # A DEPARTMENT is a clinical service: "General Medicine", "Cardiology".

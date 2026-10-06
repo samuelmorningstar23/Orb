@@ -74,7 +74,7 @@ files are the complete inventory.
 | Offline / Syncing / Synced / Sync-failed badge | 01 | `src/pages/ClinicianShell.tsx::ClinicianShell` |, (client queue, `src/api/client.ts::processOfflineQueue`) |
 | Command palette (⌘K) result rows | 01 | `src/components/CommandPalette.tsx::CommandPalette` | `server/routes/search_routes.py::search_patients` |
 | Sage floating orb (text-only, opens the Sage tab) | 01 | `src/components/sage/SageFloatingAssistant.tsx::SageFloatingAssistant` | n/a |
-| Pulse panel (weather / AQI / flu / FDA recalls) | 01, 15 | `src/components/PulseWidget.tsx::PulseWidget` | `server/services/pulse_service.py::get_pulse_dashboard` |
+| Pulse panel (season and conditions: This season, Coming up, review status) | 01, 15 | `src/components/PulseWidget.tsx::PulseWidget` | `server/services/seasonal_calendar.py::season_report` |
 | Admit Patient modal and the one-time Bridge credential | 01 | `src/components/AdmitPatientModal.tsx::AdmitPatientModal` | `server/services/admission_service.py::admit_patient` |
 | Staleness banner, "Offline, not live" | 06, 07, 08, 09, 10 | `src/components/OfflineBanner.tsx::OfflineBanner` | n/a |
 
@@ -277,7 +277,7 @@ Read this table before you edit anything in it.
 | Nurse board, Nurse handover | `server/routes/ipass_routes.py::save_draft` |
 | Nurse board, Nurse vitals/eMAR | `server/routes/nurse_routes.py::preview_news2` |
 | Nurse board, Nurse vitals/eMAR | `server/routes/nurse_routes.py::record_observations` |
-| App shell, Analytics/Pharmacy/Scribe/Lens/Bridge | `server/routes/pulse_routes.py::pulse_dashboard` |
+| App shell, Analytics/Pharmacy/Scribe/Lens/Bridge | `server/routes/pulse_routes.py::pulse_season` |
 | Relay list, Relay thread | `server/routes/relay_routes.py::_apply_alert_resolution` |
 | Relay list, Relay thread | `server/routes/relay_routes.py::list_channels` |
 | Relay list, Relay thread | `server/routes/relay_routes.py::mark_read` |
@@ -302,7 +302,7 @@ Read this table before you edit anything in it.
 | Nurse board, Round mode | `server/services/nurse_shift_service.py::_load_board_rows` |
 | Nurse board, Nurse vitals/eMAR | `server/services/nurse_shift_service.py::parse_frequency` |
 | Nurse board, Nurse vitals/eMAR | `server/services/nurse_shift_service.py::record_observation` |
-| App shell, Analytics/Pharmacy/Scribe/Lens/Bridge | `server/services/pulse_service.py::get_pulse_dashboard` |
+| App shell, Analytics/Pharmacy/Scribe/Lens/Bridge | `server/services/seasonal_calendar.py::season_report` |
 | Relay list, Relay thread | `server/services/relay_service.py::can_access_channel` |
 | Relay list, Relay thread | `server/services/relay_service.py::get_channels_for_user` |
 | Relay list, Relay thread | `server/services/relay_service.py::mark_channel_read` |
@@ -326,7 +326,6 @@ Read this table before you edit anything in it.
 | App shell, Login | `src/components/OrbLogo.css` *(whole file)* |
 | App shell, Login | `src/components/OrbLogo.tsx::OrbLogo` |
 | App shell, Analytics/Pharmacy/Scribe/Lens/Bridge | `src/components/PulseWidget.tsx::PulseWidget` |
-| App shell, Analytics/Pharmacy/Scribe/Lens/Bridge | `src/components/PulseWidget.tsx::getAqiColorClass` |
 | Vigil chart, Nurse vitals/eMAR | `src/components/vigil/AdministerModal.tsx::AdministerModal` |
 | Vigil chart, Orders | `src/components/vigil/SafetyAlertModal.tsx::SafetyAlertModal` |
 | Vigil board, Nurse board | `src/hooks/useOfflineStatus.ts::useOfflineStatus` |
@@ -546,7 +545,7 @@ nowhere), these are correctly documented as dead, not mis-cited:
 
 **`server/routes/`** (34), `admin_routes.py`, `admin_users_routes.py`, `admission_routes.py`, `appointments_routes.py`, `audit_routes.py`, `auth_routes.py`, `backup_routes.py`, `bridge_routes.py`, `bundle_routes.py`, `command_center_routes.py`, `compliance_routes.py`, `emar_routes.py`, `flight_recorder_routes.py`, `forecast_routes.py`, `helix_routes.py`, `impact_routes.py`, `ingestion_routes.py`, `ipass_routes.py`, `lens_routes.py`, `model_governance_routes.py`, `nurse_routes.py`, `orders_routes.py`, `patient_timeline_routes.py`, `pharmacy_routes.py`, `pulse_routes.py`, `relay_routes.py`, `roster_import_routes.py`, `sage_proactive_routes.py`, `sage_routes.py`, `scribe_routes.py`, `search_routes.py`, `shadow_routes.py`, `surgery_routes.py`, `vigil_routes.py`
 
-**`server/services/`** (44), `admission_service.py`, `ai_governance.py`, `allergy_interlock.py`, `audit_service.py`, `bot_service.py`, `bridge_service.py`, `command_center_service.py`, `compliance_service.py`, `discharge_service.py`, `drug_safety_service.py`, `emar_service.py`, `forecast_service.py`, `helix_service.py`, `impact_service.py`, `ingestion_service.py`, `ipass_service.py`, `lens_service.py`, `medication_safety_gate.py`, `mfa_service.py`, `model_governance_service.py`, `nurse_shift_service.py`, `order_sets_service.py`, `orders_service.py`, `patient_story_service.py`, `patient_timeline_service.py`, `pharmacy_verification_service.py`, `pulse_service.py`, `relay_service.py`, `room_fit_service.py`, `roster_import.py`, `sage_ambient_service.py`, `sage_handoff_service.py`, `sage_proactive_service.py`, `sage_service.py`, `scribe_service.py`, `sepsis_bundle_service.py`, `shadow_export_service.py`, `shadow_scorecard_service.py`, `surgery_escalation_service.py`, `surgery_service.py`, `terminology_service.py`, `thinking_mode.py`, `timeline_service.py`, `vigil_service.py`
+**`server/services/`** (44), `admission_service.py`, `ai_governance.py`, `allergy_interlock.py`, `audit_service.py`, `bot_service.py`, `bridge_service.py`, `command_center_service.py`, `compliance_service.py`, `discharge_service.py`, `drug_safety_service.py`, `emar_service.py`, `forecast_service.py`, `helix_service.py`, `impact_service.py`, `ingestion_service.py`, `ipass_service.py`, `lens_service.py`, `medication_safety_gate.py`, `mfa_service.py`, `model_governance_service.py`, `nurse_shift_service.py`, `order_sets_service.py`, `orders_service.py`, `patient_story_service.py`, `patient_timeline_service.py`, `pharmacy_verification_service.py`, `relay_service.py`, `room_fit_service.py`, `roster_import.py`, `sage_ambient_service.py`, `sage_handoff_service.py`, `sage_proactive_service.py`, `sage_service.py`, `scribe_service.py`, `seasonal_calendar.py`, `sepsis_bundle_service.py`, `shadow_export_service.py`, `shadow_scorecard_service.py`, `surgery_escalation_service.py`, `surgery_service.py`, `terminology_service.py`, `thinking_mode.py`, `timeline_service.py`, `vigil_service.py`
 
 **`server/services/vitals_source/`** (1), `simulator_source.py`
 
@@ -556,9 +555,9 @@ nowhere), these are correctly documented as dead, not mis-cited:
 
 **`src/`** (3), `App.tsx`, `index.css`, `print.css`
 
-**`src/api/`** (11), `bridgeClient.ts`, `bundles.ts`, `client.ts`, `deviceAuth.ts`, `ipass.ts`, `nurse.ts`, `orderSets.ts`, `pharmacy.ts`, `rosterImport.ts`, `scorecard.ts`, `thinkingMode.ts`
+**`src/api/`** (12), `bridgeClient.ts`, `bundles.ts`, `client.ts`, `deviceAuth.ts`, `ipass.ts`, `nurse.ts`, `orderSets.ts`, `pharmacy.ts`, `pulse.ts`, `rosterImport.ts`, `scorecard.ts`, `thinkingMode.ts`
 
-**`src/components/`** (20), `AdmitPatientModal.tsx`, `AiStatusChip.tsx`, `AlertPermissionButton.tsx`, `ClinicalCourseTimeline.tsx`, `ClockWidget.tsx`, `CommandPalette.tsx`, `DischargePrintView.tsx`, `FlightRecorder.tsx`, `HandoffPrintView.tsx`, `KeyboardShortcuts.tsx`, `MfaEnrollmentModal.css`, `MfaEnrollmentModal.tsx`, `OfflineBanner.tsx`, `OrbLogo.css`, `OrbLogo.tsx`, `ProvenanceChip.tsx`, `PulseDetail.tsx`, `PulseWidget.css`, `PulseWidget.tsx`, `SizedChart.tsx`
+**`src/components/`** (19), `AdmitPatientModal.tsx`, `AiStatusChip.tsx`, `AlertPermissionButton.tsx`, `ClinicalCourseTimeline.tsx`, `ClockWidget.tsx`, `CommandPalette.tsx`, `DischargePrintView.tsx`, `FlightRecorder.tsx`, `HandoffPrintView.tsx`, `KeyboardShortcuts.tsx`, `MfaEnrollmentModal.css`, `MfaEnrollmentModal.tsx`, `OfflineBanner.tsx`, `OrbLogo.css`, `OrbLogo.tsx`, `ProvenanceChip.tsx`, `PulseWidget.css`, `PulseWidget.tsx`, `SizedChart.tsx`
 
 **`src/components/bridge/`** (2), `CareTeamCard.tsx`, `VitalsTrendsCard.tsx`
 
@@ -1001,9 +1000,9 @@ nowhere), these are correctly documented as dead, not mis-cited:
 
 ### `server/routes/pulse_routes.py`
 
-- ⚠ `::pulse_dashboard`, **2 screens**
-  - *App shell*, Pulse alert badge; Pulse panel; Pulse weather block; Pulse air-quality block; Pulse flu block; Pulse FDA recalls block
-  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, every Pulse panel section
+- ⚠ `::pulse_season`, **2 screens**
+  - *App shell*, Pulse panel
+  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, every Pulse panel section; the 503 error sentence
 
 
 ### `server/routes/relay_routes.py`
@@ -1554,25 +1553,15 @@ nowhere), these are correctly documented as dead, not mis-cited:
   - *Analytics/Pharmacy/Scribe/Lens/Bridge*, severe-acknowledgement gate behind the 428 row
 
 
-### `server/services/pulse_service.py`
+### `server/services/seasonal_calendar.py`
 
-- `::_classify_ili_level`
-  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, flu activity level wording
-- `::_generate_weather_clinical_flags`
-  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, weather-derived alerts and recommendations
-- `::_seasonal_flu_estimate`
-  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, "(seasonal estimate)" suffix on the ILI line
-- `::fetch_aqi`
-  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, Air Quality block; AQI colour; Air Quality Details overlay
-- `::fetch_cdc_flu_data`
-  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, Flu Surveillance block; Flu Surveillance Details overlay
-- `::fetch_fda_recalls`
-  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, FDA Drug Recalls list; Drug Recall Details overlay
-- `::fetch_weather`
-  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, Weather block; 7-day forecast strip; Weather Details overlay
-- ⚠ `::get_pulse_dashboard`, **2 screens**
-  - *App shell*, Pulse alert badge; Pulse panel Active Clinical Alerts; Pulse no-alerts empty state; Pulse weather block; Pulse air-quality block; Pulse flu block; Pulse FDA recalls block
-  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, Active Clinical Alerts list and ordering; alert count badge
+(Replaced `server/services/pulse_service.py`, deleted 6 October 2026 with Pulse's internet feeds.)
+
+- `::CalendarError.public_message`
+  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, the sentence under "The seasonal calendar could not be loaded."
+- ⚠ `::season_report`, **2 screens**
+  - *App shell*, Pulse panel place line, review status, This season, Coming up
+  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, place and date line; review status; This season cards and their order; Coming up lines; state-not-set message
 
 
 ### `server/services/relay_service.py`
@@ -2111,6 +2100,13 @@ nowhere), these are correctly documented as dead, not mis-cited:
   - *Analytics/Pharmacy/Scribe/Lens/Bridge*, Verify button outcome; 428 acknowledgement row
 
 
+### `src/api/pulse.ts`
+
+- ⚠ `::fetchPulseSeason`, **2 screens**
+  - *App shell*, Pulse panel (the one Pulse request)
+  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, every Pulse panel section
+
+
 ### `src/api/rosterImport.ts`
 
 - `::commitRoster`
@@ -2282,32 +2278,28 @@ nowhere), these are correctly documented as dead, not mis-cited:
   - *Analytics/Pharmacy/Scribe/Lens/Bridge*, Forecast hero provenance chip; Lens AI Reference Read provenance chip
 
 
-### `src/components/PulseDetail.tsx`
-
-- `::ActionItem`
-  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, Clinical Recommendations checklist lines
-- `::PulseDetail`
-  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, Weather Details overlay; Air Quality Details overlay; Flu Surveillance Details overlay; Alert Details overlay; Drug Recall Details overlay
-- `::Row`
-  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, labelled value rows in Pulse detail overlays
-- `::SourceBadge`
-  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, source attribution line in every Pulse detail overlay
-
-
 ### `src/components/PulseWidget.css`
 
 - *(whole file / stylesheet)*
-  - *App shell*, Pulse trigger button; Pulse alert badge; Pulse panel
+  - *App shell*, Pulse trigger button; Pulse panel
 
 
 ### `src/components/PulseWidget.tsx`
 
-- ⚠ `::getAqiColorClass`, **2 screens**
-  - *App shell*, Pulse air-quality block (AQI number colour)
-  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, AQI number colour
+- `::CalendarStatus`
+  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, "Draft: not yet reviewed by a clinician" / "Reviewed by" line
+- ⚠ `::PulsePanel`, **2 screens**
+  - *App shell*, Pulse panel; Pulse loading state; Pulse error state; Pulse footer
+  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, Pulse panel header and close; place and date line; footer; loading state; error state and Try again
 - ⚠ `::PulseWidget`, **2 screens**
-  - *App shell*, Pulse trigger button; Pulse alert badge; Pulse panel; Pulse location button; Pulse loading state; Pulse error state; Pulse no-alerts empty state; Pulse weather block; Pulse 7-day forecast strip; Pulse air-quality block; Pulse flu block; Pulse FDA recalls block; Pulse footer and Refresh
-  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, Pulse trigger button; Pulse alert badge; Pulse panel header; location button; Active Clinical Alerts list; no-alerts empty state; Weather block; 7-day forecast strip; Air Quality block; Flu Surveillance block; FDA Drug Recalls block; Pulse footer and Refresh; Pulse loading state; Pulse error state
+  - *App shell*, Pulse trigger button
+  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, Pulse trigger button
+- `::SeasonBody`
+  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, This season section; Coming up section; empty state; state-not-set message
+- `::SeasonCard`
+  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, season card title, Peak now chip, period, summary, Typically rises, Sources
+- `::UpcomingList`
+  - *Analytics/Pharmacy/Scribe/Lens/Bridge*, Coming up lines
 
 
 ### `src/components/SizedChart.tsx`
@@ -2871,7 +2863,7 @@ nowhere), these are correctly documented as dead, not mis-cited:
 ### `src/lib/a11y.ts`
 
 - `::activatable`
-  - *App shell*, Pulse alert rows; Pulse weather block; Pulse air-quality block; Pulse flu block; Pulse FDA recall rows
+  - *App shell*, no mapped element since the 6 October 2026 Pulse rebuild (its only mapped users were the old Pulse rows)
 
 
 ### `src/lib/datetime.ts`

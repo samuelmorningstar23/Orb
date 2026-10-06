@@ -576,9 +576,12 @@ credible.
   use the voices installed on the device. Staff will see the status line read
   "Listening (local transcription; tap to stop)", and that is the correct,
   private state.
-- The Pulse panel pulls public data in (weather, air quality, influenza
-  surveillance, drug recalls), and its footer states the rule: inbound only,
-  zero patient data transmitted.
+- The Pulse panel fetches nothing. It shows a seasonal calendar for the
+  hospital's state that ships with Orb: what usually rises in this season and
+  what is coming up in the next 60 days. Until the hospital's clinical lead has
+  reviewed the calendar it says "Draft: not yet reviewed by a clinician", and
+  staff should read it as background for planning, not as a warning about this
+  week.
 - Lens (medical image analysis) ships switched off in production. It has no
   validated imaging model behind it; it is a general vision model writing
   reference prose in the most regulated area Orb touches. I do not train staff

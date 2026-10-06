@@ -11,6 +11,7 @@ See services/forecast_service.py:predict_patient_los (the FAIL CLOSED guard) and
 models/forecast_lstm.py (self.trained defaults to False until a validated
 checkpoint loads).
 """
+import json
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -315,3 +316,111 @@ def test_every_forecast_row_reconciles_with_the_one_before_it():
                     f"row {i} does not reconcile: {prev} - {dis} + {adm} = "
                     f"{expected}, but the row shows {occ}")
         prev = occ
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Season is context, never a multiplier (ruled 6 October 2026)
+# ══════════════════════════════════════════════════════════════════════════════
+#  Admissions used to be scaled by Pulse's live internet data: +20% for a
+#  thunderstorm, +35% for a flu surge, hand-picked. Orb is strictly offline and
+#  those feeds are gone. Forecast now carries today's seasonal entries as a
+#  plain list beside the numbers, and admissions are base rate x day of week.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _season_calendar(tmp_path, monkeypatch, state):
+    """A fixture calendar in which 15 March 2027 (FROZEN_UTC's hospital day) is
+    inside an in-peak season and an environmental entry, and a state to read it."""
+    from services import seasonal_calendar, site_config_service
+    from services.india_states import STATES
+    from services.site_config_service import SiteConfig
+
+    src = [{"name": "Fixture", "url": "https://example.org", "accessed": "2026-10-01"}]
+
+    def entry(eid, kind, title, start, end, peak=None):
+        e = {"id": eid, "kind": kind, "title": title, "zones": ["all_india"],
+             "start": start, "end": end, "summary": "Fixture.",
+             "typically_rises": ["Fever"], "sources": src}
+        if peak:
+            e["peak"] = {"start": peak[0], "end": peak[1]}
+        return e
+
+    doc = {
+        "version": 1, "status": "draft", "reviewed_by": None, "reviewed_on": None,
+        "compiled_on": "2026-10-06",
+        "zones": [{"id": "all_india", "name": "All India", "states": list(STATES)}],
+        "entries": [
+            entry("hot-season", "environment", "Hot season", "03-01", "05-31"),
+            entry("spring", "season", "Spring", "02-15", "04-15", peak=("03-10", "03-20")),
+            entry("monsoon", "season", "Monsoon", "06-01", "09-30"),
+        ],
+    }
+    path = tmp_path / "seasonal_calendar.json"
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    monkeypatch.setenv(seasonal_calendar.CALENDAR_PATH_ENV, str(path))
+    seasonal_calendar.reload_calendar()
+    monkeypatch.setattr(site_config_service, "_loaded",
+                        SiteConfig(present=state is not None, site_state=state))
+
+
+def _no_env_keys(result: dict) -> None:
+    for row in result["daily_forecasts"]:
+        leftovers = [k for k in row if k.startswith("env_")]
+        assert not leftovers, f"{row['date']} still carries {leftovers}"
+
+
+def test_forecast_carries_the_season_and_no_environmental_fields(
+        ist_after_midnight, tmp_path, monkeypatch):
+    _season_calendar(tmp_path, monkeypatch, "MH")
+    result = predict_hospital_flow(days_ahead=3, include_current_day=True)
+    _no_env_keys(result)
+    assert result["season"] == [
+        {"id": "spring", "title": "Spring", "kind": "season", "in_peak": True},
+        {"id": "hot-season", "title": "Hot season", "kind": "environment", "in_peak": False},
+    ]
+
+
+def test_forecast_season_is_empty_without_a_state_or_a_calendar(
+        ist_after_midnight, tmp_path, monkeypatch):
+    from services import seasonal_calendar
+
+    _season_calendar(tmp_path, monkeypatch, None)
+    assert predict_hospital_flow(days_ahead=2)["season"] == []
+
+    forecast_service._hospital_flow_cache.clear()
+    _season_calendar(tmp_path, monkeypatch, "MH")
+    monkeypatch.setenv(seasonal_calendar.CALENDAR_PATH_ENV, str(tmp_path / "absent.json"))
+    seasonal_calendar.reload_calendar()
+    result = predict_hospital_flow(days_ahead=2)
+    assert result["season"] == []
+    _no_env_keys(result)
+
+
+def test_the_season_does_not_move_a_single_number(ist_after_midnight, tmp_path, monkeypatch):
+    """An in-peak season and none at all must give identical forecasts."""
+    _season_calendar(tmp_path, monkeypatch, None)
+    without = predict_hospital_flow(days_ahead=7, include_current_day=True)
+    forecast_service._hospital_flow_cache.clear()
+    _season_calendar(tmp_path, monkeypatch, "MH")
+    with_season = predict_hospital_flow(days_ahead=7, include_current_day=True)
+    assert with_season["season"], "the fixture should put this day in season"
+    assert with_season["daily_forecasts"] == without["daily_forecasts"]
+    assert with_season["summary"] == without["summary"]
+
+
+def test_admissions_are_base_rate_times_day_of_week_only(ist_after_midnight):
+    """No weather, air-quality or flu factor is left in the arithmetic."""
+    from datetime import date as _date
+
+    assert not hasattr(forecast_service, "_get_environmental_multipliers")
+    with db_session() as db:
+        history = db.execute(
+            """SELECT admission_date, COUNT(*) as cnt
+               FROM admission_history
+               WHERE admission_date >= date('now', '-30 days')
+               GROUP BY admission_date"""
+        ).fetchall()
+    rate = sum(h["cnt"] for h in history) / len(history) if history else 4.5
+    for row in predict_hospital_flow(days_ahead=7)["daily_forecasts"]:
+        dow = _date.fromisoformat(row["date"]).weekday()
+        expected = int(round(round(rate * forecast_service.DOW_MULTIPLIERS[dow], 1)))
+        assert row["predicted_admissions"] == expected, row

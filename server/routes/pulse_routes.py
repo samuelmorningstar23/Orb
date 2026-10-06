@@ -1,98 +1,35 @@
-"""Orb Pulse — API Routes
+"""Orb Pulse: season and conditions.
 
-Environmental intelligence endpoints.
-Data flows IN only — zero patient data egress.
+Pulse used to pull live internet feeds (weather, air quality, FDA recalls, CDC
+flu). Orb is strictly offline, so since 6 October 2026 it answers from the
+seasonal calendar built into Orb, for the hospital's Indian state. No request
+here, or anywhere in Pulse, leaves the appliance. See services/seasonal_calendar.py.
 
-Endpoints:
-  GET /api/pulse/dashboard       — Full environmental dashboard
-  GET /api/pulse/weather         — Weather + 7-day forecast
-  GET /api/pulse/aqi             — Air Quality Index
-  GET /api/pulse/flu             — CDC flu surveillance
-  GET /api/pulse/drug-recalls    — FDA drug recall alerts
-  GET /api/pulse/audit-log       — Ingestion audit trail
+Endpoint:
+  GET /api/pulse/season   the season and conditions in the hospital's part of
+                          India today, and what starts in the next 60 days
+
+The old feed endpoints (/dashboard, /weather, /aqi, /flu, /drug-recalls,
+/audit-log) are gone, not stubbed: a route that still answered would suggest a
+feed still existed.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from auth import get_current_user
+from fastapi import APIRouter, Depends, HTTPException
+
 from permissions import require_permission
-from services.pulse_service import (
-    get_pulse_dashboard,
-    fetch_weather,
-    fetch_aqi,
-    fetch_cdc_flu_data,
-    fetch_fda_recalls,
-    get_ingestion_audit_log,
-)
+from services import seasonal_calendar
 
 router = APIRouter(prefix="/api/pulse", tags=["pulse"])
 
+# Read the calendar at startup, so a missing or broken file is in the boot log
+# rather than discovered on the first click. Never raises; never stops Orb.
+seasonal_calendar.preload()
 
-@router.get("/dashboard")
-async def pulse_dashboard(
-    lat: float = Query(default=19.0760, description="Latitude"),
-    lon: float = Query(default=72.8777, description="Longitude"),
-    user: dict = Depends(require_permission("forecast.read")),
-):
-    """Full environmental intelligence dashboard."""
+
+@router.get("/season")
+def pulse_season(user: dict = Depends(require_permission("forecast.read"))):
+    """Season and conditions for the hospital's state, from the built-in calendar."""
     try:
-        return await get_pulse_dashboard(lat, lon)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Pulse error: {str(e)}")
-
-
-@router.get("/weather")
-async def weather(
-    lat: float = Query(default=19.0760),
-    lon: float = Query(default=72.8777),
-    user: dict = Depends(require_permission("forecast.read")),
-):
-    """Current weather + 7-day forecast with clinical risk flags."""
-    try:
-        return await fetch_weather(lat, lon)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Weather error: {str(e)}")
-
-
-@router.get("/aqi")
-async def air_quality(
-    lat: float = Query(default=19.0760),
-    lon: float = Query(default=72.8777),
-    user: dict = Depends(require_permission("forecast.read")),
-):
-    """Air Quality Index with respiratory risk flags."""
-    try:
-        return await fetch_aqi(lat, lon)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AQI error: {str(e)}")
-
-
-@router.get("/flu")
-async def flu_surveillance(
-    user: dict = Depends(require_permission("forecast.read")),
-):
-    """CDC influenza-like illness surveillance data."""
-    try:
-        return await fetch_cdc_flu_data()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"CDC error: {str(e)}")
-
-
-@router.get("/drug-recalls")
-async def drug_recalls(
-    limit: int = Query(default=10, le=50),
-    user: dict = Depends(require_permission("forecast.read")),
-):
-    """Recent FDA drug recall/enforcement actions."""
-    try:
-        return await fetch_fda_recalls(limit)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"FDA error: {str(e)}")
-
-
-@router.get("/audit-log")
-def audit_log(
-    limit: int = Query(default=50, le=200),
-    user: dict = Depends(require_permission("audit.read")),
-):
-    """Audit trail of all external data ingestion events."""
-    return get_ingestion_audit_log(limit)
+        return seasonal_calendar.season_report()
+    except seasonal_calendar.CalendarError as e:
+        raise HTTPException(status_code=503, detail=e.public_message)

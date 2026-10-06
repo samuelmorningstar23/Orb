@@ -103,8 +103,8 @@
   - [Lens, Medical Imaging Analysis](#lens-medical-imaging-analysis)
   - [`server/services/lens_service.py`](#serverserviceslens_servicepy)
   - [`server/routes/lens_routes.py`](#serverrouteslens_routespy)
-  - [Pulse, Environmental & Operational Risk](#pulse-environmental-operational-risk)
-  - [`server/services/pulse_service.py`](#serverservicespulse_servicepy)
+  - [Pulse, Season and Conditions](#pulse-season-and-conditions)
+  - [`server/site_config/seasonal_calendar.json`](#serversite_configseasonal_calendarjson)
   - [`server/routes/pulse_routes.py`](#serverroutespulse_routespy)
   - [Bridge, Patient-Facing Portal](#bridge-patient-facing-portal)
   - [`server/services/bridge_service.py`](#serverservicesbridge_servicepy)
@@ -325,7 +325,7 @@ The second flow is what the code calls Orb's **"nervous system"**: modules don't
 | **Ingestion** | The **front door for data**, parses HL7 / CSV / JSON from hospital systems into vitals and labs. | §7 |
 | **Helix** | **Pharmacy & medications**, formulary, orders, inventory, pharmacist sign-off. | §8 |
 | **Lens** | **Medical imaging** analysis (a vision-language model reads an image). | §8 |
-| **Pulse** | **Environmental / operational risk** (weather, air quality, recalls, flu season). | §8 |
+| **Pulse** | **Season and conditions**: a built-in seasonal calendar for the hospital's state, no internet. | §8 |
 | **Bridge** | The **patient-facing** portal/bot, with an emergency red-flag safety guardrail. | §8 |
 | **Relay** | Secure **care-team messaging**, the live channel other modules post alerts into. | §9 |
 | **Surgical Suite** | **Operating-room** scheduling and emergency surgery escalation. | §9 |
@@ -845,7 +845,7 @@ Each `include_router()` call registers all the URL paths defined in that module'
 | `admission_router` | `admission_routes.py` | Patient admission workflow |
 | `discharge_access_router` | `discharge_access_routes.py` | Patient access to the discharge summary |
 | `helix_router` | `helix_routes.py` | Helix pharmacy management |
-| `pulse_router` | `pulse_routes.py` | Pulse environmental/operational risk |
+| `pulse_router` | `pulse_routes.py` | Pulse season and conditions (`GET /api/pulse/season`) |
 | `clinical_records_router` | `clinical_records_routes.py` | Clinical record documents |
 | `bundle_router` | `bundle_routes.py` | Sepsis and other care bundles |
 | `ipass_router` | `ipass_routes.py` | I-PASS shift handover (and the full reasoned Sage assessment, §5.7) |
@@ -3813,7 +3813,7 @@ Before diving into the code, here are the key clinical concepts this module deal
 
 **Multi-task model**, One neural network that produces several different outputs simultaneously. Instead of training a separate model for LOS, one for discharge probability, one for acuity, etc., a single BiLSTM shares a common representation of the patient and then splits into separate "heads" for each output. This is efficient and often improves accuracy because the tasks share useful signal.
 
-**Hospital-level capacity forecasting**, Rolling up all individual patient predictions into aggregate numbers: how many beds will be occupied in each ward tomorrow, the day after, etc. This uses each patient's remaining LOS to estimate when discharges will happen, combined with a statistical model of future admissions calibrated to Indian hospital patterns and weather/environmental data from Orb Pulse.
+**Hospital-level capacity forecasting**, Rolling up all individual patient predictions into aggregate numbers: how many beds will be occupied in each ward tomorrow, the day after, etc. This uses each patient's remaining LOS to estimate when discharges will happen, combined with a statistical model of future admissions calibrated to Indian hospital patterns. It applies no weather or seasonal adjustment; the season from Pulse is shown as context only.
 
 ---
 
@@ -4014,31 +4014,13 @@ A lazy singleton loader. The first call to this function triggers `load_model()`
 
 ---
 
-#### Group 2: Pulse integration (`_get_environmental_multipliers`)
+#### Group 2: The season line (no adjustment)
 
-**`_get_environmental_multipliers(days_ahead: int = 7) -> list[dict]`**
+Until 6 October 2026 this group was `_get_environmental_multipliers`. It read the weather, air-quality and flu data that Pulse had fetched from the internet and multiplied expected admissions by hand-picked factors, stacked multiplicatively: for example ×1.20 for a maximum temperature of 42 °C or more ("cardiac/renal emergencies"), ×1.20 for a thunderstorm, ×1.35 for an ILI rate above 5 %. None of those factors was fitted to data. The function went with the internet feeds under the strictly-offline rule, and the ruling of 6 October 2026 (R030 in `docs/RULINGS_NEEDED_2026-10.md`) also turned down replacing it with seasonal guesses.
 
-Reads cached weather, AQI (air quality index), and flu surveillance data that was fetched by Orb Pulse (a separate service). Returns one dict per forecast day with:
-- `multiplier`, A number like 1.20, meaning "expect 20% more admissions today due to environmental factors"
-- `factors`, Human-readable explanation strings (e.g., "Thunderstorm (+20% trauma)")
-- `icons`, Icon keys for the frontend (e.g., "storm", "rain", "heat", "aqi", "flu")
+Forecast now applies **no weather or seasonal adjustment**. `_season_context(today)` calls `seasonal_calendar.season_context()` (§8), imported inside the function so the forecast never depends on the calendar loading, and `predict_hospital_flow` returns the result as `season`: today's active entries as `{id, title, kind, in_peak}`, shown as one line of context, for example "Season: South-west monsoon (peak), Dengue season". The list is empty when no state is set, the calendar is unusable, or nothing applies. No admission, discharge or occupancy figure depends on it.
 
-The logic stacks multipliers multiplicatively. For example, extreme heat (×1.20) combined with very poor air quality (×1.20) gives a multiplier of 1.44, a 44% admission surge above baseline. The thresholds are:
-
-| Signal | Threshold | Multiplier | Clinical rationale |
-|---|---|---|---|
-| Weather code ≥ 95 (thunderstorm) | n/a | ×1.20 | Trauma surge (accidents, falls) |
-| Weather code ≥ 80 (heavy rain) | n/a | ×1.10 | Trauma surge |
-| Max temp ≥ 42°C | Extreme heat | ×1.20 | Cardiac/renal emergencies |
-| Max temp ≥ 38°C | Heat advisory | ×1.10 | Cardiac |
-| Min temp ≤ 5°C | Cold snap | ×1.10 | Cardiac/respiratory |
-| AQI > 200 | Very Unhealthy | ×1.20 | Respiratory admissions |
-| AQI > 150 | Unhealthy | ×1.15 | |
-| AQI > 100 | Sensitive groups | ×1.05 | |
-| ILI% > 5.0 | Flu surge | ×1.35 | Respiratory surge |
-| ILI% > 3.0 | Elevated flu | ×1.15 | |
-
-If `pulse_service` is not importable (e.g., Pulse module not installed), all multipliers default to 1.0 silently.
+⚠️ **If you change this:** do not put a hand-picked seasonal or weather multiplier back. The ruling leaves room for one thing only: a seasonal factor fitted from the hospital's own admission history, once there is enough of it.
 
 ---
 
@@ -4156,17 +4138,17 @@ Produces the 7-day hospital flow forecast shown in the Forecast Panel. Results a
 
 4. **Per-patient predictions**, For each admitted patient, calls `_get_cached_or_predict(patient_id)` to get their predicted remaining LOS. This uses the cache table first and only triggers live inference if no cached prediction exists.
 
-5. **Environmental multipliers**, Calls `_get_environmental_multipliers(days_ahead)` to get a per-day multiplier from Pulse weather/AQI/flu data.
+5. **Season line**, Reads the current season from Pulse's calendar for the context line. It changes no number.
 
 6. **Daily forecast loop**, For each future day (1 through 7):
 
-   - **Admissions:** `avg_admission_rate × DOW_MULTIPLIERS[weekday] × env_multiplier`. The result is the Poisson *mean* (not a single random draw), this keeps the forecast stable across cache refreshes.
+   - **Admissions:** `avg_admission_rate × DOW_MULTIPLIERS[weekday]`. The result is the Poisson *mean* (not a single random draw), this keeps the forecast stable across cache refreshes.
    - **Discharges:** Counts patients whose `predicted_remaining_days` falls in the window `(day, day+1]`. Then applies two smoothing rules:
      - Cap at `n_patients // 3` (no more than a third of patients can leave in one day, prevents unrealistic spikes)
      - If no discharges were predicted and `day > 0`, floor to `max(1, n_patients * 0.08)`, about 8% base discharge rate to keep the curve plausible in sparse-data conditions. **This is explicitly labelled in the code as a demo placeholder, not a model output.**
    - **Occupancy:** `running_occupancy = previous_occupancy - discharges + admissions`, clamped to `[0, TOTAL_CAPACITY + 5]`.
    - **Ward breakdown:** Distributes projected occupancy proportionally to current ward distribution.
-   - Each day's entry includes `env_multiplier`, `env_factors`, and `env_icons` for the frontend to show environmental context.
+   - There are no per-day `env_multiplier`, `env_factors` or `env_icons` fields any more (removed 6 October 2026); the top-level `season` list is context only.
 
 7. **Summary statistics:** peak day and occupancy, average occupancy, total predicted 7-day discharges and admissions, beds available in 48 h.
 
@@ -4405,7 +4387,7 @@ When the script is run directly (`python3 scripts/train_forecast.py`):
 
 - Accepts optional `days` query parameter (default 7, capped at 14 by `min(days, 14)`).
 - Calls `predict_hospital_flow(days_ahead=...)`.
-- Returns the full forecast dict (current occupancy, 7-day daily forecasts with admissions/discharges/occupancy/ward breakdown/environmental factors, summary statistics).
+- Returns the full forecast dict (current occupancy, 7-day daily forecasts with admissions/discharges/occupancy/ward breakdown, `season` for context, summary statistics).
 - On error: 500 with `"Forecast error: <detail>"`.
 
 ---
@@ -6578,7 +6560,7 @@ The table below lists all audit event `action_type` values emitted by the ingest
 
 ## 8. Helix, Lens, Pulse & Bridge
 
-This section covers four Orb modules that address different parts of hospital operations: **Helix** handles medications and pharmacy, **Lens** runs AI-assisted analysis of medical images, **Pulse** monitors environmental and public-health conditions that affect the ward, and **Bridge** is the patient-facing chatbot portal. Each module follows the same pattern: a service file that contains all the business logic, and a routes file that exposes that logic as HTTP API endpoints.
+This section covers four Orb modules that address different parts of hospital operations: **Helix** handles medications and pharmacy, **Lens** runs AI-assisted analysis of medical images, **Pulse** shows the season in the hospital's state and what usually rises with it, and **Bridge** is the patient-facing chatbot portal. Each module follows the same pattern: a service file that contains all the business logic, and a routes file that exposes that logic as HTTP API endpoints.
 
 ---
 
@@ -6596,7 +6578,7 @@ This section covers four Orb modules that address different parts of hospital op
 
 **Vision-language model (VLM)**, A large-language model that has been trained on both text and images, so it can look at a photograph or scan and describe what it sees in words. Orb Lens uses MedGemma 27B (a medically fine-tuned VLM) running locally via Ollama.
 
-**Environmental risk**, External conditions, heatwaves, poor air quality, flu outbreaks, that influence patient health and hospital workload. Pulse fetches public data feeds and translates them into clinical action items.
+**Seasonal risk**, Illness that rises and falls with the season in a given state: dengue and malaria in the monsoon, heat illness in summer. Pulse shows it from a calendar built into Orb; it fetches nothing from the internet.
 
 **Patient portal bot**, A conversational interface that lets a patient ask plain-English questions about their condition, medications, or care plan. Bridge is Orb's portal bot. Because it talks directly to patients, it includes a hard-coded safety guardrail that intercepts messages about emergencies or self-harm before they reach the AI model.
 
@@ -6985,196 +6967,55 @@ What it does: links an existing analysis (identified by its integer `analysis_id
 
 ---
 
-### Pulse: Environmental & Operational Risk
+### Pulse: Season and Conditions
 
-Pulse monitors external conditions, weather, air quality, flu activity, and drug recalls, and translates them into clinical risk flags for the ward. It is a read-only, one-directional feed: public data flows in, no patient data ever flows out.
+Pulse shows what usually rises in the hospital's state at this time of year, and what is coming up in the next 60 days, from a seasonal calendar that ships with Orb. It makes no network connection of any kind. This is the ruling of 6 October 2026 (R030 in `docs/RULINGS_NEEDED_2026-10.md`), made under the strictly-offline rule of 4 October 2026.
 
----
-
-### `server/services/pulse_service.py`
-
-**Role:** All environmental data fetching, caching, clinical flag generation, and audit logging.
-
-**Libraries used:**
-
-| Library | Why |
-|---|---|
-| `asyncio` | `asyncio.gather` fetches all four data feeds in parallel |
-| `hashlib` | SHA-256 hashing of API responses for audit integrity |
-| `json` | Parsing API responses |
-| `time` | Unix timestamps for cache TTL checks |
-| `datetime` | UTC timestamps for audit log entries and seasonal estimates |
-| `httpx` | Async HTTP client for external API calls |
+**What was removed.** Until 6 October Pulse pulled four live internet feeds (Open-Meteo weather and air quality, openFDA drug recalls, CDC FluView flu data), found the user's location with the browser's geolocation and an OpenStreetMap lookup, generated "clinical alerts" from fixed weather thresholds, and fed hand-picked weather multipliers into Forecast. All of that is gone: the feeds, the location lookup, the alert thresholds, the in-memory caches, the `INBOUND_ONLY` ingestion log, and the routes `/api/pulse/dashboard`, `/weather`, `/aqi`, `/flu`, `/drug-recalls` and `/audit-log`.
 
 ---
 
-#### Configuration constants
+### `server/site_config/seasonal_calendar.json`
 
-| Constant | Value | Meaning |
-|---|---|---|
-| `DEFAULT_LAT` / `DEFAULT_LON` | 19.0760 / 72.8777 | Default location (Mumbai), change per hospital deployment |
-| `DEFAULT_CITY` | `"Mumbai"` | Label used in UI messages |
-| `WEATHER_CACHE_TTL` | 1800 s | Weather is refreshed every 30 minutes |
-| `AQI_CACHE_TTL` | 3600 s | Air quality is refreshed every hour |
-| `CDC_CACHE_TTL` | 86400 s | Flu data is weekly, refreshed every 24 hours |
-| `FDA_CACHE_TTL` | 3600 s | Recall data is refreshed every hour |
-| `PULSE_REFRESH_INTERVAL` | 900 s | Background refresh interval (15 minutes) |
+**Role:** The data Pulse shows. One file that ships with Orb and is read on the appliance, through `server/services/seasonal_calendar.py`. It groups India's 36 states and union territories into zones (each code in exactly one zone, the codes listed in `server/services/india_states.py`) and gives each zone its entries. An entry is a season, a disease season or an environmental one, with a title, the days it usually runs (`MM-DD` to `MM-DD`, which may cross the new year), an optional peak inside that range, a short summary, the conditions that typically rise, and its sources. Each source carries a name, an address and the day it was read when the calendar was compiled; the panel shows the name only, because nothing is fetched.
 
-⚠️ **If you change this:** `DEFAULT_LAT` and `DEFAULT_LON` must be updated for every new hospital deployment. Using the Mumbai defaults at a hospital in another city will produce meaningless weather and air quality data.
+**Review status.** The calendar carries its own review status. It ships as a draft, and the panel says **"Draft: not yet reviewed by a clinician"**. Once the pilot hospital's clinical lead has reviewed it, it records who and when, and the panel says **"Reviewed by [name] on [date]"**.
+
+**Loading.** `pulse_routes.py` calls `seasonal_calendar.preload()` at import, so the file is read once at startup and a problem is in the boot log, not found on the first click. `ORB_SEASONAL_CALENDAR_FILE` (an absolute path) points elsewhere, for tests and for sites that keep their configuration in their own repository. A file that breaks any rule (an unknown key, a state in no zone or in two, a bad date, an entry with no source) is refused whole, and the log lists every problem with a line number where it can find one. A missing or refused file does **not** stop Orb: a seasonal note is reference material, not a safety control. Until the file is fixed and Orb restarted, `GET /api/pulse/season` answers 503 with one plain sentence for the ward screen, and Forecast shows no season line. "Today" is always the hospital's calendar day (`services/hospital_time.py`), not the UTC date.
+
+⚠️ **If you change this:** an edit to the calendar is a clinical change. A reviewed calendar that is then edited is no longer the calendar that was reviewed: have the clinical lead review it again and update the review record in the same change. An edit needs a restart.
 
 ---
 
-#### In-memory caches
+#### The hospital's state: `[site] state`
 
-Pulse stores the most recent result from each external API in module-level variables (`_weather_cache`, `_aqi_cache`, `_cdc_cache`, `_fda_cache`). Before every external call the function checks whether the cached data is still within its TTL. If so, it returns the cached value immediately without making a network request. This means the hospital's internal network is not hammered with API calls on every dashboard refresh, and the UI remains responsive even when the external APIs are slow.
+`state = "Maharashtra"` under `[site]` in `server/site_config/site.toml`: a state or union territory, by name or by its two-letter code (`"MH"`), in any case. `server/services/india_states.py` holds the one list of codes; some differ from vehicle plates (Odisha is `OR`, Telangana is `TG`), and a few former names (Orissa, Pondicherry, Uttaranchal) still resolve. The setting picks the zone, and so the part of the calendar Pulse shows.
 
-Crucially, these caches are in-memory only. If the server restarts, all caches are cleared and the next request to each endpoint triggers a fresh API call.
-
----
-
-#### Audit logging
-
-**`_log_ingestion(source, url, status, data_hash)`**
-
-Every external HTTP call, success or failure, is recorded in `_pulse_log`, a module-level list capped at 500 entries. Each entry contains:
-- `timestamp` (UTC ISO 8601)
-- `source` (e.g. `"weather/open-meteo"`)
-- `url` (the exact URL called)
-- `status` (`"OK"` or an error string)
-- `data_hash` (first 16 hex characters of the SHA-256 of the response body, for integrity verification)
-- `direction` (always `"INBOUND_ONLY"`, a constant reminder that no patient data was transmitted)
-
-**`_hash_response(data)`**, computes a 16-character SHA-256 prefix of a response string. Short enough to store cheaply, long enough to detect accidental or malicious data tampering in the audit trail.
-
-**`get_ingestion_audit_log(limit)`**, returns the last `limit` entries from `_pulse_log`. Exposed via the `/api/pulse/audit-log` route to administrators.
-
----
-
-#### Weather feed
-
-**`fetch_weather(lat, lon)`** (async)
-- External API: Open-Meteo (`api.open-meteo.com`), free, no API key, global coverage
-- Cache TTL: 30 minutes
-- Output dict keys: `current` (temperature, humidity, wind, pressure, description), `forecast` (7-day array), `clinical_flags`, `location`, `last_updated`
-
-The function fetches current conditions and a 7-day forecast in a single API call. After parsing the response, it passes the data to `_generate_weather_clinical_flags`.
-
-On error it logs the failure and returns the cached data if available, or an empty structure with an `error` key.
-
-**`_generate_weather_clinical_flags(current, forecast)`**
-
-Evaluates weather data against four clinical thresholds and returns a list of flag objects. Each flag has: `type`, `severity` (`"high"` or `"moderate"`), `icon`, `title`, `message`, `affected_conditions`, and `recommended_actions`.
-
-| Trigger | Flag type | Threshold |
-|---|---|---|
-| High temperature | `HEAT_ADVISORY` | ≥ 38°C (severity `high` at ≥ 42°C) |
-| Low temperature | `COLD_ADVISORY` | ≤ 5°C |
-| Storm in 3-day forecast | `STORM_WARNING` | Weather code ≥ 80 (rain showers or thunderstorm) |
-| Combined heat + humidity | `HEAT_INDEX_DANGER` | ≥ 32°C AND humidity ≥ 70% |
-
-Each flag includes plain-English recommended actions targeted at clinical staff, e.g. "Increase IV fluid monitoring for at-risk patients" or "Alert ED for potential surge in trauma cases."
-
-⚠️ **If you change this:** The temperature thresholds are calibrated for a tropical/subtropical hospital (default Mumbai). A hospital in northern Europe should use substantially lower heat thresholds. The thresholds are in `_generate_weather_clinical_flags`, not in configuration, they would need to be moved to a config variable or per-deployment setting before Pulse is deployed to multiple hospitals.
-
----
-
-#### Air Quality Index feed
-
-**`fetch_aqi(lat, lon)`** (async)
-- External API: Open-Meteo Air Quality API, free, no API key, global coverage
-- Cache TTL: 1 hour
-- Output dict keys: `aqi` (US AQI integer), `category`, `color`, `pollutants` (PM2.5, PM10, CO, NO₂, O₃), `clinical_flags`, `last_updated`
-
-Classifies the AQI value into six US EPA categories (Good → Hazardous). Generates one clinical flag (`AQI_ALERT`) if AQI exceeds 100, flagging patients with asthma, COPD, and respiratory or cardiac conditions.
-
----
-
-#### FDA drug recall feed
-
-**`fetch_fda_recalls(limit)`** (async)
-- External API: openFDA (`api.fda.gov/drug/enforcement.json`), free, no API key required for low volume
-- Cache TTL: 1 hour
-- Output: list of recall dicts with `recall_number`, `product`, `reason`, `classification`, `status`, `report_date`, `recall_initiation_date`, `recalling_firm`, `city`, `state`
-
-Fetches the most recent `limit` drug enforcement actions sorted by `report_date` descending. The route cap is 50 results. This feed gives pharmacy staff and clinicians visibility into active drug recalls that might affect medications currently in stock.
-
-Note: Pulse currently fetches recall data but does not automatically cross-reference it against the hospital's `helix_medication_master` inventory. That cross-reference is a future enhancement.
-
----
-
-#### CDC flu surveillance feed
-
-**`fetch_cdc_flu_data()`** (async)
-- External API: CDC Socrata data portal (`data.cdc.gov`), open data, no key required
-- Cache TTL: 24 hours
-- Output dict keys: `source`, `week`, `year`, `ili_percentage`, `total_patients`, `activity_level`, `clinical_flags`, `last_updated`
-
-Fetches the 10 most recent ILI (Influenza-Like Illness) records from the CDC FluView dataset, ordered by year and week descending, taking the latest entry.
-
-**`_classify_ili_level(ili_pct)`**, converts a raw ILI percentage into a category string: `minimal` (< 1.5%), `low`, `moderate`, `high`, `very_high` (≥ 7%).
-
-If ILI exceeds 3%, a `FLU_SURGE` clinical flag is generated with recommended actions including activating respiratory isolation protocols and verifying oseltamivir (Tamiflu) stock.
-
-**`_seasonal_flu_estimate()`**, fallback used when the CDC API is unavailable. Returns a hard-coded seasonal estimate based on the current calendar month, calibrated to Northern Hemisphere flu patterns (peak in January/February).
-
----
-
-#### Combined dashboard
-
-**`get_pulse_dashboard(lat, lon)`** (async)
-- Output: one large dict containing `weather`, `air_quality`, `flu_surveillance`, `drug_recalls`, `active_alerts` (all flags from all feeds, sorted by severity), `alert_count`, `last_refresh`, and `data_direction`
-
-Uses `asyncio.gather(..., return_exceptions=True)` to fetch all four feeds concurrently. This means even if one feed is slow or fails, the others complete without waiting. Failed feeds are replaced with safe empty defaults rather than causing the whole dashboard to fail.
-
-Collects clinical flags from weather, AQI, and flu feeds, then sorts them by severity (high → moderate → low) so the most urgent alerts appear first.
+There is no default and no guess. Without the line, Pulse shows no seasons and the panel asks for the state. A value Orb does not recognise stops Orb from starting, with the line, a "Did you mean" hint and the list of codes; it is never matched to the nearest state, because a wrong state is the wrong season on a clinical screen. No browser geolocation, no IP lookup, no map service. Like every site setting it is read once, at startup.
 
 ---
 
 ### `server/routes/pulse_routes.py`
 
-**Role:** Exposes Pulse feeds as FastAPI endpoints under `/api/pulse`. All endpoints are read-only.
+**Role:** Serves the calendar for the configured state under `/api/pulse`. Read-only.
 
-**Libraries used:**
+**`GET /api/pulse/season`**, requires `forecast.read`. Returns today's date in the hospital's calendar, the configured `state` and its `zone`, `active` (the entries in effect today, the "This season" cards, each with `in_peak` and the day it ends), `upcoming` (entries that start in the next 60 days, "Coming up", each with `starts_on` and `days_away`), and `calendar` (version, `status` `draft` or `reviewed`, `reviewed_by`, `reviewed_on`, `compiled_on`). When no state is set, `setup_needed` is true and `setup_message` says what to set, instead of a guess. When the calendar is missing or refused, the route answers 503 with `CalendarError.public_message`. The client half is `src/api/pulse.ts` (`fetchPulseSeason`); the panel is `src/components/PulseWidget.tsx`, which fetches each time it is opened and never polls. `PulseDetail.tsx` was deleted with the feeds.
 
-| Library | Why |
-|---|---|
-| `fastapi.APIRouter` | Groups routes under `/api/pulse` |
-| `fastapi.Query` | Validates and documents optional query parameters with defaults |
-| `auth.get_current_user` | Imported but not used directly, permission dependencies handle auth |
-| `permissions.require_permission` | Guards every endpoint |
-
-All standard endpoints require the `forecast.read` permission. The audit log endpoint requires `admin.full`.
+This is the only Pulse route.
 
 ---
 
-#### Endpoints
+#### Pulse and Forecast
 
-**`GET /api/pulse/dashboard`**
+Forecast no longer applies any weather or seasonal adjustment (§4, Group 2). `predict_hospital_flow` returns `season`, today's active entries as `{id, title, kind, in_peak}` from `seasonal_calendar.season_context()`, and the panel shows them as one line of context, for example "Season: South-west monsoon (peak), Dengue season". `season_context` never raises: with no state, an unusable calendar or nothing active, the list is empty and the forecast is unaffected. A seasonal factor fitted from the hospital's own admission history may come later.
 
-Query params: `lat` (default 19.076), `lon` (default 72.877).
-Returns the full dashboard payload from `get_pulse_dashboard()`. This is the primary endpoint for the frontend `PulseWidget` and `PulseDetail` components.
+---
 
-**`GET /api/pulse/weather`**
+#### Planned, and ruled out
 
-Query params: `lat`, `lon`. Returns current conditions and 7-day forecast from `fetch_weather()`.
-
-**`GET /api/pulse/aqi`**
-
-Query params: `lat`, `lon`. Returns AQI data from `fetch_aqi()`.
-
-**`GET /api/pulse/flu`**
-
-No params. Returns CDC flu surveillance data from `fetch_cdc_flu_data()`.
-
-**`GET /api/pulse/drug-recalls`**
-
-Query param: `limit` (default 10, max 50). Returns recent FDA drug recall records from `fetch_fda_recalls()`.
-
-**`GET /api/pulse/audit-log`**
-
-Query param: `limit` (default 50, max 200). Requires `admin.full` permission (more restrictive than the other endpoints, this log contains external URL patterns which could reveal infrastructure details). Returns `get_ingestion_audit_log(limit)`.
-
-⚠️ **If you change this:** All five data endpoints return HTTP 500 on service errors (catching `Exception` broadly). If a feed consistently fails (e.g. a new hospital's firewall blocks the external APIs), the dashboard will degrade gracefully to empty/cached data rather than crashing entirely. Check the audit log for persistent `ERROR` statuses if data stops appearing.
+- **Stage 2, not built.** A one-minute daily entry of official warnings (IMD heatwave warnings, the CPCB air-quality index) by a person the hospital designates, and support for a weather and air-quality sensor on the hospital LAN.
+- **Stage 3, not built.** Disease trends from the hospital's own admissions, and the CDSCO drug-recall list checked against Helix stock.
+- **Ruled out.** A separate internet-connected box that fetches the weather and pushes it into Orb. It is a bridge from the internet into Orb, which the offline rule forbids.
 
 ---
 
@@ -7371,7 +7212,7 @@ Requires `require_patient_self()`. Returns the 30 most recent clinical documents
 
 ### Cross-module notes
 
-- **Frontend components that consume these modules:** Helix → `HelixPanel`, `HelixDashboard`; Lens → `LensPanel`; Pulse → `PulseWidget`, `PulseDetail`; Bridge → the patient portal UI (Bridge chat window, vitals view, reports panel). Any change to API response shapes will require corresponding frontend updates.
+- **Frontend components that consume these modules:** Helix → `HelixPanel`, `HelixDashboard`; Lens → `LensPanel`; Pulse → `PulseWidget` (the header panel, from `GET /api/pulse/season`); Bridge → the patient portal UI (Bridge chat window, vitals view, reports panel). Any change to API response shapes will require corresponding frontend updates.
 
 - **LLM queue:** Both Lens (`analyze_image_stream`) and Bridge (`answer_patient_question`) acquire a slot on `llm_queue` with `priority=2` before making Ollama requests. This shared queue prevents concurrent requests from overloading the local GPU or CPU. If you add another module that calls Ollama, it must also use `llm_queue`.
 
@@ -11501,8 +11342,7 @@ These live under `src/components/` and are reused across shells and panels.
 |---|---|
 | `Aurora.tsx` | Animated canvas background shown on the Login page. |
 | `OrbLogo.tsx` + `OrbLogo.css` | The Orb animated logo SVG. Accepts a `size` prop. Used in the sidebar, login card, and patient shell header. |
-| `PulseWidget.tsx` + `PulseWidget.css` | Real-time "system pulse" status chip in the clinician header. Polls backend health. |
-| `PulseDetail.tsx` | Expanded detail panel for PulseWidget. |
+| `PulseWidget.tsx` + `PulseWidget.css` | The Pulse panel in the clinician header: the season for the hospital's state and what is coming up, from `GET /api/pulse/season`. It is not a system-health chip and never polled backend health. |
 | `ClockWidget.tsx` + `ClockWidget.css` | Live digital clock displayed in the clinician header. |
 | `AdmitPatientModal.tsx` + `AdmitPatientModal.css` | Modal form for admitting a new patient. Calls `admitPatient()`. Opened by the "Admit Patient" button in ClinicianShell. |
 | `HandoffPrintView.tsx` | Print-optimized layout for a handoff report. Rendered inside VigilPanel and opened via `createPortal`. |
@@ -11669,8 +11509,7 @@ src/
 └── components/
     ├── Aurora.tsx                    Animated login background canvas
     ├── OrbLogo.tsx + OrbLogo.css     Orb logo SVG with size prop
-    ├── PulseWidget.tsx + .css        System health pulse chip in clinician header
-    ├── PulseDetail.tsx               Expanded pulse detail view
+    ├── PulseWidget.tsx + .css        Pulse season panel in clinician header
     ├── ClockWidget.tsx + .css        Live clock in clinician header
     ├── AdmitPatientModal.tsx + .css  Modal form: admit a new patient
     ├── HandoffPrintView.tsx          Print layout for handoff report (portal-rendered)

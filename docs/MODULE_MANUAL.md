@@ -86,7 +86,7 @@ The manual is organized in seven parts:
 - [19. Nurse Mode (My Shift), the task-shaped home](#19-nurse-mode-my-shift-the-task-shaped-home)
 - [20. Bridge, the patient's own window](#20-bridge-the-patients-own-window)
 - [21. Discharge Access, the link the patient takes home](#21-discharge-access-the-link-the-patient-takes-home)
-- [22. Pulse, outside-world awareness](#22-pulse-outside-world-awareness)
+- [22. Pulse, season and conditions](#22-pulse-season-and-conditions)
 - [23. Revenue Integrity, coding and CDI](#23-revenue-integrity-coding-and-cdi)
 - [24. Impact & ROI Dashboard, the money model](#24-impact-roi-dashboard-the-money-model)
 - [25. EHR Downtime Mode, the worst hour of the CIO's year](#25-ehr-downtime-mode-the-worst-hour-of-the-cios-year)
@@ -137,7 +137,7 @@ Four operational views: a 7-day census projection, a per-ward bed-capacity view 
 How, concretely:
 
 - The Discharge Board ranks every patient by discharge probability with estimated remaining days and a trajectory arrow, so discharge planning, pharmacy reconciliation, transport, family calls, works the top of a list instead of being rediscovered patient-by-patient on rounds.
-- The census projection fits the hospital's own last 30 days of admissions (Poisson mean), adjusted by day-of-week and live Pulse environmental factors, "how full will Thursday be" is answered from the site's actual history.
+- The census projection fits the hospital's own last 30 days of admissions (Poisson mean), adjusted by day-of-week only, "how full will Thursday be" is answered from the site's actual history. No weather or seasonal factor touches the number (ruled 6 October 2026); the season from Pulse sits beside it as one line of context.
 - Numbers are deliberately calm: expected values only, no random draws, a 1-hour server cache, the figure quoted in the huddle is the same figure an hour later.
 - Every prediction carries provenance (`prediction_source: lstm | heuristic`); the panel's chip reads Untrained/Unvalidated/Validated straight from Model Governance. The doctor always knows whether they're looking at a rule of thumb or a model.
 
@@ -637,27 +637,25 @@ How, concretely:
 
 **Key code:** `server/services/discharge_access_service.py`, `src/pages/DischargeAccess.tsx`
 
-## 22. Pulse: outside-world awareness
+## 22. Pulse: season and conditions
 
 *Part V, The patient journey*
 
-A popover in the shell header that pulls four public feeds, weather and 7-day forecast, air quality, influenza-like-illness surveillance, drug recalls, and converts them into ranked clinical alerts using fixed deterministic thresholds, each naming the at-risk patient groups and concrete prep actions. Strictly one-directional: the only thing that ever leaves the hospital is a pair of map coordinates, and every pull is written to an INBOUND_ONLY audit trail with a hash of the response.
+A panel in the shell header that shows the season for the hospital's state: what usually rises at this time of year ("This season" cards with a period, a **Peak now** tag, a short summary, "Typically rises: ..." and the sources named in plain text) and what starts in the next 60 days ("Coming up"). It reads a seasonal calendar that ships with Orb (`server/site_config/seasonal_calendar.json`) for the state set in `site.toml` (`[site] state = "Maharashtra"`). It makes no internet connection of any kind.
 
-**The claim.** Pulse tells the doctor what tomorrow's case mix will look like before the patients arrive, a heat wave, pollution spike, flu surge, or drug recall shows up as a badge in the header with concrete prep actions, instead of being discovered as a full ED.
+**The claim.** The ward and the pharmacy see the monsoon coming before the dengue and leptospirosis cases do, from a calendar a clinician has checked, with no feed to fail and nothing leaving the building.
 
 How, concretely:
 
-- Heat advisory at ≥38 °C flags dehydration/heat-stroke/cardiac risk and recommends IV-fluid monitoring, electrolyte pre-positioning, and more frequent geriatric rounding, the exact prep a medicine ward does before a Mumbai heat wave.
-- AQI above 100 names asthma/COPD patients and recommends notifying respiratory therapy and checking inhaler availability, routine in the target geography.
-- Every card opens a detail view with the raw numbers and a source-attribution link, so a skeptical clinician can verify the data in one click.
+- The calendar ships marked "Draft: not yet reviewed by a clinician" and shows "Reviewed by [name] on [date]" only after the pilot hospital's clinical lead has reviewed it.
+- No state set means Pulse asks for it. It never guesses, never asks the browser for a location and never looks one up; an unknown state in `site.toml` stops Orb at startup with a "Did you mean" hint.
+- Forecast shows the season as one line of context ("Season: South-west monsoon (peak), Dengue season") and applies no weather or seasonal adjustment to any number.
 
-**Architecture.** A pull-only aggregation service with per-feed TTL caches and a fully deterministic rules engine, no AI anywhere in the path. It is the only module allowed to make external HTTP calls, on a purpose-built transport lane that resolves proxy/CA configuration once per process (the fix for the configd event-loop wedge that once froze `/api/health` for 3.5 hours).
+**Architecture.** One route, `GET /api/pulse/season` (`forecast.read`), over `server/services/seasonal_calendar.py`. The file is read once at startup and validated whole; a missing or broken file is logged and makes the route answer 503 with one plain sentence, but never stops Orb. No AI and no network anywhere in the path.
 
-- **Guardrails worth naming:** fail-soft caching, a dead feed serves last-good data, and the flu feed degrades to an explicitly labelled "(seasonal estimate)"; the UI never presents a guess as surveillance.
+**Status.** Rebuilt 6 October 2026 under the strictly-offline rule (ruling R030). Until then Pulse pulled four live internet feeds (Open-Meteo weather and air quality, US FDA recalls, US CDC flu), located the user through browser geolocation and openstreetmap.org, and Forecast multiplied admissions by hand-picked weather guesses (+20% "cardiac" above 42 °C). All of that is gone. Staged plan, neither stage built: stage 2, a one-minute daily entry of official warnings (IMD heatwave, CPCB AQI) by a designated person, plus a hospital weather and air-quality sensor on the LAN; stage 3, disease trends from the hospital's own admissions and the CDSCO recall list checked against stock. Ruled out: a separate internet-connected box that fetches weather and pushes it into Orb, because it is a bridge from the internet into Orb.
 
-**Status.** Shipped and deterministic, but geographically mismatched for the pilot: weather/AQI are locally meaningful today (Open-Meteo covers Mumbai), while flu surveillance is US CDC data and recalls are US FDA actions, both need India-specific sources (IDSP, CDSCO) before their alerts mean anything at the pilot site.
-
-**Key code:** `server/services/pulse_service.py`, `src/components/PulseWidget.tsx`
+**Key code:** `server/services/seasonal_calendar.py`, `server/site_config/seasonal_calendar.json`, `server/routes/pulse_routes.py`, `src/components/PulseWidget.tsx`
 
 ## 23. Revenue Integrity: coding and CDI
 
@@ -823,6 +821,6 @@ A manual that only lists strengths is marketing. These are the system-wide truth
 - **The LLMs are not clinically validated.** MedGemma 27B/4B are measured, not trusted: internal evals documented invented citations, fabricated chart data on the 4B, and wrong drug recalls, which is why the guardrail stack (citation validation, score pinning, mutation gates, verification sign-gates, pharmacist quarantine) is deterministic.
 - **Curated knowledge bases are starters, not licensed databases**: 55 interaction pairs, ~19 dose rules, ~19 corpus documents. Licensed sources must be bulk-loaded per site before go-live.
 - **Some demo content still wears an AI badge**, the surgical prep package is a hardcoded template labelled "AI Generated"; the clinician appointments grid mixes predicted rows with real ones; Helix dispensing is mock. Each is flagged in its module's status line.
-- **Known open engineering items**: key escrow, per-device revocation, external audit anchoring, the Scribe verification default, Hindi/Marathi red-flag coverage in Bridge, India-specific Pulse feeds, and in-app-only escalation delivery (no pager/push integration yet).
+- **Known open engineering items**: key escrow, per-device revocation, external audit anchoring, the Scribe verification default, Hindi/Marathi red-flag coverage in Bridge, Pulse stages 2 and 3 (logged official warnings and a LAN sensor; trends from the hospital's own admissions and CDSCO recalls against stock), and in-app-only escalation delivery (no pager/push integration yet).
 
 The shadow scorecard (Module 29) exists precisely so that, at Week 13, the sentence "Vigil detects deterioration earlier than the ward noticed it" either has a number behind it or is retired. Until then, every claim in this manual is a design claim, engineered honestly, and awaiting evidence.

@@ -59,6 +59,8 @@ from difflib import get_close_matches
 from pathlib import Path
 from typing import Any, Iterable
 
+from services.india_states import STATES, resolve_state
+
 logger = logging.getLogger("orb.site_config")
 
 # Default location. `ORB_SITE_CONFIG_FILE` points elsewhere — used by tests, and
@@ -131,6 +133,9 @@ class SiteConfig:
     present: bool = False
     site_name: str | None = None
     timezone: str | None = None
+    # Canonical two-letter code (services/india_states.py), or None when the
+    # file does not say. Read by Pulse's seasonal calendar.
+    site_state: str | None = None
     departments: list[dict] = field(default_factory=list)
     escalation: dict = field(default_factory=dict)
     operations: dict = field(default_factory=dict)
@@ -170,6 +175,7 @@ _SCHEMA: dict[str, dict[str, dict]] = {
     "site": {
         "name": {"type": "str", "required": True},
         "timezone": {"type": "str"},
+        "state": {"type": "str"},
     },
     "departments": {
         "name": {"type": "str", "required": True},
@@ -404,6 +410,32 @@ def _check_table(
     return out
 
 
+def _resolve_state(path: Path, idx: _LineIndex, value: str) -> str:
+    """`state` as the canonical code, or a refusal that names the line.
+
+    Never a nearest match. The state picks which part of the seasonal calendar
+    Pulse shows, and a guessed state is the wrong season on a clinical screen,
+    looking right.
+    """
+    code = resolve_state(value)
+    if code is not None:
+        return code
+    close = get_close_matches(value.strip().lower(),
+                              [n.lower() for n in STATES.values()], n=1, cutoff=0.6)
+    hint = []
+    if close:
+        name = next(n for n in STATES.values() if n.lower() == close[0])
+        hint.append(f"Did you mean '{name}'?")
+    hint.append('Write the state or union territory by name or by its two-letter '
+                'code, e.g. state = "Maharashtra" or state = "MH".')
+    hint.append("Codes Orb knows: " + ", ".join(STATES))
+    raise _fail(
+        path, idx, "site", "state",
+        f"'{value}' is not an Indian state or union territory Orb knows.",
+        hint="\n".join(hint),
+    )
+
+
 def _validate(path: Path, raw_text: str, doc: dict) -> SiteConfig:
     idx = _LineIndex(raw_text)
     cfg = SiteConfig(path=str(path), present=True)
@@ -431,6 +463,8 @@ def _validate(path: Path, raw_text: str, doc: dict) -> SiteConfig:
         )
     cfg.site_name = site.get("name")
     cfg.timezone = site.get("timezone")
+    if "state" in site:
+        cfg.site_state = _resolve_state(path, idx, site["state"])
 
     # ── [[departments]] ──
     seen_departments: dict[str, int] = {}
@@ -549,6 +583,9 @@ def _to_env(cfg: SiteConfig) -> dict[str, str]:
         # wrong stamped every reading 5.5 hours into the future in a UTC+05:30
         # hospital — see config.HL7_DEFAULT_TZ.
         env["ORB_HL7_DEFAULT_TZ"] = cfg.timezone
+    # `state` has no variable, like `name`: its only reader is new
+    # (services/seasonal_calendar.py) and reads cfg.site_state directly, so
+    # there is no older reader to speak the language of.
     return env
 
 
@@ -646,6 +683,7 @@ def site_config_snapshot() -> dict:
         "file": cfg.path,
         "site_name": cfg.site_name,
         "timezone": cfg.timezone,
+        "state": cfg.site_state,
         "department_count": len(cfg.departments),
         "departments": [d["name"] for d in cfg.departments],
         "wards": cfg.wards,

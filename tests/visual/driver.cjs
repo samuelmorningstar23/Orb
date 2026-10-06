@@ -27,7 +27,8 @@
  *     waits for running finite animations to finish before auditing — do not
  *     audit mid-animation (false positives from opacity<1).
  *   - Service workers are blocked (vite-plugin-pwa dev SW would bypass mocks).
- *   - socket.io + external calls (nominatim) are aborted in mocked mode.
+ *   - socket.io is aborted in mocked mode. The app makes no external calls
+ *     (Orb is strictly offline); doctor/pulse-widget fails if Pulse tries one.
  *   - Theme is exercised in place: audit dark → toggle to light → audit light,
  *     using the real #btn-theme-toggle where the shell provides it.
  */
@@ -191,8 +192,6 @@ async function runScenario(browser, scenario) {
     // still never connects — minus a harness-generated false positive. Do NOT
     // drop the error code.
     await context.route((u) => u.pathname.startsWith('/socket.io'), (r) => r.abort('aborted'));
-    await context.route((u) => u.hostname.endsWith('nominatim.openstreetmap.org'), (r) =>
-      r.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
     await context.route((u) => u.pathname.startsWith('/api/'), async (route) => {
       const req = route.request();
       const u = new URL(req.url());
@@ -713,13 +712,31 @@ const MOCKED = [
     ],
   },
   {
-    name: 'doctor/pulse-widget', user: 'doctor', path: '/dashboard', waitFor: '.patient-row',
+    // Pulse: season and conditions, from the calendar built into Orb. Strictly
+    // offline: opening it may ask the app's own origin and nothing else (the
+    // old panel called nominatim.openstreetmap.org from the browser). Waits for
+    // the header trigger, not a patient row: the doctor now lands on Today.
+    name: 'doctor/pulse-widget', user: 'doctor', path: '/dashboard', waitFor: '#btn-pulse',
     steps: [
       {
         name: 'open',
         act: async ({ page }) => {
-          await page.click('#btn-pulse');
-          await page.waitForSelector('.pulse-panel', { timeout: 10000 });
+          const appOrigin = new URL(page.url()).origin;
+          const offOrigin = [];
+          const watch = (req) => {
+            const u = new URL(req.url());
+            if ((u.protocol === 'http:' || u.protocol === 'https:') && u.origin !== appOrigin) offOrigin.push(req.url());
+          };
+          page.on('request', watch);
+          try {
+            await page.click('#btn-pulse');
+            await page.waitForSelector('.pulse-panel', { timeout: 10000 });
+            // Loaded: the season cards (or, live, the setup or error block).
+            await page.waitForSelector('.pulse-panel .pulse-season, .pulse-panel .orb-state--empty, .pulse-panel .orb-state--error', { timeout: 10000 });
+          } finally {
+            page.off('request', watch);
+          }
+          if (offOrigin.length) throw new Error(`Pulse asked another origin: ${offOrigin.join(', ')}`);
         },
       },
     ],

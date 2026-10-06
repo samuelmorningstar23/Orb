@@ -24,7 +24,9 @@ scenarios over a representative surface set.
   case room with Sage ambient sidebar); Sage; Scribe; Lens; Forecast (all 4
   sub-views); Command Center; Capacity Simulator; Revenue Integrity (analysis
   run); Appointments; Admit Patient modal (Identity + Vitals + Review tabs,
-  Escape closes); Pulse widget.
+  Escape closes); Pulse panel (season and conditions from the built-in
+  calendar; the scenario fails if opening it asks any origin other than the
+  app's own).
 - **Doctor — trunk wave-1/2 surfaces**: explainable NEWS2 ("why this score"
   per-parameter attribution panel); unified **Patient Story** timeline modal
   (`#btn-story`, filter chips); **eMAR Administer** modal (five rights,

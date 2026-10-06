@@ -330,3 +330,85 @@ def test_snapshot_has_no_secrets(tmp_path):
     body = json.dumps({k: v for k, v in snap.items() if k != "file"}).lower()
     for forbidden in ("key", "secret", "password", "token"):
         assert forbidden not in body, f"snapshot leaked a {forbidden}: {snap}"
+
+
+# ── [site] state: which part of Pulse's seasonal calendar applies ────────────
+
+def _with_state(value: str) -> str:
+    return f"""
+[site]
+name = "Test Hospital"
+state = {value}
+
+[[departments]]
+name = "General Medicine"
+wards = ["GM-1"]
+"""
+
+
+@pytest.mark.parametrize("written,code", [
+    ('"Maharashtra"', "MH"),
+    ('"MH"', "MH"),
+    ('"mh"', "MH"),
+    ('"maharashtra"', "MH"),
+    ('"  Tamil Nadu "', "TN"),
+    ('"Jammu & Kashmir"', "JK"),
+    ('"Dadra and Nagar Haveli and Daman and Diu"', "DH"),
+    ('"Orissa"', "OR"),
+    ('"TG"', "TG"),
+])
+def test_state_is_accepted_by_name_or_code_and_stored_as_the_code(tmp_path, written, code):
+    cfg = load_site_config(_write(tmp_path, _with_state(written)), apply_env=False)
+    assert cfg.site_state == code
+    assert site_config_snapshot()["state"] == code
+
+
+def test_state_is_optional(tmp_path):
+    cfg = load_site_config(_write(tmp_path, MINIMAL), apply_env=False)
+    assert cfg.site_state is None
+    assert site_config_snapshot()["state"] is None
+
+
+def test_state_sets_no_environment_variable(tmp_path):
+    """One reader, no second copy: the seasonal calendar reads cfg.site_state."""
+    cfg = load_site_config(_write(tmp_path, _with_state('"Kerala"')), apply_env=False)
+    assert cfg.env_overrides == {}
+
+
+def test_unknown_state_is_refused_with_its_line_and_a_suggestion(tmp_path):
+    """A guessed state is the wrong season on a clinical screen, looking right.
+    So a misspelling stops startup, and the message offers the near miss."""
+    err = _refuses(tmp_path, _with_state('"Maharastra"'))
+    assert err.line == 4, f"expected line 4, got {err.line}: {err}"
+    assert "Maharastra" in str(err)
+    assert "Did you mean 'Maharashtra'?" in str(err)
+
+
+@pytest.mark.parametrize("written", ['"Bombay"', '"XX"', '"India"', '"OD"'])
+def test_a_state_orb_does_not_know_is_refused(tmp_path, written):
+    err = _refuses(tmp_path, _with_state(written))
+    assert err.line == 4, f"expected line 4, got {err.line}: {err}"
+    assert "not an Indian state or union territory" in str(err)
+
+
+def test_blank_state_is_refused_not_defaulted(tmp_path):
+    err = _refuses(tmp_path, _with_state('""'))
+    assert err.line == 4
+    assert "empty" in str(err).lower()
+
+
+def test_state_must_be_text(tmp_path):
+    err = _refuses(tmp_path, _with_state("27"))
+    assert err.line == 4
+    assert "text" in str(err).lower()
+
+
+def test_the_shipped_example_file_loads(tmp_path):
+    """site.example.toml is what an operator copies. If it does not load, the
+    first thing every new site sees is a refusal."""
+    from pathlib import Path
+
+    example = Path(__file__).resolve().parent.parent / "site_config" / "site.example.toml"
+    cfg = load_site_config(example, apply_env=False)
+    assert cfg.site_state == "MH"
+    assert cfg.timezone == "Asia/Kolkata"

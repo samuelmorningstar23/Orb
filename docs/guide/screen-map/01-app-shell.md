@@ -642,83 +642,55 @@ printing it raw showed `[object Object]`).
 ### Pulse trigger button
 
 **Where:** right-hand header cluster, after the AI chip, a 36px round button
-with a lightning/pulse polyline.
-**Rendered by:** `src/components/PulseWidget.tsx:175-193`, 
+with a heartbeat-line polyline.
+**Rendered by:** `src/components/PulseWidget.tsx::PulseWidget`,
 `` className={`pulse-trigger ${isOpen ? 'pulse-trigger--active' : ''}`} ``,
-`id="btn-pulse"`, `title="Orb Pulse, Environmental Intelligence"`. Mounted at
-`ClinicianShell.tsx:452`.
-**Data from:** local `isOpen` (`:47`).
+`id="btn-pulse"`, `title="Pulse: season and conditions"`. Mounted at
+`ClinicianShell.tsx:541`.
+**Data from:** local `isOpen`.
 **API:** none on the button itself.
 **Server:** none.
-**Change this →** It is round (`--radius-full`, `css:10-24`) while its
-neighbours are 34px squares with `--radius-sm`, the one shape outlier in the
-header. Active/hover both tint it `--status-info`. Clicking toggles the panel
-and, on first open, triggers a **browser geolocation prompt** (`:107-111`).
-
-### Pulse alert badge
-
-**Where:** small dot pinned to the top-right of the Pulse button.
-**Rendered by:** `src/components/PulseWidget.tsx:186-192`, rendered only when
-`pulseData && pulseData.alert_count > 0`; class gains
-`pulse-trigger__badge--moderate` when the top alert's severity is `moderate`.
-**Data from:** `pulseData.alert_count` and
-`pulseData.active_alerts[0].severity` (`:158`).
-**API:** `GET /api/pulse/dashboard?lat=…&lon=…` (`:118-121`).
-**Server:** `server/routes/pulse_routes.py:30-40` `pulse_dashboard`, gated on
-`require_permission("forecast.read")`, delegating to
-`server/services/pulse_service.py:586` `get_pulse_dashboard`, which fans out to
-weather / AQI / CDC flu / FDA recalls concurrently and sorts the merged
-`clinical_flags` by severity (`pulse_service.py:592-627`).
-**Change this →** Red by default (`--status-danger`) with a 2s glow animation,
-amber (`--status-warn`) when the worst active alert is only `moderate`
-(`css:39-52`). **It never appears until the panel has been opened once**, 
-`pulseData` is only fetched while `isOpen` (`:130-134`), so a clinician who never
-opens Pulse never sees a badge. A **pharmacist gets a 403** here
-(`forecast.read` is not in their permission set,
-`server/permissions.py:135-139`), which surfaces as the panel's error text, and
-the badge stays hidden.
+**Change this →** It is round (`--radius-full`) while its neighbours are 34px
+squares with `--radius-sm`, the one shape outlier in the header. Clicking
+toggles the panel. There is no badge (nothing in Pulse is an alert) and no
+geolocation prompt. Rebuilt 6 October 2026 under the strictly-offline rule
+(ruling R030 in `docs/RULINGS_NEEDED_2026-10.md`); citations here are by
+function name because the rebuilt file was still settling when this was written.
 
 ### Pulse panel
 
 **Where:** floating overlay pinned under the header at `top:64px; right:24px`,
-380px wide, max height `100vh - 88px` (`css:68-86`), over a click-catching
-backdrop.
-**Rendered by:** `src/components/PulseWidget.tsx:196-407`. Sections in order:
-- header: "Orb Pulse" title with a sun-like icon (`:202-213`), and a location
-  button showing `Locating...` or the city label (`:214-224`);
-- **loading:** spinner + "Fetching environmental data..." (`:229-233`), only
-  while `loading && !pulseData`;
-- **error:** `pulse-error` with the thrown message (`:234-235`), only while
-  `error && !pulseData`;
-- Active Clinical Alerts list with a per-severity triangle or circle icon
-  (`:239-264`), each row clickable into a detail view;
-- **empty state:** a tick icon and "No active environmental alerts"
-  (`:266-274`);
-- Weather: big °C figure, emoji + description, "Feels like … · …% humidity", and
-  a 7-day forecast strip whose first column is labelled "Today" (`:279-320`);
-- Air Quality: the AQI number colour-mapped by `getAqiColorClass` (`:160-170`)
-  over category and `US AQI · PM2.5: …` (`:325-340`);
-- Flu Surveillance: "&lt;level&gt; Activity" plus `ILI: N%` and, when the source
-  string contains "Estimate", the suffix " (seasonal estimate)" (`:345-363`);
-- FDA recalls: first three items, product / reason / classification chip
-  (`:366-382`);
-- footer: "Inbound only · Zero patient data transmitted" and a `Refresh`
-  button (`:388-395`);
-- an overlaying `PulseDetail` view when a row is clicked (`:398-404`).
-**Data from:** `pulseData` (`:48`), `loading` (`:49`), `error` (`:50`),
-`location` (`:51-54`, persisted to `localStorage['orb_pulse_location']`,
-defaulting to Mumbai at `:44`), `geoStatus` (`:55`).
-**API:** `GET /api/pulse/dashboard?lat&lon`; the city name comes from a
-**direct browser call to nominatim.openstreetmap.org** (`:83-85`), the one
-outbound request in the shell that does not go through Orb.
-**Server:** as above.
-**Change this →** Auto-refreshes every 15 minutes while open (`:137-141`);
-Escape closes the detail view first and the panel second (`:144-155`). Each
-weather/AQI/flu/recall block is individually conditional, so a feed that returns
-null simply removes its section and leaves a stray `pulse-divider` behind. The
-severity icons hard-code `stroke="var(--status-danger)"` / `var(--status-warn)`
-(`:246`, `:252`) rather than inheriting, so they ignore the surrounding text
-colour.
+`min(380px, 100vw - 32px)` wide, max height `100vh - 88px`, over a
+click-catching backdrop.
+**Rendered by:** `PulseWidget.tsx::PulsePanel`, a modal dialog with a focus
+trap (`useFocusTrap`), mounted only while open. Sections in order:
+- header: "Pulse" with a sun-like icon, the subtitle "Season and conditions",
+  and an **X** close button;
+- the place and today's date ("Maharashtra", or "Maharashtra (Konkan)" for a
+  zone; "State not set" when `[site] state` is missing);
+- **loading:** "Loading the seasonal calendar…";
+- **error:** "The seasonal calendar could not be loaded." with the server's
+  sentence beneath and a **Try again** button;
+- the review status: "Draft: not yet reviewed by a clinician", or "Reviewed by
+  [name] on [date]" (`CalendarStatus`);
+- **This season:** one card per active entry (`SeasonCard`): title, a "Peak
+  now" chip, the period in words, summary, "Typically rises: ...", and source
+  names, never links; empty state "Nothing in the calendar covers today.";
+- **Coming up:** "Tomorrow: ..." / "In 12 days: ..." for entries that start in
+  the next 60 days (`UpcomingList`), left out when there are none;
+- footer: "Built into Orb. Calendar compiled [date]."
+**Data from:** the `PulseSeason` response (`src/api/pulse.ts`).
+**API:** `GET /api/pulse/season`, the only request Pulse makes. No browser
+geolocation, no map lookup, no `localStorage`.
+**Server:** `server/routes/pulse_routes.py::pulse_season`, gated on
+`require_permission("forecast.read")`, delegating to
+`server/services/seasonal_calendar.py::season_report`. A missing or refused
+calendar file is a 503 with a one-sentence `public_message`. A **pharmacist
+gets a 403** here (`forecast.read` is not in their permission set), which
+surfaces as the panel's error state.
+**Change this →** No polling and no Refresh button: each opening reads the
+calendar afresh, and the date changes once a day. Escape, the **X** or a
+backdrop click closes the panel.
 
 ### Critical-alert bell
 
@@ -1146,8 +1118,9 @@ lift on the Sage tab; it no longer sends questions).
    `doctor`/`clinician` hold (`server/permissions.py:105-116`).
 6. **The AI chip vanishes on failure rather than showing an error**
    (`AiStatusChip.tsx:109`), so "no chip" and "never loaded" look identical.
-7. **The Pulse badge cannot appear before the panel is opened once**, the
-   dashboard is only fetched while `isOpen` (`PulseWidget.tsx:130-134`).
+7. **Resolved 6 October 2026: Pulse has no badge any more.** The badge
+   could not appear before the panel was opened once, because the dashboard was
+   only fetched while `isOpen`. The rebuilt panel has no alerts to badge.
 8. **Two theme storage keys exist (fixed).** Boot and the App-level
    system-preference listener used to read the legacy `orb_theme` alone, which
    the shell deletes after its first theme press, so the listener overrode an
@@ -1179,9 +1152,9 @@ lift on the Sage tab; it no longer sends questions).
 - `src/components/AiStatusChip.tsx::gb` → AI configuration popover (loaded size, memory freed)
 - `src/components/AlertPermissionButton.tsx::AlertPermissionButton` → Critical-alert bell
 - `src/components/AlertPermissionButton.tsx::readPermission` → Critical-alert bell (disappears when unsupported; disabled when denied)
-- `src/components/PulseWidget.tsx::PulseWidget` → Pulse trigger button; Pulse alert badge; Pulse panel; Pulse location button; Pulse loading state; Pulse error state; Pulse no-alerts empty state; Pulse weather block; Pulse 7-day forecast strip; Pulse air-quality block; Pulse flu block; Pulse FDA recalls block; Pulse footer and Refresh
-- `src/components/PulseWidget.tsx::getAqiColorClass` → Pulse air-quality block (AQI number colour)
-- `src/components/PulseWidget.css` → Pulse trigger button; Pulse alert badge; Pulse panel
+- `src/components/PulseWidget.tsx::PulseWidget` → Pulse trigger button
+- `src/components/PulseWidget.tsx::PulsePanel` → Pulse panel; Pulse loading state; Pulse error state; Pulse footer
+- `src/components/PulseWidget.css` → Pulse trigger button; Pulse panel
 - `src/components/CommandPalette.tsx::CommandPalette` → Command palette; Command palette search input; Esc keycap chip; Command palette "Searching…" row; Command palette empty state; Command palette result rows
 - `src/components/CommandPalette.tsx::riskColor` → Command palette result rows (risk dot)
 - `src/components/CommandPalette.tsx::selectPatient` → Command palette result rows (jump to Patients tab)
@@ -1205,7 +1178,6 @@ lift on the Sage tab; it no longer sends questions).
 - `src/lib/shortcuts.ts::isTypingTarget` → Keyboard shortcuts sheet (subtitle promise); chord suppression
 - `src/lib/shortcuts.ts::isModalOpen` → chord suppression under Admit Patient modal, MFA modal, shortcut sheet
 - `src/lib/shortcuts.ts::modifierLabel` → Keyboard shortcuts sheet (⌘/Ctrl keycap)
-- `src/lib/a11y.ts::activatable` → Pulse alert rows; Pulse weather block; Pulse air-quality block; Pulse flu block; Pulse FDA recall rows
 - `src/services/criticalAlerts.ts::initCriticalAlerts` → Critical-alert bell (what it governs); browser alert toast; alert chime; tab-title flash
 - `src/services/criticalAlerts.ts::isAlertSoundMuted` → Critical-alert bell (muted state)
 - `src/services/criticalAlerts.ts::toggleAlertSoundMuted` → Critical-alert bell (click to mute/unmute)
@@ -1231,8 +1203,8 @@ lift on the Sage tab; it no longer sends questions).
 - `server/permissions.py::require_permission` → Command palette empty state for pharmacists; Pulse panel error for pharmacists; AI configuration popover Load/Unload for non-admins; Admit Patient modal error strip
 - `server/permissions.py::log_phi_read` → Command palette result rows (audited disclosure)
 - `server/permissions.py::ROLE_PERMISSIONS` → Command palette result rows; Pulse panel; AI configuration popover Load/Unload buttons; Admit Patient modal submit
-- `server/routes/pulse_routes.py::pulse_dashboard` → Pulse alert badge; Pulse panel; Pulse weather block; Pulse air-quality block; Pulse flu block; Pulse FDA recalls block
-- `server/services/pulse_service.py::get_pulse_dashboard` → Pulse alert badge; Pulse panel Active Clinical Alerts; Pulse no-alerts empty state; Pulse weather block; Pulse air-quality block; Pulse flu block; Pulse FDA recalls block
+- `server/routes/pulse_routes.py::pulse_season` → Pulse panel
+- `server/services/seasonal_calendar.py::season_report` → Pulse panel place line, review status, This season, Coming up
 - `server/routes/admission_routes.py::process_admission` → Admit Patient modal submit; One-time Bridge credential card; Admit Patient modal error strip
 - `server/services/admission_service.py::admit_patient` → One-time Bridge credential card (Login ID, one-time password)
 - `server/routes/auth_routes.py::mfa_enroll_begin` → MFA setup key; MFA provisioning URI; MFA disable view (via "MFA already enabled")

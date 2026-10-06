@@ -1,6 +1,6 @@
 # Forecast: census/demand prediction with the LSTM
 
-Orb Forecast is the platform's crystal ball: it predicts how full the hospital will be over the next week, which patients are likely to go home soon, and how each ward's beds will look in 48 hours. Under the hood it combines a small multi-task neural network (a bidirectional LSTM defined in `server/models/forecast_lstm.py`) that scores individual patients, a set of transparent statistical rules (day-of-week admission rates, environmental multipliers from Orb Pulse), and, critically, a **fail-closed honesty layer**: because the shipped network is not trained on real clinical data, the service refuses to present neural outputs as clinical predictions and instead routes to a clearly labeled rule-based heuristic, with tests locking that behavior in (`server/tests/test_forecast_service.py`). The results are served over six REST endpoints under `/api/forecast/*` and rendered by `ForecastPanel.tsx` as a hand-drawn SVG occupancy chart, a bed grid, a discharge-readiness board, and an admission-pattern dashboard.
+Orb Forecast is the platform's crystal ball: it predicts how full the hospital will be over the next week, which patients are likely to go home soon, and how each ward's beds will look in 48 hours. Under the hood it combines a small multi-task neural network (a bidirectional LSTM defined in `server/models/forecast_lstm.py`) that scores individual patients, a set of transparent statistical rules (day-of-week admission rates; since 6 October 2026 no weather or seasonal adjustment, only a one-line season context from Pulse), and, critically, a **fail-closed honesty layer**: because the shipped network is not trained on real clinical data, the service refuses to present neural outputs as clinical predictions and instead routes to a clearly labeled rule-based heuristic, with tests locking that behavior in (`server/tests/test_forecast_service.py`). The results are served over six REST endpoints under `/api/forecast/*` and rendered by `ForecastPanel.tsx` as a hand-drawn SVG occupancy chart, a bed grid, a discharge-readiness board, and an admission-pattern dashboard.
 
 Three terms you need before anything else:
 
@@ -12,7 +12,7 @@ Three terms you need before anything else:
 
 **Problem it solves.** A hospital operations team constantly asks: "Will we have a bed tomorrow? Who can go home? Which day will be the crunch?" Answering that manually means eyeballing every chart. Forecast automates it in two layers: a **per-patient layer** (predict each admitted patient's remaining length-of-stay, "LoS," the number of days a patient stays in hospital, plus their probability of discharge and whether their acuity is improving/stable/worsening) and a **hospital layer** (aggregate those per-patient numbers, add a statistical admission model, and produce a 7-day census projection, "census" is the count of patients currently occupying beds).
 
-**Why the two-model design.** Per-patient trajectories are genuinely sequential (vitals over time), so an LSTM is the right shape of tool. Hospital-level admissions, by contrast, are well modeled by simple, auditable statistics: a 30-day historical average daily admission rate treated as a Poisson process (a standard statistical model for counting independent random arrivals per unit time), scaled by day-of-week multipliers and environmental factors. Mixing a neural model where sequence matters with transparent arithmetic where it does not keeps the system both capable and explainable.
+**Why the two-model design.** Per-patient trajectories are genuinely sequential (vitals over time), so an LSTM is the right shape of tool. Hospital-level admissions, by contrast, are well modeled by simple, auditable statistics: a 30-day historical average daily admission rate treated as a Poisson process (a standard statistical model for counting independent random arrivals per unit time), scaled by day-of-week multipliers. (Until 6 October 2026 it was also scaled by hand-picked environmental factors from Pulse's internet feeds; those are gone, see `_get_environmental_multipliers` below.) Mixing a neural model where sequence matters with transparent arithmetic where it does not keeps the system both capable and explainable.
 
 **Neighbors.** Forecast sits at the center of Orb's operational pillars:
 
@@ -23,7 +23,7 @@ graph LR
     FR --> FS[forecast_service.py]
     FS --> ML[forecast_lstm.py<br/>OrbForecastLSTM]
     FS --> DB[(SQLite: patients, vitals,<br/>forecast_predictions,<br/>admission_history)]
-    PS[pulse_service caches] -.->|env multipliers| FS
+    PS[Pulse seasonal calendar] -.->|season line, context only| FS
     BOT[bot_service vitals loop] -->|refresh_all_predictions| FS
     CC[command_center_service] -->|predict_hospital_flow,<br/>WARD_CAPACITY| FS
     SIM[capacity_sim_service] -->|constants + flow| FS
@@ -31,7 +31,7 @@ graph LR
 
 - **Auth/RBAC** (see guide 03-auth-rbac): every endpoint is gated on the `forecast.read` permission via FastAPI dependency injection.
 - **Database** (see guide 04-database-schema): reads `patients`, `vitals`, `risk_scores`, `medications`, `admission_history`, `discharge_summaries`; reads/writes `forecast_predictions`.
-- **Pulse** (weather/AQI/flu-surveillance service, its own guide): Forecast reaches into Pulse's in-memory caches to bump admission forecasts during storms, heat waves, bad air, and flu season (`server/services/forecast_service.py:80`).
+- **Pulse** (the seasonal calendar, guide 18): since 6 October 2026 (ruling R030 in `docs/RULINGS_NEEDED_2026-10.md`) Forecast applies no weather or seasonal adjustment. It shows the current season as one line of context, for example "Season: South-west monsoon (peak), Dengue season", and no number depends on it. Before that, Forecast read Pulse's in-memory caches of internet weather, AQI and flu data and multiplied admissions by hand-picked factors.
 - **Bot/simulation loop** (covered with the realtime/simulation guides): the vitals bot calls `refresh_all_predictions()` roughly every 10 minutes (`server/services/bot_service.py:327-330`).
 - **Command Center and Capacity Simulator** (their own guides): both import Forecast's ward-capacity constants and call `predict_hospital_flow()` so the whole platform reports one consistent census (`server/services/command_center_service.py:31-35`, `server/services/capacity_sim_service.py:41`).
 - **Model governance**: the panel's `ProvenanceChip` displays the `forecast_lstm` registry entry ("synthetic-v1" or "untrained", never "validated") from `server/services/model_governance_service.py:64-74`.
@@ -94,7 +94,7 @@ sequenceDiagram
 
 For each of the next `days_ahead` days (`server/services/forecast_service.py:453-506`):
 
-1. **Admissions** = 30-day average daily admission rate from `admission_history` (default 4.5/day if empty) × a day-of-week multiplier (Mondays surge to 1.35×, Sundays dip to 0.65×, `server/services/forecast_service.py:64`) × an environmental multiplier from Pulse (storm +20%, AQI > 200 +20%, flu ILI > 5% +35%, `server/services/forecast_service.py:71-162`). The code deliberately reports the Poisson *mean* rather than a random draw so the number doesn't jump every time the cache expires (`server/services/forecast_service.py:461-465`).
+1. **Admissions** = 30-day average daily admission rate from `admission_history` (default 4.5/day if empty) × a day-of-week multiplier (Mondays surge to 1.35×, Sundays dip to 0.65×, `server/services/forecast_service.py:64`) (no environmental or seasonal multiplier since 6 October 2026; the old one from Pulse's internet feeds, for example storm +20% and flu ILI > 5% +35%, is gone). The code deliberately reports the Poisson *mean* rather than a random draw so the number doesn't jump every time the cache expires (`server/services/forecast_service.py:461-465`).
 2. **Discharges** = count of patients whose predicted remaining LoS lands in that day's window, clamped by two admitted demo-smoothing bounds (cap at `n_patients // 3`, floor of ~8% per day after day 0, flagged in-code as placeholders, `server/services/forecast_service.py:474-480`).
 3. **Occupancy** = running census + admissions − discharges, clamped to `[0, capacity + 5]`; a per-ward breakdown is projected proportionally to the current ward distribution (`server/services/forecast_service.py:483-492`).
 4. A summary block computes peak day, 7-day totals, and "beds available in 48h" (`server/services/forecast_service.py:508-526`). The whole dict is cached for 1 hour.
@@ -204,19 +204,10 @@ Both train only three of the four heads (LoS, discharge, acuity); neither suppli
 **Change guide:** To resize a ward, change the number here, knock-on effects ripple to `/api/forecast/hospital` percentages, the Command Center board, the Capacity Simulator baseline, and the panel's bed grid (which draws `data.total` bed icons, `src/pages/panels/ForecastPanel.tsx:470`). Watch out: `server/tests/test_command_center.py:11` imports these constants, so tests track the change automatically, but any *hardcoded* `32` elsewhere will not.
 **Gotchas:** `DOW_MULTIPLIERS` is duplicated (not imported) in `server/scripts/train_forecast.py:132-140`; if you retune one, the training data and the runtime forecast silently disagree.
 
-### _get_environmental_multipliers: `server/services/forecast_service.py:136`
-**Signature:** `(days_ahead=7) → list[{multiplier: float, factors: [str], icons: [str]}]`
-**Does:** Converts Pulse's cached weather/AQI/flu data into a per-day admission multiplier with human-readable reasons.
-**How it works:**
-1. Imports Pulse's private module-level caches (`_weather_cache`, `_aqi_cache`, `_cdc_cache`) *inside the function body* (`server/services/forecast_service.py:80`), so each call reads their current values; on `ImportError` it returns neutral 1.0 multipliers for every day.
-2. For each forecast day: reads the matching entry of the 7-day weather forecast (offset by one because forecast day 0 is *tomorrow* while `weather_cache["forecast"][0]` is *today*, `server/services/forecast_service.py:94-95`) and multiplies in rules: thunderstorm (weather code ≥ 95) ×1.20, rain showers ×1.10, extreme heat ≥ 42 °C ×1.20, heat ≥ 38 °C ×1.10, cold ≤ 5 °C ×1.10 (`server/services/forecast_service.py:103-126`).
-3. AQI (air-quality index) and ILI (influenza-like-illness percentage from CDC surveillance) apply the same value to all days since they are current/weekly readings: AQI > 200 ×1.20, > 150 ×1.15, > 100 ×1.05; ILI > 5% ×1.35, > 3% ×1.15 (`server/services/forecast_service.py:128-154`).
-4. Emits `{multiplier, factors, icons}` per day, multiplier rounded to 3 dp.
-**Why it exists:** Real hospital demand is weather- and epidemic-sensitive; encoding that as transparent multipliers keeps the forecast explainable ("+20% because thunderstorm") instead of burying it in a model.
-**Data in/out:** consumes Pulse cache shapes, `forecast[i].weather_code/temp_max/temp_min` (`server/services/pulse_service.py:218-230`), `{"aqi": int}` (`server/services/pulse_service.py:400`), `{"ili_percentage": float}` (`server/services/pulse_service.py:509`).
-**Talks to:** called only by `predict_hospital_flow()` (`server/services/forecast_service.py:447`).
-**Change guide:** To add a new factor (e.g. a local festival calendar), append another rule block here and it will automatically flow into `env_factors` on each daily forecast; footgun: the multipliers *compound* (`mult *=`), so several simultaneous factors can produce implausible surges, consider a cap.
-**Gotchas:** it depends on Pulse's caches being warm; if no Pulse endpoint has been hit since boot, all caches are `None` and every multiplier is 1.0, the forecast silently loses environmental awareness rather than fetching on demand.
+### _get_environmental_multipliers: removed 6 October 2026
+**What it was:** read Pulse's in-memory caches of internet weather, AQI and CDC flu data and turned them into a per-day admission multiplier, compounding hand-picked factors: thunderstorm ×1.20, extreme heat ≥ 42 °C ×1.20 ("cardiac"), AQI > 200 ×1.20, ILI > 5% ×1.35, and others. None was fitted to data, and it silently became 1.0 whenever no Pulse endpoint had been hit since boot.
+**Why it went:** Orb is strictly offline (4 October 2026), so the feeds are gone, and the ruling of 6 October 2026 (R030) turned down replacing them with seasonal guesses.
+**What replaced it:** nothing in the arithmetic. Forecast reads the current season from Pulse's calendar for one line of context. A seasonal factor fitted from the hospital's own admission history may come later; do not put a hand-picked multiplier back.
 
 ### extract_patient_features: `server/services/forecast_service.py:234`
 **Signature:** `(patient_id: str, seq_len=48) → torch.Tensor (1, 48, 19) | None`
@@ -278,12 +269,12 @@ Both train only three of the four heads (LoS, discharge, acuity); neither suppli
 1. Cache check against module globals `_hospital_flow_cache`/`_hospital_flow_cache_time` with `HOSPITAL_FLOW_CACHE_TTL = 3600` (`server/services/forecast_service.py:394-398`).
 2. Loads all admitted patients; counts current occupancy per ward with an *inline* normalizer (unknown wards fall back to `"General"` and are counted under a key that matches no capacity bucket, see Discrepancies) (`server/services/forecast_service.py:403-421`).
 3. Fits the average daily admission rate from the last 30 days of `admission_history` (default 4.5 if empty) (`server/services/forecast_service.py:424-438`).
-4. Collects a per-patient LoS prediction for everyone via `_get_cached_or_predict` (`server/services/forecast_service.py:441-444`), and the environmental multipliers (`server/services/forecast_service.py:447`).
-5. Day loop (`server/services/forecast_service.py:453-506`): admissions = rate × DOW × env (expected value, not a Poisson draw, the comment at `server/services/forecast_service.py:461-464` explains a single random draw made the number jump discontinuously at each cache expiry); discharges = patients whose remaining LoS falls inside `(day, day+1]`, then the admitted demo bounds (cap `n_patients // 3`, ~8% floor after day 0, flagged as `DEMO PLACEHOLDER` at `server/services/forecast_service.py:474-480`); occupancy accumulates and clamps to `[0, 37]`; ward breakdown scales the current ward ratio, clamped to `cap + 1`.
+4. Collects a per-patient LoS prediction for everyone via `_get_cached_or_predict` (`server/services/forecast_service.py:441-444`). (It used to collect the environmental multipliers here too; removed 6 October 2026.)
+5. Day loop (`server/services/forecast_service.py:453-506`): admissions = rate × DOW (expected value, not a Poisson draw, the comment at `server/services/forecast_service.py:461-464` explains a single random draw made the number jump discontinuously at each cache expiry); discharges = patients whose remaining LoS falls inside `(day, day+1]`, then the admitted demo bounds (cap `n_patients // 3`, ~8% floor after day 0, flagged as `DEMO PLACEHOLDER` at `server/services/forecast_service.py:474-480`); occupancy accumulates and clamps to `[0, 37]`; ward breakdown scales the current ward ratio, clamped to `cap + 1`.
 6. Summary block: avg/peak occupancy, 7-day totals, `beds_available_in_48h` from day index 1 (`server/services/forecast_service.py:508-526`).
 7. Stores in the cache and returns.
 **Why it exists:** This is the payload behind the panel's headline chart and KPI cards, and the shared census source for Command Center and the Capacity Simulator.
-**Data in/out:** each `daily_forecasts[i]` = `{date, day_label, predicted_admissions (int), predicted_discharges (int), predicted_occupancy (int), occupancy_pct, ward_breakdown, env_multiplier, env_factors, env_icons}` (`server/services/forecast_service.py:494-506`).
+**Data in/out:** each `daily_forecasts[i]` = `{date, day_label, predicted_admissions (int), predicted_discharges (int), predicted_occupancy (int), occupancy_pct, ward_breakdown}` (`server/services/forecast_service.py:494-506`; the `env_multiplier`, `env_factors` and `env_icons` fields were removed on 6 October 2026, and the season line is context only).
 **Talks to:** called by the `/hospital` route (`server/routes/forecast_routes.py:33`), `command_center_service._forecast()` with `days_ahead=1` (`server/services/command_center_service.py:209`), and `capacity_sim_service` with `days_ahead=7` (`server/services/capacity_sim_service.py:108`).
 **Change guide:** Worked example, to extend the panel to a 14-day view: the route already clamps `days` to 1–14 (`server/routes/forecast_routes.py:40`), so change the panel's fetch to `/api/forecast/hospital?days=14`; knock-on effects: the SVG x-axis density doubles (labels may collide at `chartWidth=700`), and, footgun, the shared 1-hour cache ignores `days_ahead`, so whichever caller populates it first dictates the horizon everyone gets for the next hour (see Discrepancies #2).
 **Gotchas:** `running_occupancy` accumulates the *unrounded* float admissions while the payload shows `round(...)`, so the displayed columns may not sum exactly to the displayed census; the occupancy clamp allows up to capacity + 5, i.e. the chart can legitimately show an over-capacity forecast.
@@ -482,7 +473,7 @@ The router is created with `prefix="/api/forecast"` (`server/routes/forecast_rou
 ### TypeScript interfaces: `src/pages/panels/ForecastPanel.tsx:34`
 **Signature:** `DailyForecast` (34), `HospitalForecast` (44), `DischargeRow` (59), `CapacityData` (75), `AdmissionPatterns` (81)
 **Does:** Frontend mirrors of the four endpoint payloads.
-**Gotchas:** `DailyForecast` omits `env_multiplier`/`env_factors`/`env_icons`, which the backend sends (`server/services/forecast_service.py:503-505`), the environmental storytelling is computed but never rendered here (Discrepancies #7).
+**Gotchas:** the `env_multiplier`/`env_factors`/`env_icons` fields this type never mirrored were removed from the backend on 6 October 2026 (Discrepancies #7).
 
 ### MiniBar: `src/pages/panels/ForecastPanel.tsx:94`
 **Signature:** `({ value, max, color }) → JSX`
@@ -514,7 +505,7 @@ The router is created with `prefix="/api/forecast"` (`server/routes/forecast_rou
 **Why it exists:** Turns four JSON payloads into an operations dashboard; the sections match the four operational questions (how full? which ward? who leaves? what is normal?).
 **Data in/out:** consumes the four endpoint payloads typed above; renders only.
 **Talks to:** mounted by `ClinicianShell` (`src/pages/ClinicianShell.tsx:562`) for roles whose tab list includes `forecast` (`src/shellConfig.tsx:826-882`); `ProvenanceChip` fetches `/admin/models/provenance` once, process-wide (`src/components/ProvenanceChip.tsx:32-49`).
-**Change guide:** Worked example, to render the environmental factors the backend already sends: add `env_factors: string[]` to `DailyForecast` (`src/pages/panels/ForecastPanel.tsx:34-43`) and, in the daily table row (`414-429`), render a small icon list from `f.env_icons` with `title={f.env_factors.join(', ')}`; knock-on effects: none server-side (fields already exist); footgun: heuristic days may have empty arrays, guard the join.
+**Change guide:** the season line (6 October 2026) is context only. Do not turn it into a number on the chart or the table.
 **Gotchas:** (1) The chart's x mapping divides by `forecasts.length - 1` (`170,352,372,386`), a single-day forecast (possible if the cache was populated with `days_ahead=1`) divides by zero, producing `NaN` coordinates and a blank chart. (2) The panel styles live partly in `src/index.css` (a comment there notes ForecastPanel has no dedicated stylesheet, `src/index.css:250`). (3) Several colors are hardcoded hex (`#eab308`, `#10b981`) rather than theme tokens, so theme changes will not reach them.
 
 ### server/tests/test_forecast_service.py
@@ -569,7 +560,7 @@ The router is created with `prefix="/api/forecast"` (`server/routes/forecast_rou
 2. Auth + RBAC: JWT issuance, `get_current_user`, `require_permission`, and the `forecast.read` permission in the role map (guide 03-auth-rbac).
 3. The app shell with tab routing and lazy panel loading (guide 01-app-shell).
 4. PyTorch installed server-side (hard dependency, `server/requirements-dev.txt:8`).
-5. Optional but recommended: Pulse's caches (for env multipliers), the GPU coordinator's `vram_guard`, the vitals bot loop, and the model-governance registry (for the ProvenanceChip).
+5. Optional but recommended: Pulse's seasonal calendar (for the one-line season context), the GPU coordinator's `vram_guard`, the vitals bot loop, and the model-governance registry (for the ProvenanceChip).
 
 **Build order:**
 1. `models/forecast_lstm.py`, the network, `predict()`, and `load_model()` with the untrained fallback and both provenance flags. This file is the contract everything else compiles against.
@@ -590,7 +581,7 @@ The router is created with `prefix="/api/forecast"` (`server/routes/forecast_rou
 4. **Chart capacity line is on a different y-scale than the occupancy line.** `capacityLine` normalizes by `capacity + 5` (`src/pages/panels/ForecastPanel.tsx:179`) while occupancy points normalize by `max(capacity + 2, …)` (`167-171`). With capacity 32, the dashed "capacity" line sits at 32/37 of the plot while an occupancy of exactly 32 plots at 32/34, visually *above* the capacity line. The chart can therefore show the census "breaching capacity" before it actually does.
 5. **Two inconsistent ward normalizers.** `predict_hospital_flow` inlines its own mapping where unrecognized wards become `"GENERAL"` and match no capacity bucket (they vanish from `ward_breakdown`) (`server/services/forecast_service.py:410-421`), while `_normalize_ward` buckets unknowns into `"W1"` (`server/services/forecast_service.py:760-771`). The same patient can count toward W1 in `/capacity` but toward no ward in `/hospital`.
 6. **`get_admission_patterns` mislabels its window.** The docstring promises "7×24 heatmap data" that is never produced (`server/services/forecast_service.py:639-640`), the query reads *all* history (no 30-day filter, `server/services/forecast_service.py:643-648`), yet the result names the total `total_30d` and computes `avg_daily = len(history)/30` (`server/services/forecast_service.py:708-710`), wrong whenever the table spans more or less than 30 days.
-7. **Environmental fields are computed but never rendered.** `env_multiplier`/`env_factors`/`env_icons` are in every daily forecast (`server/services/forecast_service.py:503-505`) but no frontend file references them (grep over `src/` returns nothing) and `DailyForecast` omits them (`src/pages/panels/ForecastPanel.tsx:34-43`).
+7. **Resolved 6 October 2026: the environmental fields were removed with the multipliers.** **Environmental fields are computed but never rendered.** `env_multiplier`/`env_factors`/`env_icons` are in every daily forecast (`server/services/forecast_service.py:503-505`) but no frontend file references them (grep over `src/` returns nothing) and `DailyForecast` omits them (`src/pages/panels/ForecastPanel.tsx:34-43`).
 8. **`hospital_forecasts` table is dead schema.** Defined with an index (`server/database.py:269-278,469`) but no code inserts into or selects from it; only the reset script and test cleanup lists mention it.
 9. **Dead imports.** `server/routes/forecast_routes.py:12` imports `get_current_user` and `require_role` but uses neither; `server/services/forecast_service.py:16` imports `math` and line 27 imports `get_db`, both unused (verified by grep).
 10. **Route module docstring omits `/appointments`.** The header lists five endpoints (`server/routes/forecast_routes.py:3-8`) but six are defined; and `get_appointments`, which forecasts nothing, arguably belongs to the appointments feature, not this service.

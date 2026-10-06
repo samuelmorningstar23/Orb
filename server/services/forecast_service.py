@@ -5,7 +5,8 @@ Provides:
   - Hospital-level flow forecasting (admissions, discharges, occupancy)
   - Bed capacity projections by ward
   - Discharge readiness scoring
-  - Environmental intelligence integration (via Orb Pulse)
+  - Season context from Pulse's built-in calendar (shown beside the numbers,
+    never multiplied into them)
 
 Uses cached predictions (refreshed by bot every 60s) for fast API responses.
 Falls back to real-time inference if cache is stale.
@@ -134,102 +135,11 @@ def refresh_ward_capacity() -> dict[str, int]:
 DOW_MULTIPLIERS = {0: 1.35, 1: 1.25, 2: 1.10, 3: 1.00, 4: 0.95, 5: 0.70, 6: 0.65}
 
 
-# ══════════════════════════════════════════════════════════════════════
-# PULSE INTEGRATION — Environmental multipliers for admission forecasts
-# ══════════════════════════════════════════════════════════════════════
-
-def _get_environmental_multipliers(days_ahead: int = 7) -> list[dict]:
-    """
-    Pull cached Pulse data and compute environmental admission multipliers
-    for each forecast day.
-
-    Returns list of dicts, one per day:
-      { "multiplier": 1.15, "factors": ["Storm forecast (+15%)"], "icons": ["storm"] }
-    """
-    try:
-        from services.pulse_service import _weather_cache, _aqi_cache, _cdc_cache
-    except ImportError:
-        return [{ "multiplier": 1.0, "factors": [], "icons": [] } for _ in range(days_ahead)]
-
-    results = []
-
-    for day_idx in range(days_ahead):
-        mult = 1.0
-        factors = []
-        icons = []
-
-        # ── Weather (per-day from 7-day forecast) ──
-        if _weather_cache and _weather_cache.get("forecast"):
-            forecast_days = _weather_cache["forecast"]
-            # day_idx 0 = tomorrow, forecast[0] = today, forecast[1] = tomorrow
-            f_idx = min(day_idx + 1, len(forecast_days) - 1)
-            if f_idx < len(forecast_days):
-                day_forecast = forecast_days[f_idx]
-                code = day_forecast.get("weather_code", 0)
-                temp_max = day_forecast.get("temp_max", 30)
-                temp_min = day_forecast.get("temp_min", 20)
-
-                # Storm / heavy rain → trauma surge
-                if code >= 95:  # Thunderstorm
-                    mult *= 1.20
-                    factors.append("Thunderstorm (+20% trauma)")
-                    icons.append("storm")
-                elif code >= 80:  # Rain showers
-                    mult *= 1.10
-                    factors.append("Heavy rain (+10% trauma)")
-                    icons.append("rain")
-
-                # Extreme heat → cardiac/renal
-                if temp_max >= 42:
-                    mult *= 1.20
-                    factors.append(f"Extreme heat {temp_max}°C (+20% cardiac)")
-                    icons.append("heat")
-                elif temp_max >= 38:
-                    mult *= 1.10
-                    factors.append(f"Heat advisory {temp_max}°C (+10%)")
-                    icons.append("heat")
-
-                # Cold snap → cardiac/respiratory
-                if temp_min <= 5:
-                    mult *= 1.10
-                    factors.append(f"Cold snap {temp_min}°C (+10% cardiac)")
-                    icons.append("cold")
-
-        # ── AQI (same for all days — current reading) ──
-        if _aqi_cache:
-            aqi = _aqi_cache.get("aqi", 0)
-            if aqi and aqi > 200:
-                mult *= 1.20
-                factors.append(f"AQI {aqi} Very Unhealthy (+20% respiratory)")
-                icons.append("aqi")
-            elif aqi and aqi > 150:
-                mult *= 1.15
-                factors.append(f"AQI {aqi} Unhealthy (+15% respiratory)")
-                icons.append("aqi")
-            elif aqi and aqi > 100:
-                mult *= 1.05
-                factors.append(f"AQI {aqi} Sensitive Groups (+5%)")
-                icons.append("aqi")
-
-        # ── Flu surveillance (same for all days — weekly data) ──
-        if _cdc_cache:
-            ili = _cdc_cache.get("ili_percentage", 0)
-            if ili and ili > 5.0:
-                mult *= 1.35
-                factors.append(f"Flu surge ILI {ili}% (+35% respiratory)")
-                icons.append("flu")
-            elif ili and ili > 3.0:
-                mult *= 1.15
-                factors.append(f"Elevated flu ILI {ili}% (+15%)")
-                icons.append("flu")
-
-        results.append({
-            "multiplier": round(mult, 3),
-            "factors": factors,
-            "icons": icons,
-        })
-
-    return results
+# There is no weather, air-quality or flu multiplier. Pulse used to feed live
+# internet data in here and admissions were scaled by hand-picked guesses
+# (+20% for a thunderstorm, +35% for a flu surge). Orb is strictly offline, and
+# ruled 6 October 2026: the season is shown as context only (`season` in
+# predict_hospital_flow), with NO numeric seasonal or weather adjustment.
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -454,6 +364,14 @@ def _cache_prediction(patient_id: str, result: dict):
 # HOSPITAL-LEVEL FORECASTING
 # ══════════════════════════════════════════════════════════════════════
 
+def _season_context(today) -> list[dict]:
+    """[{id, title, kind, in_peak}] for today's active seasonal entries."""
+    # Imported here so the forecast never depends on the calendar loading.
+    from services.seasonal_calendar import season_context
+
+    return season_context(today)
+
+
 def _day_label(d) -> str:
     """"Thu 1 Oct": day before month, unpadded, as the rest of Orb writes a date.
     "%a %b %d" gave the US "Thu Oct 01". `date` beside it stays ISO for code."""
@@ -564,9 +482,6 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
         pred = _get_cached_or_predict(p["id"])
         patient_predictions[p["id"]] = pred
 
-    # Get environmental multipliers from Pulse
-    env_multipliers = _get_environmental_multipliers(days_ahead)
-
     # Build daily forecasts
     daily_forecasts = []
     running_occupancy = n_patients
@@ -575,10 +490,9 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
         future_date = today_local + timedelta(days=day + 1)
         dow = future_date.weekday()
 
-        # Predicted admissions:
-        #   base_rate × day_of_week × environmental_multiplier
-        env = env_multipliers[day] if day < len(env_multipliers) else {"multiplier": 1.0, "factors": [], "icons": []}
-        adjusted_rate = avg_admission_rate * DOW_MULTIPLIERS.get(dow, 1.0) * env["multiplier"]
+        # Predicted admissions: base_rate x day_of_week. Nothing seasonal or
+        # weather-driven multiplies it (see the note above FEATURE EXTRACTION).
+        adjusted_rate = avg_admission_rate * DOW_MULTIPLIERS.get(dow, 1.0)
         # A forecast should report the EXPECTED value, not a single random Poisson
         # draw — drawing once made the number jump discontinuously each time the
         # 1h cache expired (no clinical/operational meaning). The Poisson mean IS
@@ -632,10 +546,6 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
             "predicted_occupancy": running_occupancy,
             "occupancy_pct": round(running_occupancy / TOTAL_CAPACITY * 100, 1),
             "ward_breakdown": ward_breakdown,
-            # Pulse integration: environmental factors that influenced this day
-            "env_multiplier": env["multiplier"],
-            "env_factors": env["factors"],
-            "env_icons": env["icons"],
         })
 
     # ── Day 0: measured, not predicted ────────────────────────────────────────
@@ -662,10 +572,6 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
             "predicted_occupancy": n_patients,
             "occupancy_pct": round(n_patients / TOTAL_CAPACITY * 100, 1),
             "ward_breakdown": {w: ward_counts.get(w, 0) for w in WARD_CAPACITY},
-            # No environmental adjustment applies to a day that already happened.
-            "env_multiplier": 1.0,
-            "env_factors": [],
-            "env_icons": [],
         }, *daily_forecasts]
 
     # Summary statistics — over the PREDICTED days only. A measured day 0 must
@@ -680,6 +586,10 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
         "total_capacity": TOTAL_CAPACITY,
         "current_occupancy_pct": round(n_patients / TOTAL_CAPACITY * 100, 1),
         "daily_forecasts": series,
+        # Today's entries from Pulse's seasonal calendar for this hospital's
+        # state: CONTEXT for the reader, never an input to any number above.
+        # Empty when no state is set, the calendar is unusable, or none apply.
+        "season": _season_context(today_local),
         "summary": {
             "avg_occupancy": round(avg_occupancy),
             "peak_day": peak_day["day_label"],
