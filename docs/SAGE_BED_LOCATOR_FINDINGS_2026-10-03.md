@@ -1,6 +1,6 @@
 # Sage bed and ward lookup: findings, 3 October 2026
 
-Status: open. Nine fixes were built between 3 and 6 October. All nine failed independent review and were backed out; main has the original substring bed matching (plus the shared ward rule, services/ward_reference.py). R026 is RULED (a) with D2 to D4, Q1 to Q3, A to F, G (the shipping bar) and H (orders), and on 6 October Samuel chose to confirm another bed while a chart is open. See "Attempt 9 review": with a chart open, that rule held on every probe.
+Status: open. Ten fixes were built between 3 and 6 October. All ten failed independent review and were backed out; main has the original substring bed matching (plus the shared ward rule, services/ward_reference.py). R026 is RULED (a) with D2 to D4, Q1 to Q3, A to F, G (the shipping bar) and H (orders), and on 6 October Samuel ruled that every bed is confirmed before Sage opens its chart. See "Attempt 10 review": the rule held everywhere it was applied; two holes in applying it blocked shipping.
 
 ## The defect today
 
@@ -199,3 +199,14 @@ Backed out by reverse patch on 6 October; the four files are byte-identical to H
 ### What attempt 9 showed
 
 The structural rule works where it applies: with a chart open no phrasing produced a wrong chart, across nine reviewers' worth of probes. Every remaining failure is a place where Sage still trusted its own reading of a bed without asking: nothing open, a lapsed conversation patient, a reply read as a confirmation, a name word. Extending the same rule to every bed reading (a bed always needs confirming unless it is the open patient's own, or the reply is exactly that bed's label) closes all four by construction; the cost is the nothing-open ask rate rising to the chart-open level (about 25% overall on the realistic sets, still under the old code's 57%).
+
+## Attempt 10 review (6 October): every bed is confirmed; did not ship
+
+Attempt 10 (plan, "Attempt 10") made the confirmation universal: Sage never opens a bed's chart on its own reading, with a chart open or not. The rule held everywhere it was applied. Across all 50 earlier probe files the reviewer recorded 5,013 retrieval calls and 93 charts other than the open one: 57 labelled, 30 typed replies to the which-patient question, 3 full names and 3 partial names with no bed; none broke the rule. Realistic sets (384 rows per lane): 2 wrong charts against the old code's 118 on a numbered ward, 0 against 6 on GM naming; asks 26% against the old code's 59%; every other-bed question reached in one reply. Performance within budget everywhere (worst 1.54 s at 512 KB).
+
+It failed on two holes in applying the rule:
+- B1: a bed read as unsure plus ONE word of a patient's name. The unsure bed was put on the question, then the partial name match removed it, so the patient was matched by name alone and never confirmed ("her husband Ravindran in bed 18 has covid, should she be tested?" opened bed 18 unlabelled; with "start lasix 40 iv for her" the order was drafted on bed 18). Separately, the full-name test drops name parts of two letters or fewer, so "Selvaraj K" or a one-word name counted as named in full from one typed word.
+- B2: following the patient chosen in reply survived a chart switch. Sage's panel keeps one conversation while the clinician moves between charts, so after "yes" to bed 13 and opening bed 9's chart, "give her lasix 40 iv" was drafted on bed 13, labelled, where the old code used the chart now open.
+Also reported: 8 of 12 phrasings asked about the OPEN patient's own bed ("how is 7?" with bed 7 open); a re-asked question lost its candidate, so "yes" could not settle it; a number reply was read as any bed in the department (an option number "2", or a bed re-occupied since); our bed plus another department's code as a place ("bed 13 was in ICU-03 before") was refused as out of department, with a security audit row; the 1,000-reference cap skipped the out-of-department name refusal.
+
+Backed out by reverse patch on 6 October; the five files are byte-identical to HEAD (784f30a). Code, tests, patches and both probe sets: docs/archive/bed-locator-attempt10-2026-10-06/ (probes_review10/ is the reviewer's, with an invariant recorder in plug/).

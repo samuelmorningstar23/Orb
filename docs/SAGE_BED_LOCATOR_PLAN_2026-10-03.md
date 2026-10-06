@@ -1,6 +1,6 @@
 # Sage bed lookup: build plan, 3 October 2026
 
-Status: RULED (R026 (a), D2 to D4, Q1 to Q3, A to F, G, H). Attempts 2 to 6 failed review and were backed out; main has the original substring bed matching plus the shared ward rule. Attempt 7 (attempt 6 plus the fixes below) was built on 4 October, failed review against ruling G and was backed out (see the findings doc, "Attempt 7 review"). Attempt 8 was measured, approved and built on 4 October (D3 kept for comma items), failed review on 6 October and was backed out (findings doc, "Attempt 8 review"). Attempt 9 (confirm another bed while a chart is open) chosen by Samuel on 6 October, built, failed review the same day on the lanes it did not cover (nothing open, a lapsed conversation patient, "not 12" as a reply) and was backed out (findings doc, "Attempt 9 review"). Next step: Samuel's call.
+Status: RULED (R026 (a), D2 to D4, Q1 to Q3, A to F, G, H). Attempts 2 to 6 failed review and were backed out; main has the original substring bed matching plus the shared ward rule. Attempt 7 (attempt 6 plus the fixes below) was built on 4 October, failed review against ruling G and was backed out (see the findings doc, "Attempt 7 review"). Attempt 8 was measured, approved and built on 4 October (D3 kept for comma items), failed review on 6 October and was backed out (findings doc, "Attempt 8 review"). Attempt 9 (confirm another bed while a chart is open) chosen by Samuel on 6 October, built, failed review the same day on the lanes it did not cover (nothing open, a lapsed conversation patient, "not 12" as a reply) and was backed out (findings doc, "Attempt 9 review"). Attempt 10 (confirm every bed) chosen by Samuel on 6 October, built, failed review the same day on two holes in applying the rule (a partial name removing the question; a reply choice surviving a chart switch) and was backed out (findings doc, "Attempt 10 review"). Next step: Samuel's call.
 Reads with: docs/SAGE_BED_LOCATOR_FINDINGS_2026-10-03.md (the defect and why the first fix was backed out).
 
 ## The idea in one paragraph
@@ -275,3 +275,21 @@ Measured from attempt 8's review data before building: on the realistic sets abo
 ### Attempt 9 as built (6 October)
 
 Built on main at 93d0d38 (the shared ward rule with generic and destination mentions) from attempt 8's code, then ported. tests/test_sage_bed_locator.py: 772 tests, 588 of the 769 before the last three fail on the code before this work; every reviewer-8 blocking row is a test. The ward-matcher session approved the same four edits to tests/test_ward_reference.py. Every reviewer probe set (46 files, attempts 2 to 8, attack sets included) re-run on the build: 0 regressions and 0 unlabelled wrong charts; asks 0 to 4% on everyday sets and 27 to 50% on the bed-heavy sets, as measured beforehand. Guard suite on main: 2,763 passed. Code, patches, probes: docs/archive/bed-locator-attempt9-2026-10-06/; pre-change copies: docs/archive/pre-bed-locator-a9-2026-10-06/.
+
+## Attempt 10 (6 October): every bed is confirmed
+
+Samuel's choice after attempt 9's review, which showed the confirmation rule holding wherever it applied and failing only where it did not. Sage never opens a bed's chart on its own reading of the words, with a chart open or with nothing open.
+
+Rules:
+- A bed read as certain is asked about: "Which patient do you mean? - Bed 12: <name>, ward <ward>. Reply "yes" for bed 12, or with another bed or name." The open patient's own bed is the only bed that opens directly.
+- A patient named IN FULL is not asked about (one name word is not enough: "she is short of breath" and a patient called Short).
+- The reply confirms only when it is "yes" (one candidate) or exactly that bed's stored label ("12", "bed 12", "GM-103 please"), compared with the labels themselves, so "not 12", "except 12" and "nahi 12" are asked again.
+- The conversation walk stops at any turn Sage answered with the which-patient question, and reads a reply to the question as the clinician's choice.
+- With a chart open and the conversation about someone else: an unnamed follow-up stays with the patient the clinician just chose in answer to the question ("yes" to bed 12, then "add kcl 20 mmol" is bed 12, labelled), and asks when that patient was only named earlier.
+- Voice sends no conversation history, so it reaches another bed by name only.
+- A question with more than 1,000 bed references (bed words, codes or kept bare numbers) is a paste, not a question: Sage stops reading and asks which patient, with no chart. Reading every one of 87,000 "bed 7" cost about 2.3 s at the 512 KB cap (every attempt since 3 paid it), and under machine load that broke the 3 s budget.
+Cost, from attempt 9's review measurements: asks with nothing open rise from about 10% to the chart-open level, about 25% overall on the realistic sets (the old code asked on 57% and opened a wrong chart on a third).
+
+### Attempt 10 as built (6 October)
+
+Built on main at 784f30a from attempt 9's code. tests/test_sage_bed_locator.py: 819 tests; tests/test_ward_reference.py carries the same four edits the ward-matcher session approved; tests/test_sage_department_scope.py::test_own_patient_by_bed_still_resolves now expects the which-patient question naming that patient. Every reviewer probe set (49 files, attempts 2 to 9, attack, nothing-open and route sets included) re-run on the build: 0 regressions and 0 unlabelled wrong charts, with a chart open and with nothing open; asks 0 to 4% on everyday sets and 27 to 50% on bed-heavy sets in both lanes. Guard suite on main: 2,816 passed under heavy machine load. Code, patches, probes: docs/archive/bed-locator-attempt10-2026-10-06/; pre-change copies: docs/archive/pre-bed-locator-a10-2026-10-06/.
