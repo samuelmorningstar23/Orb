@@ -122,38 +122,59 @@ def test_substituting_a_cephalosporin_for_a_cephalosporin_anaphylaxis_patient_is
     assert row["substitute_medication_id"] is None
 
 
-def test_acknowledged_substitution_proceeds_and_the_override_is_audited():
+def test_a_pharmacists_acknowledgement_cannot_substitute_into_a_severe_allergy():
+    """A severe allergy clears only for a prescriber (2026-10-06), and no
+    pharmacist holds medication.prescribe. A substitute is a drug no prescriber
+    has seen, so nothing a pharmacist types clears it: 428 with the refusal,
+    nothing written, and no override on the chain."""
     actor, hdr = _mk_pharmacist()
     pid = _mk_patient()
     oid = _order(pid, actor)
 
     resp = _transition(hdr, oid, target_status="substitute_suggested",
                        substitute_medication_id=_SUB_ID, safety_ack=_ACK)
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["safety"]["override"]["reason"] == _ACK["reason"]
-    assert _row(oid)["substitute_medication_id"] == _SUB_ID
+    assert resp.status_code == 428, resp.text
+    safety = resp.json()["detail"]["safety"]
+    assert safety["ack_refused"].startswith("Only a prescriber can override an allergy block.")
+    assert safety["override_requires_permission"] == "medication.prescribe"
+    row = _row(oid)
+    assert row["status"] == "reviewing", "a refused substitution must not write"
+    assert row["substitute_medication_id"] is None
     with db_session() as db:
-        log = db.execute(
-            "SELECT * FROM audit_logs WHERE action_type = 'drug_safety_override' "
-            "AND patient_id = ? ORDER BY timestamp DESC LIMIT 1",
-            (pid,),
-        ).fetchone()
-    assert log is not None, "the override must land on the audit chain"
-    assert "helix.substitute_suggested" in log["summary_message"]
+        overrides = db.execute(
+            "SELECT count(*) FROM audit_logs WHERE action_type = 'drug_safety_override' "
+            "AND patient_id = ?", (pid,)).fetchone()[0]
+        refused = db.execute(
+            "SELECT summary_message, metadata_json FROM audit_logs "
+            "WHERE action_type = 'drug_safety_block' AND patient_id = ? ORDER BY id DESC LIMIT 1",
+            (pid,)).fetchone()
+    assert overrides == 0
+    assert refused is not None and "helix.substitute_suggested" in refused["summary_message"]
+    assert "Only a prescriber" in refused["metadata_json"]
 
 
 def test_verified_re_screens_the_substitute_already_on_the_order():
-    """An acknowledgement at substitution is not a standing pass: the verify
-    step screens the effective drug again."""
+    """A substitution that screened clean is not a standing pass: the verify
+    step screens the effective drug again, and a pharmacist cannot clear the
+    allergy charted since, because no prescriber ever saw the substitute."""
     actor, hdr = _mk_pharmacist()
-    pid = _mk_patient()
+    pid = _mk_patient(allergy=None)
     oid = _order(pid, actor)
     assert _transition(hdr, oid, target_status="substitute_suggested",
-                       substitute_medication_id=_SUB_ID, safety_ack=_ACK).status_code == 200
+                       substitute_medication_id=_SUB_ID).status_code == 200
     assert _transition(hdr, oid, target_status="reviewing").status_code == 200
+    with db_session() as db:
+        db.execute(
+            "INSERT INTO patient_allergies (patient_id, substance, reaction, severity, status) "
+            "VALUES (?, 'Cephalosporins', 'anaphylaxis', 'severe', 'active')",
+            (pid,),
+        )
 
     resp = _transition(hdr, oid, target_status="verified")
     assert resp.status_code == 428, resp.text
+    resp = _transition(hdr, oid, target_status="verified", safety_ack=_ACK)
+    assert resp.status_code == 428, resp.text
+    assert resp.json()["detail"]["safety"]["ack_refused"]
     assert _row(oid)["status"] == "reviewing"
 
 

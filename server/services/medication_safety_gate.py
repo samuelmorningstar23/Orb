@@ -210,18 +210,35 @@ def _allergy_ack_refusal(actor_role: Optional[str]) -> Optional[str]:
     return None
 
 
+def _allergy_alert_key(alert: dict) -> tuple:
+    """What a prescriber decided when they overrode one allergy alert.
+
+    The allergy, and HOW the drug matched it: a direct match, a shared class
+    (with the class), or a cross reactivity (with the class pair). Overriding a
+    cephalosporin's cross reactivity with a penicillin allergy is not a decision
+    about amoxicillin itself, so it must not cover a direct match on the same
+    allergy. A direct match keys on the allergy alone, because the matched name
+    varies with how the drug was written ("Amoxicillin 500mg PO" at order time,
+    the formulary name at the pharmacy).
+    """
+    match = alert.get("match")
+    return (alert.get("allergy_id"), match,
+            None if match == "direct" else alert.get("matched_on"))
+
+
 def _prescriber_override_on_file(patient_id: str, prescriber_id: Optional[str],
-                                 allergy_ids: set) -> Optional[dict]:
+                                 allergy_keys: set) -> Optional[dict]:
     """The prescriber's own audited override that already covers these allergies.
 
     For the pharmacy steps on an order that already exists (verify, dispense):
     the pharmacist is not overriding anything when the prescriber who wrote the
     order already overrode this same allergy for this same patient, on the
     chain. Returns that audit row's id and time, or None. ``prescriber_id``
-    must still hold ``medication.prescribe`` today, and every allergy blocking
-    now must appear, as severe, in that one override.
+    must still hold ``medication.prescribe`` today, and every severe allergy
+    alert blocking now must appear, as severe and matched the same way
+    (``_allergy_alert_key``), in that one override.
     """
-    if not prescriber_id or not allergy_ids:
+    if not prescriber_id or not allergy_keys:
         return None
     try:
         with db_session() as db:
@@ -244,9 +261,9 @@ def _prescriber_override_on_file(patient_id: str, prescriber_id: Optional[str],
             meta = json.loads(row["metadata_json"] or "{}")
         except (TypeError, ValueError):
             continue
-        covered = {a.get("allergy_id") for a in (meta.get("allergy_alerts") or [])
+        covered = {_allergy_alert_key(a) for a in (meta.get("allergy_alerts") or [])
                    if isinstance(a, dict) and a.get("severity") == "severe"}
-        if allergy_ids <= covered:
+        if allergy_keys <= covered:
             return {"audit_id": row["id"], "at": row["timestamp"],
                     "prescriber_id": prescriber_id}
     return None
@@ -364,7 +381,7 @@ def enforce_medication_safety(
             if ack_refused and order_prescriber_id:
                 confirms = _prescriber_override_on_file(
                     patient_id, order_prescriber_id,
-                    {a.get("allergy_id") for a in safety.get("allergy_alerts") or []
+                    {_allergy_alert_key(a) for a in safety.get("allergy_alerts") or []
                      if a.get("severity") == "severe"})
                 if confirms:
                     ack_refused = None
@@ -394,6 +411,9 @@ def enforce_medication_safety(
                     "message": (
                         f"The dose check stopped this order. {dose_check.get('message') or ''}".strip()
                         if dose_blocked else
+                        # A refused allergy acknowledgement says why, so the
+                        # screen does not ask again for a reason it will refuse.
+                        safety["ack_refused"] if safety.get("ack_refused") else
                         "Severe drug-safety alerts must be acknowledged with a reason before this order proceeds."
                     ),
                     "safety": safety,

@@ -181,3 +181,20 @@ def test_a_pharmacist_cannot_override_when_no_prescriber_did(patient):
     with pytest.raises(HTTPException):
         _gate(patient, pharmacist, "pharmacist", "helix.verified")
     assert _overrides(patient) == []
+
+
+def test_a_cross_reactivity_override_does_not_cover_the_allergy_drug_itself(patient):
+    """The prescriber overrode a cephalosporin's cross reactivity with the
+    amoxicillin allergy. That was a decision about ceftriaxone, not about
+    amoxicillin, so a pharmacist cannot use it to clear amoxicillin."""
+    doctor, pharmacist = _user("doctor", name="Dr Sana Qureshi"), _user("pharmacist")
+    enforce_medication_safety(
+        patient, "Ceftriaxone 1g", actor_id=doctor, actor_role="doctor",
+        entry_point="relay.confirm_agentic", safety_ack=ACK)
+    assert len(_overrides(patient)) == 1
+    with pytest.raises(HTTPException) as caught:
+        _gate(patient, pharmacist, "pharmacist", "helix.verified", prescriber_id=doctor)
+    assert caught.value.status_code == 428
+    assert caught.value.detail["safety"]["ack_refused"] == ALLERGY_ACK_REFUSAL
+    assert caught.value.detail["message"] == ALLERGY_ACK_REFUSAL
+    assert len(_overrides(patient)) == 1, "no second override was recorded"
