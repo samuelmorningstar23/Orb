@@ -152,3 +152,16 @@ def test_the_file_says_when_an_empty_consciousness_or_oxygen_box_cannot_be_blank
 
     assert "Consciousness and air or oxygen" in labels(True)
     assert "Consciousness and air or oxygen" not in labels(False)
+
+
+def test_patients_are_listed_in_the_order_they_arrived(ward):
+    # Eleven patients, one an hour from 01:00, each with one round due.
+    for n in range(11):
+        pid = _patient(ward, admitted=_local(10, 1 + n), discharged=_local(10, 6 + n))
+        _set(pid, _local(10, 5 + n))
+    _setting(ward)
+    data = svc.compute_rounds(ward, "2025-07-10", "2025-07-11", now=NOW)
+    night = [r["patient"] for r in data["rows"] if r["shift"] == "23:00 to 07:00"]
+    assert night == ["Patient 1", "Patient 2"]
+    day = [r["patient"] for r in data["rows"] if r["shift"] == "07:00 to 15:00"]
+    assert day == [f"Patient {n}" for n in range(3, 11)]  # 10 before 3 as text

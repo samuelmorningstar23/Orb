@@ -793,6 +793,8 @@ def compute_rounds(ward: str, start: Any, end: Any, *, now: Optional[datetime] =
                     sets_without_entry_time += 1
 
         shift_order = sorted(shift_totals, key=lambda k: (k[0], k[1]))
+        # Patients in the order they arrived, so Patient 2 comes before Patient 10.
+        order = {pid: n for n, pid in enumerate(labels)}
         lag_rows = []
         for key in shift_order:
             lags = lag_by_shift.get(key, [])
@@ -824,7 +826,7 @@ def compute_rounds(ward: str, start: Any, end: Any, *, now: Optional[datetime] =
                              for k in shift_order],
             "rows": [{"shift_date": k[0], "shift": k[1], "patient": labels[k[2]],
                       "bed": k[3], **rows[k]}
-                     for k in sorted(rows, key=lambda k: (k[0], k[1], labels[k[2]], k[3]))],
+                     for k in sorted(rows, key=lambda k: (k[0], k[1], order[k[2]], k[3]))],
             "readings": [{"reading": name, "field": field, "blank": blank[field],
                           "illegible": illegible[field]} for field, name in READINGS],
             "entry_lag": {
