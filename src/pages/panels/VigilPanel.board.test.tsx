@@ -242,3 +242,25 @@ describe('the live tick', () => {
     expect(scoreOf('Anita Rao')).toEqual({ text: '9', label: 'NEWS2 9 (critical)' })
   })
 })
+
+describe('the board row shows the readings behind the score', () => {
+  it('prints the two worst readings beside the diagnosis, and none at NEWS2 0', async () => {
+    h.board = [
+      boardRow('P1', 'Anita Rao', 'GM-01', news2(9, 'critical', {
+        breakdown: [
+          { parameter: 'Respiratory rate', value: 37, points: 3, note: 'Severe tachypnea (RR 37)', severe: true },
+          { parameter: 'SpO2', value: 84, points: 3, note: 'Severe hypoxia (SpO2 84%)', severe: true },
+          { parameter: 'Heart rate', value: 118, points: 2, note: 'Tachycardia (HR 118)', severe: false },
+          { parameter: 'Systolic BP', value: 130, points: 0, note: null, severe: false },
+        ],
+      })),
+      boardRow('P2', 'Rahul Menon', 'GM-02', news2(0, 'stable', {
+        breakdown: [{ parameter: 'Heart rate', value: 72, points: 0, note: null, severe: false }],
+      })),
+    ]
+    await boardReady()
+    const readings = rowOf('Anita Rao').querySelector('.patient-row__readings')
+    expect(readings?.textContent).toBe('RR 37 · SpO2 84%')
+    expect(rowOf('Rahul Menon').querySelector('.patient-row__readings')).toBeNull()
+  })
+})

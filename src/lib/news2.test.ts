@@ -151,3 +151,55 @@ describe('news2Description', () => {
     expect(news2Description({ level: 'stable', complete: false })).toBe('NEWS2 not recorded')
   })
 })
+
+/* The ward board row prints the two worst readings behind the score, taken
+   from the breakdown the engine wrote, worst first by the Relay reason line's
+   rule, each value as charted. */
+describe('topReadings', () => {
+  const br = (parameter: string, value: unknown, points: number, severe = false) =>
+    ({ parameter, value, points, note: points ? 'x' : null, severe })
+
+  it('names the two worst readings, worst first, values as charted', async () => {
+    const { topReadings } = await import('./news2')
+    expect(topReadings({
+      raw_news2: 10,
+      breakdown: [
+        br('Respiratory rate', 36.5, 3, true),
+        br('SpO2', 84, 3, true),
+        br('Heart rate', 105, 1),
+        br('Temperature', 38.05, 1),
+      ],
+    })).toEqual(['RR 37', 'SpO2 84%'])
+  })
+
+  it('puts a Severe 3 above a Moderate 3 and skips anything that scored 0', async () => {
+    const { topReadings } = await import('./news2')
+    expect(topReadings({
+      raw_news2: 7,
+      breakdown: [
+        br('Respiratory rate', 26, 3, false),
+        br('Systolic BP', 82, 3, true),
+        br('Heart rate', 70, 0),
+        br('Temperature', 39.5, 2),
+      ],
+    })).toEqual(['SBP 82', 'RR 26'])
+    expect(topReadings({
+      raw_news2: 2,
+      breakdown: [br('Heart rate', 70, 0), br('Temperature', 38.05, 1), br('Supplemental O2', true, 2)],
+    })).toEqual(['On oxygen', 'Temp 38.1°C'])
+  })
+
+  it('prints nothing for a score of 0, no result, or no breakdown', async () => {
+    const { topReadings } = await import('./news2')
+    expect(topReadings({ raw_news2: 0, breakdown: [br('Heart rate', 70, 0)] })).toEqual([])
+    expect(topReadings(null)).toEqual([])
+    expect(topReadings({ raw_news2: 4, breakdown: undefined as unknown as [] })).toEqual([])
+  })
+
+  it('says a new ACVPU change in words', async () => {
+    const { topReadings } = await import('./news2')
+    expect(topReadings({
+      raw_news2: 3, breakdown: [br('Consciousness (ACVPU)', 'confusion', 3, true)],
+    })).toEqual(['Confused'])
+  })
+})

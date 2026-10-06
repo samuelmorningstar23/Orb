@@ -32,7 +32,7 @@ import { assertOnlineForWrite } from '../../lib/offline/writeGuard'
 import OfflineBanner from '../../components/OfflineBanner'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
 import { observedAt, observedBefore, vitalTemperature, vitalWhole } from '../../lib/vitals'
-import { breakdownRowFor, news2Description, type News2BreakdownRow, type News2ScoredVital } from '../../lib/news2'
+import { breakdownRowFor, news2Description, topReadings, type News2BreakdownRow, type News2ScoredVital } from '../../lib/news2'
 import { vitalTrendWindow, trendSpanShort, trendAxisLabel, trendAriaPhrase, type VitalTrendWindow } from '../../lib/vitalTrend'
 import { buildLabTrends, labGraphData, labTrendLabel, labTrendTone, LAB_TREND_TONE_COLOR, type LabStatus, type LabTrend } from '../../lib/labTrends'
 import { hasPermission, OUTCOME_RECORD, PATIENT_WRITE, DISCHARGE_GENERATE, DISCHARGE_PUBLISH } from '../../lib/roles'
@@ -659,6 +659,9 @@ const PatientRow = memo(({ patient: p, onSelect, newSinceReview = 0 }: {
   newSinceReview?: number,
 }) => {
   const isEmergencySurgery = isEmergency(p);
+  // The two worst readings behind the score ("RR 37 · SpO2 84%"), from the
+  // breakdown the row already carries. Nothing for NEWS2 0 or no observation.
+  const readings = topReadings(p.news2 ?? null)
 
   return (
   <button
@@ -682,8 +685,13 @@ const PatientRow = memo(({ patient: p, onSelect, newSinceReview = 0 }: {
       </span>
       <span className="patient-row__bed">{p.bed}</span>
     </div>
-    <div className="patient-row__meta">
+    <div className={`patient-row__meta${readings.length ? ' patient-row__meta--readings' : ''}`}>
       <span className="patient-row__diagnosis">{p.diagnosis}</span>
+      {readings.length > 0 && (
+        <span className="patient-row__readings metric-mono" title="The readings that scored most">
+          {readings.join(' · ')}
+        </span>
+      )}
     </div>
     <div className="patient-row__score">
       {/* The NEWS2 aggregate and its band, as on the nurse board and the doctor
