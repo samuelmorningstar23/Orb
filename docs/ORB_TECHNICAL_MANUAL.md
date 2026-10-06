@@ -11803,6 +11803,8 @@ to small/fast models; `prod` defaults to full-quality.
 |---|---|---|
 | `ORB_DEMO_MODE` | `true` in dev, **`false` in prod** | Demo affordances (`config.py:316`). |
 | `ORB_LENS_ENABLED` | `true` in dev, **`false` in prod** | Lens imaging is **off by default in production** unless an operator explicitly opts in (`config.py:323`). |
+| `ORB_SCORING_ENABLED` | `true` | `false` is the Orb Ward Record's scoring-off mode: an observation set is stored with no NEWS2 computed, shown or logged, no `risk_scores` row, no escalation, no Relay alert and no sepsis bundle; `/api/nurse/patients/{id}/news2-preview` answers 404 and the ward board sorts by ward then bed. Published to the front end as `clinical.scoring_enabled` on `/api/health`. |
+| `ORB_SEPSIS_AUTOSTART` | `true` | `false` stops a NEWS2 of 7 or more from opening a sepsis bundle by itself (`sepsis_bundle_service.maybe_autostart`); a clinician can still start one by hand. Published as `clinical.sepsis_autostart` on `/api/health`. |
 | `ORB_MONITOR_ENABLED` and the `ORB_MONITOR_*` / `ORB_HL7_DEFAULT_TZ` group | **`false`** / see `config.py:406-436` | The live bedside-monitor feed: protocol, mode, host, port, source id, timezone and clock-skew tolerance. |
 
 > **Completeness note.** `server/config.py` reads **109 distinct `ORB_*` variables**; §15.2 as it now stands documents most but not all of them, and a handful are read outside `config.py` (`ORB_MAX_JSON_BODY_BYTES` in `main.py`, `ORB_DB_BACKEND` in `db_backend.py`, `ORB_DEVICE_PIN_SESSION_MINUTES` in `auth.py`, `ORB_TLS_*` in `main.py`, several `ORB_*` test-only vars in `tests/conftest.py`). The authoritative list is `grep -o 'ORB_[A-Z0-9_]*' server/config.py | sort -u`. See §17.

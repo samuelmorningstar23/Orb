@@ -35,9 +35,13 @@ async def on_critical_vigil_alert(event: StateEvent):
     # opened (idempotent, clinician can cancel) turning the alert into a tracked,
     # measurable protocol. Best-effort: must never break the preloader path.
     try:
-        from services.sepsis_bundle_service import maybe_autostart, start_bundle
+        from services.sepsis_bundle_service import autostart_enabled, maybe_autostart, start_bundle
         raw = event.payload.get("raw_news2")
         def _open_bundle():
+            # ORB_SEPSIS_AUTOSTART off: no automatic bundle on either branch,
+            # including the no-score fallback below, which skips maybe_autostart.
+            if not autostart_enabled():
+                return None
             if raw is not None:
                 return maybe_autostart(patient_id, {"raw_news2": raw})
             # No raw score in payload, but this IS the critical event → open one.

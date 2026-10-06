@@ -1138,6 +1138,13 @@ def record_observation(
         source=source, illegible=illegible)
 
 
+def scoring_enabled() -> bool:
+    """ORB_SCORING_ENABLED, read at call time so a test or an operator flip is
+    seen without re-importing this module."""
+    import config
+    return bool(getattr(config, "SCORING_ENABLED", True))
+
+
 def _record_observation_txn(
     patient_id: str,
     actor_id: str,
@@ -1193,6 +1200,11 @@ def _record_observation_txn(
     illegible_text = ",".join(illegible_fields) or None
     cleaned = _clean_obs(obs, illegible_fields)
     entered_at = format_utc(_now())
+    # ORB_SCORING_ENABLED off (the Orb Ward Record): the vitals row and its
+    # audit entry are the whole write. No NEWS2 is computed, stored, returned or
+    # logged, and nothing after the commit runs: no push, no sepsis bundle, no
+    # Relay alert, no escalation chain.
+    scoring = scoring_enabled()
     # In UTC, and stored in the one spelling every vitals/risk_scores writer
     # uses (services/clinical_time.py). `_parse_ts` keeps a caller's offset, so
     # an API caller's '+05:30' used to be stored as typed beside '+00:00' rows,
@@ -1217,12 +1229,13 @@ def _record_observation_txn(
                 (patient_id, source, stored_at),
             ).fetchone()
             if existing is not None and _same_reading(existing, cleaned):
-                news2 = score_vitals_row(cleaned, on_scale_2=scale_2, overlay=False)
+                news2 = (score_vitals_row(cleaned, on_scale_2=scale_2, overlay=False)
+                         if scoring else None)
                 return {
                     "vitals_id": existing["id"],
                     "recorded_at": existing["timestamp"],
                     "news2": news2,
-                    "schedule": obs_schedule(news2),
+                    "schedule": obs_schedule(news2) if scoring else None,
                     "replayed": True,
                     "source": source,
                     "illegible": list(illegible_fields),
@@ -1245,7 +1258,8 @@ def _record_observation_txn(
         # on ingestion_service._persist_relay_alert). The recorded, audited score
         # is the deterministic RCP aggregate; the overlay is a display-time
         # escalation applied by score_vitals_row wherever the score is shown.
-        news2 = score_vitals_row(cleaned, on_scale_2=scale_2, overlay=False)
+        news2 = (score_vitals_row(cleaned, on_scale_2=scale_2, overlay=False)
+                 if scoring else None)
 
         # Provenance contract shared with the ingestion sink's vitals write:
         # `source` is a label _LABEL_KIND classifies (here OBS_SOURCE → MANUAL);
@@ -1267,11 +1281,12 @@ def _record_observation_txn(
         )
         vitals_id = cur.lastrowid
 
-        db.execute(
-            "INSERT INTO risk_scores (patient_id, timestamp, score, level, drivers) VALUES (?, ?, ?, ?, ?)",
-            (patient_id, stored_at, news2["score"], news2["level"],
-             json.dumps(news2["drivers"])),
-        )
+        if scoring:
+            db.execute(
+                "INSERT INTO risk_scores (patient_id, timestamp, score, level, drivers) VALUES (?, ?, ?, ?, ?)",
+                (patient_id, stored_at, news2["score"], news2["level"],
+                 json.dumps(news2["drivers"])),
+            )
 
         # Is this set now the chart's newest? Decided here, where the INSERT
         # above is visible, with the ordering a chart reload uses. A set
@@ -1290,7 +1305,8 @@ def _record_observation_txn(
                 (f"Nurse observation set recorded for {patient_id} "
                  if source == OBS_SOURCE else
                  f"Observation set copied from the paper sheet for {patient_id} ")
-                + f"({news2_description(news2)}) by {actor_id}"
+                + (f"({news2_description(news2)}) by {actor_id}" if scoring
+                   else f"(scoring switched off) by {actor_id}")
             ),
             actor_user_id=actor_id,
             target_type="vitals",
@@ -1301,10 +1317,13 @@ def _record_observation_txn(
                 "observed_at": stored_at,
                 "entered_at": entered_at,
                 "illegible": list(illegible_fields),
-                "news2": news2["raw_news2"],
-                "level": news2["level"],
-                "single_param_3": news2["single_param_3"],
-                "spo2_scale": news2["spo2_scale"],
+                # None, never a stand-in, while scoring is off: "no score
+                # computed, shown or logged" covers the audit row too.
+                "news2": news2["raw_news2"] if scoring else None,
+                "level": news2["level"] if scoring else None,
+                "single_param_3": news2["single_param_3"] if scoring else None,
+                "spo2_scale": news2["spo2_scale"] if scoring else None,
+                "scoring_enabled": scoring,
                 "source": source,
                 "idempotency_key": idempotency_key,
                 "supersedes_vitals_id": superseded_id,
@@ -1322,6 +1341,24 @@ def _record_observation_txn(
     # ingestion lanes. It is a push only and pages nobody: the alert below is
     # this set's one page. `news2` IS score_vitals_row on the values just
     # inserted, with the patient's scale.
+    if not scoring:
+        logger.info("nurse obs: patient %s set %s recorded by %s (scoring switched off)",
+                    patient_id, vitals_id, actor_id)
+        result = {
+            "vitals_id": vitals_id,
+            "recorded_at": stored_at,
+            "news2": None,
+            "schedule": None,
+            "replayed": False,
+            "source": source,
+            "entered_at": entered_at,
+            "illegible": list(illegible_fields),
+            "scoring_enabled": False,
+        }
+        if superseded_id is not None:
+            result["supersedes_vitals_id"] = superseded_id
+        return result
+
     if is_latest:
         _push_vitals_update(patient_id, observed_at, cleaned, news2, source=source)
 

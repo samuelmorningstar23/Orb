@@ -4,6 +4,7 @@ Modified Early Warning Score + continuous-time neural network for hybrid
 patient deterioration risk scoring. Outputs a normalized 0.0-1.0 risk
 score with driver explanations and LNN trajectory overlay.
 """
+import re
 import time
 import logging
 import httpx
@@ -868,16 +869,41 @@ def scored_admitted_patients(department: str | None) -> list[tuple]:
             ).fetchall()
         }
 
+    # ORB_SCORING_ENABLED off (the Orb Ward Record): no NEWS2 is computed, so
+    # every triple carries news2 None and the board falls back to ward, then
+    # bed, then id (ward_bed_order). Read at call time, like the write path.
+    import config
+    scoring = bool(getattr(config, "SCORING_ENABLED", True))
+
     scored = []
     for p in patients:
         patient = dict(p)
         vitals = latest_vitals.get(patient["id"])
         news2 = score_vitals_row(
             vitals, patient_id=patient["id"], on_scale_2=bool(patient["on_scale_2"]),
-        )
+        ) if scoring else None
         scored.append((patient, vitals, news2))
-    scored.sort(key=lambda s: board_order(s[0]["id"], s[2]))
+    if scoring:
+        scored.sort(key=lambda s: board_order(s[0]["id"], s[2]))
+    else:
+        scored.sort(key=lambda s: ward_bed_order(s[0]))
     return scored
+
+
+def _natural_key(text) -> tuple:
+    """'B-10' after 'B-2': digit runs compare as numbers, the rest as text."""
+    parts = re.split(r"(\d+)", str(text or "").strip().lower())
+    return tuple((0, int(part), "") if part.isdigit() else (1, 0, part)
+                 for part in parts if part != "")
+
+
+def ward_bed_order(patient: dict) -> tuple:
+    """The board's sort key with scoring switched off: ward, then bed, then id.
+    A patient with no ward or bed sorts after those that have one."""
+    ward = patient.get("ward") or ""
+    bed = patient.get("bed") or ""
+    return (ward == "", _natural_key(ward), bed == "", _natural_key(bed),
+            str(patient.get("id") or ""))
 
 
 def get_patient_risk(patient_id: str) -> dict:

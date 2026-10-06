@@ -329,6 +329,13 @@ def models_to_warm(configured, resident=frozenset()) -> list[str]:
 async def lifespan(app: FastAPI):
     """App startup / shutdown."""
     logger.info("═══ Orb Hospital OS — Starting (profile=%s) ═══", DEPLOYMENT_PROFILE)
+    # The Orb Ward Record's two clinical switches, stated once so an operator
+    # can see from the log which mode this computer is in.
+    import config as _clinical_config
+    logger.info("Clinical switches: scoring %s (ORB_SCORING_ENABLED), sepsis bundle "
+                "autostart %s (ORB_SEPSIS_AUTOSTART)",
+                "on" if _clinical_config.SCORING_ENABLED else "off",
+                "on" if _clinical_config.SEPSIS_AUTOSTART else "off")
 
     # The patient discharge link is built on ORB_PUBLIC_APP_BASE_URL. In prod a
     # value a patient's phone cannot open (unset, not https, or this machine)
@@ -1243,6 +1250,20 @@ async def health():
         "modules": enabled_modules(),
         "module_states": module_states(),
         "features": feature_flags(),
+        "clinical": clinical_switches(),
+    }
+
+
+def clinical_switches() -> dict:
+    """The clinical switches the front end hides screens by (Orb Ward Record):
+    ORB_SCORING_ENABLED, ORB_LENS_ENABLED and ORB_SEPSIS_AUTOSTART. Read from
+    config at call time. Three booleans, no PHI, safe on the unauthenticated
+    health endpoint. src/shellConfig.tsx currentClinicalSwitches() reads it."""
+    import config
+    return {
+        "scoring_enabled": bool(getattr(config, "SCORING_ENABLED", True)),
+        "lens_enabled": bool(getattr(config, "LENS_ENABLED", False)),
+        "sepsis_autostart": bool(getattr(config, "SEPSIS_AUTOSTART", True)),
     }
 
 

@@ -460,6 +460,19 @@ DEMO_MODE = os.getenv("ORB_DEMO_MODE", "true" if is_dev else "false").strip().lo
 # is clinician decision-support reference only and never a diagnostic device.
 LENS_ENABLED = os.getenv("ORB_LENS_ENABLED", "true" if is_dev else "false").strip().lower() in ("1", "true", "yes", "on")
 
+# The Orb Ward Record (docs/fundraising/SALES_PLAN_2026-10.md section 3, step 2)
+# runs with "no score computed, shown or logged". ORB_SCORING_ENABLED=false makes
+# the observation write store the vitals row and nothing else: no risk_scores
+# row, no NEWS2 or schedule in the response, no escalation, no Relay alert, no
+# sepsis bundle; the score preview answers 404 and the ward board sorts by ward
+# and bed. Default on, so every existing site is unchanged.
+SCORING_ENABLED = os.getenv("ORB_SCORING_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+
+# Whether a NEWS2 of 7 or more opens a sepsis bundle by itself
+# (sepsis_bundle_service.maybe_autostart). Off, nothing starts one
+# automatically; a clinician can still start a bundle by hand. Default on.
+SEPSIS_AUTOSTART = os.getenv("ORB_SEPSIS_AUTOSTART", "true").strip().lower() in ("1", "true", "yes", "on")
+
 # The dev profile's cheap Scribe stages run on the fast 4B through Ollama, the
 # same as .env sets on the dev box. They used to default to an MLX path for
 # MedGemma 1.5 4B whose weights were never downloaded, so a fresh dev install

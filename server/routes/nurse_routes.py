@@ -150,6 +150,10 @@ def preview_news2(
     Lets the entry screen show the NEWS2 the nurse is about to create as they
     type, from the same scoring code the record path uses.
     """
+    # The Orb Ward Record runs with scoring switched off: no score computed or
+    # shown, so the preview does not exist on that computer.
+    if not nurse_shift_service.scoring_enabled():
+        raise HTTPException(status_code=404, detail="Scoring is switched off on this computer")
     try:
         return nurse_shift_service.score_observation(patient_id, req.model_dump())
     except ValueError as e:

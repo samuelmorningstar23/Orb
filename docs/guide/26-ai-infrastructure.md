@@ -317,7 +317,9 @@ Every LLM caller reads `OLLAMA_BASE_URL`, `LLM_MODEL`, `OLLAMA_KEEP_ALIVE` direc
 | `DEPLOYMENT_PROFILE` | `:11` | env `ORB_DEPLOYMENT_PROFILE`, default `prod` | `dev` vs `prod`. Drives many fail-closed/demo defaults across the file. |
 | `is_dev` | `:275` | `DEPLOYMENT_PROFILE == "dev"` | Convenience bool. |
 | `DEMO_MODE` | `:281` | ON in dev, OFF in prod | Permits synthetic clinical content (mock notes, simulation bots). Fail-closed so fabricated data can never enter a real deployment. |
-| `LENS_ENABLED` | `:288` | ON in dev, OFF in prod | Gates the Lens vision feature. Lens ships **no validated imaging model**, it is a general vision LLM writing reference prose, so it is demo-only unless an operator sets `ORB_LENS_ENABLED`. Asserted a bool by `test_tier1_small_closes.py:92`. |
+| `LENS_ENABLED` | `:288` | ON in dev, OFF in prod | Gates the Lens vision feature. Lens ships **no validated imaging model**, it is a general vision LLM writing reference prose, so it is demo-only unless an operator sets `ORB_LENS_ENABLED`. Asserted a bool by `test_tier1_small_closes.py:92`. When it is off the Lens screen says so before any upload and the analyse control is disabled. |
+| `SCORING_ENABLED` | beside `LENS_ENABLED` | ON | `ORB_SCORING_ENABLED=false` is the Orb Ward Record's scoring-off mode: observation sets are stored with no NEWS2, no `risk_scores` row, no escalation, no Relay alert and no sepsis bundle. |
+| `SEPSIS_AUTOSTART` | beside `LENS_ENABLED` | ON | `ORB_SEPSIS_AUTOSTART=false` stops a high NEWS2 opening a sepsis bundle by itself; starting one by hand still works. |
 
 #### Correction/draft/verify model defaults (`:104-109`)
 

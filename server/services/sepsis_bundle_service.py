@@ -289,10 +289,22 @@ def _decorate(row: dict, names: dict[str, str] | None = None) -> dict:
 
 
 # ── Auto-trigger helper (safe to call from the risk path) ────────────────────
+def autostart_enabled() -> bool:
+    """ORB_SEPSIS_AUTOSTART, read at call time so a test or an operator flip is
+    seen without re-importing. Off, no lane opens a bundle by itself; a
+    clinician's own start_bundle call is unaffected."""
+    import config
+    return bool(getattr(config, "SEPSIS_AUTOSTART", True))
+
+
 def maybe_autostart(patient_id: str, news2: dict) -> dict | None:
     """Open a sepsis bundle automatically when NEWS2 indicates high risk
     (aggregate >= 7, the RCP 'urgent clinical review' threshold). Idempotent and
-    non-raising, so it is safe to call from the monitoring path."""
+    non-raising, so it is safe to call from the monitoring path.
+
+    Returns None and starts nothing while ORB_SEPSIS_AUTOSTART is off."""
+    if not autostart_enabled():
+        return None
     try:
         raw = news2.get("raw_news2", 0) if isinstance(news2, dict) else 0
         if raw is not None and raw >= 7:

@@ -1,4 +1,4 @@
-import { lazy, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react'
+import { lazy, useSyncExternalStore, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react'
 import { hasPermission, PATIENT_WRITE, ROLE_FEATURE, type Permission, type RoleFeatureId } from './lib/roles'
 
 /**
@@ -525,6 +525,62 @@ export function resetFeatureFlags(): void {
   for (const listener of moduleFlagListeners) listener()
 }
 
+/* ── Clinical switches ────────────────────────────────────────────────────────
+ *
+ * The Orb Ward Record's switches, published as 'clinical' on /api/health
+ * (server/main.py clinical_switches): ORB_SCORING_ENABLED, ORB_LENS_ENABLED and
+ * ORB_SEPSIS_AUTOSTART. All three default TRUE here until the probe answers, so
+ * a site that never sets them sees exactly what it saw before. A key that is
+ * not a strict boolean leaves the switch as it was. They share the module flag
+ * listeners, so one subscription hears every answer of the probe.
+ */
+export interface ClinicalSwitches {
+  scoringEnabled: boolean
+  lensEnabled: boolean
+  sepsisAutostart: boolean
+}
+
+export const DEFAULT_CLINICAL_SWITCHES: Readonly<ClinicalSwitches> = {
+  scoringEnabled: true,
+  lensEnabled: true,
+  sepsisAutostart: true,
+}
+
+let clinicalSwitches: ClinicalSwitches = { ...DEFAULT_CLINICAL_SWITCHES }
+
+/** The clinical switches the client should act on right now. */
+export function currentClinicalSwitches(): Readonly<ClinicalSwitches> {
+  return clinicalSwitches
+}
+
+/** Apply the server's 'clinical' answer (snake_case keys) and notify. */
+export function setClinicalSwitches(next: {
+  scoring_enabled?: unknown
+  lens_enabled?: unknown
+  sepsis_autostart?: unknown
+}): void {
+  const merged = { ...clinicalSwitches }
+  if (typeof next.scoring_enabled === 'boolean') merged.scoringEnabled = next.scoring_enabled
+  if (typeof next.lens_enabled === 'boolean') merged.lensEnabled = next.lens_enabled
+  if (typeof next.sepsis_autostart === 'boolean') merged.sepsisAutostart = next.sepsis_autostart
+  if (merged.scoringEnabled === clinicalSwitches.scoringEnabled
+      && merged.lensEnabled === clinicalSwitches.lensEnabled
+      && merged.sepsisAutostart === clinicalSwitches.sepsisAutostart) return
+  clinicalSwitches = merged
+  for (const listener of moduleFlagListeners) listener()
+}
+
+/** Back to all on. For tests and sign-out. */
+export function resetClinicalSwitches(): void {
+  clinicalSwitches = { ...DEFAULT_CLINICAL_SWITCHES }
+  for (const listener of moduleFlagListeners) listener()
+}
+
+/** The clinical switches as React state, re-rendering when the probe answers. */
+export function useClinicalSwitches(): Readonly<ClinicalSwitches> {
+  return useSyncExternalStore(subscribeModuleFlags, currentClinicalSwitches)
+}
+
 /**
  * Ask the server which modules this deployment runs.
  *
@@ -559,6 +615,7 @@ export async function refreshModuleFlags(
     const body = await resp.json() as {
       modules?: Partial<Record<HospitalModuleId, boolean>>
       features?: Partial<Record<FeatureFlagId, boolean>>
+      clinical?: { scoring_enabled?: unknown, lens_enabled?: unknown, sepsis_autostart?: unknown }
     }
     if (body?.modules && typeof body.modules === 'object') {
       /* The overrides are patched OVER the server's answer, not under it: a
@@ -568,6 +625,7 @@ export async function refreshModuleFlags(
          server alone can still do that. */
       setModuleFlags({ ...body.modules, ...readModuleOverrides() })
       if (body.features && typeof body.features === 'object') setFeatureFlags(body.features)
+      if (body.clinical && typeof body.clinical === 'object') setClinicalSwitches(body.clinical)
       setHealthProbe('answered')
     } else {
       setHealthProbe('failed')
