@@ -4,6 +4,7 @@ import { apiFetch } from '../../../api/client'
 import { useFocusTrap } from '../../../hooks/useFocusTrap'
 import { formatClinicalDateTime } from '../../../lib/datetime'
 import { AdminLoadingState, AdminErrorState, AdminEmptyState } from './AdminEmptyState'
+import WardRecordSection from './WardRecordSection'
 
 /* ── Types ── */
 interface BackupFile {
@@ -561,6 +562,8 @@ export default function DataPanel() {
           </div>
         )}
       </div>
+
+      <WardRecordSection />
 
       {toast && <div className="admin-toast" role="status">{toast}</div>}
 

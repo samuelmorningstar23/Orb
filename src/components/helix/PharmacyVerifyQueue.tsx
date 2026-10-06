@@ -20,7 +20,6 @@ import {
   type SafetyScreen,
 } from '../../api/pharmacy';
 import { formatClinicalDateTime } from '../../lib/datetime';
-import { hasPermission, MEDICATION_PRESCRIBE } from '../../lib/roles';
 
 /** The queue row as the server now sends it: where the patient is, who wrote
  *  the order (the prescriber, or the author of the note Sage read it from) and
@@ -65,18 +64,6 @@ function isPlaceholder(value: string | null | undefined): boolean {
 }
 
 const INCOMPLETE_HINT = 'Enter a dose, route and frequency before verifying';
-
-const ALLERGY_PRESCRIBER_ONLY = 'Only a prescriber can override an allergy block.';
-
-/** True when a severe allergy stops this med and the signed in user may not
- *  clear it: the server refuses anyone without medication.prescribe, so the
- *  queue offers no reason box, only Reject. */
-function allergyNeedsPrescriber(safety: SafetyScreen | null): boolean {
-  if (!safety) return false;
-  const severeAllergy = !!safety.override_requires_permission
-    || (safety.alerts ?? []).some((a) => a.type === 'allergy' && a.severity === 'severe');
-  return severeAllergy && !hasPermission(MEDICATION_PRESCRIBE);
-}
 /** Per-med inline acknowledge flow, opened when a verify attempt returns 428
  *  (severe alerts or a failed screen). */
 type AckState = Record<number, { reason: string; safety: SafetyScreen | null; message: string }>;
@@ -511,31 +498,6 @@ export default function PharmacyVerifyQueue() {
                             {ack.safety && ack.safety.alerts && ack.safety.alerts.length > 0 && (
                               <SafetyAlerts alerts={ack.safety.alerts} />
                             )}
-                            {allergyNeedsPrescriber(ack.safety) ? (
-                              <>
-                                <div className={styles.reasonWarn} role="alert">
-                                  {ALLERGY_PRESCRIBER_ONLY} Reject it and ask the prescriber to order it again.
-                                </div>
-                                <div className={styles.verifyActions}>
-                                  <button
-                                    type="button"
-                                    className={styles.btnDanger}
-                                    disabled={busy}
-                                    onClick={() => { closeAck(row.id); openReject(row.id); }}
-                                  >
-                                    Reject
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className={styles.btnSecondary}
-                                    disabled={busy}
-                                    onClick={() => closeAck(row.id)}
-                                  >
-                                    Cancel
-                                  </button>
-                                </div>
-                              </>
-                            ) : (<>
                             <textarea
                               className={styles.verifyInput}
                               style={{ minHeight: 56, resize: 'vertical' }}
@@ -567,7 +529,6 @@ export default function PharmacyVerifyQueue() {
                                 Cancel
                               </button>
                             </div>
-                            </>)}
                           </div>
                         </td>
                       </tr>
