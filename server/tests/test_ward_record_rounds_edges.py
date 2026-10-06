@@ -132,3 +132,23 @@ def test_a_move_onto_the_ward_starts_the_interval_there(ward):
     # The other ward sees only its own spell: arrived 08:00, left 10:00, so no
     # round fell due there.
     assert _totals(other)["due"] == 0
+
+
+def test_the_file_says_when_an_empty_consciousness_or_oxygen_box_cannot_be_blank(ward):
+    pid = _patient(ward, admitted=_local(10, 8), discharged=_local(10, 13))
+    _setting(ward)
+    _set(pid, _local(10, 12, 0))
+    data = svc.compute_rounds(ward, "2025-07-10", "2025-07-11", now=NOW)
+    # Asked of the entry code: today an empty box is stored as alert and air.
+    from services.nurse_shift_service import _clean_obs
+    filled = _clean_obs({"heart_rate": 80, "consciousness": "alert",
+                         "on_oxygen": False})["consciousness"] is not None
+    assert data["empty_acvpu_oxygen_stored_as_alert_air"] is filled
+
+    def labels(flag: bool) -> list:
+        return [label for label, _ in svc.header_lines(
+            dict(data, empty_acvpu_oxygen_stored_as_alert_air=flag),
+            reference="WR-T", generated_at=NOW.isoformat(), generated_by="T")]
+
+    assert "Consciousness and air or oxygen" in labels(True)
+    assert "Consciousness and air or oxygen" not in labels(False)
