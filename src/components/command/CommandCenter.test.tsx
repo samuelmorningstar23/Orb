@@ -55,3 +55,20 @@ describe('command center deteriorations card', () => {
     expect(screen.queryByText(/ only$/)).toBeNull()
   })
 })
+
+/* 2026-10-06: the critical count carries its denominator, and patients with no
+   observation are counted as not scored rather than folded into stable. */
+describe('command center critical count', () => {
+  it('says how many of the admitted patients are critical', async () => {
+    apiFetch.mockResolvedValue({
+      ...SNAPSHOT,
+      census: { ...SNAPSHOT.census, total_admitted: 24 },
+      acuity: { critical: 3, elevated: 2, stable: 17, not_scored: 2, heatmap: [] },
+    })
+    render(<CommandCenter />)
+    const label = await screen.findByText('Critical Patients')
+    const kpi = label.closest('.cmd-kpi') as HTMLElement
+    expect(kpi.querySelector('.cmd-kpi__value')?.textContent).toBe('3 of 24 admitted')
+    expect(kpi.querySelector('.cmd-kpi__foot')?.textContent).toBe('2 elevated · 17 stable · 2 not scored')
+  })
+})

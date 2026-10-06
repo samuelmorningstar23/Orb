@@ -5,11 +5,13 @@ Covers: census totals + capacity, acuity counts + heatmap, active deteriorations
 empty-DB degrade-to-zeros path.
 """
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from database import db_session
 from services import command_center_service as cc
+from services.clinical_time import format_utc
 # TOTAL_CAPACITY is deliberately NOT imported here: it is an int, so importing
 # it binds a pre-discovery COPY, and every assertion written against that copy
 # agrees with itself while the screen disagrees. Assert the invariant (total ==
@@ -48,19 +50,41 @@ def _discharge_seeded_patients():
     _SEEDED.clear()
 
 
-def _mk_patient(ward: str, level: str, bed: str) -> str:
-    """Seed one admitted patient in `ward` with a latest risk_score of `level`."""
+# A full observation set for each band (HR, SBP, SpO2, temp, RR). Since
+# 2026-10-06 the Command Center bands from the latest VITALS row, the Vigil
+# board's rule, so the seed writes vitals, not risk_scores.
+_VITALS_FOR = {
+    "critical": (135, 85, 88, 39.5, 30),    # NEWS2 14
+    "elevated": (115, 105, 96, 37.0, 22),   # NEWS2 5
+    "stable": (72, 124, 98, 36.8, 16),      # NEWS2 0
+}
+
+
+def _mk_patient(ward: str, level: str | None, bed: str, risk_level: str | None = None) -> str:
+    """Seed one admitted patient in `ward` whose latest vitals score `level`
+    (None: no vitals at all). `risk_level` also writes a risk_scores row, which
+    the Command Center must now ignore."""
     pid = f"CCP{uuid.uuid4().hex[:8].upper()}"
     with db_session() as db:
         db.execute(
             "INSERT INTO patients (id, name, mrn, ward, bed, status) "
             "VALUES (?, ?, ?, ?, ?, 'admitted')",
-            (pid, f"CC {level.title()}", f"MRN-{uuid.uuid4().hex[:8]}", ward, bed),
+            (pid, f"CC {(level or 'none').title()}", f"MRN-{uuid.uuid4().hex[:8]}", ward, bed),
         )
-        db.execute(
-            "INSERT INTO risk_scores (patient_id, score, level) VALUES (?, ?, ?)",
-            (pid, 0.9 if level == "critical" else 0.2, level),
-        )
+        if level is not None:
+            hr, sbp, spo2, temp, rr = _VITALS_FOR[level]
+            db.execute(
+                """INSERT INTO vitals (patient_id, timestamp, heart_rate, systolic_bp, diastolic_bp,
+                       spo2, temperature, respiratory_rate, consciousness, on_oxygen)
+                   VALUES (?, ?, ?, ?, 70, ?, ?, ?, 'alert', 0)""",
+                (pid, format_utc(datetime.now(timezone.utc) - timedelta(minutes=5)),
+                 hr, sbp, spo2, temp, rr),
+            )
+        if risk_level is not None:
+            db.execute(
+                "INSERT INTO risk_scores (patient_id, score, level) VALUES (?, ?, ?)",
+                (pid, 0.9 if risk_level == "critical" else 0.2, risk_level),
+            )
     _SEEDED.append(pid)
     return pid
 
@@ -100,7 +124,7 @@ def test_snapshot_census_and_acuity_aggregate():
 
     # Acuity buckets partition the census exactly.
     ac = snap["acuity"]
-    assert ac["critical"] + ac["elevated"] + ac["stable"] == admitted
+    assert ac["critical"] + ac["elevated"] + ac["stable"] + ac["not_scored"] == admitted
     assert ac["critical"] >= 1
 
     # Heatmap present: one row per canonical ward; ICU shows the critical patient.
@@ -198,3 +222,37 @@ def test_capacity_is_internally_consistent_after_ward_discovery():
         assert cap["total_capacity"] == census["total_capacity"], (
             "capacity forecast total disagrees with the census total"
         )
+
+
+def test_bands_and_order_come_from_the_latest_vitals_like_the_vigil_board():
+    """The highest-scores list and the acuity map band each patient from the
+    NEWS2 of their latest vitals and list them in vigil_service.board_order, so
+    the Command Center and the Vigil board cannot disagree (2026-10-06)."""
+    from services.vigil_service import board_order
+
+    # Risk rows that contradict the vitals: the old source, now ignored.
+    crit = _mk_patient("ICU", "critical", f"ICU-{uuid.uuid4().hex[:3]}", risk_level="stable")
+    calm = _mk_patient("W2", "stable", f"W2-{uuid.uuid4().hex[:3]}", risk_level="critical")
+    elev = _mk_patient("W2", "elevated", f"W2-{uuid.uuid4().hex[:3]}")
+    blank = _mk_patient("W2", None, f"W2-{uuid.uuid4().hex[:3]}", risk_level="critical")
+
+    patients = cc._admitted_with_acuity()
+    by_id = {p["id"]: p for p in patients}
+    assert by_id[crit]["level"] == "critical" and by_id[crit]["news2"] == 14
+    assert by_id[calm]["level"] == "stable" and by_id[calm]["news2"] == 0
+    assert by_id[elev]["level"] == "elevated"
+    # Nothing recorded is not scored, never stable, whatever risk_scores says.
+    assert by_id[blank]["level"] is None and by_id[blank]["news2"] is None
+
+    # The whole list is in the board's order.
+    keys = [board_order(p["id"], p["news2_result"]) for p in patients]
+    assert keys == sorted(keys)
+
+    snap = cc.house_snapshot()
+    det = [d["patient_id"] for d in snap["deteriorations"]]
+    assert crit in det and elev in det
+    assert calm not in det and blank not in det
+    assert det.index(crit) < det.index(elev)
+    row = next(d for d in snap["deteriorations"] if d["patient_id"] == crit)
+    assert row["news2"] == 14
+    assert snap["acuity"]["not_scored"] >= 1

@@ -201,11 +201,16 @@ def test_discharge_summary_prompt_carries_the_correction(pid, monkeypatch):
 
 
 def test_command_center_deterioration_scores_the_correction(pid):
-    from services.command_center_service import _deteriorations
+    # Since 2026-10-06 the Command Center bands and scores each patient once,
+    # in _admitted_with_acuity, from the latest vitals row (the board's rule);
+    # _deteriorations only filters that list.
+    from services.command_center_service import _admitted_with_acuity, _deteriorations
 
-    out = _deteriorations([{"id": pid, "level": "critical", "name": "x",
-                            "ward": DEPT, "bed": "TB-1"}])
-    assert out[0]["news2"] == CORRECTION_NEWS2
+    patients = _admitted_with_acuity()
+    row = next(p for p in patients if p["id"] == pid)
+    assert row["news2"] == CORRECTION_NEWS2
+    out = [d for d in _deteriorations(patients) if d["patient_id"] == pid]
+    assert [d["news2"] for d in out] == [CORRECTION_NEWS2]
 
 
 def test_sage_fresh_risk_block_scores_the_correction(pid):

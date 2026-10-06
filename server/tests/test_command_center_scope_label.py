@@ -5,12 +5,14 @@ payload must say which department that is AND how many there are house-wide,
 or an empty scoped list reads as a quiet hospital.
 """
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
 from auth import create_token
 from database import db_session
 from main import app
+from services.clinical_time import format_utc
 
 client = TestClient(app)
 
@@ -41,8 +43,14 @@ def _critical_patient(dept):
                    (pid, f"MRN-{pid}", dept))
         db.execute("INSERT INTO admissions (id, patient_id, department, ward, status, admitted_by) "
                    "VALUES (?, ?, ?, ?, 'active', 'CCSLADM')", (f"ADM-{pid}", pid, dept, dept))
-        db.execute("INSERT INTO risk_scores (patient_id, score, level) VALUES (?, 0.9, 'critical')",
-                   (pid,))
+        # Critical by its latest vitals (NEWS2 14): the Command Center bands
+        # from vitals, as the Vigil board does, since 2026-10-06.
+        db.execute(
+            """INSERT INTO vitals (patient_id, timestamp, heart_rate, systolic_bp, diastolic_bp,
+                   spo2, temperature, respiratory_rate, consciousness, on_oxygen)
+               VALUES (?, ?, 135, 85, 50, 88, 39.5, 30, 'alert', 0)""",
+            (pid, format_utc(datetime.now(timezone.utc) - timedelta(minutes=5))),
+        )
     _SEEDED.append(pid)
     return pid
 

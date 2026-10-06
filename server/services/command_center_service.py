@@ -74,24 +74,56 @@ def _parse_ts(ts) -> datetime | None:
 
 
 def _admitted_with_acuity() -> list[dict]:
-    """All admitted patients with their latest risk level (single query)."""
+    """All admitted patients, each banded by the NEWS2 of their LATEST VITALS
+    row, in the Vigil board's order.
+
+    The band came off risk_scores, which the Vigil board stopped reading on 3
+    October (the simulator and the Scribe lane write vitals with no risk row,
+    so it goes stale), and a patient with no risk row was counted "stable". So
+    the Command Center could list a patient as stable whom the board beside it
+    showed at NEWS2 9. It now scores the same row with the same entry point
+    (vigil_service.score_vitals_row, overlay on, the patient's own SpO2 scale)
+    and sorts with vigil_service.board_order, so the two cannot disagree.
+
+    `level` is None when nothing is recorded: "not scored", never "stable".
+    Every admitted patient is listed (the census counts them all), including
+    one with no active admission row, which the board's own query would drop.
+    """
+    from services.vigil_service import board_order, score_vitals_row
+
     with db_session() as db:
         rows = db.execute(
-            """SELECT p.id, p.name, p.ward, p.bed,
-                      (SELECT rs.level FROM risk_scores rs
-                        WHERE rs.patient_id = p.id
-                        ORDER BY rs.timestamp DESC, rs.id DESC LIMIT 1) AS level
+            """SELECT p.id, p.name, p.ward, p.bed, p.on_scale_2
                FROM patients p
-               WHERE p.status = 'admitted'
-               ORDER BY p.ward, p.bed"""
+               WHERE p.status = 'admitted'"""
         ).fetchall()
+        # The latest row per patient, id DESC breaking a timestamp tie: the
+        # same moment the board scores.
+        latest = {
+            v["patient_id"]: dict(v)
+            for v in db.execute(
+                """SELECT v.* FROM patients p
+                   JOIN vitals v ON v.id = (
+                       SELECT v2.id FROM vitals v2 WHERE v2.patient_id = p.id
+                       ORDER BY v2.timestamp DESC, v2.id DESC LIMIT 1
+                   )
+                   WHERE p.status = 'admitted'"""
+            ).fetchall()
+        }
+
+    # Scored after the session closes: the CfC overlay reads the vitals history
+    # on its own connection.
     out = []
     for r in rows:
         d = dict(r)
-        # No risk score yet → treat as stable so acuity buckets always sum to census.
-        d["level"] = d.get("level") or "stable"
+        on_scale_2 = bool(d.pop("on_scale_2", 0) or 0)
+        news2 = score_vitals_row(latest.get(d["id"]), patient_id=d["id"], on_scale_2=on_scale_2)
+        d["news2_result"] = news2
+        d["level"] = news2["level"] if news2 else None
+        d["news2"] = news2["raw_news2"] if news2 else None
         d["norm_ward"] = _normalize_ward(d.get("ward"))
         out.append(d)
+    out.sort(key=lambda d: board_order(d["id"], d["news2_result"]))
     return out
 
 
@@ -104,12 +136,15 @@ def _census_and_acuity(patients: list[dict]) -> tuple[dict, dict]:
     sections from a single pass over the admitted-patient list."""
     # Per-ward tallies keyed by the canonical WARD_CAPACITY wards.
     ward_occ = {w: 0 for w in WARD_CAPACITY}
-    ward_acuity = {w: {"critical": 0, "elevated": 0, "stable": 0} for w in WARD_CAPACITY}
-    totals = {"critical": 0, "elevated": 0, "stable": 0}
+    ward_acuity = {w: {"critical": 0, "elevated": 0, "stable": 0, "not_scored": 0}
+                   for w in WARD_CAPACITY}
+    totals = {"critical": 0, "elevated": 0, "stable": 0, "not_scored": 0}
 
     for p in patients:
         w = p["norm_ward"]
-        lvl = p["level"] if p["level"] in totals else "stable"
+        # Nothing recorded is its own bucket. It used to be counted stable so
+        # the buckets summed to the census; they still do, honestly.
+        lvl = p["level"] if p["level"] in ("critical", "elevated", "stable") else "not_scored"
         totals[lvl] += 1
         if w in ward_occ:
             ward_occ[w] += 1
@@ -130,6 +165,7 @@ def _census_and_acuity(patients: list[dict]) -> tuple[dict, dict]:
             "critical": ward_acuity[w]["critical"],
             "elevated": ward_acuity[w]["elevated"],
             "stable": ward_acuity[w]["stable"],
+            "not_scored": ward_acuity[w]["not_scored"],
         })
 
     total_admitted = len(patients)
@@ -143,61 +179,37 @@ def _census_and_acuity(patients: list[dict]) -> tuple[dict, dict]:
         "critical": totals["critical"],
         "elevated": totals["elevated"],
         "stable": totals["stable"],
+        "not_scored": totals["not_scored"],
         "heatmap": heatmap,
     }
     return census, acuity
 
 
 def _deteriorations(patients: list[dict]) -> list[dict]:
-    """The active deterioration list: every critical/elevated patient, sorted with
-    critical first, annotated with a live NEWS2 from their latest vitals."""
-    from services.vigil_service import compute_news2
+    """The highest-scores list: every critical/elevated patient, in the Vigil
+    board's order (critical first, then NEWS2 high to low), each with the NEWS2
+    of the latest vitals that banded them.
 
-    watch = [p for p in patients if p["level"] in ("critical", "elevated")]
-    if not watch:
-        return []
-
+    It used to band from risk_scores and then re-score the vitals itself with
+    unassessed ACVPU taken as alert, so a row could say "elevated" beside a
+    NEWS2 from a different moment, and the order was not the board's.
+    `patients` arrives in board order from `_admitted_with_acuity`.
+    """
     out = []
-    with db_session() as db:
-        for p in watch:
-            news2_val = None
-            try:
-                vrow = db.execute(
-                    """SELECT heart_rate, systolic_bp, respiratory_rate, temperature,
-                              spo2, consciousness, on_oxygen
-                       FROM vitals WHERE patient_id = ? AND voided_at IS NULL
-                       -- id DESC: a same-timestamp correction is the later write.
-                       ORDER BY timestamp DESC, id DESC LIMIT 1""",
-                    (p["id"],),
-                ).fetchone()
-                prow = db.execute(
-                    "SELECT on_scale_2 FROM patients WHERE id = ?", (p["id"],)
-                ).fetchone()
-                if vrow is not None:
-                    v = dict(vrow)
-                    news2 = compute_news2(
-                        v.get("heart_rate"), v.get("systolic_bp"),
-                        v.get("respiratory_rate"), v.get("temperature"),
-                        v.get("spo2"),
-                        consciousness=v.get("consciousness") or "alert",
-                        on_oxygen=bool(v.get("on_oxygen") or 0),
-                        on_scale_2=bool((dict(prow).get("on_scale_2") if prow else 0) or 0),
-                    )
-                    news2_val = news2.get("raw_news2")
-            except Exception as e:  # a single bad patient must not blank the list
-                logger.warning("deterioration NEWS2 failed for %s: %s", p["id"], e)
-            out.append({
-                "patient_id": p["id"],
-                "name": p.get("name"),
-                "ward": p.get("ward"),
-                "bed": p.get("bed"),
-                "level": p["level"],
-                "news2": news2_val,
-            })
-
-    # Critical first, then by NEWS2 descending (None sorts last).
-    rank = {"critical": 0, "elevated": 1}
-    out.sort(key=lambda d: (rank.get(d["level"], 2), -(d["news2"] if d["news2"] is not None else -1)))
+    for p in patients:
+        if p["level"] not in ("critical", "elevated"):
+            continue
+        news2 = p.get("news2_result") or {}
+        out.append({
+            "patient_id": p["id"],
+            "name": p.get("name"),
+            "ward": p.get("ward"),
+            "bed": p.get("bed"),
+            "level": p["level"],
+            "news2": p.get("news2"),
+            # False: an incomplete set, so the number is a minimum.
+            "news2_complete": news2.get("complete"),
+        })
     return out
 
 
@@ -319,9 +331,9 @@ def _empty_census() -> dict:
 
 def _empty_acuity() -> dict:
     return {
-        "critical": 0, "elevated": 0, "stable": 0,
+        "critical": 0, "elevated": 0, "stable": 0, "not_scored": 0,
         "heatmap": [
-            {"ward": w, "critical": 0, "elevated": 0, "stable": 0}
+            {"ward": w, "critical": 0, "elevated": 0, "stable": 0, "not_scored": 0}
             for w in WARD_CAPACITY
         ],
     }

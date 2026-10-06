@@ -13,7 +13,9 @@ interface ORCase { id: string; procedure_name: string | null; operating_room: st
 interface HouseSnapshot {
   generated_at: string
   census: { total_admitted: number; total_capacity: number; occupancy_pct: number; by_ward: WardCensus[] }
-  acuity: { critical: number; elevated: number; stable: number; heatmap: HeatCell[] }
+  /** Banded from each patient's latest vitals, as the Vigil board is.
+   *  `not_scored`: admitted with no observation on record. */
+  acuity: { critical: number; elevated: number; stable: number; not_scored?: number; heatmap: HeatCell[] }
   deteriorations: Deterioration[]
   bundles: { active: number; compliant: number; compliance_pct: number }
   forecast: { projected_admissions_24h: number; projected_occupancy: number; projected_occupancy_pct?: number; current_occupancy?: number; total_capacity?: number }
@@ -161,8 +163,12 @@ export default function CommandCenter() {
 
         <div className={`cmd-kpi ${acuity.critical > 0 ? 'cmd-kpi--danger' : 'cmd-kpi--ok'}`}>
           <span className="cmd-kpi__label">Critical Patients</span>
-          <span className="cmd-kpi__value">{acuity.critical}</span>
-          <span className="cmd-kpi__foot">{acuity.elevated} elevated · {acuity.stable} stable</span>
+          {/* A count needs its denominator: "3 of 24 admitted", not a bare 3. */}
+          <span className="cmd-kpi__value">{acuity.critical}<span className="cmd-kpi__unit"> of {census.total_admitted} admitted</span></span>
+          <span className="cmd-kpi__foot">
+            {acuity.elevated} elevated · {acuity.stable} stable
+            {acuity.not_scored ? ` · ${acuity.not_scored} not scored` : ''}
+          </span>
         </div>
 
         <div className={`cmd-kpi cmd-kpi--${complianceTone(bundles.compliance_pct)}`}>

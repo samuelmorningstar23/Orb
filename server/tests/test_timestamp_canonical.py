@@ -259,8 +259,9 @@ def test_a_critical_ingestion_score_is_not_hidden_by_an_earlier_nurse_set():
             (pid,)).fetchall()
     assert [r["level"] for r in joined] == ["critical"]
 
-    acuity = {r["id"]: r["level"] for r in command_center_service._admitted_with_acuity()}
-    assert acuity[pid] == "critical"
+    # The Command Center acuity used to be checked here too. Since 2026-10-06 it
+    # bands from the latest VITALS row (the Vigil board's rule), not
+    # risk_scores, so it is covered by tests/test_command_center.py instead.
 
 
 async def test_the_newest_device_reading_is_the_one_scored():
