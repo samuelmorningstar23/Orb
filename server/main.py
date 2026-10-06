@@ -98,6 +98,7 @@ from routes.frontdesk_routes import router as frontdesk_router
 from routes.payer_routes import router as payer_router
 from routes.procurement_routes import router as procurement_router
 from routes.nabh_routes import router as nabh_router
+from routes.ward_record_routes import router as ward_record_router
 from routes.dietary_routes import router as dietary_router
 from routes.workforce_routes import router as workforce_router
 from routes.biomedical_routes import router as biomedical_router
@@ -1052,6 +1053,7 @@ app.include_router(payments_router)
 app.include_router(abdm_router)
 app.include_router(billing_router)
 app.include_router(nabh_router)
+app.include_router(ward_record_router)
 
 app.include_router(admission_router)
 
