@@ -133,6 +133,8 @@ interface PortalAppointment {
   scheduled_date: string
   scheduled_time: string
   appointment_type: string
+  /** The type in plain words (appointment_types.type_label). */
+  appointment_type_label?: string
   reason: string | null
   status: string
   created_at: string
@@ -526,7 +528,11 @@ export default function PatientShell() {
                                 <span className="appt__upcoming-type">Requested by you. The time is not agreed yet.</span>
                               </>
                             ) : (
-                              <span className="appt__upcoming-type">{a.department || a.appointment_type}</span>
+                              <>
+                                <span className="appt__upcoming-type">{a.department || a.appointment_type_label || a.appointment_type}</span>
+                                {/* The reason the care team wrote, as they wrote it. */}
+                                {a.reason && <span className="appt__upcoming-reason">{a.reason}</span>}
+                              </>
                             )}
                           </div>
                           <button

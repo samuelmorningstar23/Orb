@@ -264,10 +264,24 @@ def test_forecast_features_carry_the_correction_score():
 
 
 def test_forecast_appointment_acuity_is_the_correction(pid):
+    """Since 2026-10-06 the appointment badge is the NEWS2 of the latest VITALS
+    row (the Vigil board's rule), not risk_scores, so the tie this file is about
+    is now a vitals tie: a benign set and a peri-arrest correction charted at
+    the same time, the correction the higher id. The risk rows the fixture
+    wrote are ignored."""
     from services.forecast_service import get_appointments
     from services.hospital_time import hospital_today
 
+    ts = format_utc(datetime.now(timezone.utc) - timedelta(minutes=5))
     with db_session() as db:
+        _insert_vitals(db, pid, ts)
+        db.execute(
+            """INSERT INTO vitals (patient_id, timestamp, heart_rate, systolic_bp,
+                                   diastolic_bp, spo2, temperature, respiratory_rate,
+                                   consciousness, on_oxygen)
+               VALUES (?, ?, 135, 85, 50, 88, 39.5, 30, 'alert', 0)""",
+            (pid, ts),
+        )
         db.execute(
             """INSERT INTO appointments (id, patient_id, booked_by_user_id, scheduled_date,
                    scheduled_time, appointment_type, reason, status, origin, department)

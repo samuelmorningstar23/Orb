@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { buildHeaders } from '../../api/client'
 import { sexShort } from '../../lib/demographics'
-import { formatClinicalClock, formatClinicalDate, localDateKey } from '../../lib/datetime'
+import { formatClinicalClock, formatClinicalDate, localDateKey, parseUTC } from '../../lib/datetime'
+import { newId } from '../../lib/id'
 
 const API = ''
 
@@ -31,12 +32,172 @@ interface Appointment {
   bed: string | null
   diagnosis: string | null
   type: string
+  /** One of APPOINTMENT_TYPES; an old free-text type arrives as 'other'. */
+  type_key?: string
+  /** The label to print: the list's word, or an old row's own text. */
+  type_label?: string
   reason: string | null
   origin?: 'staff' | 'patient'
   department?: string | null
-  /** The latest real risk score, or null when the patient has never been scored. */
+  /** The NEWS2 band of the patient's latest vitals (the Vigil board's rule),
+   *  or null when nothing is recorded. */
   acuity: 'critical' | 'elevated' | 'stable' | null
+  /** The NEWS2 behind that band, or null. */
+  news2?: number | null
+  /** False when the set was incomplete, so the number is a minimum. */
+  news2_complete?: boolean | null
   source?: string
+}
+
+/** The four types a clinician can book (server/services/appointment_types.py). */
+const APPOINTMENT_TYPES: { key: string; label: string }[] = [
+  { key: 'follow_up', label: 'Follow-up' },
+  { key: 'medication_review', label: 'Medication review' },
+  { key: 'post_discharge_check', label: 'Post-discharge check' },
+  { key: 'other', label: 'Other' },
+]
+
+/** A discharged patient stays bookable this long after going home. */
+const RECENT_DISCHARGE_DAYS = 30
+
+interface BookablePatient { id: string; name: string; bed?: string | null; discharged_at?: string | null }
+
+/** "Critical 9", the band word with the NEWS2 beside it; "≥" when the set was
+ *  incomplete. "Not scored" when nothing is recorded, never "Stable". */
+function bandText(a: Pick<Appointment, 'acuity' | 'news2' | 'news2_complete'>): string {
+  if (!a.acuity || !(a.acuity in ACUITY_TEXT)) return 'Not scored'
+  const word = a.acuity.charAt(0).toUpperCase() + a.acuity.slice(1)
+  if (typeof a.news2 !== 'number') return word
+  return `${word} ${a.news2_complete === false ? '≥' : ''}${a.news2}`
+}
+
+const FIELD_STYLE: React.CSSProperties = {
+  display: 'flex', flexDirection: 'column', gap: 4, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)',
+}
+const INPUT_STYLE: React.CSSProperties = {
+  padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border-glass)',
+  background: 'var(--bg-surface)', color: 'var(--text-primary)', fontSize: '0.85rem', fontFamily: 'inherit',
+}
+
+/* ── Booking form ──
+   POST /api/appointments had no caller in the app: a slot could only be
+   booked by the patient asking from the portal. Staff now book here, for a
+   patient on the ward or one discharged in the last 30 days, with one of the
+   four types. */
+function BookingForm({ onBooked, onClose }: { onBooked: () => void; onClose: () => void }) {
+  const [patients, setPatients] = useState<{ admitted: BookablePatient[]; discharged: BookablePatient[] } | null>(null)
+  const [loadError, setLoadError] = useState('')
+  const [patientId, setPatientId] = useState('')
+  const [type, setType] = useState('follow_up')
+  const [date, setDate] = useState(localDateKey())
+  const [time, setTime] = useState('10:00')
+  const [reason, setReason] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [idemKey] = useState(() => newId())
+
+  useEffect(() => {
+    let live = true
+    Promise.all([
+      apiFetch('/api/vigil/patients?limit=500'),
+      apiFetch('/api/vigil/discharged?limit=200'),
+    ]).then(([admitted, discharged]) => {
+      if (!live) return
+      const cutoff = Date.now() - RECENT_DISCHARGE_DAYS * 86_400_000
+      const recent = (Array.isArray(discharged) ? discharged : []).filter((p: BookablePatient) => {
+        if (!p.discharged_at) return false
+        const t = parseUTC(String(p.discharged_at)).getTime()
+        return Number.isFinite(t) && t >= cutoff
+      })
+      setPatients({ admitted: Array.isArray(admitted) ? admitted : [], discharged: recent })
+    }).catch(() => { if (live) setLoadError('Could not load the patient list.') })
+    return () => { live = false }
+  }, [])
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!patientId) { setError('Choose a patient.'); return }
+    setSaving(true)
+    setError('')
+    try {
+      const res = await fetch('/api/appointments', {
+        method: 'POST',
+        credentials: 'include',
+        headers: buildHeaders('POST', { 'Idempotency-Key': idemKey }),
+        body: JSON.stringify({
+          patient_id: patientId, appointment_type: type,
+          scheduled_date: date, scheduled_time: time, reason: reason.trim() || null,
+        }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        const detail = typeof body?.detail === 'string' ? body.detail : body?.detail?.message
+        throw new Error(detail || `Could not book (error ${res.status}).`)
+      }
+      onBooked()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not book.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form
+      aria-label="Book an appointment"
+      onSubmit={submit}
+      className="glass-card"
+      style={{ padding: '14px 16px', marginBottom: 20, display: 'grid', gap: 12,
+               gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', alignItems: 'end' }}
+    >
+      <label style={FIELD_STYLE}>
+        Patient
+        <select style={INPUT_STYLE} value={patientId} onChange={e => setPatientId(e.target.value)} required>
+          <option value="">{patients ? 'Choose a patient' : 'Loading patients...'}</option>
+          {patients && patients.admitted.length > 0 && (
+            <optgroup label="On the ward">
+              {patients.admitted.map(p => (
+                <option key={p.id} value={p.id}>{p.name}{p.bed ? `, bed ${p.bed}` : ''}</option>
+              ))}
+            </optgroup>
+          )}
+          {patients && patients.discharged.length > 0 && (
+            <optgroup label={`Discharged in the last ${RECENT_DISCHARGE_DAYS} days`}>
+              {patients.discharged.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </optgroup>
+          )}
+        </select>
+      </label>
+      <label style={FIELD_STYLE}>
+        Type
+        <select style={INPUT_STYLE} value={type} onChange={e => setType(e.target.value)}>
+          {APPOINTMENT_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+        </select>
+      </label>
+      <label style={FIELD_STYLE}>
+        Date
+        <input style={INPUT_STYLE} type="date" value={date} min={localDateKey()} onChange={e => setDate(e.target.value)} required />
+      </label>
+      <label style={FIELD_STYLE}>
+        Time
+        <input style={INPUT_STYLE} type="time" value={time} onChange={e => setTime(e.target.value)} required />
+      </label>
+      <label style={{ ...FIELD_STYLE, gridColumn: '1 / -1' }}>
+        Reason
+        <input style={INPUT_STYLE} type="text" value={reason} maxLength={2000}
+               placeholder="What the visit is for" onChange={e => setReason(e.target.value)} />
+      </label>
+      {(error || loadError) && (
+        <p role="alert" style={{ gridColumn: '1 / -1', margin: 0, fontSize: '0.85rem', color: 'var(--status-danger-text)' }}>
+          {error || loadError}
+        </p>
+      )}
+      <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+        <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Booking...' : 'Book appointment'}</button>
+      </div>
+    </form>
+  )
 }
 
 /** A YYYY-MM-DD key as a LOCAL calendar date. new Date('2026-10-03') is UTC
@@ -77,6 +238,7 @@ export default function AppointmentsPanel() {
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [booking, setBooking] = useState(false)
 
   const fetchAppointments = useCallback(async () => {
     try {
@@ -108,7 +270,8 @@ export default function AppointmentsPanel() {
     )
   }
 
-  // Group by date, keeping the server's date-then-time order.
+  // Group by date, keeping the server's order: date, then the sickest patient
+  // first (highest NEWS2 of the latest vitals), then time.
   const grouped = appointments.reduce<Record<string, Appointment[]>>((acc, a) => {
     (acc[a.date] ||= []).push(a)
     return acc
@@ -121,13 +284,27 @@ export default function AppointmentsPanel() {
     appointments.filter(a => a.acuity === 'critical').map(a => a.patient_id),
   ).size
   const patientRequests = appointments.filter(a => a.origin === 'patient').length
+  // The list is the next 7 days already, so every row counts.
+  const postDischargeChecks = appointments.filter(a => a.type_key === 'post_discharge_check').length
 
   return (
     <div className="forecast-section animate-fade-in">
       <div style={{ marginBottom: 24 }}>
         <h2 className="detail__section-title" style={{ fontSize: '1.4rem' }}>Booked appointments</h2>
-        <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Appointments booked for the next 7 days.</p>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', margin: 0 }}>Appointments booked for the next 7 days.</p>
+          {!booking && (
+            <button type="button" className="btn-primary" onClick={() => setBooking(true)}>Book appointment</button>
+          )}
+        </div>
       </div>
+
+      {booking && (
+        <BookingForm
+          onClose={() => setBooking(false)}
+          onBooked={() => { setBooking(false); fetchAppointments() }}
+        />
+      )}
 
       {/* Summary strip */}
       <div className="forecast-kpi-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '24px' }}>
@@ -147,7 +324,13 @@ export default function AppointmentsPanel() {
           label="Critical patients"
           value={criticalPatients}
           accent="var(--status-danger-text)"
-          subtitle="Latest risk score critical"
+          subtitle="Latest NEWS2 critical"
+        />
+        <MetricCard
+          label="Post-discharge checks"
+          value={postDischargeChecks}
+          accent="var(--text-primary)"
+          subtitle="Due in the next 7 days"
         />
         <MetricCard
           label="Patient requests"
@@ -210,7 +393,7 @@ export default function AppointmentsPanel() {
                 return (
                   <div key={appt.id ?? `${appt.patient_id}-${i}`} style={{
                     display: 'grid',
-                    gridTemplateColumns: '64px 1fr',
+                    gridTemplateColumns: '76px 1fr',
                     gap: 10,
                     padding: '8px 10px',
                     borderRadius: 8,
@@ -224,8 +407,8 @@ export default function AppointmentsPanel() {
                         fontSize: 'var(--text-xs)', fontWeight: 600, whiteSpace: 'nowrap',
                         padding: '1px 4px', borderRadius: 4,
                         background: `color-mix(in srgb, ${acTint} 12%, transparent)`, color: acText,
-                      }}>
-                        {scored ? appt.acuity!.charAt(0).toUpperCase() + appt.acuity!.slice(1) : 'Not scored'}
+                      }} title={typeof appt.news2 === 'number' ? `NEWS2 ${appt.news2} (${appt.acuity})` : 'NEWS2 not recorded'}>
+                        {bandText(appt)}
                       </span>
                     </div>
 
@@ -239,8 +422,8 @@ export default function AppointmentsPanel() {
                           {appt.age ?? ''}{sexShort(appt.sex, '')}
                         </span>
                       </div>
-                      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={appt.type}>
-                        <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{appt.type}</strong>
+                      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={appt.type_label ?? appt.type}>
+                        <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{appt.type_label ?? appt.type}</strong>
                       </div>
                       {appt.reason && (
                         <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={appt.reason}>

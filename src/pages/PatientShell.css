@@ -1271,6 +1271,14 @@
   color: var(--text-muted);
 }
 
+/* The care team's reason, as written. Wraps: it is the patient's only note of
+   what the visit is for. */
+.appt__upcoming-reason {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
 .appt__upcoming-cancel {
   flex-shrink: 0;
   font-size: 0.7rem;

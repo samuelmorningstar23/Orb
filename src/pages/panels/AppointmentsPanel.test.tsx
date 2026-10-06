@@ -156,3 +156,69 @@ describe('AppointmentsPanel layout (§13.7, §13.8, F142)', () => {
     }
   })
 })
+
+/* 2026-10-06: the badge is the NEWS2 band of the latest vitals WITH the
+   number; a tile counts the post-discharge checks due this week; and staff can
+   book from the panel (the POST had no caller in the app). */
+describe('AppointmentsPanel score, tile and booking form', () => {
+  it('prints the band word with the NEWS2 beside it', async () => {
+    serve([
+      appt(localDateKey(), { acuity: 'critical', news2: 9, news2_complete: true }),
+      appt(localDateKey(), { patient_id: 'PAT-B', time: '11:00', acuity: 'elevated', news2: 5, news2_complete: false }),
+    ])
+    expect(await screen.findByText('Critical 9')).toBeInTheDocument()
+    expect(screen.getByText('Elevated ≥5')).toBeInTheDocument()
+  })
+
+  it('counts the post-discharge checks due in the next 7 days', async () => {
+    serve([
+      appt(localDateKey(), { type_key: 'post_discharge_check', type_label: 'Post-discharge check' }),
+      appt(localDateKey(), { patient_id: 'PAT-B', time: '11:00', type_key: 'follow_up', type_label: 'Follow-up' }),
+    ])
+    await screen.findByText('Post-discharge checks')
+    expect(tileValue('Post-discharge checks')).toBe('1')
+    expect(screen.getByText('Due in the next 7 days')).toBeInTheDocument()
+    expect(screen.getByText('Post-discharge check')).toBeInTheDocument()
+  })
+
+  it('opens a booking form and posts the chosen type to the booking route', async () => {
+    const { fireEvent, waitFor } = await import('@testing-library/react')
+    const posted: { url: string; body: Record<string, unknown> }[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        posted.push({ url, body: JSON.parse(String(init.body)) })
+        return { ok: true, json: async () => ({ id: 'NEW' }) }
+      }
+      if (url.startsWith('/api/vigil/patients')) {
+        return { ok: true, json: async () => [{ id: 'PAT-W', name: 'Ward Patient', bed: 'GM-4' }] }
+      }
+      if (url.startsWith('/api/vigil/discharged')) {
+        return { ok: true, json: async () => [
+          { id: 'PAT-D', name: 'Home Yesterday', discharged_at: new Date(Date.now() - 86_400_000).toISOString() },
+          { id: 'PAT-OLD', name: 'Home Long Ago', discharged_at: '2020-01-01 10:00:00' },
+        ] }
+      }
+      return { ok: true, json: async () => [] }
+    }))
+    render(<AppointmentsPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Book appointment' }))
+    const form = await screen.findByRole('form', { name: 'Book an appointment' })
+    await screen.findByRole('option', { name: 'Ward Patient, bed GM-4' })
+    expect(screen.getByRole('option', { name: 'Home Yesterday' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Home Long Ago' })).toBeNull()
+    for (const label of ['Follow-up', 'Medication review', 'Post-discharge check', 'Other']) {
+      expect(screen.getByRole('option', { name: label })).toBeInTheDocument()
+    }
+    fireEvent.change(screen.getByLabelText('Patient'), { target: { value: 'PAT-D' } })
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'post_discharge_check' } })
+    fireEvent.change(screen.getByLabelText('Time'), { target: { value: '23:59' } })
+    fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'Wound check' } })
+    fireEvent.submit(form)
+    await waitFor(() => expect(posted).toHaveLength(1))
+    expect(posted[0].url).toBe('/api/appointments')
+    expect(posted[0].body).toMatchObject({
+      patient_id: 'PAT-D', appointment_type: 'post_discharge_check',
+      scheduled_date: localDateKey(), scheduled_time: '23:59', reason: 'Wound check',
+    })
+  })
+})

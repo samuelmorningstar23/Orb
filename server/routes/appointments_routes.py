@@ -41,6 +41,7 @@ from permissions import (
 )
 from database import db_session
 from services.audit_service import log_audit_event
+from services.appointment_types import APPOINTMENT_TYPES, parse_type, type_key, type_label
 
 router = APIRouter(prefix="/api/appointments", tags=["appointments"])
 
@@ -119,6 +120,10 @@ def _serialize(row: sqlite3.Row) -> dict:
         "scheduled_date": row["scheduled_date"],
         "scheduled_time": row["scheduled_time"],
         "appointment_type": row["appointment_type"],
+        # One of services.appointment_types.APPOINTMENT_TYPES. An old free-text
+        # type reads as "other" here, and its own text stays in the label.
+        "appointment_type_key": type_key(row["appointment_type"]),
+        "appointment_type_label": type_label(row["appointment_type"]),
         "reason": row["reason"],
         "status": row["status"],
         "created_at": row["created_at"],
@@ -354,6 +359,18 @@ def book_appointment(
     if len(appointment_type) > _MAX_TYPE_LEN:
         raise HTTPException(status_code=422,
                             detail=f"appointment_type exceeds {_MAX_TYPE_LEN} characters")
+    # A clinician books one of the fixed types (services/appointment_types.py).
+    # Free text made the list impossible to count by type. The stored value is
+    # the label, the spelling the column has always defaulted to. A patient's
+    # own wording is not refused: their branch below files it in the reason.
+    if role != "patient":
+        key = parse_type(data.appointment_type)
+        if key is None:
+            raise HTTPException(
+                status_code=422,
+                detail="appointment_type must be one of: " + ", ".join(APPOINTMENT_TYPES),
+            )
+        appointment_type = APPOINTMENT_TYPES[key]
     reason = data.reason
     if reason is not None:
         reason = str(reason).strip() or None

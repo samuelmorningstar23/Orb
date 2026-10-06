@@ -948,32 +948,76 @@ def get_appointments(days_ahead: int = 7, department: str | None = None) -> list
         params.append(department.strip())
     sql += " ORDER BY ap.scheduled_date, ap.scheduled_time, p.name"
 
+    # The badge is the NEWS2 of the patient's latest vitals row, scored by the
+    # Vigil board's own entry point (vigil_service.score_vitals_row) on the
+    # patient's own SpO2 scale. It came off risk_scores, which the board stopped
+    # reading on 3 October because the simulator and the Scribe lane write
+    # vitals with no risk row, so it went stale.
+    from services.appointment_types import type_key, type_label
+    from services.vigil_service import score_vitals_row
+
     with db_session() as db:
         booked = db.execute(sql, params).fetchall()
-        appointments = []
+        latest: dict[str, tuple] = {}
         for b in booked:
-            r = db.execute(
-                "SELECT level FROM risk_scores WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 1",
-                (b["patient_id"],),
+            pid = b["patient_id"]
+            if pid in latest:
+                continue
+            v = db.execute(
+                "SELECT * FROM vitals WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 1",
+                (pid,),
             ).fetchone()
-            appointments.append({
-                "id": b["id"],
-                "date": b["scheduled_date"],
-                "time": b["scheduled_time"],
-                "patient_id": b["patient_id"],
-                "patient_name": b["name"],
-                "age": b["age"],
-                "sex": b["sex"],
-                "ward": b["ward"],
-                "bed": b["bed"],
-                "diagnosis": b["diagnosis"],
-                "type": b["appointment_type"] or "Follow-up",
-                "reason": b["reason"],
-                "origin": b["origin"] or "staff",
-                "department": b["department"],
-                # The latest real risk score, or None. Never defaulted to
-                # "stable": a patient nobody has scored is not a stable patient.
-                "acuity": r["level"] if r else None,
-                "source": "booked",
-            })
+            scale = db.execute(
+                "SELECT on_scale_2 FROM patients WHERE id = ?", (pid,),
+            ).fetchone()
+            latest[pid] = (dict(v) if v else None,
+                           bool(scale["on_scale_2"]) if scale and scale["on_scale_2"] is not None else False)
+
+    # Scored after the session closes: the CfC overlay reads the vitals history
+    # on its own connection.
+    scores: dict[str, tuple] = {}
+    for pid, (vitals, on_scale_2) in latest.items():
+        news2 = score_vitals_row(vitals, patient_id=pid, on_scale_2=on_scale_2)
+        scores[pid] = (news2, vitals["timestamp"] if vitals else None)
+
+    appointments = []
+    for b in booked:
+        news2, news2_at = scores.get(b["patient_id"], (None, None))
+        appointments.append({
+            "id": b["id"],
+            "date": b["scheduled_date"],
+            "time": b["scheduled_time"],
+            "patient_id": b["patient_id"],
+            "patient_name": b["name"],
+            "age": b["age"],
+            "sex": b["sex"],
+            "ward": b["ward"],
+            "bed": b["bed"],
+            "diagnosis": b["diagnosis"],
+            "type": b["appointment_type"] or "Follow-up",
+            # One of services.appointment_types; an old free-text type is
+            # "other" and keeps its own text in type_label.
+            "type_key": type_key(b["appointment_type"]),
+            "type_label": type_label(b["appointment_type"]),
+            "reason": b["reason"],
+            "origin": b["origin"] or "staff",
+            "department": b["department"],
+            # The band of the latest vitals, or None. Never defaulted to
+            # "stable": a patient nobody has scored is not a stable patient.
+            "acuity": news2["level"] if news2 else None,
+            "news2": news2["raw_news2"] if news2 else None,
+            "news2_complete": news2.get("complete") if news2 else None,
+            "news2_at": news2_at,
+            "source": "booked",
+        })
+    # Within a day the sickest patient comes first, then by time: the nurse
+    # planning the day sees who needs looking at before who comes earliest.
+    # Not scored sorts last in its day.
+    appointments.sort(key=lambda a: (
+        a["date"],
+        0 if a["news2"] is not None else 1,
+        -(a["news2"] or 0),
+        a["time"] or "",
+        a["patient_name"] or "",
+    ))
     return appointments

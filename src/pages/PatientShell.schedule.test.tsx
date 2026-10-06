@@ -102,3 +102,28 @@ describe('record download', () => {
     expect(document.body.textContent).not.toContain('FHIR')
   })
 })
+
+/* 2026-10-06: an appointment the care team booked shows its reason as they
+   wrote it, under the type in plain words. */
+describe('upcoming appointments', () => {
+  it('shows the reason as written', async () => {
+    vi.resetModules()
+    vi.doMock('../api/client', () => ({
+      getBridgeStatus: () => Promise.resolve({ patient_name: 'Raj Patel', status: 'stable', status_message: 'Monitoring.' }),
+      getBridgeReports: () => reports(),
+      askBridge: vi.fn(),
+      apiFetch: () => Promise.resolve({ appointments: [{
+        id: 'A1', patient_id: 'PAT1', booked_by_user_id: 'D1', scheduled_date: '2026-10-09',
+        scheduled_time: '10:00', appointment_type: 'Post-discharge check',
+        appointment_type_label: 'Post-discharge check', reason: 'Check the wound and take out the stitches',
+        status: 'booked', created_at: '2026-10-02', origin: 'staff', department: null,
+      }] }),
+    }))
+    const { default: Shell } = await import('./PatientShell')
+    vi.setSystemTime(new Date(2026, 9, 2, 12, 0))
+    render(<Shell />)
+    expect(await screen.findByText('Check the wound and take out the stitches')).toBeInTheDocument()
+    expect(screen.getByText('Post-discharge check')).toBeInTheDocument()
+    vi.doUnmock('../api/client')
+  })
+})
