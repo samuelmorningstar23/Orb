@@ -2951,7 +2951,10 @@ def _fresh_risk_and_observations(db, patient_id: str) -> tuple[dict | None, list
         # Unassessed ACVPU / O2 pass THROUGH as None (see _assemble_patient_context).
         cons = v["consciousness"] if "consciousness" in keys else None
         o2 = bool(v["on_oxygen"]) if "on_oxygen" in keys and v["on_oxygen"] is not None else None
-        from services.vigil_service import compute_news2
+        from services.vigil_service import compute_news2, scoring_enabled
+        # Scoring switched off (the Orb Ward Record): no risk block at all.
+        if not scoring_enabled():
+            return None, list(rows)
         n = compute_news2(v["heart_rate"], v["systolic_bp"], v["respiratory_rate"],
                           v["temperature"], v["spo2"], cons, o2, on_scale_2=scale2)
         # ONE COMPUTATION, ONE SET OF NUMBERS. The normalized index, the band,
@@ -2990,7 +2993,11 @@ def _authoritative_news2_line(db, patient_id: str, name: str | None = None) -> s
     Returns None when there is no observation to score — deliberately, so the
     caller appends nothing rather than a zero, which would read as "this patient
     scores nothing" instead of "we have not measured them".
+    Also None while scoring is switched off (the Orb Ward Record).
     """
+    from services.vigil_service import scoring_enabled
+    if not scoring_enabled():
+        return None
     try:
         v = db.execute(
             "SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
@@ -3137,7 +3144,10 @@ def _assemble_patient_context(db, patient_id: str, dept: str | None) -> dict | N
     else:
         context["completeness"]["missing"].append("No recent vitals")
         
-    risk = db.execute("SELECT * FROM risk_scores WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 1", (patient_id,)).fetchone()
+    # Scoring switched off (the Orb Ward Record): no stored band is read and
+    # no NEWS2 is computed, so the context carries no risk block.
+    from services.vigil_service import scoring_enabled as _scoring_enabled
+    risk = db.execute("SELECT * FROM risk_scores WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 1", (patient_id,)).fetchone() if _scoring_enabled() else None
     if risk:
         context["completeness"]["has_risk_score"] = True
         context["risk"] = {

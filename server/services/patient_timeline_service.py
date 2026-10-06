@@ -221,6 +221,19 @@ def _r_alert(r: dict) -> dict:
     }
 
 
+@dataclass(frozen=True)
+class _ScoredSource(_Source):
+    """A stream that IS a score: the stored critical NEWS2 band. While scoring
+    is switched off (ORB_SCORING_ENABLED, the Orb Ward Record) it names no
+    table, so available_sources leaves it out of the rail and the count the
+    same way it leaves out a stream whose table does not exist."""
+
+    @property
+    def base_table(self) -> str:
+        from services.vigil_service import scoring_enabled
+        return super().base_table if scoring_enabled() else ""
+
+
 def _r_medication(r: dict) -> dict:
     dose = " ".join(
         str(x) for x in (r.get("dosage"), r.get("route"), r.get("frequency")) if x
@@ -406,7 +419,7 @@ SOURCES: tuple[_Source, ...] = (
                      "u.name AS actor_name"),
         render=_r_imaging,
     ),
-    _Source(
+    _ScoredSource(
         kind="alert",
         from_sql="risk_scores rs",
         patient_col="rs.patient_id",

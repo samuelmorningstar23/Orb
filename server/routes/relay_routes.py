@@ -496,7 +496,19 @@ async def transition_sage_action(
 # transition endpoint above, the per-action confirm lock, the medication safety
 # gate and the existing shadow pairing. Nothing about execution is duplicated
 # here, because nothing here executes.
-@router.get("/channels/{channel_id}/sage_assessments")
+def _assessment_switched_on() -> None:
+    """The alert assessment is a NEWS2 breakdown (Tier 1) and a model's draft
+    (Tier 2). With scoring switched off (ORB_SCORING_ENABLED, the Orb Ward
+    Record) or the models switched off (ORB_MODELS_ENABLED), its routes answer
+    404 here, before any assessment is read or rendered."""
+    from services.model_switch import SWITCHED_OFF_DETAIL, models_enabled
+    from services.vigil_service import scoring_enabled
+    if not scoring_enabled() or not models_enabled():
+        raise HTTPException(status_code=404, detail=SWITCHED_OFF_DETAIL)
+
+
+@router.get("/channels/{channel_id}/sage_assessments",
+            dependencies=[Depends(_assessment_switched_on)])
 async def get_sage_assessments(
     channel_id: str,
     message_id: int | None = None,
@@ -513,7 +525,8 @@ async def get_sage_assessments(
     return await run_db(sage_assessment_service.list_for_channel, channel_id, message_id)
 
 
-@router.get("/sage_assessments/{assessment_id}")
+@router.get("/sage_assessments/{assessment_id}",
+            dependencies=[Depends(_assessment_switched_on)])
 async def get_sage_assessment(
     assessment_id: str,
     user: dict = Depends(require_permission("relay.read")),
@@ -535,7 +548,8 @@ async def get_sage_assessment(
     return sage_assessment_service.render(row)
 
 
-@router.post("/channels/{channel_id}/sage_assessments/{assessment_id}/transition")
+@router.post("/channels/{channel_id}/sage_assessments/{assessment_id}/transition",
+             dependencies=[Depends(_assessment_switched_on)])
 async def transition_sage_assessment(
     channel_id: str,
     assessment_id: str,

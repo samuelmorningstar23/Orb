@@ -121,9 +121,12 @@ def test_scoring_off_the_escalation_sweep_raises_nothing_from_a_clerk_set(
 def test_scoring_off_evaluate_observation_opens_no_chain(monkeypatch, quiet_relay):
     from services import escalation_service
     from services.vigil_service import compute_news2
+    # Scored before the switch goes off: with it off compute_news2 itself
+    # refuses (vigil_service.ScoringSwitchedOff), so this hands the chain a
+    # score from an older lane and checks the chain still opens nothing.
+    news2 = compute_news2(125, 95, 26, 39.2, 90, "alert", False)
     monkeypatch.setattr(config, "SCORING_ENABLED", False)
     pid = _mk_patient(DEPT)
-    news2 = compute_news2(125, 95, 26, 39.2, 90, "alert", False)
     assert escalation_service.evaluate_observation(pid, news2) is None
     assert _chains(pid) == 0
 

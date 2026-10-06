@@ -32,7 +32,7 @@ from services.ingestion_adapters import (
     HL7Adapter,
     JSONAdapter,
 )
-from services.vigil_service import news2_reason_line, score_vitals_row
+from services.vigil_service import news2_reason_line, score_vitals_row, scoring_enabled
 from services.bot_service import VIGIL_BOT_ID
 from services.vital_charting import as_charted, vitals_line
 from services.vitals_carry import carry_forward, dump_carried
@@ -898,6 +898,11 @@ async def _insert_vitals(
     # row in the live path, where a torch forward pass per message does not
     # belong. Every surface that DISPLAYS this patient re-scores through
     # score_vitals_row and gets the overlay there.
+    #
+    # Scoring switched off (ORB_SCORING_ENABLED off, the Orb Ward Record): the
+    # reading stored above is pushed to open charts with risk None, and nothing
+    # is scored, written to risk_scores, alerted or escalated.
+    scoring = scoring_enabled()
     risk = score_vitals_row(
         {
             "heart_rate": hr, "systolic_bp": sbp, "respiratory_rate": rr,
@@ -906,24 +911,25 @@ async def _insert_vitals(
         },
         on_scale_2=on_scale_2,
         overlay=False,
-    )
+    ) if scoring else None
 
-    # Store risk score
-    risk_score_id = await run_db(_persist_risk_score, patient_id, risk)
-        
-    await run_db(
-        log_audit_event,
-        correlation_id=correlation_id,
-        event_category="ingestion",
-        action_type="news2_recomputed",
-        outcome="success",
-        patient_id=patient_id,
-        target_type="risk_scores",
-        target_id=str(risk_score_id),
-        source_type=source_label,
-        source_event_id=event_id,
-        summary_message=f"NEWS2 recomputed: {news2_description(risk)}"
-    )
+    if scoring:
+        # Store risk score
+        risk_score_id = await run_db(_persist_risk_score, patient_id, risk)
+
+        await run_db(
+            log_audit_event,
+            correlation_id=correlation_id,
+            event_category="ingestion",
+            action_type="news2_recomputed",
+            outcome="success",
+            patient_id=patient_id,
+            target_type="risk_scores",
+            target_id=str(risk_score_id),
+            source_type=source_label,
+            source_event_id=event_id,
+            summary_message=f"NEWS2 recomputed: {news2_description(risk)}"
+        )
 
     # Emit Socket.IO update (identical shape to bot_service)
     payload = {
@@ -953,6 +959,9 @@ async def _insert_vitals(
             await emit_patient_vitals("vitals:update", payload)
         except Exception as e:
             logger.warning("Socket.IO emit error: %s", e)
+
+    if not scoring:
+        return 1
 
     # The row this reading became, so the alert and the escalation chain can
     # name it (read here because _persist_vitals_row's return is unchanged).

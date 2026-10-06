@@ -56,6 +56,8 @@ def search_patients(
     dept_clause = "AND a.department = ?" if dept else ""
     dept_param = (dept,) if dept else ()
 
+    from services.vigil_service import scoring_enabled
+    _scoring = scoring_enabled()
     with db_session() as db:
         rows = db.execute(
             f"""SELECT p.id, p.name, p.mrn, p.bed, p.ward, p.diagnosis,
@@ -97,7 +99,8 @@ def search_patients(
                 "mrn": r["mrn"],
                 "bed": r["bed"],
                 "ward": r["ward"],
-                "risk_level": r["risk_level"],
+                # No stored band while scoring is switched off (Ward Record).
+                "risk_level": r["risk_level"] if _scoring else None,
                 "diagnosis": r["diagnosis"],
             }
             for r in rows

@@ -200,8 +200,17 @@ class WardNarrator:
                    WHERE state = 'active' AND severity IN ('critical', 'warning')"""
             ).fetchone()["n"]
 
+        # Scoring switched off (the Orb Ward Record): scored_admitted_patients
+        # scored nobody, so there is no risk mix and no watchlist to show. The
+        # mix is None rather than four zeros, which would read as "no one is
+        # unwell"; `scoring_enabled` tells the screen why.
+        from services.vigil_service import scoring_enabled
+        scoring = scoring_enabled()
+        if not scoring:
+            risk_dist, risk_by_dept, watchlist = None, None, []
         return {
             "census": census,
+            "scoring_enabled": scoring,
             "risk_distribution": risk_dist,
             "watchlist": watchlist[:WATCHLIST_LIMIT],
             "recent_events": recent_events,
@@ -220,6 +229,10 @@ class WardNarrator:
     async def _narrate(self, snapshot: dict) -> str | None:
         """One debounced background-priority MedGemma pass over the snapshot.
         Returns None on any failure — the deterministic floor stands alone."""
+        # Scoring switched off: the prose would be about a risk mix and a
+        # watchlist that do not exist, so the floor stands alone.
+        if snapshot.get("scoring_enabled") is False:
+            return None
         from services.gpu_coordinator import PRIORITY_BACKGROUND
         from services.llm_queue_service import llm_queue
 
@@ -453,7 +466,9 @@ class WardNarrator:
         # The department's own risk mix, all four levels, from the same scan. A
         # department with no scored patient is all zeros, not the fallback.
         # Older snapshots without the breakdown fall back to the watchlist.
-        if _RISK_BY_DEPT in snap:
+        if public.get("scoring_enabled") is False:
+            scoped["risk_distribution"] = None
+        elif _RISK_BY_DEPT in snap:
             scoped["risk_distribution"] = dict(
                 (snap.get(_RISK_BY_DEPT) or {}).get(department)
                 or {"critical": 0, "elevated": 0, "moderate": 0, "stable": 0}

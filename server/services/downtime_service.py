@@ -32,7 +32,7 @@ from database import db_session
 # NEWS2 is a pure, rule-based function (no network, no LLM, no torch). We call it
 # directly rather than vigil_service.get_patient_risk() so capture never pulls in
 # the optional CfC/torch overlay or any I/O beyond the DB.
-from services.vigil_service import compute_news2
+from services.vigil_service import compute_news2, scoring_enabled
 from services.news2_text import news2_description, news2_qualifiers
 from services.hospital_time import hospital_stamp
 from services.vital_charting import charted_text
@@ -65,7 +65,8 @@ def _row_to_dict(row) -> dict:
 
 
 def _build_summary(demo: dict, allergies: list, problems: list,
-                   medications: list, news2: dict | None) -> str:
+                   medications: list, news2: dict | None,
+                   has_vitals: bool = False) -> str:
     """One-line, human-readable summary for the snapshot list / banner."""
     name = demo.get("name") or "Unknown patient"
     mrn = demo.get("mrn") or "—"
@@ -95,6 +96,9 @@ def _build_summary(demo: dict, allergies: list, problems: list,
         # badge and the Relay alerts use, so it also says when a single
         # parameter scores 3 and when the set was incomplete (a minimum).
         parts.append(news2_description(news2))
+    elif has_vitals:
+        # Scoring switched off (the Orb Ward Record): the set is there, no score.
+        parts.append("vitals recorded")
     else:
         parts.append("no vitals recorded")
     return ". ".join(parts) + "."
@@ -267,9 +271,17 @@ def capture_snapshot(patient_id: str, created_by: str = "auto") -> dict:
                 db, patient_id, limit=_RECENT_LAB_RESULTS)
         ]
 
+    # Scoring switched off (ORB_SCORING_ENABLED off, the Orb Ward Record): no
+    # NEWS2, no stored risk rows and no escalation chain go into the snapshot,
+    # so neither the downtime page nor the printed pack can show one.
+    scoring = scoring_enabled()
+    if not scoring:
+        risk_scores = []
+        open_escalations = []
+
     # ── NEWS2 from the latest vitals row (rule-based, in-process, offline-safe) ──
     news2: dict | None = None
-    if latest_vitals is not None:
+    if latest_vitals is not None and scoring:
         news2 = compute_news2(
             latest_vitals.get("heart_rate"),
             latest_vitals.get("systolic_bp"),
@@ -320,7 +332,8 @@ def capture_snapshot(patient_id: str, created_by: str = "auto") -> dict:
             "lab_results": len(lab_results),
         },
     }
-    summary = _build_summary(demo, allergies, problems, medications, news2)
+    summary = _build_summary(demo, allergies, problems, medications, news2,
+                             has_vitals=latest_vitals is not None)
 
     with db_session() as db:
         cur = db.execute(
@@ -770,10 +783,20 @@ def _envelope(row) -> dict:
         parsed = json.loads(raw) if raw else None
     except (json.JSONDecodeError, TypeError):
         parsed = None
+    summary = d.get("summary")
+    if isinstance(parsed, dict) and not scoring_enabled():
+        # A snapshot taken before scoring was switched off still holds its
+        # score. While it is off nothing reads one back: no NEWS2, no stored
+        # risk rows, no escalation chain, and the summary is said again
+        # without the score.
+        parsed = {**parsed, "news2": None, "recent_risk_scores": [], "open_escalations": []}
+        summary = _build_summary(parsed.get("demographics") or {}, parsed.get("allergies") or [],
+                                 parsed.get("problems") or [], parsed.get("medications") or [],
+                                 None, has_vitals=bool(parsed.get("latest_vitals")))
     return {
         "id": d.get("id"),
         "patient_id": d.get("patient_id"),
-        "summary": d.get("summary"),
+        "summary": summary,
         "created_by": d.get("created_by"),
         "created_by_name": d.get("created_by_name"),
         "created_at": d.get("created_at"),
@@ -1131,7 +1154,9 @@ def _render_vitals_news2(snap: dict) -> str:
     lv = snap.get("latest_vitals")
     if not lv:
         return "<p><i>No vitals recorded at capture time.</i></p>"
-    news2 = snap.get("news2") or {}
+    # Scoring switched off: no NEWS2 column at all, whatever the snapshot holds.
+    scoring = scoring_enabled()
+    news2 = (snap.get("news2") or {}) if scoring else {}
     band = (
         f"{_e(news2.get('raw_news2'))} ({_e(news2.get('level'))})"
         if news2.get("raw_news2") is not None else "—"
@@ -1152,7 +1177,9 @@ def _render_vitals_news2(snap: dict) -> str:
         spo2 += _SCALE_2_SPO2
     return (
         "<table><thead><tr><th>HR</th><th>BP</th><th>SpO₂</th><th>RR</th>"
-        "<th>Temp</th><th>ACVPU</th><th>NEWS2</th><th>Recorded</th></tr></thead>"
+        "<th>Temp</th><th>ACVPU</th>"
+        + ("<th>NEWS2</th>" if scoring else "")
+        + "<th>Recorded</th></tr></thead>"
         "<tbody><tr>"
         f"<td>{_v('heart_rate')}</td>"
         f"<td>{_v('systolic_bp')}/{_v('diastolic_bp')}</td>"
@@ -1160,8 +1187,8 @@ def _render_vitals_news2(snap: dict) -> str:
         f"<td>{_v('respiratory_rate')}</td>"
         f"<td>{_v('temperature', 1)}</td>"
         f"<td>{_e(lv.get('consciousness'))}</td>"
-        f"<td><b>{band}</b></td>"
-        f"<td>{_e(_when(lv.get('timestamp')))}</td>"
+        + (f"<td><b>{band}</b></td>" if scoring else "")
+        + f"<td>{_e(_when(lv.get('timestamp')))}</td>"
         "</tr></tbody></table>"
     )
 
@@ -1209,7 +1236,8 @@ def _render_patient_page(item: dict, index: int, total: int,
         # Never "NKDA": an empty list is also a patient nobody has asked yet.
         allergy_html = '<div class="wp-nkda">No allergies recorded. Confirm with the patient.</div>'
 
-    esc = item.get("escalation")
+    scoring = scoring_enabled()
+    esc = item.get("escalation") if scoring else None
     if esc:
         esc_text = (
             f"OPEN ({_e(esc.get('status'))}), tier {_e(esc.get('current_tier'))}"
@@ -1277,9 +1305,10 @@ def _render_patient_page(item: dict, index: int, total: int,
         "</div></div>"
         f'<div class="wp-allergies"><h3>Allergies</h3>{allergy_html}</div>'
         '<div class="wp-status-line">'
-        f"<b>Code status:</b> {_e(_code_status_text(item.get('code_status')))} &nbsp;·&nbsp; "
-        f"<b>Escalation:</b> {esc_text}</div>"
-        f"<h3>Latest vitals + NEWS2</h3>{_render_vitals_news2(snap)}"
+        f"<b>Code status:</b> {_e(_code_status_text(item.get('code_status')))}"
+        + (f" &nbsp;·&nbsp; <b>Escalation:</b> {esc_text}" if scoring else "")
+        + "</div>"
+        f"<h3>{'Latest vitals + NEWS2' if scoring else 'Latest vitals'}</h3>{_render_vitals_news2(snap)}"
         f"<h3>Active medications ({len(meds)})</h3>{meds_html}"
         f"<h3>Active problems ({len(problems)})</h3><p>{problems_html}</p>"
         f"<h3>Recent lab results</h3>{_render_labs(snap)}"
@@ -1348,10 +1377,11 @@ def _render_ward_pack(ward: str, items: list[dict], generated_at: str,
             logger.warning("[Downtime] ward pack staff names unavailable: %s", e)
             names = {}
     index_rows = ""
+    scoring = scoring_enabled()
     for item in items:
         env = item.get("envelope")
         snap = (env or {}).get("snapshot") or {}
-        news2 = snap.get("news2") or {}
+        news2 = (snap.get("news2") or {}) if scoring else {}
         band = (
             f"{_e(news2.get('raw_news2'))} ({_e(news2.get('level'))})"
             if news2.get("raw_news2") is not None else "—"
@@ -1362,7 +1392,9 @@ def _render_ward_pack(ward: str, items: list[dict], generated_at: str,
             band += _band_qualifiers_html(news2)
         index_rows += (
             f"<tr><td>{_e(item.get('bed'))}</td><td>{_e(item.get('name'))}</td>"
-            f"<td>{_e(item.get('mrn'))}</td><td>{band}</td>"
+            f"<td>{_e(item.get('mrn'))}</td>"
+            + (f"<td>{band}</td>" if scoring else "")
+            + 
             f"<td>{_e(_when((env or {}).get('created_at')), dash='NO SNAPSHOT')}</td></tr>"
         )
 
@@ -1383,8 +1415,9 @@ def _render_ward_pack(ward: str, items: list[dict], generated_at: str,
         f"<p>Generated {_e(_when(generated_at))} · <b>{total} admitted patient(s)</b> · "
         "point-in-time local copy. Each patient page carries its own snapshot "
         "capture time. Anything after that time is not in this pack.</p>"
-        "<table><thead><tr><th>Bed</th><th>Patient</th><th>MRN</th><th>NEWS2</th>"
-        f"<th>Snapshot captured</th></tr></thead><tbody>{index_rows}</tbody></table>"
+        "<table><thead><tr><th>Bed</th><th>Patient</th><th>MRN</th>"
+        + ("<th>NEWS2</th>" if scoring else "")
+        + f"<th>Snapshot captured</th></tr></thead><tbody>{index_rows}</tbody></table>"
         "</section>"
         f"{pages}</body></html>"
     )

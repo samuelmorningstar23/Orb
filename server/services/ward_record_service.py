@@ -701,6 +701,57 @@ def _median(values: list[float]) -> Optional[float]:
     return round(statistics.median(values), 1) if values else None
 
 
+def due_now(ward: str, *, now: Optional[datetime] = None, db: Any = None) -> Optional[dict]:
+    """When each patient on `ward` is next due a round, by the rounds file's rule.
+
+    The nurse shift board's due time while scoring is switched off (the Orb
+    Ward Record): the ward's fixed interval only, chained from the patient's
+    arrival on the ward exactly as compute_rounds chains it, never anything
+    worked out about the patient. None when the ward has no setting, so the
+    caller says "Set the ward's observation interval" and shows no due time.
+
+    Returns {"ward", "interval_minutes", "grace_minutes", "patients": {id:
+    {"due_at", "late"}}} for every patient on the ward now. `due_at` is the
+    round still open (no set yet, its window not closed), else the next due
+    time after the last round; `late` is True when that open round is past its
+    due time plus the grace window, the same "late" the file counts."""
+    moment = now or _now()
+
+    def _work(conn) -> Optional[dict]:
+        setting = get_setting(ward, db=conn)
+        if setting is None:
+            return None
+        interval = timedelta(minutes=setting["interval_minutes"])
+        grace = timedelta(minutes=setting["grace_minutes"])
+        cols = _table_columns(conn, "vitals")
+        segments, _notes = _stay_segments(conn, setting["ward"], moment - interval,
+                                          moment, moment)
+        patients: dict[str, dict] = {}
+        for seg in segments:
+            if not seg.get("open") or seg["start"] > moment:
+                continue
+            sets = _load_sets(conn, seg["patient_id"], seg["start"],
+                              moment + timedelta(seconds=1), cols)
+            rounds = _rounds_for_segment(seg, sets, interval=interval, grace=grace,
+                                         period_start=seg["start"],
+                                         period_end=moment + interval, now=moment)
+            if not rounds:
+                due, late = seg["start"] + interval, False
+            elif rounds[-1]["outcome"] == "open":
+                due = rounds[-1]["due"]
+                late = moment > due + grace
+            else:
+                due, late = rounds[-1]["due"] + interval, False
+            patients[seg["patient_id"]] = {"due_at": due, "late": late}
+        return {"ward": setting["ward"], "interval_minutes": setting["interval_minutes"],
+                "grace_minutes": setting["grace_minutes"], "patients": patients}
+
+    if db is not None:
+        return _work(db)
+    with db_session() as conn:
+        return _work(conn)
+
+
 def compute_rounds(ward: str, start: Any, end: Any, *, now: Optional[datetime] = None,
                    include_patient_identifiers: bool = False, db: Any = None) -> dict:
     """The rounds file's content for one ward and period, as a dict.

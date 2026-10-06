@@ -323,15 +323,16 @@ def get_patient_status_simple(user_id: str) -> dict:
 
     db.close()
 
-    from services.vigil_service import score_vitals_row
+    from services.vigil_service import score_vitals_row, scoring_enabled
     from services.vital_charting import charted_text
 
     keys = patient.keys()
     on_scale_2 = bool(patient["on_scale_2"]) if "on_scale_2" in keys and patient["on_scale_2"] else False
     # overlay=False: NEWS2 only, the deterministic band; the patient's status
-    # is not the place for a model's overlay.
+    # is not the place for a model's overlay. Scoring switched off (the Orb
+    # Ward Record): nothing is scored and the plain "monitoring" message stands.
     news2 = score_vitals_row(vitals, patient_id=patient["id"], on_scale_2=on_scale_2,
-                             overlay=False) if vitals else None
+                             overlay=False) if vitals and scoring_enabled() else None
     level = (news2 or {}).get("level") or "stable"
 
     status_messages = {

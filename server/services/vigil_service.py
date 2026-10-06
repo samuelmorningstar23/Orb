@@ -340,6 +340,46 @@ _RCP_CHART_ORDER = {
 }
 
 
+# ── The boot guard: scoring switched off (Orb Ward Record) ────────────────────
+# With ORB_SCORING_ENABLED off (or ORB_WARD_RECORD on, which forces it off) no
+# NEWS2 may be computed, shown or logged anywhere. Every scorer funnels through
+# compute_news2 (the RCP table), score_vitals_row (table plus the CfC overlay)
+# or risk_for_row (the chart's entry point), and each of the three refuses with
+# ScoringSwitchedOff instead of answering. A lane that still tries to score
+# fails loudly rather than quietly putting a band on a Ward Record screen, and
+# tests/test_ward_record_profile_boot.py boots the profile and fails on any
+# such call. Callers ask scoring_enabled() first and return their no-score
+# shape (SCORING_OFF_REASON is the sentence a screen shows).
+
+#: What a screen says in place of a score while scoring is switched off.
+SCORING_OFF_REASON = "Scores are switched off on this computer."
+
+
+class ScoringSwitchedOff(RuntimeError):
+    """A scoring entry point was called while scoring is switched off."""
+
+
+#: Where each refused call came from, newest last, capped. The profile boot
+#: test reads it, because a caller that catches the exception and carries on
+#: would otherwise hide the call it made.
+SWITCHED_OFF_CALLS: list[str] = []
+_SWITCHED_OFF_CALLS_CAP = 200
+
+
+def _refuse_when_switched_off(entry: str) -> None:
+    if scoring_enabled():
+        return
+    import traceback
+    where = "".join(traceback.format_stack(limit=8)[:-2])
+    if len(SWITCHED_OFF_CALLS) < _SWITCHED_OFF_CALLS_CAP:
+        SWITCHED_OFF_CALLS.append(f"{entry}\n{where}")
+    logger.error("%s was called with scoring switched off; no score was computed. "
+                 "Caller:\n%s", entry, where)
+    raise ScoringSwitchedOff(
+        f"{entry} was called with scoring switched off "
+        "(ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)")
+
+
 # Load shedding logic will now rely on llm_queue size
 def compute_news2(hr, sbp, rr, temp, spo2, consciousness=None, on_oxygen=None,
                   on_scale_2=False) -> dict:
@@ -372,6 +412,7 @@ def compute_news2(hr, sbp, rr, temp, spo2, consciousness=None, on_oxygen=None,
     ``services.vital_charting.as_charted``). A raw RR of 20.4 is scored,
     printed and returned as 20.
     """
+    _refuse_when_switched_off("compute_news2")
     # Rebinding on purpose: below this line no branch can reach the raw float,
     # so no band, word or label can be computed from a different number than
     # the one the others use.
@@ -750,6 +791,7 @@ def score_vitals_row(vitals, *, patient_id: str | None = None,
     the patient's stored vitals history on its own connection, which from inside
     an open write transaction is the documented WAL self-deadlock.
     """
+    _refuse_when_switched_off("score_vitals_row")
     if vitals is None:
         return None
 
@@ -787,6 +829,9 @@ def risk_for_row(row, *, patient_id: str, on_scale_2: bool) -> dict:
     always been scored. `on_scale_2` has no default on purpose: a caller that
     forgets the patient's scale gets a TypeError, not a Scale 1 score.
     """
+    # The no-vitals stub below is a band too ("stable"), so this refuses
+    # before it, not only through score_vitals_row.
+    _refuse_when_switched_off("risk_for_row")
     # `not row`, not `is None`: the falsy test get_patient_risk always made.
     if not row:
         return {"score": 0, "level": "stable", "drivers": ["No vitals recorded"],
@@ -872,8 +917,7 @@ def scored_admitted_patients(department: str | None) -> list[tuple]:
     # ORB_SCORING_ENABLED off (the Orb Ward Record): no NEWS2 is computed, so
     # every triple carries news2 None and the board falls back to ward, then
     # bed, then id (ward_bed_order). Read at call time, like the write path.
-    import config
-    scoring = bool(getattr(config, "SCORING_ENABLED", True))
+    scoring = scoring_enabled()
 
     scored = []
     for p in patients:
@@ -901,9 +945,11 @@ def scoring_enabled() -> bool:
     """ORB_SCORING_ENABLED, read at call time so a test or an operator flip is
     seen at once. Off (the Orb Ward Record), no NEWS2 is computed for any
     screen that reads it here: the appointments list, the Surgical Suite day
-    list and the Command Center use it beside scored_admitted_patients."""
+    list and the Command Center use it beside scored_admitted_patients.
+    ORB_WARD_RECORD forces it off at boot (config.py)."""
     import config
-    return bool(getattr(config, "SCORING_ENABLED", True))
+    return (bool(getattr(config, "SCORING_ENABLED", True))
+            and not bool(getattr(config, "WARD_RECORD", False)))
 
 
 def ward_bed_order(patient: dict) -> tuple:

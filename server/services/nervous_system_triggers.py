@@ -757,12 +757,15 @@ def _live_vitals_payload(db, patient_id, vitals_id):
     patient's SpO2 scale. overlay=False: the CfC overlay opens its own
     connection, which inside this write transaction is the WAL self-deadlock.
     """
-    from services.vigil_service import is_latest_vitals_row, score_vitals_row
+    from services.vigil_service import is_latest_vitals_row, score_vitals_row, scoring_enabled
     from ws.realtime import vitals_update_payload
 
     if not is_latest_vitals_row(db, patient_id, vitals_id):
         return None
     row = db.execute("SELECT * FROM vitals WHERE id = ?", (vitals_id,)).fetchone()
+    # Scoring switched off (the Orb Ward Record): pushed with risk None.
+    if not scoring_enabled():
+        return vitals_update_payload(row, None, source="llm_extracted")
     prow = db.execute("SELECT on_scale_2 FROM patients WHERE id = ?", (patient_id,)).fetchone()
     risk = score_vitals_row(row, on_scale_2=bool(prow and prow["on_scale_2"]), overlay=False)
     return vitals_update_payload(row, risk, source="llm_extracted")

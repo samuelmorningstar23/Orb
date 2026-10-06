@@ -57,7 +57,7 @@ import logging
 from datetime import datetime, timezone, timedelta, date
 
 from database import db_session, run_db
-from services.vigil_service import get_vitals_trend, risk_for_row
+from services.vigil_service import get_vitals_trend, risk_for_row, scoring_enabled
 from services.hospital_time import hospital_stamp
 from services.vital_charting import charted_text
 from services.news2_text import news2_qualifiers
@@ -907,7 +907,13 @@ def render_assessment_text(block: dict | None) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 # Section builders
 # ─────────────────────────────────────────────────────────────────────────────
-def _build_illness_severity(risk: dict) -> dict:
+def _build_illness_severity(risk: dict | None) -> dict:
+    if risk is None:
+        # Scoring switched off: no severity is drafted. Every key stays on the
+        # wire, empty, so the screen tests one value and prints no line.
+        return {"severity": None, "news2": None, "news2_level": None,
+                "scoring_model": None, "spo2_scale": None, "drivers": [],
+                "text": None, "scoring_enabled": False}
     level = str(risk.get("level", "stable")).lower()
     severity = _SEVERITY_MAP.get(level, "Watcher")
     raw_news2 = risk.get("raw_news2", risk.get("raw_mews"))
@@ -979,7 +985,7 @@ UNVERIFIED_MED_LABEL = "AI-extracted, awaiting pharmacist verification"
 _UNVERIFIED_SOURCES = ("llm_extracted", "agentic")
 
 
-def _build_action_list(meds: list[dict], bundles: list[dict], risk: dict) -> dict:
+def _build_action_list(meds: list[dict], bundles: list[dict], risk: dict | None) -> dict:
     active_meds = [
         {
             "drug_name": m.get("drug_name"),
@@ -1012,8 +1018,9 @@ def _build_action_list(meds: list[dict], bundles: list[dict], risk: dict) -> dic
         for label in pending:
             outstanding_items.append(f"Pending ({label_for_bundle}): {label}")
 
-    # Severity-driven monitoring action so the list is never empty for a sick patient.
-    level = str(risk.get("level", "stable")).lower()
+    # Severity-driven monitoring action so the list is never empty for a sick
+    # patient. None while scoring is switched off: no line from a score.
+    level = str(risk.get("level", "stable")).lower() if risk is not None else None
     if level == "critical":
         outstanding_items.append("Repeat a full set of observations now and keep continuous monitoring.")
     elif level == "elevated":
@@ -1140,10 +1147,10 @@ def _contingencies(risk: dict) -> list[str]:
     return out
 
 
-def _build_situation_awareness(vitals: list[dict], trend: dict, risk: dict) -> dict:
+def _build_situation_awareness(vitals: list[dict], trend: dict, risk: dict | None) -> dict:
     latest = vitals[-1] if vitals else {}
     trend_label = trend.get("trend", "insufficient_data")
-    level = str(risk.get("level", "stable")).lower()
+    level = str(risk.get("level", "stable")).lower() if risk is not None else None
     active_deterioration = level in ("critical", "elevated") or trend_label == "deteriorating"
 
     latest_vitals = {
@@ -1170,7 +1177,9 @@ def _build_situation_awareness(vitals: list[dict], trend: dict, risk: dict) -> d
         # a broken feed — so it is printed instead of a second generic phrase.
         trend_detail = str(trend.get("reason") or "").strip() or "insufficient recent data"
 
-    contingencies = _contingencies(risk)
+    # No NEWS2 contingency lines while scoring is switched off: each one is
+    # read off a score's breakdown.
+    contingencies = _contingencies(risk) if risk is not None else []
 
     vit_text = (
         f"HR {_num(latest.get('heart_rate'))}, "
@@ -1199,10 +1208,11 @@ def _build_situation_awareness(vitals: list[dict], trend: dict, risk: dict) -> d
     }
 
 
-def _build_synthesis(patient: dict, severity: str) -> dict:
+def _build_synthesis(patient: dict, severity: str | None) -> dict:
+    who = patient.get('name', 'the patient') + (f" ({severity})" if severity else "")
     text = (
         f"Read-back required: receiving clinician to confirm understanding of "
-        f"{patient.get('name', 'the patient')} ({severity}), the action list and the "
+        f"{who}, the action list and the "
         f"contingency plans above, then record outstanding questions, their name "
         f"and the time."
     )
@@ -1232,9 +1242,11 @@ def _render_plain_text(sections: dict, patient: dict, generated_at: str) -> str:
                  f"Window: last {HANDOFF_WINDOW_HOURS}h")
     lines.append("=" * 60)
 
-    lines.append("")
-    lines.append(f"I. ILLNESS SEVERITY: {isv['severity']}")
-    lines.append(f"   {isv['text']}")
+    # No severity line at all while scoring is switched off (severity None).
+    if isv.get("severity") is not None:
+        lines.append("")
+        lines.append(f"I. ILLNESS SEVERITY: {isv['severity']}")
+        lines.append(f"   {isv['text']}")
 
     lines.append("")
     lines.append("P. PATIENT SUMMARY")
@@ -1265,9 +1277,10 @@ def _render_plain_text(sections: dict, patient: dict, generated_at: str) -> str:
     lines.append("")
     lines.append("S. SITUATION AWARENESS & CONTINGENCY")
     lines.append(f"   {sa['text']}")
-    lines.append("   Contingency planning:")
-    for c in sa["contingencies"]:
-        lines.append(f"     - {c}")
+    if sa["contingencies"]:
+        lines.append("   Contingency planning:")
+        for c in sa["contingencies"]:
+            lines.append(f"     - {c}")
 
     # The AI-drafted supplement sits BETWEEN the last I-PASS section and the
     # read-back, deliberately: the receiver signs off having seen everything
@@ -1324,8 +1337,11 @@ def build_ipass(patient_id: str, window_hours: int = HANDOFF_WINDOW_HOURS,
     # Risk scores the row this handoff PRINTS (vitals[-1]). A second "latest"
     # read was a separate query, and a reading landing between the two gave a
     # severity for a set the handoff did not show.
-    risk = risk_for_row(vitals[-1] if vitals else None, patient_id=patient_id,
-                        on_scale_2=bool(patient.get("on_scale_2") or 0))
+    # Scoring switched off (ORB_SCORING_ENABLED off): risk is None and the
+    # draft carries no severity line and no NEWS2 contingency line.
+    risk = (risk_for_row(vitals[-1] if vitals else None, patient_id=patient_id,
+                         on_scale_2=bool(patient.get("on_scale_2") or 0))
+            if scoring_enabled() else None)
     try:
         trend = get_vitals_trend(patient_id, hours=max(1, window_hours // 2))
     except Exception as e:  # pragma: no cover - defensive
@@ -1360,9 +1376,10 @@ def build_ipass(patient_id: str, window_hours: int = HANDOFF_WINDOW_HOURS,
         f"Auto-drafted I-PASS handoff for {patient.get('name')} (MRN {patient.get('mrn')}) "
         f"from the last {window_hours}h: {len(vitals)} vitals reading(s), {len(meds)} active "
         f"medication(s), {len(problems)} active problem(s), {len(allergies)} allergy record(s), "
-        f"{len(bundles)} open care bundle(s), {len(recent_notes)} recent note(s). "
-        f"Illness severity {sections['illness_severity']['severity']} "
-        f"({sections['illness_severity']['text']})."
+        f"{len(bundles)} open care bundle(s), {len(recent_notes)} recent note(s)."
+        + (f" Illness severity {sections['illness_severity']['severity']} "
+           f"({sections['illness_severity']['text']})."
+           if sections['illness_severity']['severity'] is not None else "")
     )
     if assessment:
         # The summary is stored as the note's `raw_transcript` and is read by a

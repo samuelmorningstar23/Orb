@@ -37,7 +37,20 @@ from services.ipass_service import (
 )
 from services.audit_service import log_audit_event
 
-router = APIRouter(prefix="/api/ipass", tags=["ipass"])
+def _handover_switched_on() -> None:
+    """The Orb Ward Record profile switches the handover off (SALES_PLAN
+    section 3, step 2: "The handover is off"). Every I-PASS route then answers
+    404 in these words, before any patient is read."""
+    import config
+    if getattr(config, "WARD_RECORD", False):
+        raise HTTPException(status_code=404, detail=HANDOVER_SWITCHED_OFF)
+
+
+#: What every I-PASS route answers under the Orb Ward Record profile.
+HANDOVER_SWITCHED_OFF = "The handover is switched off on this computer"
+
+router = APIRouter(prefix="/api/ipass", tags=["ipass"],
+                   dependencies=[Depends(_handover_switched_on)])
 
 
 @router.get("/{patient_id}/draft")

@@ -18,7 +18,10 @@ from permissions import (
 from database import get_db, db_session, run_db
 from datetime import datetime, timedelta, timezone
 from services.clinical_time import format_utc
-from services.vigil_service import get_vitals_trend, risk_for_row, scored_admitted_patients
+from services.vigil_service import (
+    SCORING_OFF_REASON, get_vitals_trend, risk_for_row, scored_admitted_patients,
+    scoring_enabled,
+)
 from services.medication_safety_gate import enforce_medication_safety
 from services.vitals_source.base import LABEL_SIMULATED
 from services.lens_service import decorate_analysis
@@ -569,10 +572,15 @@ async def get_patient(
     # TODO (perf, cross-file): also serve the baseline from the precomputed
     # risk_scores table written by the bot to avoid recomputing CfC per card open.
     import asyncio as _asyncio
+    # Scoring switched off (ORB_SCORING_ENABLED off, or the Orb Ward Record
+    # profile): no NEWS2, no band, no response line and no schedule worked out
+    # from one. `risk` is null and `risk_off_reason` says why, for the chart to
+    # show in place of the badge; the stored risk history is not sent either.
+    scoring = scoring_enabled()
     risk = await _asyncio.to_thread(
         risk_for_row, vitals[0] if vitals else None,
         patient_id=patient_id, on_scale_2=on_scale_2,
-    )
+    ) if scoring else None
     trend = await _asyncio.to_thread(get_vitals_trend, patient_id)
 
     # The RCP minimum observation interval for this score, from the same table
@@ -594,8 +602,10 @@ async def get_patient(
     return {
         "patient": patient_out,
         "risk": risk,
+        "risk_off_reason": None if scoring else SCORING_OFF_REASON,
         "trend": trend,
-        "obs_schedule": obs_schedule(risk if risk.get("raw_news2") is not None else None),
+        "obs_schedule": (obs_schedule(risk if risk.get("raw_news2") is not None else None)
+                         if scoring else None),
         "lab_observations": [dict(o) for o in lab_observations],
         "problems": [dict(p) for p in problems],
         "site_name": site_name,
@@ -625,7 +635,7 @@ async def get_patient(
                 "drivers": json.loads(r["drivers"]) if r["drivers"] else [],
                 "timestamp": r["timestamp"],
             }
-            for r in risk_history
+            for r in (risk_history if scoring else [])
         ],
         # image_url is the authenticated /uploads path the chart loads the
         # image from; image_path is a location on the appliance's disk.
@@ -1057,7 +1067,9 @@ async def get_patient_timeline_projection(
     """
     from services.timeline_service import get_timeline_projection
 
-    risk = await run_db(_load_latest_risk, patient_id)
+    # Scoring switched off: the stored band is not read, so no phase is
+    # placed from a score.
+    risk = await run_db(_load_latest_risk, patient_id) if scoring_enabled() else None
     risk_level = risk["level"] if risk else "stable"
 
     result = await get_timeline_projection(patient_id, risk_level=risk_level, force_refresh=refresh)

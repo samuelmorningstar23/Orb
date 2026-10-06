@@ -11,7 +11,7 @@ logger = logging.getLogger("orb.bot")
 from database import get_db, db_session, run_db
 from config import UPLOAD_DIR
 from services.vigil_service import (generate_ai_recommendation, news2_reason_line,
-                                    score_vitals_row)
+                                    score_vitals_row, scoring_enabled)
 from services.vital_charting import as_charted, vitals_line
 from services.vitals_carry import carry_forward, dump_carried
 from services.news2_text import news2_description
@@ -244,12 +244,14 @@ def _next_reading(db, pid: str, latest: dict, now_ts, *, on_scale_2: bool):
     # VigilPanel replaces the chart's own risk with it.
     # overlay=False keeps this lane NEWS2-only, as it has always been. Putting
     # the CfC overlay on the paging path is a separate decision.
+    # Scoring switched off (the Orb Ward Record): the reading is stored and
+    # pushed with risk None, and nothing below pages on it.
     risk = score_vitals_row(
         {"heart_rate": new_hr, "systolic_bp": new_sys, "respiratory_rate": new_rr,
          "temperature": new_temp, "spo2": new_spo2,
          "consciousness": consciousness, "on_oxygen": on_oxygen},
         on_scale_2=on_scale_2, overlay=False,
-    )
+    ) if scoring_enabled() else None
 
     return (
         (pid, now_ts, new_hr, new_sys, new_dia, new_spo2,
@@ -802,6 +804,9 @@ async def evaluate_and_dispatch_alerts(sio, emit_queue: list):
     Called by both the normal bot loop and the deterministic demo trigger.
     """
     from services import shadow_service
+    # Scoring switched off: there is no level to alert on, so nothing is sent.
+    if not scoring_enabled():
+        return
     # Once per process: a restart must not re-page every elevated patient.
     await ensure_cooldowns_reconciled()
     now = time.time()
@@ -817,7 +822,7 @@ async def evaluate_and_dispatch_alerts(sio, emit_queue: list):
 
     for payload in emit_queue:
         pid = payload["patient_id"]
-        risk = payload.get("risk", {})
+        risk = payload.get("risk") or {}
         risk_level = risk.get("level", "stable")
         risk_score = risk.get("score", 0)
         drivers = risk.get("drivers", [])

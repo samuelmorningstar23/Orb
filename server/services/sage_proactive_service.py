@@ -16,7 +16,7 @@ from datetime import datetime, timezone, timedelta
 from database import db_session
 from services.clinical_time import format_utc, parse_to_utc
 from services.news2_text import news2_description
-from services.vigil_service import news2_reason_line, score_vitals_row
+from services.vigil_service import news2_reason_line, score_vitals_row, scoring_enabled
 from services.vital_charting import as_charted, charted_text
 
 INSIGHT_COOLDOWN_MIN = 30  # don't re-raise the same dedup_key within this window
@@ -353,6 +353,10 @@ def _stand_down(db, dedup_key, now, label, worst, band, was_title, no_longer) ->
     return False
 
 
+class _RuleOneOff(Exception):
+    """Rule 1 (the NEWS2 band) does not run while scoring is switched off."""
+
+
 def evaluate_patient(patient_id, raised_again=None) -> list:
     """Run all surveillance rules for one patient. Returns ids of NEW insights created.
     Never raises.
@@ -379,7 +383,13 @@ def evaluate_patient(patient_id, raised_again=None) -> list:
         # nor stand down a card on the feed: Rule 1 sits this sweep out.
         now = table = before_score = worst = None
         scored = True
+        # Scoring switched off (the Orb Ward Record): Rule 1 never runs. Its
+        # cards are not kept valid either, so any left from before go stale and
+        # auto-resolve, and get_active_insights hides them meanwhile.
+        rule_1 = scoring_enabled()
         try:
+            if not rule_1:
+                raise _RuleOneOff()
             on_scale_2 = bool(pat["on_scale_2"])
             if vits:
                 now = score_vitals_row(vits[0], patient_id=patient_id, on_scale_2=on_scale_2)
@@ -390,6 +400,8 @@ def evaluate_patient(patient_id, raised_again=None) -> list:
                 # Overlay off: it scores the history as it stands NOW, so it
                 # cannot say what the band was 15 minutes ago.
                 before_score = score_vitals_row(before, on_scale_2=on_scale_2, overlay=False)
+        except _RuleOneOff:
+            scored = False
         except Exception as e:
             scored = False
             print(f"  [SageProactive] scoring {patient_id} failed: {e}")
@@ -411,7 +423,9 @@ def evaluate_patient(patient_id, raised_again=None) -> list:
             # previous-row compare saw about one rise in three.
             crit_key = f"{patient_id}:deterioration:critical"
             elev_key = f"{patient_id}:deterioration:elevated"
-            if not scored:
+            if not rule_1:
+                pass
+            elif not scored:
                 valid_keys.update((crit_key, elev_key))
             elif now is not None:
                 lvl_now = now["level"]
@@ -603,6 +617,9 @@ def get_active_insights(user_id, role) -> list:
                 (user_id,),
             ).fetchall()
         out = [dict(r) for r in rows]
+    # Scoring switched off: a deterioration card is a band, so none is shown.
+    if not scoring_enabled():
+        out = [i for i in out if i.get("insight_type") != "deterioration"]
     # A row stored before 2026-10-02 may still name a drug. Hide it here rather
     # than rewrite it: the stored row is the record of what Sage suggested.
     for i in out:

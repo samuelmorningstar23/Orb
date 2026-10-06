@@ -503,10 +503,10 @@ def _audit(db, action_type: str, summary: str, escalation_id: str,
 #  Raising / extending a chain
 # ═════════════════════════════════════════════════════════════════════════════
 def _scoring_enabled() -> bool:
-    """ORB_SCORING_ENABLED, read at call time (nurse_shift_service.scoring_enabled
-    reads the same setting the same way)."""
-    import config
-    return bool(getattr(config, "SCORING_ENABLED", True))
+    """ORB_SCORING_ENABLED, read at call time through vigil_service, so the
+    Ward Record profile (ORB_WARD_RECORD) switches it off here too."""
+    from services.vigil_service import scoring_enabled
+    return scoring_enabled()
 
 
 def evaluate_observation(

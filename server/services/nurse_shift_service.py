@@ -155,6 +155,11 @@ _OBS_INTERVAL_ZERO = 720
 _OBS_INTERVAL_SINGLE_PARAM_3 = 60
 
 
+#: The shift board's words for a ward with no observation interval set while
+#: scoring is off (the Orb Ward Record). An administrator sets it in Admin, Data.
+WARD_INTERVAL_MISSING = "Set the ward's observation interval"
+
+
 def obs_schedule(news2: dict | None) -> dict:
     """Minimum obs interval + the RCP response for a NEWS2 result.
 
@@ -586,26 +591,62 @@ def build_board(department: str | None) -> dict:
     overrides_by_key = extra.get("overrides", {})
     last_obs_by_patient = extra.get("last_obs", {})
 
+    # Scoring switched off (the Orb Ward Record): no NEWS2 and no schedule
+    # worked out from one. The due time is the ward's fixed interval from
+    # ward_observation_settings, chained the way the monthly rounds file chains
+    # it (ward_record_service.due_now); a ward with no setting shows no due time.
+    scoring = scoring_enabled()
+    ward_due: dict[str, dict | None] = {}
+    if not scoring:
+        from services import ward_record_service
+        for ward in {str(p.get("ward") or "").strip() for p in patients}:
+            try:
+                ward_due[ward.upper()] = ward_record_service.due_now(ward, now=now) if ward else None
+            except Exception as e:  # noqa: BLE001 - one ward's read must not blank the board
+                logger.warning("ward record due times failed for ward %r: %s", ward, e)
+                ward_due[ward.upper()] = None
+
     cards = []
     for p in patients:
         pid = p["id"]
         vitals = latest_vitals.get(pid)
-        news2 = _score_from_vitals(vitals, bool(p.get("on_scale_2")))
-        schedule = obs_schedule(news2)
-
-        # Anchored on the last set a person took, not on the newest row: see
-        # OBS_CLOCK_SOURCES. The NEWS2 above still scores the newest row.
         last_obs = last_obs_by_patient.get(pid)
         last_obs_at = _parse_ts(last_obs.get("timestamp")) if last_obs else None
-        obs_due_at = (
-            last_obs_at + timedelta(minutes=schedule["interval_minutes"]) if last_obs_at else None
-        )
-        obs_minutes_until = (
-            None if obs_due_at is None else round((obs_due_at - now).total_seconds() / 60)
-        )
-        # No obs at all on an admitted patient is itself the overdue state.
-        obs_overdue = obs_minutes_until is None or obs_minutes_until < 0
-        obs_due_soon = obs_minutes_until is not None and 0 <= obs_minutes_until <= 30
+        obs_due_note = None
+        if scoring:
+            news2 = _score_from_vitals(vitals, bool(p.get("on_scale_2")))
+            schedule = obs_schedule(news2)
+            # Anchored on the last set a person took, not on the newest row: see
+            # OBS_CLOCK_SOURCES. The NEWS2 above still scores the newest row.
+            obs_due_at = (
+                last_obs_at + timedelta(minutes=schedule["interval_minutes"]) if last_obs_at else None
+            )
+            obs_minutes_until = (
+                None if obs_due_at is None else round((obs_due_at - now).total_seconds() / 60)
+            )
+            # No obs at all on an admitted patient is itself the overdue state.
+            obs_overdue = obs_minutes_until is None or obs_minutes_until < 0
+            obs_due_soon = obs_minutes_until is not None and 0 <= obs_minutes_until <= 30
+        else:
+            news2 = None
+            setting = ward_due.get(str(p.get("ward") or "").strip().upper())
+            due = (setting or {}).get("patients", {}).get(pid) if setting else None
+            schedule = {
+                "interval_minutes": setting["interval_minutes"] if setting else None,
+                "band": None,
+                "response": None,
+            }
+            obs_due_at = due["due_at"] if due else None
+            obs_minutes_until = (
+                None if obs_due_at is None else round((obs_due_at - now).total_seconds() / 60)
+            )
+            # Late is the rounds file's late: past the due time plus the ward's
+            # grace window. No setting, no due time and nothing is late.
+            obs_overdue = bool(due and due["late"])
+            obs_due_soon = (obs_minutes_until is not None and not obs_overdue
+                            and obs_minutes_until <= 30)
+            if setting is None:
+                obs_due_note = WARD_INTERVAL_MISSING
 
         patient_allergies = allergies_by_patient.get(pid, [])
         med_tasks = [
@@ -653,6 +694,11 @@ def build_board(department: str | None) -> dict:
             "obs_band": schedule["band"],
             "obs_response": schedule["response"],
             "obs_due_at": _iso(obs_due_at),
+            # Where the due time came from: the NEWS2 schedule, or the ward's
+            # fixed interval while scoring is off. obs_due_note says what to
+            # do when the ward has no interval set.
+            "obs_due_source": "news2" if scoring else ("ward_interval" if obs_due_at else None),
+            "obs_due_note": obs_due_note,
             "obs_minutes_until_due": obs_minutes_until,
             "obs_overdue": obs_overdue,
             "obs_due_soon": obs_due_soon,
@@ -665,8 +711,9 @@ def build_board(department: str | None) -> dict:
     _LEVEL_RANK = {"critical": 0, "elevated": 1, "stable": 2}
 
     def _priority(card: dict):
-        """Sickest first, then latest-running, then soonest due, then bed order."""
-        level = (card["news2"] or {}).get("level", "stable")
+        """Sickest first, then latest-running, then soonest due, then bed order.
+        With scoring off nobody is "sickest": late rounds first, then due."""
+        level = (card["news2"] or {}).get("level", "stable") if scoring else "stable"
         # A patient with no obs at all has no due time; sort them with the most
         # overdue rather than at the "nothing due" end.
         minutes = card["obs_minutes_until_due"]
@@ -683,11 +730,15 @@ def build_board(department: str | None) -> dict:
     return {
         "generated_at": _iso(now),
         "department": department,
+        "scoring_enabled": scoring,
         "patients": cards,
         "totals": {
             "patients": len(cards),
-            "critical": sum(1 for c in cards if (c["news2"] or {}).get("level") == "critical"),
-            "elevated": sum(1 for c in cards if (c["news2"] or {}).get("level") == "elevated"),
+            # Band counts are a score: None, not 0, while scoring is off.
+            "critical": (sum(1 for c in cards if (c["news2"] or {}).get("level") == "critical")
+                         if scoring else None),
+            "elevated": (sum(1 for c in cards if (c["news2"] or {}).get("level") == "elevated")
+                         if scoring else None),
             "obs_overdue": sum(1 for c in cards if c["obs_overdue"]),
             "meds_overdue": sum(c["meds_overdue"] for c in cards),
             "meds_allergy_blocked": sum(c["meds_allergy_blocked"] for c in cards),
@@ -1143,9 +1194,10 @@ def record_observation(
 
 def scoring_enabled() -> bool:
     """ORB_SCORING_ENABLED, read at call time so a test or an operator flip is
-    seen without re-importing this module."""
-    import config
-    return bool(getattr(config, "SCORING_ENABLED", True))
+    seen without re-importing this module. Through vigil_service, so the Ward
+    Record profile (ORB_WARD_RECORD) switches it off here too."""
+    from services.vigil_service import scoring_enabled as _vigil_scoring_enabled
+    return _vigil_scoring_enabled()
 
 
 def _record_observation_txn(

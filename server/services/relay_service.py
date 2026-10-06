@@ -47,6 +47,8 @@ def get_channels_for_user(user_id: str, user_role: str) -> list:
     # and they answer exactly as before. patient and any unknown role get [].
     if not _relay_capable(user_role):
         return []
+    from services.vigil_service import scoring_enabled
+    _scoring = scoring_enabled()
     with db_session() as db:
         # Get user department
         user_row = db.execute("SELECT department FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -300,8 +302,9 @@ def get_channels_for_user(user_id: str, user_role: str) -> list:
                 "diagnosis": r["diagnosis"],
                 "ward": r["ward"],
                 "bed": r["bed"],
-                "risk_score": r["risk_score"],
-                "risk_level": r["risk_level"],
+                # No stored score or band while scoring is switched off.
+                "risk_score": r["risk_score"] if _scoring else None,
+                "risk_level": r["risk_level"] if _scoring else None,
                 "unread_count": r["unread_count"] or 0,
                 "last_message": r["last_message"],
                 "last_activity": r["last_activity"],

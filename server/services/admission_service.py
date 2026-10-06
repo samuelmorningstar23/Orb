@@ -400,9 +400,9 @@ def admit_patient(data: dict, user: dict) -> dict:
             # (ORB_SCORING_ENABLED, the Orb Ward Record): no score is computed,
             # shown or logged, so the admission set is stored and nothing else,
             # the same as the observation write path.
-            import config as _config
             try:
-                if not bool(getattr(_config, "SCORING_ENABLED", True)):
+                from services.vigil_service import scoring_enabled as _scoring_enabled
+                if not _scoring_enabled():
                     raise _ScoringOff()
                 from services.vigil_service import score_vitals_row
                 # On the patient's recorded SpO2 scale, read back from the row
