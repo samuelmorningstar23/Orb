@@ -662,7 +662,7 @@ export default function AdministerModal({
             <p className="administer-modal__hint">
               {overrideOffered
                 ? `Your earlier confirmation was for an ordinary dose. Type “${med.drug_name}” again to confirm you are giving it across the charted allergy.`
-                : 'Barcode-style check: type the drug name exactly as charted (case-insensitive) to enable “Given”.'}
+                : 'Name check: type the drug name exactly as charted (capital letters do not matter) to enable “Given”.'}
             </p>
 
             {showNotGiven && (
