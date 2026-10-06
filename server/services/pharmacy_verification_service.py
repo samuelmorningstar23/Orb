@@ -160,6 +160,13 @@ def _serialize_med(row) -> dict:
         # None when the user row is gone, never a guess.
         "ordered_by_name": d.get("prescriber_name"),
         "verified_by_name": d.get("verified_by_name"),
+        # Provenance (migration 79): the signed note the medicine was read
+        # from, who signed it and when, and the sentence that names the drug.
+        # All None for a medicine that did not come from a note.
+        "source_note_id": d.get("source_note_id"),
+        "source_sentence": d.get("source_sentence"),
+        "source_note_signed_by": d.get("source_note_signer"),
+        "source_note_signed_at": d.get("source_note_signed_at"),
     }
 
 
@@ -178,11 +185,16 @@ def list_pending_verification() -> list[dict]:
             """SELECT m.id, m.patient_id, m.drug_name, m.dosage, m.route, m.frequency,
                       m.status, m.source, m.verified_by, m.verified_at, m.notes,
                       m.started_at, p.name AS patient_name, p.ward, p.bed,
-                      u.name AS prescriber_name, v.name AS verified_by_name
+                      u.name AS prescriber_name, v.name AS verified_by_name,
+                      m.source_note_id, m.source_sentence,
+                      sn_u.name AS source_note_signer,
+                      COALESCE(sn.signed_at, sn.created_at) AS source_note_signed_at
                FROM medications m
                JOIN patients p ON p.id = m.patient_id AND p.status = 'admitted'
                LEFT JOIN users u ON u.id = m.prescribed_by
                LEFT JOIN users v ON v.id = m.verified_by
+               LEFT JOIN scribe_notes sn ON sn.id = m.source_note_id
+               LEFT JOIN users sn_u ON sn_u.id = COALESCE(sn.signed_by, sn.author_id)
                WHERE m.source IN ({placeholders})
                  AND m.verified_by IS NULL
                  AND m.status = 'active'
@@ -207,14 +219,51 @@ def list_pending_verification() -> list[dict]:
     return pending
 
 
+def source_note(med_id: int) -> dict | None:
+    """The signed note a queue medicine was read from, for the pharmacist.
+
+    None when the medicine is unknown, was not charted from a note, or the note
+    is gone. Only the note's words (``services.note_text``), who signed it and
+    when, and the sentence that names the drug: not the raw transcript.
+    """
+    from services.note_text import note_plain_text
+    with db_session() as db:
+        row = db.execute(
+            """SELECT m.id, m.patient_id, m.source_note_id, m.source_sentence,
+                      sn.structured_note, sn.raw_transcript,
+                      COALESCE(sn.signed_at, sn.created_at) AS signed_at,
+                      su.name AS signed_by
+               FROM medications m
+               JOIN scribe_notes sn ON sn.id = m.source_note_id
+               LEFT JOIN users su ON su.id = COALESCE(sn.signed_by, sn.author_id)
+               WHERE m.id = ?""",
+            (med_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "medication_id": row["id"],
+        "patient_id": row["patient_id"],
+        "note_id": row["source_note_id"],
+        "signed_by": row["signed_by"],
+        "signed_at": row["signed_at"],
+        "sentence": row["source_sentence"],
+        "text": note_plain_text(row["structured_note"]) or "",
+    }
+
+
 def _fetch_med(db, med_id: int):
     return db.execute(
         """SELECT m.*, p.name AS patient_name,
-                  u.name AS prescriber_name, v.name AS verified_by_name
+                  u.name AS prescriber_name, v.name AS verified_by_name,
+                  sn_u.name AS source_note_signer,
+                  COALESCE(sn.signed_at, sn.created_at) AS source_note_signed_at
            FROM medications m
            LEFT JOIN patients p ON p.id = m.patient_id
            LEFT JOIN users u ON u.id = m.prescribed_by
            LEFT JOIN users v ON v.id = m.verified_by
+           LEFT JOIN scribe_notes sn ON sn.id = m.source_note_id
+           LEFT JOIN users sn_u ON sn_u.id = COALESCE(sn.signed_by, sn.author_id)
            WHERE m.id = ?""",
         (med_id,),
     ).fetchone()

@@ -3,7 +3,7 @@
  * and name the source in words a pharmacist uses ("Sage, from notes",
  * "Sage action") rather than "Agentic".
  */
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 const ROWS = [
@@ -83,6 +83,32 @@ describe('PharmacyVerifyQueue names the people', () => {
     (ROWS as unknown[]).push({ ...ROWS[1], id: 13, patient: 'Mina Das', ordered_by_name: 'Dr Neel Shah' })
     render(<PharmacyVerifyQueue />)
     expect(await screen.findByText('Ordered by Dr Neel Shah')).toBeInTheDocument()
+    ROWS.pop()
+  })
+})
+
+describe('PharmacyVerifyQueue provenance from a signed note', () => {
+  it('says which note, shows the sentence, and opens the note', async () => {
+    const pharmacy = await import('../../api/pharmacy')
+    const getSourceNote = vi.fn(async () => ({
+      medication_id: 14, patient_id: 'P003', note_id: 88, signed_by: 'Dr Rohan Pillai',
+      signed_at: '2026-10-06T11:19:00+00:00',
+      sentence: 'Start enoxaparin 40 mg SC once daily for VTE prophylaxis.',
+      text: 'Day 2 after hip fracture repair.\nStart enoxaparin 40 mg SC once daily for VTE prophylaxis.',
+    }))
+    ;(pharmacy as unknown as { getSourceNote: unknown }).getSourceNote = getSourceNote
+    ;(ROWS as unknown[]).push({
+      ...ROWS[0], id: 14, patient: 'Gita Rao', drug_name: 'Enoxaparin',
+      source_note_id: 88, source_sentence: 'Start enoxaparin 40 mg SC once daily for VTE prophylaxis.',
+      source_note_signed_by: 'Dr Rohan Pillai', source_note_signed_at: '2026-10-06T11:19:00+00:00',
+    })
+    render(<PharmacyVerifyQueue />)
+    // 11:19 UTC is 04:49 PM in India.
+    expect(await screen.findByText('From the note signed by Dr Rohan Pillai at 04:49 PM on 6 Oct 2026')).toBeInTheDocument()
+    expect(screen.getByText('“Start enoxaparin 40 mg SC once daily for VTE prophylaxis.”')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Open the note' }))
+    expect(await screen.findByRole('region', { name: 'Signed note for Enoxaparin' })).toHaveTextContent('Day 2 after hip fracture repair.')
+    expect(getSourceNote).toHaveBeenCalledWith(14)
     ROWS.pop()
   })
 })

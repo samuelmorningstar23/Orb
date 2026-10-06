@@ -157,3 +157,21 @@ export async function rejectMedication(medId: number, reason: string): Promise<R
     body: JSON.stringify({ reason }),
   });
 }
+
+/** The signed note a queue medicine was read from (GET /pharmacy/{id}/source-note). */
+export interface SourceNote {
+  medication_id: number;
+  patient_id: string;
+  note_id: number;
+  signed_by: string | null;
+  signed_at: string | null;
+  /** The sentence that names the drug, as signed. */
+  sentence: string | null;
+  /** The note's words, one section per line. */
+  text: string;
+}
+
+/** Read the signed note behind one queue row. The read is audited server side. */
+export async function getSourceNote(medId: number): Promise<SourceNote> {
+  return apiFetch<SourceNote>(`/pharmacy/${medId}/source-note`);
+}

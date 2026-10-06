@@ -21,6 +21,7 @@ import {
 } from '../../api/pharmacy';
 import { formatClinicalDateTime } from '../../lib/datetime';
 import { hasPermission, MEDICATION_PRESCRIBE } from '../../lib/roles';
+import SourceNoteLine, { type SourceNoteFields } from './SourceNote';
 
 /** The queue row as the server now sends it: where the patient is, who wrote
  *  the order (the prescriber, or the author of the note Sage read it from) and
@@ -32,7 +33,7 @@ type QueueRow = PendingMedication & {
   started_at?: string | null;
   /** The ordering person by name (the prescriber, or the note's author). */
   ordered_by_name?: string | null;
-};
+} & Partial<Omit<SourceNoteFields, 'id' | 'drug_name'>>;
 
 /** "Ward 3, bed 12", or whichever half is known. */
 function wardBed(row: QueueRow): string {
@@ -385,7 +386,11 @@ export default function PharmacyVerifyQueue() {
                       </td>
                       <td data-label="Drug">
                         <div>{row.drug_name}</div>
-                        {orderedLine(row) && <div style={ROW_DETAIL_STYLE}>{orderedLine(row)}</div>}
+                        {/* A medicine read from a signed note says which note,
+                            the sentence, and opens it; any other says who ordered it. */}
+                        {row.source_note_id != null
+                          ? <SourceNoteLine row={row} />
+                          : orderedLine(row) && <div style={ROW_DETAIL_STYLE}>{orderedLine(row)}</div>}
                       </td>
                       <td data-label="Dose">
                         <input

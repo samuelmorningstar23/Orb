@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 
-from permissions import require_permission
+from permissions import enforce_patient_scope, log_phi_read, require_permission
 from services import pharmacy_verification_service as pharmacy
 from services.audit_service import log_audit_event
 from services.drug_safety_service import formulary_interaction_coverage
@@ -48,6 +48,34 @@ def get_interaction_coverage(user=Depends(require_permission("helix.read"))):
     interaction result for it means nothing; this is the list to review.
     """
     return formulary_interaction_coverage()
+
+
+@router.get("/{med_id}/source-note")
+def get_source_note(med_id: int, request: Request,
+                    user=Depends(require_permission("helix.read"))):
+    """The signed note a queue medicine was read from: its words, who signed
+    it and when, and the sentence that names the drug.
+
+    A pharmacist holds no scribe permission, so the Verify Queue reads the one
+    note behind the row it is checking here, and nothing else. 404 when the
+    medicine was not charted from a note. Scoped like the Helix routes (a
+    no-op for the department-less central pharmacy account), and the read is
+    on the audit chain before the text is returned.
+    """
+    note = pharmacy.source_note(med_id)
+    if note is None:
+        raise HTTPException(status_code=404, detail="This medicine was not charted from a signed note.")
+    enforce_patient_scope(user, note["patient_id"])
+    log_phi_read(
+        request=request,
+        user=user,
+        action_type="scribe_note_viewed",
+        summary_message=f"Signed note {note['note_id']} viewed from the Verify Queue (medication {med_id})",
+        patient_id=note["patient_id"],
+        target_type="scribe_note",
+        target_id=str(note["note_id"]),
+    )
+    return note
 
 
 @router.post("/{med_id}/verify")

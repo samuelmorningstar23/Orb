@@ -641,7 +641,35 @@ def _load_note(note_id):
     return structured_text, author_id
 
 
-def _screen_medications(patient_id, author_id, note_id, updates):
+def _note_plain_text(structured_text) -> str:
+    """The signed note as plain text (services/note_text.py)."""
+    from services.note_text import note_plain_text
+    return note_plain_text(structured_text)
+
+
+def _drug_sentence(note_text, drug) -> str | None:
+    """The sentence of the signed note that names ``drug``, or None.
+
+    Tried on the full extracted name first ("Enoxaparin 40mg"), then on its
+    first word ("Enoxaparin"), since the model often adds a dose the note
+    spells differently. The same sentence rule Revenue Integrity uses (split on
+    sentence ends and line breaks, 240 characters at most).
+    """
+    from services.coding_service import evidence_sentence
+    text = _note_plain_text(note_text)
+    name = (drug or "").strip()
+    if not text or not name:
+        return None
+    first = name.split()[0]
+    # A short first word ("IV", "Inj") names a route or a form, not the drug.
+    for term in (name, first) if len(first) >= 4 else (name,):
+        sentence = evidence_sentence(term, text)
+        if sentence:
+            return sentence
+    return None
+
+
+def _screen_medications(patient_id, author_id, note_id, updates, note_text=None):
     """Classify every extracted medication action into rows to chart vs stops to
     propose, running the safety gate for each 'start'. Returns
     (med_starts, stop_proposals).
@@ -709,6 +737,11 @@ def _screen_medications(patient_id, author_id, note_id, updates):
                 "route": med.get("route") or "REVIEW REQUIRED",
                 "frequency": med.get("frequency") or "REVIEW REQUIRED",
                 "notes": safety_note,
+                # Provenance (migration 79): which signed note, and the sentence
+                # in it that names the drug, so the pharmacist can check the
+                # read against what the doctor actually signed.
+                "source_note_id": note_id,
+                "source_sentence": _drug_sentence(note_text, drug),
             })
     return med_starts, stop_proposals
 
@@ -755,9 +788,11 @@ def _persist_extraction(note_id, patient_id, author_id, updates, med_starts, sto
         # verifies (pharmacy_verification_service).
         for m in med_starts:
             db.execute(
-                """INSERT INTO medications (patient_id, drug_name, dosage, route, frequency, status, prescribed_by, source, notes)
-                   VALUES (?, ?, ?, ?, ?, 'active', ?, 'llm_extracted', ?)""",
-                (patient_id, m["drug"], m["dosage"], m["route"], m["frequency"], author_id, m["notes"])
+                """INSERT INTO medications (patient_id, drug_name, dosage, route, frequency, status, prescribed_by, source, notes,
+                                            source_note_id, source_sentence)
+                   VALUES (?, ?, ?, ?, ?, 'active', ?, 'llm_extracted', ?, ?, ?)""",
+                (patient_id, m["drug"], m["dosage"], m["route"], m["frequency"], author_id, m["notes"],
+                 m.get("source_note_id"), m.get("source_sentence"))
             )
         for drug in stop_proposals:
             db.execute(
@@ -867,7 +902,7 @@ async def on_scribe_note_signed(event: StateEvent):
     # at a time per patient. Different patients still run concurrently.
     async with _patient_write_lock(patient_id):
         med_starts, stop_proposals = await run_db(
-            _screen_medications, patient_id, author_id, note_id, updates
+            _screen_medications, patient_id, author_id, note_id, updates, structured_text
         )
 
         stop_channel = None
