@@ -2109,6 +2109,9 @@ export interface MedicationSafety {
   /** Why the server refused the written reason on the last attempt, in its
    *  own words (for example a reason too short to be one). */
   ack_refused?: string | null;
+  /** Set by the server on a severe allergy block: the permission that may
+   *  clear it (medication.prescribe). */
+  override_requires_permission?: string | null;
 }
 
 /** Clinician acknowledgement re-submitted after reviewing severe alerts. */

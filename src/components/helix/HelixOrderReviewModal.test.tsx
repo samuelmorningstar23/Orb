@@ -91,6 +91,24 @@ describe('HelixOrderReviewModal drug safety', () => {
     }))
   })
 
+  it('says why a pharmacist\'s reason was refused on a severe allergy', async () => {
+    getHelixOrderSafety.mockResolvedValue({ order_id: 'ORD-1', medication_id: 'MED-MONOCEF', drug_name: 'Monocef 1g Injection', is_substitute: true, safety: severe })
+    const allergyBlock = { ...severe, override_requires_permission: 'medication.prescribe' }
+    const refusal = 'Only a prescriber can override an allergy block. Choose another medicine, or ask the prescriber.'
+    transitionHelixOrder
+      .mockRejectedValueOnce(Object.assign(new Error('blocked'), { code: 'safety_ack_required', status: 428, safety: allergyBlock }))
+      .mockRejectedValueOnce(Object.assign(new Error(refusal), {
+        code: 'safety_ack_required', status: 428, safety: { ...allergyBlock, ack_refused: refusal },
+      }))
+    render(<HelixOrderReviewModal order={order} catalog={catalog} onClose={() => {}} onTransition={() => {}} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Verify' }))
+    expect(await screen.findByText(/A reason here is accepted only when the prescriber has already overridden/)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText(/Reason for proceeding/), { target: { value: 'Test dose tolerated' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Override and verify' }))
+    expect(await screen.findByText(`Not accepted: ${refusal}`)).toBeInTheDocument()
+  })
+
   it('a failed screen never reads as all clear', async () => {
     getHelixOrderSafety.mockRejectedValue(new Error('Failed to fetch'))
     render(<HelixOrderReviewModal order={order} catalog={catalog} onClose={() => {}} onTransition={() => {}} />)

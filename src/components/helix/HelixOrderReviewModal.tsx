@@ -385,6 +385,20 @@ export default function HelixOrderReviewModal({ order: openedOrder, catalog, onC
                 {ackFor.safety
                   ? <SafetyScreenView screen={ackFor.safety} />
                   : <div style={{ fontSize: '0.8125rem', color: 'var(--status-danger-text)' }}>Severe drug-safety alert.</div>}
+                {/* The server refused the last reason (a severe allergy clears
+                    only for a prescriber). Say so, or the box just comes back
+                    empty and reads as if nothing was sent. */}
+                {ackFor.safety?.ack_refused && (
+                  <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--status-danger-text)' }}>
+                    Not accepted: {ackFor.safety.ack_refused}
+                  </div>
+                )}
+                {ackFor.safety?.override_requires_permission && !ackFor.safety?.ack_refused && (
+                  <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                    Only a prescriber can override an allergy block. A reason here is accepted only
+                    when the prescriber has already overridden this allergy for this patient.
+                  </div>
+                )}
                 <label htmlFor="helix-ack-reason" style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
                   Reason for proceeding (recorded with your name)
                 </label>
