@@ -33,6 +33,7 @@ import OfflineBanner from '../../components/OfflineBanner'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
 import { observedAt, observedBefore, vitalTemperature, vitalWhole } from '../../lib/vitals'
 import VoidObservationButton from '../../components/vitals/VoidObservationButton'
+import { useClinicalSwitches } from '../../shellConfig'
 import { breakdownRowFor, news2Description, topReadings, type News2BreakdownRow, type News2ScoredVital } from '../../lib/news2'
 import { vitalTrendWindow, trendSpanShort, trendAxisLabel, trendAriaPhrase, type VitalTrendWindow } from '../../lib/vitalTrend'
 import { buildLabTrends, labGraphData, labTrendLabel, labTrendTone, LAB_TREND_TONE_COLOR, type LabStatus, type LabTrend } from '../../lib/labTrends'
@@ -177,6 +178,10 @@ export default function VigilPanel({ role }: { role?: string | null }) {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null)
   const [sortBy, setSortBy] = useState<'stability' | 'recent'>('stability')
+  // ORB_SCORING_ENABLED off (the Orb Ward Record): the server sends no NEWS2
+  // and orders the board by ward then bed, so the board keeps that order
+  // instead of re-sorting every row by a score that is not there.
+  const { scoringEnabled } = useClinicalSwitches()
   const [outcomeCaptureOpen, setOutcomeCaptureOpen] = useState(false)
   const canRecordOutcome = hasPermission(OUTCOME_RECORD, role)
 
@@ -348,7 +353,7 @@ export default function VigilPanel({ role }: { role?: string | null }) {
   const sortedPatients = useMemo(() => {
     const sorted = [...patients];
     if (sortBy === 'stability') {
-      sorted.sort(boardOrder)
+      sorted.sort(scoringEnabled ? boardOrder : wardBedOrder)
     } else {
       sorted.sort((a, b) => 
         new Date(b.admission_date || 0).getTime() - new Date(a.admission_date || 0).getTime()
@@ -366,7 +371,7 @@ export default function VigilPanel({ role }: { role?: string | null }) {
       return 0
     })
     return sorted;
-  }, [patients, sortBy])
+  }, [patients, sortBy, scoringEnabled])
 
   if (selectedPatientId) {
     return (
@@ -647,6 +652,21 @@ function boardOrder(a: Patient, b: Patient): number {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
+/* The board's order with scoring switched off, twin of
+   vigil_service.ward_bed_order: ward, then bed, then id, with digit runs
+   compared as numbers ('B-2' before 'B-10'). A patient with no ward or bed
+   comes after those that have one. */
+const WARD_BED_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+function wardBedOrder(a: Patient, b: Patient): number {
+  const text = (v: unknown): string => String(v ?? '').trim()
+  for (const [x, y] of [[text(a.ward), text(b.ward)], [text(a.bed), text(b.bed)]]) {
+    if ((x === '') !== (y === '')) return x === '' ? 1 : -1
+    const c = WARD_BED_COLLATOR.compare(x, y)
+    if (c !== 0) return c
+  }
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
 // onSelect is a STABLE callback (useCallback in the parent) and the row passes
 // its own id back — so memo() actually bails out on unchanged rows. Previously
 // the parent passed a fresh `() => setSelected(p.id)` closure per row per
@@ -663,6 +683,9 @@ const PatientRow = memo(({ patient: p, onSelect, newSinceReview = 0 }: {
   // The two worst readings behind the score ("RR 37 · SpO2 84%"), from the
   // breakdown the row already carries. Nothing for NEWS2 0 or no observation.
   const readings = topReadings(p.news2 ?? null)
+  // Scoring switched off: the server sends no NEWS2, and a dash badge would
+  // say "no observations recorded" about a patient whose sets are on file.
+  const { scoringEnabled } = useClinicalSwitches()
 
   return (
   <button
@@ -699,7 +722,7 @@ const PatientRow = memo(({ patient: p, onSelect, newSinceReview = 0 }: {
           home. It used to print `risk_score * 100` with a "%": a 0-1 index of
           the aggregate, not a probability, and "0%" for a patient with nothing
           recorded, because (null * 100).toFixed(0) is "0". */}
-      <News2Badge news2={p.news2 ?? null} labelled={false} />
+      {scoringEnabled && <News2Badge news2={p.news2 ?? null} labelled={false} />}
     </div>
   </button>
   );
