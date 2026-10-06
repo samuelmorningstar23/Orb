@@ -3,13 +3,21 @@ import { analyzeLensImage, getPatientsList, assignLensToPatient } from '../../ap
 import ProvenanceChip from '../../components/ProvenanceChip'
 import InvestigationalBanner from '../../components/InvestigationalBanner'
 import { withoutAppendedDisclaimer } from '../../lib/lensDisclaimer'
+import { useClinicalSwitches } from '../../shellConfig'
 import './LensPanel.css'
+
+/** Shown before any upload while ORB_LENS_ENABLED is off (Orb Ward Record). */
+export const LENS_OFF_NOTICE =
+  'Lens is switched off on this computer. It is not a certified diagnostic device.'
 
 /* ═══════════════════════════════════════════════════
    LENS PANEL — Medical Image Analysis with Patient Linking
    ═══════════════════════════════════════════════════ */
 
 export default function LensPanel() {
+  // ORB_LENS_ENABLED, published on /api/health. Off: the tab stays, the notice
+  // says why, and the analyse control is disabled (the server refuses anyway).
+  const { lensEnabled } = useClinicalSwitches()
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [context, setContext] = useState('')
@@ -66,7 +74,7 @@ export default function LensPanel() {
   }
 
   const handleAnalyze = async () => {
-    if (!imageFile) return
+    if (!imageFile || !lensEnabled) return
     setAnalyzing(true); setAnalysis(''); setReviewedText(''); setClinicianReviewed(false); setAnalysisId(null)
     try {
       const { analysisId: newId } = await analyzeLensImage(imageFile, { clinical_context: context, image_type: imageType }, (partial) => {
@@ -119,6 +127,9 @@ export default function LensPanel() {
       <div className="lens-container">
         {/* Fixed, before any upload and whatever the model returns. */}
         <InvestigationalBanner detail="Image reads come from a local AI model that has not been clinically validated. They are not a radiologist read." />
+        {!lensEnabled && (
+          <p className="lens-off-notice" role="note">{LENS_OFF_NOTICE}</p>
+        )}
         {!imagePreview ? (
           <div
             className={`lens-dropzone glass-card ${dragOver ? 'lens-dropzone--over' : ''}`}
@@ -179,7 +190,12 @@ export default function LensPanel() {
               </select>
               <input className="lens-context-input" type="text" placeholder="Clinical context (optional)…"
                 value={context} onChange={e => setContext(e.target.value)} />
-              <button className="lens-analyze-btn" onClick={handleAnalyze} disabled={analyzing}>
+              <button
+                className="lens-analyze-btn"
+                onClick={handleAnalyze}
+                disabled={analyzing || !lensEnabled}
+                title={lensEnabled ? undefined : LENS_OFF_NOTICE}
+              >
                 {analyzing ? 'Analyzing…' : 'Analyze Image'}
               </button>
             </div>

@@ -32,6 +32,7 @@ import { assertOnlineForWrite } from '../../lib/offline/writeGuard'
 import OfflineBanner from '../../components/OfflineBanner'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
 import { observedAt, observedBefore, vitalTemperature, vitalWhole } from '../../lib/vitals'
+import VoidObservationButton from '../../components/vitals/VoidObservationButton'
 import { breakdownRowFor, news2Description, topReadings, type News2BreakdownRow, type News2ScoredVital } from '../../lib/news2'
 import { vitalTrendWindow, trendSpanShort, trendAxisLabel, trendAriaPhrase, type VitalTrendWindow } from '../../lib/vitalTrend'
 import { buildLabTrends, labGraphData, labTrendLabel, labTrendTone, LAB_TREND_TONE_COLOR, type LabStatus, type LabTrend } from '../../lib/labTrends'
@@ -1715,6 +1716,21 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
             {renderSparkline('RR', 'respiratory_rate')}
           </div>
         </div>
+
+        {/* Orb Ward Record: the set on the bar can be struck out with a reason
+            (nurse, doctor; VoidObservationButton hides itself from anyone else).
+            Only a stored row carries an id; a live tick has none until reload,
+            and a simulated row is not anyone's to correct. After the void the
+            live pair is dropped so the reload's older set is taken. */}
+        {typeof (latest as { id?: unknown }).id === 'number' && !vitalsSimulated && (
+          <div className="command-bar__void">
+            <VoidObservationButton
+              vitalsId={(latest as { id: number }).id}
+              what="the observations on the bar"
+              onVoided={() => { setLive(null); void loadPatientData() }}
+            />
+          </div>
+        )}
 
         {/* Action buttons, in sentence case and one style, grouped by what
             they do: read the chart, hand it over, print it, discharge last.

@@ -58,6 +58,14 @@ export const HELIX_RECEIVE = 'helix.receive' as const
  *  whose POST is already known to 403. */
 export const DISCHARGE_GENERATE = 'discharge.generate' as const
 export const DISCHARGE_PUBLISH = 'discharge.publish' as const
+/** Recording an observation set at the bedside (nurse, doctor), and marking a
+ *  recorded set "entered in error". Mirrored so the clerk, who copies sets from
+ *  the paper sheet under VITALS_TRANSCRIBE, is never offered the void action
+ *  whose POST the server answers with 403 (Orb Ward Record, 6 October 2026). */
+export const VITALS_WRITE = 'vitals.write' as const
+/** Copying an observation set from the paper sheet: the ward clerk only. Her
+ *  entry sheet asks for the time written on the sheet and shows no score. */
+export const VITALS_TRANSCRIBE = 'vitals.transcribe' as const
 
 /* ── The HIS permissions (build plan of 3 October 2026, wave 1) ─────────────
  *
@@ -129,6 +137,8 @@ export type Permission =
   | typeof HELIX_RECEIVE
   | typeof DISCHARGE_GENERATE
   | typeof DISCHARGE_PUBLISH
+  | typeof VITALS_WRITE
+  | typeof VITALS_TRANSCRIBE
   | HisPermission
 
 /**
@@ -170,14 +180,14 @@ const ROLE_PERMISSIONS: Record<string, readonly Permission[]> = {
   // critical (LIS-R12), and raises ward indents, receives ward stock and
   // records returns for her own ward (GRN-R8). No bed-board grant: the nurse's
   // read-only board waits on ruling ADT-S7, and until then she gets nothing new.
-  nurse: [PATIENT_READ_ALL, OUTCOME_RECORD, HELIX_RECEIVE,
+  nurse: [PATIENT_READ_ALL, OUTCOME_RECORD, HELIX_RECEIVE, VITALS_WRITE,
           LAB_COLLECT, LAB_CRITICAL_ACK,
           WARD_STOCK_READ, WARD_STOCK_RECEIVE, WARD_INDENT_RAISE, WARD_RETURN_RECORD],
   // HIS: the doctor registers and consults outpatients (OPD-N3), reads the bed
   // board (moves and transfers go through the patient.write arm on the
   // server), and collects specimens and acknowledges lab criticals (LIS-R12).
   doctor: [PATIENT_READ_ALL, PATIENT_WRITE, OUTCOME_RECORD, RELAY_EXECUTE_ACTION,
-           MEDICATION_PRESCRIBE, DISCHARGE_GENERATE, DISCHARGE_PUBLISH,
+           MEDICATION_PRESCRIBE, DISCHARGE_GENERATE, DISCHARGE_PUBLISH, VITALS_WRITE,
            REGISTRATION_READ, REGISTRATION_WRITE, OPD_CONSULT,
            ADT_READ, LAB_COLLECT, LAB_CRITICAL_ACK],
   // Governance + read-only clinical. Holds OUTCOME_RECORD for backfill, but
@@ -206,7 +216,9 @@ const ROLE_PERMISSIONS: Record<string, readonly Permission[]> = {
   receptionist: [REGISTRATION_READ, REGISTRATION_WRITE],
   // The ward clerk reads the board and moves a patient between beds of the
   // same department: no transfer (ADT-S8), no leave or absconded (ADT-S7).
-  ward_clerk: [ADT_READ, ADT_BED],
+  // The Orb Ward Record (6 October 2026): she also copies observation sets
+  // from the paper sheet (VITALS_TRANSCRIBE), never VITALS_WRITE.
+  ward_clerk: [ADT_READ, ADT_BED, VITALS_TRANSCRIBE],
   // The lab roles (LIS-R12): hospital-wide, none of the clinical set.
   phlebotomist: [LAB_READ, LAB_COLLECT],
   lab_technician: [LAB_READ, LAB_COLLECT, LAB_RECEIVE, LAB_RESULT, LAB_CRITICAL_LOG, INGEST_RECONCILE],

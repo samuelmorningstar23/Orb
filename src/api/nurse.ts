@@ -112,6 +112,8 @@ export interface NursePatientCard {
    *  a simulated or monitor row (nurse_shift_service.OBS_CLOCK_SOURCES). */
   last_obs_at: string | null;
   last_obs_source?: string | null;
+  /** The vitals row behind last_obs_at, for "Entered in error". */
+  last_obs_vitals_id?: number | null;
   obs_interval_minutes: number;
   obs_band: string;
   obs_response: string;
@@ -151,9 +153,18 @@ export interface ObservationInput {
   spo2?: number | null;
   consciousness?: string;
   on_oxygen?: boolean;
-  /** Stamped when the nurse hits Save; also the server-side dedupe key. */
+  /** Stamped when the nurse hits Save; also the server-side dedupe key. For
+   *  the ward clerk it is the time written on the paper sheet. */
   taken_at?: string;
+  /** Readings the paper sheet showed but nobody could read. Each is stored
+   *  empty and named on the record (Orb Ward Record). */
+  illegible?: IllegibleField[];
 }
+
+/** The readings that can be marked illegible (nurse_shift_service.ILLEGIBLE_FIELDS). */
+export type IllegibleField =
+  | 'heart_rate' | 'systolic_bp' | 'diastolic_bp' | 'spo2'
+  | 'temperature' | 'respiratory_rate' | 'consciousness' | 'on_oxygen';
 
 export interface ObservationPreview {
   news2: News2;
@@ -164,9 +175,23 @@ export interface ObservationPreview {
 export interface ObservationRecorded {
   vitals_id: number;
   recorded_at: string;
-  news2: News2;
-  schedule: ObsSchedule;
+  /** null when scoring is switched off on this computer (ORB_SCORING_ENABLED). */
+  news2: News2 | null;
+  schedule: ObsSchedule | null;
   replayed: boolean;
+  /** 'nurse_manual' at the bedside, 'clerk_transcribed' from the paper sheet. */
+  source?: string;
+  /** When the set was keyed (UTC); recorded_at is when it was taken. */
+  entered_at?: string;
+  illegible?: IllegibleField[];
+}
+
+export interface ObservationVoided {
+  vitals_id: number;
+  patient_id: string;
+  voided_at: string;
+  voided_by: string;
+  void_reason: string;
 }
 
 /**
@@ -229,6 +254,24 @@ export async function recordObservations(
     method: 'POST',
     headers: { 'Idempotency-Key': newId() },
     body: JSON.stringify(obs),
+  });
+}
+
+/**
+ * Mark a recorded observation set as entered in error, with a reason.
+ *
+ * Nurse and doctor only (vitals.write); the server refuses the ward clerk. The
+ * set stays on the record, struck out, and every screen stops reading it as the
+ * latest. Online only, like recording: a correction to the chart is never queued.
+ */
+export async function voidObservation(
+  vitalsId: number,
+  reason: string,
+): Promise<ObservationVoided> {
+  return apiFetch(`/nurse/observations/${vitalsId}/void`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': newId() },
+    body: JSON.stringify({ reason }),
   });
 }
 

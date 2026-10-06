@@ -324,8 +324,8 @@ def _load_board_rows(department: str | None):
         # by timestamp DESC, id DESC. Anchors the obs-due clock.
         src_marks = ",".join("?" for _ in OBS_CLOCK_SOURCES)
         last_obs_rows = db.execute(
-            f"""SELECT patient_id, timestamp, source FROM (
-                    SELECT v.patient_id, v.timestamp, v.source,
+            f"""SELECT id, patient_id, timestamp, source FROM (
+                    SELECT v.id, v.patient_id, v.timestamp, v.source,
                            ROW_NUMBER() OVER (PARTITION BY v.patient_id
                                               ORDER BY v.timestamp DESC, v.id DESC) AS rn
                       FROM vitals v
@@ -646,6 +646,9 @@ def build_board(department: str | None) -> dict:
             "vitals_source": vitals.get("source") if vitals else None,
             "last_obs_at": _iso(last_obs_at),
             "last_obs_source": last_obs.get("source") if last_obs else None,
+            # The vitals row behind last_obs_at, so the shift view can offer
+            # "Entered in error" on that set (POST /api/nurse/observations/{id}/void).
+            "last_obs_vitals_id": last_obs.get("id") if last_obs else None,
             "obs_interval_minutes": schedule["interval_minutes"],
             "obs_band": schedule["band"],
             "obs_response": schedule["response"],

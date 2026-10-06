@@ -1400,3 +1400,25 @@ textarea.shift-input { min-height: 88px; resize: vertical; }
   .nurse-delivery__side { align-items: stretch; }
   .nurse-delivery__from { text-align: left; }
 }
+
+/* The clerk's copy of the paper sheet (Orb Ward Record): the time written on
+   the sheet, and an "Illegible" tick beside every reading. */
+.obs-sheet-time {
+  margin-bottom: var(--space-3);
+}
+
+.obs-illegible {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.obs-illegible input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+}
+

@@ -281,3 +281,10 @@ def test_the_chart_reads_skip_the_voided_set(voided_latest):
     assert [dict(v)["id"] for v in chart_vitals] == [voided_latest["good"]]
     recent = vigil_routes._load_recent_vitals(pid, 1)
     assert [dict(v)["id"] for v in recent] == [voided_latest["good"]]
+
+
+def test_the_shift_board_names_the_last_unvoided_set_for_the_void_action(voided_latest):
+    from services import nurse_shift_service
+    board = nurse_shift_service.build_board(DEPT_A)
+    card = next(c for c in board["patients"] if c["patient_id"] == voided_latest["pid"])
+    assert card["last_obs_vitals_id"] == voided_latest["good"]

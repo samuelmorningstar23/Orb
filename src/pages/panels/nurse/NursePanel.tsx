@@ -21,6 +21,7 @@ import { useOfflineSnapshot } from '../../../hooks/useOfflineSnapshot'
 import { useNow } from '../../../hooks/useNow'
 import { useVisiblePolling } from '../../../hooks/useVisiblePolling'
 import OfflineBanner from '../../../components/OfflineBanner'
+import VoidObservationButton from '../../../components/vitals/VoidObservationButton'
 import './NursePanel.css'
 
 /* ═══════════════════════════════════════════════════
@@ -718,6 +719,21 @@ export default function NursePanel() {
                   )}
                   <li className={p.obs_overdue ? 'is-late' : ''}>
                     {obsLabel(p.last_obs_at, p.obs_minutes_until_due)}
+                    {/* Orb Ward Record: a wrong set is struck out with a reason,
+                        never edited. Nurse and doctor only (vitals.write). */}
+                    {p.last_obs_vitals_id != null && (
+                      <>
+                        {' '}
+                        <VoidObservationButton
+                          vitalsId={p.last_obs_vitals_id}
+                          what={`the last observations for ${p.name}`}
+                          onVoided={() => {
+                            showFlash(`Observations for ${p.name} marked entered in error.`)
+                            void load({ quiet: true })
+                          }}
+                        />
+                      </>
+                    )}
                   </li>
                   {/* NAME THE NOUN. This line is about DOSES and sat directly
                       under the observations line with no noun of its own, so
@@ -790,9 +806,10 @@ export default function NursePanel() {
           onRecorded={(news2, schedule) => {
             const name = obsFor.name
             setObsFor(null)
-            showFlash(
-              `Observations recorded for ${name}. ${news2Description(news2)}. ${schedule.response}`,
-            )
+            // No score when scoring is switched off on this computer.
+            showFlash(news2 && schedule
+              ? `Observations recorded for ${name}. ${news2Description(news2)}. ${schedule.response}`
+              : `Observations recorded for ${name}.`)
             void load({ quiet: true })
           }}
         />

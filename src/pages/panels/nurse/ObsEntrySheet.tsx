@@ -3,13 +3,17 @@ import { createPortal } from 'react-dom'
 import {
   previewNews2,
   recordObservations,
+  type IllegibleField,
   type News2,
   type NursePatientCard,
   type ObsSchedule,
   type ObservationInput,
 } from '../../../api/nurse'
 import { getUser } from '../../../api/client'
+import { hasPermission, VITALS_TRANSCRIBE, VITALS_WRITE } from '../../../lib/roles'
+import { useClinicalSwitches } from '../../../shellConfig'
 import { useFocusTrap } from '../../../hooks/useFocusTrap'
+import { useNow } from '../../../hooks/useNow'
 import { isOwnFreshDraft, obsDraftKey, type DraftEnvelope } from '../../../lib/nurseDrafts'
 import { assertOnlineForWrite } from '../../../lib/offline/writeGuard'
 import type { OfflineSnapshot } from '../../../hooks/useOfflineSnapshot'
@@ -54,10 +58,26 @@ import News2Badge from '../../../components/News2Badge'
  *     in-flight guard is also a ref, because two taps 6 ms apart both run
  *     against the same render's `saving` state and a state-based guard sees
  *     `false` on both.
+ *
+ *  5. THE CLERK'S COPY (Orb Ward Record, 6 October 2026). An account that
+ *     copies sets from the paper sheet (vitals.transcribe, no vitals.write)
+ *     gets a required "Time on the sheet", which becomes `taken_at` and may be
+ *     days back but never in the future; an "Illegible" tick beside every
+ *     reading, which blanks it and names it in `illegible`; and no score at
+ *     all, live or after saving, because the record copies the sheet and
+ *     scores nothing. With scoring switched off on this computer
+ *     (useClinicalSwitches().scoringEnabled false) nobody sees a score.
  */
 
+/** What the sheet needs to know about the patient. The shift board passes its
+ *  whole card; the clerk's Observations view has no chart, so it passes the
+ *  bed-board identity only. */
+export type ObsSheetPatient =
+  Pick<NursePatientCard, 'patient_id' | 'name' | 'bed' | 'mrn'>
+  & Partial<Pick<NursePatientCard, 'allergies' | 'on_scale_2'>>
+
 interface Props {
-  patient: NursePatientCard
+  patient: ObsSheetPatient
   /**
    * The shift board's snapshot, when the caller has one. Optional because the
    * refusal in save() — not this label — is what actually stops an offline
@@ -66,7 +86,9 @@ interface Props {
    */
   offline?: OfflineSnapshot<unknown>
   onClose: () => void
-  onRecorded: (news2: News2, schedule: ObsSchedule) => void
+  /** news2 and schedule are null when no score is computed: the clerk's copy,
+   *  or scoring switched off on this computer. */
+  onRecorded: (news2: News2 | null, schedule: ObsSchedule | null) => void
 }
 
 type FieldKey =
@@ -118,6 +140,23 @@ interface Draft extends DraftEnvelope {
   consciousness: string
   onOxygen: boolean
   savedAt: number
+  /** The clerk's ticks and sheet time, so an interrupted copy comes back whole. */
+  illegible?: IllegibleField[]
+  sheetTime?: string
+}
+
+/** `datetime-local` value for a Date, in the computer's own time zone. */
+function toLocalInput(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    + `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/** A `datetime-local` value read as local time; null when it is not one. */
+function fromLocalInput(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return null
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? null : d
 }
 
 /**
@@ -164,6 +203,31 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
   const [showRestoredNote, setShowRestoredNote] = useState(!!restored)
   const restoredAt = restored?.savedAt ?? null
 
+  // The clerk copies the paper sheet (vitals.transcribe without vitals.write).
+  // Decided once from the stored session, like ownerId above.
+  const [transcribing] = useState(
+    () => hasPermission(VITALS_TRANSCRIBE) && !hasPermission(VITALS_WRITE),
+  )
+  const { scoringEnabled } = useClinicalSwitches()
+  // No score for the clerk's copy, and none for anyone while scoring is off.
+  const showScore = scoringEnabled && !transcribing
+  const [illegible, setIllegible] = useState<ReadonlySet<IllegibleField>>(
+    () => new Set(restored?.illegible ?? []),
+  )
+  const [sheetTime, setSheetTime] = useState<string>(
+    () => restored?.sheetTime ?? toLocalInput(new Date()),
+  )
+  // The clock for "never in the future", read through useNow so the render
+  // stays pure. Ticks only on the clerk's copy.
+  const now = useNow(30_000, transcribing)
+  const sheetTimeError = useMemo(() => {
+    if (!transcribing) return ''
+    const when = fromLocalInput(sheetTime)
+    if (!when) return 'Enter the date and time written on the sheet'
+    if (when.getTime() > now + 60_000) return 'The time on the sheet cannot be in the future'
+    return ''
+  }, [transcribing, sheetTime, now])
+
   const [preview, setPreview] = useState<{ news2: News2; schedule: ObsSchedule } | null>(null)
   const [previewing, setPreviewing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -171,8 +235,9 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
   const [confirmDiscard, setConfirmDiscard] = useState(false)
 
   const hasAnyValue = useMemo(
-    () => FIELDS.some(f => values[f.key].trim() !== '') || consciousness !== 'alert' || onOxygen,
-    [values, consciousness, onOxygen],
+    () => FIELDS.some(f => values[f.key].trim() !== '') || consciousness !== 'alert' || onOxygen
+      || illegible.size > 0,
+    [values, consciousness, onOxygen, illegible],
   )
 
   /** Per-field range validation, so a fat-fingered keypad is caught before save. */
@@ -188,16 +253,32 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
     return errs
   }, [values])
 
-  const hasFieldErrors = Object.keys(fieldErrors).length > 0
+  const hasFieldErrors = Object.keys(fieldErrors).length > 0 || sheetTimeError !== ''
 
   const buildPayload = useCallback((): ObservationInput => {
     const payload: ObservationInput = { consciousness, on_oxygen: onOxygen }
     for (const f of FIELDS) {
       const raw = values[f.key].trim()
-      payload[f.key] = raw === '' ? null : Number(raw)
+      payload[f.key] = raw === '' || illegible.has(f.key) ? null : Number(raw)
     }
+    if (illegible.size > 0) payload.illegible = Array.from(illegible)
     return payload
-  }, [values, consciousness, onOxygen])
+  }, [values, consciousness, onOxygen, illegible])
+
+  /** Tick or untick "Illegible" for one reading. A ticked reading is blanked,
+   *  so a half-read number can never travel with the mark. */
+  const toggleIllegible = (key: IllegibleField) => {
+    setIllegible(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+    if ((FIELDS as { key: string }[]).some(f => f.key === key)) {
+      setValues(prev => ({ ...prev, [key]: '' }))
+    }
+    setShowRestoredNote(false)
+  }
 
   // ── Draft persistence: mirror every change so an interruption cannot lose it.
   //    Stamped with the owner so only this nurse can ever read it back.
@@ -209,17 +290,22 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
     try {
       const draft: Draft = {
         values, consciousness, onOxygen, savedAt: Date.now(), ownerId: ownerId ?? undefined,
+        illegible: Array.from(illegible),
+        sheetTime: transcribing ? sheetTime : undefined,
       }
       localStorage.setItem(obsDraftKey(patient.patient_id), JSON.stringify(draft))
     } catch {
       // A full/blocked localStorage must never break charting — the in-memory
       // form is still authoritative for this session.
     }
-  }, [values, consciousness, onOxygen, hasAnyValue, patient.patient_id, ownerId])
+  }, [values, consciousness, onOxygen, illegible, sheetTime, transcribing, hasAnyValue,
+      patient.patient_id, ownerId])
 
   // ── Live NEWS2. Debounced, and every in-flight request is aborted when a
   //    newer one starts so a slow response can never overwrite a fresher score.
-  const scoreable = hasAnyValue && !hasFieldErrors
+  // No preview request at all when no score is shown: the clerk holds no
+  // vitals.read, and with scoring off the route answers 404.
+  const scoreable = hasAnyValue && !hasFieldErrors && showScore
   // Whether a stale score is still in state is irrelevant — an unscoreable form
   // shows no score. Deriving that (rather than clearing state from an effect)
   // means there is no render in which an old NEWS2 sits above edited values.
@@ -271,6 +357,10 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
     setSaving(true)
     setError('')
     if (takenAtRef.current === null) takenAtRef.current = new Date().toISOString()
+    // The clerk's set is timed by the sheet, not by the keyboard. Same value on
+    // every tap, so the server's replay guard still recognises a double tap.
+    const sheetWhen = transcribing ? fromLocalInput(sheetTime) : null
+    const takenAt = sheetWhen ? sheetWhen.toISOString() : takenAtRef.current
     try {
       // Offline is a REFUSAL, not a delay. An observation set is the input to a
       // NEWS2 escalation decision and the nurse must see the resulting score
@@ -283,13 +373,13 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
         ...buildPayload(),
         // Stamped on the client, not the server: this is when the reading was
         // taken, and it is what the server dedupes a replay on.
-        taken_at: takenAtRef.current,
+        taken_at: takenAt,
       })
       // Only now is the draft safe to drop. The latch is deliberately NOT
       // released on success — the sheet is closing, and a late second tap must
       // not start another write.
       localStorage.removeItem(obsDraftKey(patient.patient_id))
-      onRecorded(res.news2, res.schedule)
+      onRecorded(showScore ? res.news2 ?? null : null, showScore ? res.schedule ?? null : null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not record these observations')
       inFlightRef.current = false
@@ -311,7 +401,21 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
     return hit ? hit.points : null
   }
 
-  const severeAllergies = patient.allergies.filter(a => a.severity === 'severe')
+  const severeAllergies = (patient.allergies ?? []).filter(a => a.severity === 'severe')
+
+  /** The "Illegible" tick for one reading, shown on the clerk's copy only. */
+  const illegibleTick = (key: IllegibleField, label: string) => transcribing ? (
+    <label className="obs-illegible">
+      <input
+        type="checkbox"
+        checked={illegible.has(key)}
+        onChange={() => toggleIllegible(key)}
+        disabled={saving}
+        aria-label={`${label} illegible on the sheet`}
+      />
+      Illegible
+    </label>
+  ) : null
 
   return createPortal(
     <div className="nurse-sheet-backdrop" onClick={requestClose}>
@@ -325,7 +429,9 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
       >
         <header className="nurse-sheet__header">
           <div>
-            <h2 className="nurse-sheet__title" id="obs-sheet-title">Record observations</h2>
+            <h2 className="nurse-sheet__title" id="obs-sheet-title">
+              {transcribing ? 'Copy observations from the sheet' : 'Record observations'}
+            </h2>
             <p className="nurse-sheet__subject">
               <strong>{patient.name}</strong>
               {patient.bed ? <> · Bed {patient.bed}</> : null}
@@ -364,7 +470,30 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
             </div>
           )}
 
-          {patient.on_scale_2 && (
+          {transcribing && (
+            <div className={`obs-field obs-sheet-time ${sheetTimeError ? 'obs-field--error' : ''}`}>
+              <label className="obs-field__label" htmlFor="obs-sheet-time">
+                Time on the sheet
+              </label>
+              <input
+                id="obs-sheet-time"
+                className="obs-field__input"
+                type="datetime-local"
+                required
+                max={toLocalInput(new Date(now))}
+                value={sheetTime}
+                onChange={e => { setSheetTime(e.target.value); setShowRestoredNote(false) }}
+                disabled={saving}
+                aria-invalid={!!sheetTimeError}
+                aria-describedby={sheetTimeError ? 'obs-sheet-time-err' : undefined}
+              />
+              {sheetTimeError && (
+                <span className="obs-field__error" id="obs-sheet-time-err">{sheetTimeError}</span>
+              )}
+            </div>
+          )}
+
+          {showScore && patient.on_scale_2 && (
             <div className="nurse-note nurse-note--warn" role="note">
               SpO₂ scored on <strong>Scale 2</strong> (target 88–92%) for this patient.
             </div>
@@ -399,7 +528,7 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
                       placeholder="—"
                       value={values[f.key]}
                       onChange={e => setField(f.key, e.target.value)}
-                      disabled={saving}
+                      disabled={saving || illegible.has(f.key)}
                       autoFocus={index === 0}
                       aria-describedby={err ? `obs-${f.key}-err` : undefined}
                       aria-invalid={!!err}
@@ -414,6 +543,7 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
                     )}
                   </div>
                   {err && <span className="obs-field__error" id={`obs-${f.key}-err`}>{err}</span>}
+                  {illegibleTick(f.key, f.label)}
                 </div>
               )
             })}
@@ -432,12 +562,13 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
                   className={`obs-chip ${onOxygen === opt.value ? 'obs-chip--active' : ''}`}
                   aria-pressed={onOxygen === opt.value}
                   onClick={() => { setOnOxygen(opt.value); setShowRestoredNote(false) }}
-                  disabled={saving}
+                  disabled={saving || illegible.has('on_oxygen')}
                 >
                   {opt.label}
                 </button>
               ))}
             </div>
+            {illegibleTick('on_oxygen', 'Supplemental oxygen')}
           </fieldset>
 
           <fieldset className="obs-segment">
@@ -456,17 +587,26 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
                   className={`obs-chip ${consciousness === level.value ? 'obs-chip--active' : ''}`}
                   aria-pressed={consciousness === level.value}
                   onClick={() => { setConsciousness(level.value); setShowRestoredNote(false) }}
-                  disabled={saving}
+                  disabled={saving || illegible.has('consciousness')}
                 >
                   <span className="obs-chip__key" aria-hidden="true">{level.hint}</span>
                   {level.label}
                 </button>
               ))}
             </div>
+            {illegibleTick('consciousness', 'Consciousness')}
           </fieldset>
 
+          {!showScore && (
+            <p className="obs-score__caveat" role="note">
+              {transcribing
+                ? 'Copy each reading exactly as written. Tick Illegible for any you cannot read. No score is shown.'
+                : 'Scoring is switched off on this computer. No score is shown.'}
+            </p>
+          )}
+
           {/* The score this set produces — the reason the obs were taken. */}
-          <section className="obs-score" aria-live="polite">
+          {showScore && <section className="obs-score" aria-live="polite">
             {shownPreview ? (
               <>
                 <div className="obs-score__head">
@@ -494,7 +634,7 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
                     : 'Enter observations to see the NEWS2 they produce.'}
               </p>
             )}
-          </section>
+          </section>}
         </div>
 
         <footer className="nurse-sheet__actions">
