@@ -61,11 +61,12 @@ vi.mock('../../api/client', () => ({
 
 vi.mock('../../components/sage/SageInsightsFeed', () => ({ default: () => <div data-testid="insights-feed" /> }))
 vi.mock('../../components/sage/WardBrief', () => ({ default: () => <div data-testid="ward-brief" /> }))
-vi.mock('../../components/vigil/CareBundleTimer', () => ({ default: () => null }))
+vi.mock('../../components/vigil/CareBundleTimer', () => ({ default: () => <div data-testid="care-bundle" /> }))
 vi.mock('../../components/vigil/PatientStory', () => ({ default: () => null }))
 vi.mock('../../components/ClinicalCourseTimeline', () => ({ ClinicalCourseTimeline: () => <div data-testid="course" /> }))
 
 import VigilPanel from './VigilPanel'
+import { getPatientForecast, prefetchSageContext } from '../../api/client'
 import { ActivePatientProvider } from '../../contexts/ActivePatientProvider'
 import { ActiveViewProvider } from '../../contexts/ActiveViewProvider'
 import { resetClinicalSwitches, setClinicalSwitches } from '../../shellConfig'
@@ -219,5 +220,55 @@ describe('the patient list with scoring switched off', () => {
     board()
     await waitFor(() => expect(screen.getByText('Admitted · My Dept')).toBeTruthy())
     expect(screen.queryByTestId('insights-feed')).toBeNull()
+  })
+})
+
+/* Review, 7 October 2026. */
+describe('what else the chart leaves out with the switches off', () => {
+  it('draws no worsening or improving trend line with scoring off', async () => {
+    h.detail = { ...chartWithNoScore(), trend: { trend: 'worsening' } }
+    act(() => { setClinicalSwitches({ scoring_enabled: false }) })
+    await openChart()
+    expect(screen.queryByText(/Trend \(last 6h/)).toBeNull()
+    expect(document.querySelector('.detail__trend')).toBeNull()
+  })
+
+  it('keeps the trend line with scoring on', async () => {
+    h.detail = { ...chartWithNoScore(), trend: { trend: 'worsening' } }
+    await openChart()
+    expect(document.querySelector('.detail__trend')).toBeTruthy()
+  })
+
+  it('under the profile shows no Sepsis Six card and asks no model to forecast or warm Sage', async () => {
+    act(() => {
+      setClinicalSwitches({ scoring_enabled: false, models_enabled: false, ward_record: true })
+    })
+    await openChart()
+    expect(screen.queryByTestId('care-bundle')).toBeNull()
+    expect(vi.mocked(getPatientForecast)).not.toHaveBeenCalled()
+    expect(vi.mocked(prefetchSageContext)).not.toHaveBeenCalled()
+  })
+
+  it('keeps the Sepsis Six card, the forecast and the Sage warm up on an ordinary site', async () => {
+    await openChart()
+    expect(screen.getByTestId('care-bundle')).toBeTruthy()
+    expect(vi.mocked(getPatientForecast)).toHaveBeenCalled()
+    expect(vi.mocked(prefetchSageContext)).toHaveBeenCalled()
+  })
+})
+
+describe('the board sort with scoring switched off', () => {
+  it('names the order it really uses: ward and bed, not stability', async () => {
+    act(() => { setClinicalSwitches({ scoring_enabled: false }) })
+    render(
+      <ActivePatientProvider>
+        <ActiveViewProvider>
+          <VigilPanel role="doctor" />
+        </ActiveViewProvider>
+      </ActivePatientProvider>,
+    )
+    await waitFor(() => expect(screen.getByText('Admitted · My Dept')).toBeTruthy())
+    expect(screen.getByRole('button', { name: /Ward and bed/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Stability/ })).toBeNull()
   })
 })

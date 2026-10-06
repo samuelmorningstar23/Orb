@@ -206,3 +206,29 @@ describe('a direct visit to a screen the profile hides', () => {
     expect(notPart(container)).toBeNull()
   })
 })
+
+/* Review, 7 October 2026: with ONLY the models switched off this is still a
+   full Orb, so a visit to Sage must not be told it is "not part of Orb Ward
+   Record", a product the hospital is not running. */
+describe('a direct visit to Sage with only the models switched off', () => {
+  it('says the screen is switched off on this computer, and names no Ward Record', async () => {
+    h.user = { id: 'D1', name: 'Dr Ward', role: 'doctor', department: 'General Medicine' }
+    stubFetch({
+      ...ORDINARY_HEALTH,
+      clinical: {
+        scoring_enabled: true, lens_enabled: true, sepsis_autostart: true,
+        models_enabled: false, ward_record: false,
+      },
+    })
+    const container = await renderShell()
+    await waitFor(() => expect(rail(container)).not.toContain('sage'))
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('orb:goto-tab', { detail: { tab: 'sage' } }))
+    })
+    const page = notPart(container)
+    expect(page).toBeTruthy()
+    expect(page!.textContent).toContain('Switched off on this computer')
+    expect(page!.textContent).not.toContain('Ward Record')
+    expect(container.querySelector('[data-testid="mounted-sage"]')).toBeNull()
+  })
+})

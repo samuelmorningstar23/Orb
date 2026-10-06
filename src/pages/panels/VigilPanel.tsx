@@ -225,8 +225,9 @@ export default function VigilPanel({ role }: { role?: string | null }) {
   // clinician's first question streams faster.
   const handleSelectPatient = useCallback((id: string) => {
     setSelectedPatientId(id)
-    prefetchSageContext(id).catch(() => {})
-  }, [])
+    // Sage is a model: nothing to warm while the models are switched off.
+    if (modelsEnabled) prefetchSageContext(id).catch(() => {})
+  }, [modelsEnabled])
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch trigger: loadPatients sets state only after its fetch resolves.
   useEffect(() => { loadPatients() }, [])
@@ -255,9 +256,9 @@ export default function VigilPanel({ role }: { role?: string | null }) {
   useEffect(() => {
     return onOpenPatient((patientId) => {
       setSelectedPatientId(patientId)
-      prefetchSageContext(patientId).catch(() => {})
+      if (modelsEnabled) prefetchSageContext(patientId).catch(() => {})
     })
-  }, [])
+  }, [modelsEnabled])
 
   /* House-wide census for the Bed Occupancy tile — see HouseCensus above.
      Fetched only for the role that is shown the tile, so no other clinician's
@@ -485,10 +486,11 @@ export default function VigilPanel({ role }: { role?: string | null }) {
               <button
                 className={`sort-btn ${sortBy === 'stability' ? 'sort-btn--active' : ''}`}
                 onClick={() => setSortBy('stability')}
-                title="Sort by NEWS2 band"
+                title={scoringEnabled ? 'Sort by NEWS2 band' : 'Sort by ward, then bed'}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                Stability
+                {/* With scoring off this order is ward then bed, not stability. */}
+                {scoringEnabled ? 'Stability' : 'Ward and bed'}
               </button>
               <button
                 className={`sort-btn ${sortBy === 'recent' ? 'sort-btn--active' : ''}`}
@@ -1126,9 +1128,10 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
     loadPatientData()
     loadAdministrations()
     // Fetch forecast for this patient via the centralized client (auth + 401 handling).
-    getPatientForecast(patientId).then(setForecast).catch(() => {})
+    // The forecast is a model: not asked for while the models are switched off.
+    if (modelsEnabled) getPatientForecast(patientId).then(setForecast).catch(() => {})
     loadProjection()
-  }, [patientId, loadProjection])
+  }, [patientId, loadProjection, modelsEnabled])
 
   /* Charted allergies for the Administer modal. Cleared to `null` on every
      patient change BEFORE the fetch, so a slow response can never leave the
@@ -1836,7 +1839,8 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
           )}
         </div>
       </div>
-      <CareBundleTimer patientId={patientId} />
+      {/* The Sepsis Six timer is not part of Orb Ward Record. */}
+      {!wardRecord && <CareBundleTimer patientId={patientId} />}
 
 
       
@@ -1888,9 +1892,13 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
                  The basis is named too: a 6-hour average is not the last
                  observation, and the two genuinely disagree on a patient who
                  fell in the last twenty minutes. ── */}
-          <div className={`detail__trend detail__trend--${TREND_CLASS[trend.trend] || 'unknown'}`}>
-            Trend (last 6h vs the 6h before): {TREND_LABEL[trend.trend] || 'not enough earlier observations to compare'}
-          </div>
+          {/* Scoring switched off: no "worsening" or "improving" either. It is
+              Orb's judgement about the patient, not a recorded reading. */}
+          {scoringEnabled && (
+            <div className={`detail__trend detail__trend--${TREND_CLASS[trend.trend] || 'unknown'}`}>
+              Trend (last 6h vs the 6h before): {TREND_LABEL[trend.trend] || 'not enough earlier observations to compare'}
+            </div>
+          )}
           {/* ── Why this NEWS2 — ONE breakdown on this screen, never two ──
                  Sage's block below carries Tier 1: the same decomposition of the
                  observation THE ALERT FIRED ON, plus the movement sentences and
