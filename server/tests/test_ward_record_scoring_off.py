@@ -444,3 +444,33 @@ def test_an_auto_started_bundle_shows_no_score_with_scoring_off(monkeypatch):
     bundle = r.json()["bundles"][0]
     assert "NEWS2" not in r.text
     assert bundle["trigger_news2"] is None and bundle["trigger_reason"] is None
+
+
+# ── Review, 7 October 2026: the handover's deterioration warning ────────────
+# With scoring off the I-PASS draft still printed "ACTIVE DETERIORATION: watch
+# closely." whenever the six hour vitals trend read as deteriorating.
+
+def _deteriorating_patient():
+    pid = _patient(f"SOF IPASS Trend {uuid.uuid4().hex[:6]}", stored_band=False)
+    with db_session() as db:
+        db.execute(
+            """INSERT INTO vitals (patient_id, timestamp, heart_rate, systolic_bp, diastolic_bp,
+                   spo2, temperature, respiratory_rate, consciousness, on_oxygen, source)
+               VALUES (?, ?, 72, 125, 80, 98, 36.8, 16, 'alert', 0, 'nurse_manual')""",
+            (pid, format_utc(_ago(9 * 60))))
+    return pid
+
+
+def test_ipass_with_scoring_off_raises_no_deterioration_warning(monkeypatch):
+    from services.ipass_service import build_ipass
+    pid = _deteriorating_patient()
+    _scoring(monkeypatch, True)
+    on = build_ipass(pid, include_assessment=False)
+    assert on["sections"]["situation_awareness"]["active_deterioration"] is True
+    assert "ACTIVE DETERIORATION" in on["plain_text"]
+    _scoring(monkeypatch, False)
+    off = build_ipass(pid, include_assessment=False)
+    # The trend alone still reads deteriorating, so only the fix keeps the line out.
+    assert off["sections"]["situation_awareness"]["trend"] == "deteriorating"
+    assert off["sections"]["situation_awareness"]["active_deterioration"] is False
+    assert "ACTIVE DETERIORATION" not in off["plain_text"]

@@ -1151,7 +1151,11 @@ def _build_situation_awareness(vitals: list[dict], trend: dict, risk: dict | Non
     latest = vitals[-1] if vitals else {}
     trend_label = trend.get("trend", "insufficient_data")
     level = str(risk.get("level", "stable")).lower() if risk is not None else None
-    active_deterioration = level in ("critical", "elevated") or trend_label == "deteriorating"
+    # Scoring switched off (risk None): no "ACTIVE DETERIORATION" line either,
+    # not even from the trend. It is a warning Orb works out, and with scoring
+    # off Orb raises none.
+    active_deterioration = risk is not None and (
+        level in ("critical", "elevated") or trend_label == "deteriorating")
 
     latest_vitals = {
         "timestamp": latest.get("timestamp"),
