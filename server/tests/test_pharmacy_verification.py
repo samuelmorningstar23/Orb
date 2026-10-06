@@ -265,6 +265,10 @@ def test_verify_severe_with_reason_verifies_and_audits(patient):
     assert audit["outcome"] == "partial_success"
     assert audit["actor_user_id"] == pharmacist
     assert "Desensitisation protocol in place" in (audit["summary_message"] or "")
+    # By name too, as the order lanes record an override.
+    import json
+    who = json.loads(audit["metadata_json"])["override_by"]
+    assert who == {"user_id": prescriber, "display_name": "Dr Verify Test", "role": "doctor"}
 
 
 def test_verify_sub_severe_needs_no_acknowledgement(patient, pharmacist):

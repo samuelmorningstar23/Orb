@@ -102,6 +102,21 @@ def _actor_role(user_id: str | None) -> str | None:
         return None
 
 
+def _override_by(user_id: str | None) -> dict:
+    """{user_id, display_name, role} of whoever cleared a block, read from
+    users now; the name and role are None when the user row is gone."""
+    name = role = None
+    if user_id:
+        try:
+            with db_session() as db:
+                r = db.execute("SELECT name, role FROM users WHERE id = ?", (user_id,)).fetchone()
+            if r:
+                name, role = r["name"], r["role"]
+        except Exception:                       # pragma: no cover (audit detail only)
+            pass
+    return {"user_id": user_id, "display_name": name, "role": role}
+
+
 def _with_dose_check(safety: dict, drug_name: str, dose, route) -> dict:
     """The safety screen plus the dose guard's verdict on the dose that will be
     verified. Its findings join ``alerts``, the list the verify queue already
@@ -412,6 +427,9 @@ def verify_medication(med_id: int, pharmacist_id: str, dosage: str | None = None
                 "screen_failed": bool(safety.get("screen_failed")),
                 "alerts": safety.get("alerts", []),
                 "reason": ack_reason,
+                # Who cleared it, by id and by name, as the order lanes record
+                # it. For a severe allergy this is always a prescriber.
+                "override_by": _override_by(pharmacist_id),
             },
         )
         safety = {**safety, "override": {"by": pharmacist_id, "reason": ack_reason}}

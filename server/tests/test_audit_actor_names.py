@@ -85,9 +85,20 @@ def test_flight_recorder_timeline_and_detail_carry_the_actor_name(admin):
 
 
 def test_chain_still_verifies_after_names_are_read(admin):
-    resp = client.get("/api/flight-recorder/verify", headers=_hdr(admin, "admin"))
+    doctor = _user("doctor", "Dr Chain Reader")
+    pid = f"PAANC{uuid.uuid4().hex[:5].upper()}"
+    log_audit_event(correlation_id=f"aan-{uuid.uuid4().hex}", event_category="clinical_safety",
+                    action_type="actor_name_probe", outcome="success",
+                    actor_user_id=doctor, actor_role="doctor", patient_id=pid,
+                    summary_message="actor name probe")
+    read = client.get("/api/audit/logs", params={"patient_id": pid}, headers=_hdr(admin, "admin"))
+    assert read.status_code == 200 and read.json()["logs"][0]["actor_name"] == "Dr Chain Reader"
+    resp = client.get("/api/flight-recorder/verify", params={"patient_id": pid},
+                      headers=_hdr(admin, "admin"))
     assert resp.status_code == 200
-    assert "ok" in resp.json()
+    body = resp.json()
+    assert body["ok"] is True, body
+    assert body.get("count", 1) >= 1
 
 
 def test_the_verify_queue_names_who_ordered_and_who_checked():
