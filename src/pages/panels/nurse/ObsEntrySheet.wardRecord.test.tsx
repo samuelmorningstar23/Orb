@@ -107,12 +107,16 @@ describe('the ward clerk copies the paper sheet', () => {
     expect((screen.getByRole('button', { name: 'Record observations' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('an illegible ACVPU is sent as illegible and its buttons are locked', () => {
+  it('an illegible ACVPU is sent as illegible and its buttons are locked', async () => {
     renderSheet()
     fireEvent.click(screen.getByLabelText('Consciousness illegible on the sheet'))
     expect((screen.getByRole('button', { name: /Voice/ }) as HTMLButtonElement).disabled).toBe(true)
     // An all-illegible round is still a round: Record is offered.
-    expect((screen.getByRole('button', { name: 'Record observations' }) as HTMLButtonElement).disabled).toBe(false)
+    const record = screen.getByRole('button', { name: 'Record observations' }) as HTMLButtonElement
+    expect(record.disabled).toBe(false)
+    await act(async () => { fireEvent.click(record) })
+    expect(recordObservations).toHaveBeenCalledTimes(1)
+    expect(recordObservations.mock.calls[0][1].illegible).toEqual(['consciousness'])
   })
 })
 
