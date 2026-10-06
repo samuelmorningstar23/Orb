@@ -72,3 +72,34 @@ describe('command center critical count', () => {
     expect(kpi.querySelector('.cmd-kpi__foot')?.textContent).toBe('2 elevated · 17 stable · 2 not scored')
   })
 })
+
+/* The heatmap counted the patients with no observation nowhere, so a ward's
+   parts no longer added up to its beds occupied. They now show as their own
+   neutral count. An incomplete set's NEWS2 is a minimum, as on the board. */
+describe('command center not scored and incomplete sets', () => {
+  it('names the not scored patients on the ward cell', async () => {
+    apiFetch.mockResolvedValue({
+      ...SNAPSHOT,
+      census: { ...SNAPSHOT.census, total_admitted: 6 },
+      acuity: {
+        critical: 1, elevated: 1, stable: 2, not_scored: 2,
+        heatmap: [{ ward: 'ICU', critical: 1, elevated: 1, stable: 2, not_scored: 2 }],
+      },
+    })
+    render(<CommandCenter />)
+    const cell = await screen.findByRole('group', { name: /^ICU:/ })
+    expect(cell.getAttribute('aria-label')).toContain('2 stable, 2 not scored')
+    expect(cell.querySelector('.cmd-heat__counts em')?.textContent).toBe('2 not scored')
+    expect(cell.querySelector('.cmd-heat__seg--unscored')).toBeTruthy()
+  })
+
+  it('prints an incomplete set as a minimum', async () => {
+    apiFetch.mockResolvedValue({
+      ...SNAPSHOT,
+      deteriorations: [{ patient_id: 'P1', name: 'Asha Rao', ward: 'ICU', bed: '3',
+                         level: 'elevated', news2: 5, news2_complete: false }],
+    })
+    render(<CommandCenter />)
+    expect(await screen.findByText('NEWS2 ≥5')).toBeTruthy()
+  })
+})

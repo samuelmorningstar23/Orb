@@ -127,6 +127,7 @@
 .cmd-dot--critical { background: var(--status-danger); }
 .cmd-dot--elevated { background: var(--status-warn); }
 .cmd-dot--stable { background: var(--status-ok); }
+.cmd-dot--unscored { background: var(--text-muted); }
 
 .cmd-heat__scroll { overflow-x: auto; padding: 16px; }
 .cmd-heat {
@@ -154,10 +155,13 @@
 .cmd-heat__seg--critical { background: var(--status-danger); }
 .cmd-heat__seg--elevated { background: var(--status-warn); }
 .cmd-heat__seg--stable { background: var(--status-ok); }
+/* Admitted with no observation on record: neutral, never a band colour. */
+.cmd-heat__seg--unscored { background: var(--text-muted); }
 .cmd-heat__counts { display: flex; gap: 0.6rem; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
 .cmd-heat__counts b { color: var(--status-danger-text); font-weight: 800; }
 .cmd-heat__counts span { color: var(--status-warn-text); }
 .cmd-heat__counts i { color: var(--status-ok-text); font-style: normal; }
+.cmd-heat__counts em { color: var(--text-secondary); font-style: normal; }
 
 /* ── Deteriorations ───────────────────────────────────────── */
 .cmd-detlist { display: flex; flex-direction: column; overflow-y: auto; max-height: 520px; }

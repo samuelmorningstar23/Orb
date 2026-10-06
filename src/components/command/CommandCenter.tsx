@@ -6,8 +6,10 @@ import './CommandCenter.css'
 
 // ── Snapshot shape (mirrors server/services/command_center_service.house_snapshot) ──
 interface WardCensus { ward: string; occupied: number; capacity: number; occupancy_pct: number }
-interface HeatCell { ward: string; critical: number; elevated: number; stable: number }
-interface Deterioration { patient_id: string; name: string | null; ward: string | null; bed: string | null; level: string; news2: number | null }
+/** `not_scored`: admitted with no observation on record (counted apart, never as stable). */
+interface HeatCell { ward: string; critical: number; elevated: number; stable: number; not_scored?: number }
+/** `news2_complete` false: an incomplete set, so the number is a minimum. */
+interface Deterioration { patient_id: string; name: string | null; ward: string | null; bed: string | null; level: string; news2: number | null; news2_complete?: boolean | null }
 interface ORCase { id: string; procedure_name: string | null; operating_room: string | null; scheduled_time: string | null; status: string | null; patient_name: string | null; ward: string | null }
 
 interface HouseSnapshot {
@@ -208,6 +210,7 @@ export default function CommandCenter() {
               <span><i className="cmd-dot cmd-dot--critical" />Critical</span>
               <span><i className="cmd-dot cmd-dot--elevated" />Elevated</span>
               <span><i className="cmd-dot cmd-dot--stable" />Stable</span>
+              <span><i className="cmd-dot cmd-dot--unscored" />Not scored</span>
             </div>
           </header>
           <div className="cmd-heat__scroll">
@@ -217,7 +220,11 @@ export default function CommandCenter() {
                 const intensity = heatIntensity(cell)
                 // The counts were told apart by colour alone; each now carries a
                 // word, and the cell reads as one sentence to a screen reader.
+                // A patient with no observation on record is counted apart,
+                // so the parts still add up to the beds occupied.
+                const unscored = cell.not_scored ?? 0
                 const summary = `${cell.ward}: ${cell.critical} critical, ${cell.elevated} elevated, ${cell.stable} stable`
+                  + (unscored ? `, ${unscored} not scored` : '')
                   + (wardCensus ? `, ${wardCensus.occupied} of ${wardCensus.capacity} beds occupied` : '')
                 return (
                   <div
@@ -236,9 +243,11 @@ export default function CommandCenter() {
                       <span className="cmd-heat__seg cmd-heat__seg--critical" style={{ flexGrow: cell.critical || 0 }} />
                       <span className="cmd-heat__seg cmd-heat__seg--elevated" style={{ flexGrow: cell.elevated || 0 }} />
                       <span className="cmd-heat__seg cmd-heat__seg--stable" style={{ flexGrow: cell.stable || 0 }} />
+                      <span className="cmd-heat__seg cmd-heat__seg--unscored" style={{ flexGrow: unscored }} />
                     </div>
                     <div className="cmd-heat__counts" aria-hidden="true">
                       <b>{cell.critical} crit</b><span>{cell.elevated} elev</span><i>{cell.stable} stable</i>
+                      {unscored > 0 && <em>{unscored} not scored</em>}
                     </div>
                   </div>
                 )
@@ -275,7 +284,7 @@ export default function CommandCenter() {
                   </div>
                   <div className="cmd-det__right">
                     <span className={`cmd-det__badge cmd-det__badge--${d.level}`}>{d.level}</span>
-                    <span className="cmd-det__news2">{d.news2 != null ? `NEWS2 ${d.news2}` : 'NEWS2 —'}</span>
+                    <span className="cmd-det__news2">{d.news2 != null ? `NEWS2 ${d.news2_complete === false ? '≥' : ''}${d.news2}` : 'NEWS2 not recorded'}</span>
                   </div>
                 </div>
               ))

@@ -105,6 +105,7 @@ def _admitted_with_acuity() -> list[dict]:
                 """SELECT v.* FROM patients p
                    JOIN vitals v ON v.id = (
                        SELECT v2.id FROM vitals v2 WHERE v2.patient_id = p.id
+                         AND v2.voided_at IS NULL
                        ORDER BY v2.timestamp DESC, v2.id DESC LIMIT 1
                    )
                    WHERE p.status = 'admitted'"""
@@ -117,7 +118,15 @@ def _admitted_with_acuity() -> list[dict]:
     for r in rows:
         d = dict(r)
         on_scale_2 = bool(d.pop("on_scale_2", 0) or 0)
-        news2 = score_vitals_row(latest.get(d["id"]), patient_id=d["id"], on_scale_2=on_scale_2)
+        # One patient whose row cannot be scored must not blank the house: the
+        # whole list used to fall to zeros with it. That patient is counted
+        # "not scored", which the Critical card says out loud.
+        try:
+            news2 = score_vitals_row(latest.get(d["id"]), patient_id=d["id"],
+                                     on_scale_2=on_scale_2)
+        except Exception as e:
+            logger.warning("command-center: NEWS2 failed for %s: %s", d["id"], e)
+            news2 = None
         d["news2_result"] = news2
         d["level"] = news2["level"] if news2 else None
         d["news2"] = news2["raw_news2"] if news2 else None

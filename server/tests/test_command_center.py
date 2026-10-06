@@ -256,3 +256,47 @@ def test_bands_and_order_come_from_the_latest_vitals_like_the_vigil_board():
     row = next(d for d in snap["deteriorations"] if d["patient_id"] == crit)
     assert row["news2"] == 14
     assert snap["acuity"]["not_scored"] >= 1
+
+
+def test_a_set_entered_in_error_does_not_band_a_patient():
+    """The old highest-scores lane skipped a vitals set marked entered in error
+    (voided_at IS NULL); the 2026-10-06 rewrite read the newest row whatever
+    its state, so a voided peri-arrest set kept a patient critical. The board
+    and every other vitals reader skip it."""
+    pid = _mk_patient("W2", "stable", f"W2-{uuid.uuid4().hex[:3]}")
+    later = format_utc(datetime.now(timezone.utc) - timedelta(minutes=1))
+    hr, sbp, spo2, temp, rr = _VITALS_FOR["critical"]
+    with db_session() as db:
+        db.execute(
+            """INSERT INTO vitals (patient_id, timestamp, heart_rate, systolic_bp, diastolic_bp,
+                   spo2, temperature, respiratory_rate, consciousness, on_oxygen,
+                   voided_at, voided_by, void_reason)
+               VALUES (?, ?, ?, ?, 70, ?, ?, ?, 'alert', 0, ?, 'CC-TEST', 'Wrong patient')""",
+            (pid, later, hr, sbp, spo2, temp, rr, later),
+        )
+    by_id = {p["id"]: p for p in cc._admitted_with_acuity()}
+    assert by_id[pid]["level"] == "stable" and by_id[pid]["news2"] == 0
+    assert pid not in [d["patient_id"] for d in cc.house_snapshot()["deteriorations"]]
+
+
+def test_one_patient_that_cannot_be_scored_does_not_blank_the_house(monkeypatch):
+    """Scoring moved into the base read, outside the old per-patient guard, so
+    one row that raised emptied the census, the acuity map and the list. That
+    patient is now counted not scored and the rest still show."""
+    import services.vigil_service as vs
+
+    bad = _mk_patient("W2", "critical", f"W2-{uuid.uuid4().hex[:3]}")
+    good = _mk_patient("ICU", "critical", f"ICU-{uuid.uuid4().hex[:3]}")
+    real = vs.score_vitals_row
+
+    def flaky(vitals, *, patient_id=None, **kw):
+        if patient_id == bad:
+            raise ValueError("unreadable row")
+        return real(vitals, patient_id=patient_id, **kw)
+
+    monkeypatch.setattr(vs, "score_vitals_row", flaky)
+    snap = cc.house_snapshot()
+    assert "patients_error" not in snap
+    det = [d["patient_id"] for d in snap["deteriorations"]]
+    assert good in det and bad not in det
+    assert snap["acuity"]["not_scored"] >= 1
