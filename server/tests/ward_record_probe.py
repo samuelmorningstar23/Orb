@@ -227,6 +227,14 @@ def _seed() -> dict:
             (f"NEWS2 15 {MARKER} crossed the escalation threshold",
              json.dumps({"drivers": [MARKER]}), format_utc(now - timedelta(hours=2))),
         )
+        # A Sepsis Six bundle Orb opened on a score before the switch: the
+        # stored criterion names that score.
+        db.execute(
+            """INSERT INTO care_bundles (patient_id, bundle_type, triggered_at, triggered_by,
+                   trigger_reason, status, source)
+               VALUES (?, 'sepsis6', ?, 'vigil_auto', ?, 'active', 'vigil_auto')""",
+            (pids[0], format_utc(now - timedelta(hours=2)), f"NEWS2 15 (>=7) {MARKER}"),
+        )
         db.execute(
             "INSERT INTO ward_observation_settings (ward, interval_minutes, grace_minutes, set_by, set_at) "
             "VALUES (?, 240, 30, ?, ?)",

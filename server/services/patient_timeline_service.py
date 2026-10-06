@@ -345,9 +345,16 @@ def _r_observation(r: dict) -> dict:
 
 
 def _r_bundle(r: dict) -> dict:
+    # Scoring switched off (ORB_SCORING_ENABLED, the Orb Ward Record): a
+    # bundle Orb opened on a score keeps its line, without the stored NEWS2
+    # criterion that opened it. A reason a clinician typed is kept.
+    from services.vigil_service import scoring_enabled
+    # The automatic starter always signs as 'vigil_auto' (sepsis_bundle_service).
+    auto = r.get("triggered_by") == "vigil_auto"
+    reason = "" if auto and not scoring_enabled() else trigger_reason_text(r.get("trigger_reason"))
     return {
         "title": f"{bundle_label(r.get('bundle_type'))} bundle started",
-        "detail": trigger_reason_text(r.get("trigger_reason")) or "",
+        "detail": reason or "",
         "severity": "critical",
         "badge": "BUNDLE",
     }
@@ -562,7 +569,7 @@ SOURCES: tuple[_Source, ...] = (
         ts_col="cb.triggered_at",
         id_col="cb.id",
         select_cols=("cb.bundle_type AS bundle_type", "cb.trigger_reason AS trigger_reason",
-                     "NULL AS actor_name"),
+                     "cb.triggered_by AS triggered_by", "NULL AS actor_name"),
         render=_r_bundle,
     ),
     _Source(

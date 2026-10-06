@@ -420,3 +420,27 @@ def test_a_stored_chain_is_listed_without_its_score_with_scoring_off(monkeypatch
     assert events and all(e["news2"] is None for e in events)
     assert all("NEWS2" not in (e["detail"] or "") for e in events)
     assert all("drivers" not in (e["metadata"] or {}) for e in events)
+
+
+# ── Review, 7 October 2026: a bundle Orb opened on a score ──────────────────
+# The chart's Sepsis Six card printed "Opened by Orb at NEWS2 15" and the
+# stored criterion for a bundle auto-started before scoring was switched off.
+
+def test_an_auto_started_bundle_shows_no_score_with_scoring_off(monkeypatch):
+    pid = _patient(f"SOF Bundle {uuid.uuid4().hex[:6]}", stored_band=False)
+    with db_session() as db:
+        db.execute("INSERT INTO care_bundles (patient_id, bundle_type, triggered_at, "
+                   "triggered_by, trigger_reason, status, source) VALUES (?, 'sepsis6', ?, "
+                   "'vigil_auto', 'NEWS2 15 (>=7)', 'active', 'vigil_auto')",
+                   (pid, datetime.now(timezone.utc).isoformat()))
+    admin = _auth(_user("admin"), "admin")
+    _scoring(monkeypatch, True)
+    r = client.get(f"/api/bundles/patient/{pid}", headers=admin)
+    assert r.status_code == 200, r.text
+    assert "NEWS2 15" in r.text and r.json()["bundles"][0]["trigger_news2"] == 15
+    _scoring(monkeypatch, False)
+    r = client.get(f"/api/bundles/patient/{pid}", headers=admin)
+    assert r.status_code == 200, r.text
+    bundle = r.json()["bundles"][0]
+    assert "NEWS2" not in r.text
+    assert bundle["trigger_news2"] is None and bundle["trigger_reason"] is None

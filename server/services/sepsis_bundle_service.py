@@ -204,6 +204,13 @@ _AUTO_STARTERS = {"vigil_auto"}
 _NEWS2_IN_REASON = re.compile(r"NEWS2\s+(\d+)")
 
 
+def _scoring_enabled() -> bool:
+    """ORB_SCORING_ENABLED through vigil_service, so the Ward Record profile
+    (ORB_WARD_RECORD) switches it off here too. Read at call time."""
+    from services.vigil_service import scoring_enabled
+    return scoring_enabled()
+
+
 def _is_auto_start(row: dict) -> bool:
     return (row.get("source") in _AUTO_STARTERS
             or row.get("triggered_by") in _AUTO_STARTERS)
@@ -274,6 +281,13 @@ def _decorate(row: dict, names: dict[str, str] | None = None) -> dict:
     on_time = sum(1 for e in elements if e["state"] == "done_on_time")
     row["bundle_label"] = bundle_label(row.get("bundle_type"))
     row["trigger_reason"] = trigger_reason_text(row.get("trigger_reason"))
+    # Scoring switched off (ORB_SCORING_ENABLED, the Orb Ward Record): a
+    # bundle Orb opened before the switch still shows, but not the stored
+    # NEWS2 that opened it. A reason a clinician typed is kept.
+    if not _scoring_enabled():
+        row["trigger_news2"] = None
+        if _is_auto_start(row):
+            row["trigger_reason"] = None
     row["elapsed_min"] = round(elapsed_min, 1)
     row["elements"] = elements
     row["completed_count"] = completed
