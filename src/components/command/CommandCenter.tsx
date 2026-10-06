@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiFetch } from '../../api/client'
 import { useVisiblePolling } from '../../hooks/useVisiblePolling'
+import { useClinicalSwitches } from '../../shellConfig'
 import { formatClinicalClock, formatClinicalTime } from '../../lib/datetime'
 import './CommandCenter.css'
 
@@ -27,6 +28,9 @@ interface HouseSnapshot {
   // their department and sends the house-wide count beside it.
   deteriorations_scope?: string | null
   deteriorations_house_count?: number
+  /** False with ORB_SCORING_ENABLED off (the Orb Ward Record): every patient
+   *  is "not scored" and the highest-scores list is empty. */
+  scoring_enabled?: boolean
 }
 
 const REFRESH_MS = 20_000
@@ -64,6 +68,7 @@ function ageLabel(min: number | null): string {
 }
 
 export default function CommandCenter() {
+  const { scoringEnabled } = useClinicalSwitches()
   const [snap, setSnap] = useState<HouseSnapshot | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -135,6 +140,10 @@ export default function CommandCenter() {
   // A scoped list must say so: an empty one would otherwise claim the whole house is stable.
   const scope = snap.deteriorations_scope || null
   const houseCount = snap.deteriorations_house_count ?? null
+  // Scoring switched off (the Orb Ward Record): no band exists, so the critical
+  // count, the acuity heatmap and the highest-scores list are not drawn. Either
+  // the shell's switch or the server's own flag turns them off.
+  const scoring = scoringEnabled && snap.scoring_enabled !== false
 
   return (
     <div className="cmd">
@@ -163,7 +172,7 @@ export default function CommandCenter() {
           <span className="cmd-kpi__foot">{census.occupancy_pct}% beds occupied</span>
         </div>
 
-        <div className={`cmd-kpi ${acuity.critical > 0 ? 'cmd-kpi--danger' : 'cmd-kpi--ok'}`}>
+        {scoring && <div className={`cmd-kpi ${acuity.critical > 0 ? 'cmd-kpi--danger' : 'cmd-kpi--ok'}`}>
           <span className="cmd-kpi__label">Critical Patients</span>
           {/* A count needs its denominator: "3 of 24 admitted", not a bare 3. */}
           <span className="cmd-kpi__value">{acuity.critical}<span className="cmd-kpi__unit"> of {census.total_admitted} admitted</span></span>
@@ -171,7 +180,7 @@ export default function CommandCenter() {
             {acuity.elevated} elevated · {acuity.stable} stable
             {acuity.not_scored ? ` · ${acuity.not_scored} not scored` : ''}
           </span>
-        </div>
+        </div>}
 
         <div className={`cmd-kpi cmd-kpi--${complianceTone(bundles.compliance_pct)}`}>
           <span className="cmd-kpi__label">Sepsis Bundle Compliance</span>
@@ -203,7 +212,7 @@ export default function CommandCenter() {
 
       <div className="cmd__grid">
         {/* ── ACUITY HEATMAP ───────────────────────────────────── */}
-        <section className="cmd-card cmd-card--heatmap">
+        {scoring && <section className="cmd-card cmd-card--heatmap">
           <header className="cmd-card__head">
             <h2>Ward Acuity Heatmap</h2>
             <div className="cmd-legend">
@@ -254,10 +263,10 @@ export default function CommandCenter() {
               })}
             </div>
           </div>
-        </section>
+        </section>}
 
         {/* ── ACTIVE DETERIORATIONS ────────────────────────────── */}
-        <section className="cmd-card cmd-card--deteriorations">
+        {scoring && <section className="cmd-card cmd-card--deteriorations">
           <header className="cmd-card__head">
             <div className="cmd-legend" style={{ alignItems: 'baseline', gap: '0.5rem' }}>
               <h2>Highest NEWS2 scores</h2>
@@ -290,7 +299,7 @@ export default function CommandCenter() {
               ))
             )}
           </div>
-        </section>
+        </section>}
 
         {/* ── FORECAST STRIP ───────────────────────────────────── */}
         <section className="cmd-card cmd-card--forecast">

@@ -954,7 +954,7 @@ def get_appointments(days_ahead: int = 7, department: str | None = None) -> list
     # reading on 3 October because the simulator and the Scribe lane write
     # vitals with no risk row, so it went stale.
     from services.appointment_types import type_key, type_label
-    from services.vigil_service import score_vitals_row
+    from services.vigil_service import score_vitals_row, scoring_enabled
 
     with db_session() as db:
         booked = db.execute(sql, params).fetchall()
@@ -978,9 +978,13 @@ def get_appointments(days_ahead: int = 7, department: str | None = None) -> list
 
     # Scored after the session closes: the CfC overlay reads the vitals history
     # on its own connection.
+    # With scoring switched off (ORB_SCORING_ENABLED, the Orb Ward Record) no
+    # NEWS2 is computed: every row carries acuity and news2 None, and a day is
+    # listed by time.
+    scoring = scoring_enabled()
     scores: dict[str, tuple] = {}
     for pid, (vitals, on_scale_2) in latest.items():
-        news2 = score_vitals_row(vitals, patient_id=pid, on_scale_2=on_scale_2)
+        news2 = score_vitals_row(vitals, patient_id=pid, on_scale_2=on_scale_2) if scoring else None
         scores[pid] = (news2, vitals["timestamp"] if vitals else None)
 
     appointments = []

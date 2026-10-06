@@ -362,8 +362,10 @@ export default function VigilPanel({ role }: { role?: string | null }) {
     
     // Float genuinely critical patients to the top regardless of sort — driven
     // by the real NEWS2 band, not a hardcoded demo patient id (the previous
-    // build pinned 'PAT007' as a permanent fake emergency).
-    sorted.sort((a, b) => {
+    // build pinned 'PAT007' as a permanent fake emergency). With scoring
+    // switched off there is no band, so nothing floats and the ward then bed
+    // order stands.
+    if (scoringEnabled) sorted.sort((a, b) => {
       const aEmerg = a.risk_level === 'critical'
       const bEmerg = b.risk_level === 'critical'
       if (aEmerg && !bEmerg) return -1
@@ -682,10 +684,11 @@ const PatientRow = memo(({ patient: p, onSelect, newSinceReview = 0 }: {
   const isEmergencySurgery = isEmergency(p);
   // The two worst readings behind the score ("RR 37 · SpO2 84%"), from the
   // breakdown the row already carries. Nothing for NEWS2 0 or no observation.
-  const readings = topReadings(p.news2 ?? null)
   // Scoring switched off: the server sends no NEWS2, and a dash badge would
   // say "no observations recorded" about a patient whose sets are on file.
+  // The readings behind a score and the band stripe go with it.
   const { scoringEnabled } = useClinicalSwitches()
+  const readings = scoringEnabled ? topReadings(p.news2 ?? null) : []
 
   return (
   <button
@@ -693,7 +696,7 @@ const PatientRow = memo(({ patient: p, onSelect, newSinceReview = 0 }: {
     onClick={() => onSelect(p.id)}
     style={{ width: '100%', textAlign: 'left', cursor: 'pointer' }}
   >
-    <div className={`patient-row__risk patient-row__risk--${p.risk_level}`} />
+    <div className={`patient-row__risk patient-row__risk--${scoringEnabled ? p.risk_level : 'none'}`} />
     <div className="patient-row__info">
       <span className="patient-row__name">
         {p.name}

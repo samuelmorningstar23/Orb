@@ -103,3 +103,38 @@ describe('command center not scored and incomplete sets', () => {
     expect(await screen.findByText('NEWS2 ≥5')).toBeTruthy()
   })
 })
+
+/* With scoring switched off (ORB_SCORING_ENABLED, the Orb Ward Record) there
+   is no band: the critical count, the acuity heatmap and the highest-scores
+   list are not drawn, so nothing says "House is stable" or "not scored" about
+   patients whose observations are on file. Census and the rest still show. */
+describe('command center with scoring switched off', () => {
+  it('draws no critical count, heatmap or highest-scores list when the server says so', async () => {
+    apiFetch.mockResolvedValue({
+      ...SNAPSHOT,
+      scoring_enabled: false,
+      acuity: { critical: 0, elevated: 0, stable: 0, not_scored: 30, heatmap: [] },
+    })
+    render(<CommandCenter />)
+    expect(await screen.findByText('Census / Occupancy')).toBeTruthy()
+    expect(screen.queryByText('Critical Patients')).toBeNull()
+    expect(screen.queryByText('Ward Acuity Heatmap')).toBeNull()
+    expect(screen.queryByText('Highest NEWS2 scores')).toBeNull()
+    expect(screen.queryByText(/House is stable/)).toBeNull()
+  })
+
+  it('does the same when the shell switch is off', async () => {
+    const { act } = await import('@testing-library/react')
+    const { setClinicalSwitches, resetClinicalSwitches } = await import('../../shellConfig')
+    act(() => { setClinicalSwitches({ scoring_enabled: false }) })
+    try {
+      apiFetch.mockResolvedValue(SNAPSHOT)
+      render(<CommandCenter />)
+      expect(await screen.findByText('Census / Occupancy')).toBeTruthy()
+      expect(screen.queryByText('Critical Patients')).toBeNull()
+      expect(screen.queryByText('Highest NEWS2 scores')).toBeNull()
+    } finally {
+      act(() => { resetClinicalSwitches() })
+    }
+  })
+})

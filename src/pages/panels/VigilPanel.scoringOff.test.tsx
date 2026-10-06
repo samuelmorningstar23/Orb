@@ -110,6 +110,33 @@ describe('the ward board with scoring switched off', () => {
     }
   })
 
+  it('shows no readings, no band stripe and floats nobody even when a row carries a score', async () => {
+    // A row that arrived scored (a feed left running, or a page loaded just
+    // before the switch was turned off) must still read as unscored.
+    h.board = [
+      row('P1', 'Ward One Bed One', 'GM-1', 'B-1'),
+      {
+        ...row('P2', 'Ward Two Bed One', 'GM-2', 'B-1'),
+        risk_level: 'critical',
+        news2: {
+          score: 0.45, level: 'critical', raw_news2: 9, raw_mews: 9, single_param_3: false,
+          drivers: [], scoring_model: 'NEWS2', spo2_scale: 1, complete: true,
+          missing_parameters: [], coverage_note: null,
+          breakdown: [
+            { parameter: 'Respiratory rate', value: 37, points: 3, note: null, severe: true },
+            { parameter: 'SpO2', value: 84, points: 3, note: null, severe: true },
+          ],
+        },
+      },
+    ]
+    act(() => { setClinicalSwitches({ scoring_enabled: false }) })
+    renderPanel()
+    await waitFor(() => expect(screen.getByText('Ward Two Bed One')).toBeTruthy())
+    expect(names()).toEqual(['Ward One Bed One', 'Ward Two Bed One'])
+    expect(document.querySelector('.patient-row__readings')).toBeNull()
+    expect(document.querySelector('.patient-row__risk--critical')).toBeNull()
+  })
+
   it('with scoring on, an unscored row still shows the not recorded dash', async () => {
     renderPanel()
     await waitFor(() => expect(screen.getByText('Ward One Bed Two')).toBeTruthy())

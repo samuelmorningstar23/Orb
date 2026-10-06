@@ -89,7 +89,9 @@ def _admitted_with_acuity() -> list[dict]:
     Every admitted patient is listed (the census counts them all), including
     one with no active admission row, which the board's own query would drop.
     """
-    from services.vigil_service import board_order, score_vitals_row
+    from services.vigil_service import (
+        board_order, score_vitals_row, scoring_enabled, ward_bed_order,
+    )
 
     with db_session() as db:
         rows = db.execute(
@@ -114,10 +116,21 @@ def _admitted_with_acuity() -> list[dict]:
 
     # Scored after the session closes: the CfC overlay reads the vitals history
     # on its own connection.
+    # With scoring switched off (ORB_SCORING_ENABLED, the Orb Ward Record) no
+    # NEWS2 is computed: every patient is "not scored", the highest-scores list
+    # is empty and the list is in ward, then bed order, as on the Vigil board.
+    scoring = scoring_enabled()
     out = []
     for r in rows:
         d = dict(r)
         on_scale_2 = bool(d.pop("on_scale_2", 0) or 0)
+        if not scoring:
+            d["news2_result"] = None
+            d["level"] = None
+            d["news2"] = None
+            d["norm_ward"] = _normalize_ward(d.get("ward"))
+            out.append(d)
+            continue
         # One patient whose row cannot be scored must not blank the house: the
         # whole list used to fall to zeros with it. That patient is counted
         # "not scored", which the Critical card says out loud.
@@ -132,7 +145,10 @@ def _admitted_with_acuity() -> list[dict]:
         d["news2"] = news2["raw_news2"] if news2 else None
         d["norm_ward"] = _normalize_ward(d.get("ward"))
         out.append(d)
-    out.sort(key=lambda d: board_order(d["id"], d["news2_result"]))
+    if scoring:
+        out.sort(key=lambda d: board_order(d["id"], d["news2_result"]))
+    else:
+        out.sort(key=ward_bed_order)
     return out
 
 
@@ -356,6 +372,10 @@ def house_snapshot() -> dict:
     still renders. Never raises.
     """
     snapshot: dict = {"generated_at": _now_iso()}
+    # The screen hides the acuity bands and the highest-scores list when this
+    # is False (ORB_SCORING_ENABLED off, the Orb Ward Record).
+    from services.vigil_service import scoring_enabled
+    snapshot["scoring_enabled"] = scoring_enabled()
 
     # Admitted-patient list feeds census, acuity, deteriorations and downtime.
     # If even this base read fails, everything patient-derived degrades to zeros.

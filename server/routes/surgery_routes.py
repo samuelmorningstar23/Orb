@@ -198,7 +198,7 @@ def get_surgery_schedule(
 
     scope_sql, scope_params = surgical_list_filter(user)
 
-    from services.vigil_service import score_vitals_row
+    from services.vigil_service import score_vitals_row, scoring_enabled
 
     with db_session() as db:
         rows = db.execute(
@@ -231,10 +231,12 @@ def get_surgery_schedule(
     # Scored after the session closes: the CfC overlay reads the vitals history
     # on its own connection.
     on_scale_2 = {r["patient_id"]: bool(r["patient_on_scale_2"]) for r in rows}
+    # With scoring switched off (ORB_SCORING_ENABLED, the Orb Ward Record) no
+    # NEWS2 is computed and every case carries risk_level and news2 None.
     scores = {
         pid: score_vitals_row(v, patient_id=pid, on_scale_2=on_scale_2[pid])
         for pid, v in latest_vitals.items()
-    }
+    } if scoring_enabled() else {}
 
     # Group by date
     grouped: dict[str, list] = {}

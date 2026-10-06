@@ -270,3 +270,33 @@ describe('day list surgeon and score', () => {
     expect(risks).toEqual(['◉ elevated · NEWS2 5', '○ not scored'])
   })
 })
+
+/* With scoring switched off (ORB_SCORING_ENABLED, the Orb Ward Record) the
+   route sends no band. The day list draws no band line and the week card no
+   high risk count, so no case reads "not scored" while its sets are on file. */
+describe('day list with scoring switched off', () => {
+  it('draws no band line and no high risk count', async () => {
+    const { setClinicalSwitches, resetClinicalSwitches } = await import('../../shellConfig')
+    act(() => { setClinicalSwitches({ scoring_enabled: false }) })
+    try {
+      getSurgerySchedule.mockResolvedValue([{
+        date: '2026-08-11', day_label: 'Tuesday', is_today: true,
+        surgeries: [{
+          id: 'S1', patient_id: 'P1', patient_name: 'Asha Rao', age: 61, sex: 'F', operating_room: 'OR-1',
+          procedure_name: 'Laparoscopic cholecystectomy', diagnosis: 'Gallstones',
+          scheduled_time: '09:00', estimated_duration_min: 90, status: 'scheduled',
+          risk_level: null, risk_score: null, news2: null, news2_complete: null,
+          surgeon_name: 'Dr. Meera Sharma', success_probability: null,
+        }],
+      }])
+      const { container } = render(<SurgicalSuitePanel />)
+      await waitFor(() => expect(container.querySelectorAll('.suite__day-card').length).toBe(1))
+      expect(screen.queryByText('High risk')).toBeNull()
+      await act(async () => { (container.querySelector('.suite__day-card') as HTMLButtonElement).click() })
+      expect(await screen.findByText('Dr. Meera Sharma')).toBeInTheDocument()
+      expect(container.querySelector('.suite__surgery-risk')).toBeNull()
+    } finally {
+      act(() => { resetClinicalSwitches() })
+    }
+  })
+})

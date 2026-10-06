@@ -7,6 +7,7 @@ import {
   type EmergencySurgeryCase, type SurgeryCase, type SurgeryImportedContext,
 } from '../../api/client'
 import { useVisiblePolling } from '../../hooks/useVisiblePolling'
+import { useClinicalSwitches } from '../../shellConfig'
 import { formatClinicalClock, formatClinicalDayMonth } from '../../lib/datetime'
 import Icon from '../../components/common/Icon'
 import './SurgicalSuitePanel.css'
@@ -142,6 +143,9 @@ function formatDate(dateStr: string) {
 
 /* ━━━ Component ━━━ */
 export default function SurgicalSuitePanel() {
+  // Scoring switched off (the Orb Ward Record): the server sends no band, so
+  // no band line and no high risk count are drawn.
+  const { scoringEnabled } = useClinicalSwitches()
   const [schedule, setSchedule] = useState<DaySchedule[]>([])
   const [emergencyQueue, setEmergencyQueue] = useState<EmergencySurgeryCase[]>([])
   const [intakePopupData, setIntakePopupData] = useState<{ surgeryId: string } | null>(null)
@@ -772,10 +776,12 @@ export default function SurgicalSuitePanel() {
                         <span className="suite__day-footer-val">{formatDuration(totalMins)}</span>
                         <span className="suite__day-footer-lbl">Total OR time</span>
                       </div>
-                      <div className="suite__day-footer-stat">
-                        <span className="suite__day-footer-val">{highRisk}</span>
-                        <span className="suite__day-footer-lbl">High risk</span>
-                      </div>
+                      {scoringEnabled && (
+                        <div className="suite__day-footer-stat">
+                          <span className="suite__day-footer-val">{highRisk}</span>
+                          <span className="suite__day-footer-lbl">High risk</span>
+                        </div>
+                      )}
                       <div className="suite__day-footer-stat">
                         <span className="suite__day-footer-val">{activeORs}</span>
                         <span className="suite__day-footer-lbl">Active rooms</span>
@@ -841,9 +847,11 @@ export default function SurgicalSuitePanel() {
                     {s.surgeon_name && (
                       <span className="suite__surgery-surgeon">{s.surgeon_name}</span>
                     )}
-                    <span className="suite__surgery-risk" style={{ color: riskColor(s.risk_level) }}>
-                      {s.risk_level === 'critical' ? '⬤' : s.risk_level === 'elevated' ? '◉' : '○'} {scheduleBand(s)}
-                    </span>
+                    {scoringEnabled && (
+                      <span className="suite__surgery-risk" style={{ color: riskColor(s.risk_level) }}>
+                        {s.risk_level === 'critical' ? '⬤' : s.risk_level === 'elevated' ? '◉' : '○'} {scheduleBand(s)}
+                      </span>
+                    )}
                     {successPct(s.success_probability) !== null && (
                       <span className="suite__surgery-success" style={{ color: successColor(successPct(s.success_probability)) }}>
                         {successPct(s.success_probability)}% success

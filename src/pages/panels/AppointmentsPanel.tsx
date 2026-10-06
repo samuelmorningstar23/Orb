@@ -4,6 +4,7 @@ import { sexShort } from '../../lib/demographics'
 import { formatClinicalClock, formatClinicalDate, localDateKey, parseUTC } from '../../lib/datetime'
 import { newId } from '../../lib/id'
 import { hasPermission, PATIENT_WRITE } from '../../lib/roles'
+import { useClinicalSwitches } from '../../shellConfig'
 
 const API = ''
 
@@ -241,6 +242,9 @@ export default function AppointmentsPanel() {
   const [error, setError] = useState('')
   const [booking, setBooking] = useState(false)
   const canBook = hasPermission(PATIENT_WRITE)
+  // Scoring switched off (the Orb Ward Record): the server sends no band, so
+  // no badge and no critical count are drawn, and a day is listed by time.
+  const { scoringEnabled } = useClinicalSwitches()
 
   const fetchAppointments = useCallback(async () => {
     try {
@@ -273,7 +277,8 @@ export default function AppointmentsPanel() {
   }
 
   // Group by date, keeping the server's order: date, then the sickest patient
-  // first (highest NEWS2 of the latest vitals), then time.
+  // first (highest NEWS2 of the latest vitals), then time. With scoring
+  // switched off the server sends no score, so a day is in time order.
   const grouped = appointments.reduce<Record<string, Appointment[]>>((acc, a) => {
     (acc[a.date] ||= []).push(a)
     return acc
@@ -325,12 +330,14 @@ export default function AppointmentsPanel() {
           accent="var(--text-primary)"
           subtitle={`${dayCount} ${dayCount === 1 ? 'day' : 'days'} with bookings`}
         />
-        <MetricCard
-          label="Critical patients"
-          value={criticalPatients}
-          accent="var(--status-danger-text)"
-          subtitle="Latest NEWS2 critical"
-        />
+        {scoringEnabled && (
+          <MetricCard
+            label="Critical patients"
+            value={criticalPatients}
+            accent="var(--status-danger-text)"
+            subtitle="Latest NEWS2 critical"
+          />
+        )}
         <MetricCard
           label="Post-discharge checks"
           value={postDischargeChecks}
@@ -408,13 +415,15 @@ export default function AppointmentsPanel() {
                     {/* Time */}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2 }}>
                       <span className="metric-mono" style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)' }}>{formatClinicalClock(appt.time)}</span>
-                      <span style={{
-                        fontSize: 'var(--text-xs)', fontWeight: 600, whiteSpace: 'nowrap',
-                        padding: '1px 4px', borderRadius: 4,
-                        background: `color-mix(in srgb, ${acTint} 12%, transparent)`, color: acText,
-                      }} title={typeof appt.news2 === 'number' ? `NEWS2 ${appt.news2} (${appt.acuity})` : 'NEWS2 not recorded'}>
-                        {bandText(appt)}
-                      </span>
+                      {scoringEnabled && (
+                        <span className="appt-band" style={{
+                          fontSize: 'var(--text-xs)', fontWeight: 600, whiteSpace: 'nowrap',
+                          padding: '1px 4px', borderRadius: 4,
+                          background: `color-mix(in srgb, ${acTint} 12%, transparent)`, color: acText,
+                        }} title={typeof appt.news2 === 'number' ? `NEWS2 ${appt.news2} (${appt.acuity})` : 'NEWS2 not recorded'}>
+                          {bandText(appt)}
+                        </span>
+                      )}
                     </div>
 
                     {/* Patient info */}

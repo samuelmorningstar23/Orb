@@ -245,3 +245,30 @@ describe('AppointmentsPanel booking is offered only to a role that can book', ()
     expect(await screen.findByRole('button', { name: 'Book appointment' })).toBeInTheDocument()
   })
 })
+
+/* With scoring switched off (ORB_SCORING_ENABLED, the Orb Ward Record) the
+   server sends no band. No badge and no critical count are drawn, so nothing
+   reads "Not scored" about a patient whose observations are on file. */
+describe('AppointmentsPanel with scoring switched off', () => {
+  afterEach(async () => {
+    const { resetClinicalSwitches } = await import('../../shellConfig')
+    resetClinicalSwitches()
+  })
+
+  it('draws no band badge and no critical patients tile', async () => {
+    const { act } = await import('@testing-library/react')
+    const { setClinicalSwitches } = await import('../../shellConfig')
+    act(() => { setClinicalSwitches({ scoring_enabled: false }) })
+    serve([appt(localDateKey(), { acuity: null, news2: null })])
+    await screen.findByText('Post-discharge checks')
+    expect(screen.queryByText('Not scored')).toBeNull()
+    expect(screen.queryByText('Critical patients')).toBeNull()
+    expect(document.querySelector('.appt-band')).toBeNull()
+  })
+
+  it('with scoring on, the badge and the tile are drawn', async () => {
+    serve([appt(localDateKey(), { acuity: 'critical', news2: 9, news2_complete: true })])
+    expect(await screen.findByText('Critical 9')).toBeInTheDocument()
+    expect(screen.getByText('Critical patients')).toBeInTheDocument()
+  })
+})

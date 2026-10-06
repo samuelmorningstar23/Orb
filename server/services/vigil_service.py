@@ -897,6 +897,15 @@ def _natural_key(text) -> tuple:
                  for part in parts if part != "")
 
 
+def scoring_enabled() -> bool:
+    """ORB_SCORING_ENABLED, read at call time so a test or an operator flip is
+    seen at once. Off (the Orb Ward Record), no NEWS2 is computed for any
+    screen that reads it here: the appointments list, the Surgical Suite day
+    list and the Command Center use it beside scored_admitted_patients."""
+    import config
+    return bool(getattr(config, "SCORING_ENABLED", True))
+
+
 def ward_bed_order(patient: dict) -> tuple:
     """The board's sort key with scoring switched off: ward, then bed, then id.
     A patient with no ward or bed sorts after those that have one."""
