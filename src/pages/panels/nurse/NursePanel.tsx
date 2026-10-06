@@ -18,7 +18,7 @@ import { clockTime, missedSlotsCount, obsLabel, relativeMinutes, shiftDate } fro
 import { news2Description } from '../../../lib/news2'
 import { rovingTabKeyDown } from '../../../lib/tablist'
 import { HELIX_RECEIVE, LAB_COLLECT, hasPermission } from '../../../lib/roles'
-import { currentModuleFlags, subscribeModuleFlags } from '../../../shellConfig'
+import { currentModuleFlags, subscribeModuleFlags, useClinicalSwitches } from '../../../shellConfig'
 import { useOfflineSnapshot } from '../../../hooks/useOfflineSnapshot'
 import { useNow } from '../../../hooks/useNow'
 import { useVisiblePolling } from '../../../hooks/useVisiblePolling'
@@ -72,12 +72,17 @@ type View = 'tasks' | 'patients' | 'deliveries' | 'samples' | 'handover' | 'shif
  *
  *  Samples (lis-8) needs `lab.collect` AND the laboratory module on this site
  *  (/api/health modules.lab, off by default): with the module off there is no
- *  tab, and the strip is exactly what it was. */
-const nurseViews = (labOn: boolean): readonly View[] => {
+ *  tab, and the strip is exactly what it was.
+ *
+ *  Under the Orb Ward Record profile the handover is switched off (every
+ *  I-PASS route answers 404) and Pharmacy deliveries are not part of it, so
+ *  neither tab is offered. */
+const nurseViews = (labOn: boolean, wardRecord = false): readonly View[] => {
   const views: View[] = ['tasks', 'patients']
-  if (hasPermission(HELIX_RECEIVE)) views.push('deliveries')
+  if (!wardRecord && hasPermission(HELIX_RECEIVE)) views.push('deliveries')
   if (labOn && hasPermission(LAB_COLLECT)) views.push('samples')
-  views.push('handover', 'shift')
+  if (!wardRecord) views.push('handover')
+  views.push('shift')
   return views
 }
 
@@ -213,7 +218,8 @@ export default function NursePanel() {
   // shell's /api/health probe), so the strip follows it.
   const modules = useSyncExternalStore(subscribeModuleFlags, currentModuleFlags)
   const labOn = modules.lab === true
-  const views = useMemo(() => nurseViews(labOn), [labOn])
+  const { wardRecord } = useClinicalSwitches()
+  const views = useMemo(() => nurseViews(labOn, wardRecord), [labOn, wardRecord])
 
   const [obsFor, setObsFor] = useState<NursePatientCard | null>(null)
   const [roundFor, setRoundFor] = useState<{ patient: NursePatientCard; medId: number | null } | null>(null)
@@ -828,7 +834,7 @@ export default function NursePanel() {
         </div>
       )}
 
-      {board && view === 'handover' && (
+      {board && view === 'handover' && views.includes('handover') && (
         <div className="nurse-section" id="nurse-panel-handover" role="tabpanel" aria-labelledby="nurse-tab-handover">
           <HandoverSheet patients={board.patients} />
         </div>

@@ -117,4 +117,16 @@ describe('the shift board with scoring switched off', () => {
     expect(screen.getByText("Set the ward's observation interval")).toBeTruthy()
     expect(document.querySelector('.patient-card .is-late')).toBeNull()
   })
+
+  it('offers no handover tab under the Ward Record profile, and keeps it otherwise', async () => {
+    act(() => { setClinicalSwitches({ ward_record: true, models_enabled: false }) })
+    await renderPanel(scoringOffBoard([card()]))
+    expect(screen.queryByRole('tab', { name: /Handover/ })).toBeNull()
+    expect(screen.queryByRole('tab', { name: /Deliveries/ })).toBeNull()
+    expect(screen.getByRole('tab', { name: /My patients/ })).toBeTruthy()
+    cleanup()
+    act(() => { setClinicalSwitches({ ward_record: false }) })
+    await renderPanel(scoringOffBoard([card()]))
+    expect(screen.getByRole('tab', { name: /Handover/ })).toBeTruthy()
+  })
 })
