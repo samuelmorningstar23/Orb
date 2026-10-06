@@ -31,6 +31,11 @@ export interface SafetyScreen {
   coverage_note?: string | null;
   screen_failed?: boolean;
   override?: { by: string; reason: string };
+  /** The permission that clears this block, named by the server: set for a
+   *  severe allergy, which only a prescriber may override. */
+  override_requires_permission?: string | null;
+  /** Why the server refused the reason on the last attempt, in its words. */
+  ack_refused?: string | null;
 }
 
 export interface PendingMedication {
