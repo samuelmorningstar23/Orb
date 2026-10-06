@@ -211,7 +211,36 @@ def test_verify_screen_failure_requires_acknowledgement(patient, pharmacist, mon
     assert row["verified_by"] is None
 
 
-def test_verify_severe_with_reason_verifies_and_audits(patient, pharmacist):
+def test_a_pharmacist_cannot_override_a_severe_allergy(patient, pharmacist):
+    """Prescriber only, as at the bedside and at order time (2026-10-06): the
+    reason is refused, the med stays unverified, and no override is recorded."""
+    add_allergy(patient, "amoxicillin", reaction="anaphylaxis", severity="severe")
+    med_id = _chart_ai_med(patient, drug="Amoxicillin 500mg")
+    with pytest.raises(ValueError, match=r"^severe_ack_required:") as exc:
+        pharmacy.verify_medication(med_id, pharmacist, **_FULL_ORDER,
+                                   ack_reason="Desensitisation protocol in place")
+    assert exc.value.safety["ack_refused"].startswith(
+        "Only a prescriber can override an allergy block.")
+    assert exc.value.safety["override_requires_permission"] == "medication.prescribe"
+    with db_session() as db:
+        row = db.execute("SELECT verified_by FROM medications WHERE id = ?", (med_id,)).fetchone()
+        overrides = db.execute(
+            "SELECT count(*) FROM audit_logs WHERE action_type = 'pharmacy_verify_override' "
+            "AND target_id = ?", (str(med_id),)).fetchone()[0]
+        refused = db.execute(
+            "SELECT count(*) FROM audit_logs WHERE action_type = 'pharmacy_verify_allergy_block' "
+            "AND target_id = ?", (str(med_id),)).fetchone()[0]
+    assert row["verified_by"] is None
+    assert overrides == 0 and refused == 1
+
+
+def test_verify_severe_with_reason_verifies_and_audits(patient):
+    """A verifier who holds medication.prescribe may still clear it, audited."""
+    prescriber = f"PRX{uuid.uuid4().hex[:6].upper()}"
+    with db_session() as db:
+        db.execute("INSERT INTO users (id, name, role, password_hash) VALUES (?, ?, 'doctor', 'x')",
+                   (prescriber, "Dr Verify Test"))
+    pharmacist = prescriber
     add_allergy(patient, "amoxicillin", reaction="anaphylaxis", severity="severe")
     med_id = _chart_ai_med(patient, drug="Amoxicillin 500mg")
     result = pharmacy.verify_medication(med_id, pharmacist, **_FULL_ORDER,
@@ -281,16 +310,16 @@ def test_route_pending_verify_reject_flow(patient, pharmacist, client):
     assert detail["safety"]["max_severity"] == "severe"
     assert any(a["type"] == "allergy" for a in detail["safety"]["alerts"])
 
-    # re-submit with the acknowledgement reason → verified
+    # A pharmacist's reason does not clear a severe allergy (prescriber only,
+    # 2026-10-06): still 428, with the refusal, and the way on is a rejection.
     resp = client.post(f"/api/pharmacy/{verify_id}/verify",
                        json={"dosage": "500mg", "route": "Oral", "frequency": "TDS",
                              "ack_reason": "Discussed with consultant"}, headers=hdr)
+    assert resp.status_code == 428, resp.text
+    assert resp.json()["detail"]["safety"]["ack_refused"].startswith("Only a prescriber")
+    resp = client.post(f"/api/pharmacy/{verify_id}/reject",
+                       json={"reason": "Allergy: back to the prescriber"}, headers=hdr)
     assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["medication"]["dose"] == "500mg"
-    assert body["medication"]["status"] == "active"
-    assert any(a["type"] == "allergy" for a in body["safety_alerts"])
-    assert body["safety"]["override"]["reason"] == "Discussed with consultant"
 
     # reject the other
     resp = client.post(f"/api/pharmacy/{reject_id}/reject",

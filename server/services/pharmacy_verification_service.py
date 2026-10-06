@@ -296,6 +296,44 @@ def verify_medication(med_id: int, pharmacist_id: str, dosage: str | None = None
             )
             err.safety = {**safety, "ack_refused": refusal if ack_reason else None}
             raise err
+    severe_allergy = any((a or {}).get("severity") == "severe"
+                         for a in safety.get("allergy_alerts") or [])
+    if severe_allergy:
+        # Named by the server so the queue offers a reason box only to a
+        # prescriber, as at the bedside and at order time.
+        safety = {**safety, "override_requires_permission": "medication.prescribe"}
+    if severe_allergy and ack_reason:
+        # A SEVERE ALLERGY CLEARS ONLY FOR A PRESCRIBER (2026-10-06), here as in
+        # every other lane. A pharmacist holds no medication.prescribe, so the
+        # way on is a rejection and a call to the prescriber, who can order the
+        # drug with their own override. Decided before the override branch
+        # below, so a refused attempt leaves no override row.
+        from services.medication_safety_gate import _allergy_ack_refusal
+        refusal = _allergy_ack_refusal(_actor_role(pharmacist_id))
+        if refusal:
+            log_audit_event(
+                correlation_id=str(uuid.uuid4()),
+                event_category="clinical_safety",
+                action_type="pharmacy_verify_allergy_block",
+                outcome="denied",
+                summary_message=(
+                    f"Allergy block stopped verification of medication {med_id} "
+                    f"({row['drug_name']}): the acknowledgement was not a prescriber's"
+                ),
+                actor_user_id=pharmacist_id,
+                target_type="medication",
+                target_id=str(med_id),
+                patient_id=row["patient_id"],
+                metadata={"alerts": safety.get("allergy_alerts", []),
+                          "ack_refused": refusal,
+                          "attempted_reason": ack_reason[:500]},
+            )
+            err = ValueError(
+                f"severe_ack_required: {row['drug_name']} is stopped by a severe allergy. "
+                f"{refusal}"
+            )
+            err.safety = {**safety, "ack_refused": refusal}
+            raise err
     needs_ack = safety["max_severity"] == "severe" or safety.get("screen_failed")
     if needs_ack:
         cause = ("the drug-safety screen is unavailable" if safety.get("screen_failed")
