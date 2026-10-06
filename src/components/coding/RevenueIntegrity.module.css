@@ -254,6 +254,33 @@
 }
 .evidence { flex: 1; min-width: 0; }
 
+/* The sentence a code was matched in, quiet, under the code it supports. */
+.evidenceSentence {
+  margin: 0;
+  padding: 0 0 0 10px;
+  border-left: 2px solid var(--border-subtle);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.evidenceSource { font-size: 0.75rem; color: var(--text-muted); }
+
+/* ── Documentation query cards ── */
+.query {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-info);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.queryAsk { font-size: 0.82rem; font-weight: 600; color: var(--status-info-text); }
+
 .confBar {
   display: inline-flex;
   align-items: center;

@@ -6,10 +6,11 @@ engine. Given a patient it:
   1. Suggests ICD-10 / SNOMED codes by lexically scanning the patient's
      diagnosis, coded problem list, documented comorbidities, clinical notes
      and scribe notes for known clinical terms.
-  2. Flags documentation / coding gaps ("CDI flags") — e.g. a medication for a
-     condition that is not coded, a documented comorbidity missing from the
-     coded problem list, or a low-specificity ("unspecified") code that could
-     be sharpened.
+  2. Flags documentation / coding gaps ("CDI flags"), for example a documented
+     comorbidity missing from the coded problem list, or a low-specificity
+     ("unspecified") code that could be sharpened. A condition only a
+     medication implies is never a code: it is a documentation query to the
+     clinician ("Treated and not documented: ask the clinician").
   3. Produces an ILLUSTRATIVE reimbursement-capture estimate (captured today vs
      potential-with-CDI vs the uplift), from a transparent, editable assumption
      table.
@@ -127,7 +128,7 @@ _CONCEPTS: list[dict] = [
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  MEDICATION → CONDITION rules (drives the "med present but not coded" CDI flag)
+#  MEDICATION → CONDITION rules (drive the documentation queries)
 # ══════════════════════════════════════════════════════════════════════════
 # An active medication strongly indicative of a chronic condition is a classic
 # CDI signal: the drug is documented but the diagnosis it treats was never
@@ -217,6 +218,9 @@ def _load_patient_context(patient_id: str) -> dict:
         "diagnosis": "",
         "comorbidities": "",
         "notes": [],           # (label, text)
+        # The same notes with where they came from, for the evidence sentence:
+        # {label, text, note_id, note_type, author_id, author}
+        "note_sources": [],
         "coded_problems": [],  # {"code","system"}
         "medications": [],     # drug name strings
     }
@@ -249,18 +253,30 @@ def _load_patient_context(patient_id: str) -> dict:
 
         # Narrative note text — clinical documents + scribe notes.
         for r in conn.execute(
-            "SELECT content FROM clinical_documents WHERE patient_id = ? ORDER BY created_at DESC LIMIT 25",
+            "SELECT d.id, d.content, d.author_id, u.name AS author_name "
+            "FROM clinical_documents d LEFT JOIN users u ON u.id = d.author_id "
+            "WHERE d.patient_id = ? ORDER BY d.created_at DESC LIMIT 25",
             (patient_id,),
         ).fetchall():
             if r["content"]:
                 ctx["notes"].append(("clinical note", r["content"]))
+                ctx["note_sources"].append({
+                    "label": "clinical note", "text": r["content"], "note_id": r["id"],
+                    "note_type": "clinical_document", "author_id": r["author_id"],
+                    "author": r["author_name"]})
         for r in conn.execute(
-            "SELECT raw_transcript, structured_note FROM scribe_notes WHERE patient_id = ? ORDER BY created_at DESC LIMIT 25",
+            "SELECT s.id, s.raw_transcript, s.structured_note, s.author_id, u.name AS author_name "
+            "FROM scribe_notes s LEFT JOIN users u ON u.id = s.author_id "
+            "WHERE s.patient_id = ? ORDER BY s.created_at DESC LIMIT 25",
             (patient_id,),
         ).fetchall():
             text = " ".join(t for t in (r["raw_transcript"], r["structured_note"]) if t)
             if text:
                 ctx["notes"].append(("scribe note", text))
+                ctx["note_sources"].append({
+                    "label": "scribe note", "text": text, "note_id": r["id"],
+                    "note_type": "scribe_note", "author_id": r["author_id"],
+                    "author": r["author_name"]})
 
         # Active medications — drive med→condition CDI inference.
         # `status != 'discontinued'` alone drops rows whose status is NULL
@@ -292,6 +308,40 @@ def _term_matches(term: str, text: str) -> bool:
     return re.search(pattern, text, flags=re.IGNORECASE) is not None
 
 
+# Sentence boundaries: end punctuation followed by space, or a line break. A
+# structured note is JSON, so quotes and braces are trimmed off the ends too.
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
+EVIDENCE_SENTENCE_MAX = 240
+
+
+def evidence_sentence(term: str, text: str) -> str | None:
+    """The sentence of ``text`` that contains ``term``, capped at 240 characters.
+
+    The whole-token match :func:`_term_matches` uses, so the sentence returned
+    is the one the code was actually matched in. A sentence longer than the
+    cap is cut around the term rather than from its start, so the term shows.
+    """
+    if not text or not term:
+        return None
+    for raw in _SENTENCE_SPLIT.split(text):
+        sentence = raw.strip().strip('{}[]",').strip()
+        if not sentence or not _term_matches(term, sentence):
+            continue
+        sentence = " ".join(sentence.split())
+        if len(sentence) <= EVIDENCE_SENTENCE_MAX:
+            return sentence
+        # Room for "..." on both ends, so the result never passes the cap.
+        body = EVIDENCE_SENTENCE_MAX - 6
+        at = sentence.lower().find(term.lower())
+        start = max(0, min(at - body // 3, len(sentence) - body))
+        cut = sentence[start:start + body].strip()
+        return ("..." if start > 0 else "") + cut + "..."
+    return None
+
+
+DOCUMENTATION_QUERY_TEXT = "Treated and not documented: ask the clinician"
+
+
 def _emit_code(system: str, code: str, display_fallback: str) -> dict | None:
     """Validate against terminology; return a code dict or None if unknown."""
     if not code:
@@ -316,7 +366,12 @@ def suggest_codes(patient_id: str, use_llm: bool = False) -> dict:
         {
           patient_id,
           patient_found: bool,
-          suggested_codes: [{code, system, display, evidence, confidence}],
+          suggested_codes: [{code, system, display, evidence, confidence,
+                             evidence_sentence, evidence_source,
+                             evidence_note_id, evidence_note_type,
+                             evidence_author_id, evidence_author}],
+          documentation_queries: [{condition, medication, code, system,
+                                   display, message}],
           cdi_flags: [{type, message, rationale, est_impact_inr}],
           reimbursement: {captured_inr, potential_inr, uplift_inr, assumptions},
         }
@@ -325,11 +380,11 @@ def suggest_codes(patient_id: str, use_llm: bool = False) -> dict:
 
     # Ordered scan sources with an evidence label and a confidence tier.
     sources = [
-        ("diagnosis", ctx["diagnosis"], 0.9),
-        ("comorbidity list", ctx["comorbidities"], 0.75),
+        ("diagnosis", ctx["diagnosis"], 0.9, None),
+        ("comorbidity list", ctx["comorbidities"], 0.75, None),
     ]
-    for label, text in ctx["notes"]:
-        sources.append((label, text, 0.7))
+    for note in ctx["note_sources"]:
+        sources.append((note["label"], note["text"], 0.7, note))
 
     coded_set = {(p["system"].upper(), p["code"]) for p in ctx["coded_problems"]}
 
@@ -337,7 +392,7 @@ def suggest_codes(patient_id: str, use_llm: bool = False) -> dict:
     # code_key (system, code) -> suggestion dict (keep highest-confidence hit).
     suggestions: dict[tuple[str, str], dict] = {}
 
-    def _add_suggestion(system, code, display_fallback, evidence, confidence):
+    def _add_suggestion(system, code, display_fallback, evidence, confidence, where=None):
         emitted = _emit_code(system, code, display_fallback)
         if not emitted:
             return None
@@ -348,33 +403,60 @@ def suggest_codes(patient_id: str, use_llm: bool = False) -> dict:
                 **emitted,
                 "evidence": evidence,
                 "confidence": round(confidence, 2),
+                # The sentence the term was found in, and the note it came from
+                # (None for the diagnosis and comorbidity fields).
+                **(where or {}),
             }
         return key
 
     for concept in _CONCEPTS:
-        for src_label, src_text, tier in sources:
+        for src_label, src_text, tier, note in sources:
             matched_term = next((t for t in concept["terms"] if _term_matches(t, src_text)), None)
             if not matched_term:
                 continue
             evidence = f"Matched “{matched_term}” in {src_label}"
+            where = {
+                "evidence_sentence": evidence_sentence(matched_term, src_text),
+                "evidence_source": src_label,
+                "evidence_note_id": note["note_id"] if note else None,
+                "evidence_note_type": note["note_type"] if note else None,
+                "evidence_author_id": note["author_id"] if note else None,
+                "evidence_author": note["author"] if note else None,
+            }
             if concept.get("icd10"):
-                _add_suggestion("ICD10", concept["icd10"], concept["label"], evidence, tier)
+                _add_suggestion("ICD10", concept["icd10"], concept["label"], evidence, tier, where)
             if concept.get("snomed"):
-                _add_suggestion("SNOMED", concept["snomed"], concept["label"], evidence, tier)
+                _add_suggestion("SNOMED", concept["snomed"], concept["label"], evidence, tier, where)
             break  # first (highest-priority) source wins for this concept
 
-    # ── 2. Medication-inferred suggestions + CDI signal collection ───────────
+    # ── 2. Documentation queries: a drug treats a condition nobody wrote ─────
+    # A condition inferred from a medication is NOT a code suggestion: nothing
+    # documents it, so it cannot be coded or billed. It used to be added to the
+    # suggested codes at 0.5 and then flagged. It is now a query to the
+    # clinician, listed on its own and kept out of the suggested codes (and so
+    # out of the potential total, which is coded plus suggested). A condition
+    # that IS documented, or already coded, raises no query.
     meds_text = " ; ".join(ctx["medications"])
-    med_inferred_codes: dict[str, str] = {}  # icd10 code -> matched drug
+    documentation_queries: list[dict] = []
     for rule in _MED_CONDITION_RULES:
         drug = next((d for d in rule["drugs"] if _term_matches(d, meds_text)), None)
         if not drug:
             continue
-        med_inferred_codes[rule["icd10"]] = drug
-        _add_suggestion(
-            "ICD10", rule["icd10"], rule["label"],
-            f"Inferred from active medication “{drug}”", 0.5,
-        )
+        code = rule["icd10"]
+        if ("ICD10", code) in coded_set or ("ICD10", code) in suggestions:
+            continue
+        emitted = _emit_code("ICD10", code, rule["label"])
+        if not emitted:
+            continue
+        medication = next((m for m in ctx["medications"] if _term_matches(drug, m)), drug)
+        documentation_queries.append({
+            "condition": rule["label"],
+            "medication": medication,
+            "code": code,
+            "system": "ICD10",
+            "display": emitted["display"],
+            "message": DOCUMENTATION_QUERY_TEXT,
+        })
 
     suggested_codes = sorted(
         suggestions.values(),
@@ -385,24 +467,11 @@ def suggest_codes(patient_id: str, use_llm: bool = False) -> dict:
     cdi_flags: list[dict] = []
     flagged_codes: set[str] = set()  # avoid double-flagging one code as uncoded
 
-    # (a) Medication present but the condition it treats is not coded.
-    for code, drug in med_inferred_codes.items():
-        if ("ICD10", code) in coded_set:
-            continue
-        emitted = _emit_code("ICD10", code, code)
-        if not emitted:
-            continue
-        impact = _code_value_inr(code)
-        flagged_codes.add(code)
-        cdi_flags.append({
-            "type": "uncoded_condition_from_medication",
-            "message": f"Active medication “{drug}” suggests {emitted['display']} ({code}), which is not on the coded problem list.",
-            "rationale": "A drug strongly indicative of a chronic condition is documented, but the diagnosis it treats was never coded. Its acuity/CC weight is uncaptured. Confirm and code if clinically present.",
-            "est_impact_inr": impact,
-        })
+    # (a) was "medication present, condition not coded". A condition only a
+    #     drug implies is now a documentation query (step 2), not a flag.
 
     # (b) Condition documented in narrative/diagnosis but not on the coded
-    #     problem list (excludes symptoms and anything already flagged via med).
+    #     problem list (excludes symptoms).
     for s in suggested_codes:
         if s["system"] != "ICD10":
             continue
@@ -414,8 +483,6 @@ def suggest_codes(patient_id: str, use_llm: bool = False) -> dict:
         value = _code_value_inr(code)
         if value <= 0:
             continue  # symptoms / zero-weight → not a capture gap
-        if s["evidence"].startswith("Inferred from active medication"):
-            continue  # already covered by (a)
         flagged_codes.add(code)
         cdi_flags.append({
             "type": "documented_not_coded",
@@ -488,6 +555,7 @@ def suggest_codes(patient_id: str, use_llm: bool = False) -> dict:
         # report, so a typo'd or stale id read as a clean CDI review.
         "patient_found": ctx["exists"],
         "suggested_codes": suggested_codes,
+        "documentation_queries": documentation_queries,
         "cdi_flags": cdi_flags,
         "reimbursement": reimbursement,
     }

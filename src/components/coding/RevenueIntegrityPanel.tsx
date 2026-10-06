@@ -8,6 +8,8 @@ import PatientPicker from '../common/PatientPicker'
  * improvement) panel. For a selected patient it shows:
  *   • suggested ICD-10 / SNOMED codes (code chips + evidence + confidence),
  *   • CDI documentation-gap flags with an illustrative ₹ impact,
+ *   • documentation queries: a medicine that treats a condition nobody has
+ *     written down, which is a question for the clinician and never a code,
  *   • a headline "Reimbursement: ₹captured → ₹potential (+₹uplift)".
  *
  * The reimbursement figures are ILLUSTRATIVE (see the backend assumption
@@ -20,6 +22,22 @@ interface SuggestedCode {
   display: string
   evidence: string
   confidence: number
+  /** The sentence the term was found in (240 characters at most). */
+  evidence_sentence?: string | null
+  /** Set when that sentence came from a note: which note and who wrote it. */
+  evidence_note_id?: number | null
+  evidence_note_type?: string | null
+  evidence_author?: string | null
+}
+
+/** A condition only a medicine implies. Not a code: a question to ask. */
+interface DocumentationQuery {
+  condition: string
+  medication: string
+  code: string
+  system: string
+  display: string
+  message: string
 }
 
 interface CdiFlag {
@@ -49,6 +67,8 @@ interface Reimbursement {
 interface CodingResult {
   patient_id: string
   suggested_codes: SuggestedCode[]
+  /** Absent from an older server. */
+  documentation_queries?: DocumentationQuery[]
   cdi_flags: CdiFlag[]
   reimbursement: Reimbursement
 }
@@ -205,6 +225,16 @@ export default function RevenueIntegrityPanel({ patientId: patientIdProp }: Prop
                       <span className={styles.systemChip}>{c.system}</span>
                       <span className={styles.codeDisplay}>{c.display}</span>
                     </div>
+                    {c.evidence_sentence && (
+                      <blockquote className={styles.evidenceSentence}>
+                        <span>&ldquo;{c.evidence_sentence}&rdquo;</span>
+                        {c.evidence_note_id != null && (
+                          <span className={styles.evidenceSource}>
+                            {c.evidence_author ? `Note by ${c.evidence_author}` : 'From a note'}
+                          </span>
+                        )}
+                      </blockquote>
+                    )}
                     <div className={styles.codeMeta}>
                       <span className={styles.evidence}>{c.evidence}</span>
                       <span className={styles.confBar} title={`Confidence ${(c.confidence * 100).toFixed(0)}%`}>
@@ -240,6 +270,28 @@ export default function RevenueIntegrityPanel({ patientId: patientIdProp }: Prop
                 ))
               )}
             </div>
+          </div>
+
+          {/* Documentation queries: never codes, never counted as revenue. */}
+          <div className={styles.section}>
+            <div className={styles.sectionTitle}>
+              Documentation queries
+              <span className={styles.count}>{(result.documentation_queries ?? []).length}</span>
+            </div>
+            {(result.documentation_queries ?? []).length === 0 ? (
+              <div className={styles.emptyState}>No medicine points to a condition that is not written down.</div>
+            ) : (
+              (result.documentation_queries ?? []).map(q => (
+                <div key={`${q.system}-${q.code}`} className={styles.query}>
+                  <div className={styles.codeHead}>
+                    <span className={styles.codeDisplay}>{q.condition}</span>
+                    <span className={styles.systemChip}>Would support {q.code}</span>
+                  </div>
+                  <div className={styles.flagMessage}>Treated with {q.medication}</div>
+                  <div className={styles.queryAsk}>{q.message}</div>
+                </div>
+              ))
+            )}
           </div>
 
           {/* Assumptions disclosure */}

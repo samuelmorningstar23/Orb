@@ -120,9 +120,14 @@ def test_cdi_flag_is_produced(sepsis_patient):
         assert f["est_impact_inr"] >= 0
 
     types = {f["type"] for f in flags}
-    # Sepsis, unspecified organism → a specificity flag; metformin → uncoded-from-med.
+    # Sepsis, unspecified organism → a specificity flag; the documented diabetes
+    # is not coded → documented_not_coded. A medication never raises a flag of
+    # its own any more: an undocumented condition is a documentation query.
     assert "nonspecific_code" in types
-    assert "uncoded_condition_from_medication" in types
+    assert "documented_not_coded" in types
+    assert "uncoded_condition_from_medication" not in types
+    # Diabetes is written in the comorbidity list, so metformin asks nothing.
+    assert result["documentation_queries"] == []
 
 
 # ── reimbursement ───────────────────────────────────────────────────────────────
@@ -175,3 +180,54 @@ def test_use_llm_hook_is_noop_without_llm(sepsis_patient):
     llm = coding_service.suggest_codes(sepsis_patient, use_llm=True)
     assert base["suggested_codes"] == llm["suggested_codes"]
     assert base["cdi_flags"] == llm["cdi_flags"]
+
+
+# ── documentation queries and the evidence sentence (2026-10-06) ──────────────
+def test_metformin_without_diabetes_is_a_documentation_query_not_a_code():
+    pid = _new_patient(diagnosis="Community acquired pneumonia")
+    with db_session() as db:
+        db.execute(
+            "INSERT INTO medications (patient_id, drug_name, dosage, route, frequency) "
+            "VALUES (?, 'Metformin 500mg', '500mg', 'Oral', 'BD')", (pid,))
+    result = coding_service.suggest_codes(pid)
+    codes = {c["code"] for c in result["suggested_codes"]}
+    assert not any(c.startswith("E11") for c in codes), codes
+    assert result["documentation_queries"] == [{
+        "condition": "Type 2 diabetes mellitus",
+        "medication": "Metformin 500mg",
+        "code": "E11.9",
+        "system": "ICD10",
+        "display": result["documentation_queries"][0]["display"],
+        "message": "Treated and not documented: ask the clinician",
+    }]
+    assert all(f["type"] != "uncoded_condition_from_medication" for f in result["cdi_flags"])
+    # Not a suggestion, so not counted as potential either.
+    assert "E11.9" not in result["reimbursement"]["assumptions"]["code_weights"]
+
+
+def test_a_note_gives_the_sentence_the_term_was_found_in():
+    pid = _new_patient(diagnosis=None)
+    author = f"DCODE{uuid.uuid4().hex[:5].upper()}"
+    with db_session() as db:
+        db.execute("INSERT INTO users (id, name, role, password_hash) VALUES (?, ?, 'doctor', 'x')",
+                   (author, "Dr Leela Varma"))
+        note_id = db.execute(
+            "INSERT INTO clinical_documents (patient_id, doc_type, title, content, author_id) "
+            "VALUES (?, 'progress', 'Ward round', ?, ?)",
+            (pid, "Seen on the ward round. Admitted with a COPD exacerbation, "
+                  "wheezy and on 2 L oxygen. Plan nebulisers and steroids.", author),
+        ).lastrowid
+    result = coding_service.suggest_codes(pid)
+    copd = next(c for c in result["suggested_codes"] if c["system"] == "ICD10" and c["code"].startswith("J44"))
+    assert copd["evidence_sentence"] == "Admitted with a COPD exacerbation, wheezy and on 2 L oxygen."
+    assert copd["evidence_note_id"] == note_id
+    assert copd["evidence_note_type"] == "clinical_document"
+    assert copd["evidence_author"] == "Dr Leela Varma"
+    assert copd["evidence"].startswith("Matched")
+
+
+def test_the_evidence_sentence_is_capped_and_keeps_the_term():
+    long = ("word " * 120) + "COPD exacerbation " + ("word " * 120) + "."
+    sentence = coding_service.evidence_sentence("COPD", long)
+    assert len(sentence) <= 240
+    assert "COPD" in sentence

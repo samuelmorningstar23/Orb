@@ -656,8 +656,10 @@ def test_medication_with_null_status_still_drives_cdi_inference(patient, doctor)
     assert "Metformin" in ctx["medications"]
 
     result = coding_service.suggest_codes(patient)
-    types = {f["type"] for f in result["cdi_flags"]}
-    assert "uncoded_condition_from_medication" in types
+    # A drug that implies an undocumented condition is a documentation query
+    # (2026-10-06), not a code suggestion or a flag.
+    queries = {(q["code"], q["medication"]) for q in result["documentation_queries"]}
+    assert ("E11.9", "Metformin") in queries
 
 
 def test_discontinued_medication_is_still_excluded(patient):
