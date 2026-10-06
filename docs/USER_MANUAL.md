@@ -1458,6 +1458,7 @@ Because Lens ships with **no clinically validated imaging model**, the entire an
 
 - In the **development/demo profile**, Lens is enabled by default, this is what you experience in the demo environment.
 - In a **production profile**, Lens analysis is **disabled by default**. Any attempt to analyse an image is refused with the message: "Lens image analysis is disabled in this deployment. It has no validated imaging model and is decision-support reference only. Set ORB_LENS_ENABLED=true to enable it explicitly."
+- While the switch is off, the Lens screen says so before any image is chosen: "Lens is switched off on this computer. It is not a certified diagnostic device." The Analyze Image button cannot be pressed. The Lens tab stays in the menu.
 - An operator who wants Lens active in production must set `ORB_LENS_ENABLED=true` in the server's environment configuration and restart the backend. This is a deliberate, positive opt-in: an unvalidated vision model can never silently process patient images in a real deployment because someone forgot a setting. Enabling it is an institutional decision and should be documented under your local clinical-AI governance process.
 
 The gate controls *analysis* only. Previously saved analyses remain readable in patient records regardless of the switch.
