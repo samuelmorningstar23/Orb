@@ -128,11 +128,13 @@ export interface NursePatientCard {
   obs_minutes_until_due: number | null;
   obs_overdue: boolean;
   obs_due_soon: boolean;
+  /** Empty on an Orb Ward Record computer: there is no medication round. */
   medications: MedTask[];
-  meds_overdue: number;
-  meds_due_soon: number;
+  /** Null on an Orb Ward Record computer (no medication round), as below. */
+  meds_overdue: number | null;
+  meds_due_soon: number | null;
   /** Doses the bedside allergy screen will refuse without a prescriber. */
-  meds_allergy_blocked?: number;
+  meds_allergy_blocked?: number | null;
 }
 
 export interface ShiftBoard {
@@ -140,6 +142,9 @@ export interface ShiftBoard {
   department: string | null;
   /** False while scoring is switched off on this computer (the Ward Record). */
   scoring_enabled?: boolean;
+  /** False on an Orb Ward Record computer: no medication round, no dose
+   *  counts and no allergy block lines, and the eMAR routes answer 404. */
+  medication_round?: boolean;
   patients: NursePatientCard[];
   totals: {
     patients: number;
@@ -147,8 +152,9 @@ export interface ShiftBoard {
     critical: number | null;
     elevated: number | null;
     obs_overdue: number;
-    meds_overdue: number;
-    meds_allergy_blocked?: number;
+    /** Null with no medication round (the Orb Ward Record). */
+    meds_overdue: number | null;
+    meds_allergy_blocked?: number | null;
   };
 }
 

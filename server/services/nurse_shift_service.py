@@ -585,6 +585,12 @@ def build_board(department: str | None) -> dict:
     """
     now = _now()
     patients, latest_vitals, meds_by_patient, extra = _load_board_rows(department)
+    # The Orb Ward Record has no medication round: no task, no count and no
+    # allergy block line is built from the charted drugs. Each card's count is
+    # None, not 0, the way a band count is None while scoring is off.
+    med_round = medication_round_enabled()
+    if not med_round:
+        meds_by_patient = {}
     last_given_by_med = extra.get("last_given", {})
     allergies_by_patient = extra.get("allergies", {})
     ingredient_map = extra.get("ingredients", {})
@@ -658,15 +664,15 @@ def build_board(department: str | None) -> dict:
             )
             for m in meds_by_patient.get(pid, [])
         ]
-        meds_overdue = sum(1 for t in med_tasks if t["overdue"])
-        meds_due_soon = sum(1 for t in med_tasks if t["due_soon"])
+        meds_overdue = sum(1 for t in med_tasks if t["overdue"]) if med_round else None
+        meds_due_soon = sum(1 for t in med_tasks if t["due_soon"]) if med_round else None
         # A dose that will need a typed clinical reason at the bedside, with no
         # acceptance already on record for this order.
         meds_allergy_blocked = sum(
             1 for t in med_tasks
             if t["allergy"]["decision"] == allergy_interlock.BLOCK
             and not t["allergy"].get("override")
-        )
+        ) if med_round else None
 
         cards.append({
             "patient_id": pid,
@@ -720,7 +726,7 @@ def build_board(department: str | None) -> dict:
         return (
             _LEVEL_RANK.get(level, 3),
             0 if card["obs_overdue"] else 1,
-            -card["meds_overdue"],
+            -(card["meds_overdue"] or 0),
             minutes if minutes is not None else -10_000,
             str(card.get("bed") or ""),
         )
@@ -731,6 +737,8 @@ def build_board(department: str | None) -> dict:
         "generated_at": _iso(now),
         "department": department,
         "scoring_enabled": scoring,
+        # False on an Orb Ward Record computer: no medication round.
+        "medication_round": med_round,
         "patients": cards,
         "totals": {
             "patients": len(cards),
@@ -740,8 +748,10 @@ def build_board(department: str | None) -> dict:
             "elevated": (sum(1 for c in cards if (c["news2"] or {}).get("level") == "elevated")
                          if scoring else None),
             "obs_overdue": sum(1 for c in cards if c["obs_overdue"]),
-            "meds_overdue": sum(c["meds_overdue"] for c in cards),
-            "meds_allergy_blocked": sum(c["meds_allergy_blocked"] for c in cards),
+            # Dose counts: None, not 0, while there is no medication round.
+            "meds_overdue": sum(c["meds_overdue"] for c in cards) if med_round else None,
+            "meds_allergy_blocked": (sum(c["meds_allergy_blocked"] for c in cards)
+                                     if med_round else None),
         },
     }
 
@@ -1241,6 +1251,16 @@ def record_observation(
         patient_id, actor_id, obs,
         idempotency_key=idempotency_key, taken_at=taken_at,
         source=source, illegible=illegible)
+
+
+def medication_round_enabled() -> bool:
+    """False on an Orb Ward Record computer (ORB_WARD_RECORD): the profile has
+    no drug checks, no interlock and no orders (SALES_PLAN_2026-10.md section
+    3, step 2, "What is off"), so the shift board carries no medication tasks,
+    dose counts or allergy block lines and the eMAR routes answer 404. Read at
+    call time. Scoring switched off on its own leaves the round as it is."""
+    import config
+    return not getattr(config, "WARD_RECORD", False)
 
 
 def scoring_enabled() -> bool:

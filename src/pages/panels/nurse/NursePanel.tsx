@@ -125,7 +125,16 @@ function obsTaskDetail(p: ShiftBoard['patients'][number]): string {
   }`
 }
 
-function buildTasks(board: ShiftBoard | null): Task[] {
+/** False on an Orb Ward Record computer: the profile has no medication round
+ *  (no drug checks, no interlock, no orders), so this screen shows no dose
+ *  task, dose count, allergy block line or Med round button. The clinical
+ *  switch answers before the board loads; the board's own flag is the
+ *  server's word for it. Scoring switched off alone keeps the round. */
+function medicationRoundOn(board: ShiftBoard | null, wardRecord: boolean): boolean {
+  return !wardRecord && board?.medication_round !== false
+}
+
+function buildTasks(board: ShiftBoard | null, medRound = true): Task[] {
   if (!board) return []
   const tasks: Task[] = []
   for (const p of board.patients) {
@@ -139,6 +148,7 @@ function buildTasks(board: ShiftBoard | null): Task[] {
       title: 'Observations',
       detail: obsTaskDetail(p),
     })
+    if (!medRound) continue
     for (const m of p.medications) {
       // PRN, continuous and unschedulable orders are real, but they are not
       // things the nurse "owes" at a time — listing them here would bury the
@@ -180,7 +190,7 @@ function buildTasks(board: ShiftBoard | null): Task[] {
  * Scheduled medications only, matching buildTasks: a PRN dose has no due time,
  * so promising one would be a fabricated clock.
  */
-function nextDue(board: ShiftBoard | null):
+function nextDue(board: ShiftBoard | null, medRound = true):
   | { who: string; what: string; at: string | null; minutes: number }
   | null {
   if (!board) return null
@@ -194,6 +204,7 @@ function nextDue(board: ShiftBoard | null):
     if (p.obs_minutes_until_due !== null) {
       consider({ who, what: 'observations', at: p.obs_due_at, minutes: p.obs_minutes_until_due })
     }
+    if (!medRound) continue
     for (const m of p.medications) {
       if (m.schedule_kind !== 'scheduled' && m.schedule_kind !== 'stat') continue
       if (m.minutes_until_due === null) continue
@@ -287,7 +298,8 @@ export default function NursePanel() {
       : staleMinutes >= STALE_AFTER_MIN ? 'stale'
         : 'fresh'
 
-  const tasks = useMemo(() => buildTasks(board), [board])
+  const medRound = medicationRoundOn(board, wardRecord)
+  const tasks = useMemo(() => buildTasks(board, medRound), [board, medRound])
   const overdueTasks = tasks.filter(t => t.overdue)
   const soonTasks = tasks.filter(t => !t.overdue && t.dueSoon)
   const queuedTasks = overdueTasks.length + soonTasks.length
@@ -451,12 +463,14 @@ export default function NursePanel() {
   // no congratulation: at 03:00 she does not want to be congratulated by
   // software, she wants to know the screen is telling the truth.
   const renderNothingDue = () => {
-    const next = nextDue(board)
+    const next = nextDue(board, medRound)
     const detail = next
       ? next.at
         ? <>Next {next.what} for {next.who} at <span className="orb-home__clock">{clockTime(next.at)}</span>.</>
         : <>Next {next.what} for {next.who} {relativeMinutes(next.minutes)}.</>
-      : <>No observations or doses are scheduled in the next four hours.</>
+      : medRound
+        ? <>No observations or doses are scheduled in the next four hours.</>
+        : <>No observations are scheduled in the next four hours.</>
     return (
       <div className="orb-state orb-state--empty orb-state--calm">
         <span className="orb-state__icon" aria-hidden="true">
@@ -585,15 +599,19 @@ export default function NursePanel() {
             <span className="nurse-total__label" aria-hidden="true">obs overdue</span>
             <span className="sr-only">observations overdue</span>
           </span>
-          <span className={chipTone(board.totals.meds_overdue, 'warn')}>
-            <span className="nurse-total__value">{board.totals.meds_overdue}</span>
-            <span className="nurse-total__label">
-              {board.totals.meds_overdue === 1 ? 'dose' : 'doses'} overdue
+          {/* No dose chips at all on an Orb Ward Record computer: it has no
+              medication round. */}
+          {medRound && (
+            <span className={chipTone(board.totals.meds_overdue ?? 0, 'warn')}>
+              <span className="nurse-total__value">{board.totals.meds_overdue ?? 0}</span>
+              <span className="nurse-total__label">
+                {board.totals.meds_overdue === 1 ? 'dose' : 'doses'} overdue
+              </span>
             </span>
-          </span>
+          )}
           {/* Only when there is one: a standing "0 blocked" chip would be one
               more number to learn to skip. */}
-          {(board.totals.meds_allergy_blocked ?? 0) > 0 && (
+          {medRound && (board.totals.meds_allergy_blocked ?? 0) > 0 && (
             <span className={chipTone(board.totals.meds_allergy_blocked ?? 0, 'danger')}>
               <span className="nurse-total__value">{board.totals.meds_allergy_blocked}</span>
               <span className="nurse-total__label">blocked by allergy</span>
@@ -708,9 +726,13 @@ export default function NursePanel() {
             {board?.scoring_enabled === false
               ? "Observation due times follow the ward's fixed interval, set in Admin. "
               : 'Observation intervals follow the RCP NEWS2 escalation table. '}
-            Medication due times are derived
-            from each order's frequency and the last charted dose. Orb holds no prescriber-authored
-            administration schedule.
+            {medRound && (
+              <>
+                Medication due times are derived
+                from each order's frequency and the last charted dose. Orb holds no prescriber-authored
+                administration schedule.
+              </>
+            )}
           </p>
         </div>
       )}
@@ -784,12 +806,15 @@ export default function NursePanel() {
                       "2 overdue" read as two overdue observations — while the
                       header chip two inches above said "0 obs overdue". The
                       figures were right and the sentence was not. */}
-                  <li className={p.meds_overdue ? 'is-late' : ''}>
-                    {p.medications.length === 0
-                      ? 'No medications charted'
-                      : `Doses: ${p.medications.length} charted · ${p.meds_overdue} overdue · ${p.meds_due_soon} due soon`}
-                  </li>
-                  {(p.meds_allergy_blocked ?? 0) > 0 && (
+                  {/* No dose line on an Orb Ward Record computer. */}
+                  {medRound && (
+                    <li className={p.meds_overdue ? 'is-late' : ''}>
+                      {p.medications.length === 0
+                        ? 'No medications charted'
+                        : `Doses: ${p.medications.length} charted · ${p.meds_overdue ?? 0} overdue · ${p.meds_due_soon ?? 0} due soon`}
+                    </li>
+                  )}
+                  {medRound && (p.meds_allergy_blocked ?? 0) > 0 && (
                     <li className="is-late">
                       Allergy block on {p.meds_allergy_blocked} dose{p.meds_allergy_blocked === 1 ? '' : 's'}:
                       needs prescriber authorisation
@@ -801,14 +826,16 @@ export default function NursePanel() {
                   <button type="button" className="nurse-btn nurse-btn--primary" onClick={() => setObsFor(p)}>
                     Record obs
                   </button>
-                  <button
-                    type="button"
-                    className="nurse-btn nurse-btn--secondary"
-                    onClick={() => setRoundFor({ patient: p, medId: null })}
-                    disabled={p.medications.length === 0}
-                  >
-                    Med round
-                  </button>
+                  {medRound && (
+                    <button
+                      type="button"
+                      className="nurse-btn nurse-btn--secondary"
+                      onClick={() => setRoundFor({ patient: p, medId: null })}
+                      disabled={p.medications.length === 0}
+                    >
+                      Med round
+                    </button>
+                  )}
                 </div>
               </li>
             ))}
@@ -867,7 +894,7 @@ export default function NursePanel() {
         />
       )}
 
-      {roundFor && (
+      {roundFor && medRound && (
         <MedRoundSheet
           patient={roundFor.patient}
           focusMedicationId={roundFor.medId}

@@ -228,7 +228,7 @@ export function currentIssues(
     })
   }
 
-  if (card.meds_overdue > 0) {
+  if ((card.meds_overdue ?? 0) > 0) {
     issues.push({
       id: 'meds-overdue',
       severity: 'warning',

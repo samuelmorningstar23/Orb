@@ -40,7 +40,22 @@ from services.allergy_interlock import AllergyInterlockBlocked, AllergyOverrideN
 from services.audit_service import log_audit_event
 from services.drug_safety_service import DoseGuardBlocked
 
-router = APIRouter(prefix="/api/emar", tags=["eMAR"])
+#: What every eMAR route answers on an Orb Ward Record computer.
+MEDICATION_ROUND_SWITCHED_OFF = "The medication round is switched off on this computer"
+
+
+def _medication_round_switched_on() -> None:
+    """The Orb Ward Record profile has no medication round (SALES_PLAN section
+    3, step 2: the drug checks and the interlock are off, no orders). Every
+    eMAR route then answers 404 in these words, before any patient or dose is
+    read. Scoring switched off on its own leaves the round as it is."""
+    from services.nurse_shift_service import medication_round_enabled
+    if not medication_round_enabled():
+        raise HTTPException(status_code=404, detail=MEDICATION_ROUND_SWITCHED_OFF)
+
+
+router = APIRouter(prefix="/api/emar", tags=["eMAR"],
+                   dependencies=[Depends(_medication_round_switched_on)])
 
 
 class AdministerRequest(BaseModel):
