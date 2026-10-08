@@ -1362,6 +1362,13 @@ async def adjudicate(text: str, room: RosterPatient, suspect_name: Optional[str]
     except Exception:
         return None
 
+    # Models switched off (ORB_MODELS_ENABLED, or the Orb Ward Record): the
+    # tier cannot answer, so the gateway is not asked; the rule based verdict
+    # stands, as it does when the tier is evicted.
+    from services.model_switch import models_enabled
+    if not models_enabled():
+        return None
+
     try:
         if await ambient_tier_evicted(AMBIENT_LLM_MODEL):
             logger.debug("room_fit: ambient tier evicted — review dies silent")

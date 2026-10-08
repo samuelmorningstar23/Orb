@@ -367,3 +367,29 @@ def test_the_recorded_data_summary_says_drafting_is_switched_off(models_off):
     text = discharge_service.offline_discharge_summary(pid)
     assert "switched off on this computer" in text
     assert "unavailable" not in text
+
+
+# ── The Relay wrong room check (review, 9 October 2026) ─────────────────────
+# Its rule based part still runs with the models off; its model step asked the
+# gateway, which refused. It now does not ask.
+
+def test_the_wrong_room_check_asks_no_model_with_the_models_off(models_off, monkeypatch):
+    from services import room_fit_service
+
+    asked = []
+
+    async def _post(*a, **k):
+        # Recorded, not only raised: adjudicate turns any failure into None.
+        asked.append(k.get("purpose"))
+        raise AssertionError("the gateway was asked with the models switched off")
+
+    async def _not_evicted(*a, **k):
+        return False
+
+    from services import model_router
+    monkeypatch.setattr(ollama_gateway, "post", _post)
+    # The tier reads as loaded, so only the models switch can stop the ask.
+    monkeypatch.setattr(model_router, "ambient_tier_evicted", _not_evicted)
+    room = room_fit_service.RosterPatient(patient_id="P1", name="Asha Rao", bed="4")
+    assert asyncio.run(room_fit_service.adjudicate("Bed 4 needs a review", room, None)) is None
+    assert asked == []
