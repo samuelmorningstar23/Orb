@@ -197,6 +197,12 @@ export interface ObservationRecorded {
   /** When the set was keyed (UTC); recorded_at is when it was taken. */
   entered_at?: string;
   illegible?: IllegibleField[];
+  /** false on a set the ward clerk copied more than the live alert limit
+   *  after it was taken (2 hours by default): charted, but no alert raised. */
+  live_hooks?: boolean;
+  /** Said back to whoever keyed the set, e.g. "Charted. Older than 2 hours,
+   *  so no alert was raised." Absent on an ordinary set. */
+  message?: string;
 }
 
 export interface ObservationVoided {

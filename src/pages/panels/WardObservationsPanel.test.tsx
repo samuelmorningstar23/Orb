@@ -40,6 +40,55 @@ describe('the ward clerk\'s Observations screen', () => {
     expect(screen.getByRole('heading', { name: 'Copy observations from the sheet' })).toBeTruthy()
   })
 
+  it('tells her when a copy older than 2 hours was charted without an alert', async () => {
+    getTranscribePatients.mockResolvedValue({
+      department: 'General Medicine',
+      patients: [{ patient_id: 'P1', name: 'Sita Devi', mrn: 'UHID-1', ward: 'GM', bed: '4',
+        admitted_at: '2026-10-01T08:50:00+00:00' }],
+    })
+    recordObservations.mockResolvedValue({
+      vitals_id: 7, recorded_at: 'x', news2: null, schedule: null, replayed: false,
+      live_hooks: false, message: 'Charted. Older than 2 hours, so no alert was raised.',
+    })
+    render(<WardObservationsPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy from sheet for Sita Devi' }))
+    const when = new Date(Date.now() - 3 * 3600 * 1000)
+    when.setSeconds(0, 0)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const local = `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}T${pad(when.getHours())}:${pad(when.getMinutes())}`
+    fireEvent.change(screen.getByLabelText('Time on the sheet'), { target: { value: local } })
+    fireEvent.change(document.getElementById('obs-heart_rate') as HTMLInputElement, { target: { value: '82' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Record observations' }))
+    })
+    expect(recordObservations).toHaveBeenCalledTimes(1)
+    expect(await screen.findByText(
+      'Observations saved for Sita Devi. Older than 2 hours, so no alert was raised.')).toBeTruthy()
+  })
+
+  it('says only that the set was saved when the server says nothing more', async () => {
+    getTranscribePatients.mockResolvedValue({
+      department: 'General Medicine',
+      patients: [{ patient_id: 'P1', name: 'Sita Devi', mrn: 'UHID-1', ward: 'GM', bed: '4',
+        admitted_at: null }],
+    })
+    recordObservations.mockResolvedValue({
+      vitals_id: 8, recorded_at: 'x', news2: null, schedule: null, replayed: false,
+    })
+    render(<WardObservationsPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy from sheet for Sita Devi' }))
+    const when = new Date(Date.now() - 30 * 60 * 1000)
+    when.setSeconds(0, 0)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const local = `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}T${pad(when.getHours())}:${pad(when.getMinutes())}`
+    fireEvent.change(screen.getByLabelText('Time on the sheet'), { target: { value: local } })
+    fireEvent.change(document.getElementById('obs-heart_rate') as HTMLInputElement, { target: { value: '82' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Record observations' }))
+    })
+    expect(await screen.findByText('Observations saved for Sita Devi.')).toBeTruthy()
+  })
+
   it('says so when no patient is admitted to her ward', async () => {
     getTranscribePatients.mockResolvedValue({ department: 'General Medicine', patients: [] })
     render(<WardObservationsPanel />)

@@ -95,8 +95,10 @@ interface Props {
   offline?: OfflineSnapshot<unknown>
   onClose: () => void
   /** news2 and schedule are null when no score is computed: the clerk's copy,
-   *  or scoring switched off on this computer. */
-  onRecorded: (news2: News2 | null, schedule: ObsSchedule | null) => void
+   *  or scoring switched off on this computer. `message` is passed only when
+   *  the server said something about the set, e.g. that a copy older than 2
+   *  hours was charted without raising an alert. */
+  onRecorded: (news2: News2 | null, schedule: ObsSchedule | null, message?: string) => void
 }
 
 type FieldKey =
@@ -427,7 +429,12 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
       // released on success — the sheet is closing, and a late second tap must
       // not start another write.
       localStorage.removeItem(obsDraftKey(patient.patient_id))
-      onRecorded(showScore ? res.news2 ?? null : null, showScore ? res.schedule ?? null : null)
+      const recordedNews2 = showScore ? res.news2 ?? null : null
+      const recordedSchedule = showScore ? res.schedule ?? null : null
+      // The server's word on the set (a copy too old to raise an alert), only
+      // when it gave one.
+      if (res.message) onRecorded(recordedNews2, recordedSchedule, res.message)
+      else onRecorded(recordedNews2, recordedSchedule)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not record these observations')
       inFlightRef.current = false

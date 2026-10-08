@@ -141,8 +141,12 @@ export default function WardObservationsPanel() {
         <ObsEntrySheet
           patient={sheetFor}
           onClose={() => setSheetFor(null)}
-          onRecorded={() => {
-            setOutcome(`Observations saved for ${sheetFor.name}.`)
+          onRecorded={(_news2, _schedule, message) => {
+            // A copy older than the live alert limit is charted but raises no
+            // alert, and the server says so; she reads it here.
+            setOutcome(message
+              ? `Observations saved for ${sheetFor.name}. ${message.replace(/^Charted\.\s*/, '')}`
+              : `Observations saved for ${sheetFor.name}.`)
             setSheetFor(null)
           }}
         />
