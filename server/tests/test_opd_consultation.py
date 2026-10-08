@@ -67,9 +67,34 @@ def _outpatient():
 
 
 def _chart_allergy(pid, substance="penicillin"):
+    """A charted allergy AND the allergy review that recorded it (opd-10a):
+    since W5-A a charted allergy with no review does not let a note be signed
+    (ruling OPD-S7), so the signing tests below record both, as a doctor's
+    earlier review would have."""
     with db_session() as db:
         db.execute("INSERT INTO patient_allergies (patient_id, substance, severity, status) "
                    "VALUES (?, ?, 'severe', 'active')", (pid, substance))
+        db.execute("INSERT INTO patient_allergy_assessments (patient_id, status, "
+                   "substances_json, source, assessed_by, assessed_at) "
+                   "VALUES (?, 'allergies_recorded', ?, 'opd', 'CTREVIEWER', ?)",
+                   (pid, json.dumps([substance]), datetime.now(timezone.utc).isoformat()))
+
+
+def _stated_identity(pid):
+    """What the patient states at the desk (opd-6a, ruling OPD-S1): with the
+    registration feature on, every visit registered through the front desk
+    carries it. Read from the fixture row: name, age and UHID."""
+    from services import patient_matching as pm
+    with db_session() as db:
+        r = db.execute(
+            "SELECT p.name, p.mrn, p.date_of_birth, p.age, p.created_at, d.age_recorded_on "
+            "FROM patients p LEFT JOIN patient_demographics d ON d.patient_id = p.id "
+            "WHERE p.id = ?", (pid,)).fetchone()
+    if r is None:
+        return {"name": "Not On File", "age_years": 40, "uhid": "NOT-ON-FILE"}
+    age, _ = pm.current_age(date_of_birth=r["date_of_birth"], stated_age=r["age"],
+                            age_recorded_on=r["age_recorded_on"], created_at=r["created_at"])
+    return {"name": r["name"], "age_years": age, "uhid": r["mrn"]}
 
 
 @pytest.fixture(scope="module")
@@ -105,7 +130,9 @@ def opd_off(monkeypatch):
 
 def _visit(doc, pid=None):
     pid = pid or _outpatient()
-    resp = client.post("/api/frontdesk/opd/visits", json={"patient_id": pid, "doctor_id": doc},
+    resp = client.post("/api/frontdesk/opd/visits",
+                       json={"patient_id": pid, "doctor_id": doc,
+                             "identity_check": _stated_identity(pid)},
                        headers=_auth(doc))
     assert resp.status_code == 200, resp.text
     return resp.json()
@@ -330,8 +357,10 @@ def test_signing_is_refused_until_allergies_are_charted(staff, opd_on):
     vid, pid = visit["id"], visit["patient_id"]
     _put(vid, doc, {"plan": "Paracetamol as needed"})
     view = client.get(f"/api/opd/visits/{vid}/consultation", headers=_auth(doc)).json()
-    assert view["allergy_review"] == {"status": "not_reviewed", "can_sign": False,
-                                      "charted_count": 0}
+    # W5-A (opd-10a) added reviewed_this_visit, basis and assessment.
+    assert {k: view["allergy_review"][k] for k in ("status", "can_sign", "charted_count")} \
+        == {"status": "not_reviewed", "can_sign": False, "charted_count": 0}
+    assert view["allergy_review"]["assessment"] is None
     refused = _sign(vid, doc, 1)
     assert refused.status_code == 409
     assert refused.json()["detail"]["error"] == "allergy_review_required"

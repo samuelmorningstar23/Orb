@@ -77,6 +77,16 @@ MEDICATION_WRITE = "medication.write"          # Chart / modify a medication ord
 # does not need a code change, which is the point of expressing it here.
 MEDICATION_PRESCRIBE = "medication.prescribe"   # Make the prescribing decision itself
 
+# THE PHARMACIST'S CHECK OF A MEDICATION ORDER (medication-order store, W5-E).
+# Verifying or rejecting an order in the store's own verification queue
+# (/api/medorders, built in a later wave; every route there answers 404 while
+# ORB_MED_ORDER_STORE is off). Ruling MO-R4 (a): the pharmacist only. The
+# administrator does not hold it, although helix.write still lets an
+# administrator verify on the Helix and Verify Queue screens as before; this
+# grant changes nothing that exists today. A site that wants another role to
+# verify grants it this permission.
+MEDICATION_VERIFY = "medication.verify"         # Verify or reject a medication order (pharmacist)
+
 # Scribe
 SCRIBE_CREATE_DRAFT = "scribe.create_draft"    # Transcribe + structure notes
 SCRIBE_READ_ALL = "scribe.read_all"            # Read any scribe note (future: team-scoped)
@@ -362,6 +372,9 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         # NOT approve: approving a purchase order, an adjustment or a write-off
         # stays with a second person, the same split as procurement above.
         PHARMACY_STORE_READ, PHARMACY_STORE_WRITE, PHARMACY_STORE_NDPS,
+        # The pharmacist's check of a medication order in the store (MO-R4 (a):
+        # the pharmacist only). Inert until ORB_MED_ORDER_STORE is on.
+        MEDICATION_VERIFY,
     },
     "admin": {
         # Governance + read-only clinical + pharmacy access

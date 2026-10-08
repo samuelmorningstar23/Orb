@@ -21,8 +21,9 @@
  * The panel is driven through a mocked `apiFetch`, so the REAL src/api/frontdesk.ts
  * (URL building, the null-vs-zero display helpers) is exercised rather than stubbed.
  */
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { resetFeatureFlags, setFeatureFlags } from '../../shellConfig'
 import FrontDeskPanel from './FrontDeskPanel'
 
 const apiFetch = vi.fn()
@@ -31,6 +32,8 @@ vi.mock('../../api/client', () => ({
   apiFetch: (path: string, options?: RequestInit) => apiFetch(path, options),
   buildHeaders: () => ({}),
   API_BASE: '/api',
+  // The signed-in role the desk views read their permissions from (opd-6a).
+  getUser: () => ({ role: 'receptionist' }),
 }))
 
 const DEPT = 'Cardiology'
@@ -512,5 +515,48 @@ describe('FrontDeskPanel — failure states', () => {
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('Network unreachable')
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+  })
+})
+
+/**
+ * opd-6a: with the registration feature on the server refuses any visit whose
+ * patient has not confirmed who they are (ruling OPD-S1), so the ward-list
+ * form is not offered; the OPD section opens the Register view, which
+ * searches the patient index first. With the feature off (every test above)
+ * the old form is unchanged.
+ */
+describe('FrontDeskPanel: registering a visit with the registration feature on', () => {
+  const desk = (p: string) => ['patient.read_all', 'patient.write', 'registration.read',
+    'registration.write'].includes(p)
+
+  beforeEach(() => setFeatureFlags({ registration: true }))
+  afterEach(() => {
+    cleanup()
+    resetFeatureFlags()
+  })
+
+  it('keeps the old ward-list form with the feature off', async () => {
+    resetFeatureFlags()
+    render(<FrontDeskPanel holds={desk} />)
+    expect(await screen.findByLabelText('Patient')).toBeInTheDocument()
+    expect(screen.getByText('Register a visit')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Find or register a patient' })).toBeNull()
+  })
+
+  it('offers no ward-list form, and opens the Register view, search first', async () => {
+    routeApi({
+      '/registration/config': {
+        uhid_source: 'hospital', uhid_ready: true, duplicate_mode: 'warn', abdm_enabled: false,
+        abha_notice: '', search_min_chars: 3, search_max_results: 20, reason_min_chars: 8,
+      },
+    })
+    render(<FrontDeskPanel holds={desk} />)
+    const open = await screen.findByRole('button', { name: 'Find or register a patient' })
+    expect(screen.queryByLabelText('Patient')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Register & issue token' })).toBeNull()
+    fireEvent.click(open)
+    expect(await screen.findByLabelText('UHID, full phone number or name')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Register' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('button', { name: 'Register a new patient' })).toBeNull()
   })
 })

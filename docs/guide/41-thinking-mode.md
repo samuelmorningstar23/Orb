@@ -446,7 +446,7 @@ sequenceDiagram
 **Why it is read here and not later (`:1483-1486`):** the ContextVar belongs to the request's task, and a streaming generator is not guaranteed to be iterated inside it. Read it in the request's own context or you read the default.
 **Breaks if you change it:** move this read into the generator and every refused turn records "thinking ON" regardless of what the clinician chose.
 
-#### `select_provider` in `query_ollama`: `server/services/sage_service.py:1835`
+#### `select_provider` in `query_ollama`: `server/services/sage_service.py:1841`
 **Does:** Replaced the two lines that used to pick the model and the provider.
 **On screen:** everything; this is where the tier choice becomes real.
 **Gotchas:** `route_info=info` is passed **before** `info.update(lane=…, model=…)` at `:1361-1364`. The order matters only because the key sets must stay disjoint, see `stamp`.

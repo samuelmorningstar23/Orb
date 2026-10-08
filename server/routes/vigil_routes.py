@@ -23,6 +23,8 @@ from services.vigil_service import (
     scoring_enabled,
 )
 from services.medication_safety_gate import enforce_medication_safety
+from services.medorders import chart_lane
+from services.medorders import core as medorder_core
 from services.vitals_source.base import LABEL_SIMULATED
 from services.lens_service import decorate_analysis
 from services.stay_times import summary_less_ends_sql
@@ -977,6 +979,7 @@ async def review_discharge_summary(
 async def add_patient_medication(
     patient_id: str,
     data: dict,
+    request: Request,
     user: dict = Depends(require_patient_access("medication.write")),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
@@ -993,6 +996,30 @@ async def add_patient_medication(
 
     if not all([drug_name, dosage, frequency]):
         raise HTTPException(status_code=400, detail="Drug name, dosage, and frequency are required")
+
+    if medorder_core.store_on():
+        # ORB_MED_ORDER_STORE on (medorders-3): the same gate call, then ONE
+        # transaction for the ward row, its medication order, the order's
+        # event and its audit row (services/medorders/chart_lane.py). Through
+        # run_db, so the gate's SQLite work is off the event loop as well.
+        # Nothing the ward sees changes: same checks, same row, same answer,
+        # plus the order's id. With the store off, the path below is unchanged.
+        try:
+            result = await run_db(
+                chart_lane.create_chart_order, patient_id, drug_name, dosage, route,
+                frequency, status, actor_id=user["id"], actor_role=user.get("role"),
+                idempotency_key=idempotency_key, safety_ack=data.get("safety_ack"),
+                request_meta={
+                    "request_path": request.url.path,
+                    "http_method": request.method,
+                    "ip_address": request.client.host if request.client else None,
+                    "user_agent": request.headers.get("user-agent"),
+                },
+            )
+        except medorder_core.MedOrderError as e:
+            raise HTTPException(status_code=e.http_status, detail=medorder_core.http_detail(e))
+        return {"status": "success", "id": result["id"], "safety": result["safety"],
+                "med_order_id": result["med_order_id"]}
 
     # Order-time drug-safety gate: allergy + interaction screen BEFORE any DB
     # write. Severe alerts raise 428 until the clinician re-submits with

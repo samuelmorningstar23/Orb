@@ -10,9 +10,14 @@ WHAT THIS MAY CHANGE ON A DRUG, AND WHAT IT MAY NOT
   * Commercial and stock fields (pack size, purchase and dispense units, HSN
     code, GST rate, manufacturer, storage condition, reorder defaults, the
     active flag): the write tier, at once, audited.
-  * Clinical identity (name, generic name, form, strength): NEVER here. Those
-    drive allergy and interaction screening, and their governance is ruling
-    GRN-RS1 (grn-6). A request to change them is refused with 422.
+  * Clinical identity (name, generic name, form, strength): never through the
+    field editor. Those drive allergy and interaction screening, and their
+    governance is ruling GRN-RS1, built here as option (b) (grn-6, see the
+    'Clinical identity' section below): a new drug is a draft until a second
+    pharmacist confirms it, a correction to a confirmed drug with no orders or
+    stock needs a second pharmacist too, and a drug with orders or stock is
+    retired and replaced, never rewritten. The field editor refuses identity
+    fields with 422 identity_locked.
   * Classification (schedule, NDPS category, the essential narcotic mark): a
     change that ADDS control applies at once at the write tier. A change that
     REMOVES control is a pharmacy_master_change_requests row that a different
@@ -36,7 +41,10 @@ record commit together or not at all. Audit target ids are strings.
 """
 from __future__ import annotations
 
+import json
+import logging
 import re
+import uuid
 from datetime import date, timedelta
 from typing import Any, Mapping, Optional
 
@@ -45,20 +53,26 @@ from db_backend import DBIntegrityError
 from services import pharmacy_stock_service as stock
 from services import procurement_service as procurement
 
+logger = logging.getLogger("orb.pharmacy_masters")
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  Errors and labels
 # ═════════════════════════════════════════════════════════════════════════════
 
 
 class MasterError(ValueError):
-    """A masters write the caller must correct. `code` maps to HTTP in the route."""
+    """A masters write the caller must correct. `code` maps to HTTP in the route.
+    `detail` carries structured facts the screen shows (the rows a duplicate
+    check found), never anything about a patient."""
 
     code = "master_error"
 
-    def __init__(self, message: str, *, code: Optional[str] = None):
+    def __init__(self, message: str, *, code: Optional[str] = None,
+                 detail: Optional[dict] = None):
         super().__init__(message)
         if code:
             self.code = code
+        self.detail = detail or {}
 
 
 NOT_CLASSIFIED = "Not classified"
@@ -173,6 +187,9 @@ def _decorate_drug(row: Mapping) -> dict:
         if drug.get("storage_condition") is not None else NOT_CONFIGURED
     bp = drug.get("gst_rate_bp")
     drug["gst_label"] = NOT_CONFIGURED if bp is None else f"{bp / 100:g}%"
+    status = drug.get("identity_status") or "active"
+    drug["identity_label"] = IDENTITY_STATUS_LABELS.get(status, status)
+    drug["orderable_identity"] = status == "active"
     return drug
 
 
@@ -455,8 +472,13 @@ def _from_text(field: str, value: Optional[str]) -> Any:
 
 
 def list_change_requests(*, decision: Optional[str] = "pending",
-                         drug_id: Optional[str] = None) -> list[dict]:
-    sql = ("SELECT r.*, m.name AS drug_name, ru.name AS requested_by_name, "
+                         drug_id: Optional[str] = None,
+                         kinds: Optional[tuple[str, ...]] = None) -> list[dict]:
+    """Change requests, newest first. `kinds` limits them to those change
+    kinds (the classification screen asks for classification downgrades only;
+    the identity screen for identity requests only); None lists every kind."""
+    sql = ("SELECT r.*, m.name AS drug_name, m.identity_status AS drug_identity_status, "
+           "ru.name AS requested_by_name, "
            "du.name AS decided_by_name FROM pharmacy_master_change_requests r "
            "LEFT JOIN helix_medication_master m ON m.id = r.helix_medication_id "
            "LEFT JOIN users ru ON ru.id = r.requested_by "
@@ -470,6 +492,9 @@ def list_change_requests(*, decision: Optional[str] = "pending",
     if drug_id:
         sql += " AND r.helix_medication_id = ?"
         params.append(drug_id)
+    if kinds:
+        sql += f" AND r.change_kind IN ({','.join('?' for _ in kinds)})"
+        params.extend(kinds)
     sql += " ORDER BY r.id DESC LIMIT 500"
     with db_session() as conn:
         return [dict(r) for r in conn.execute(sql, params).fetchall()]
@@ -489,7 +514,10 @@ def decide_change_request(request_id: int, *, approve: bool, actor: Mapping,
     with db_session(immediate=True) as conn:
         req = conn.execute("SELECT * FROM pharmacy_master_change_requests WHERE id = ?",
                            (request_id,)).fetchone()
-        if req is None:
+        # An identity request (grn-6) is decided by a second pharmacist on its
+        # own route, never by this approve-tier one: to this route it does
+        # not exist.
+        if req is None or req["change_kind"] not in CLASSIFICATION_REQUEST_KINDS:
             raise MasterError(f"no change request {request_id}", code="not_found")
         if req["decision"] != "pending":
             raise MasterError(f"this request was already {req['decision']}", code="decided")
@@ -548,7 +576,7 @@ def withdraw_change_request(request_id: int, *, actor: Mapping,
     with db_session(immediate=True) as conn:
         req = conn.execute("SELECT * FROM pharmacy_master_change_requests WHERE id = ?",
                            (request_id,)).fetchone()
-        if req is None:
+        if req is None or req["change_kind"] not in CLASSIFICATION_REQUEST_KINDS:
             raise MasterError(f"no change request {request_id}", code="not_found")
         if req["decision"] != "pending":
             raise MasterError(f"this request was already {req['decision']}", code="decided")
@@ -567,6 +595,581 @@ def withdraw_change_request(request_id: int, *, actor: Mapping,
         out = dict(conn.execute("SELECT * FROM pharmacy_master_change_requests WHERE id = ?",
                                 (request_id,)).fetchone())
     return out
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Clinical identity (grn-6, ruling GRN-RS1 option (b), held for Samuel)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# A drug's name, generic name, form and strength decide how the allergy
+# interlock, the interaction screen and the Sage lexicon recognise it, so who
+# may set them is a safety ruling (GRN-RS1). Built here as option (b):
+#
+#   * ADD. A pharmacist adds a drug as a DRAFT (identity_status 'draft') with a
+#     pending 'identity_create' request. A different pharmacist confirms it,
+#     against the identity they were shown, and only then is it 'active'. A
+#     draft is never orderable: every ordering and suggestion path reads
+#     identity_status = 'active' (helix_service, rxnorm_reconciler, the Sage
+#     order match, pharmacy purchasing), while every SAFETY screen
+#     (allergy_interlock, patient_specific_screen, drug_safety_service) and the
+#     Sage lexicon keep reading every row, so a draft brand of a penicillin is
+#     screened as a penicillin from the moment it is saved.
+#   * CORRECT. A confirmed drug with no orders, no stock and no purchase lines
+#     may have its identity corrected through an 'identity_correction' request
+#     a different pharmacist approves; the drug keeps its confirmed identity
+#     until then. A drug in use is never rewritten: it is RETIRED and a
+#     corrected drug is added (retire and replace), so every order keeps the
+#     identity it was placed with.
+#   * RETIRE. Applies at once (it only removes a drug from ordering, so it adds
+#     control), with a reason. A retired drug stays on every order, receipt and
+#     ledger that names it, and is never made orderable again.
+#
+# The confirming tier is the WRITE tier (a second pharmacist), never the
+# approve tier: the administrator approves money and classification downgrades,
+# not clinical identity. The strictest option named, (c) import from a
+# licensed knowledge base only, was not built: Orb is offline and holds no such
+# source; Samuel confirms (b) before go-live.
+#
+# A DUPLICATE is refused: a name already on a draft or confirmed drug (409
+# already_exists), and the same generic name, strength and form as another
+# draft or confirmed drug (409 same_identity_exists) unless the pharmacist says
+# it is another brand of the same medicine, which the confirming pharmacist
+# then sees. The first draft of this design defined a duplicate as the same
+# molecule, strength and form UNDER THE SAME NAME; the seed and the stockout
+# suggestion rely on several brands of one molecule, so a second brand is
+# allowed with that acknowledgement rather than refused outright.
+
+IDENTITY_STATUS_LABELS = {
+    "draft": "Waiting for a second pharmacist",
+    "active": "Confirmed for ordering",
+    "retired": "Retired",
+}
+CLASSIFICATION_REQUEST_KINDS: tuple[str, ...] = ("classification_downgrade",)
+IDENTITY_REQUEST_KINDS: tuple[str, ...] = ("identity_create", "identity_correction")
+
+#: requested_by on a draft the formulary loader added (scripts/
+#: load_rxnorm_formulary.py with the pharmacy store on). Not a person, so any
+#: pharmacist may confirm or refuse it, and nobody may withdraw it.
+LOADER_REQUESTER = "formulary_loader"
+
+_IDENTITY_WORDS = {"name": "name", "generic_name": "generic name", "form": "form",
+                   "strength": "strength"}
+_IDENTITY_LIMITS = {"name": 200, "generic_name": 160, "form": 60, "strength": 60}
+_NOTE_LIMIT = 1000
+
+
+def _key(value: Any) -> str:
+    """Lower case with every space removed, so 'Amoxicillin 500 mg' and
+    'amoxicillin 500mg' are one drug (helix_service._norm, the stockout
+    suggestion's own rule)."""
+    return "".join(str(value or "").lower().split())
+
+
+def identity_text(value: Any) -> Optional[str]:
+    """One identity field as it is stored: runs of spaces collapsed, None when
+    blank. The formulary loader stores drafts through this too, so the
+    snapshot a pharmacist confirms matches the row exactly."""
+    text = " ".join(str(value or "").split())
+    return text or None
+
+
+def identity_snapshot(identity: Mapping) -> str:
+    """The public name of _snapshot, for the formulary loader."""
+    return _snapshot(identity)
+
+
+def _identity_from(fields: Any) -> dict:
+    """All four identity fields, trimmed, each required."""
+    if not isinstance(fields, Mapping):
+        raise MasterError("send the drug's name, generic name, form and strength",
+                          code="bad_value")
+    unknown = sorted(set(fields) - set(IDENTITY_FIELDS))
+    if unknown:
+        raise MasterError(f"these are not part of a drug's identity: {', '.join(unknown)}",
+                          code="unknown_field")
+    out: dict[str, str] = {}
+    for field in IDENTITY_FIELDS:
+        value = fields.get(field)
+        if value is not None and not isinstance(value, str):
+            raise MasterError(f"the {_IDENTITY_WORDS[field]} must be text", code="bad_value")
+        text = " ".join((value or "").split())
+        if not text:
+            why = (" The allergy and interaction screens read it, so a drug is never added "
+                   "without it." if field == "generic_name" else "")
+            raise MasterError(f"enter the {_IDENTITY_WORDS[field]}.{why}", code="missing_field",
+                              detail={"field": field})
+        if len(text) > _IDENTITY_LIMITS[field]:
+            raise MasterError(f"the {_IDENTITY_WORDS[field]} is longer than "
+                              f"{_IDENTITY_LIMITS[field]} characters", code="bad_value",
+                              detail={"field": field})
+        out[field] = text
+    return out
+
+
+def _snapshot(identity: Mapping) -> str:
+    """The identity as one stable string, kept on the request and compared at
+    the decision, so a pharmacist confirms exactly what they were shown."""
+    return json.dumps({f: identity.get(f) for f in IDENTITY_FIELDS}, sort_keys=True,
+                      ensure_ascii=False)
+
+
+def _row_identity(row: Mapping) -> dict:
+    return {f: row[f] for f in IDENTITY_FIELDS}
+
+
+def _note(text: Any, *, required: bool, what: str = "reason") -> Optional[str]:
+    if text is not None and not isinstance(text, str):
+        raise MasterError(f"the {what} must be text", code="bad_value")
+    clean = (text or "").strip()
+    if not clean:
+        if required:
+            raise MasterError(f"give a {what}", code="missing_reason")
+        return None
+    if len(clean) > _NOTE_LIMIT:
+        raise MasterError(f"the {what} is longer than {_NOTE_LIMIT} characters", code="bad_value")
+    return clean
+
+
+def _brief(row: Mapping) -> dict:
+    return {"id": row["id"], "name": row["name"], "generic_name": row["generic_name"],
+            "form": row["form"], "strength": row["strength"],
+            "identity_status": row["identity_status"] or "active"}
+
+
+def _live_rows(conn) -> list:
+    """Draft and confirmed drugs: the rows a new identity must not repeat. A
+    retired drug's name is free again, so a corrected drug can take it."""
+    return conn.execute(
+        "SELECT id, name, generic_name, form, strength, identity_status "
+        "FROM helix_medication_master WHERE COALESCE(identity_status, 'active') <> 'retired' "
+        "ORDER BY name").fetchall()
+
+
+def _same_name_rows(conn, name: str, *, exclude_id: Optional[str] = None) -> list[dict]:
+    want = _key(name)
+    return [_brief(r) for r in _live_rows(conn) if r["id"] != exclude_id and _key(r["name"]) == want]
+
+
+def _same_identity_rows(conn, identity: Mapping, *,
+                        exclude_id: Optional[str] = None) -> list[dict]:
+    want = (_key(identity["generic_name"]), _key(identity["strength"]), _key(identity["form"]))
+    return [_brief(r) for r in _live_rows(conn) if r["id"] != exclude_id
+            and (_key(r["generic_name"]), _key(r["strength"]), _key(r["form"])) == want]
+
+
+def _table_exists(conn, name: str) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                        (name,)).fetchone() is not None
+
+
+def drug_in_use(conn, drug_id: str) -> bool:
+    """A drug that something already names: a Helix order (as prescribed or
+    as a substitute), a stock lot, a pharmacy purchase or receipt line, or a
+    medication order (W4-E store). Its identity is never rewritten."""
+    probes = [
+        ("helix_patient_med_orders",
+         "SELECT 1 FROM helix_patient_med_orders WHERE medication_id = ? "
+         "OR substitute_medication_id = ? LIMIT 1", 2),
+        ("helix_inventory_lots",
+         "SELECT 1 FROM helix_inventory_lots WHERE medication_id = ? LIMIT 1", 1),
+        ("purchase_order_lines",
+         "SELECT 1 FROM purchase_order_lines WHERE helix_medication_id = ? LIMIT 1", 1),
+        ("goods_receipt_lines",
+         "SELECT 1 FROM goods_receipt_lines WHERE helix_medication_id = ? LIMIT 1", 1),
+        ("med_orders", "SELECT 1 FROM med_orders WHERE formulary_id = ? LIMIT 1", 1),
+    ]
+    for table, sql, n in probes:
+        if _table_exists(conn, table) and conn.execute(sql, (drug_id,) * n).fetchone():
+            return True
+    return False
+
+
+def screening(identity: Mapping) -> dict:
+    """What the safety screens will make of a drug with this identity: the
+    drug classes drug_safety_service.classify_drug assigns (what the allergy
+    interlock matches a class allergy against) and whether the interaction
+    knowledge base recognises it at all. Read-only. It opens a session of its
+    own for the interaction table, so a caller computes it BEFORE taking the
+    write lock, never inside it."""
+    from services import drug_safety_service as dss
+    from services.helix_service import _screen_name
+
+    name = _screen_name({"name": identity.get("name"), "generic_name": identity.get("generic_name")})
+    classes = dss.classify_drug(name)
+    try:
+        recognised: Optional[bool] = bool(dss.interaction_recognised(name))
+    except Exception:  # the interaction table unreadable: say so, never 'clean'
+        logger.warning("interaction check unavailable for the identity preview", exc_info=True)
+        recognised = None
+    return {
+        "screened_as": name,
+        "classes": classes,
+        "class_labels": [c.replace("_", " ") for c in classes],
+        "interaction_recognised": recognised,
+    }
+
+
+def preview_drug(fields: Any, *, exclude_id: Optional[str] = None) -> dict:
+    """What saving this identity would do, before anything is saved: the
+    screening classes, and any draft or confirmed drug with the same name or
+    the same generic name, strength and form."""
+    identity = _identity_from(fields)
+    with db_session() as conn:
+        same_name = _same_name_rows(conn, identity["name"], exclude_id=exclude_id)
+        same_identity = _same_identity_rows(conn, identity, exclude_id=exclude_id)
+    return {"identity": identity, "screening": screening(identity),
+            "same_name": same_name, "same_identity": same_identity}
+
+
+def _refresh_sage_lexicon() -> None:
+    """Fold the master into the Sage mutation gate's lexicon now, so a new
+    brand is caught by 'stop the X' without a restart. sage_service belongs to
+    a separate workstream: its loader is called, never edited. Best-effort, as the
+    loader itself is: the built-in lexicon is the floor."""
+    try:
+        from services.sage_service import refresh_formulary_terms_from_db
+
+        refresh_formulary_terms_from_db()
+    except Exception:
+        logger.warning("Sage lexicon refresh after a drug master change failed", exc_info=True)
+
+
+def _request_row(conn, request_id: int) -> dict:
+    row = dict(conn.execute("SELECT * FROM pharmacy_master_change_requests WHERE id = ?",
+                            (request_id,)).fetchone())
+    return _decorate_identity_request(row)
+
+
+def _decorate_identity_request(row: dict) -> dict:
+    if row.get("change_kind") in IDENTITY_REQUEST_KINDS:
+        row["identity"] = json.loads(row["to_value"]) if row.get("to_value") else None
+        row["previous_identity"] = json.loads(row["from_value"]) if row.get("from_value") else None
+    return row
+
+
+def _refuse_duplicates(conn, identity: Mapping, *, acknowledge_same_identity: bool,
+                       exclude_id: Optional[str] = None) -> list[dict]:
+    """409 on a duplicate name, and on the same generic name, strength and
+    form unless the pharmacist said it is another brand. Returns the
+    same-identity rows that were acknowledged."""
+    named = _same_name_rows(conn, identity["name"], exclude_id=exclude_id)
+    if named:
+        raise MasterError(f"{named[0]['name']} is already in the drug master. Nothing was "
+                          "changed.", code="already_exists", detail={"same_name": named})
+    same = _same_identity_rows(conn, identity, exclude_id=exclude_id)
+    if same and not acknowledge_same_identity:
+        raise MasterError(
+            "the drug master already holds this generic name, strength and form: "
+            f"{', '.join(r['name'] for r in same[:5])}. If this is another brand of the same "
+            "medicine, say so and save again. Nothing was changed.",
+            code="same_identity_exists", detail={"same_identity": same})
+    return same
+
+
+def create_drug(fields: Any, *, actor: Mapping, acknowledge_same_identity: bool = False,
+                note: Optional[str] = None, audit_ctx: Optional[Mapping] = None) -> dict:
+    """Add a drug as a draft (the write tier). It cannot be ordered until a
+    different pharmacist confirms it. Returns {"drug", "request", "screening"}.
+    The Sage lexicon learns the new name at once."""
+    identity = _identity_from(fields)
+    if not isinstance(acknowledge_same_identity, bool):
+        raise MasterError("say yes or no to 'another brand of the same medicine'",
+                          code="bad_value")
+    why = _note(note, required=False, what="note")
+    actor_id = _actor_id(actor)
+    screen = screening(identity)  # before the write lock (see screening())
+    drug_id = f"MED-{uuid.uuid4().hex[:10].upper()}"
+    with db_session(immediate=True) as conn:
+        same = _refuse_duplicates(conn, identity,
+                                  acknowledge_same_identity=acknowledge_same_identity)
+        conn.execute(
+            """INSERT INTO helix_medication_master (id, name, generic_name, form, strength,
+                   identity_status, is_active, updated_by, updated_at)
+               VALUES (?, ?, ?, ?, ?, 'draft', 1, ?, CURRENT_TIMESTAMP)""",
+            (drug_id, identity["name"], identity["generic_name"], identity["form"],
+             identity["strength"], actor_id))
+        request_id = conn.execute(
+            """INSERT INTO pharmacy_master_change_requests (helix_medication_id, change_kind,
+                   field, from_value, to_value, reason, requested_by)
+               VALUES (?, 'identity_create', 'identity', NULL, ?, ?, ?)""",
+            (drug_id, _snapshot(identity), why, actor_id)).lastrowid
+        _audit(conn, actor, "pharmacy_drug_created",
+               summary=f"Drug added as a draft for a second pharmacist: {identity['name']}",
+               target_type="helix_medication", target_id=drug_id,
+               metadata={"identity": identity, "request_id": str(request_id),
+                         "classes": screen["classes"],
+                         "interaction_recognised": screen["interaction_recognised"],
+                         "same_identity_ids": [r["id"] for r in same],
+                         "acknowledged_same_identity": bool(same)},
+               audit_ctx=audit_ctx)
+        request = _request_row(conn, request_id)
+    _refresh_sage_lexicon()
+    return {"drug": get_drug(drug_id), "request": request, "screening": screen}
+
+
+def list_identity_requests(*, decision: Optional[str] = "pending") -> list[dict]:
+    """Identity requests with what each identity screens as, for the second
+    pharmacist."""
+    rows = [_decorate_identity_request(r) for r in
+            list_change_requests(decision=decision, kinds=IDENTITY_REQUEST_KINDS)]
+    for row in rows:
+        row["screening"] = screening(row["identity"]) if row.get("identity") else None
+        row["requested_by_loader"] = row.get("requested_by") == LOADER_REQUESTER
+    return rows
+
+
+def request_identity_correction(drug_id: str, fields: Any, *, actor: Mapping,
+                                reason: Optional[str],
+                                acknowledge_same_identity: bool = False,
+                                audit_ctx: Optional[Mapping] = None) -> dict:
+    """Ask for a confirmed drug's identity to be corrected (the write tier).
+    Refused (422 identity_locked) on a draft (withdraw it and add it again),
+    on a retired drug, and on any drug in use (retire and replace). The drug
+    keeps its confirmed identity until a different pharmacist approves."""
+    identity = _identity_from(fields)
+    if not isinstance(acknowledge_same_identity, bool):
+        raise MasterError("say yes or no to 'another brand of the same medicine'",
+                          code="bad_value")
+    why = _note(reason, required=True)
+    actor_id = _actor_id(actor)
+    with db_session(immediate=True) as conn:
+        drug = _drug_row(conn, drug_id)
+        if drug is None:
+            raise MasterError(f"no drug {drug_id}", code="not_found")
+        status = drug["identity_status"] or "active"
+        if status == "draft":
+            raise MasterError("this drug is still a draft. Withdraw it, or ask the checking "
+                              "pharmacist to refuse it, and add it again with the right "
+                              "details.", code="identity_locked")
+        if status == "retired":
+            raise MasterError("a retired drug's identity is history and is not corrected",
+                              code="identity_locked")
+        current = _row_identity(drug)
+        if _snapshot(current) == _snapshot(identity):
+            raise MasterError("that is the identity it already has", code="no_change")
+        if drug_in_use(conn, drug_id):
+            raise MasterError(
+                "this drug already has orders, stock or purchase lines, so its identity is "
+                "not rewritten. Retire it and add the corrected drug, so every order keeps "
+                "the identity it was placed with. Nothing was changed.", code="identity_locked")
+        same = _refuse_duplicates(conn, identity,
+                                  acknowledge_same_identity=acknowledge_same_identity,
+                                  exclude_id=drug_id)
+        try:
+            request_id = conn.execute(
+                """INSERT INTO pharmacy_master_change_requests (helix_medication_id,
+                       change_kind, field, from_value, to_value, reason, requested_by)
+                   VALUES (?, 'identity_correction', 'identity', ?, ?, ?, ?)""",
+                (drug_id, _snapshot(current), _snapshot(identity), why, actor_id)).lastrowid
+        except DBIntegrityError as exc:
+            raise MasterError("a correction to this drug is already waiting for a second "
+                              "pharmacist. Nothing was changed.",
+                              code="request_pending") from exc
+        _audit(conn, actor, "pharmacy_drug_identity_correction_requested",
+               summary=f"Identity correction asked for: {drug['name']}",
+               target_type="helix_medication", target_id=drug_id,
+               metadata={"request_id": str(request_id), "from": current, "to": identity,
+                         "same_identity_ids": [r["id"] for r in same]},
+               audit_ctx=audit_ctx)
+        request = _request_row(conn, request_id)
+    return {"drug": get_drug(drug_id), "request": request}
+
+
+def decide_identity_request(request_id: int, *, approve: bool, actor: Mapping,
+                            expected: Any = None, reason: Optional[str] = None,
+                            audit_ctx: Optional[Mapping] = None) -> dict:
+    """A second pharmacist confirms or refuses a new drug, or approves or
+    refuses an identity correction (the write tier).
+
+    Never the requester (403 same_person). Approving needs `expected`, the
+    identity the decider was shown; it must equal both the request and the
+    drug as it is now, or nothing changes (409 request_stale). A correction is
+    re-checked for orders and stock at approval (422 identity_locked).
+    Refusing needs a reason; a refused new drug is retired, never ordered.
+    Returns {"request", "drug"}."""
+    actor_id = _actor_id(actor)
+    why = _note(reason, required=not approve)
+    seen = None
+    if approve:
+        if expected is None:
+            raise MasterError("send the identity you checked", code="missing_field")
+        seen = _identity_from(expected)
+    with db_session(immediate=True) as conn:
+        req = conn.execute("SELECT * FROM pharmacy_master_change_requests WHERE id = ?",
+                           (request_id,)).fetchone()
+        if req is None or req["change_kind"] not in IDENTITY_REQUEST_KINDS:
+            raise MasterError(f"no identity request {request_id}", code="not_found")
+        if req["decision"] != "pending":
+            raise MasterError(f"this request was already {req['decision']}", code="decided")
+        if req["requested_by"] == actor_id:
+            raise MasterError("you asked for this, so another pharmacist must check it. "
+                              "Nothing was changed.", code="same_person")
+        drug = _drug_row(conn, req["helix_medication_id"])
+        if drug is None:
+            raise MasterError("the drug this request was for no longer exists", code="not_found")
+        kind = req["change_kind"]
+        status = drug["identity_status"] or "active"
+        stale = MasterError("the drug changed since you opened it. Reload it and check it "
+                            "again. Nothing was changed.", code="request_stale")
+        if kind == "identity_create":
+            if status != "draft":
+                raise stale
+            if approve:
+                blank = [f for f in IDENTITY_FIELDS if not (drug[f] or "").strip()]
+                if blank:
+                    raise MasterError(
+                        f"this draft has no {_IDENTITY_WORDS[blank[0]]}, so it cannot be "
+                        "confirmed. Refuse it and add the drug with all four details.",
+                        code="missing_field", detail={"field": blank[0]})
+                if _snapshot(_row_identity(drug)) != req["to_value"] \
+                        or _snapshot(seen) != req["to_value"]:
+                    raise stale
+                named = _same_name_rows(conn, drug["name"], exclude_id=drug["id"])
+                if named:
+                    raise MasterError(f"{named[0]['name']} has the same name. Refuse this one. "
+                                      "Nothing was changed.", code="already_exists",
+                                      detail={"same_name": named})
+                to_status, action = "active", "pharmacy_drug_identity_confirmed"
+            else:
+                to_status, action = "retired", "pharmacy_drug_identity_refused"
+            cur = conn.execute(
+                "UPDATE helix_medication_master SET identity_status = ?, updated_by = ?, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND identity_status = 'draft'",
+                (to_status, actor_id, drug["id"]))
+            if cur.rowcount != 1:
+                raise stale
+        else:
+            if status != "active":
+                raise stale
+            if approve:
+                if _snapshot(_row_identity(drug)) != req["from_value"] \
+                        or _snapshot(seen) != req["to_value"]:
+                    raise stale
+                if drug_in_use(conn, drug["id"]):
+                    raise MasterError(
+                        "this drug now has orders, stock or purchase lines, so its identity "
+                        "is not rewritten. Refuse this correction, retire the drug and add "
+                        "the corrected one.", code="identity_locked")
+                after = json.loads(req["to_value"])
+                named = _same_name_rows(conn, after["name"], exclude_id=drug["id"])
+                if named:
+                    raise MasterError(f"{named[0]['name']} has the same name. Refuse this "
+                                      "correction. Nothing was changed.",
+                                      code="already_exists", detail={"same_name": named})
+                conn.execute(
+                    "UPDATE helix_medication_master SET name = ?, generic_name = ?, form = ?, "
+                    "strength = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (after["name"], after["generic_name"], after["form"], after["strength"],
+                     actor_id, drug["id"]))
+                action = "pharmacy_drug_identity_corrected"
+            else:
+                action = "pharmacy_drug_identity_correction_refused"
+        conn.execute(
+            "UPDATE pharmacy_master_change_requests SET decision = ?, decided_by = ?, "
+            "decided_at = CURRENT_TIMESTAMP, decision_reason = ? WHERE id = ? "
+            "AND decision = 'pending'",
+            ("approved" if approve else "refused", actor_id, why, request_id))
+        _audit(conn, actor, action,
+               summary=(f"{'Confirmed' if approve else 'Refused'} by a second pharmacist: "
+                        f"{drug['name']}"),
+               target_type="helix_medication", target_id=drug["id"],
+               metadata={"request_id": str(request_id), "change_kind": kind,
+                         "decision": "approved" if approve else "refused",
+                         "requested_by": str(req["requested_by"]),
+                         "identity": json.loads(req["to_value"]) if req["to_value"] else None,
+                         "previous_identity": (json.loads(req["from_value"])
+                                               if req["from_value"] else None),
+                         "reason": why},
+               audit_ctx=audit_ctx)
+        request = _request_row(conn, request_id)
+    if approve:
+        _refresh_sage_lexicon()
+    return {"request": request, "drug": get_drug(drug["id"])}
+
+
+def withdraw_identity_request(request_id: int, *, actor: Mapping,
+                              audit_ctx: Optional[Mapping] = None) -> dict:
+    """The requester takes back their own identity request. A withdrawn new
+    drug is retired: it was never confirmed, so nothing may order it."""
+    actor_id = _actor_id(actor)
+    with db_session(immediate=True) as conn:
+        req = conn.execute("SELECT * FROM pharmacy_master_change_requests WHERE id = ?",
+                           (request_id,)).fetchone()
+        if req is None or req["change_kind"] not in IDENTITY_REQUEST_KINDS:
+            raise MasterError(f"no identity request {request_id}", code="not_found")
+        if req["decision"] != "pending":
+            raise MasterError(f"this request was already {req['decision']}", code="decided")
+        if req["requested_by"] != actor_id:
+            raise MasterError("only the person who asked can withdraw this", code="not_requester")
+        retired = False
+        if req["change_kind"] == "identity_create":
+            retired = conn.execute(
+                "UPDATE helix_medication_master SET identity_status = 'retired', updated_by = ?, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND identity_status = 'draft'",
+                (actor_id, req["helix_medication_id"])).rowcount == 1
+        conn.execute(
+            "UPDATE pharmacy_master_change_requests SET decision = 'withdrawn', decided_by = ?, "
+            "decided_at = CURRENT_TIMESTAMP WHERE id = ? AND decision = 'pending'",
+            (actor_id, request_id))
+        _audit(conn, actor, "pharmacy_drug_identity_withdrawn",
+               summary=f"Identity request withdrawn: {req['change_kind']}",
+               target_type="helix_medication", target_id=req["helix_medication_id"],
+               metadata={"request_id": str(request_id), "change_kind": req["change_kind"],
+                         "draft_retired": retired},
+               audit_ctx=audit_ctx)
+        request = _request_row(conn, request_id)
+    return {"request": request, "drug": get_drug(req["helix_medication_id"])}
+
+
+def retire_drug(drug_id: str, *, actor: Mapping, reason: Optional[str],
+                replacement_drug_id: Optional[str] = None,
+                audit_ctx: Optional[Mapping] = None) -> dict:
+    """Retire a confirmed drug now (the write tier): nothing can order it or
+    suggest it again, and every order, receipt and ledger row that names it
+    keeps it. Applies at once because it only removes a drug from ordering. A
+    pending identity correction for it is withdrawn."""
+    why = _note(reason, required=True)
+    if replacement_drug_id is not None and not isinstance(replacement_drug_id, str):
+        raise MasterError("the replacement is a drug id", code="bad_value")
+    replacement = (replacement_drug_id or "").strip() or None
+    actor_id = _actor_id(actor)
+    with db_session(immediate=True) as conn:
+        drug = _drug_row(conn, drug_id)
+        if drug is None:
+            raise MasterError(f"no drug {drug_id}", code="not_found")
+        status = drug["identity_status"] or "active"
+        if status == "retired":
+            raise MasterError("this drug is already retired", code="decided")
+        if status == "draft":
+            raise MasterError("a draft is withdrawn by the person who added it, or refused by "
+                              "the pharmacist checking it", code="identity_locked")
+        if replacement is not None:
+            other = _drug_row(conn, replacement)
+            if other is None:
+                raise MasterError(f"no drug {replacement}", code="not_found")
+            if other["id"] == drug["id"] or (other["identity_status"] or "active") == "retired":
+                raise MasterError("the replacement must be another drug that is not retired",
+                                  code="bad_value")
+        cur = conn.execute(
+            "UPDATE helix_medication_master SET identity_status = 'retired', updated_by = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+            "AND COALESCE(identity_status, 'active') = 'active'", (actor_id, drug_id))
+        if cur.rowcount != 1:
+            raise MasterError("the drug changed since you opened it. Nothing was changed.",
+                              code="request_stale")
+        withdrawn = conn.execute(
+            "UPDATE pharmacy_master_change_requests SET decision = 'withdrawn', decided_by = ?, "
+            "decided_at = CURRENT_TIMESTAMP, decision_reason = 'The drug was retired' "
+            "WHERE helix_medication_id = ? AND change_kind = 'identity_correction' "
+            "AND decision = 'pending'", (actor_id, drug_id)).rowcount
+        _audit(conn, actor, "pharmacy_drug_retired",
+               summary=f"Drug retired from ordering: {drug['name']}",
+               target_type="helix_medication", target_id=drug_id,
+               metadata={"reason": why, "replacement_drug_id": replacement,
+                         "in_use": drug_in_use(conn, drug_id),
+                         "corrections_withdrawn": withdrawn},
+               audit_ctx=audit_ctx)
+    return {"drug": get_drug(drug_id)}
 
 
 # ═════════════════════════════════════════════════════════════════════════════

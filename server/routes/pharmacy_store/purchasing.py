@@ -1,13 +1,19 @@
 """Pharmacy purchasing and goods receipt: endpoints under /api/pharmacy-store.
 
-Purchase orders (grn-7, W4-C) are here; goods receipts arrive with grn-8
-(W5-C). The package router in routes/pharmacy_store/__init__.py adds the
-/api/pharmacy-store prefix and the ORB_PHARMACY_STORE gate; this router has
-neither, so every endpoint added here inherits both.
+Purchase orders (grn-7, W4-C) and goods receipts (grn-8, W5-C). The package
+router in routes/pharmacy_store/__init__.py adds the /api/pharmacy-store
+prefix and the ORB_PHARMACY_STORE gate; this router has neither, so every
+endpoint added here inherits both.
 
-Planned endpoints (docs/his_design/grn.json, section E):
+Endpoints (docs/his_design/grn.json, section E):
   purchase-orders, plus submit, approve, issue, cancel, reorder-suggestions
-  goods-receipts, plus post and cancel     expiry typed twice (ruling GRN-RS6, held)
+  goods-receipts, plus receivable, post and cancel  (expiry typed twice,
+                                                     ruling GRN-RS6 (b), held)
+
+Goods receipts: reading is the read tier; drafting and cancelling a draft are
+the write tier; posting is read plus (write or approve), and the service then
+needs the write tier, or for a short-dated batch the approve tier from someone
+other than the receiver, with a reason (GRN-R16).
 
 Tiers, built once at import as procurement_routes does:
   read     pharmacy_store.read                 lists, one order, form options,
@@ -30,7 +36,7 @@ allow is 409; anything the request must correct is 422; an audit outage is
 """
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from permissions import (
@@ -53,8 +59,17 @@ _STATUS = {
     "not_found": 404,
     "same_person": 403,
     "approve_needed": 403,
+    "write_needed": 403,
     "illegal_transition": 409,
     "already_received": 409,
+    # Goods receipts (grn-8): a conflict with what is already on file.
+    "po_not_receivable": 409,
+    "line_closed": 409,
+    "batch_expiry_mismatch": 409,
+    "batch_mrp_mismatch": 409,
+    "lot_status_conflict": 409,
+    "idempotency_conflict": 409,
+    "already_exists": 409,
 }
 
 
@@ -260,6 +275,122 @@ def cancel_purchase_order(po_id: int, body: CancelIn, request: Request,
             po_id, reason=body.reason, actor=user,
             may_approve=has_permission(user.get("role", ""), PHARMACY_STORE_APPROVE),
             audit_ctx=_ctx(request))
+    except purchasing.PurchasingError as exc:
+        raise _fail(exc)
+    except AuditWriteError:
+        raise _audit_unavailable()
+
+
+# ── Goods receipts (grn-8) ────────────────────────────────────────────────────
+
+@router.get("/goods-receipts")
+def list_goods_receipts(status: Optional[str] = Query(None, max_length=40),
+                        purchase_order_id: Optional[int] = Query(None, ge=1),
+                        limit: int = Query(100, ge=1, le=500),
+                        user: dict = Depends(_PS_READ)):
+    try:
+        return {"goods_receipts": purchasing.list_goods_receipts(
+            status=status, purchase_order_id=purchase_order_id, limit=limit)}
+    except purchasing.PurchasingError as exc:
+        raise _fail(exc)
+
+
+@router.get("/goods-receipts/receivable")
+def receivable_orders(user: dict = Depends(_PS_READ)):
+    """Orders sent to a vendor with packs still to come, line by line, and
+    the hospital's minimum shelf life at receipt."""
+    return purchasing.receivable_orders()
+
+
+@router.get("/goods-receipts/{grn_id}")
+def get_goods_receipt(grn_id: int, user: dict = Depends(_PS_READ)):
+    doc = purchasing.get_goods_receipt(grn_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail={
+            "error": "not_found", "message": f"No goods receipt {grn_id}"})
+    return {"goods_receipt": doc}
+
+
+class GRNLineIn(BaseModel):
+    po_line_no: Any = None
+    packs: Any = 0
+    free_packs: Any = 0
+    rejected_packs: Any = 0
+    rejection_reason: Optional[str] = Field(None, max_length=500)
+    batch_no: Optional[str] = Field(None, max_length=80)
+    expiry_date: Optional[str] = Field(None, max_length=10)
+    expiry_date_confirm: Optional[str] = Field(None, max_length=10)
+    mrp_pack_paise: Any = None
+    mfg_date: Optional[str] = Field(None, max_length=10)
+    unit_rate_paise: Any = None
+    remarks: Optional[str] = Field(None, max_length=500)
+
+
+class GoodsReceiptIn(BaseModel):
+    purchase_order_id: Any = None
+    lines: List[GRNLineIn] = Field(..., min_length=1, max_length=purchasing.MAX_LINES)
+    vendor_invoice_number: Optional[str] = Field(None, max_length=80)
+    vendor_invoice_date: Optional[str] = Field(None, max_length=10)
+    vendor_invoice_total_paise: Any = None
+    store_code: Optional[str] = Field(None, max_length=40)
+    remarks: Optional[str] = Field(None, max_length=2000)
+    idempotency_key: Optional[str] = Field(None, max_length=200)
+
+
+@router.post("/goods-receipts")
+def create_goods_receipt(body: GoodsReceiptIn, request: Request,
+                         idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key",
+                                                                 max_length=200),
+                         user: dict = Depends(_PS_WRITE)):
+    """Record a delivery as a draft. Batch, MRP and an expiry typed twice on
+    every line received; nothing moves into stock until it is posted. The
+    Idempotency-Key header (or body field) makes a retry return the same
+    draft."""
+    try:
+        return purchasing.create_goods_receipt(
+            purchase_order_id=body.purchase_order_id,
+            lines=[line.model_dump() for line in body.lines], actor=user,
+            vendor_invoice_number=body.vendor_invoice_number,
+            vendor_invoice_date=body.vendor_invoice_date,
+            vendor_invoice_total_paise=body.vendor_invoice_total_paise,
+            store_code=body.store_code, remarks=body.remarks,
+            idempotency_key=idempotency_key or body.idempotency_key,
+            audit_ctx=_ctx(request))
+    except purchasing.PurchasingError as exc:
+        raise _fail(exc)
+    except AuditWriteError:
+        raise _audit_unavailable()
+
+
+class PostReceiptIn(BaseModel):
+    short_expiry_reason: Optional[str] = Field(None, max_length=1000)
+
+
+@router.post("/goods-receipts/{grn_id}/post")
+def post_goods_receipt(grn_id: int, body: PostReceiptIn, request: Request,
+                       user: dict = Depends(_cancel_tier)):
+    """Put the receipt on the shelf in one transaction. A short-dated batch
+    needs the approve tier, someone other than the receiver, and a reason.
+    Posting twice answers the posted receipt and moves nothing again."""
+    role = user.get("role", "")
+    try:
+        return purchasing.post_goods_receipt(
+            grn_id, actor=user, may_write=has_permission(role, PHARMACY_STORE_WRITE),
+            may_approve=has_permission(role, PHARMACY_STORE_APPROVE),
+            short_expiry_reason=body.short_expiry_reason, audit_ctx=_ctx(request))
+    except purchasing.PurchasingError as exc:
+        raise _fail(exc)
+    except AuditWriteError:
+        raise _audit_unavailable()
+
+
+@router.post("/goods-receipts/{grn_id}/cancel")
+def cancel_goods_receipt(grn_id: int, body: CancelIn, request: Request,
+                         user: dict = Depends(_PS_WRITE)):
+    """Cancel a draft, with a reason. A posted receipt is never cancelled."""
+    try:
+        return purchasing.cancel_goods_receipt(grn_id, reason=body.reason, actor=user,
+                                               audit_ctx=_ctx(request))
     except purchasing.PurchasingError as exc:
         raise _fail(exc)
     except AuditWriteError:

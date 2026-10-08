@@ -388,7 +388,9 @@ def test_a_fresh_database_stays_empty_off_and_loads_once_on(tmp_path):
     out = subprocess.run([sys.executable, "-c", _FRESH], cwd=str(SERVER), env=env,
                          capture_output=True, text=True, timeout=240)
     assert out.returncode == 0, out.stderr[-3000:]
-    assert "FRESH-OK 17" in out.stdout
+    # 17 lab_ tables from migration 55, plus lab_instruments and
+    # lab_instrument_test_map from migration 64 (lis-23), all empty while off.
+    assert "FRESH-OK 19" in out.stdout
 
 
 def test_a_loop_module_registers_itself_at_import_and_a_broken_one_is_skipped(monkeypatch, tmp_path):

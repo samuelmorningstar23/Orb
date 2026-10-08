@@ -13,6 +13,15 @@
  *     state of this visit's consultation note (opd-10).
  *   * FINISH VISIT. A disposition, and a reason when there is no signed note
  *     (ruling OPD-N8). The front desk's charge rule raises the fee.
+ *   * ADD WALK-IN (opd-8). The front desk's Register view
+ *     (frontdesk/RegisterPatientView.tsx) on this tab: the patient index
+ *     first, the patient confirms who they are (ruling OPD-S1), a new patient
+ *     only after a search; the visit lands in this doctor's queue.
+ *   * ALLERGY REVIEW (opd-10a, ruling OPD-S7). The record says "Allergies not
+ *     yet asked" or "No known allergies, asked by X on date", and the doctor
+ *     records the review: the allergies the patient has (charted, which is
+ *     what the interlocks screen), no known allergies, or why they could not
+ *     be asked. A note is signed only after one.
  *
  * WHAT THIS SCREEN NEVER DOES, by design (docs/his_design/opd.json):
  *   * It never shows a NEWS2, a band, a colour on a vital or AI advice. OPD
@@ -57,6 +66,9 @@ import { useFocusTrap } from '../../hooks/useFocusTrap'
 import { useVisiblePolling } from '../../hooks/useVisiblePolling'
 import { formatClinicalDateKey, formatClinicalDateTime } from '../../lib/datetime'
 import { bloodPressure, vitalTemperature, vitalWhole } from '../../lib/vitals'
+import { assessmentOf, reviewStateOf, type AllergyAssessment } from '../../api/opdAllergyReview'
+import RegisterPatientView from './frontdesk/RegisterPatientView'
+import AllergyReviewDialog from './opd/AllergyReviewDialog'
 import './OpdPanel.css'
 
 /** Used until /api/opd/meta answers; the server's list wins once it does. */
@@ -229,12 +241,64 @@ function NoteState({ view }: { view: ConsultationView | null }) {
       )}
       {!view.allergy_review.can_sign && (
         <p className="opd-hint">
-          A note can be signed once the patient&rsquo;s allergies are recorded. Until then the
-          visit can be finished with a reason.
+          A note can be signed once the patient&rsquo;s allergies are recorded in an allergy
+          review: their allergies, no known allergies, or why they could not be asked. Until then
+          the visit can be finished with a reason.
         </p>
       )}
+      <ReviewBasis view={view} />
     </div>
   )
+}
+
+/** Which allergy review lets this note be signed (opd-10a). */
+function ReviewBasis({ view }: { view: ConsultationView }) {
+  const review = reviewStateOf(view)
+  if (!review?.can_sign || !review.assessment) return null
+  return (
+    <p className="opd-hint">
+      {review.basis === 'this_visit'
+        ? 'Allergy review recorded on this visit.'
+        : `Allergy review from an earlier visit, ${formatClinicalDateTime(review.assessment.assessed_at)}.`}
+    </p>
+  )
+}
+
+/** What the patient said when last asked about allergies (opd-10a). */
+function AllergyReviewLine({ assessment, charted }: {
+  assessment: AllergyAssessment | null
+  charted: number
+}) {
+  if (!assessment) {
+    /* Allergies charted elsewhere (an admission, for example) with no review:
+       the list below is real, so the line does not say "not yet asked". */
+    return charted > 0 ? (
+      <p className="opd-line">
+        <strong>No allergy review on record.</strong> The allergies below were charted without
+        one. Confirm them with the patient in a review.
+      </p>
+    ) : (
+      <p className="opd-line">
+        <strong>Allergies not yet asked.</strong> No allergy review is on record for this patient.
+      </p>
+    )
+  }
+  const who = `${assessment.assessed_by_name ?? assessment.assessed_by} on `
+    + formatClinicalDateTime(assessment.assessed_at)
+  if (assessment.status === 'none_known') {
+    return charted > 0
+      ? <p className="opd-line">The last review, by {who}, said no known allergies; allergies have been charted since. Review again.</p>
+      : <p className="opd-line">No known allergies, asked by {who}.</p>
+  }
+  if (assessment.status === 'unable_to_obtain') {
+    return (
+      <p className="opd-line">
+        Allergies could not be obtained{assessment.reason ? ` (${assessment.reason})` : ''}, recorded
+        by {who}. Ask again when you can.
+      </p>
+    )
+  }
+  return <p className="opd-line">Allergies reviewed by {who}.</p>
 }
 
 function RecordPane({
@@ -244,6 +308,7 @@ function RecordPane({
   error,
   canFinish,
   onFinish,
+  onReview,
 }: {
   visit: OpdQueueVisit
   record: OpdRecord | null
@@ -251,6 +316,8 @@ function RecordPane({
   error: string
   canFinish: boolean
   onFinish: () => void
+  /** Record the allergy review (opd-10a); offered on the doctor's own visits. */
+  onReview?: () => void
 }) {
   if (error) return <p className="opd-error" role="alert">{error}</p>
   /* Never draw one patient's record or note under another patient's token. */
@@ -284,10 +351,13 @@ function RecordPane({
 
       <section className="opd-block" aria-label="Allergies">
         <h4 className="opd-subhead">Allergies</h4>
+        <AllergyReviewLine assessment={assessmentOf(record)} charted={record.allergies.length} />
         {record.allergy_status === 'none_recorded' ? (
-          <p className="opd-line">
-            No allergies recorded. This is not the same as no known allergies: nobody may have asked yet.
-          </p>
+          assessmentOf(record) ? null : (
+            <p className="opd-line">
+              No allergies recorded. This is not the same as no known allergies: nobody may have asked yet.
+            </p>
+          )
         ) : (
           <ul className="opd-plain-list">
             {record.allergies.map(a => (
@@ -298,6 +368,13 @@ function RecordPane({
               </li>
             ))}
           </ul>
+        )}
+        {onReview && (
+          <div className="opd-row__actions">
+            <button type="button" className="opd-btn" onClick={onReview}>
+              Record allergy review
+            </button>
+          </div>
         )}
       </section>
 
@@ -464,6 +541,8 @@ export default function OpdPanel() {
   const [note, setNote] = useState<ConsultationView | null>(null)
   const [recordError, setRecordError] = useState('')
   const [finishing, setFinishing] = useState(false)
+  const [reviewing, setReviewing] = useState(false)
+  const [walkIn, setWalkIn] = useState(false)
   const [dispositions, setDispositions] = useState<CodeLabel[]>(FALLBACK_DISPOSITIONS)
   const [connected, setConnected] = useState<boolean>(() => socket?.connected === true)
   const mounted = useRef(true)
@@ -539,6 +618,7 @@ export default function OpdPanel() {
   const openRecord = useCallback(async (visit: OpdQueueVisit) => {
     const seq = ++openSeq.current
     setFinishing(false)
+    setReviewing(false)
     setOpenVisit(visit)
     setRecord(null)
     setNote(null)
@@ -563,6 +643,7 @@ export default function OpdPanel() {
   const closeRecord = useCallback(() => {
     openSeq.current += 1
     setFinishing(false)
+    setReviewing(false)
     setOpenVisit(null)
     setRecord(null)
     setNote(null)
@@ -591,6 +672,15 @@ export default function OpdPanel() {
     } finally {
       if (mounted.current) setBusyId('')
     }
+  }, [load])
+
+  /* The walk-in (opd-8): the Register view's callbacks, stable so it loads its
+     settings once. It never names a clinic; the server derives it. */
+  const noOtherView = useCallback(() => {}, [])
+  const walkInOff = useCallback(() => setWalkIn(false), [])
+  const walkInRegistered = useCallback((visit: { token_number: number; patient_name: string | null }) => {
+    setNotice(`Token ${visit.token_number} registered for ${visit.patient_name ?? 'the patient'}.`)
+    void load()
   }, [load])
 
   if (state === 'loading') return <div className="orb-panel-loading">Loading your outpatient queue…</div>
@@ -653,11 +743,32 @@ export default function OpdPanel() {
           <button type="button" className="opd-btn opd-btn--quiet" onClick={() => { void load() }}>
             Refresh
           </button>
+          <button
+            type="button"
+            className="opd-btn opd-btn--quiet"
+            aria-expanded={walkIn}
+            onClick={() => setWalkIn(open => !open)}
+          >
+            {walkIn ? 'Close walk-in' : 'Add walk-in'}
+          </button>
         </div>
       </header>
 
       {error && <p className="opd-error" role="alert">{error}</p>}
       {notice && <p className="opd-notice" role="status">{notice}</p>}
+
+      {walkIn && (
+        <section className="opd-card" aria-label="Add a walk-in">
+          <RegisterPatientView
+            scopedDepartment={queue.department}
+            openView={noOtherView}
+            onFeatureOff={walkInOff}
+            context="opd"
+            defaultDoctorId={queue.doctor_id}
+            onVisitRegistered={walkInRegistered}
+          />
+        </section>
+      )}
 
       <div className="opd-layout">
         <div className="opd-queue">
@@ -696,11 +807,27 @@ export default function OpdPanel() {
                 error={recordError}
                 canFinish={!!mineOpen}
                 onFinish={() => setFinishing(true)}
+                onReview={mineOpen ? () => setReviewing(true) : undefined}
               />
             )
             : <p className="opd-empty">Choose a patient to open their outpatient record.</p>}
         </section>
       </div>
+
+      {reviewing && openVisit && record && record.patient.id === openVisit.patient_id && (
+        <AllergyReviewDialog
+          visitId={openVisit.id}
+          patientName={openVisit.patient_name ?? record.patient.name}
+          charted={record.allergies.map(a => a.substance)}
+          onClose={() => setReviewing(false)}
+          onDone={result => {
+            setReviewing(false)
+            setNotice(`Allergy review saved for ${openVisit.patient_name ?? record.patient.name}: `
+              + `${result.assessment.status_label.toLowerCase()}.`)
+            void openRecord(openVisit)
+          }}
+        />
+      )}
 
       {finishing && openVisit && openNote && (
         <FinishVisitDialog

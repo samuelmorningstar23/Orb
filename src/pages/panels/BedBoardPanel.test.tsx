@@ -221,8 +221,9 @@ describe('BedBoardPanel', () => {
     getBoard.mockResolvedValue(BOARD)
     render(<BedBoardPanel holds={holdsAll} />)
     const nav = await screen.findByRole('navigation', { name: 'Beds screens' })
+    // Bed setup (adt-4b, W5-B) is order 90 and needs bed.master.
     expect(within(nav).getAllByRole('button').map((b) => b.textContent))
-      .toEqual(['Board', 'Awaiting a bed', 'Observations'])
+      .toEqual(['Board', 'Awaiting a bed', 'Observations', 'Bed setup'])
   })
 
   it('says so when no view is open to this role', async () => {

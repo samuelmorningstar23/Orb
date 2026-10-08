@@ -69,7 +69,7 @@ __all__ = [
     "projection_for", "fhir_status_for", "cpoe_status_for", "screen_fingerprint",
     "get_order_in_txn", "events_in_txn", "screen_fingerprint_in_txn",
     "record_event_in_txn", "create_in_txn", "link_projection_in_txn", "project_in_txn",
-    "transition_in_txn", "audit_in_txn",
+    "transition_in_txn", "audit_in_txn", "legacy_decision_on_held_in_txn",
 ]
 
 # ── Vocabularies ──────────────────────────────────────────────────────────────
@@ -892,4 +892,82 @@ def transition_in_txn(
                  actor_role=actor_role, entry_point=entry_point, from_status=from_status,
                  to_status=to_status, reason=reason_text, lane=lane, event_id=event_id,
                  safety=safety, extra=audit_extra, request_meta=request_meta)
+    return StoreWrite(after, event_id, False)
+
+
+def legacy_decision_on_held_in_txn(
+    conn, order_id: str, decision: str, *,
+    actor_id: Optional[str],
+    actor_role: Optional[str],
+    entry_point: str,
+    reason: Optional[str] = None,
+    lane: Optional[str] = None,
+    audit_extra: Optional[Mapping] = None,
+    request_meta: Optional[Mapping] = None,
+    now: Optional[str] = None,
+) -> StoreWrite:
+    """A pharmacist's decision taken on the legacy Verify Queue while the order
+    is HELD (W5-E, the legacy verify and reject mirror; design section 5).
+    Neither is a step the state machine offers a store route, so neither goes
+    through transition_in_txn:
+
+      'verified'  the order stays held and its hold is untouched (who held it,
+                  when and why still answer the bedside); the verifier is
+                  recorded and held_from becomes 'verified', so a resume
+                  returns to verified. The legacy writer has already put the
+                  verifier on the ward row (invariant I1).
+      'rejected'  the order ends as rejected (a reason is required) and its
+                  ward row loses the hold marker; the legacy writer has
+                  already marked the row discontinued.
+
+    Same guarded UPDATE, ledger event and clinical_access audit row as
+    transition_in_txn, in the caller's transaction."""
+    _require_txn(conn)
+    if decision not in ("verified", "rejected"):
+        raise MedOrderInvalid(f"Unknown pharmacist decision {decision!r}",
+                              code="invalid_decision")
+    order = get_order_in_txn(conn, order_id)
+    if order is None:
+        raise MedOrderNotFound("This medication order no longer exists")
+    if order["status"] != "held" or (decision == "verified"
+                                     and order["held_from"] != "prescribed"):
+        raise TransitionNotAllowed(
+            f"A {order['status']} order cannot be {decision} here", order=order,
+            from_status=order["status"], to_status=decision)
+    reason_text = _clean(reason)
+    if decision == "rejected" and not reason_text:
+        raise NeedsInput("Say why", code="reason_required", order=order)
+    if not _clean(actor_id):
+        raise MedOrderInvalid(f"A {decision} step names the person who took it",
+                              code="actor_required", order=order)
+
+    now = now or utc_iso_now()
+    sets: dict[str, Any] = {"version": order["version"] + 1, "updated_at": now}
+    if decision == "verified":
+        sets.update({"held_from": "verified", "verified_by": actor_id, "verified_at": now})
+    else:
+        sets.update({"status": "rejected", "held_from": None, "projection_status": None,
+                     "status_reason": reason_text, "status_changed_by": actor_id,
+                     "status_changed_at": now})
+    assignments = ", ".join(f"{k} = ?" for k in sets)
+    cur = conn.execute(
+        f"UPDATE med_orders SET {assignments} WHERE id = ? AND version = ? AND status = 'held'",
+        (*sets.values(), order_id, order["version"]),
+    )
+    if cur.rowcount != 1:
+        raise StaleOrderVersion("This order was changed by someone else. Refresh and try again.",
+                                order=get_order_in_txn(conn, order_id) or order)
+    after = get_order_in_txn(conn, order_id)
+    event_id = record_event_in_txn(
+        conn, order=after, kind=decision, from_status="held", to_status=after["status"],
+        actor_id=actor_id, actor_role=actor_role, entry_point=entry_point,
+        reason=reason_text, payload={"while_held": True}, created_at=now,
+    )
+    if decision == "rejected":
+        project_in_txn(conn, after)
+    audit_in_txn(conn, order=after, action=f"med_order_{decision}", actor_id=actor_id,
+                 actor_role=actor_role, entry_point=entry_point, from_status="held",
+                 to_status=after["status"], reason=reason_text, lane=lane, event_id=event_id,
+                 extra={"while_held": True, **dict(audit_extra or {})},
+                 request_meta=request_meta)
     return StoreWrite(after, event_id, False)

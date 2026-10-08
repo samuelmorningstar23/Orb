@@ -342,12 +342,20 @@ def test_every_registered_table_that_exists_has_the_named_columns():
                     assert pcol in cols, f"{table} has no {pcol}"
 
 
-def test_a_registered_table_that_does_not_exist_yet_is_skipped_quietly(caplog):
+def test_a_registered_table_that_does_not_exist_yet_is_skipped_quietly(caplog, monkeypatch):
     from services import consent_service as cs
     with db_session() as db:
         tables = {r[0] for r in db.execute(
             "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
     absent = {t for t, _, _ in PLANNED_RETENTION} - tables
+    if not absent:
+        # Migration 63 (W5-A) created the last planned table, so the
+        # precondition is made here: a registration naming a table no
+        # migration has created yet, exactly the state later waves meet.
+        absent = {"planned_table_not_created_yet"}
+        monkeypatch.setitem(cs._RETENTION_SOURCES, "clinical_record", [
+            *cs._RETENTION_SOURCES["clinical_record"],
+            ("planned_table_not_created_yet", "patient_id", "created_at")])
     assert absent, "precondition: some planned tables do not exist yet"
     review = cs.retention_review()
     listed = {t for c in review["categories"] for t in c["by_table"]}

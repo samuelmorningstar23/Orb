@@ -156,9 +156,12 @@ def _natural_key(label: str) -> list:
     return [int(t) if t.isdigit() else t.casefold() for t in re.split(r"(\d+)", label)]
 
 
-def admission_choices(user_department=None) -> dict:
+def admission_choices(user_department=None, *, user: dict | None = None) -> dict:
     """What the admission form offers: covered departments, attending doctors,
     and ward and bed labels with whether each bed is held.
+
+    `user` (the caller, optional) is read only with ORB_ADT on, to say whether
+    the caller may authorise a bed awaiting a terminal clean themself.
 
     No patient data leaves: department names, staff names and ids, ward and bed
     labels, and a held flag (never by whom). Beds come from the housekeeping
@@ -215,7 +218,7 @@ def admission_choices(user_department=None) -> dict:
             entry["departments"].append(r["department"])
 
     wanted = (user_department or "").strip().casefold() if isinstance(user_department, str) else ""
-    return {
+    choices = {
         "departments": departments,
         "default_department": next((d for d in departments if d.casefold() == wanted), None),
         "doctors": attending_doctors(),
@@ -223,12 +226,219 @@ def admission_choices(user_department=None) -> dict:
         "beds": sorted(beds.values(),
                        key=lambda b: (_natural_key(b["ward"]), _natural_key(b["bed"]))),
     }
+    # Beds and admissions (ORB_ADT, default off): the bed master's wards and
+    # beds with the status the bed board derives, for the form's bed picker
+    # (adt-5). Absent while the module is off, so the answer is unchanged.
+    if _adt_admitting():
+        choices["master"] = _master_choices(user)
+    return choices
 
 
-def admit_patient(data: dict, user: dict) -> dict:
+# ═════════════════════════════════════════════════════════════════════════════
+#  Admitting into a master bed (adt-5, W5-B; ORB_ADT, default off)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# With the module on, admit_patient runs in ONE immediate session and puts the
+# patient in a place through services.adt.core (prepare_place_on, then
+# place_admission_on, which writes through the single location writer
+# locate_admission_on): the 'admission' movement and its fail-closed
+# patient_movement audit commit with the patient, or nothing does. The rules
+# (an occupied bed refused with an extra bed offered, a bed not recorded clean
+# needing a reason or a named authoriser, a boarder needing the
+# acknowledgement, a back-time window) are stated in services/adt/core.py.
+# Text from lanes that only type (Scribe's quick admission) resolves against
+# the master the same way (design section 5): 'gm-1' links to GM-1. With the
+# module off nothing here runs and admit_patient is exactly as before.
+
+def _adt_admitting() -> bool:
+    """True while ORB_ADT is on (read at call time; draining counts as off,
+    so a module being switched off takes no new master placements)."""
+    from services.adt.core import adt_on
+
+    return adt_on()
+
+
+def _master_choices(user: dict | None = None) -> dict:
+    """The bed picker's lists: every active ward and its beds with what placing
+    a patient there needs (services.adt.core.bed_choices_on), who may
+    authorise a bed awaiting a terminal clean, and the back-time window.
+
+    Authorising such a bed is an act, never a name (ruling ADT-S2 (c), round
+    3): `self_authoriser` is the caller when their role allows (their own
+    session confirms it), and `authorisers` lists the other doctors, nurses and
+    administrators who can confirm it on the spot with their own signing PIN,
+    so only those with a PIN set. Each carries a department; the picker offers
+    only those the server accepts for the ward (the ward's department, the
+    treating one, or none). Staff names and ward and bed labels only; no
+    patient data."""
+    import config
+    from services import housekeeping_service as hk
+    from services.adt.core import (
+        TERMINAL_CLEAN_AUTHORISER_ROLES, bed_choices_on, terminal_authoriser_eligible_on,
+    )
+
+    # Opens a session of its own, so it runs before the read session below.
+    hk.ensure_housekeeping_schema()
+    me = str((user or {}).get("id") or "")
+    service_ids = sorted(SERVICE_ACCOUNT_IDS)
+    role_marks = ",".join("?" for _ in TERMINAL_CLEAN_AUTHORISER_ROLES)
+    service_marks = ",".join("?" for _ in service_ids)
+    with db_session() as db:
+        wards = bed_choices_on(db)
+        authorisers = [
+            {"id": r["id"], "name": r["name"], "role": r["role"],
+             "department": r["department"] or None}
+            for r in db.execute(
+                f"""SELECT id, name, role, TRIM(COALESCE(department, '')) AS department
+                      FROM users
+                     WHERE role IN ({role_marks}) AND COALESCE(is_active, 1) = 1
+                       AND id NOT IN ({service_marks}) AND id <> ?
+                       AND LOWER(TRIM(id)) NOT LIKE 'bot\\_%' ESCAPE '\\'
+                       AND pin_hash IS NOT NULL AND pin_hash <> ''
+                     ORDER BY name""",
+                (*TERMINAL_CLEAN_AUTHORISER_ROLES, *service_ids, me),
+            ).fetchall()
+        ]
+        self_authoriser = None
+        if me and terminal_authoriser_eligible_on(db, me):
+            row = db.execute(
+                "SELECT id, name, role, TRIM(COALESCE(department, '')) AS department "
+                "FROM users WHERE id = ?", (me,)).fetchone()
+            self_authoriser = {"id": row["id"], "name": row["name"], "role": row["role"],
+                               "department": row["department"] or None}
+    return {"wards": wards, "authorisers": authorisers, "self_authoriser": self_authoriser,
+            "backtime_hours": int(getattr(config, "ADT_BACKTIME_HOURS", 72))}
+
+
+def _plain(value) -> str | None:
+    """Spaces tidied, None when blank or not text."""
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value.split())
+    return text or None
+
+
+def _adt_admission_plan(data: dict, idempotency_key, user: dict | None = None,
+                        request_meta: dict | None = None, authoriser_pin=None) -> dict:
+    """The placement fields of an admission, checked BEFORE any session opens
+    (the immediate session must be the outermost one). Raises AdtError (or
+    AdtBadTime, 400) with words. A signing PIN typed for a terminal-clean
+    authoriser is checked here too (services.adt.core.confirm_terminal_
+    authoriser), so a refused PIN is audited in a session of its own; only
+    whether it confirmed somebody is kept, never the PIN."""
+    from services import housekeeping_service as hk
+    from services.adt.core import AdtError, check_event_time, confirm_terminal_authoriser
+    from services.clinical_time import to_utc_iso as _iso
+
+    awaiting = data.get("awaiting_bed") is True
+    extra = data.get("extra_bed") is True
+    plan = {
+        "key": _plain(idempotency_key),
+        "ward_id": _plain(data.get("ward_id")),
+        "bed_id": _plain(data.get("bed_id")),
+        "ward_text": _plain(data.get("ward")),
+        "bed_text": _plain(data.get("bed")),
+        "extra_bed": extra,
+        "boarder_acknowledged": data.get("boarder_acknowledged") is True,
+        "out_of_service_reason": data.get("out_of_service_reason"),
+        "not_clean_reason": data.get("not_clean_reason"),
+        "terminal_clean_authorised_by": data.get("terminal_clean_authorised_by"),
+        "terminal_clean_reason": data.get("terminal_clean_reason"),
+    }
+    if awaiting and (plan["bed_id"] or plan["bed_text"] or extra):
+        raise AdtError("No bed yet was chosen, but a bed was named as well. Choose one or "
+                       "the other.", code="awaiting_bed_with_bed")
+    admitted = check_event_time(data.get("admitted_at"), what="admission")
+    plan["admitted"] = admitted
+    plan["admitted_iso"] = _iso(admitted)
+    # Opens a session of its own (the lazy housekeeping path), so before ours.
+    hk.ensure_housekeeping_schema()
+    plan["terminal_clean_confirmed"] = confirm_terminal_authoriser(
+        actor=user, authorised_by=plan["terminal_clean_authorised_by"], pin=authoriser_pin,
+        bed_id=plan["bed_id"], request_meta=request_meta)
+    return plan
+
+
+def _adt_replay_on(db, plan: dict, user: dict, name: str) -> dict | None:
+    """The first admission when this Idempotency-Key was already used for an
+    admission by this person for a patient of this name; None for a new key.
+    A key used for anything else is refused and nothing is written. The
+    one-time portal password was shown once and cannot be shown again."""
+    from services.adt.core import AdtConflict, movement_for_key
+
+    if not plan["key"]:
+        return None
+    prior = movement_for_key(db, plan["key"])
+    if prior is None:
+        return None
+    row = db.execute(
+        """SELECT p.id, p.name, p.mrn, p.user_id, p.date_of_birth,
+                  a.id AS admission_id, a.admitted_at
+             FROM admissions a JOIN patients p ON p.id = a.patient_id
+            WHERE a.id = ?""",
+        (prior.get("admission_id"),),
+    ).fetchone()
+    same = (row is not None and prior.get("movement_type") == "admission"
+            and (prior.get("moved_by") or None) == user.get("id")
+            and (_plain(row["name"]) or "").casefold() == (_plain(name) or "").casefold())
+    if not same:
+        raise AdtConflict("That Idempotency-Key was already used for another admission. "
+                          "Nothing was saved.", code="idempotency_key_reused")
+    room = db.execute(
+        "SELECT id FROM channels WHERE patient_id = ? AND type = 'case_room' "
+        "ORDER BY created_at LIMIT 1", (row["id"],)).fetchone()
+    return {
+        "success": True,
+        "replayed": True,
+        "patient_id": row["id"],
+        "admission_id": row["admission_id"],
+        "channel_id": room["id"] if room else None,
+        "mrn": row["mrn"],
+        "patient_login_id": row["user_id"],
+        "temporary_password": None,
+        "date_of_birth_recorded": row["date_of_birth"] is not None,
+        "bed_warning": None,
+        "admitted_at": row["admitted_at"],
+        "movement_id": prior["id"],
+        "location": {
+            "ward_id": prior.get("to_ward_id"), "bed_id": prior.get("to_bed_id"),
+            "ward": prior.get("to_ward"), "bed": prior.get("to_bed"),
+            "linked": prior.get("to_bed_id") is not None,
+            "awaiting_bed": not prior.get("to_bed_id") and not prior.get("to_bed"),
+            "boarder": bool((prior.get("detail") or {}).get("boarder")),
+            "extra_bed": ((prior.get("detail") or {}).get("extra_bed") or {}).get("label"),
+        },
+        "location_warning": None,
+    }
+
+
+def _location_warning(target: dict) -> str | None:
+    """Ruling F104 until a site turns strict on: a ward or bed not in bed
+    setup is admitted unlinked, and said so."""
+    if target["ward"] is None and target["ward_text"]:
+        return (f"Ward {target['ward_text']} is not in bed setup, so this admission is not "
+                "linked to a bed. A bed manager can link it once the ward is set up.")
+    if target["ward"] is not None and target["bed"] is None and target["bed_text"]:
+        return (f"Bed {target['bed_text']} on {target['ward_text']} is not in bed setup, so "
+                "this admission is not linked to a bed. A bed manager can link it once the "
+                "bed is set up.")
+    return None
+
+
+def admit_patient(data: dict, user: dict, *, idempotency_key: str | None = None,
+                  request_meta: dict | None = None) -> dict:
     """
     Transactional admission orchestrator.
     Creates records in patients, admissions, patient_profiles, channels, messages, and sage_room_memory.
+
+    With ORB_ADT on (adt-5) the same transaction is an immediate one and also
+    places the patient through the bed master (see the section above): the
+    'admission' movement, its patient_movement audit and any boarder line
+    commit with the patient or not at all, an Idempotency-Key replay returns
+    the first admission, and the answer adds admitted_at, movement_id,
+    location and location_warning. With the module off, idempotency_key,
+    request_meta and data['terminal_clean_authoriser_pin'] are ignored and
+    nothing differs from before.
     """
     # THE registration name rule (services/patient_name_rule.py). A provided
     # name with fewer than two letters raises PatientNameError here, before a
@@ -237,6 +447,17 @@ def admit_patient(data: dict, user: dict) -> dict:
     # route never does (AdmissionRequest.name is required).
     raw_name = data.get("name")
     name = "Unknown Patient" if raw_name is None else validate_patient_name(raw_name)
+
+    # A signing PIN typed for a terminal-clean authoriser (ORB_ADT only) is
+    # taken out of the admission's fields at once, so nothing below can store
+    # or print it; with the module off it is dropped unread.
+    data = dict(data)
+    authoriser_pin = data.pop("terminal_clean_authoriser_pin", None)
+
+    # Beds and admissions (ORB_ADT): None while the module is off.
+    adt_plan = (_adt_admission_plan(data, idempotency_key, user, request_meta, authoriser_pin)
+                if _adt_admitting() else None)
+    authoriser_pin = None
 
     now = datetime.now(timezone.utc).isoformat()
     admitting_user_id = user["id"]
@@ -255,18 +476,66 @@ def admit_patient(data: dict, user: dict) -> dict:
     date_of_birth = _record_dob(data.get("date_of_birth"))
     admission_id = f"ADM-{str(uuid.uuid4())[:8].upper()}"
     channel_id = f"chan_{uuid.uuid4().hex[:12]}"
-    
-    with db_session() as db:
-        # Checked before this admission writes its own patient row, so the
-        # patient being admitted is never counted as the bed's other occupant.
-        bed_warning = bed_in_use_warning(db, data.get("ward"), data.get("bed"))
-        if bed_warning:
-            logger.warning("Admission %s: %s", admission_id, bed_warning)
+
+    # What the rows and the case-room lines say about where the patient is.
+    # With ORB_ADT off these are the typed values, exactly as before; with it
+    # on the location writer fills the rows and the lines use the master's
+    # spelling of the checked place.
+    row_ward, row_bed = data.get("ward"), data.get("bed")
+    portal_ward = data.get("ward", "General")
+    summary_ward, summary_bed = data.get('ward', 'Unassigned'), data.get('bed', 'Unassigned')
+    sage_ward = data.get('ward')
+    admission_date = now
+    adt_prepared = None
+
+    # Immediate only with ORB_ADT on, so the bed check and the write see the
+    # same state and two admissions to one bed give one admission and one 409.
+    with db_session(immediate=adt_plan is not None) as db:
+        if adt_plan is None:
+            # Checked before this admission writes its own patient row, so the
+            # patient being admitted is never counted as the bed's other occupant.
+            bed_warning = bed_in_use_warning(db, data.get("ward"), data.get("bed"))
+            if bed_warning:
+                logger.warning("Admission %s: %s", admission_id, bed_warning)
+        else:
+            replay = _adt_replay_on(db, adt_plan, user, name)
+            if replay is not None:
+                return replay
+            from services.adt.core import prepare_place_on
+
+            # Every placement rule is applied here, before a row about the
+            # patient is written; a refusal leaves nothing behind. An occupied
+            # bed is refused, never warned (ruling ADT-S1 (a)), and so is a
+            # typed place not in bed setup that another admitted patient is
+            # recorded at: the module-off warning becomes a refusal, so the
+            # answer's bed_warning is always None here.
+            bed_warning = None
+            adt_prepared = prepare_place_on(
+                db, admission_id=None, actor=user, movement_type="admission",
+                ward_id=adt_plan["ward_id"], bed_id=adt_plan["bed_id"],
+                ward_text=adt_plan["ward_text"], bed_text=adt_plan["bed_text"],
+                extra_bed=adt_plan["extra_bed"],
+                out_of_service_reason=adt_plan["out_of_service_reason"],
+                not_clean_reason=adt_plan["not_clean_reason"],
+                terminal_clean_authorised_by=adt_plan["terminal_clean_authorised_by"],
+                terminal_clean_reason=adt_plan["terminal_clean_reason"],
+                request_meta=request_meta,
+                treating_department=data.get("department"),
+                terminal_clean_confirmed=adt_plan["terminal_clean_confirmed"],
+            )
+            place = adt_prepared["target"]
+            # The location writer fills both mirrors from the checked place.
+            row_ward, row_bed = None, None
+            portal_ward = place["ward_text"] or portal_ward
+            summary_ward = place["ward_text"] or "Not chosen yet"
+            summary_bed = place["bed_text"] or "Awaiting a bed"
+            sage_ward = place["ward_text"] or "a ward not yet chosen"
+            admission_date = adt_plan["admitted"].isoformat()
 
         # 0. Create the patient's Bridge portal login (unique one-time password).
         db.execute(
             "INSERT INTO users (id, name, role, department, password_hash) VALUES (?, ?, 'patient', ?, ?)",
-            (patient_user_id, name, data.get("ward", "General"),
+            (patient_user_id, name, portal_ward,
              hash_password(temp_password)),
         )
         # 1. Create Patient Master Record (Identity), linked to the login user.
@@ -294,11 +563,12 @@ def admit_patient(data: dict, user: dict) -> dict:
                 data.get("address"),
                 # Mirror ward/bed/diagnosis onto the patients row — Vigil, Sage and the
                 # discharge summary read these from `patients`, not `admissions`.
-                data.get("ward"),
-                data.get("bed"),
+                # (With ORB_ADT on the location writer fills ward and bed below.)
+                row_ward,
+                row_bed,
                 data.get("initial_diagnosis") or data.get("chief_complaint"),
                 data.get("attending_doctor_id"),
-                now,
+                admission_date,
                 now
             )
         )
@@ -319,8 +589,8 @@ def admit_patient(data: dict, user: dict) -> dict:
                 data.get("admission_source"),
                 data.get("admission_type"),
                 data.get("department"),
-                data.get("ward"),
-                data.get("bed"),
+                row_ward,
+                row_bed,
                 data.get("attending_doctor_id"),
                 data.get("referring_clinician"),
                 data.get("chief_complaint"),
@@ -334,7 +604,12 @@ def admit_patient(data: dict, user: dict) -> dict:
                 now
             )
         )
-        
+        if adt_plan is not None:
+            # When the stay began, which may be up to ADT_BACKTIME_HOURS back
+            # (ruling ADT-P3); created_at stays the time it was recorded.
+            db.execute("UPDATE admissions SET admitted_at = ? WHERE id = ?",
+                       (adt_plan["admitted_iso"], admission_id))
+
         # 3. Create Patient Profile (Longitudinal Data)
         db.execute(
             """INSERT INTO patient_profiles (
@@ -452,7 +727,7 @@ def admit_patient(data: dict, user: dict) -> dict:
         # Build structured initial system message for Relay
         summary_lines = [
             f"**ADMISSION**: {data.get('name')} ({data.get('age', '?')}y {data.get('sex', '?')})",
-            f"Ward: {data.get('ward', 'Unassigned')} | Bed: {data.get('bed', 'Unassigned')}",
+            f"Ward: {summary_ward} | Bed: {summary_bed}",
             f"Source: {data.get('admission_source', 'Direct')} | Type: {data.get('admission_type', 'Inpatient')}",
             f"Chief Complaint: {data.get('chief_complaint', 'Not provided')}",
             f"Initial Diagnosis: {data.get('initial_diagnosis', 'Pending')}",
@@ -474,7 +749,7 @@ def admit_patient(data: dict, user: dict) -> dict:
         )
         
         # 6. Initialize Sage Room Memory
-        sage_patient_summary = f"{data.get('name')}, {data.get('age', '?')}y {data.get('sex', '?')} admitted to {data.get('ward')} for {data.get('initial_diagnosis')}."
+        sage_patient_summary = f"{data.get('name')}, {data.get('age', '?')}y {data.get('sex', '?')} admitted to {sage_ward} for {data.get('initial_diagnosis')}."
         if data.get('comorbidities'):
             sage_patient_summary += f" PMH: {', '.join(data.get('comorbidities'))}."
             
@@ -503,7 +778,38 @@ def admit_patient(data: dict, user: dict) -> dict:
                 now
             )
         )
-        
+
+        placed = None
+        if adt_plan is not None:
+            from services.adt.core import place_admission_on
+
+            # Last, so the case room exists for a boarder line and every row
+            # above commits with the movement and its fail-closed audit, or
+            # none of them does.
+            placed = place_admission_on(
+                db, admission_id=admission_id, actor=user, movement_type="admission",
+                reason="Patient admitted", prepared=adt_prepared,
+                boarder_acknowledged=adt_plan["boarder_acknowledged"],
+                moved_at=adt_plan["admitted_iso"], idempotency_key=adt_plan["key"],
+                request_meta=request_meta,
+            )
+
+    adt_answer = {}
+    if placed is not None:
+        extra = (adt_prepared["detail"].get("extra_bed") or {})
+        adt_answer = {
+            "replayed": False,
+            "admitted_at": adt_plan["admitted_iso"],
+            "movement_id": placed["movement"]["id"],
+            "location": {
+                "ward_id": placed["ward_id"], "bed_id": placed["bed_id"],
+                "ward": placed["ward"], "bed": placed["bed"], "linked": placed["linked"],
+                "awaiting_bed": placed["bed_id"] is None and not placed["bed"],
+                "boarder": placed["boarder"], "extra_bed": extra.get("label"),
+            },
+            "location_warning": _location_warning(adt_prepared["target"]),
+        }
+
     return {
         "success": True,
         "patient_id": patient_id,
@@ -522,4 +828,7 @@ def admit_patient(data: dict, user: dict) -> dict:
         # None, or the sentence saying this bed was already held by an admitted
         # patient. The admission stands either way (bed_in_use_warning).
         "bed_warning": bed_warning,
+        # With ORB_ADT on: when the stay began, the admission movement and
+        # where the patient was placed. Empty, so absent, while it is off.
+        **adt_answer,
     }

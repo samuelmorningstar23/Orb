@@ -1839,8 +1839,10 @@ def _chart_patient_name(patient_context_dict) -> str | None:
 
 def _match_medication(med_name):
     with db_session() as db:
-        # Case-insensitive partial match
-        match = db.execute("SELECT id, name FROM helix_medication_master WHERE name LIKE ? OR generic_name LIKE ?", (f"%{med_name}%", f"%{med_name}%")).fetchone()
+        # Case-insensitive partial match, over CONFIRMED drugs only (grn-6): a
+        # draft waiting for its second pharmacist, or a retired drug, is never
+        # drafted into a pharmacy request.
+        match = db.execute("SELECT id, name FROM helix_medication_master WHERE (name LIKE ? OR generic_name LIKE ?) AND identity_status = 'active'", (f"%{med_name}%", f"%{med_name}%")).fetchone()
         return match
 
 

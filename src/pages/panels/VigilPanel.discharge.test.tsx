@@ -57,9 +57,18 @@ function detail(over: Record<string, unknown> = {}) {
   }
 }
 
-type FetchOpts = { method?: string; body?: string }
+type FetchOpts = { method?: string; body?: string; headers?: Record<string, string> }
+/* Answers a test sets for one route prefix (an Error is thrown), checked
+   before the defaults below. Cleared before every test. */
+const routes: Record<string, unknown> = {}
 // `_opts` is unused here: the review assertion reads it from mock.calls.
 const apiFetch = vi.fn(async (path: string, _opts?: FetchOpts): Promise<unknown> => {
+  for (const [prefix, answer] of Object.entries(routes)) {
+    if (path.startsWith(prefix)) {
+      if (answer instanceof Error) throw answer
+      return answer
+    }
+  }
   if (path.includes('/allergies')) return { allergies: [{ substance: 'Penicillin', reaction: 'Rash', severity: 'moderate' }] }
   if (path.includes('/discharge-advisory')) {
     return {
@@ -78,6 +87,13 @@ const addClinicalNote = vi.fn<(...a: unknown[]) => Promise<{ status: string; id:
 
 vi.mock('../../api/client', () => ({
   apiFetch: (path: string, opts?: FetchOpts) => apiFetch(path, opts),
+  errorDetailMessage: (detail: unknown, status: number) => {
+    if (typeof detail === 'string') return detail
+    const message = (detail as { message?: unknown } | null)?.message
+    return typeof message === 'string' ? message : `The server answered ${status}.`
+  },
+  getOpenEscalations: vi.fn(async () => []),
+  resolveEscalation: vi.fn(),
   getPatientDetail: vi.fn(async () => state.detail),
   getAdministrations: vi.fn(async () => []),
   givenAcrossAllergy: () => false,
@@ -106,12 +122,15 @@ vi.mock('../../components/vigil/PatientStory', () => ({ default: () => null }))
 vi.mock('../../components/ClinicalCourseTimeline', () => ({ ClinicalCourseTimeline: () => null }))
 
 import VigilPanel from './VigilPanel'
+import { resetModuleFlags, setModuleFlags } from '../../shellConfig'
 import { buildLabTrends, labGraphData } from '../../lib/labTrends'
 import { ActivePatientProvider } from '../../contexts/ActivePatientProvider'
 import { ActiveViewProvider } from '../../contexts/ActiveViewProvider'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  for (const key of Object.keys(routes)) delete routes[key]
+  resetModuleFlags()
   state.detail = detail()
   vi.stubGlobal('fetch', vi.fn(async () => ({
     ok: true, status: 200, json: async () => [], headers: { get: () => '0' },
@@ -218,6 +237,205 @@ describe('Discharge', () => {
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Confirm discharge/ })) })
     expect(await screen.findByRole('alert')).toHaveTextContent('Patient is not currently admitted')
     expect(alertSpy).not.toHaveBeenCalled()
+  })
+})
+
+/* Beds and admissions (ORB_ADT, opt-in, off by default; adt-9): how the stay
+   ended. Off, the discharge screen is exactly what it was and posts no body.
+   On, it asks, routes LAMA, absconded and death to End of stay, and a DAMA
+   needs the MRN typed back and a reason. */
+describe('How the stay ended (Beds and admissions)', () => {
+  const DRAFT = {
+    status: 'success', summary_id: 43, review_status: 'draft', drafted_by: 'assistant',
+    summary: 'DISCHARGE SUMMARY\nAdmitted with pneumonia.', discharged_at: '2026-10-06 01:00:00', timeline: [],
+    summary_url: null, qr_code_url: null, secure_link_issued: false, secure_link_reason: 'No date of birth on file.',
+  }
+
+  function dischargePosts() {
+    return apiFetch.mock.calls.filter(([p, o]) => p === '/vigil/patients/P021/discharge' && o?.method === 'POST')
+  }
+
+  /** Opens the discharge screen and lets its reads (the billing advisory,
+   *  the open chains) answer before the test goes on. */
+  async function openDischarge() {
+    await openChart('doctor')
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Discharge$/ })) })
+    return screen.getByRole('dialog', { name: /Discharge Ravi Kumar/ })
+  }
+
+  it('with the module off there is no select, and the discharge posts no body', async () => {
+    dischargePatient.mockResolvedValue(DRAFT)
+    const dialog = await openDischarge()
+    expect(within(dialog).queryByLabelText('How the stay ended')).toBeNull()
+    expect(screen.queryByTestId('discharge-end-type')).toBeNull()
+    await act(async () => { fireEvent.click(within(dialog).getByRole('button', { name: /Confirm discharge/ })) })
+    expect(dischargePatient).toHaveBeenCalledTimes(1)
+    expect(dischargePatient).toHaveBeenCalledWith('P021')
+    expect(dischargePosts()).toHaveLength(0)
+    expect(await screen.findByTestId('discharge-draft')).toBeInTheDocument()
+  })
+
+  it('with the module off an ended stay offers no reopen', async () => {
+    state.detail = detail({ patient: { ...(detail().patient as Record<string, unknown>), status: 'discharged' } })
+    await openChart('doctor')
+    expect(screen.queryByRole('button', { name: 'Recorded in error' })).toBeNull()
+  })
+
+  it('with the module on it asks how the stay ended, and a routine discharge posts its type', async () => {
+    setModuleFlags({ adt: true })
+    routes['/vigil/patients/P021/discharge'] = DRAFT
+    const dialog = await openDischarge()
+    const select = within(dialog).getByLabelText('How the stay ended') as HTMLSelectElement
+    expect(select.value).toBe('routine')
+    expect(within(select).getAllByRole('option').map((o) => (o as HTMLOptionElement).value)).toEqual(
+      ['routine', 'referred_out', 'transferred_out', 'dama', 'lama', 'absconded', 'death'])
+    await act(async () => { fireEvent.click(within(dialog).getByRole('button', { name: /Confirm discharge/ })) })
+    expect(dischargePatient).not.toHaveBeenCalled()
+    const [call] = dischargePosts()
+    expect(JSON.parse(call[1]?.body ?? '{}')).toEqual({ discharge_type: 'routine' })
+    expect(await screen.findByTestId('discharge-draft')).toHaveTextContent('Admitted with pneumonia.')
+  })
+
+  it.each(['referred_out', 'transferred_out'])('a %s discharge posts its type and no read-back', async (endType) => {
+    setModuleFlags({ adt: true })
+    routes['/vigil/patients/P021/discharge'] = DRAFT
+    const dialog = await openDischarge()
+    fireEvent.change(within(dialog).getByLabelText('How the stay ended'), { target: { value: endType } })
+    expect(within(dialog).queryByLabelText('Type the MRN from the wristband to confirm')).toBeNull()
+    await act(async () => { fireEvent.click(within(dialog).getByRole('button', { name: /Confirm discharge/ })) })
+    const [call] = dischargePosts()
+    expect(JSON.parse(call[1]?.body ?? '{}')).toEqual({ discharge_type: endType })
+  })
+
+  it("a DAMA needs a reason and the typed MRN, and the server's read_back_mismatch is shown in words", async () => {
+    setModuleFlags({ adt: true })
+    routes['/vigil/patients/P021/discharge'] = Object.assign(new Error('refused'), {
+      status: 409,
+      detail: { error: 'read_back_mismatch', message: "The MRN typed does not match this patient's record. Check the wristband and type it again. Nothing was recorded." },
+    })
+    const dialog = await openDischarge()
+    fireEvent.change(within(dialog).getByLabelText('How the stay ended'), { target: { value: 'dama' } })
+    const confirm = within(dialog).getByRole('button', { name: /Confirm discharge/ })
+    expect(confirm).toBeDisabled()
+    fireEvent.change(within(dialog).getByLabelText('Reason the patient is leaving against advice'), { target: { value: 'Family wants a second opinion' } })
+    expect(confirm).toBeDisabled()
+    fireEvent.change(within(dialog).getByLabelText('Type the MRN from the wristband to confirm'), { target: { value: 'MRN-0012' } })
+    expect(within(dialog).getByText('This does not match the MRN on file.')).toBeInTheDocument()
+    expect(confirm).toBeDisabled()
+    fireEvent.change(within(dialog).getByLabelText('Type the MRN from the wristband to confirm'), { target: { value: 'mrn-0021' } })
+    expect(confirm).toBeEnabled()
+    await act(async () => { fireEvent.click(confirm) })
+    const [call] = dischargePosts()
+    expect(JSON.parse(call[1]?.body ?? '{}')).toEqual({
+      discharge_type: 'dama', confirm_mrn: 'mrn-0021', reason: 'Family wants a second opinion',
+    })
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      "The discharge did not complete. The MRN typed does not match this patient's record. Check the wristband and type it again. Nothing was recorded.")
+    expect(screen.queryByTestId('discharge-draft')).toBeNull()
+  })
+
+  it('a DAMA for a patient with no MRN on file cannot be confirmed, and says so', async () => {
+    setModuleFlags({ adt: true })
+    state.detail = detail({ patient: { ...(detail().patient as Record<string, unknown>), mrn: '' } })
+    const dialog = await openDischarge()
+    fireEvent.change(within(dialog).getByLabelText('How the stay ended'), { target: { value: 'dama' } })
+    fireEvent.change(within(dialog).getByLabelText('Reason the patient is leaving against advice'), { target: { value: 'Going home' } })
+    expect(within(dialog).getByLabelText('Type the MRN from the wristband to confirm')).toBeDisabled()
+    expect(dialog).toHaveTextContent('No MRN is on file for this patient, so a DAMA cannot be confirmed here.')
+    expect(within(dialog).getByRole('button', { name: /Confirm discharge/ })).toBeDisabled()
+    expect(dischargePosts()).toHaveLength(0)
+  })
+
+  it('a lost reply is not called a failure: the doctor is told to reload before trying again', async () => {
+    setModuleFlags({ adt: true })
+    routes['/vigil/patients/P021/discharge'] = new TypeError('Failed to fetch')
+    const dialog = await openDischarge()
+    await act(async () => { fireEvent.click(within(dialog).getByRole('button', { name: /Confirm discharge/ })) })
+    const alert = await within(dialog).findByRole('alert')
+    expect(alert).toHaveTextContent(
+      'Could not reach Orb, so it is not known whether the discharge was recorded. Reload the chart to see before you try again.')
+    expect(alert).not.toHaveTextContent('did not complete')
+    expect(alert).not.toHaveTextContent('never recorded twice')
+  })
+
+  it.each([
+    ['death', 'Death'],
+    ['lama', 'Left against medical advice (LAMA)'],
+    ['absconded', 'Absconded'],
+  ])('%s opens End of stay, which posts to the end route only once the MRN matches', async (endType, label) => {
+    setModuleFlags({ adt: true })
+    routes['/adt/admissions/ADM-0021/end'] = {
+      status: 'ended', replayed: false, admission_id: 'ADM-0021', patient_id: 'P021', end_type: endType,
+      discharged_at: '2026-10-06T04:30:00Z', movement_id: 'MOV-9', discharge_link_issued: false,
+      open_escalations: [], bundles_cancelled: [],
+    }
+    const dialog = await openDischarge()
+    fireEvent.change(within(dialog).getByLabelText('How the stay ended'), { target: { value: endType } })
+    expect(dialog).toHaveTextContent('is recorded through End of stay')
+    expect(within(dialog).queryByRole('button', { name: /Confirm discharge/ })).toBeNull()
+    await act(async () => { fireEvent.click(within(dialog).getByRole('button', { name: 'Continue to end of stay' })) })
+
+    // The discharge screen closed; End of stay is open with the type chosen.
+    expect(screen.queryByRole('dialog', { name: /Discharge Ravi Kumar/ })).toBeNull()
+    const endStay = screen.getByRole('dialog', { name: 'End of stay' })
+    expect(within(endStay).getByRole('radio', { name: label })).toBeChecked()
+    const readback = within(endStay).getByText('Ward and bed').closest('dl') as HTMLElement
+    expect(readback).toHaveTextContent('MRN-0021')
+    const record = within(endStay).getByRole('button', { name: endType === 'death' ? 'Record death' : 'Record end of stay' })
+    if (endType !== 'death') {
+      fireEvent.change(within(endStay).getByLabelText('Reason'), { target: { value: 'Left the ward at night' } })
+    }
+    expect(record).toBeDisabled()
+    fireEvent.change(within(endStay).getByLabelText('Type the MRN from the wristband to confirm'), { target: { value: 'MRN-0021' } })
+    expect(record).toBeEnabled()
+    await act(async () => { fireEvent.click(record) })
+
+    expect(dischargePatient).not.toHaveBeenCalled()
+    expect(dischargePosts()).toHaveLength(0)
+    const ends = apiFetch.mock.calls.filter(([p, o]) => p === '/adt/admissions/ADM-0021/end' && o?.method === 'POST')
+    expect(ends).toHaveLength(1)
+    const body = JSON.parse(ends[0][1]?.body ?? '{}')
+    expect(body.end_type).toBe(endType)
+    expect(body.confirm_mrn).toBe('MRN-0021')
+    expect(ends[0][1]?.headers?.['Idempotency-Key']).toBeTruthy()
+    expect(await screen.findByTestId('end-stay-result')).toBeInTheDocument()
+  })
+
+  it("an ended stay offers 'Recorded in error', which posts the reopen", async () => {
+    setModuleFlags({ adt: true })
+    state.detail = detail({ patient: { ...(detail().patient as Record<string, unknown>), status: 'discharged' } })
+    routes['/adt/admissions/ADM-0021/reopen'] = {
+      status: 'reopened', replayed: false, admission_id: 'ADM-0021', patient_id: 'P021', movement_id: 'MOV-10',
+      corrects_movement_id: 'MOV-9', corrected_end_type: 'death', bed_retaken: true, awaiting_bed: false,
+      ward: 'GM-2', bed: '21', portal_login_restored: false, bundles_not_restored: [],
+    }
+    await openChart('doctor')
+    fireEvent.click(screen.getByRole('button', { name: 'Recorded in error' }))
+    const dialog = screen.getByRole('dialog', { name: 'Reopen a stay recorded in error' })
+    fireEvent.change(within(dialog).getByLabelText('Why the end was recorded in error'), { target: { value: 'Wrong patient' } })
+    fireEvent.change(within(dialog).getByLabelText('Type the MRN from the wristband to confirm'), { target: { value: 'MRN-0021' } })
+    await act(async () => { fireEvent.click(within(dialog).getByRole('button', { name: 'Reopen stay' })) })
+    const reopens = apiFetch.mock.calls.filter(([p, o]) => p === '/adt/admissions/ADM-0021/reopen' && o?.method === 'POST')
+    expect(reopens).toHaveLength(1)
+    expect(JSON.parse(reopens[0][1]?.body ?? '{}')).toEqual({ reason: 'Wrong patient', confirm_mrn: 'MRN-0021' })
+    expect(await screen.findByTestId('reopen-stay-result')).toHaveTextContent('Back in GM-2, bed 21.')
+  })
+
+  it('a nurse is offered neither the discharge nor the reopen', async () => {
+    setModuleFlags({ adt: true })
+    state.detail = detail({ patient: { ...(detail().patient as Record<string, unknown>), status: 'discharged' } })
+    await openChart('nurse')
+    expect(screen.queryByRole('button', { name: /^Discharge$/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Recorded in error' })).toBeNull()
+  })
+
+  it('no rendered sentence on the discharge screen carries an em dash', async () => {
+    setModuleFlags({ adt: true })
+    const dialog = await openDischarge()
+    for (const value of ['dama', 'death']) {
+      fireEvent.change(within(dialog).getByLabelText('How the stay ended'), { target: { value } })
+      expect(dialog.textContent).not.toMatch(/\u2014/)
+    }
   })
 })
 

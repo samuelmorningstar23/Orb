@@ -41,6 +41,7 @@ from services import allergy_interlock, drug_safety_service
 from services.allergy_interlock import AllergyInterlockBlocked
 from services.audit_service import log_audit_event
 from services.drug_safety_service import DoseGuardBlocked
+from services.medorders import emar_check
 
 logger = logging.getLogger("orb.emar")
 
@@ -613,6 +614,19 @@ def record_administration(
                     f"re-admit the patient first"
                 )
 
+        # ── The medication ORDER must allow the dose (medorders-3) ──────────
+        # Only for a ward row LINKED to a medication order, and keyed on that
+        # link rather than on the store switches (ruling MO-R9 (a)): a held,
+        # unsigned or ended order refuses 'given' (OrderStateRefused, a
+        # ValueError, so the route's 422 with these words). 'not_given' is never
+        # refused. BELOW the replay check and the discharged-patient guard for
+        # the reasons given above them; ABOVE the allergy interlock so a held
+        # drug is refused before anyone is asked about an allergy. Read again
+        # after the INSERT below, under the write lock. See
+        # services/medorders/emar_check.py. An unlinked row skips this entirely.
+        if status == "given":
+            emar_check.check_dose_in_txn(db, med_id, status)
+
         # ── Allergy interlock (the last line of defence) ──────────────────────
         # Runs on THIS connection, inside this transaction, immediately before
         # the write — so it sees the allergy list as of the instant of the dose,
@@ -682,6 +696,18 @@ def record_administration(
             if not existing:
                 raise
             return {**_hydrate(_fetch_administration(db, existing["id"])), "replayed": True}
+
+        # The order-state check again, now that this transaction holds the
+        # write lock: no hold can commit after this read, and one that
+        # committed since the first read refuses here and rolls the dose back.
+        # Then the order's bedside event, in this same transaction. Both are
+        # no-ops for an unlinked ward row.
+        linked_order = emar_check.check_dose_in_txn(db, med_id, status)
+        order_event_id = emar_check.record_bedside_event_in_txn(
+            db, linked_order, medication_id=med_id, administration_id=inserted_id,
+            administration_status=status, actor_id=actor_id,
+            not_given_reason=not_given_reason, confirmation_method=confirmation_method,
+        )
 
         # A NEW override (as opposed to one carried forward from an earlier dose
         # of this order) gets its own ledger row, in this transaction, linked to
@@ -753,6 +779,11 @@ def record_administration(
                 # and has to be on the chain, not just in a log line nobody
                 # reads.
                 "dose_check": record.get("dose_check"),
+                # The medication order this ward row is linked to, and the
+                # bedside event written for it (medorders-3). Absent for an
+                # unlinked row, so its audit row is exactly as before.
+                **({"med_order_id": linked_order["med_order_id"],
+                    "med_order_event_id": order_event_id} if linked_order else {}),
             },
         )
 

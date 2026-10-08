@@ -46,6 +46,14 @@
  * charge), and a re-read every ORB_OPD_QUEUE_POLL_SECONDS until live desk
  * nudges land (opd-9b). Calling in needs opd.consult; finishing a visit is on
  * the doctor's Outpatients tab. Without the mark the queue below is unchanged.
+ *
+ * ── REGISTERING A VISIT WITH THE REGISTRATION FEATURE (opd-6a) ────────────
+ * The server then refuses any visit whose patient has not confirmed who they
+ * are (ruling OPD-S1), so the old form, which picked from the ward's patient
+ * list, is not offered. The OPD queue section points to the Register view
+ * (./frontdesk/RegisterPatientView.tsx): the patient index search first, the
+ * identity check, a new registration only after a search. With the feature
+ * off the form is exactly the one it always was.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
@@ -141,6 +149,37 @@ function StatusChip({ status }: { status: OpdVisit['status'] }) {
 
 function EmptyNote({ children }: { children: React.ReactNode }) {
   return <p className="fd-empty">{children}</p>
+}
+
+/** The id of the Register view (./frontdesk/RegisterPatientView.tsx). */
+const REGISTER_VIEW_ID = 'register'
+
+/** With the registration feature on, the OPD section's way to register a
+ *  visit: the Register view, search first, then the identity check. */
+function RegisterVisitPointer({ onOpen }: { onOpen: (() => void) | null }) {
+  return (
+    <section className="fd-card fd-register-pointer" aria-label="Register a visit">
+      <h3 className="fd-card__title">Register a visit</h3>
+      {onOpen ? (
+        <>
+          <p className="fd-hint">
+            Find the patient in the index and confirm who they are before the visit is attached
+            to their record. A new patient is registered there too, after a search.
+          </p>
+          <div className="fd-actions">
+            <button type="button" className="fd-btn fd-btn--primary" onClick={onOpen}>
+              Find or register a patient
+            </button>
+          </div>
+        </>
+      ) : (
+        <p className="fd-hint">
+          A visit is registered from the patient index, after the patient confirms who they are.
+          Your account cannot open the index, so a colleague at the desk registers the visit.
+        </p>
+      )}
+    </section>
+  )
 }
 
 function sameDepartment(a: string | null | undefined, b: string | null | undefined): boolean {
@@ -940,12 +979,14 @@ export default function FrontDeskPanel({
         />
       ) : (
         <div className="fd-opd">
-          {deskOnly ? (
-            <p className="fd-empty">
-              Patient search for registering a visit is not on this screen yet, so for now a
-              clinician or the administrator registers the visit. The queue below is yours to
-              follow, and you can mark a patient who left as a no-show.
-            </p>
+          {registrationOn ? (
+            /* opd-6a: the server refuses a visit without the identity check,
+               so the ward-list form is not offered; the Register view is. */
+            <RegisterVisitPointer
+              onOpen={deskViews.some(v => v.id === REGISTER_VIEW_ID)
+                ? () => openView(REGISTER_VIEW_ID)
+                : null}
+            />
           ) : (
             <RegisterVisitForm
               patients={patients}

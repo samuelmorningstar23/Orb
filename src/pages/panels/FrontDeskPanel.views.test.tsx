@@ -149,9 +149,10 @@ describe('FrontDeskPanel with the registration feature on', () => {
     expect(screen.queryByRole('button', { name: 'Call in' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Complete' })).toBeNull()
     expect(screen.getByRole('button', { name: 'No-show' })).toBeInTheDocument()
-    expect(screen.queryByText('Register a visit')).toBeNull()
-    expect(screen.getByText(/Patient search for registering a visit is not on this screen yet/))
-      .toBeInTheDocument()
+    /* opd-6a: no ward-list visit form with the feature on; with no Register
+       view installed (these stub views) the section says who registers. */
+    expect(screen.queryByLabelText('Patient')).toBeNull()
+    expect(screen.getByText(/Your account cannot open the index/)).toBeInTheDocument()
   })
 
   it('installs the real clinic timings view for a role that reads the desk', async () => {

@@ -435,11 +435,14 @@ def _write_helix(db, action: dict, actor_id: str, screened) -> tuple:
     # Then create the Helix pharmacy order (best-effort — a non-formulary drug is still
     # charted and visible in Vigil; only the pharmacy order is skipped). On this
     # transaction, through insert_order: create_order commits in a session of
-    # its own. The drug is found by name exactly as create_order finds it.
+    # its own. The drug is found by name exactly as create_order finds it:
+    # confirmed drugs only (grn-6), so a draft waiting for its second
+    # pharmacist never shadows the confirmed drug of the same name.
     try:
         with _savepoint(db, "handoff_order"):
             med = db.execute(
-                "SELECT id FROM helix_medication_master WHERE name LIKE ? OR generic_name LIKE ?",
+                "SELECT id FROM helix_medication_master "
+                "WHERE (name LIKE ? OR generic_name LIKE ?) AND identity_status = 'active'",
                 (f"%{target_med}%", f"%{target_med}%")
             ).fetchone()
             if not med:

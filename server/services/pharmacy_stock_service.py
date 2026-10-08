@@ -594,6 +594,171 @@ def open_or_merge_lot(
     return {"lot": dict(lot), "movement": movement, "merged": merged}
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+#  Goods received from a vendor (grn-8)
+# ═════════════════════════════════════════════════════════════════════════════
+
+#: reference_type on the receipt movement of a pharmacy goods receipt line.
+GRN_REFERENCE = "pharmacy_grn"
+
+#: Pharmacy store kinds a vendor delivery lands in (pharmacy purchasing's
+#: ORDERABLE_STORE_KINDS): returns quarantine holds returns, and ward stores are
+#: filled by transfers, never by a vendor.
+RECEIVING_STORE_KINDS: tuple[str, ...] = (DISPENSING_STORE_KIND, "sub_store", NDPS_VAULT_KIND)
+
+
+def _batch_key(text: object) -> str:
+    """A batch number compared without case or spaces: 'b 123a' is 'B123A'."""
+    return "".join(str(text or "").upper().split())
+
+
+def batch_conflict(conn, *, medication_id: str, lot_number: str, expiration_date: object,
+                   store_id: Optional[int] = None,
+                   mrp_pack_paise: Optional[int] = None) -> Optional[dict]:
+    """Why this batch of this drug cannot come in, or None. Read-only.
+
+      * batch_expiry_mismatch: the drug's batch is already on file, in any
+        store and any status, with ANOTHER expiry. A batch has one expiry, so
+        one of the two dates is a typing error, and neither is guessed at.
+      * batch_mrp_mismatch: the batch is already held in this store at another
+        MRP per pack. A batch carries one printed MRP, and the patient is
+        billed at it (GRN-R12).
+    Returns {code, message, lot_id, held_expiry, held_mrp_pack_paise, spelling},
+    where spelling is how the batch is already written on file."""
+    expiry = _date_text(expiration_date, "expiry date")
+    want = _batch_key(lot_number)
+    for row in conn.execute(
+            "SELECT id, lot_number, expiration_date, store_id, mrp_pack_paise "
+            "FROM helix_inventory_lots WHERE medication_id = ? ORDER BY rowid",
+            (medication_id,)).fetchall():
+        if _batch_key(row["lot_number"]) != want:
+            continue
+        held = str(row["expiration_date"])[:10] if row["expiration_date"] else None
+        if held != expiry:
+            return {"code": "batch_expiry_mismatch", "lot_id": row["id"], "held_expiry": held,
+                    "held_mrp_pack_paise": row["mrp_pack_paise"], "spelling": row["lot_number"],
+                    "message": (f"batch {row['lot_number']} of this drug is already on file "
+                                f"with expiry {held or 'not recorded'}. One batch has one "
+                                "expiry date: check the pack against the earlier receipt. "
+                                "Nothing was changed.")}
+        if (store_id is not None and row["store_id"] == store_id
+                and mrp_pack_paise is not None and row["mrp_pack_paise"] is not None
+                and int(row["mrp_pack_paise"]) != int(mrp_pack_paise)):
+            return {"code": "batch_mrp_mismatch", "lot_id": row["id"], "held_expiry": held,
+                    "held_mrp_pack_paise": int(row["mrp_pack_paise"]),
+                    "spelling": row["lot_number"],
+                    "message": (f"batch {row['lot_number']} is already held in this store at "
+                                "another MRP per pack. One batch carries one printed MRP: "
+                                "check the pack. Nothing was changed.")}
+    return None
+
+
+def batch_spelling(conn, medication_id: str, lot_number: object) -> str:
+    """How a batch is written on the lot: the spelling already on file for
+    this drug when the batch is known (so 'b123' merges with 'B123'), else the
+    typed batch in capitals with single spaces."""
+    want = _batch_key(lot_number)
+    for row in conn.execute("SELECT lot_number FROM helix_inventory_lots WHERE medication_id = ? "
+                            "ORDER BY rowid", (medication_id,)).fetchall():
+        if _batch_key(row["lot_number"]) == want:
+            return row["lot_number"]
+    return " ".join(str(lot_number or "").upper().split())
+
+
+def receive_grn_lines(conn, *, grn_id: int, store_id: int, vendor_id: Optional[int],
+                      lines: Iterable[dict], actor_id: str, today: Optional[str] = None,
+                      received_at: object = None) -> list[dict]:
+    """Put the accepted lines of a posted pharmacy goods receipt on the shelf,
+    in the caller's transaction (grn-8). Returns one dict per line:
+    {line_no, lot_id, movement_id, merged, units, unit_cost_paise}.
+
+    Each line is {line_no, line_id, medication_id, batch_no, expiry_date,
+    units (paid plus free, in dispense units), units_per_pack, mrp_pack_paise,
+    unit_cost_paise, mfg_date}. Every line becomes a 'receipt' movement into
+    the receipt's store at status 'available', keyed
+    'pharmacy_grn:<grn>:line:<n>' so it can never land twice. The same drug,
+    batch and expiry already in that store merges into one lot, whose unit cost
+    becomes the weighted cost of what it then holds (GRN-R12, lot cost).
+
+    Refused (StockError, so the caller's whole transaction rolls back): a store
+    that does not take vendor deliveries; a narcotic or psychotropic outside an
+    NDPS vault, or anything else inside one (GRN-R14); an expiry before the
+    hospital's date; a batch already on file with another expiry or, in this
+    store, another MRP; and a merge into a lot of another status."""
+    _require_transaction(conn)
+    actor = _text(actor_id)
+    if not actor:
+        raise StockError("a receipt names who received it", code="missing_actor")
+    store = _pharmacy_store(conn, store_id)
+    if not store["is_active"]:
+        raise StockError(f"{store['name']} is closed", code="store_inactive")
+    if store["pharmacy_kind"] not in RECEIVING_STORE_KINDS:
+        raise StockError(f"{store['name']} does not take deliveries from vendors",
+                         code="store_not_orderable")
+    vault = store["pharmacy_kind"] == NDPS_VAULT_KIND
+    day = today or site_today()
+    results: list[dict] = []
+    for line in lines:
+        medication_id = line["medication_id"]
+        units = _whole(line.get("units"), "units")
+        if units < 1:
+            raise StockError("a receipt line brings in at least one unit", code="bad_quantity")
+        drug = conn.execute("SELECT id, name, ndps_category FROM helix_medication_master "
+                            "WHERE id = ?", (medication_id,)).fetchone()
+        if drug is None:
+            raise StockError(f"no drug {medication_id} in the formulary", code="drug_not_found")
+        controlled = drug["ndps_category"] in NDPS_CONTROLLED
+        if controlled and not vault:
+            raise StockError(f"{drug['name']} is a narcotic or psychotropic drug and is received "
+                             "only into the NDPS vault", code="ndps_needs_vault")
+        if vault and not controlled:
+            raise StockError(f"{drug['name']} is not a narcotic or psychotropic drug, so it is "
+                             "not received into the NDPS vault", code="vault_is_for_ndps")
+        expiry = _date_text(line.get("expiry_date"), "expiry date")
+        if expiry is None:
+            raise StockError("a drug is received with its expiry date", code="expiry_required")
+        if expiry < day:
+            raise StockError(f"batch {line.get('batch_no')} expired on {expiry}; expired stock "
+                             "is never received", code="expired_on_receipt")
+        mrp = line.get("mrp_pack_paise")
+        conflict = batch_conflict(conn, medication_id=medication_id,
+                                  lot_number=line.get("batch_no"), expiration_date=expiry,
+                                  store_id=store_id, mrp_pack_paise=mrp)
+        if conflict:
+            raise StockError(conflict["message"], code=conflict["code"])
+        batch = batch_spelling(conn, medication_id, line.get("batch_no"))
+        cost = line.get("unit_cost_paise")
+        opened = open_or_merge_lot(
+            conn, medication_id=medication_id, lot_number=batch, expiration_date=expiry,
+            units=units, actor_id=actor, store_id=store_id, status="available",
+            movement_type="receipt", units_per_pack=line.get("units_per_pack"),
+            mrp_pack_paise=mrp, unit_cost_paise=cost, mfg_date=line.get("mfg_date"),
+            vendor_id=vendor_id, receipt_line_ref=line.get("line_id"),
+            received_at=received_at, reference_type=GRN_REFERENCE, reference_id=str(grn_id),
+            idempotency_key=f"{GRN_REFERENCE}:{grn_id}:line:{line['line_no']}",
+            remarks=f"Received on goods receipt {grn_id}, line {line['line_no']}")
+        lot, movement = opened["lot"], opened["movement"] or {}
+        if opened["merged"] and not movement.get("replayed"):
+            after = int(lot["quantity"] or 0)
+            before = after - units
+            held_cost = lot["unit_cost_paise"]
+            if cost is not None:
+                weighted = cost if (held_cost is None or before <= 0) else (
+                    (before * int(held_cost) + units * int(cost) + after // 2) // after)
+                conn.execute(
+                    "UPDATE helix_inventory_lots SET unit_cost_paise = ?, "
+                    "mrp_pack_paise = COALESCE(mrp_pack_paise, ?), "
+                    "units_per_pack = COALESCE(units_per_pack, ?) WHERE id = ?",
+                    (weighted, mrp, line.get("units_per_pack"), lot["id"]))
+                lot = dict(conn.execute("SELECT * FROM helix_inventory_lots WHERE id = ?",
+                                        (lot["id"],)).fetchone())
+        results.append({"line_no": line["line_no"], "lot_id": lot["id"],
+                        "movement_id": movement.get("id"), "merged": opened["merged"],
+                        "units": units, "unit_cost_paise": lot["unit_cost_paise"],
+                        "replayed": bool(movement.get("replayed"))})
+    return results
+
+
 def _quarantined_by(conn, lot_id: str) -> Optional[str]:
     row = conn.execute(
         "SELECT actor_id FROM pharmacy_lot_events WHERE lot_id = ? AND to_status = 'quarantined' "

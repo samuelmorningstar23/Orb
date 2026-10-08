@@ -23,7 +23,7 @@ from services.scribe_service import (
     create_revision_from_signed, record_unverified_ack, WORKER_SCRIPT,
 )
 from services.scribe_providers import StageTimer
-from services.audit_service import log_audit_event
+from services.audit_service import AuditWriteError, log_audit_event
 from services.admission_service import (
     AdmissionInputError,
     admission_choices,
@@ -1226,6 +1226,22 @@ def quick_admit(data: dict, user: dict = Depends(require_permission("patient.wri
         result = admit_patient(payload, user)
     except PatientNameError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        # Only with ORB_ADT on (adt-5): the bed master refused the typed place
+        # (an occupied bed, a bed not recorded clean, a boarder this lane
+        # cannot acknowledge), in words, with nothing written.
+        from services.adt.core import AdtError, http_detail
+        if not isinstance(e, AdtError):
+            raise
+        raise HTTPException(status_code=e.http_status, detail=http_detail(e))
+    except AuditWriteError:
+        # Only with ORB_ADT on: the fail-closed patient_movement record could
+        # not be written, so the whole admission was rolled back.
+        raise HTTPException(status_code=503, detail={
+            "error": "audit_unavailable",
+            "message": "The record of this admission could not be written, so the patient "
+                       "was not admitted. Try again in a moment.",
+        })
 
     log_audit_event(
         correlation_id=f"quick-admit-{result['admission_id']}",

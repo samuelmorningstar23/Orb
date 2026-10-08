@@ -27,10 +27,11 @@ Rules for every endpoint added here (design: docs/his_design/opd.json):
 Built: GET /patients/{patient_id}/record (opd-7, W3-A); GET /my-queue
 (opd-8, W4-F); GET /patients/{patient_id}/consultations, GET and PUT
 /visits/{visit_id}/consultation, POST .../consultation/sign and
-.../consultation/addenda, POST /visits/{visit_id}/complete (opd-10, W4-F).
+.../consultation/addenda, POST /visits/{visit_id}/complete (opd-10, W4-F);
+POST /visits/{visit_id}/allergy-review (opd-10a, W5-A).
 
-Planned endpoints: POST /visits/{visit_id}/allergy-review, /orders,
-/prescriptions; GET /terminology/search.
+Planned endpoints: POST /visits/{visit_id}/orders, /prescriptions; GET
+/terminology/search.
 
 VISIT-ADDRESSED ROUTES (opd-10) resolve the visit and answer 404 unless its
 clinic is the caller's department (an account with no department reads every
@@ -39,7 +40,7 @@ Saves, signing, addenda and completion are audited INSIDE their transaction
 (clinical_record), so the change and its record land together.
 """
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 import config
 from permissions import (
@@ -64,6 +65,7 @@ from services.opd_service import (
     get_consultation,
     get_opd_record,
     list_patient_consultations,
+    record_allergy_review,
     save_consultation,
     sign_consultation,
 )
@@ -178,6 +180,17 @@ class AddendumIn(BaseModel):
     body: str
 
 
+class AllergyReviewIn(BaseModel):
+    """POST body of an allergy review (opd-10a). A field this route does not
+    know is refused (422), so nobody believes it was saved."""
+    model_config = ConfigDict(extra="forbid")
+    # 'allergies_recorded', 'none_known' or 'unable_to_obtain'.
+    status: str = Field(..., max_length=40)
+    substances: list[str] | None = Field(None, max_length=30)
+    reason: str | None = Field(None, max_length=500)
+    note: str | None = Field(None, max_length=1000)
+
+
 class OpdCompleteIn(BaseModel):
     disposition: str
     # Ruling OPD-N8: a visit may be completed without a signed note only with
@@ -260,7 +273,10 @@ def read_consultation(
     user: dict = Depends(require_permission(OPD_CONSULT)),
 ):
     """This visit's note (or null before it is started), its addenda, and
-    whether it may be signed yet (the allergy review, ruling OPD-S7)."""
+    whether it may be signed yet (the allergy review, ruling OPD-S7). The
+    review is carried as status, label and time only (opd_service.
+    visit_review_summary): a visit id of any date reaches this read, so it
+    names no allergen, note, reason, clinic or clinician."""
     visit = _visit_in_clinic(visit_id, department_scope(user))
     try:
         result = get_consultation(visit_id)
@@ -347,6 +363,64 @@ def add_consultation_addendum(
                 summary=lambda n, f: f"Addendum added to OPD consultation {n['id']}",
                 metadata=lambda n, f: {"visit_id": n["visit_id"], **f},
             ),
+        )
+    except ConsultationError as err:
+        raise _consultation_http_error(err)
+    except AuditWriteError:
+        raise _audit_unavailable()
+
+
+@router.post("/visits/{visit_id}/allergy-review")
+def record_visit_allergy_review(
+    visit_id: str,
+    data: AllergyReviewIn,
+    request: Request,
+    user: dict = Depends(require_permission(OPD_CONSULT)),
+):
+    """The consulting doctor's allergy review (opd-10a, ruling OPD-S7): the
+    allergies the patient has (charted now, the same writer the admission
+    lane uses), no known allergies, or why they could not be asked. Written
+    with its audit row in one transaction. Visit-scoped (404 outside the
+    caller's clinic); refused once the patient is admitted (409) and on a
+    visit outside the OPD scope window (409 visit_not_current, before the
+    chart is read), so it is exactly as wide as the OPD arm and an old visit
+    id reads nothing. The answer carries the review as status, label and
+    time only, never the allergy list: that is read from the record view.
+    A review never changes how the allergy interlocks screen."""
+    _visit_in_clinic(visit_id, department_scope(user))
+
+    def _audit(db, result: dict, facts: dict) -> None:
+        charted, again = facts.get("charted") or [], facts.get("reactivated") or []
+        log_audit_event(
+            correlation_id=f"opd-allergy-review-{visit_id}",
+            event_category="clinical_record",
+            action_type="opd_allergy_review_recorded",
+            outcome="success",
+            db=db,
+            summary_message=(
+                f"Allergy review on OPD visit {visit_id}: {facts.get('status')}"
+                + (f"; charted {', '.join(charted)}" if charted else "")
+                + (f"; made active again {', '.join(again)}" if again else "")),
+            actor_user_id=user.get("id"),
+            actor_role=user.get("role"),
+            patient_id=result.get("patient_id"),
+            target_type="patient_allergy_assessment",
+            target_id=str(facts.get("assessment_id")),
+            request_path=request.url.path,
+            http_method=request.method,
+            ip_address=request.client.host if request.client else None,
+            metadata={"visit_id": visit_id, **facts, "written": "in_transaction"},
+        )
+
+    try:
+        return record_allergy_review(
+            visit_id,
+            status=data.status,
+            substances=data.substances,
+            reason=data.reason,
+            note=data.note,
+            actor_id=user.get("id") or "",
+            on_done=_audit,
         )
     except ConsultationError as err:
         raise _consultation_http_error(err)

@@ -1,0 +1,195 @@
+/* BedPicker.css: Orb "Quiet Clinical" (flat).
+ *
+ * The admission form's bed picker (adt-5). It sits inside the admission
+ * modal, so it reuses that sheet's inputs and buttons (.admit-input,
+ * .admit-btn) and adds only the bed list and its notes.
+ *
+ *  - No `opacity` for state anywhere. A bed that cannot be chosen says so in
+ *    words and reads in the secondary text token.
+ *  - Status colour is a border on an ordinary surface, never a fill behind
+ *    text, so every word stays in the body text tokens. The server's tone
+ *    picks the border; an unknown tone is drawn neutral.
+ *  - Tap targets are at least 24px, and 44px under `pointer: coarse`.
+ */
+
+.bed-picker {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.bed-picker__legend {
+  padding: 0;
+  margin-bottom: 4px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.bed-picker__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bed-picker__label {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.bed-picker__typed {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.bed-picker__typed .bed-picker__note {
+  grid-column: 1 / -1;
+}
+
+.bed-picker__note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-info);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.bed-picker__note--warn {
+  border-left-color: var(--status-warn);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bed-picker__words {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.bed-picker__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.bed-picker__check input {
+  width: 18px;
+  height: 18px;
+}
+
+.bed-picker__beds {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.bed-picker__bed {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.bed-picker__bed--occupied { border-left-color: var(--status-info); }
+.bed-picker__bed--attention { border-left-color: var(--status-warn); }
+.bed-picker__bed--ready { border-left-color: var(--status-ok); }
+.bed-picker__bed--progress { border-left-color: var(--status-warn); border-left-style: dashed; }
+.bed-picker__bed--held { border-left-color: var(--accent-deep); }
+.bed-picker__bed--off { border-left-color: var(--text-muted); border-left-style: dotted; }
+
+.bed-picker__bed--on {
+  border-color: var(--accent-deep);
+  box-shadow: inset 0 0 0 1px var(--accent-deep);
+}
+
+.bed-picker__bed-pick,
+label.bed-picker__bed {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  row-gap: 2px;
+  align-items: center;
+  min-height: 24px;
+  cursor: pointer;
+}
+
+.bed-picker__bed--closed .bed-picker__bed-pick {
+  cursor: not-allowed;
+}
+
+.bed-picker__bed-pick input,
+label.bed-picker__bed input {
+  grid-row: span 2;
+  width: 18px;
+  height: 18px;
+}
+
+.bed-picker__bed-title {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.bed-picker__bed-status {
+  font-size: var(--text-xs, 0.75rem);
+  color: var(--text-secondary);
+}
+
+.bed-picker__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.bed-picker__chip {
+  padding: 1px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs, 0.75rem);
+  color: var(--text-secondary);
+}
+
+.bed-picker__extra {
+  align-self: flex-start;
+  min-height: 24px;
+  font-size: var(--text-xs, 0.75rem);
+}
+
+.bed-picker__refusal {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-danger);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+@media (pointer: coarse) {
+  .bed-picker__bed-pick,
+  label.bed-picker__bed,
+  .bed-picker__check,
+  .bed-picker__extra {
+    min-height: 44px;
+  }
+}

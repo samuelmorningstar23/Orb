@@ -14,9 +14,10 @@ is the ONLY route the OPD scope arm opens (tests/test_opd_scope_drift.py), so
 what this function returns is everything a self-registered visit can reach.
 
 Identity is deliberately narrow. The date of birth is the discharge-link second
-factor (discharge_access_service), and in this wave nothing yet checks the
-patient's identity before a clinician attaches a visit to an existing record
-(ruling OPD-S1 builds that in opd-4 and opd-6a). So the record says whether a
+factor (discharge_access_service). Since opd-6a (W5-A) a visit is attached
+to an existing record only after the stated-identifier check (ruling OPD-S1,
+frontdesk_routes.create_opd_visit), which answers match or no match and never
+shows the stored date of birth either. So the record says whether a
 date of birth is on file and never what it is; phone, address and next of kin
 are not here either. The registration record (opd-4) carries demographics
 under its own scope.
@@ -30,7 +31,11 @@ Rules this module keeps (tests/test_opd_no_scoring.py enforces the first):
     permissions.require_patient_access(..., opd_arm=True), or for a
     visit-addressed consultation write by the route's department check,
     before this runs. Its only writes are the consultation note, its addenda
-    and, at signing, the problem-list rows the doctor ticked (opd-10).
+    and, at signing, the problem-list rows the doctor ticked (opd-10); and
+    the allergy review with the allergies it charts (opd-10a). The review
+    also needs its visit inside the OPD scope window (_require_current_visit),
+    and visit-addressed answers carry a review only as visit_review_summary
+    gives it, so an old visit id never reads the allergy list.
 """
 from __future__ import annotations
 
@@ -46,9 +51,13 @@ __all__ = [
     "RECORD_RESULT_LIMIT",
     "RECORD_VISIT_LIMIT",
     "OPD_VITAL_FIELDS",
+    "ALLERGY_ASSESSMENT_STATUSES",
     "ConsultationError",
     "add_addendum",
     "allergy_review_status",
+    "latest_allergy_assessment",
+    "record_allergy_review",
+    "visit_review_summary",
     "consultation_signed",
     "get_consultation",
     "get_opd_record",
@@ -193,8 +202,11 @@ def get_opd_record(
 
     Allergy status: Orb cannot tell "no known allergies" from "never asked"
     (services/allergy_interlock.py), so an empty list is reported as
-    'none_recorded', never as no known allergies. The allergy review that
-    records 'none known' is opd-10a (ruling OPD-S7).
+    'none_recorded', never as no known allergies. What the patient said when
+    last asked is `allergy_assessment` (opd-10a, ruling OPD-S7): the latest
+    allergy review, {status, assessed_by_name, assessed_at, ...}, or None
+    when nobody has recorded one ("Allergies not yet asked"). A review never
+    changes `allergies`, which is what the interlocks screen.
 
     Consultations: the signed OPD consultations of every clinic (OPD-N2
     extent ii), newest first, as summaries: clinic, doctor, date, diagnoses,
@@ -220,6 +232,7 @@ def get_opd_record(
             "results": _opd_results(db, patient_id),
             "consultations": [],
             "consultations_available": False,
+            "allergy_assessment": latest_allergy_assessment(db, patient_id),
         }
         if _table_exists(db, "opd_consultations"):
             record["consultations"] = _signed_summaries(db, patient_id)
@@ -248,13 +261,14 @@ def get_opd_record(
 # signing, a validated diagnosis the doctor ticked is added to the problem
 # list.
 #
-# SIGNING NEEDS AN ALLERGY REVIEW (ruling OPD-S7, strictest option, applied).
-# Until opd-10a records 'no known allergies' and 'unable to obtain' as an
-# assessment, the only review Orb can see is an allergy charted on the
-# patient. So a note is signed only when the patient has at least one active
-# charted allergy; otherwise signing is refused with 'allergy_review_required'
-# and the visit can still be completed with a reason (ruling OPD-N8). This is
-# listed for Samuel with the other safety defaults.
+# SIGNING NEEDS AN ALLERGY REVIEW (ruling OPD-S7, option a, applied). The
+# consulting doctor records one (record_allergy_review, opd-10a): the
+# allergies the patient has, 'no known allergies', or 'unable to obtain' with
+# a reason. A note is signed only after a review on this visit or a still
+# valid earlier one (allergy_review_status says which); an allergy merely
+# charted elsewhere, with no review, does not count. Otherwise signing is
+# refused with 'allergy_review_required' and the visit can still be completed
+# with a reason (ruling OPD-N8). Listed for Samuel with the safety defaults.
 #
 # Writes here are visit-scoped and refused once the patient has an active
 # admission anywhere (the inpatient chart owns them then). Every function opens
@@ -464,21 +478,341 @@ def _writable_visit(db, visit_id: str):
     return visit
 
 
-def allergy_review_status(db, patient_id: str) -> dict:
-    """Whether a note for this patient may be signed (ruling OPD-S7).
+def _require_current_visit(visit) -> None:
+    """Refuse an allergy review on a visit outside the OPD scope window.
 
-    'recorded': at least one active charted allergy, so the allergies were
-    asked and charted; signing is allowed. 'not_reviewed': nothing charted,
-    which Orb cannot tell apart from never asked; signing is refused until
-    opd-10a records 'no known allergies' or 'unable to obtain'.
-    """
-    charted = db.execute(
-        "SELECT COUNT(*) AS n FROM patient_allergies WHERE patient_id = ? AND status = 'active'",
+    The window is permissions.opd_scope_window (the one the OPD arm uses,
+    read at call time from ORB_OPD_SCOPE_DAYS, hospital calendar, today
+    included). A visit dated after today is a booking and opens nothing until
+    its day, the arm's strict edge. A missing date is refused (fail closed).
+    The refusal names no patient data: the visit is already listed to its
+    clinic."""
+    from permissions import opd_scope_window
+
+    first_day, last_day = opd_scope_window()
+    day = str(visit["visit_date"] or "").strip()[:10]
+    if day and day > last_day:
+        raise ConsultationError(
+            "visit_not_current",
+            "This visit is booked for a later day. Record the allergy review on the day "
+            "of the visit.", status=409)
+    if not day or day < first_day:
+        raise ConsultationError(
+            "visit_not_current",
+            "This visit is too old for an allergy review. Record it on the patient's "
+            "current visit.", status=409)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  The allergy review (opd-10a, W5-A, 6 October 2026; ruling OPD-S7)
+# ═════════════════════════════════════════════════════════════════════════════
+# An empty allergy list means "no known allergies" OR "never asked", and the
+# interlocks cannot tell them apart (services/allergy_interlock.py). The
+# review says which, in patient_allergy_assessments (migration 63,
+# append-only):
+#   * 'allergies_recorded': the allergies the patient names are charted
+#     through clinical_records_service.record_allergies_on (source 'opd'), the
+#     same writer the admission lane uses, in the review's own transaction. A
+#     named allergy already on the chart but marked inactive or resolved is
+#     made active again: the patient has just said they have it, and the
+#     interlock must see it. Naming nothing new confirms what is charted.
+#   * 'none_known': nothing is charted. Refused while any allergy is active on
+#     the chart (a review cannot say "none" over a charted allergy).
+#   * 'unable_to_obtain': nothing is charted; a reason is required.
+# "nkda", "nil" and the like typed as an allergen are never charted
+# (clinical_records_service.allergy_entries drops them).
+#
+# The review never changes HOW the interlock screens (allergy_interlock and
+# drug_safety_service are untouched, so held ruling R011 is untouched). A
+# 'none_known' row writes no allergy row at all.
+#
+# Scope: the review is addressed by a visit id, and visit ids of any date
+# reach the caller's clinic. So a review is recorded only on a visit inside
+# the OPD scope window (_require_current_visit), which makes it exactly as
+# wide as the OPD arm, and every visit-addressed answer (the consultation
+# read, the signing refusal, the review's own answer) carries a review as
+# visit_review_summary gives it: status, label and time, never an allergen,
+# note, reason, clinic or clinician. The allergy list and the full review are
+# read from the record view (get_opd_record), behind the arm.
+
+#: The three things an allergy review can record.
+ALLERGY_ASSESSMENT_STATUSES = ("none_known", "allergies_recorded", "unable_to_obtain")
+
+_ASSESSMENT_LABELS = {
+    "none_known": "No known allergies",
+    "allergies_recorded": "Allergies recorded",
+    "unable_to_obtain": "Allergies could not be obtained",
+}
+_MAX_REVIEW_SUBSTANCES = 30
+_MAX_SUBSTANCE_TEXT = 120
+_MAX_REVIEW_REASON = 500
+_MIN_REVIEW_REASON = 3
+_MAX_REVIEW_NOTE = 1000
+
+
+def _assessment_summary(db, row) -> Optional[dict]:
+    if row is None:
+        return None
+    names = _user_names(db, [row["assessed_by"]])
+    substances = _loads(row["substances_json"], [])
+    return {
+        "id": int(row["id"]),
+        "status": row["status"],
+        "status_label": _ASSESSMENT_LABELS.get(row["status"], row["status"]),
+        "substances": [s for s in substances if isinstance(s, str)],
+        "reason": row["reason"],
+        "note": row["note"],
+        "opd_visit_id": row["opd_visit_id"],
+        "department": row["department"],
+        "assessed_by": row["assessed_by"],
+        "assessed_by_name": names.get(row["assessed_by"]),
+        "assessed_at": row["assessed_at"],
+    }
+
+
+def visit_review_summary(assessment: Optional[dict]) -> Optional[dict]:
+    """A review as a VISIT-addressed answer may carry it: what it said and
+    when, never what it names or who wrote it where.
+
+    A visit id reaches every visit of the caller's clinic, of any date (the
+    front desk queue takes a visit_date), while the OPD record view, the one
+    OPD read of the allergy list and of the full review, is limited by the OPD
+    arm (ORB_OPD_SCOPE_DAYS, no active admission; permissions.
+    patient_in_opd_scope). permissions.enforce_patient_scope treats a
+    surrogate id as the same disclosure as a patient_id path. So the
+    consultation read, the signing refusal and the review's own answer carry
+    {status, status_label, assessed_at} only: no allergen, note, reason,
+    clinic, visit id or clinician (review round 1, 9 October 2026)."""
+    if assessment is None:
+        return None
+    return {
+        "status": assessment["status"],
+        "status_label": assessment["status_label"],
+        "assessed_at": assessment["assessed_at"],
+    }
+
+
+def latest_allergy_assessment(db, patient_id: str, *,
+                              visit_id: Optional[str] = None) -> Optional[dict]:
+    """The patient's most recent allergy review (or this visit's, when
+    `visit_id` is given), or None when there is none. Newest by the time it
+    was recorded, then by id, the same tie-break every 'latest' read keeps."""
+    if not _table_exists(db, "patient_allergy_assessments"):
+        return None
+    if visit_id is None:
+        row = db.execute(
+            "SELECT * FROM patient_allergy_assessments WHERE patient_id = ? "
+            "ORDER BY assessed_at DESC, id DESC LIMIT 1",
+            (patient_id,),
+        ).fetchone()
+    else:
+        row = db.execute(
+            "SELECT * FROM patient_allergy_assessments WHERE patient_id = ? "
+            "AND opd_visit_id = ? ORDER BY assessed_at DESC, id DESC LIMIT 1",
+            (patient_id, visit_id),
+        ).fetchone()
+    return _assessment_summary(db, row)
+
+
+def _active_allergy_substances(db, patient_id: str) -> list[str]:
+    return [r["substance"] for r in db.execute(
+        "SELECT substance FROM patient_allergies WHERE patient_id = ? AND status = 'active' "
+        "ORDER BY substance",
         (patient_id,),
-    ).fetchone()["n"]
-    if charted:
-        return {"status": "recorded", "can_sign": True, "charted_count": int(charted)}
-    return {"status": "not_reviewed", "can_sign": False, "charted_count": 0}
+    ).fetchall()]
+
+
+def allergy_review_status(db, patient_id: str, visit_id: Optional[str] = None) -> dict:
+    """Whether a note for this patient may be signed (ruling OPD-S7, option a).
+
+    The deciding review is the latest one recorded on THIS visit, or failing
+    that the patient's latest review from any visit. It lets the note be
+    signed when:
+      * it was recorded on this visit, whatever it says ('unable to obtain'
+        included: the doctor asked today and wrote down why there is no
+        answer); or
+      * it is an earlier 'allergies_recorded' or 'none_known'. An earlier
+        'unable to obtain' never does: someone must ask again.
+    Either way a 'none_known' review stops counting once an allergy is active
+    on the chart: the chart now contradicts it, so the doctor reviews again.
+    An allergy charted without any review does not count.
+
+    Returns {status, can_sign, charted_count, reviewed_this_visit, basis,
+    assessment}: `status` is the deciding review's status, or 'not_reviewed';
+    `basis` is 'this_visit', 'earlier_review' or None; `assessment` is the
+    deciding review as visit_review_summary gives it (status, label and time,
+    nothing it names), or None. Every caller answers a visit-addressed
+    request, so the full review stays on the record view.
+    """
+    charted = len(_active_allergy_substances(db, patient_id))
+    this_visit = (latest_allergy_assessment(db, patient_id, visit_id=visit_id)
+                  if visit_id else None)
+    deciding = this_visit or latest_allergy_assessment(db, patient_id)
+    basis = None
+    if deciding is not None:
+        contradicted = deciding["status"] == "none_known" and charted > 0
+        if this_visit is not None and not contradicted:
+            basis = "this_visit"
+        elif (this_visit is None and not contradicted
+              and deciding["status"] in ("allergies_recorded", "none_known")):
+            basis = "earlier_review"
+    return {
+        "status": deciding["status"] if deciding else "not_reviewed",
+        "can_sign": basis is not None,
+        "charted_count": charted,
+        "reviewed_this_visit": this_visit is not None,
+        "basis": basis,
+        "assessment": visit_review_summary(deciding),
+    }
+
+
+def _review_substances(raw: Any) -> list[str]:
+    """The allergens a review names: free text through allergy_entries, so
+    'penicillin; sulfa' is two, and 'nkda' or 'nil' is none."""
+    from services.clinical_records_service import allergy_entries
+
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list) or not all(isinstance(s, str) for s in raw):
+        raise ConsultationError("bad_substances", "List the allergies as text")
+    entries = allergy_entries(raw)
+    if len(entries) > _MAX_REVIEW_SUBSTANCES:
+        raise ConsultationError("bad_substances",
+                                f"At most {_MAX_REVIEW_SUBSTANCES} allergies in one review")
+    for entry in entries:
+        if len(entry) > _MAX_SUBSTANCE_TEXT:
+            raise ConsultationError(
+                "bad_substances",
+                f"Keep each allergy under {_MAX_SUBSTANCE_TEXT} characters")
+    return entries
+
+
+def record_allergy_review(
+    visit_id: str,
+    *,
+    status: Any,
+    substances: Any = None,
+    reason: Any = None,
+    note: Any = None,
+    actor_id: str,
+    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
+) -> dict:
+    """Record the consulting doctor's allergy review on an OPD visit.
+
+    One immediate transaction: the allergies named are charted (and any of
+    them on the chart as inactive made active again), the review row is
+    written, and `on_done(db, result, facts)` writes the route's audit row
+    before the commit. Refused: an unknown status (422 'bad_allergy_status');
+    'none_known' or 'unable_to_obtain' with allergies named (422
+    'substances_not_allowed'); 'unable_to_obtain' with no reason (422
+    'reason_required'); 'allergies_recorded' naming nothing when nothing is
+    charted (422 'no_allergies_named'); 'none_known' while an allergy is
+    active on the chart (409 'allergies_on_chart'); a visit outside the OPD
+    scope window, older than ORB_OPD_SCOPE_DAYS or dated in the future (409
+    'visit_not_current', checked before anything on the chart is read); and
+    every refusal of a consultation write (cancelled visit, patient now
+    admitted).
+
+    The window check makes a review exactly as wide as the OPD record view: a
+    review is recorded only on a visit of the caller's clinic (the route's
+    check), not cancelled, with no active admission anywhere, dated within the
+    window, which is the OPD arm itself (permissions.patient_in_opd_scope)
+    for that one visit. An old visit id therefore reads and writes nothing.
+
+    Returns {visit_id, patient_id, assessment, charted, reactivated,
+    allergy_review}. `assessment` is visit_review_summary's shape; the list of
+    allergies on the chart is read from the record view, never from here.
+    """
+    from services.clinical_records_service import record_allergies_on
+
+    word = str(status or "").strip().lower()
+    if word not in ALLERGY_ASSESSMENT_STATUSES:
+        raise ConsultationError(
+            "bad_allergy_status",
+            "Choose what the patient said: allergies recorded, no known allergies, or "
+            "unable to obtain")
+    named = _review_substances(substances)
+    why = _clean_text(reason, _MAX_REVIEW_REASON)
+    remark = _clean_text(note, _MAX_REVIEW_NOTE)
+    if word == "none_known" and named:
+        raise ConsultationError(
+            "substances_not_allowed",
+            "You named an allergy, so record 'allergies recorded', not 'no known allergies'")
+    if word == "unable_to_obtain":
+        if named:
+            raise ConsultationError(
+                "substances_not_allowed",
+                "Chart the allergies you were told about with 'allergies recorded'")
+        if not why or len(why) < _MIN_REVIEW_REASON:
+            raise ConsultationError(
+                "reason_required",
+                "Say why the allergies could not be obtained, for example the patient "
+                "cannot speak and nobody with them knows")
+
+    with db_session(immediate=True) as db:
+        visit = _writable_visit(db, visit_id)
+        _require_current_visit(visit)
+        if not _table_exists(db, "patient_allergy_assessments"):
+            raise ConsultationError(
+                "allergy_review_unavailable",
+                "Allergy reviews cannot be recorded on this database yet", status=503)
+        pid = visit["patient_id"]
+        active = _active_allergy_substances(db, pid)
+        if word == "none_known" and active:
+            raise ConsultationError(
+                "allergies_on_chart",
+                "This patient has allergies on the chart: " + ", ".join(active)
+                + ". Confirm them with 'allergies recorded' instead.",
+                status=409, charted=active)
+        if word == "allergies_recorded" and not named and not active:
+            raise ConsultationError(
+                "no_allergies_named",
+                "Name at least one allergy, or record 'no known allergies'")
+        now = utc_iso_now()
+        charted = record_allergies_on(db, pid, named, source="opd",
+                                      recorded_by=actor_id, recorded_at=now)
+        reactivated: list[str] = []
+        for entry in named:
+            norm = entry.strip().lower()
+            if norm in charted:
+                continue
+            row = db.execute(
+                "SELECT id, status FROM patient_allergies WHERE patient_id = ? AND substance = ?",
+                (pid, norm),
+            ).fetchone()
+            if row is not None and row["status"] != "active":
+                db.execute("UPDATE patient_allergies SET status = 'active' WHERE id = ?",
+                           (row["id"],))
+                reactivated.append(norm)
+        on_chart = _active_allergy_substances(db, pid)
+        cur = db.execute(
+            "INSERT INTO patient_allergy_assessments (patient_id, status, substances_json, "
+            "reason, note, opd_visit_id, admission_id, department, source, assessed_by, "
+            "assessed_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, 'opd', ?, ?)",
+            (pid, word,
+             json.dumps(on_chart) if word == "allergies_recorded" else None,
+             why if word == "unable_to_obtain" else None,
+             remark, visit_id, visit["department"], actor_id, now),
+        )
+        assessment = _assessment_summary(db, db.execute(
+            "SELECT * FROM patient_allergy_assessments WHERE id = ?", (cur.lastrowid,)
+        ).fetchone())
+        result = {
+            "visit_id": visit_id,
+            "patient_id": pid,
+            "assessment": visit_review_summary(assessment),
+            "charted": charted,
+            "reactivated": reactivated,
+            "allergy_review": allergy_review_status(db, pid, visit_id),
+        }
+        if on_done is not None:
+            on_done(db, result, {"status": word, "charted": charted,
+                                 "reactivated": reactivated,
+                                 "on_chart_count": len(on_chart),
+                                 "assessment_id": assessment["id"] if assessment else None})
+        return result
 
 
 def _serialize(db, row, *, with_addenda: bool = True) -> Optional[dict]:
@@ -541,7 +875,7 @@ def get_consultation(visit_id: str) -> dict:
             "patient_id": visit["patient_id"],
             "visit_status": visit["status"],
             "consultation": note,
-            "allergy_review": allergy_review_status(db, visit["patient_id"]),
+            "allergy_review": allergy_review_status(db, visit["patient_id"], visit_id),
             "patient_admitted": _active_admission(db, visit["patient_id"]),
         }
 
@@ -687,12 +1021,12 @@ def sign_consultation(
                                  ("chief_complaint", "history", "examination", "plan"))):
             raise ConsultationError("empty_note",
                                     "Write the findings, a diagnosis or a plan before signing")
-        review = allergy_review_status(db, visit["patient_id"])
+        review = allergy_review_status(db, visit["patient_id"], visit_id)
         if not review["can_sign"]:
             raise ConsultationError(
                 "allergy_review_required",
-                "Record the patient's allergies before signing. Orb cannot yet record "
-                "'no known allergies'; until it can, finish the visit with a reason.",
+                "Record the allergy review before signing: the patient's allergies, no "
+                "known allergies, or why they could not be asked.",
                 status=409, allergy_review=review)
         now = utc_iso_now()
         db.execute(
@@ -706,7 +1040,8 @@ def sign_consultation(
         if on_done is not None:
             on_done(db, note, {"problem_ids": problems,
                                "diagnosis_count": len(diagnoses),
-                               "allergy_review": review["status"]})
+                               "allergy_review": review["status"],
+                               "allergy_review_basis": review["basis"]})
         return note
 
 

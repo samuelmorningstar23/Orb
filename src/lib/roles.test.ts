@@ -38,6 +38,7 @@ import {
   LAB_RECEIVE,
   LAB_RESULT,
   MEDICATION_PRESCRIBE,
+  MEDICATION_VERIFY,
   OPD_CONSULT,
   OUTCOME_RECORD,
   PATIENT_READ_ALL,
@@ -103,7 +104,7 @@ const SERVER_GRANTS: Record<string, Permission[]> = {
           ADT_READ, ADT_BED, ADT_TRANSFER, ADT_PRESENCE, BED_MASTER,
           PHARMACY_STORE_READ, PHARMACY_STORE_APPROVE,
           LAB_READ, LAB_INTERFACE],
-  pharmacist: [PHARMACY_STORE_READ, PHARMACY_STORE_WRITE, PHARMACY_STORE_NDPS],
+  pharmacist: [PHARMACY_STORE_READ, PHARMACY_STORE_WRITE, PHARMACY_STORE_NDPS, MEDICATION_VERIFY],
   patient: [],
   cashier: [],
   receptionist: [REGISTRATION_READ, REGISTRATION_WRITE],
@@ -257,5 +258,25 @@ describe('the HIS safety rows hold', () => {
       expect(hasPermission(LAB_AUTHORISE, role), role).toBe(role === 'pathologist')
       expect(hasPermission(LAB_MASTER, role), role).toBe(role === 'pathologist')
     }
+  })
+
+  // Ruling MO-R4 (a), W5-E: the check of a medication order is the
+  // pharmacist's alone. Not the administrator (who still verifies on the Helix
+  // screens through helix.write, unchanged), and not a prescriber or a nurse.
+  it('only the pharmacist verifies a medication order', () => {
+    for (const role of Object.keys(SERVER_GRANTS)) {
+      expect(hasPermission(MEDICATION_VERIFY, role), role).toBe(role === 'pharmacist')
+    }
+  })
+
+  it('medication.verify is spelled as the server spells it, granted to the pharmacist there', () => {
+    const permissions = serverSource('permissions.py')
+    expect(permissions).toMatch(/^MEDICATION_VERIFY = "medication\.verify"/m)
+    const pharmacist = permissions.match(/^ {4}"pharmacist": \{([\s\S]*?)^ {4}\},/m)
+    expect(pharmacist, 'server/permissions.py has no pharmacist grant block').toBeTruthy()
+    expect(pharmacist![1]).toMatch(/^\s+MEDICATION_VERIFY,/m)
+    const admin = permissions.match(/^ {4}"admin": \{([\s\S]*?)^ {4}\},/m)
+    expect(admin, 'server/permissions.py has no admin grant block').toBeTruthy()
+    expect(admin![1]).not.toMatch(/MEDICATION_VERIFY/)
   })
 })

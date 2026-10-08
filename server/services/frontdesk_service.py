@@ -73,6 +73,7 @@ CONVENTIONS
 """
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import uuid
@@ -712,6 +713,7 @@ def register_opd_visit(
     self_registered: bool = False,
     on_registered: Optional[Callable[[Any, dict], None]] = None,
     on_replay: Optional[Callable[[Any, dict, dict], None]] = None,
+    identity_check: Optional[dict] = None,
 ) -> dict:
     """Register an outpatient visit and put it in the queue.
 
@@ -740,6 +742,15 @@ def register_opd_visit(
         {"replay": True}, so the route audits the disclosure exactly as the
         flag-off path audits every call. Without it, a replay returns the
         earlier visit as it always did.
+
+    One keyword used only with the 'registration' feature on (opd-6a):
+      * `identity_check` is the passing stated-identifier check the route ran
+        before this transaction (registration_service.check_identity, ruling
+        OPD-S1): {result, checked, checked_at, checked_by, purpose, method},
+        never a stated or stored value. It is written to migration 50's
+        opd_visits.identity_check_json on a NEW visit only (a replay keeps the
+        first call's). The API leaves that column out of every visit it
+        returns, so the visit shape is unchanged.
     """
     ensure_frontdesk_schema()
     patient_id = (patient_id or "").strip()
@@ -833,6 +844,13 @@ def register_opd_visit(
             db.execute(
                 "UPDATE opd_visits SET scope_self_registered = 1 WHERE id = ?",
                 (visit_id,),
+            )
+        if identity_check is not None:
+            # Migration 50's column; written only with the registration
+            # feature on (opd-6a), in the visit's own transaction.
+            db.execute(
+                "UPDATE opd_visits SET identity_check_json = ? WHERE id = ?",
+                (json.dumps(identity_check, sort_keys=True), visit_id),
             )
         row = db.execute("SELECT * FROM opd_visits WHERE id = ?", (visit_id,)).fetchone()
         visit = _serialize_visit(db, row)

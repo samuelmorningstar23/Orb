@@ -1,0 +1,355 @@
+/* EndStay.css: Orb "Quiet Clinical" (flat).
+ *
+ * The End of stay screen and the Reopen a stay screen (adt-9). Both sit in
+ * a chart modal (VigilPanel) or inline under the bed board (a tile action),
+ * so neither draws its own overlay or surface shadow: the container does.
+ *
+ *  - No `opacity` for state anywhere. A disabled button is a flat repaint in
+ *    the disabled tokens; quiet text is a quieter token.
+ *  - Status colour is a border on an ordinary surface, never a fill behind
+ *    text, so every word stays in the body text tokens. Small status text
+ *    uses the --status-x-text tokens.
+ *  - Tap targets are at least 24px, and 44px under `pointer: coarse`.
+ */
+
+.es {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+  min-width: 0;
+}
+
+.es__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.es__lead,
+.es__note {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+/* The patient read back: name, MRN, ward and bed. */
+
+.es__readback {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.es__readback-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.es__term {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.es__value {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* Choices, fields */
+
+.es__fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-width: 0;
+}
+
+.es__legend,
+.es__label {
+  padding: 0;
+  margin-bottom: 4px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.es__choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 6px;
+}
+
+.es__choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.es__choice--on {
+  border-color: var(--accent-deep);
+  box-shadow: inset 0 0 0 1px var(--accent-deep);
+}
+
+.es__choice-input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent-deep);
+}
+
+.es__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.es__input,
+.es__textarea {
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+}
+
+.es__textarea {
+  min-height: 64px;
+  resize: vertical;
+}
+
+.es__input--mrn {
+  max-width: 260px;
+  font-family: var(--font-mono, inherit);
+  letter-spacing: 0.02em;
+}
+
+.es__input:focus-visible,
+.es__textarea:focus-visible,
+.es__choice-input:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 1px;
+}
+
+.es__input[aria-invalid='true'] {
+  border-color: var(--status-danger);
+}
+
+.es__hint {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.es__field-error {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--status-danger-text);
+}
+
+.es__field-ok {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--status-ok-text);
+}
+
+/* Boxes: what is still open, what will be cancelled, refusals, results. */
+
+.es__box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-info);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.es__box--warn {
+  border-left-color: var(--status-warn);
+}
+
+.es__box--error {
+  border-left-color: var(--status-danger);
+}
+
+.es__box--ok {
+  border-left-color: var(--status-ok);
+}
+
+.es__box-title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.es__box-text {
+  margin: 0;
+}
+
+.es__error-text {
+  margin: 0;
+  color: var(--status-danger-text);
+}
+
+.es__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.es__list-item {
+  color: var(--text-primary);
+}
+
+.es__escalation {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.es__escalation-line {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.es__escalation-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.es__escalation-row .es__input {
+  flex: 1 1 220px;
+}
+
+/* Buttons */
+
+.es__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.es__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 7px 16px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.es__btn:hover {
+  background: var(--bg-glass-hover);
+}
+
+.es__btn--primary {
+  border-color: transparent;
+  background: var(--accent-deep);
+  color: var(--btn-primary-text);
+}
+
+.es__btn--primary:hover {
+  background: var(--btn-gradient-hover);
+}
+
+.es__btn:disabled,
+.es__btn--primary:disabled {
+  background: var(--btn-disabled-bg);
+  color: var(--btn-disabled-text);
+  border-color: var(--btn-disabled-border);
+  cursor: not-allowed;
+}
+
+.es__btn:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+.es__btn--small {
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: var(--text-xs);
+}
+
+/* The chart's discharge screen, Beds and admissions on: 'How the stay ended',
+   and for a DAMA the reason and the MRN typed back. It sits inside
+   VigilPanel's discharge modal and uses .es__input and .es__textarea above,
+   so its select and fields have the same targets as End of stay. */
+
+.es-discharge {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.es-discharge__label {
+  font-size: var(--text-sm);
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.es-discharge__label--next {
+  margin-top: 6px;
+  font-weight: 600;
+}
+
+@media (pointer: coarse) {
+  .es__btn,
+  .es__btn--small,
+  .es__choice,
+  .es__input,
+  .es__textarea {
+    min-height: 44px;
+  }
+}

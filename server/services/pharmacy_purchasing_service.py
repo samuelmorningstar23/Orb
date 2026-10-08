@@ -44,11 +44,47 @@ the approve tier.
 NUMBERS come from the pharmacy's own series, PHPO (GRN-R11). Migration 54
 seeds it unconfigured; the order carries number_series_configured so a screen
 can say the number is a placeholder until the site sets its series up.
+
+GOODS RECEIPTS (grn-8) are the second half of this module: a DRAFT is what
+arrived, checked line by line; POST puts it on the shelf; a draft may be
+cancelled with a reason. Post is ONE immediate transaction: procurement's
+pharmacy post core (receipt posted, order quantities and status derived),
+pharmacy_stock_service.receive_grn_lines (lots opened or merged and their
+receipt movements, into the receipt's store, status 'available') and the
+'security' audit row commit together or not at all. No inventory_items or
+stock_movements row is ever written for a drug. The PHGRN number is drawn
+after the commit. What a receipt line needs, at draft and again at post:
+  * the order is still with the vendor with packs to come (issued or
+    partially received), and the line's order line is neither cancelled nor
+    closed short. A draft whose order was cancelled or closed, or whose order
+    line was closed, after it was made is refused at post (409) and puts
+    nothing on the shelf; the draft can then only be cancelled;
+  * batch, MRP per pack and expiry are mandatory; the expiry is TYPED TWICE
+    and the two must match (ruling GRN-RS6 option (b), held for Samuel);
+  * expiry and minimum shelf life are judged on the HOSPITAL's date
+    (pharmacy_stock_service.site_today), never the server's UTC date: an
+    expired batch is refused outright; one with fewer than
+    ORB_PHARMACY_MIN_SHELF_LIFE_DAYS (90) left posts only when a person with
+    the approve tier, who did not receive it, accepts it with a reason
+    (GRN-R16);
+  * a batch already on file with another expiry, or in the store at another
+    MRP, is refused;
+  * the drug passes the purchase-order checks again (classified, confirmed,
+    pack size, NDPS into the vault and nothing else there), and the vendor's
+    drug licence is still valid (GRN-R10);
+  * nothing is over-received: every receipt line, and every draft posted
+    later against the same order line, stays within what is outstanding;
+  * free units come in at no cost and are spread into the lot's unit cost,
+    which is the line's landed total (after discount, with GST, which a
+    hospital cannot claim back) over paid plus free units (GRN-R12, lot cost);
+  * a rate per pack above the MRP, and an invoice total that differs from
+    the receipt by more than a rupee, are warnings, never silent.
 """
 from __future__ import annotations
 
 import logging
 import uuid
+from datetime import date
 from typing import Any, Mapping, Optional, Sequence
 
 from database import db_session
@@ -710,3 +746,638 @@ def options() -> dict:
     return {"vendors": vendors, "stores": stores, "drugs": drugs,
             "number_series_configured": configured,
             "licence_warn_days": int(config.PHARMACY_LICENCE_WARN_DAYS)}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Goods receipts (grn-8)
+# ═════════════════════════════════════════════════════════════════════════════
+
+GRN_NUMBER_SERIES = "PHGRN"
+GRN_STATUSES = ("draft", "posted", "cancelled", "returned")
+
+#: An invoice total within this many paise of the receipt's own total is a
+#: rounding difference, not a mismatch (invoices round to the rupee).
+INVOICE_TOLERANCE_PAISE = 100
+
+_TEXT_LIMIT = 60
+
+
+def _min_shelf_life_days() -> int:
+    import config
+
+    return max(0, int(getattr(config, "PHARMACY_MIN_SHELF_LIFE_DAYS", 90) or 0))
+
+
+def _receipt_text(value: Any, name: str, *, required: bool, limit: int = _TEXT_LIMIT) -> Optional[str]:
+    if value is not None and not isinstance(value, str):
+        raise PurchasingError(f"{name} must be text", code="bad_value")
+    text = " ".join((value or "").split())
+    if not text:
+        if required:
+            raise PurchasingError(f"enter the {name}", code="missing_field", detail={"field": name})
+        return None
+    if len(text) > limit:
+        raise PurchasingError(f"{name} is longer than {limit} characters", code="bad_value")
+    return text
+
+
+def _receipt_date(value: Any, name: str, *, required: bool) -> Optional[str]:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        if required:
+            raise PurchasingError(f"enter the {name}", code="missing_field", detail={"field": name})
+        return None
+    if not isinstance(value, str):
+        raise PurchasingError(f"{name} is a date (YYYY-MM-DD)", code="bad_date")
+    text = value.strip()
+    try:
+        if len(text) != 10:
+            raise ValueError
+        date.fromisoformat(text)
+    except ValueError:
+        raise PurchasingError(f"{name} is a date (YYYY-MM-DD), not {value!r}",
+                              code="bad_date") from None
+    return text
+
+
+def _clean_receipt_lines(raw_lines: Sequence[Any]) -> list[dict]:
+    """Each receipt line as typed: whole packs received, free and rejected,
+    the batch, the expiry typed twice, the MRP per pack and the optional
+    manufacturing date. Shape only; the rules come later."""
+    if not isinstance(raw_lines, (list, tuple)) or not raw_lines:
+        raise PurchasingError("a goods receipt needs at least one line", code="empty_document")
+    if len(raw_lines) > MAX_LINES:
+        raise PurchasingError(f"a goods receipt has at most {MAX_LINES} lines", code="bad_value")
+    out: list[dict] = []
+    for n, raw in enumerate(raw_lines, start=1):
+        if not isinstance(raw, Mapping):
+            raise PurchasingError("each line is an object", code="bad_line")
+        po_line_no = _whole(raw.get("po_line_no"), f"line {n} order line", minimum=1)
+        packs = _whole(raw.get("packs", 0) if raw.get("packs") is not None else 0,
+                       f"line {n} packs received", minimum=0, maximum=MAX_PACKS)
+        free = _whole(raw.get("free_packs", 0) if raw.get("free_packs") is not None else 0,
+                      f"line {n} free packs", minimum=0, maximum=MAX_PACKS)
+        rejected = _whole(raw.get("rejected_packs", 0)
+                          if raw.get("rejected_packs") is not None else 0,
+                          f"line {n} packs rejected", minimum=0, maximum=MAX_PACKS)
+        if packs + free + rejected == 0:
+            raise PurchasingError(f"line {n} receives nothing; leave it off the receipt",
+                                  code="empty_line")
+        if free and not packs:
+            raise PurchasingError(f"line {n}: free packs come with paid packs on the same line",
+                                  code="bad_line")
+        reason = _receipt_text(raw.get("rejection_reason"), f"line {n} rejection reason",
+                               required=bool(rejected), limit=500)
+        line = {"n": n, "po_line_no": po_line_no, "packs": packs, "free_packs": free,
+                "rejected_packs": rejected, "rejection_reason": reason,
+                "batch_no": None, "expiry_date": None, "mrp_pack_paise": None, "mfg_date": None,
+                "unit_rate_paise": None,
+                "remarks": _receipt_text(raw.get("remarks"), f"line {n} remarks",
+                                         required=False, limit=500)}
+        if packs:
+            line["batch_no"] = _receipt_text(raw.get("batch_no"), f"line {n} batch number",
+                                             required=True)
+            expiry = _receipt_date(raw.get("expiry_date"), f"line {n} expiry date",
+                                   required=True)
+            again = _receipt_date(raw.get("expiry_date_confirm"),
+                                  f"line {n} expiry date, typed again", required=True)
+            if expiry != again:
+                raise PurchasingError(
+                    f"line {n}: the two expiry dates do not match ({expiry} and {again}). Check "
+                    "the pack and type the expiry again. Nothing was saved.",
+                    code="expiry_mismatch", detail={"line": n})
+            line["expiry_date"] = expiry
+            mrp = raw.get("mrp_pack_paise")
+            if mrp is None:
+                raise PurchasingError(f"line {n}: enter the MRP printed on the pack",
+                                      code="missing_field", detail={"field": "mrp_pack_paise"})
+            line["mrp_pack_paise"] = _whole(mrp, f"line {n} MRP per pack", minimum=1)
+            line["mfg_date"] = _receipt_date(raw.get("mfg_date"), f"line {n} manufacturing date",
+                                             required=False)
+            if raw.get("unit_rate_paise") is not None:
+                line["unit_rate_paise"] = _whole(raw.get("unit_rate_paise"),
+                                                 f"line {n} rate per pack", minimum=0)
+        out.append(line)
+    return out
+
+
+def _days_left(expiry: Optional[str], today: str) -> Optional[int]:
+    if not expiry:
+        return None
+    return (date.fromisoformat(str(expiry)[:10]) - date.fromisoformat(today)).days
+
+
+def _round_div(numerator: int, denominator: int) -> int:
+    return (numerator + denominator // 2) // denominator
+
+
+def _receipt_line_view(line: dict, *, today: str, min_days: int) -> dict:
+    """A receipt line with its packs, units, landed unit cost and expiry
+    verdicts, for the screen and for the post."""
+    out = dict(line)
+    per_pack = line.get("units_per_pack")
+    packs = int(line.get("accepted_quantity_milli") or 0) // QUANTITY_SCALE
+    free = int(line.get("free_quantity_milli") or 0) // QUANTITY_SCALE
+    rejected = int(line.get("rejected_quantity_milli") or 0) // QUANTITY_SCALE
+    units = (packs + free) * int(per_pack) if per_pack and packs else 0
+    out.update({
+        "packs": packs, "free_packs": free, "rejected_packs": rejected,
+        "units": units, "free_units": free * int(per_pack) if per_pack else 0,
+        "unit_cost_paise": _round_div(int(line.get("total_paise") or 0), units) if units else None,
+    })
+    left = _days_left(line.get("expiry_date"), today) if packs else None
+    out["days_to_expiry"] = left
+    out["expired"] = left is not None and left < 0
+    out["short_dated"] = left is not None and 0 <= left < min_days
+    mrp = line.get("mrp_pack_paise")
+    out["rate_above_mrp"] = bool(packs and mrp is not None
+                                 and int(line.get("unit_rate_paise") or 0) > int(mrp))
+    return out
+
+
+def _receipt_warnings(doc: dict) -> list[dict]:
+    warnings: list[dict] = []
+    for line in doc.get("lines", []):
+        name = line.get("description") or line.get("item_code")
+        if line.get("short_dated"):
+            warnings.append({
+                "code": "short_shelf_life", "line_no": line["line_no"],
+                "message": f"{name} batch {line.get('batch_no')} has {line['days_to_expiry']} "
+                           f"day{'' if line['days_to_expiry'] == 1 else 's'} left, under the "
+                           f"{doc['min_shelf_life_days']} the hospital asks for. Posting it "
+                           "needs a person with approval rights, with a reason."})
+        if line.get("rate_above_mrp"):
+            warnings.append({
+                "code": "rate_above_mrp", "line_no": line["line_no"],
+                "message": f"{name}: the rate per pack is above the MRP printed on the pack."})
+    invoice = doc.get("vendor_invoice_total_paise")
+    if invoice is not None and abs(int(invoice) - int(doc.get("total_paise") or 0)) \
+            > INVOICE_TOLERANCE_PAISE:
+        warnings.append({
+            "code": "invoice_total_mismatch",
+            "difference_paise": int(invoice) - int(doc.get("total_paise") or 0),
+            "message": "The vendor's invoice total differs from this receipt's total. Check "
+                       "the rates, discounts and quantities against the invoice."})
+    return warnings
+
+
+def _receipt_series_configured(conn) -> bool:
+    row = conn.execute("SELECT is_configured FROM document_number_series WHERE series_code = ?",
+                       (GRN_NUMBER_SERIES,)).fetchone()
+    return bool(row and row["is_configured"])
+
+
+def _decorate_receipt(conn, doc: dict, *, today: Optional[str] = None) -> dict:
+    day = today or stock.site_today()
+    min_days = _min_shelf_life_days()
+    doc["min_shelf_life_days"] = min_days
+    doc["lines"] = [_receipt_line_view(line, today=day, min_days=min_days)
+                    for line in doc.get("lines", [])]
+    names = _user_names(conn, {doc.get("received_by"), doc.get("posted_by"),
+                               doc.get("cancelled_by")})
+    doc["received_by_name"] = names.get(doc.get("received_by"))
+    doc["posted_by_name"] = names.get(doc.get("posted_by"))
+    doc["cancelled_by_name"] = names.get(doc.get("cancelled_by"))
+    doc["needs_approval"] = doc.get("status") == "draft" and any(
+        line["short_dated"] for line in doc["lines"])
+    doc["has_expired_line"] = any(line["expired"] for line in doc["lines"])
+    doc["number_series_configured"] = _receipt_series_configured(conn)
+    doc["warnings"] = _receipt_warnings(doc)
+    return doc
+
+
+def _load_receipt(conn, grn_id: int) -> dict:
+    doc = procurement._get_goods_receipt_core(conn, grn_id, domain=DOMAIN)
+    if not doc:
+        raise PurchasingError(f"no goods receipt {grn_id}", code="not_found")
+    return doc
+
+
+def _audit_receipt(conn, actor: Mapping, action: str, *, summary: str, grn_id: int,
+                   metadata: dict, audit_ctx: Optional[Mapping] = None) -> None:
+    """One 'security' row in the receipt's transaction (fail-closed). A goods
+    receipt is hospital business: no patient id, ids as strings."""
+    from services import audit_service
+
+    ctx = audit_ctx or {}
+    audit_service.log_audit_event(
+        correlation_id=str(uuid.uuid4()), event_category="security", action_type=action,
+        outcome="success", db=conn, summary_message=summary,
+        actor_user_id=str(actor.get("id")) if actor.get("id") is not None else None,
+        actor_role=actor.get("role"), target_type="pharmacy_goods_receipt",
+        target_id=str(grn_id), request_path=ctx.get("request_path"),
+        http_method=ctx.get("http_method"), ip_address=ctx.get("ip_address"),
+        metadata=metadata)
+
+
+def get_goods_receipt(grn_id: int) -> Optional[dict]:
+    with db_session() as conn:
+        doc = procurement._get_goods_receipt_core(conn, grn_id, domain=DOMAIN)
+        return _decorate_receipt(conn, doc) if doc else None
+
+
+def list_goods_receipts(*, status: Optional[str] = None, purchase_order_id: Optional[int] = None,
+                        limit: int = 100) -> list[dict]:
+    if status is not None and status not in GRN_STATUSES:
+        raise PurchasingError(f"unknown goods receipt status {status!r}", code="bad_value")
+    return procurement.list_goods_receipts(status=status, purchase_order_id=purchase_order_id,
+                                           limit=max(1, min(int(limit), 500)), domain=DOMAIN)
+
+
+def receivable_orders() -> dict:
+    """Pharmacy orders sent to a vendor that still have packs to come, each
+    line with what is outstanding, for the receipt form. No patient data."""
+    today = stock.site_today()
+    with db_session() as conn:
+        ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM purchase_orders WHERE domain = ? AND status IN "
+            f"({','.join('?' for _ in procurement.RECEIVABLE_PO_STATUSES)}) "
+            "ORDER BY order_date, id LIMIT 200",
+            (DOMAIN, *sorted(procurement.RECEIVABLE_PO_STATUSES))).fetchall()]
+        orders = []
+        for po_id in ids:
+            doc = procurement._get_purchase_order_core(conn, po_id, domain=DOMAIN)
+            lines = []
+            for line in doc.get("lines", []):
+                if line.get("status") in ("cancelled", "short_closed"):
+                    continue
+                outstanding = int(line.get("outstanding_quantity_milli") or 0) // QUANTITY_SCALE
+                if outstanding <= 0:
+                    continue
+                drug = _find_drug(conn, line.get("helix_medication_id") or "")
+                lines.append({
+                    "line_no": line["line_no"], "helix_medication_id": line.get("helix_medication_id"),
+                    "description": line.get("description") or line.get("item_code"),
+                    "uom": line.get("uom"), "units_per_pack": line.get("units_per_pack"),
+                    "ordered_packs": int(line["quantity_milli"]) // QUANTITY_SCALE,
+                    "received_packs": int(line.get("received_quantity_milli") or 0)
+                    // QUANTITY_SCALE,
+                    "outstanding_packs": outstanding,
+                    "unit_rate_paise": line.get("unit_rate_paise"),
+                    "gst_rate_bp": line.get("gst_rate_bp"),
+                    "ndps": bool(drug is not None and _is_ndps(drug))})
+            if not lines:
+                continue
+            vendor = conn.execute("SELECT * FROM vendors WHERE id = ?",
+                                  (doc.get("vendor_id"),)).fetchone()
+            orders.append({
+                "id": doc["id"], "po_number": doc.get("po_number"), "status": doc["status"],
+                "vendor_code": doc.get("vendor_code"), "vendor_name": doc.get("vendor_name"),
+                "store_code": doc.get("store_code"), "store_name": doc.get("store_name"),
+                "order_date": doc.get("order_date"),
+                "vendor_licence": vendor_licence(vendor, today=today) if vendor else None,
+                "lines": lines})
+        configured = _receipt_series_configured(conn)
+    return {"orders": orders, "min_shelf_life_days": _min_shelf_life_days(),
+            "number_series_configured": configured, "today": today}
+
+
+def _order_rate(po_line: Mapping) -> Optional[int]:
+    """The rate per pack a receipt line takes when it names none: the order's
+    NET rate when the order line carries a discount (procurement's receipt
+    core prices a line from its rate alone, so the discount would otherwise
+    be lost from the landed cost), else None for the order's own rate."""
+    if int(po_line.get("discount_paise") or 0) <= 0 or not int(po_line.get("quantity_milli") or 0):
+        return None
+    return _round_div(int(po_line.get("taxable_value_paise") or 0) * QUANTITY_SCALE,
+                      int(po_line["quantity_milli"]))
+
+
+def _receipt_store(conn, po: dict, store_code: Optional[str]):
+    code = store_code
+    if not code:
+        row = conn.execute("SELECT code, pharmacy_kind FROM stores WHERE id = ?",
+                           (po.get("store_id"),)).fetchone()
+        if row is None or row["pharmacy_kind"] is None:
+            raise PurchasingError("this order has no pharmacy store to receive into",
+                                  code="store_required")
+        code = row["code"]
+    return _check_store(conn, code)
+
+
+#: How an order that can take no more goods is named on screen.
+_ORDER_STATE_WORDS = {
+    "draft": "still a draft", "pending_approval": "waiting for approval",
+    "approved": "approved but not yet sent to the vendor", "received": "fully received",
+    "closed": "closed", "cancelled": "cancelled",
+}
+#: Order line statuses that take no more goods, and how they are named.
+_CLOSED_LINE_WORDS = {"cancelled": "cancelled", "short_closed": "closed short"}
+
+
+def _check_order_receivable(po: Mapping, po_line_nos: Sequence[int], *, posting: bool) -> None:
+    """The order must still be with the vendor with packs to come, and every
+    order line the receipt names must still be open, at draft AND at post. An
+    order cancelled or closed, or a line closed, after a draft was made puts
+    nothing on the shelf: procurement's post core leaves cancelled lines out
+    when it derives the order's status, so without this a stale draft would
+    post stock against a cancelled order. Raises; writes nothing."""
+    if po["status"] not in procurement.RECEIVABLE_PO_STATUSES:
+        if not posting:
+            raise PurchasingError(
+                "goods are received only against an order sent to the vendor that still has "
+                "packs to come", code="po_not_receivable")
+        words = _ORDER_STATE_WORDS.get(str(po["status"]), "no longer open")
+        raise PurchasingError(
+            f"order {po.get('po_number') or po['id']} is {words}, so nothing more can be "
+            "received against it. Cancel this receipt. Nothing was changed.",
+            code="po_not_receivable", detail={"order_status": po["status"]})
+    lines = {int(line["line_no"]): line for line in po.get("lines", [])}
+    for po_line_no in po_line_nos:
+        line = lines.get(int(po_line_no)) if po_line_no is not None else None
+        if line is None:
+            continue
+        words = _CLOSED_LINE_WORDS.get(str(line.get("status")))
+        if words:
+            name = line.get("description") or line.get("item_code") or "this drug"
+            raise PurchasingError(
+                f"order line {po_line_no} ({name}) is {words}, so nothing can be received "
+                f"against it.{' Cancel this receipt.' if posting else ''} Nothing was changed.",
+                code="line_closed", detail={"po_line_no": int(po_line_no)})
+
+
+def _check_receipt_lines(conn, lines: list[dict], *, po: dict, store: Mapping, today: str
+                         ) -> tuple[list[dict], bool]:
+    """Every line against its order line, the drug master, the store and the
+    stock already on file. Returns (lines with their order line and drug, any
+    NDPS line). Raises on the first refusal; nothing is written."""
+    po_lines = {int(line["line_no"]): line for line in po.get("lines", [])}
+    asked: dict[int, int] = {}
+    checked: list[dict] = []
+    any_ndps = False
+    #: (drug, batch) -> (expiry, MRP) across this receipt's own lines: one
+    #: batch on two lines must agree with itself as much as with the shelf.
+    batches: dict[tuple[str, str], tuple[Any, Any]] = {}
+    for line in lines:
+        po_line = po_lines.get(line["po_line_no"])
+        if po_line is None:
+            raise PurchasingError(f"the order has no line {line['po_line_no']}", code="bad_line")
+        drug = _orderable_drug(conn, po_line.get("helix_medication_id") or "")
+        _check_drug_for_store(drug, store)
+        any_ndps = any_ndps or _is_ndps(drug)
+        if not po_line.get("units_per_pack"):
+            raise PurchasingError(f"{_drug_name(drug)}: the order line has no pack size, so the "
+                                  "units cannot be counted", code="pack_size_not_configured")
+        asked[line["po_line_no"]] = asked.get(line["po_line_no"], 0) + \
+            (line["packs"] + line["rejected_packs"]) * QUANTITY_SCALE
+        if line["packs"]:
+            left = _days_left(line["expiry_date"], today)
+            if left < 0:
+                raise PurchasingError(
+                    f"{_drug_name(drug)} batch {line['batch_no']} expired on "
+                    f"{line['expiry_date']}. Expired stock is never received.",
+                    code="expired_on_receipt", detail={"line": line["n"]})
+            if line["mfg_date"] and line["mfg_date"] > today:
+                raise PurchasingError(f"line {line['n']}: the manufacturing date is in the "
+                                      "future", code="bad_date")
+            conflict = stock.batch_conflict(conn, medication_id=drug["id"],
+                                            lot_number=line["batch_no"],
+                                            expiration_date=line["expiry_date"],
+                                            store_id=store["id"],
+                                            mrp_pack_paise=line["mrp_pack_paise"])
+            if conflict:
+                raise PurchasingError(conflict["message"], code=conflict["code"],
+                                      detail={"line": line["n"], "lot_id": conflict["lot_id"]})
+            key = (str(drug["id"]), "".join(str(line["batch_no"]).upper().split()))
+            seen = batches.setdefault(key, (line["expiry_date"], line["mrp_pack_paise"]))
+            if seen[0] != line["expiry_date"]:
+                raise PurchasingError(
+                    f"batch {line['batch_no']} of {_drug_name(drug)} is on this receipt twice "
+                    "with different expiry dates. One batch has one expiry date.",
+                    code="batch_expiry_mismatch", detail={"line": line["n"]})
+            if seen[1] != line["mrp_pack_paise"]:
+                raise PurchasingError(
+                    f"batch {line['batch_no']} of {_drug_name(drug)} is on this receipt twice "
+                    "with different MRPs. One batch carries one printed MRP.",
+                    code="batch_mrp_mismatch", detail={"line": line["n"]})
+        checked.append({**line, "po_line": po_line, "drug": drug})
+    for po_line_no, milli in asked.items():
+        outstanding = int(po_lines[po_line_no].get("outstanding_quantity_milli") or 0)
+        if milli > outstanding:
+            raise PurchasingError(
+                f"order line {po_line_no}: receiving {milli // QUANTITY_SCALE} packs against "
+                f"{outstanding // QUANTITY_SCALE} still to come would over-receive the order. "
+                "Raise a new order for the excess.", code="over_receipt")
+    return checked, any_ndps
+
+
+def create_goods_receipt(*, purchase_order_id: int, lines: Sequence[Any], actor: Mapping,
+                         vendor_invoice_number: Any = None, vendor_invoice_date: Any = None,
+                         vendor_invoice_total_paise: Any = None, store_code: Optional[str] = None,
+                         remarks: Optional[str] = None, idempotency_key: Optional[str] = None,
+                         audit_ctx: Optional[Mapping] = None) -> dict:
+    """Record what arrived as a DRAFT receipt (the write tier). Nothing moves
+    into stock until it is posted. Returns {"goods_receipt", "warnings",
+    "replayed"}; a replay of the same Idempotency-Key returns the receipt it
+    made, and writes nothing."""
+    actor_id = _actor_id(actor)
+    po_id = _whole(purchase_order_id, "purchase order", minimum=1)
+    clean = _clean_receipt_lines(lines)
+    invoice_no = _receipt_text(vendor_invoice_number, "vendor invoice number", required=True)
+    invoice_date = _receipt_date(vendor_invoice_date, "vendor invoice date", required=True)
+    invoice_total = (None if vendor_invoice_total_paise is None
+                     else _whole(vendor_invoice_total_paise, "vendor invoice total", minimum=0))
+    note = _receipt_text(remarks, "remarks", required=False, limit=2000)
+    key = _receipt_text(idempotency_key, "request key", required=False, limit=200)
+    today = stock.site_today()
+    if invoice_date > today:
+        raise PurchasingError("the vendor invoice date is in the future", code="bad_date")
+    with db_session(immediate=True) as conn:
+        if key:
+            try:
+                existing = procurement._goods_receipt_id_for_key(conn, key, domain=DOMAIN)
+            except procurement.ProcurementError as exc:
+                raise _procurement_error(exc) from exc
+            if existing is not None:
+                doc = _load_receipt(conn, existing)
+                if int(doc.get("purchase_order_id") or 0) != po_id:
+                    raise PurchasingError("this request key was already used for another "
+                                          "receipt. Nothing was saved.",
+                                          code="idempotency_conflict")
+                doc = _decorate_receipt(conn, doc, today=today)
+                return {"goods_receipt": doc, "warnings": doc["warnings"], "replayed": True}
+        po = _load(conn, po_id)
+        _check_order_receivable(po, [c["po_line_no"] for c in clean], posting=False)
+        store = _receipt_store(conn, po, store_code)
+        checked, any_ndps = _check_receipt_lines(conn, clean, po=po, store=store, today=today)
+        _vendor, licence_warnings = _check_vendor(conn, po.get("vendor_code") or "",
+                                                  needs_ndps=any_ndps, today=today)
+        try:
+            grn_id = procurement._create_goods_receipt_core(
+                conn, purchase_order_id=po_id, store_code=store["code"],
+                lines=[{"po_line_no": c["po_line_no"],
+                        "accepted_quantity_milli": c["packs"] * QUANTITY_SCALE,
+                        "rejected_quantity_milli": c["rejected_packs"] * QUANTITY_SCALE,
+                        "rejection_reason": c["rejection_reason"],
+                        "batch_no": (stock.batch_spelling(conn, c["drug"]["id"], c["batch_no"])
+                                     if c["batch_no"] else None),
+                        "expiry_date": c["expiry_date"],
+                        "unit_rate_paise": (c["unit_rate_paise"]
+                                            if c["unit_rate_paise"] is not None
+                                            else _order_rate(c["po_line"])),
+                        "free_quantity_milli": c["free_packs"] * QUANTITY_SCALE,
+                        "mrp_pack_paise": c["mrp_pack_paise"], "mfg_date": c["mfg_date"],
+                        "remarks": c["remarks"]} for c in checked],
+                vendor_invoice_number=invoice_no, vendor_invoice_date=invoice_date,
+                vendor_invoice_total_paise=invoice_total, qc_status="passed",
+                received_by=actor_id, remarks=note, idempotency_key=key, today=today,
+                domain=DOMAIN)
+        except procurement.ProcurementError as exc:
+            raise _procurement_error(exc) from exc
+        doc = _decorate_receipt(conn, _load_receipt(conn, grn_id), today=today)
+        warnings = licence_warnings + doc["warnings"]
+        _audit_receipt(conn, actor, "pharmacy_grn_created",
+                       summary=f"Pharmacy goods receipt drafted against order "
+                               f"{po.get('po_number') or po_id} ({len(doc['lines'])} lines)",
+                       grn_id=grn_id,
+                       metadata={"goods_receipt_id": str(grn_id),
+                                 "purchase_order_id": str(po_id), "store_code": store["code"],
+                                 "vendor_invoice_number": invoice_no,
+                                 "lines": len(doc["lines"]),
+                                 "drug_ids": [str(c["drug"]["id"]) for c in checked],
+                                 "total_paise": doc.get("total_paise"),
+                                 "warnings": [w["code"] for w in warnings]},
+                       audit_ctx=audit_ctx)
+    return {"goods_receipt": doc, "warnings": warnings, "replayed": False}
+
+
+def post_goods_receipt(grn_id: int, *, actor: Mapping, may_write: bool, may_approve: bool,
+                       short_expiry_reason: Optional[str] = None,
+                       audit_ctx: Optional[Mapping] = None) -> dict:
+    """Put a draft receipt on the shelf, in ONE immediate transaction (see
+    the module docstring). A receipt already posted is answered as it is,
+    with replayed True, and nothing is written again.
+
+    Who may post: the write tier. A receipt holding a batch with less than
+    the minimum shelf life left needs the approve tier instead, from someone
+    other than the person who received it, with a reason (GRN-R16); the
+    reason and the lines it covered are on the audit row. An expired batch
+    is never posted."""
+    actor_id = _actor_id(actor)
+    today = stock.site_today()
+    reason = _receipt_text(short_expiry_reason, "reason for accepting short expiry",
+                           required=False, limit=1000)
+    with db_session(immediate=True) as conn:
+        doc = _load_receipt(conn, grn_id)
+        if doc["status"] == "posted":
+            doc = _decorate_receipt(conn, doc, today=today)
+            return {"goods_receipt": doc, "warnings": [], "replayed": True}
+        if doc["status"] != "draft":
+            raise PurchasingError(f"this receipt is {doc['status']} and cannot be posted",
+                                  code="illegal_transition")
+        doc = _decorate_receipt(conn, doc, today=today)
+        # The order and its lines as they are NOW, before any other check: an
+        # order cancelled or closed, or a line closed, since this draft was
+        # made takes nothing onto the shelf, whoever is posting.
+        po = _load(conn, int(doc["purchase_order_id"]))
+        relines = [{"n": line["line_no"], "po_line_no": None, "packs": line["packs"],
+                    "rejected_packs": line["rejected_packs"], "batch_no": line.get("batch_no"),
+                    "expiry_date": line.get("expiry_date"), "mfg_date": line.get("mfg_date"),
+                    "mrp_pack_paise": line.get("mrp_pack_paise")}
+                   for line in doc["lines"]]
+        po_line_by_id = {int(p["id"]): int(p["line_no"]) for p in po.get("lines", [])}
+        for reline, line in zip(relines, doc["lines"]):
+            reline["po_line_no"] = po_line_by_id.get(int(line.get("purchase_order_line_id") or 0))
+            if reline["po_line_no"] is None:
+                raise PurchasingError(f"receipt line {line['line_no']} has lost its order line",
+                                      code="bad_line")
+        _check_order_receivable(po, [r["po_line_no"] for r in relines], posting=True)
+        if doc["has_expired_line"]:
+            raise PurchasingError("a batch on this receipt has expired since it was drafted. "
+                                  "Cancel the receipt and record the delivery again without it.",
+                                  code="expired_on_receipt")
+        short = [line["line_no"] for line in doc["lines"] if line["short_dated"]]
+        if short:
+            if not may_approve:
+                raise PurchasingError(
+                    "a batch on this receipt has less shelf life left than the hospital asks "
+                    "for. A person with approval rights must accept it, with a reason. Nothing "
+                    "was changed.", code="approve_needed", detail={"short_dated_lines": short})
+            if str(doc.get("received_by") or "") == actor_id:
+                raise PurchasingError("you received this delivery, so someone else must accept "
+                                      "its short expiry. Nothing was changed.",
+                                      code="same_person")
+            if not reason:
+                raise PurchasingError("give the reason for accepting stock with short expiry",
+                                      code="missing_reason")
+        elif not may_write:
+            raise PurchasingError("posting a receipt needs the pharmacy write tier",
+                                  code="write_needed")
+        store = _check_store(conn, doc.get("store_code") or "")
+        _checked, any_ndps = _check_receipt_lines(conn, relines, po=po, store=store, today=today)
+        _vendor, licence_warnings = _check_vendor(conn, po.get("vendor_code") or "",
+                                                  needs_ndps=any_ndps, today=today)
+        try:
+            procurement._post_goods_receipt_core(conn, grn_id, actor=actor_id, domain=DOMAIN)
+        except procurement.ProcurementError as exc:
+            raise _procurement_error(exc) from exc
+        receipt_lines = [{
+            "line_no": line["line_no"], "line_id": line["id"],
+            "medication_id": line["helix_medication_id"], "batch_no": line["batch_no"],
+            "expiry_date": line["expiry_date"], "units": line["units"],
+            "units_per_pack": line.get("units_per_pack"),
+            "mrp_pack_paise": line.get("mrp_pack_paise"),
+            "unit_cost_paise": line["unit_cost_paise"], "mfg_date": line.get("mfg_date"),
+        } for line in doc["lines"] if line["units"] > 0]
+        try:
+            received = stock.receive_grn_lines(
+                conn, grn_id=grn_id, store_id=int(store["id"]), vendor_id=doc.get("vendor_id"),
+                lines=receipt_lines, actor_id=actor_id, today=today)
+        except stock.StockError as exc:
+            raise PurchasingError(str(exc), code=exc.code) from exc
+        for item in received:
+            conn.execute("UPDATE goods_receipt_lines SET helix_lot_ref = ? "
+                         "WHERE goods_receipt_id = ? AND line_no = ?",
+                         (item["lot_id"], grn_id, item["line_no"]))
+        po_status = conn.execute("SELECT status FROM purchase_orders WHERE id = ?",
+                                 (po["id"],)).fetchone()["status"]
+        _audit_receipt(conn, actor, "pharmacy_grn_posted",
+                       summary=f"Pharmacy goods receipt {grn_id} posted into {store['name']} "
+                               f"({sum(i['units'] for i in received)} units)",
+                       grn_id=grn_id,
+                       metadata={"goods_receipt_id": str(grn_id),
+                                 "purchase_order_id": str(po["id"]),
+                                 "purchase_order_status": po_status,
+                                 "store_id": str(store["id"]),
+                                 "lots": [{"line_no": i["line_no"], "lot_id": str(i["lot_id"]),
+                                           "movement_id": (str(i["movement_id"])
+                                                           if i["movement_id"] else None),
+                                           "units": i["units"],
+                                           "unit_cost_paise": i["unit_cost_paise"],
+                                           "merged": i["merged"]} for i in received],
+                                 "short_expiry_accepted": ({"lines": short, "reason": reason,
+                                                            "received_by":
+                                                                str(doc.get("received_by") or "")}
+                                                           if short else None),
+                                 "total_paise": doc.get("total_paise")},
+                       audit_ctx=audit_ctx)
+    number = procurement._stamp_document_number("pharmacy_goods_receipt", grn_id)
+    if number is None:
+        logger.error("pharmacy goods receipt %s was posted but not numbered; stamp it again",
+                     grn_id)
+    with db_session() as conn:
+        doc = _decorate_receipt(conn, _load_receipt(conn, grn_id), today=today)
+    return {"goods_receipt": doc, "warnings": licence_warnings, "replayed": False}
+
+
+def cancel_goods_receipt(grn_id: int, *, reason: Optional[str], actor: Mapping,
+                         audit_ctx: Optional[Mapping] = None) -> dict:
+    """Cancel a DRAFT receipt with a reason (the write tier). A posted
+    receipt is never cancelled: its stock is on the shelf."""
+    actor_id = _actor_id(actor)
+    text = _receipt_text(reason, "reason", required=True, limit=1000)
+    with db_session(immediate=True) as conn:
+        doc = _load_receipt(conn, grn_id)
+        try:
+            procurement._cancel_goods_receipt_core(conn, grn_id, reason=text, actor=actor_id,
+                                                   domain=DOMAIN)
+        except procurement.ProcurementError as exc:
+            raise _procurement_error(exc) from exc
+        _audit_receipt(conn, actor, "pharmacy_grn_cancelled",
+                       summary=f"Pharmacy goods receipt {grn_id} cancelled before posting",
+                       grn_id=grn_id,
+                       metadata={"goods_receipt_id": str(grn_id),
+                                 "purchase_order_id": str(doc.get("purchase_order_id")),
+                                 "reason": text},
+                       audit_ctx=audit_ctx)
+        doc = _decorate_receipt(conn, _load_receipt(conn, grn_id))
+    return {"goods_receipt": doc, "warnings": [], "replayed": False}

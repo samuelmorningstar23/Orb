@@ -124,3 +124,38 @@ def test_an_unreadable_catalogue_refuses_rather_than_waving_through(monkeypatch)
     with pytest.raises(svc.ProcurementError) as exc:
         _item("Sterile glove size 8")
     assert exc.value.code == "pharmacy_check_unavailable"
+
+
+@pytest.mark.parametrize("closest_first", [True, False])
+def test_the_refusal_names_the_closest_entry_whatever_the_catalogue_order(monkeypatch,
+                                                                          closest_first):
+    """Brand twins of one generic, and a draft beside its confirmed brand, are
+    normal since drug identity governance (wave 5). Every one of them refuses
+    "Amoxicillin 500 mg", so the sentence names the closest entry: the code,
+    then the exact name, the exact generic, a name that is the other plus
+    words, and last a stem with a strength. The catalogue's own order never
+    decides it."""
+    from services import helix_service
+
+    twin = {"id": "PHX-TWIN", "name": "Zymox 500mg Capsule", "generic_name": "Amoxicillin"}
+    full = {"id": "PHX-FULL", "name": "Amoxicillin 500mg Oral Capsule",
+            "generic_name": "Amoxicillin"}
+    exact = {"id": "PHX-EXACT", "name": "Amoxicillin 500 mg", "generic_name": "Amoxicillin"}
+    generic = {"id": "PHX-GEN", "name": "Moxa Capsule", "generic_name": "Amoxicillin 500mg"}
+
+    def catalogue(rows):
+        rows = list(rows) if closest_first else list(reversed(rows))
+        monkeypatch.setattr(helix_service, "get_medication_catalog", lambda: rows)
+
+    catalogue([full, twin])
+    assert svc._helix_catalogue_match("ANY1", "Amoxicillin 500 mg")["id"] == "PHX-FULL"
+    catalogue([generic, full, twin])
+    assert svc._helix_catalogue_match("ANY1", "Amoxicillin 500 mg")["id"] == "PHX-GEN"
+    catalogue([exact, generic, full, twin])
+    assert svc._helix_catalogue_match("ANY1", "Amoxicillin 500 mg")["id"] == "PHX-EXACT"
+    # A code that is a medication id names that medication, whatever the name says.
+    assert svc._helix_catalogue_match("phx-twin", "Amoxicillin 500 mg")["id"] == "PHX-TWIN"
+    # Only a stem match left: still refused, and named.
+    catalogue([twin])
+    assert svc._helix_catalogue_match("ANY1", "Amoxicillin 500 mg")["id"] == "PHX-TWIN"
+    assert svc._helix_catalogue_match("ANY1", "Sterile glove size 7") is None

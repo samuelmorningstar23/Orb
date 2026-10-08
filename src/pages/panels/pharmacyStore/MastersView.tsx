@@ -11,7 +11,16 @@
  *
  * THE SERVER DECIDES. Whether a classification change applies now or waits for
  * a second approver is the server's answer, shown as it comes back. A drug's
- * name, generic name, form and strength are shown and never edited here.
+ * name, generic name, form and strength are never edited in the drug's
+ * details form.
+ *
+ * DRUG IDENTITY (grn-6, ruling GRN-RS1 option (b)). 'Add a drug' first asks
+ * the server how the safety screens will read the new identity (its drug
+ * classes and whether the interaction checks know it) and saves only an
+ * identity it has previewed, as a draft. A different pharmacist confirms it
+ * in Approvals against the same details; until then nothing can order it. A
+ * confirmed drug is retired at once with a reason, and its identity is
+ * corrected only through a second pharmacist while nothing names it.
  *
  * No patient data is read or shown. Dates are calendar keys
  * (formatClinicalDateKey) or stored UTC instants (formatClinicalDateTime).
@@ -22,25 +31,39 @@ import { getUser } from '../../../api/client'
 import { toPharmacyStoreError } from '../../../api/pharmacyStore'
 import {
   CLASSIFICATION_FIELD_LABELS,
+  IDENTITY_STATUS_LABELS,
   LICENCE_STATUS_LABELS,
+  addDrug,
   classifyDrug,
   createPharmacyStore,
   createPharmacyVendor,
   decideClassificationRequest,
+  decideIdentityRequest,
   listClassificationRequests,
   listDrugs,
+  listIdentityRequests,
   listParLevels,
   listPharmacyStores,
   listPharmacyVendors,
+  previewDrug,
+  requestIdentityCorrection,
+  retireDrug,
   saveParLevel,
   setVendorDrugLicence,
   updateDrug,
   updatePharmacyStore,
   withdrawClassificationRequest,
+  withdrawIdentityRequest,
   type AdoptionResult,
   type ClassificationChange,
   type ClassificationRequest,
   type DrugFieldChanges,
+  type DrugIdentity,
+  type DrugPreview,
+  type DrugScreening,
+  type IdentityMatch,
+  type IdentityRequest,
+  type IdentityStatus,
   type MastersOptions,
   type ParLevel,
   type PharmacyDrug,
@@ -98,6 +121,177 @@ function drugIdentity(d: PharmacyDrug): string {
   return [d.generic_name, d.strength, d.form].filter(Boolean).join(', ')
 }
 
+function identityLabel(d: PharmacyDrug): string {
+  return d.identity_label ?? IDENTITY_STATUS_LABELS[d.identity_status as IdentityStatus]
+    ?? d.identity_status
+}
+
+function identityWords(i: Pick<DrugIdentity, 'generic_name' | 'strength' | 'form'>): string {
+  return [i.generic_name, i.strength, i.form].filter(Boolean).join(', ')
+}
+
+/** The server's screening answer in plain words. */
+function screeningWords(s: DrugScreening): string[] {
+  const classes = s.class_labels.length
+    ? `The allergy check reads it as: ${s.class_labels.join(', ')}.`
+    : 'The allergy check finds no drug class for it, so a class allergy will not match it; '
+      + 'only an allergy charted by its own name will.'
+  const interactions = s.interaction_recognised === null
+    ? 'The interaction check could not be run just now.'
+    : s.interaction_recognised
+      ? 'The interaction check knows this drug.'
+      : 'The interaction check does not know this drug, so it is screened for allergies only.'
+  return [`Screened as ${s.screened_as}.`, classes, interactions]
+}
+
+function matchWords(m: IdentityMatch): string {
+  const status = m.identity_status === 'active' ? '' : ` (${IDENTITY_STATUS_LABELS[m.identity_status]})`
+  return `${m.name}${status}`
+}
+
+const BLANK_IDENTITY: DrugIdentity = { name: '', generic_name: '', form: '', strength: '' }
+
+function sameIdentity(a: DrugIdentity, b: DrugIdentity): boolean {
+  return a.name === b.name && a.generic_name === b.generic_name && a.form === b.form
+    && a.strength === b.strength
+}
+
+function trimmed(i: DrugIdentity): DrugIdentity {
+  return { name: i.name.trim(), generic_name: i.generic_name.trim(), form: i.form.trim(),
+    strength: i.strength.trim() }
+}
+
+function IdentityFields({ prefix, value, onChange, disabled }: {
+  prefix: string
+  value: DrugIdentity
+  onChange: (next: DrugIdentity) => void
+  disabled?: boolean
+}) {
+  const set = (patch: Partial<DrugIdentity>) => onChange({ ...value, ...patch })
+  return (
+    <fieldset className="psm-fields" disabled={disabled}>
+      <Field id={`${prefix}-name`} label="Name on the pack" value={value.name}
+        onChange={v => set({ name: v })} />
+      <Field id={`${prefix}-generic`} label="Generic name" value={value.generic_name}
+        onChange={v => set({ generic_name: v })} />
+      <Field id={`${prefix}-strength`} label="Strength" value={value.strength}
+        onChange={v => set({ strength: v })} />
+      <Field id={`${prefix}-form`} label="Form" value={value.form}
+        onChange={v => set({ form: v })} />
+    </fieldset>
+  )
+}
+
+/** The screening preview and anything the identity would repeat. */
+function PreviewPanel({ preview }: { preview: DrugPreview }) {
+  return (
+    <div className="psm-notice" role="status">
+      {screeningWords(preview.screening).map(line => <p key={line} className="psm-sub">{line}</p>)}
+      {preview.same_name.length > 0 && (
+        <p className="psm-sub">
+          A drug with this name is already in the master: {preview.same_name.map(matchWords).join(', ')}.
+        </p>
+      )}
+      {preview.same_identity.length > 0 && (
+        <p className="psm-sub">
+          Same generic name, strength and form as: {preview.same_identity.map(matchWords).join(', ')}.
+        </p>
+      )}
+    </div>
+  )
+}
+
+function AddDrugForm({ fail, onAdded, onClose }: {
+  fail: Fail
+  onAdded: (drug: PharmacyDrug) => void
+  onClose: () => void
+}) {
+  const [identity, setIdentity] = useState<DrugIdentity>(BLANK_IDENTITY)
+  const [preview, setPreview] = useState<DrugPreview | null>(null)
+  const [anotherBrand, setAnotherBrand] = useState(false)
+  const [note, setNote] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const current = trimmed(identity)
+  const previewed = preview !== null && sameIdentity(preview.identity, current)
+  const needsBrand = previewed && (preview?.same_identity.length ?? 0) > 0
+
+  async function check() {
+    setError('')
+    if (!current.name || !current.generic_name || !current.strength || !current.form) {
+      setError('Enter the name, generic name, strength and form. The allergy and interaction '
+        + 'screens read the generic name.')
+      return
+    }
+    setBusy(true)
+    try {
+      setPreview(await previewDrug(current))
+      setAnotherBrand(false)
+    } catch (err) {
+      setError(fail(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function save(e: FormEvent) {
+    e.preventDefault()
+    setError('')
+    if (!previewed) { setError('Check how the drug will be screened before saving it.'); return }
+    if (needsBrand && !anotherBrand) {
+      setError('Say whether this is another brand of the same medicine.')
+      return
+    }
+    setBusy(true)
+    try {
+      const res = await addDrug({ ...current, another_brand: anotherBrand,
+        note: note.trim() || undefined })
+      onAdded(res.drug)
+    } catch (err) {
+      setError(fail(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form className="psm-form" onSubmit={save} aria-label="Add a drug">
+      <h3 className="psm-form__title">Add a drug</h3>
+      <p className="psm-hint">
+        A new drug is saved as a draft. Nothing can order it until another pharmacist checks
+        these details and confirms them.
+      </p>
+      <IdentityFields prefix="psm-new" value={identity} disabled={busy}
+        onChange={next => { setIdentity(next); setError('') }} />
+      <button type="button" className="psm-btn" disabled={busy} onClick={check}>
+        Check screening
+      </button>
+      {previewed && preview && <PreviewPanel preview={preview} />}
+      {needsBrand && (
+        <label className="psm-check">
+          <input type="checkbox" checked={anotherBrand}
+            onChange={e => setAnotherBrand(e.target.checked)} />
+          This is another brand of the same medicine
+        </label>
+      )}
+      <div className="psm-field psm-field--wide">
+        <label htmlFor="psm-new-note">Note for the checking pharmacist</label>
+        <textarea id="psm-new-note" rows={2} value={note} onChange={e => setNote(e.target.value)} />
+      </div>
+      {error && <p className="psm-error" role="alert">{error}</p>}
+      <div className="psm-item__actions">
+        <button type="submit" className="psm-btn psm-btn--primary" disabled={busy || !previewed}>
+          Save as draft
+        </button>
+        <button type="button" className="psm-btn psm-btn--quiet" disabled={busy} onClick={onClose}>
+          Close
+        </button>
+      </div>
+    </form>
+  )
+}
+
 export default function MastersView({ onModuleOff, meta }: PharmacyStoreViewProps) {
   const [section, setSection] = useState<Section>('drugs')
   const fail = useFail(onModuleOff)
@@ -144,6 +338,8 @@ function DrugsSection({ fail, canWrite }: { fail: Fail; canWrite: boolean }) {
   const [search, setSearch] = useState('')
   const [error, setError] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
+  const [added, setAdded] = useState('')
 
   const load = useCallback((term = '') => {
     listDrugs({ search: term || undefined }).then(
@@ -165,6 +361,13 @@ function DrugsSection({ fail, canWrite }: { fail: Fail; canWrite: boolean }) {
     setDrugs(list => (list ?? []).map(d => (d.id === drug.id ? drug : d)))
   }
 
+  function onAdded(drug: PharmacyDrug) {
+    setAdding(false)
+    setAdded(`${drug.name} was saved as a draft. Another pharmacist must confirm it in Approvals `
+      + 'before it can be ordered.')
+    load(search.trim())
+  }
+
   return (
     <section className="psm-card" aria-labelledby="psm-drugs-title">
       <div className="psm-card__head">
@@ -179,7 +382,17 @@ function DrugsSection({ fail, canWrite }: { fail: Fail; canWrite: boolean }) {
           />
           <button type="submit" className="psm-btn">Find</button>
         </form>
+        {canWrite && !adding && (
+          <button type="button" className="psm-btn psm-btn--primary"
+            onClick={() => { setAdded(''); setAdding(true) }}>
+            Add a drug
+          </button>
+        )}
       </div>
+      {added && <p className="psm-ok" role="status">{added}</p>}
+      {canWrite && adding && (
+        <AddDrugForm fail={fail} onAdded={onAdded} onClose={() => setAdding(false)} />
+      )}
       {error && <p className="psm-error" role="alert">{error}</p>}
       {drugs === null && !error && <p className="psm-note" role="status">Loading drugs</p>}
       {drugs && drugs.length === 0 && <p className="psm-note">No drugs match.</p>}
@@ -203,6 +416,11 @@ function DrugsSection({ fail, canWrite }: { fail: Fail; canWrite: boolean }) {
                     <span className="psm-strong">{d.name}</span>
                     <span className="psm-sub">{drugIdentity(d)}</span>
                     {d.is_active === 0 && <span className="psm-sub">Not in use</span>}
+                    {d.identity_status !== 'active' && (
+                      <span className={`psm-chip ${d.identity_status === 'draft' ? 'psm-chip--warn' : ''}`}>
+                        {identityLabel(d)}
+                      </span>
+                    )}
                   </td>
                   <td>{d.schedule_label}</td>
                   <td>{d.ndps_label}</td>
@@ -375,6 +593,7 @@ function DrugEditor({ drug, options, canWrite, fail, onSaved }: {
           The name, generic name, form and strength decide how allergies and interactions are
           screened, so they are not changed here.
         </p>
+        <IdentityActions drug={drug} canWrite={canWrite} fail={fail} onSaved={onSaved} />
       </div>
 
       <form className="psm-form" onSubmit={saveFields} aria-label="Stock and purchase details">
@@ -445,6 +664,142 @@ function DrugEditor({ drug, options, canWrite, fail, onSaved }: {
   )
 }
 
+/** A drug's identity status, and for a confirmed drug the two ways its
+ *  identity may change: retire it now, or ask a second pharmacist to correct
+ *  it (the server refuses a correction once anything names the drug). */
+function IdentityActions({ drug, canWrite, fail, onSaved }: {
+  drug: PharmacyDrug
+  canWrite: boolean
+  fail: Fail
+  onSaved: (d: PharmacyDrug) => void
+}) {
+  const [mode, setMode] = useState<'none' | 'retire' | 'correct'>('none')
+  const [reason, setReason] = useState('')
+  const [identity, setIdentity] = useState<DrugIdentity>(() => ({
+    name: drug.name, generic_name: drug.generic_name ?? '', form: drug.form ?? '',
+    strength: drug.strength ?? '' }))
+  const [anotherBrand, setAnotherBrand] = useState(false)
+  const [askBrand, setAskBrand] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  if (drug.identity_status === 'draft') {
+    return <p className="psm-sub">{identityLabel(drug)}. Nothing can order it yet.</p>
+  }
+  if (drug.identity_status === 'retired') {
+    return (
+      <p className="psm-sub">
+        Retired. Nothing can order it; its orders, receipts and stock records keep it.
+      </p>
+    )
+  }
+
+  async function retire(e: FormEvent) {
+    e.preventDefault()
+    setError(''); setMessage('')
+    if (!reason.trim()) { setError('Say why the drug is being retired.'); return }
+    setBusy(true)
+    try {
+      const res = await retireDrug(drug.id, { reason: reason.trim() })
+      onSaved(res.drug)
+      setMode('none')
+    } catch (err) {
+      setError(fail(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function correct(e: FormEvent) {
+    e.preventDefault()
+    setError(''); setMessage('')
+    const next = trimmed(identity)
+    if (!reason.trim()) { setError('Say why the identity needs correcting.'); return }
+    setBusy(true)
+    try {
+      await requestIdentityCorrection(drug.id, { ...next, reason: reason.trim(),
+        another_brand: anotherBrand })
+      setMessage('Sent to another pharmacist to check. The drug keeps its current details '
+        + 'until they approve.')
+      setMode('none')
+      setReason('')
+    } catch (err) {
+      const failure = toPharmacyStoreError(err)
+      if (failure.code === 'same_identity_exists') setAskBrand(true)
+      setError(fail(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="psm-form">
+      <p className="psm-sub">{identityLabel(drug)}.</p>
+      {canWrite && mode === 'none' && (
+        <div className="psm-item__actions">
+          <button type="button" className="psm-btn psm-btn--quiet"
+            onClick={() => { setMode('retire'); setReason(''); setError('') }}>
+            Retire this drug
+          </button>
+          <button type="button" className="psm-btn psm-btn--quiet"
+            onClick={() => { setMode('correct'); setReason(''); setError('') }}>
+            Correct the identity
+          </button>
+        </div>
+      )}
+      {mode === 'retire' && (
+        <form className="psm-form" onSubmit={retire} aria-label="Retire this drug">
+          <p className="psm-hint">
+            Retiring takes the drug out of ordering at once. To replace it, add the corrected
+            drug as a new one.
+          </p>
+          <div className="psm-field psm-field--wide">
+            <label htmlFor="psm-retire-reason">Why is it being retired?</label>
+            <textarea id="psm-retire-reason" rows={2} value={reason}
+              onChange={e => setReason(e.target.value)} />
+          </div>
+          <div className="psm-item__actions">
+            <button type="submit" className="psm-btn psm-btn--primary" disabled={busy}>Retire</button>
+            <button type="button" className="psm-btn psm-btn--quiet" disabled={busy}
+              onClick={() => setMode('none')}>Keep it</button>
+          </div>
+        </form>
+      )}
+      {mode === 'correct' && (
+        <form className="psm-form" onSubmit={correct} aria-label="Correct the identity">
+          <p className="psm-hint">
+            Only a drug that nothing has ordered, stocked or bought yet is corrected, and another
+            pharmacist must approve it. Otherwise retire it and add the corrected drug.
+          </p>
+          <IdentityFields prefix="psm-fix" value={identity} disabled={busy} onChange={setIdentity} />
+          {askBrand && (
+            <label className="psm-check">
+              <input type="checkbox" checked={anotherBrand}
+                onChange={e => setAnotherBrand(e.target.checked)} />
+              This is another brand of the same medicine
+            </label>
+          )}
+          <div className="psm-field psm-field--wide">
+            <label htmlFor="psm-fix-reason">Why does it need correcting?</label>
+            <textarea id="psm-fix-reason" rows={2} value={reason}
+              onChange={e => setReason(e.target.value)} />
+          </div>
+          <div className="psm-item__actions">
+            <button type="submit" className="psm-btn psm-btn--primary" disabled={busy}>
+              Send for checking
+            </button>
+            <button type="button" className="psm-btn psm-btn--quiet" disabled={busy}
+              onClick={() => setMode('none')}>Close</button>
+          </div>
+        </form>
+      )}
+      {error && <p className="psm-error" role="alert">{error}</p>}
+      {message && <p className="psm-ok" role="status">{message}</p>}
+    </div>
+  )
+}
+
 function Field({ id, label, value, onChange, inputMode, placeholder, type = 'text' }: {
   id: string
   label: string
@@ -503,6 +858,8 @@ function ApprovalsSection({ fail, canWrite, canApprove }: {
   }
 
   return (
+    <>
+    <IdentityApprovals fail={fail} canWrite={canWrite} me={me} />
     <section className="psm-card" aria-labelledby="psm-approvals-title">
       <h2 id="psm-approvals-title" className="psm-card__title">Classification changes waiting for approval</h2>
       <p className="psm-hint">
@@ -545,6 +902,119 @@ function ApprovalsSection({ fail, canWrite, canApprove }: {
                   {canWrite && mine && (
                     <button type="button" className="psm-btn psm-btn--quiet" disabled={busyId === r.id}
                       onClick={() => act(r, 'withdraw')}>Withdraw</button>
+                  )}
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </section>
+    </>
+  )
+}
+
+/** New drugs and identity corrections waiting for a second pharmacist
+ *  (grn-6). The write tier decides, never the person who asked; confirming
+ *  sends back exactly the details shown here. */
+function IdentityApprovals({ fail, canWrite, me }: {
+  fail: Fail
+  canWrite: boolean
+  me: string | null
+}) {
+  const [requests, setRequests] = useState<IdentityRequest[] | null>(null)
+  const [error, setError] = useState('')
+  const [notes, setNotes] = useState<Record<number, string>>({})
+  const [busyId, setBusyId] = useState<number | null>(null)
+  const [message, setMessage] = useState('')
+
+  useEffect(() => {
+    let live = true
+    listIdentityRequests('pending').then(
+      res => { if (live) { setError(''); setRequests(res.requests) } },
+      err => { if (live) setError(fail(err)) },
+    )
+    return () => { live = false }
+  }, [fail])
+
+  async function act(r: IdentityRequest, action: 'approved' | 'refused' | 'withdraw') {
+    setError(''); setMessage('')
+    const note = notes[r.id]?.trim()
+    if (action === 'refused' && !note) { setError('Give the reason for refusing.'); return }
+    if (action === 'approved' && !r.identity) { setError('These details cannot be read. Reload.'); return }
+    setBusyId(r.id)
+    try {
+      if (action === 'withdraw') await withdrawIdentityRequest(r.id)
+      else {
+        await decideIdentityRequest(r.id, action, action === 'approved'
+          ? { expected: r.identity ?? undefined, reason: note || undefined }
+          : { reason: note })
+      }
+      setRequests(list => (list ?? []).filter(x => x.id !== r.id))
+      setMessage(action === 'approved'
+        ? `${r.identity?.name ?? 'The drug'} is confirmed${r.change_kind === 'identity_create' ? ' and can now be ordered' : ''}.`
+        : action === 'refused' ? 'Refused.' : 'Withdrawn.')
+    } catch (err) {
+      setError(fail(err))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  return (
+    <section className="psm-card" aria-labelledby="psm-identity-title">
+      <h2 id="psm-identity-title" className="psm-card__title">New drugs and corrections waiting for a second pharmacist</h2>
+      <p className="psm-hint">
+        Check each drug's details against the pack and how the safety screens will read it.
+        The pharmacist who asked cannot confirm it.
+      </p>
+      {error && <p className="psm-error" role="alert">{error}</p>}
+      {message && <p className="psm-ok" role="status">{message}</p>}
+      {requests === null && !error && <p className="psm-note" role="status">Loading</p>}
+      {requests && requests.length === 0 && <p className="psm-note">Nothing is waiting.</p>}
+      {requests && requests.length > 0 && (
+        <ul className="psm-list">
+          {requests.map(r => {
+            const mine = me !== null && r.requested_by === me
+            const isNew = r.change_kind === 'identity_create'
+            const who = r.requested_by_loader ? 'the formulary file'
+              : (r.requested_by_name ?? r.requested_by)
+            return (
+              <li key={r.id} className="psm-item">
+                <span className="psm-strong">{r.identity?.name ?? r.drug_name ?? r.helix_medication_id}</span>
+                <span>{isNew ? 'New drug' : 'Identity correction'}: {r.identity ? identityWords(r.identity) : 'details missing'}</span>
+                {!isNew && r.previous_identity && (
+                  <span className="psm-sub">
+                    Now: {r.previous_identity.name}, {identityWords(r.previous_identity)}
+                  </span>
+                )}
+                {r.screening && screeningWords(r.screening).map(line => (
+                  <span key={line} className="psm-sub">{line}</span>
+                ))}
+                {r.reason && <span className="psm-sub">{isNew ? 'Note' : 'Reason'}: {r.reason}</span>}
+                <span className="psm-sub">Asked by {who}, {formatClinicalDateTime(r.requested_at)}</span>
+                {mine && <span className="psm-sub">You asked for this, so another pharmacist must check it.</span>}
+                <div className="psm-item__actions">
+                  {canWrite && !mine && (
+                    <>
+                      <label htmlFor={`psm-idnote-${r.id}`} className="psm-visually-hidden">Note for this decision</label>
+                      <input id={`psm-idnote-${r.id}`} className="psm-inline-input" placeholder="Note (needed to refuse)"
+                        value={notes[r.id] ?? ''} onChange={e => setNotes(n => ({ ...n, [r.id]: e.target.value }))} />
+                      <button type="button" className="psm-btn psm-btn--primary" disabled={busyId === r.id}
+                        onClick={() => act(r, 'approved')}>
+                        {isNew ? 'Confirm drug' : 'Approve correction'}
+                      </button>
+                      <button type="button" className="psm-btn" disabled={busyId === r.id}
+                        onClick={() => act(r, 'refused')}>
+                        {isNew ? 'Refuse drug' : 'Refuse correction'}
+                      </button>
+                    </>
+                  )}
+                  {canWrite && mine && (
+                    <button type="button" className="psm-btn psm-btn--quiet" disabled={busyId === r.id}
+                      onClick={() => act(r, 'withdraw')}>
+                      {isNew ? 'Withdraw draft' : 'Withdraw correction'}
+                    </button>
                   )}
                 </div>
               </li>

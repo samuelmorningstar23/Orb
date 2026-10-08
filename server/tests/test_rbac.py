@@ -272,3 +272,44 @@ def test_unauthenticated_gets_401_on_ingest_status():
     """No token → 401 on /api/ingest/status (was previously fully open)."""
     resp = client.get("/api/ingest/status")
     assert resp.status_code in (401, 403)
+
+
+# ════════════════════════════════════════════
+#  Medication orders (W5-E): the verify permission and the prescriber's steps
+# ════════════════════════════════════════════
+
+def test_medication_verify_is_the_pharmacists_alone():
+    """Ruling MO-R4 (a): medication.verify is held by the pharmacist and by no
+    other role, the administrator included (src/lib/roles.test.ts mirrors it)."""
+    from permissions import MEDICATION_VERIFY, ROLE_PERMISSIONS
+    assert MEDICATION_VERIFY == "medication.verify"
+    holders = {role for role, perms in ROLE_PERMISSIONS.items() if MEDICATION_VERIFY in perms}
+    assert holders == {"pharmacist"}
+
+
+def test_a_nurse_cannot_sign_a_medication_order(monkeypatch):
+    """With both medication-order switches on, signing needs medication.prescribe:
+    the nurse is refused before anything is read, and the denial is audited."""
+    import uuid
+    import config
+    monkeypatch.setattr(config, "MED_ORDER_STORE_ENABLED", True)
+    monkeypatch.setattr(config, "MED_ORDER_LIFECYCLE_ENABLED", True)
+    token = _login("RBAC-NRS")
+    resp = client.post(f"/api/medorders/orders/{uuid.uuid4()}/sign",
+                       headers=_auth_header(token), json={"expected_version": 1})
+    assert resp.status_code == 403
+    assert "medication.prescribe" in resp.json()["detail"]["missing"]
+    with db_session() as db:
+        log = db.execute(
+            "SELECT * FROM audit_logs WHERE action_type = 'permission_denied' "
+            "AND actor_user_id = 'RBAC-NRS' ORDER BY rowid DESC LIMIT 1").fetchone()
+    assert log is not None and "/api/medorders/orders/" in log["request_path"]
+
+
+def test_medication_order_routes_are_404_with_the_store_off():
+    """Every /api/medorders route answers 404 feature_disabled while
+    ORB_MED_ORDER_STORE is off, whoever asks."""
+    token = _login("RBAC-DOC")
+    resp = client.get("/api/medorders/queue/to-sign", headers=_auth_header(token))
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["error"] == "feature_disabled"

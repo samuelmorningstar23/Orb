@@ -1,0 +1,215 @@
+/* SetupView.css: Orb "Quiet Clinical" (flat).
+ *
+ * The Beds panel's Bed setup view (adt-4b). It reuses the panel's primitives
+ * from BedBoardPanel.css (.bb-list, .bb-row, .bb-btn, .bb-field, .bb-input,
+ * .bb-note, .bb-confirm) and adds only the forms, the bulk preview and the
+ * refusal box.
+ *
+ *  - No `opacity` for state anywhere.
+ *  - Status colour is a border on an ordinary surface, never a fill behind
+ *    text, so every word stays in the body text tokens.
+ *  - Tap targets are at least 24px, and 44px under `pointer: coarse`.
+ */
+
+.bs {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.bs-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.bs-actions,
+.bs-row-actions,
+.bs-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.bs-ward {
+  border-left: 3px solid var(--accent-deep);
+}
+
+.bs-row--open {
+  border-color: var(--accent-deep);
+}
+
+.bs-sub {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.bs-minor {
+  margin: 8px 0 6px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.bs-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.bs-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  align-items: end;
+  gap: 10px 12px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+}
+
+.bs-form .bb-field {
+  display: flex;
+}
+
+.bs-wide,
+.bs-form > .bs-refusal,
+.bs-form > .bs-form-actions,
+.bs-form > .bs-preview {
+  grid-column: 1 / -1;
+}
+
+.bs-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.bs-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.bs-check input {
+  width: 18px;
+  height: 18px;
+}
+
+.bs-textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.bs-inline {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.bs-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-info);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.bs-codes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.bs-code {
+  padding: 2px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.bs-line {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.bs-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-info);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.bs-refusal {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-danger);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.bs-reconcile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bs-subrow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 10px;
+  border-left: 2px solid var(--border-subtle);
+}
+
+.bs-outcome {
+  padding: 8px 12px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--status-ok);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+@media (pointer: coarse) {
+  .bs-check { min-height: 44px; }
+}

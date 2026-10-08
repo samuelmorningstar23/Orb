@@ -107,8 +107,25 @@ def nudges(monkeypatch):
     return seen
 
 
+def _stated_identity(pid):
+    """What the patient states at the desk (opd-6a, ruling OPD-S1): with the
+    registration feature on, every visit registered through the front desk
+    carries it. Read from the fixture row: name, age and UHID."""
+    from services import patient_matching as pm
+    with db_session() as db:
+        r = db.execute(
+            "SELECT p.name, p.mrn, p.date_of_birth, p.age, p.created_at, d.age_recorded_on "
+            "FROM patients p LEFT JOIN patient_demographics d ON d.patient_id = p.id "
+            "WHERE p.id = ?", (pid,)).fetchone()
+    if r is None:
+        return {"name": "Not On File", "age_years": 40, "uhid": "NOT-ON-FILE"}
+    age, _ = pm.current_age(date_of_birth=r["date_of_birth"], stated_age=r["age"],
+                            age_recorded_on=r["age_recorded_on"], created_at=r["created_at"])
+    return {"name": r["name"], "age_years": age, "uhid": r["mrn"]}
+
+
 def _register(staff_uid, pid, *, doctor=None, role="doctor"):
-    body = {"patient_id": pid}
+    body = {"patient_id": pid, "identity_check": _stated_identity(pid)}
     if doctor:
         body["doctor_id"] = doctor
     resp = client.post("/api/frontdesk/opd/visits", json=body, headers=_auth(staff_uid, role))

@@ -1218,22 +1218,42 @@ def _helix_catalogue_match(code: str, name: str) -> Optional[dict]:
     code_u = (code or "").strip().upper()
     if not item and not code_u:
         return None
+    # Several entries can match one name (brand twins of one generic, a draft
+    # beside its confirmed brand), so the refusal names the CLOSEST one, never
+    # whichever the catalogue happens to list first. Whether the item is
+    # refused does not depend on this: any match refuses it.
+    best, best_rank = None, None
     for med in catalogue:
-        if code_u and str(med.get("id") or "").strip().upper() == code_u:
-            return med
-        cat = _drug_key(med.get("name"))
-        generic = _drug_key(med.get("generic_name"))
-        if not item:
-            continue
-        if item in (cat, generic):
-            return med
-        if cat and (item.startswith(cat + " ") or cat.startswith(item + " ")):
-            return med
-        for stem in {generic, _product_stem(cat)}:
-            # Four characters at least: a short stem would prefix a large,
-            # arbitrary slice of the stores catalogue.
-            if len(stem) >= 4 and re.match(re.escape(stem) + r"(?:\s*\d|$)", item):
-                return med
+        rank = _catalogue_match_rank(med, item, code_u)
+        if rank is not None and (best_rank is None or rank < best_rank):
+            best, best_rank = med, rank
+            if rank == 0:
+                break
+    return best
+
+
+def _catalogue_match_rank(med: dict, item: str, code_u: str) -> Optional[int]:
+    """How closely one catalogue entry matches the item, lower is closer, or
+    None for no match: 0 the code is its medication id, 1 the name is its
+    catalogue name, 2 the name is its generic name, 3 one name is the other
+    plus more words, 4 a generic or product stem followed by a strength."""
+    if code_u and str(med.get("id") or "").strip().upper() == code_u:
+        return 0
+    if not item:
+        return None
+    cat = _drug_key(med.get("name"))
+    generic = _drug_key(med.get("generic_name"))
+    if cat and item == cat:
+        return 1
+    if generic and item == generic:
+        return 2
+    if cat and (item.startswith(cat + " ") or cat.startswith(item + " ")):
+        return 3
+    for stem in {generic, _product_stem(cat)}:
+        # Four characters at least: a short stem would prefix a large,
+        # arbitrary slice of the stores catalogue.
+        if len(stem) >= 4 and re.match(re.escape(stem) + r"(?:\s*\d|$)", item):
+            return 4
     return None
 
 

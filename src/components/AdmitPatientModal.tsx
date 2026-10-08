@@ -1,8 +1,20 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { admitPatient, apiFetch } from '../api/client';
+import React, { useState, useCallback, useEffect, useSyncExternalStore } from 'react';
+import { admitPatient, apiFetch, type AdmissionResult } from '../api/client';
 import { useAuth } from '../App';
 import { useFocusTrap } from '../hooks/useFocusTrap';
-import { formatClinicalDate, localDateKey } from '../lib/datetime';
+import { formatClinicalDate, formatClinicalDateTime, localDateKey } from '../lib/datetime';
+import { currentModuleFlags, subscribeModuleFlags } from '../shellConfig';
+import {
+  BED_REFUSAL_CODES,
+  EMPTY_BED_CHOICE,
+  bedChoiceMissing,
+  bedChoicePayload,
+  bedChoiceSummary,
+  newIdempotencyKey,
+  type AdmissionMaster,
+  type BedChoice,
+} from '../api/adt/moves';
+import BedPicker from './adt/BedPicker';
 import { ageFromDob, ageInRange } from './admissionAge';
 import './AdmitPatientModal.css';
 
@@ -21,10 +33,33 @@ interface AdmissionOptions {
   doctors: { id: string; name: string; department: string | null }[];
   wards: { ward: string; departments: string[] }[];
   beds: { ward: string; bed: string; in_use: boolean }[];
+  /** Only while Beds and admissions (ORB_ADT) is on: bed setup's wards and
+   *  beds with their status, for the bed picker (adt-5). */
+  master?: AdmissionMaster;
 }
+
+/** What the admission answers with Beds and admissions on, beyond the base. */
+type AdmissionAnswer = AdmissionResult & {
+  replayed?: boolean;
+  location_warning?: string | null;
+};
 
 /** Ward and bed labels compare trimmed and case-blind, as the server does. */
 const sameLabel = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/** Why a typed admission time cannot be sent, or null. The server enforces
+ *  the same window (ruling ADT-P3) and answers 400 in its own words. */
+function admittedAtProblem(value: string, backtimeHours: number): string | null {
+  if (!value) return null;
+  const when = new Date(value).getTime();
+  if (Number.isNaN(when)) return 'Give a date and a time.';
+  const now = Date.now();
+  if (when > now + 5 * 60_000) return 'The admission time is in the future.';
+  if (now - when > backtimeHours * 3_600_000) {
+    return `The admission time can be entered up to ${backtimeHours} hours back.`;
+  }
+  return null;
+}
 
 // Helper for Chip Input. Defined at module scope so it keeps its identity across
 // parent re-renders (defining it inside the component remounted it on every
@@ -74,12 +109,23 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
   const [error, setError] = useState<string | null>(null);
   // What the clinician must act on now the patient is admitted: the one-time
   // Bridge login (shown ONCE) and whether a discharge link will be possible.
-  const [credential, setCredential] = useState<{ login: string | null; password: string | null; dobRecorded: boolean; bedWarning: string | null } | null>(null);
+  const [credential, setCredential] = useState<{ login: string | null; password: string | null; dobRecorded: boolean; bedWarning: string | null; locationWarning?: string | null; replayed?: boolean } | null>(null);
   // Department, attending and bed come from lists the server also checks
   // against: a typed department put the patient on nobody's board, and a typed
   // doctor id failed as a raw error after the whole form was filled.
   const [options, setOptions] = useState<AdmissionOptions | null>(null);
   const [optionsError, setOptionsError] = useState<string | null>(null);
+  // Beds and admissions (adt-5): with the module on (flags.adt) AND the server
+  // sending bed setup's beds, the ward and bed come from the bed picker, the
+  // admission time may be set back within the server's window, and the send
+  // carries one Idempotency-Key per form so a retry never admits twice. With
+  // the module off nothing below changes the form.
+  const moduleFlags = useSyncExternalStore(subscribeModuleFlags, currentModuleFlags);
+  const master: AdmissionMaster | null = moduleFlags.adt ? (options?.master ?? null) : null;
+  const [bedChoice, setBedChoice] = useState<BedChoice>(EMPTY_BED_CHOICE);
+  const [admittedAt, setAdmittedAt] = useState('');
+  const [admitKey] = useState(newIdempotencyKey);
+  const [refusal, setRefusal] = useState<{ code: string; message: string } | null>(null);
 
   // Focus-trap for the modal. Escape closes the active surface: on the credential
   // hand-off screen that means finishing (onSuccess), otherwise cancelling. While
@@ -152,6 +198,9 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
 
   const handleChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+    // A boarder acknowledgement names the treating department, so a new
+    // department needs it read again.
+    if (field === 'department') setBedChoice(prev => ({ ...prev, boarderAcknowledged: false }));
   };
 
   const loadOptions = useCallback(async () => {
@@ -220,7 +269,12 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
   const isIdentityValid = formData.name.trim() !== '' && !nameTooShort && formData.age !== '' && !ageInvalid && formData.sex !== '' && !dobInvalid;
   const departmentListed = !!options?.departments.includes(formData.department);
   const attending = options?.doctors.find(d => d.id === formData.attending_doctor_id);
-  const isAdmissionValid = formData.admission_source !== '' && formData.admission_type !== '' && !!attending && departmentListed && formData.ward.trim() !== '';
+  // With the bed picker the place is valid when the picker has everything the
+  // server will ask for; without it, as before, when a ward is typed.
+  const bedMissing = master ? bedChoiceMissing(master, bedChoice, formData.department) : null;
+  const admittedAtError = master ? admittedAtProblem(admittedAt, master.backtime_hours) : null;
+  const placeValid = master ? !bedMissing && !admittedAtError : formData.ward.trim() !== '';
+  const isAdmissionValid = formData.admission_source !== '' && formData.admission_type !== '' && !!attending && departmentListed && placeValid;
   // Wards in use in the chosen department first; any ward when none is known.
   // Suggestions only: a ward or bed not listed is still accepted.
   const departmentWards = (options?.wards ?? []).filter(w => w.departments.includes(formData.department));
@@ -265,26 +319,62 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
         } : undefined
       };
 
-      const result = await admitPatient(payload);
+      let result: AdmissionAnswer;
+      if (master) {
+        // Beds and admissions on: the place from the picker, the admission
+        // time when set back, and this form's one Idempotency-Key.
+        setRefusal(null);
+        const body = JSON.stringify({
+          ...payload,
+          ...bedChoicePayload(master, bedChoice),
+          ...(admittedAt ? { admitted_at: new Date(admittedAt).toISOString() } : {}),
+        });
+        // A signing PIN typed by the person authorising a bed awaiting a
+        // terminal clean is sent once and never kept: whatever the answer,
+        // the next send needs it typed again.
+        if (bedChoice.terminalAuthoriserPin) {
+          setBedChoice(prev => ({ ...prev, terminalAuthoriserPin: '' }));
+        }
+        result = await apiFetch<AdmissionAnswer>('/admissions/admit', {
+          method: 'POST',
+          headers: { 'Idempotency-Key': admitKey },
+          body,
+        });
+      } else {
+        result = await admitPatient(payload);
+      }
       // Surface the patient's one-time Bridge credential before finishing, so the
       // clinician can hand it over. It is never retrievable again. A missing date
       // of birth also stops here: said now, while someone can still ask the
       // patient, rather than at discharge.
       const dobRecorded = result?.date_of_birth_recorded !== false;
       const bedWarning: string | null = result?.bed_warning || null;
-      if (result?.temporary_password || !dobRecorded || bedWarning) {
+      const locationWarning: string | null = result?.location_warning || null;
+      const replayed = result?.replayed === true;
+      if (result?.temporary_password || !dobRecorded || bedWarning || locationWarning || replayed) {
         setCredential({
           login: result?.patient_login_id ?? null,
           password: result?.temporary_password ?? null,
           dobRecorded,
           bedWarning,
+          locationWarning,
+          replayed,
         });
         setIsSubmitting(false);
       } else {
         onSuccess();
       }
     } catch (err) {
-      setError((err instanceof Error ? err.message : '') || 'Failed to admit patient');
+      const message = (err instanceof Error ? err.message : '') || 'Failed to admit patient';
+      const code = (err as { detail?: { error?: unknown } } | null)?.detail?.error;
+      if (master && typeof code === 'string' && BED_REFUSAL_CODES.has(code)) {
+        // The bed changed under the form (taken, retired, a clean raised) or
+        // the server wants words the picker did not have: show its words by
+        // the picker and read the beds again.
+        setRefusal({ code, message });
+        void loadOptions();
+      }
+      setError(message);
       setIsSubmitting(false);
     }
   };
@@ -317,6 +407,17 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
                 }}
               >
                 {credential.bedWarning}
+              </p>
+            )}
+            {credential.replayed && (
+              <p role="note" className="bed-picker__note" style={{ marginBottom: 16 }}>
+                This admission was already recorded when the form was first sent, so it was not
+                recorded twice. The one-time password was shown then and cannot be shown again.
+              </p>
+            )}
+            {credential.locationWarning && (
+              <p role="note" className="bed-picker__note" style={{ marginBottom: 16 }}>
+                {credential.locationWarning}
               </p>
             )}
             {!credential.dobRecorded && (
@@ -503,25 +604,51 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
                           ))}
                         </select>
                       </div>
-                      <div className="admit-form-group">
-                        <label htmlFor="admit-ward">Ward <span>*</span></label>
-                        <input id="admit-ward" type="text" className="admit-input" list="admit-ward-options" autoComplete="off" value={formData.ward} onChange={e => handleChange('ward', e.target.value)} required />
-                        <datalist id="admit-ward-options">
-                          {wardChoices.map(w => <option key={w.ward} value={w.ward} />)}
-                        </datalist>
-                      </div>
-                      <div className="admit-form-group">
-                        <label htmlFor="admit-bed">Bed</label>
-                        <input id="admit-bed" type="text" className="admit-input" list="admit-bed-options" autoComplete="off" value={formData.bed} onChange={e => handleChange('bed', e.target.value)} />
-                        <datalist id="admit-bed-options">
-                          {bedChoices.map(b => <option key={b.bed} value={b.bed} label={b.in_use ? 'In use' : undefined} />)}
-                        </datalist>
-                        {bedHeld && (
-                          <span role="status" style={{ fontSize: '0.8125rem', color: 'var(--status-warn-text)' }}>
-                            This bed is already held by an admitted patient. Check it with the ward before admitting.
-                          </span>
-                        )}
-                      </div>
+                      {master ? (
+                        <>
+                          <BedPicker
+                            master={master}
+                            department={formData.department}
+                            value={bedChoice}
+                            onChange={next => { setBedChoice(next); setRefusal(null); }}
+                            refusal={refusal}
+                          />
+                          {bedMissing && (
+                            <span role="status" style={{ gridColumn: '1 / -1', fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                              {bedMissing}
+                            </span>
+                          )}
+                          <div className="admit-form-group">
+                            <label htmlFor="admit-admitted-at">Admitted at</label>
+                            <input id="admit-admitted-at" type="datetime-local" className="admit-input" value={admittedAt} onChange={e => setAdmittedAt(e.target.value)} />
+                            {admittedAtError
+                              ? <span className="admit-modal__error">{admittedAtError}</span>
+                              : <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>Leave blank for now. Up to {master.backtime_hours} hours back.</span>}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="admit-form-group">
+                            <label htmlFor="admit-ward">Ward <span>*</span></label>
+                            <input id="admit-ward" type="text" className="admit-input" list="admit-ward-options" autoComplete="off" value={formData.ward} onChange={e => handleChange('ward', e.target.value)} required />
+                            <datalist id="admit-ward-options">
+                              {wardChoices.map(w => <option key={w.ward} value={w.ward} />)}
+                            </datalist>
+                          </div>
+                          <div className="admit-form-group">
+                            <label htmlFor="admit-bed">Bed</label>
+                            <input id="admit-bed" type="text" className="admit-input" list="admit-bed-options" autoComplete="off" value={formData.bed} onChange={e => handleChange('bed', e.target.value)} />
+                            <datalist id="admit-bed-options">
+                              {bedChoices.map(b => <option key={b.bed} value={b.bed} label={b.in_use ? 'In use' : undefined} />)}
+                            </datalist>
+                            {bedHeld && (
+                              <span role="status" style={{ fontSize: '0.8125rem', color: 'var(--status-warn-text)' }}>
+                                This bed is already held by an admitted patient. Check it with the ward before admitting.
+                              </span>
+                            )}
+                          </div>
+                        </>
+                      )}
                       <div className="admit-form-group" style={{ gridColumn: '1 / -1' }}>
                         <label>Referring Clinician</label>
                         <input type="text" className="admit-input" value={formData.referring_clinician} onChange={e => handleChange('referring_clinician', e.target.value)} />
@@ -674,8 +801,11 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
                         <h3>Admission Context</h3>
                         <div className="admit-review-list">
                           <div className="admit-review-item"><span>Type</span><span>{formData.admission_type.toUpperCase()} via {formData.admission_source.toUpperCase()}</span></div>
-                          <div className="admit-review-item"><span>Location</span><span>{formData.department} - {formData.ward} {formData.bed}</span></div>
-                          {bedHeld && (
+                          <div className="admit-review-item"><span>Location</span><span>{master ? `${formData.department} - ${bedChoiceSummary(master, bedChoice)}` : `${formData.department} - ${formData.ward} ${formData.bed}`}</span></div>
+                          {master && admittedAt && !admittedAtError && (
+                            <div className="admit-review-item"><span>Admitted at</span><span>{formatClinicalDateTime(new Date(admittedAt))}</span></div>
+                          )}
+                          {!master && bedHeld && (
                             <div className="admit-review-item"><span>Bed</span><span style={{ color: 'var(--status-warn-text)' }}>Already held by an admitted patient</span></div>
                           )}
                           <div className="admit-review-item"><span>Attending</span><span>{attending?.name || '-'}</span></div>
@@ -714,8 +844,17 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
             <div className="admit-summary-group">
               <h4>Location</h4>
               <div className="admit-summary-item">
-                <span className="admit-summary-value">{formData.ward || <span className="admit-summary-value--empty">Pending Ward...</span>}</span>
-                <span className="admit-summary-label">{formData.department} {formData.bed ? `· Bed ${formData.bed}` : ''}</span>
+                {master ? (
+                  <>
+                    <span className="admit-summary-value">{bedChoice.wardId ? bedChoiceSummary(master, bedChoice) : <span className="admit-summary-value--empty">Pending Ward...</span>}</span>
+                    <span className="admit-summary-label">{formData.department}</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="admit-summary-value">{formData.ward || <span className="admit-summary-value--empty">Pending Ward...</span>}</span>
+                    <span className="admit-summary-label">{formData.department} {formData.bed ? `· Bed ${formData.bed}` : ''}</span>
+                  </>
+                )}
               </div>
             </div>
 

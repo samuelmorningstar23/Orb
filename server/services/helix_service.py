@@ -118,10 +118,40 @@ class SelfReceiptRefused(Exception):
 #  READ OPERATIONS
 # ═══════════════════════════════════════════════════════════════════
 
-def get_medication_catalog():
-    """Retrieve all medications in the Helix master catalog."""
+#: helix_medication_master.identity_status of a drug that may be ORDERED or
+#: SUGGESTED (grn-6, ruling GRN-RS1). A draft waits for a second pharmacist and
+#: a retired drug is out of use. Every ordering and suggestion path in this
+#: module reads only these rows; the safety screens (allergy_interlock,
+#: patient_specific_screen, drug_safety_service) and the Sage lexicon keep
+#: reading every row, so a draft brand is screened by its molecule from the
+#: moment it is saved. With the pharmacy store never switched on, every row is
+#: 'active' (migration 54's default), so nothing changes there.
+ORDERABLE_IDENTITY = "active"
+
+
+def _identity_refusal(med_name: str, status: str) -> str:
+    if status == "draft":
+        return (f"{med_name} is waiting for a second pharmacist to confirm it, so it cannot "
+                "be ordered yet.")
+    return f"{med_name} has been retired from the formulary and cannot be ordered."
+
+
+def get_medication_catalog(*, orderable_only: bool = False):
+    """Retrieve the medications in the Helix master catalog.
+
+    Every row by default, each carrying its identity_status: the procurement
+    drug-boundary screen must see drafts and retired drugs too (or a draft's
+    name could enter the stores item master), and the board looks up the form
+    of a drug on an existing order, which may since have been retired. A
+    caller choosing a drug to ORDER or SUGGEST passes orderable_only=True, and
+    the substitute and order writers below refuse any other row whatever a
+    screen offered."""
     with db_session() as conn:
-        rows = conn.execute("SELECT * FROM helix_medication_master").fetchall()
+        if orderable_only:
+            rows = conn.execute("SELECT * FROM helix_medication_master "
+                                "WHERE identity_status = ?", (ORDERABLE_IDENTITY,)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM helix_medication_master").fetchall()
         return [dict(row) for row in rows]
 
 def get_inventory():
@@ -240,10 +270,17 @@ def insert_order(conn, patient_id: str, medication_id: str, dose: str, route: st
     Taking the id, not a name, also orders exactly the row the caller screened:
     create_order's LIKE lookup can land on a different row whose name merely
     contains this one.
+
+    Only a confirmed drug (identity_status 'active') is ordered: a draft
+    waiting for its second pharmacist, or a retired drug, is refused here
+    whatever lane resolved it (grn-6).
     """
-    if not conn.execute("SELECT 1 FROM helix_medication_master WHERE id = ?",
-                        (medication_id,)).fetchone():
+    med = conn.execute("SELECT name, identity_status FROM helix_medication_master WHERE id = ?",
+                       (medication_id,)).fetchone()
+    if not med:
         raise ValueError(f"Medication {medication_id} not found in Helix master catalog.")
+    if (med["identity_status"] or ORDERABLE_IDENTITY) != ORDERABLE_IDENTITY:
+        raise ValueError(_identity_refusal(med["name"] or medication_id, med["identity_status"]))
     order_id = str(uuid.uuid4())
     conn.execute("""
         INSERT INTO helix_patient_med_orders (id, patient_id, medication_id, dosage, route, frequency, status, prescribed_by)
@@ -255,9 +292,12 @@ def insert_order(conn, patient_id: str, medication_id: str, dose: str, route: st
 def create_order(patient_id: str, medication_name: str, dose: str, route: str, frequency: str, prescribed_by: str):
     """Create a new medication order in the Helix system."""
     with db_session() as conn:
+        # Confirmed drugs only (grn-6): a draft or retired row that also
+        # matches the name is never the one ordered.
         med = conn.execute(
-            "SELECT id FROM helix_medication_master WHERE name LIKE ? OR generic_name LIKE ?",
-            (f"%{medication_name}%", f"%{medication_name}%")
+            "SELECT id FROM helix_medication_master "
+            "WHERE (name LIKE ? OR generic_name LIKE ?) AND identity_status = ?",
+            (f"%{medication_name}%", f"%{medication_name}%", ORDERABLE_IDENTITY)
         ).fetchone()
         if not med:
             raise ValueError(f"Medication {medication_name} not found in Helix master catalog.")
@@ -359,13 +399,19 @@ def transition_order_status(
         # stored and the dispense later failed on "insufficient stock" for a
         # drug that does not exist.
         if substitute_medication_id and target_status == "substitute_suggested":
-            if not conn.execute(
-                "SELECT 1 FROM helix_medication_master WHERE id = ?",
+            sub = conn.execute(
+                "SELECT name, identity_status FROM helix_medication_master WHERE id = ?",
                 (substitute_medication_id,),
-            ).fetchone():
+            ).fetchone()
+            if not sub:
                 raise ValueError(
                     f"Medication {substitute_medication_id} is not in the Helix formulary."
                 )
+            # A substitute is an ordering decision: only a confirmed drug
+            # (grn-6). A draft or retired row is refused before anything moves.
+            if (sub["identity_status"] or ORDERABLE_IDENTITY) != ORDERABLE_IDENTITY:
+                raise ValueError(_identity_refusal(sub["name"] or substitute_medication_id,
+                                                   sub["identity_status"]))
 
         # ── Dispense: Atomic Inventory Decrement ──
         stock_movement_id = None
@@ -537,6 +583,18 @@ def transition_screen_target(
                 (idempotency_key,),
             ).fetchone():
                 return None
+    # A proposed substitute that is not a confirmed drug (grn-6) is refused in
+    # words here, before any screen runs, so no override is audited against a
+    # suggestion the state machine would then refuse.
+    if target_status == "substitute_suggested" and substitute_medication_id:
+        with db_session() as conn:
+            sub = conn.execute(
+                "SELECT name, identity_status FROM helix_medication_master WHERE id = ?",
+                (substitute_medication_id,),
+            ).fetchone()
+        if sub and (sub["identity_status"] or ORDERABLE_IDENTITY) != ORDERABLE_IDENTITY:
+            raise ValueError(_identity_refusal(sub["name"] or substitute_medication_id,
+                                               sub["identity_status"]))
     target = order_screen_target(
         order_id,
         substitute_medication_id if target_status == "substitute_suggested" else None,
@@ -896,9 +954,12 @@ def pre_flight_alternative_suggestion(medication_id: str) -> Optional[dict]:
         if not (molecule and strength and form):
             return None
 
+        # Only a confirmed drug is ever suggested (grn-6): a draft waiting for
+        # its second pharmacist, or a retired one, is never offered.
         candidates = conn.execute(
-            "SELECT * FROM helix_medication_master WHERE id != ? ORDER BY name",
-            (medication_id,)
+            "SELECT * FROM helix_medication_master WHERE id != ? AND identity_status = ? "
+            "ORDER BY name",
+            (medication_id, ORDERABLE_IDENTITY)
         ).fetchall()
         for cand in candidates:
             if (_norm(cand["generic_name"]), _norm(cand["strength"]), _norm(cand["form"])) != (molecule, strength, form):

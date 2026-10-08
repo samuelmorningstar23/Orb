@@ -38,6 +38,10 @@ interface CatalogItem {
   generic_name: string
   form: string
   strength: string
+  /** 'draft' (waiting for a second pharmacist), 'active' or 'retired'
+   *  (grn-6). Only an active drug is offered as a substitute; the server
+   *  refuses any other whatever is chosen. Absent reads as active. */
+  identity_status?: string
 }
 
 // ─── Allowed next actions per state ───
@@ -348,7 +352,8 @@ export default function HelixOrderReviewModal({ order: openedOrder, catalog, onC
                   onChange={e => setSubstituteId(e.target.value)}
                 >
                   <option value="">(Select substitute)</option>
-                  {catalog.filter(c => c.name !== order.medication_name).map(c => (
+                  {catalog.filter(c => c.name !== order.medication_name
+                    && (c.identity_status ?? 'active') === 'active').map(c => (
                     <option key={c.id} value={c.id}>{c.name} ({c.strength})</option>
                   ))}
                 </select>

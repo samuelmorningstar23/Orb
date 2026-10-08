@@ -21,11 +21,20 @@ services/pharmacy_master_service.py. Every handler is a plain def.
 Errors: a field that may not change, or a value outside its set, is 422; an
 unknown id is 404; the same person deciding their own request is 403; a
 pending, stale or stock-blocked change is 409.
+
+DRUG IDENTITY (grn-6, ruling GRN-RS1 option (b)). Adding a drug, asking for an
+identity correction, retiring a drug and the second pharmacist's decision are
+all the WRITE tier: identity is a pharmacist's call, never the approve tier's.
+The decider is never the requester (403), approving names the identity the
+decider checked (409 request_stale when it moved), a duplicate name or an
+unacknowledged same generic name, strength and form is 409, and a drug in use
+is never rewritten (422 identity_locked). An audit outage is 503
+audit_unavailable and nothing changed.
 """
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from permissions import (
     PHARMACY_STORE_APPROVE,
@@ -34,6 +43,7 @@ from permissions import (
     require_permission,
 )
 from services import pharmacy_master_service as masters
+from services.audit_service import AuditWriteError
 
 router = APIRouter()
 
@@ -50,6 +60,7 @@ _STATUS = {
     "vault_stock": 409,
     "decided": 409,
     "already_exists": 409,
+    "same_identity_exists": 409,
     "dispensing_store_exists": 409,
     "store_kind_fixed": 409,
     "store_holds_stock": 409,
@@ -57,8 +68,17 @@ _STATUS = {
 
 
 def _fail(exc: masters.MasterError) -> HTTPException:
-    return HTTPException(status_code=_STATUS.get(exc.code, 422),
-                         detail={"error": exc.code, "message": str(exc)})
+    detail = {"error": exc.code, "message": str(exc)}
+    extra = getattr(exc, "detail", None) or {}
+    detail.update({k: v for k, v in extra.items() if k not in detail})
+    return HTTPException(status_code=_STATUS.get(exc.code, 422), detail=detail)
+
+
+def _audit_unavailable() -> HTTPException:
+    return HTTPException(status_code=503, detail={
+        "error": "audit_unavailable",
+        "message": "The audit record could not be written, so nothing was changed. "
+                   "Try again shortly."})
 
 
 def _ctx(request: Request) -> dict:
@@ -127,11 +147,149 @@ def classify_drug(drug_id: str, body: ClassificationIn, request: Request,
 def list_classification_requests(decision: Optional[str] = Query("pending"),
                                  drug_id: Optional[str] = None,
                                  user: dict = Depends(_PS_READ)):
+    """Classification changes only: identity requests are on /identity-requests,
+    where a second pharmacist decides them."""
     try:
-        return {"requests": masters.list_change_requests(decision=decision or None,
-                                                         drug_id=drug_id)}
+        return {"requests": masters.list_change_requests(
+            decision=decision or None, drug_id=drug_id,
+            kinds=masters.CLASSIFICATION_REQUEST_KINDS)}
     except masters.MasterError as exc:
         raise _fail(exc)
+
+
+# ── Drug identity (grn-6) ─────────────────────────────────────────────────────
+
+class IdentityIn(BaseModel):
+    name: Optional[str] = Field(None, max_length=400)
+    generic_name: Optional[str] = Field(None, max_length=400)
+    form: Optional[str] = Field(None, max_length=200)
+    strength: Optional[str] = Field(None, max_length=200)
+
+
+def _identity(body: IdentityIn) -> dict:
+    return {"name": body.name, "generic_name": body.generic_name, "form": body.form,
+            "strength": body.strength}
+
+
+@router.post("/drugs/preview")
+def preview_drug(body: IdentityIn, user: dict = Depends(_PS_WRITE)):
+    """What the allergy and interaction screens will make of this identity,
+    and any drug with the same name or the same generic name, strength and
+    form. Saves nothing."""
+    try:
+        return masters.preview_drug(_identity(body))
+    except masters.MasterError as exc:
+        raise _fail(exc)
+
+
+class NewDrugIn(IdentityIn):
+    another_brand: bool = False
+    note: Optional[str] = Field(None, max_length=1000)
+
+
+@router.post("/drugs")
+def create_drug(body: NewDrugIn, request: Request, user: dict = Depends(_PS_WRITE)):
+    """Add a drug as a draft. It cannot be ordered until a different
+    pharmacist confirms it."""
+    try:
+        return masters.create_drug(_identity(body), actor=user,
+                                   acknowledge_same_identity=body.another_brand,
+                                   note=body.note, audit_ctx=_ctx(request))
+    except masters.MasterError as exc:
+        raise _fail(exc)
+    except AuditWriteError:
+        raise _audit_unavailable()
+
+
+class CorrectionIn(IdentityIn):
+    reason: Optional[str] = Field(None, max_length=1000)
+    another_brand: bool = False
+
+
+@router.post("/drugs/{drug_id}/identity-correction")
+def request_identity_correction(drug_id: str, body: CorrectionIn, request: Request,
+                                user: dict = Depends(_PS_WRITE)):
+    """Ask a second pharmacist to correct a confirmed drug that nothing names
+    yet. A drug with orders, stock or purchase lines is retired and replaced
+    instead (422 identity_locked)."""
+    try:
+        return masters.request_identity_correction(
+            drug_id, _identity(body), actor=user, reason=body.reason,
+            acknowledge_same_identity=body.another_brand, audit_ctx=_ctx(request))
+    except masters.MasterError as exc:
+        raise _fail(exc)
+    except AuditWriteError:
+        raise _audit_unavailable()
+
+
+class RetireIn(BaseModel):
+    reason: Optional[str] = Field(None, max_length=1000)
+    replacement_drug_id: Optional[str] = Field(None, max_length=80)
+
+
+@router.post("/drugs/{drug_id}/retire")
+def retire_drug(drug_id: str, body: RetireIn, request: Request,
+                user: dict = Depends(_PS_WRITE)):
+    """Take a confirmed drug out of ordering now, with a reason. Its orders,
+    receipts and ledger keep naming it."""
+    try:
+        return masters.retire_drug(drug_id, actor=user, reason=body.reason,
+                                   replacement_drug_id=body.replacement_drug_id,
+                                   audit_ctx=_ctx(request))
+    except masters.MasterError as exc:
+        raise _fail(exc)
+    except AuditWriteError:
+        raise _audit_unavailable()
+
+
+@router.get("/identity-requests")
+def list_identity_requests(decision: Optional[str] = Query("pending"),
+                           user: dict = Depends(_PS_READ)):
+    """New drugs and identity corrections waiting for a second pharmacist,
+    each with what it screens as."""
+    try:
+        return {"requests": masters.list_identity_requests(decision=decision or None)}
+    except masters.MasterError as exc:
+        raise _fail(exc)
+
+
+class IdentityDecisionIn(BaseModel):
+    decision: str
+    reason: Optional[str] = Field(None, max_length=1000)
+    expected: Optional[IdentityIn] = None
+
+
+@router.post("/identity-requests/{request_id}/decision")
+def decide_identity_request(request_id: int, body: IdentityDecisionIn, request: Request,
+                            user: dict = Depends(_PS_WRITE)):
+    """A second pharmacist confirms or refuses. Never the requester (403).
+    Confirming names the identity that was checked."""
+    if body.decision not in ("approved", "refused"):
+        raise HTTPException(status_code=422, detail={
+            "error": "bad_value", "message": "the decision is approved or refused"})
+    try:
+        return masters.decide_identity_request(
+            request_id, approve=body.decision == "approved", actor=user, reason=body.reason,
+            expected=_identity(body.expected) if body.expected is not None else None,
+            audit_ctx=_ctx(request))
+    except masters.MasterError as exc:
+        raise _fail(exc)
+    except AuditWriteError:
+        raise _audit_unavailable()
+
+
+@router.post("/identity-requests/{request_id}/withdraw")
+def withdraw_identity_request(request_id: int, request: Request,
+                              user: dict = Depends(_PS_WRITE)):
+    """The requester takes their own request back. A withdrawn new drug is
+    retired, never ordered."""
+    try:
+        return masters.withdraw_identity_request(request_id, actor=user,
+                                                 audit_ctx=_ctx(request))
+    except masters.MasterError as exc:
+        raise _fail(exc)
+    except AuditWriteError:
+        raise _audit_unavailable()
 
 
 class DecisionIn(BaseModel):

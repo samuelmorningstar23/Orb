@@ -117,6 +117,11 @@ export const LAB_CRITICAL_ACK = 'lab.critical_ack' as const
 export const LAB_INTERFACE = 'lab.interface' as const
 export const INGEST_RECONCILE = 'ingest.reconcile' as const
 
+/** Medication orders (the order store, W5-E). The pharmacist's check of an
+ *  order: verify or reject it in the store's verification queue. Ruling MO-R4
+ *  (a): the pharmacist only, never the administrator. */
+export const MEDICATION_VERIFY = 'medication.verify' as const
+
 /** Every HIS permission above, in one list, for tests and for later waves. */
 export const HIS_PERMISSIONS = [
   REGISTRATION_READ, REGISTRATION_WRITE, OPD_CONSULT, SCHEDULE_MANAGE,
@@ -125,6 +130,7 @@ export const HIS_PERMISSIONS = [
   WARD_STOCK_READ, WARD_STOCK_RECEIVE, WARD_RETURN_RECORD, WARD_INDENT_RAISE,
   LAB_READ, LAB_COLLECT, LAB_RECEIVE, LAB_RESULT, LAB_AUTHORISE, LAB_MASTER,
   LAB_CRITICAL_LOG, LAB_CRITICAL_ACK, LAB_INTERFACE, INGEST_RECONCILE,
+  MEDICATION_VERIFY,
 ] as const
 
 export type HisPermission = (typeof HIS_PERMISSIONS)[number]
@@ -217,8 +223,9 @@ const ROLE_PERMISSIONS: Record<string, readonly Permission[]> = {
           PHARMACY_STORE_READ, PHARMACY_STORE_APPROVE,
           LAB_READ, LAB_INTERFACE],
   // Pharmacy workflow + Sage only: no clinical read, no clinical write.
-  // HIS: the pharmacy store, including the NDPS register (GRN-R7).
-  pharmacist: [PHARMACY_STORE_READ, PHARMACY_STORE_WRITE, PHARMACY_STORE_NDPS],
+  // HIS: the pharmacy store, including the NDPS register (GRN-R7), and the
+  // check of a medication order (MO-R4 (a): the pharmacist only).
+  pharmacist: [PHARMACY_STORE_READ, PHARMACY_STORE_WRITE, PHARMACY_STORE_NDPS, MEDICATION_VERIFY],
   // Self-only access through Bridge.
   patient: [],
   // The cash counter: payments only, none of the mirrored set.

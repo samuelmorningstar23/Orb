@@ -211,7 +211,7 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 
 ---
 
-#### `verify_medication`: `server/services/pharmacy_verification_service.py:287`
+#### `verify_medication`: `server/services/pharmacy_verification_service.py:305`
 **Signature:** `(med_id: int, pharmacist_id: str, dosage: str|None=None, route: str|None=None, frequency: str|None=None, ack_reason: str|None=None) -> dict`
 **Does:** A pharmacist verifies an AI/agentic med, optionally correcting dose/route/frequency, and stamps who/when, **behind fail-closed safety gates**: the corrected dose goes through the dose guard, and a severe alert, or a screen that failed to run, blocks verification until the pharmacist supplies an `ack_reason`.
 **How it works:**
@@ -225,7 +225,7 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 3. **Dose gate** (`:259-290`), decided before the allergy branch so a refused dose never leaves an allergy-override audit row for a verification that did not happen: if the dose guard blocks, `_dose_ack_refusal` decides whether this actor may override. A pharmacist holds no `medication.prescribe`, so the way on is a corrected dose or a rejection; the refusal is audited as `pharmacy_verify_dose_block` / `denied` and raised as a `severe_ack_required:` `ValueError`.
 4. **Severity gate:** `needs_ack = max_severity == "severe" or screen_failed` (`:291`). With no `ack_reason`, it raises a `ValueError` whose message begins with the machine-readable prefix `severe_ack_required:` and whose `.safety` attribute carries the whole screen (`:295-301`). The route turns exactly that into **HTTP 428 Precondition Required** (`server/routes/pharmacy_routes.py:74-85`). With an `ack_reason`, the override is written to the tamper-evident audit chain as `pharmacy_verify_override` / `outcome="partial_success"`, carrying the severity, the alerts and the reason (`:302-321`), and the returned screen gains `override: {by, reason}` (`:322`). A dose override (only an actor holding `medication.prescribe`) is audited separately as `pharmacy_verify_dose_override` (`:324-344`).
 5. **Re-guard inside the write session** (`:346-362`): not on chart, already decided, stopped, and the placeholder check run again, because another pharmacist may have verified the med (or a doctor stopped it) while the screen or the acknowledgement round-trip was in flight.
-6. `UPDATE medications SET dosage, route, frequency, verified_by, verified_at WHERE id=? AND verified_by IS NULL AND status='active'` (`:364-370`). Status is **not** written: the med stays `active`. The trailing predicates are a **concurrency guard**, even if two requests both pass the read-time check, only the first UPDATE matches.
+6. `UPDATE medications SET dosage, route, frequency, verified_by, verified_at WHERE id=? AND verified_by IS NULL AND status='active'` (`:364-370`). Status is **not** written: the med stays `active`. The trailing predicates are a **concurrency guard**, even if two requests both pass the read-time check, only the first UPDATE matches. When that UPDATE matched and the ward row is linked to a medication order (`medications.med_order_id`), `_mirror_into_order_store` (`server/services/pharmacy_verification_service.py:287`) moves the order in the same transaction through `chart_lane.mirror_legacy_decision_in_txn` (wave 5, W5-E), whatever the store switches say. A refusal from the store is raised as a `ValueError`, so the route answers 400 and the verification is undone with it. An unlinked row is untouched.
 7. Re-read with `_fetch_med`, serialise, log, and return (`:373-380`).
 **Why it exists:** This is the promotion step, the moment an AI suggestion becomes a human-owned active order. Re-running the safety screen *at decision time* means the returned payload shows the pharmacist the allergy/interaction picture as it stands right now, even if the patient's allergies changed since the med was charted.
 **Data in/out:** in: med id, pharmacist id, optional corrections, optional acknowledgement. out:
@@ -241,14 +241,14 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 
 ---
 
-#### `reject_medication`: `server/services/pharmacy_verification_service.py:496`
+#### `reject_medication`: `server/services/pharmacy_verification_service.py:517`
 **Signature:** `(med_id: int, pharmacist_id: str, reason: str) -> dict`
 **Does:** A pharmacist rejects an AI/agentic med: discontinue it and record who rejected it and why.
 **How it works:**
 1. `reason = (reason or "").strip()`; if empty, raise `ValueError("Give a reason for rejecting this medication.")` **before** touching the DB (`:393-395`). A reason is mandatory for auditability.
 2. Open a session, `_fetch_med`, run the not-on-chart, not-Sage-charted and already-decided guards (`:397-404`). There is no `active` check: a pharmacist may still reject a med a doctor has since stopped.
 3. Build the rejection note with the pharmacist's **name**, read from `users` on the same session (`:411-412`), falling back to the id: `f"[REJECTED by {who_name} @ {stamp}] {reason}"`, appended to any prior `notes` with a newline (`:406-414`), history is preserved, not overwritten. The time stays UTC ISO in the stored note; every screen that prints it renders it in local clinical form.
-4. `UPDATE ... SET status='discontinued', verified_by, verified_at, notes WHERE id=? AND verified_by IS NULL` (`:416-421`). Note rejection also stamps `verified_by`/`verified_at`, "verified" here means "a pharmacist made the decision," not "approved."
+4. `UPDATE ... SET status='discontinued', verified_by, verified_at, notes WHERE id=? AND verified_by IS NULL` (`:416-421`). Note rejection also stamps `verified_by`/`verified_at`, "verified" here means "a pharmacist made the decision," not "approved." A linked ward row moves its medication order to rejected in the same transaction (`_mirror_into_order_store`, as in verify), and a store refusal undoes the rejection.
 5. Re-read, serialise, re-run safety (`:425`), log, return.
 **Why it exists:** The negative half of the loop. A rejected AI med must leave the active chart (`discontinued`) *and* leave a paper trail (the reason in `notes` plus the audit event) so a later reviewer can see why the AI's suggestion was thrown out.
 **Data in/out:** in: med id, pharmacist id, non-empty reason. out: `{status:'rejected', medication:{status:'discontinued', ...}, reason, safety, safety_alerts}`.

@@ -99,6 +99,23 @@ With the feature off every route here behaves exactly as before.
     (ORB_OPD_QUEUE_POLL_SECONDS) until live desk nudges land (opd-9b);
   * after every change the clinic's open doctor queues get a content-free
     'opd:queue_changed' {department} on the socket (opd_queue_service).
+
+── WHO THE PATIENT IS (opd-6a, the 'registration' feature on) ──────────────
+With registration on, the desk finds a returning patient in the hospital-wide
+index, so attaching a visit to the wrong record (and so to someone else's
+allergies and history) is one tap away. Ruling OPD-S1, applied strictly:
+EVERY visit registered here carries `identity_check`, the identifiers the
+patient STATES (name; date of birth or age; the last 4 digits of their phone
+or their UHID), and the server checks them against the record
+(registration_service.check_identity, before the visit's transaction) and
+answers match or no match, never a stored value. No check is 409
+'identity_check_required'; no match is 409 'identity_not_confirmed' (the
+failure is audited by the check, and the refused visit on the fail-closed
+patient_identity chain); five failures by one user for one patient in an hour
+is 429. A patient registered a moment ago is no exception: the desk sends
+what it just typed and the UHID the registration returned. The passing check
+is stored on opd_visits.identity_check_json and in the visit's audit row.
+With the feature off the field is ignored and nothing here changes.
 """
 from __future__ import annotations
 
@@ -106,7 +123,7 @@ import uuid
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 import config
 from database import db_session
@@ -125,6 +142,7 @@ from permissions import (
     require_registration_desk,
 )
 from routes.opt_in_gates import require_opd_feature
+from services import registration_service
 from services.audit_service import AuditWriteError, log_audit_event
 from services.frontdesk_service import (
     FrontDeskError,
@@ -165,6 +183,18 @@ router = APIRouter(prefix="/api/frontdesk", tags=["frontdesk"])
 # arrives through a typed body (or a path param). A `dict` body makes a route
 # invisible to the guard, which is worse than being listed by it.
 
+class IdentityStatedIn(BaseModel):
+    """What the patient STATES at the desk (opd-6a, ruling OPD-S1): their
+    name, their date of birth or age, and the last 4 digits of their phone or
+    their UHID. Compared on the server; never echoed back."""
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(None, max_length=200)
+    date_of_birth: str | None = Field(None, max_length=40)
+    age_years: int | None = None
+    phone_last4: str | None = Field(None, max_length=10)
+    uhid: str | None = Field(None, max_length=40)
+
+
 class OpdVisitIn(BaseModel):
     patient_id: str
     department: str | None = None
@@ -174,6 +204,8 @@ class OpdVisitIn(BaseModel):
     appointment_id: str | None = None
     notes: str | None = None
     idempotency_key: str | None = None
+    # Required while the 'registration' feature is on (opd-6a); ignored off.
+    identity_check: IdentityStatedIn | None = None
 
 
 class CompleteVisitIn(BaseModel):
@@ -369,10 +401,13 @@ def _request_audit_fields(request: Request, user: dict) -> dict:
 
 
 def _registration_audit(request: Request, user: dict, *, patient_id: str,
-                        dept: str | None, self_registered: bool):
+                        dept: str | None, self_registered: bool,
+                        identity: dict | None = None):
     """The register callback: re-check the registration rule under the write
     lock, write 'opd_visit_registered', and for a patient with no active
-    admission write 'opd_scope_opened' (clinical_access, fail-closed)."""
+    admission write 'opd_scope_opened' (clinical_access, fail-closed).
+    `identity` is the passing stated-identifier check (registration feature
+    on, opd-6a); its result rides in the 'opd_visit_registered' row."""
 
     def _write(db, visit: dict) -> None:
         # The rule was checked before the transaction began; an admission that
@@ -401,6 +436,7 @@ def _registration_audit(request: Request, user: dict, *, patient_id: str,
                 "doctor_id": visit.get("doctor_id"),
                 "self_registered": self_registered,
                 "replay": False,
+                **_identity_facts(identity),
                 "written": "in_transaction",
             },
             **fields,
@@ -546,6 +582,100 @@ def _replay_conflict() -> HTTPException:
                         "registration again."),
         },
     )
+
+
+# ── Registration on: who the patient is (opd-6a, ruling OPD-S1) ──────────────
+
+def _identity_refused(request: Request, user: dict, *, patient_id: str,
+                      reason_code: str) -> None:
+    """A visit refused because the patient's identity was not confirmed, on
+    the fail-closed patient_identity chain (written after nothing was saved).
+    A failed check also has its own identity_check_failed row; this one says
+    a visit was refused because of it. Raises AuditWriteError when it cannot
+    be written, and the caller answers 503."""
+    log_audit_event(
+        correlation_id=str(uuid.uuid4()),
+        event_category="patient_identity",
+        action_type="opd_visit_identity_refused",
+        outcome="denied",
+        summary_message=(
+            f"OPD visit for {patient_id} refused: "
+            + ("no identity check was sent" if reason_code == "identity_check_required"
+               else "what the patient stated did not match the record")),
+        patient_id=patient_id,
+        target_type="patient",
+        target_id=patient_id,
+        metadata={"reason_code": reason_code, "purpose": "opd_visit"},
+        **_request_audit_fields(request, user),
+    )
+
+
+def _confirm_identity(request: Request, user: dict, *, patient_id: str,
+                      dept: str | None, stated: IdentityStatedIn | None) -> dict:
+    """Run the stated-identifier check for a visit (registration feature on).
+
+    Before the visit's transaction, as registration_service.check_identity
+    opens its own. Returns what is stored on the visit and its audit row:
+    {result, checked, checked_at, checked_by, purpose, method}, never a stated
+    or stored value. Refusals: no check 409 'identity_check_required'; too
+    few identifiers 422 (the check's own codes); no match 409
+    'identity_not_confirmed'; too many failures 429; another ward's inpatient
+    404 (the check audits that as patient_scope_denied)."""
+    if stated is None:
+        try:
+            _identity_refused(request, user, patient_id=patient_id,
+                              reason_code="identity_check_required")
+        except AuditWriteError:
+            raise _audit_unavailable()
+        raise HTTPException(status_code=409, detail={
+            "error": "identity_check_required",
+            "message": ("Confirm who the patient is first: ask for their name, their date "
+                        "of birth or age, and the last 4 digits of their phone or their "
+                        "UHID. Nothing was saved."),
+        })
+    try:
+        verdict = registration_service.check_identity(
+            patient_id, stated.model_dump(), user=user, department=dept,
+            request_meta={
+                "request_path": request.url.path,
+                "http_method": request.method,
+                "ip_address": request.client.host if request.client else None,
+                "user_agent": request.headers.get("user-agent"),
+            },
+            purpose="opd_visit")
+    except registration_service.RegistrationNotFound:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    except registration_service.RegistrationError as err:
+        raise HTTPException(status_code=err.status, detail=err.detail())
+    except AuditWriteError:
+        raise _audit_unavailable()
+    if verdict.get("result") != "match":
+        try:
+            _identity_refused(request, user, patient_id=patient_id,
+                              reason_code="identity_not_confirmed")
+        except AuditWriteError:
+            raise _audit_unavailable()
+        raise HTTPException(status_code=409, detail={
+            "error": "identity_not_confirmed",
+            "message": ("What the patient told you does not match this record. Check you "
+                        "have the right patient. Nothing was saved."),
+        })
+    return {
+        "result": "match",
+        "checked": list(verdict.get("checked") or []),
+        "checked_at": verdict.get("checked_at"),
+        "checked_by": user.get("id"),
+        "purpose": "opd_visit",
+        "method": "stated_identifiers",
+    }
+
+
+def _identity_facts(identity: dict | None) -> dict:
+    """What a visit's audit row and response say about the check: the
+    result, which identifiers were compared, and when."""
+    if not identity:
+        return {}
+    return {"identity_check": {k: identity.get(k) for k in ("result", "checked", "checked_at")}}
 
 
 # ── OPD mode: the consulting doctor's actions (opd-8) ───────────────────────
@@ -720,6 +850,14 @@ def create_opd_visit(
             # 404, not 403 — the caller must not learn that this patient exists.
             raise HTTPException(status_code=404, detail="Patient not found")
 
+    # opd-6a (ruling OPD-S1): with the registration feature on, the patient
+    # confirms who they are before any visit is attached to the record. Off,
+    # nothing here runs and identity_check is ignored.
+    identity = None
+    if config.feature_enabled("registration"):
+        identity = _confirm_identity(request, user, patient_id=patient_id, dept=dept,
+                                     stated=data.identity_check)
+
     if opd_mode():
         # OPD mode (opd-7): the audit rows commit with the visit, and the visit
         # that opens the outpatient record view says so on the fail-closed chain.
@@ -739,9 +877,10 @@ def create_opd_visit(
                 self_registered=self_registered,
                 on_registered=_registration_audit(
                     request, user, patient_id=patient_id, dept=dept,
-                    self_registered=self_registered,
+                    self_registered=self_registered, identity=identity,
                 ),
                 on_replay=_registration_replay_audit(request, user),
+                identity_check=identity,
             )
         except OpdReplayConflict as err:
             _audit_replay_refused(request, user, patient_id=patient_id,
@@ -753,7 +892,7 @@ def create_opd_visit(
             raise _audit_unavailable()
         # opd-8: the clinic's open queues refetch (content-free, after commit).
         nudge_queue_changed(registered.get("department"))
-        return registered
+        return {**registered, **_identity_facts(identity)}
 
     try:
         visit = register_opd_visit(
@@ -766,6 +905,7 @@ def create_opd_visit(
             notes=data.notes,
             registered_by=user.get("id"),
             idempotency_key=data.idempotency_key,
+            identity_check=identity,
         )
     except FrontDeskError as err:
         raise _bad_request(err)
@@ -791,9 +931,10 @@ def create_opd_visit(
             "department": visit["department"],
             "token_number": visit["token_number"],
             "doctor_id": visit.get("doctor_id"),
+            **_identity_facts(identity),
         },
     )
-    return visit
+    return {**visit, **_identity_facts(identity)}
 
 
 @router.get("/opd/visits/{visit_id}")

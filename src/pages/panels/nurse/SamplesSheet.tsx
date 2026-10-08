@@ -19,6 +19,11 @@
  *   3. Draw the sample and mark each tube collected. The collection time is
  *      now: back-dating is switched off until the ruling is confirmed.
  *
+ * A REJECTED SAMPLE (lis-9) shows as 'Recollection needed' with the
+ * laboratory's reason until the laboratory decides. If it recollects, a NEW
+ * tube appears here as an ordinary sample to collect, marked as the
+ * recollection of the rejected one; if it cancels the tests, the row goes.
+ *
  * A failed load never renders as an empty list, and an empty list names the
  * scope it covers. No polling: each read is audited, so the list refreshes
  * when it opens, after each step and when asked.
@@ -48,6 +53,10 @@ import './SamplesSheet.css'
 export interface SamplesSheetProps {
   /** 'ward' (default): by bed. 'laboratory': every ward, grouped by ward. */
   variant?: 'ward' | 'laboratory'
+}
+
+function rejectionWords(specimen: CollectionSpecimen): string {
+  return [specimen.rejection_display, specimen.rejection_note].filter(Boolean).join(': ')
 }
 
 interface PatientGroup {
@@ -214,11 +223,17 @@ function PatientCard({ group, showWard, onPrinted, onChanged }: PatientCardProps
                 {formatAccession(specimen.id)}
                 {specimen.recollection_needed ? null : ` · ${labelStatus(specimen)}`}
               </span>
+              {specimen.recollect_of && !specimen.recollection_needed && (
+                <span className="samples__tube-line">
+                  Recollection of {formatAccession(specimen.recollect_of)},
+                  which the laboratory rejected
+                </span>
+              )}
               {specimen.recollection_needed && (
                 <span className="samples__recollect">
                   Recollection needed: the laboratory rejected this sample
-                  {specimen.rejection_note ? ` (${specimen.rejection_note})` : ''}. It plans the new
-                  sample; nothing to do here yet.
+                  {rejectionWords(specimen) ? ` (${rejectionWords(specimen)})` : ''}. The laboratory
+                  decides whether to recollect it; if it does, a new tube to collect appears here.
                 </span>
               )}
             </span>

@@ -284,6 +284,24 @@ def _fetch_med(db, med_id: int):
     ).fetchone()
 
 
+def _mirror_into_order_store(db, med_id: int, decision: str, pharmacist_id: str, *,
+                             reason: str | None = None, decided_at: str | None = None) -> None:
+    """Invariant I2 of the medication-order store (medorders-3, W5-E): when the
+    ward row just verified or rejected is LINKED to a medication order, the
+    order moves in this same transaction, whatever the store switches say
+    (services/medorders/chart_lane.mirror_legacy_decision_in_txn). An unlinked
+    row is untouched. A refusal from the store undoes this decision and reaches
+    the pharmacist as a sentence (the route's 400), because the bedside check
+    follows the link and the two must never disagree."""
+    from services.medorders import chart_lane, core as medorder_core
+    try:
+        chart_lane.mirror_legacy_decision_in_txn(
+            db, medication_id=med_id, decision=decision, actor_id=pharmacist_id,
+            reason=reason, decided_at=decided_at)
+    except medorder_core.MedOrderError as exc:
+        raise ValueError(exc.message) from exc
+
+
 def verify_medication(med_id: int, pharmacist_id: str, dosage: str | None = None,
                       route: str | None = None, frequency: str | None = None,
                       ack_reason: str | None = None) -> dict:
@@ -474,13 +492,16 @@ def verify_medication(med_id: int, pharmacist_id: str, dosage: str | None = None
         if any(_is_placeholder(v) for v in (new_dosage, new_route, new_frequency)):
             raise IncompleteOrderError(INCOMPLETE_ORDER_MESSAGE)
 
-        db.execute(
+        stamp = _now()
+        cur = db.execute(
             """UPDATE medications
                SET dosage = ?, route = ?, frequency = ?,
                    verified_by = ?, verified_at = ?
                WHERE id = ? AND verified_by IS NULL AND status = 'active'""",
-            (new_dosage, new_route, new_frequency, pharmacist_id, _now(), med_id),
+            (new_dosage, new_route, new_frequency, pharmacist_id, stamp, med_id),
         )
+        if cur.rowcount == 1:
+            _mirror_into_order_store(db, med_id, "verified", pharmacist_id, decided_at=stamp)
         updated = _fetch_med(db, med_id)
 
     med = _serialize_med(updated)
@@ -526,12 +547,15 @@ def reject_medication(med_id: int, pharmacist_id: str, reason: str) -> dict:
         rejection_note = f"[REJECTED by {who_name} @ {stamp}] {reason}"
         new_notes = f"{prior_notes}\n{rejection_note}".strip() if prior_notes else rejection_note
 
-        db.execute(
+        cur = db.execute(
             """UPDATE medications
                SET status = 'discontinued', verified_by = ?, verified_at = ?, notes = ?
                WHERE id = ? AND verified_by IS NULL""",
             (pharmacist_id, stamp, new_notes, med_id),
         )
+        if cur.rowcount == 1:
+            _mirror_into_order_store(db, med_id, "rejected", pharmacist_id, reason=reason,
+                                     decided_at=stamp)
         updated = _fetch_med(db, med_id)
 
     med = _serialize_med(updated)

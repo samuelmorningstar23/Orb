@@ -205,6 +205,21 @@ describe('SamplesSheet', () => {
     expect(screen.queryByRole('button', { name: 'Check identity and print labels' })).toBeNull()
   })
 
+  it('names the laboratory\'s reason and marks the new tube a recollection (lis-9)', async () => {
+    getCollectionList.mockResolvedValue(list([
+      tube({ id: '261006000135', status: 'rejected', recollection_needed: true,
+        rejection_code: 'clotted', rejection_display: 'Clotted', rejection_note: 'Small clot' }),
+      tube({ id: '261006000143', recollect_of: '261006000127' }),
+    ]))
+    render(<SamplesSheet />)
+    expect(await screen.findByText(/the laboratory rejected this sample \(Clotted: Small clot\)/))
+      .toBeTruthy()
+    expect(screen.getByText(/Recollection of 261006 00012 7, which the laboratory rejected/))
+      .toBeTruthy()
+    // The new tube is collected like any other.
+    expect(screen.getByRole('button', { name: 'Check identity and print labels' })).toBeTruthy()
+  })
+
   it('never shows a failed load as an empty list', async () => {
     getCollectionList.mockRejectedValue(new LabApiError('Server error', 500, 'http_500'))
     render(<SamplesSheet />)

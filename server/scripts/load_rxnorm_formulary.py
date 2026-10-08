@@ -33,6 +33,22 @@ replace step, not to a bulk load. A brand-name change on an in-use row with
 the same identity is still applied. Each run writes one 'security' audit row
 with its counts, in the load's own transaction.
 
+WITH THE PHARMACY STORE ON (ORB_PHARMACY_STORE, any state but 'off'), the
+loader follows ruling GRN-RS1 option (b) as the masters screen does (grn-6):
+  * a NEW row lands as a DRAFT with a pending identity request, which a
+    pharmacist must confirm before anything can order it (the file is not a
+    person, so any pharmacist may confirm or refuse it). It is listed under
+    `drafted`;
+  * a draft's identity is refreshed from the file, and its pending request
+    with it, so the pharmacist confirms what is on the row;
+  * a CONFIRMED or RETIRED row's generic name, form and strength are never
+    rewritten by a file, in use or not: a correction goes through Masters
+    with a second pharmacist. Such rows are listed under `governed` and left
+    exactly as they are (a brand-name change with the same identity still
+    applies).
+With the module off nothing above applies and the loader behaves as before:
+there is no screen to confirm a draft on, so a draft would be a dead end.
+
 Usage
 -----
     python scripts/load_rxnorm_formulary.py --file scripts/fixtures/rxnorm_sample.csv
@@ -74,12 +90,115 @@ def _in_use(db, med_id: str) -> bool:
     ).fetchone() is not None
 
 
+def _governed() -> bool:
+    """Ruling GRN-RS1 applies to the loader while the pharmacy store is on
+    (or draining): the screen a pharmacist confirms a draft on exists."""
+    import config
+
+    return config.module_state("pharmacy-store") != "off"
+
+
+def _load_governed(db, path: Path, reader) -> dict:
+    """The loader with the pharmacy store on (see the module docstring)."""
+    from services import pharmacy_master_service as masters
+
+    read = upserted = 0
+    refused: list[dict] = []
+    governed: list[dict] = []
+    drafted: list[str] = []
+    for row in reader:
+        rxcui = _pick(row, "rxcui", "RXCUI", "id")
+        name = masters.identity_text(_pick(row, "name", "str", "STR"))
+        if not rxcui or not name:
+            continue
+        read += 1
+        med_id = rxcui if rxcui.upper().startswith("RX-") else f"RX-{rxcui}"
+        incoming = {
+            "generic_name": masters.identity_text(_pick(row, "generic_name", "generic",
+                                                        "ingredient")),
+            "form": masters.identity_text(_pick(row, "form", "dose_form", "df")),
+            "strength": masters.identity_text(_pick(row, "strength")),
+        }
+        current = db.execute(
+            "SELECT name, generic_name, form, strength, identity_status "
+            "FROM helix_medication_master WHERE id = ?", (med_id,)).fetchone()
+        if current is None:
+            db.execute(
+                """INSERT INTO helix_medication_master (id, name, generic_name, form, strength,
+                       identity_status, updated_by, updated_at)
+                   VALUES (?, ?, ?, ?, ?, 'draft', ?, CURRENT_TIMESTAMP)""",
+                (med_id, name, incoming["generic_name"], incoming["form"], incoming["strength"],
+                 masters.LOADER_REQUESTER))
+            db.execute(
+                """INSERT INTO pharmacy_master_change_requests (helix_medication_id, change_kind,
+                       field, from_value, to_value, reason, requested_by)
+                   VALUES (?, 'identity_create', 'identity', NULL, ?, ?, ?)""",
+                (med_id, masters.identity_snapshot({"name": name, **incoming}),
+                 f"Added by the formulary file {path.name}", masters.LOADER_REQUESTER))
+            drafted.append(med_id)
+            upserted += 1
+            continue
+        held = {c: current[c] for c in IDENTITY_COLUMNS}
+        status = current["identity_status"] or "active"
+        if held != incoming:
+            if masters.drug_in_use(db, med_id):
+                refused.append({"id": med_id, "name": name, "current": held,
+                                "incoming": incoming})
+                continue
+            if status != "draft":
+                governed.append({"id": med_id, "name": name, "current": held,
+                                 "incoming": incoming, "identity_status": status})
+                continue
+        db.execute(
+            "UPDATE helix_medication_master SET name = ?, generic_name = ?, form = ?, "
+            "strength = ? WHERE id = ?",
+            (name, incoming["generic_name"], incoming["form"], incoming["strength"], med_id))
+        if status == "draft":
+            # The pharmacist confirms what is on the row, so the pending
+            # request's identity follows the file.
+            db.execute(
+                "UPDATE pharmacy_master_change_requests SET to_value = ? "
+                "WHERE helix_medication_id = ? AND change_kind = 'identity_create' "
+                "AND decision = 'pending'",
+                (masters.identity_snapshot({"name": name, **incoming}), med_id))
+        upserted += 1
+    return {"read": read, "upserted": upserted, "refused": refused,
+            "governed": governed, "drafted": drafted}
+
+
 def load_file_report(path: Path) -> dict:
     """Load an RxNorm-style formulary CSV. Returns {"read", "upserted",
     "refused": [{"id", "name", "current", "incoming"}]}, where refused lists
     the in-use rows whose identity the file would have changed and which were
-    left exactly as they were."""
+    left exactly as they were. With the pharmacy store on the report also
+    carries "drafted" (new rows waiting for a pharmacist) and "governed"
+    (confirmed or retired rows whose identity the file would have changed,
+    left as they were)."""
     from services.audit_service import log_audit_event
+
+    if _governed():
+        with path.open(newline="", encoding="utf-8") as fh, \
+                db_session(immediate=True) as db:
+            report = _load_governed(db, path, csv.DictReader(fh))
+            log_audit_event(
+                correlation_id=f"formulary-load-{uuid.uuid4()}",
+                event_category="security",
+                action_type="pharmacy_formulary_loaded",
+                outcome="success",
+                db=db,
+                summary_message=(
+                    f"Formulary file loaded: {report['read']} rows read, {report['upserted']} "
+                    f"written, {len(report['drafted'])} new drafts waiting for a pharmacist, "
+                    f"{len(report['refused']) + len(report['governed'])} rows left unchanged"),
+                actor_user_id="system",
+                target_type="formulary_file",
+                target_id=str(path.name),
+                metadata={"read": report["read"], "upserted": report["upserted"],
+                          "refused_ids": [r["id"] for r in report["refused"]][:200],
+                          "governed_ids": [r["id"] for r in report["governed"]][:200],
+                          "drafted_ids": report["drafted"][:200]},
+            )
+        return report
 
     read = upserted = 0
     refused: list[dict] = []
@@ -160,6 +279,16 @@ def main() -> None:
     report = load_file_report(path)
     print(f"Read {report['read']} formulary rows; upserted {report['upserted']} into "
           f"helix_medication_master.")
+    if report.get("drafted"):
+        print(f"Added {len(report['drafted'])} new drug(s) as drafts. A pharmacist confirms each "
+              "in Pharmacy store, Masters, before it can be ordered.")
+    if report.get("governed"):
+        print(f"Left {len(report['governed'])} confirmed or retired drug(s) unchanged because "
+              "the file would change their generic name, form or strength. Correct them in "
+              "Masters, with a second pharmacist:")
+        for item in report["governed"]:
+            print(f"  {item['id']} {item['name']}: on file {item['current']}, "
+                  f"in the file {item['incoming']}")
     if report["refused"]:
         print(f"Left {len(report['refused'])} drug(s) unchanged because they have orders or "
               f"stock and the file would change their generic name, form or strength:")

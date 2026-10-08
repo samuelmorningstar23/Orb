@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback, memo, lazy, Suspense, type ComponentProps } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback, memo, lazy, Suspense, useSyncExternalStore, type ComponentProps } from 'react'
 import { createPortal } from 'react-dom'
 import { apiFetch, getPatientDetail, dischargePatient, getOpenEscalations, resolveEscalation, type EscalationChain, addClinicalNote, addMedication, getAdministrations, givenAcrossAllergy, isSafetyAckRequired, getPatientForecast, getTimelineProjection, getDischargeQrObjectUrl, prefetchSageContext, getUnseenCounts, socket, getUser, buildHeaders, type Patient, type MedicationSafety, type SafetyAck, type AdministrationRecord, type PatientDetail, type ChartVitalsRow, type PatientRisk, type ChartMedicationRow, type DischargeResult, type DischargeSummaryView, type TimelineProjection } from '../../api/client'
 import { ClinicalCourseTimeline } from '../../components/ClinicalCourseTimeline'
@@ -33,7 +33,21 @@ import OfflineBanner from '../../components/OfflineBanner'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
 import { observedAt, observedBefore, vitalTemperature, vitalWhole } from '../../lib/vitals'
 import VoidObservationButton from '../../components/vitals/VoidObservationButton'
-import { useClinicalSwitches } from '../../shellConfig'
+import { currentModuleFlags, subscribeModuleFlags, useClinicalSwitches } from '../../shellConfig'
+import EndStayDrawer from '../../components/adt/EndStayDrawer'
+import ReopenStayDialog from '../../components/adt/ReopenStayDialog'
+// The discharge screen's 'How the stay ended' fields use its classes too.
+import '../../components/adt/EndStay.css'
+import {
+  DISCHARGE_ROUTE_TYPES,
+  END_STAY_ONLY_TYPES,
+  END_TYPE_WORDS,
+  dischargeFailureWords,
+  dischargeWithEndType,
+  isEndType,
+  mrnMatches,
+  type EndType,
+} from '../../api/adt/endStay'
 import { breakdownRowFor, news2Description, topReadings, type News2BreakdownRow, type News2ScoredVital } from '../../lib/news2'
 import { vitalTrendWindow, trendSpanShort, trendAxisLabel, trendAriaPhrase, type VitalTrendWindow } from '../../lib/vitalTrend'
 import { buildLabTrends, labGraphData, labTrendLabel, labTrendTone, LAB_TREND_TONE_COLOR, type LabStatus, type LabTrend } from '../../lib/labTrends'
@@ -1004,6 +1018,20 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
   const [escalationReasons, setEscalationReasons] = useState<Record<string, string>>({})
   const [closingEscalation, setClosingEscalation] = useState<string | null>(null)
   const [escalationError, setEscalationError] = useState<string | null>(null)
+  /* Beds and admissions (ORB_ADT, opt-in, off by default; adt-9). With the
+     module on the discharge screen asks how the stay ended: routine, referred
+     out, transferred out or DAMA go through the discharge (a DAMA needs the
+     MRN typed back and a reason); LAMA, absconded and death open End of stay,
+     which drafts no summary. With the module off none of this is drawn and
+     the discharge posts exactly what it always did. */
+  const adtOn = useSyncExternalStore(subscribeModuleFlags, currentModuleFlags).adt === true
+  const [endType, setEndType] = useState<EndType>('routine')
+  const [damaMrn, setDamaMrn] = useState('')
+  const [damaReason, setDamaReason] = useState('')
+  /** End of stay is open, with the end type chosen on the discharge screen. */
+  const [endStayType, setEndStayType] = useState<EndType | null>(null)
+  /** Reopen a stay whose end was recorded in error (an ended stay's chart). */
+  const [reopenOpen, setReopenOpen] = useState(false)
   const [selectedNote, setSelectedNote] = useState<HistoryNote | null>(null)
   const [selectedReport, setSelectedReport] = useState<ChartReport | null>(null)
 
@@ -1227,18 +1255,42 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
     setDischarging(true)
     setDischargeError(null)
     try {
-      const result = await dischargePatient(patientId)
+      // Module off: exactly the call it always was, with no body.
+      const result = adtOn
+        ? await dischargeWithEndType(patientId, {
+          discharge_type: endType, confirm_mrn: damaMrn.trim(), reason: damaReason.trim(),
+        })
+        : await dischargePatient(patientId)
       if (result?.status === 'already_discharged') {
         setDischargeError('This patient has already been discharged.')
       } else {
         setDischargeSummary(result)
       }
     } catch (err) {
-      const e = err as { message?: string } | null
-      setDischargeError(`The discharge did not complete: ${e?.message || 'the server did not say why'}.`)
+      if (adtOn) {
+        // The server's own words: read_back_mismatch, reason_required and
+        // use_end_of_stay each say what to do, and that nothing was recorded.
+        // No reply at all is not called a failure: it may have been recorded.
+        setDischargeError(dischargeFailureWords(err))
+      } else {
+        const e = err as { message?: string } | null
+        setDischargeError(`The discharge did not complete: ${e?.message || 'the server did not say why'}.`)
+      }
     } finally {
       setDischarging(false)
     }
+  }
+
+  /* LAMA, absconded or death chosen on the discharge screen: End of stay
+     records it (MRN typed back, no summary). The discharge screen closes so
+     the two are never open together. */
+  const continueToEndStay = () => {
+    if (!data?.patient?.admission_id) {
+      setDischargeError('No admission is on file for this chart, so the end of stay cannot be recorded here.')
+      return
+    }
+    setDischargeModal(false)
+    setEndStayType(endType)
   }
 
   /* The doctor has read the drafted summary: release it to the patient's
@@ -1542,6 +1594,14 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
   // `risk` is deliberately NOT read from `data`: there it is the throttled
   // trend array's score. Everything below reads the one observation.
   const { patient, trend, notes, medications } = data
+  /* How the stay ended (Beds and admissions on only). LAMA, absconded and
+     death go to End of stay; a DAMA is a discharge that needs the MRN typed
+     back (matching the one on file) and a reason before it can be sent. */
+  const endStayChosen = adtOn && END_STAY_ONLY_TYPES.includes(endType)
+  const damaChosen = adtOn && endType === 'dama'
+  const damaMrnOnFile = !!(patient.mrn && String(patient.mrn).trim())
+  const damaMrnMatches = mrnMatches(damaMrn, patient.mrn)
+  const dischargeReady = !damaChosen || (damaMrnMatches && damaReason.trim().length > 0)
   /* ONE observation for every reader of "the patient now": badge, bar values,
      bar colours, gauge, drivers, breakdown, Sage's risk level, the discharge
      modal and the handoff print. Live chart: the pair (the panel is keyed by
@@ -1834,9 +1894,18 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
           </div>
           {canDischarge && (
             <div className="command-bar__group" role="group" aria-label="Discharge">
-              <button className="command-bar__btn" onClick={() => { setDischargeError(null); setDischargeModal(true) }}>
+              <button className="command-bar__btn" onClick={() => { setDischargeError(null); setEndType('routine'); setDamaMrn(''); setDamaReason(''); setDischargeModal(true) }}>
                 <Icon name="exit" size={13} /> Discharge
               </button>
+              {/* Beds and admissions on, and this chart's stay has ended:
+                  reopen it when the end was recorded in error. The server
+                  decides whether it can be (no summary on file, no later
+                  stay) and says why not. */}
+              {adtOn && (patient.status === 'discharged' || patient.status === 'transferred') && patient.admission_id && (
+                <button className="command-bar__btn" onClick={() => setReopenOpen(true)} title="Reopen this stay: its end was recorded in error">
+                  Recorded in error
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -2062,11 +2131,18 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
             <h2 className="modal__title" id="discharge-modal-title">Discharge {patient.name}</h2>
             {!dischargeSummary ? (
               <div className="modal__body">
-                <p className="modal__text">
-                  This drafts a discharge summary from the recorded chart for you to read,
-                  marks the patient discharged and closes the admission. A secure link and
-                  QR code are issued only when the patient has a date of birth on file.
-                </p>
+                {endStayChosen ? (
+                  <p className="modal__text">
+                    {END_TYPE_WORDS[endType]} is recorded through End of stay, which asks for the
+                    MRN to be typed back from the wristband and drafts no discharge summary.
+                  </p>
+                ) : (
+                  <p className="modal__text">
+                    This drafts a discharge summary from the recorded chart for you to read,
+                    marks the patient discharged and closes the admission. A secure link and
+                    QR code are issued only when the patient has a date of birth on file.
+                  </p>
+                )}
                 <div className="modal__patient-summary">
                   <div><strong>Diagnosis:</strong> {patient.diagnosis || 'Not documented'}</div>
                   <div><strong>Ward:</strong> {patient.ward} · Bed {patient.bed}</div>
@@ -2075,6 +2151,64 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
                     <div><strong>Current NEWS2:</strong> {risk.level}{typeof risk.raw_news2 === 'number' ? ` (score ${risk.raw_news2})` : ''}</div>
                   )}
                 </div>
+                {adtOn && (
+                  <div data-testid="discharge-end-type" className="es-discharge">
+                    <label htmlFor="discharge-end-type" className="es-discharge__label">How the stay ended</label>
+                    <select
+                      id="discharge-end-type"
+                      className="es__input"
+                      value={endType}
+                      disabled={discharging}
+                      onChange={ev => { if (isEndType(ev.target.value)) { setEndType(ev.target.value); setDischargeError(null) } }}
+                    >
+                      <optgroup label="Discharge, with a summary">
+                        {DISCHARGE_ROUTE_TYPES.map(t => <option key={t} value={t}>{END_TYPE_WORDS[t]}</option>)}
+                      </optgroup>
+                      <optgroup label="End of stay, no summary">
+                        {END_STAY_ONLY_TYPES.map(t => <option key={t} value={t}>{END_TYPE_WORDS[t]}</option>)}
+                      </optgroup>
+                    </select>
+                    {damaChosen && (
+                      <>
+                        <label htmlFor="discharge-dama-reason" className="es-discharge__label es-discharge__label--next">Reason the patient is leaving against advice</label>
+                        <textarea
+                          id="discharge-dama-reason"
+                          className="es__textarea"
+                          value={damaReason}
+                          maxLength={2000}
+                          disabled={discharging}
+                          onChange={ev => setDamaReason(ev.target.value)}
+                          aria-required="true"
+                        />
+                        <label htmlFor="discharge-dama-mrn" className="es-discharge__label es-discharge__label--next">Type the MRN from the wristband to confirm</label>
+                        <input
+                          id="discharge-dama-mrn"
+                          type="text"
+                          className="es__input es__input--mrn"
+                          value={damaMrn}
+                          autoComplete="off"
+                          spellCheck={false}
+                          disabled={discharging || !damaMrnOnFile}
+                          onChange={ev => setDamaMrn(ev.target.value)}
+                          aria-invalid={damaMrn.trim() !== '' && !damaMrnMatches}
+                          aria-describedby="discharge-dama-mrn-state"
+                        />
+                        <span
+                          id="discharge-dama-mrn-state"
+                          className={damaMrnMatches ? 'es__field-ok' : damaMrn.trim() ? 'es__field-error' : 'es__hint'}
+                        >
+                          {!damaMrnOnFile
+                            ? 'No MRN is on file for this patient, so a DAMA cannot be confirmed here. Ask the records desk to add it.'
+                            : damaMrnMatches
+                              ? 'Matches the MRN on file.'
+                              : damaMrn.trim()
+                                ? 'This does not match the MRN on file.'
+                                : 'The discharge is sent only when this matches the MRN on file.'}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                )}
                 {dischargeAdvisory && typeof dischargeAdvisory === 'object' && (
                   <div data-testid="discharge-billing-advisory" style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8, border: `1px solid ${dischargeAdvisory.advisory_status === 'clear' ? 'var(--border-subtle)' : 'var(--status-warn)'}`, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                     <div style={{ fontWeight: 700, color: dischargeAdvisory.advisory_status === 'clear' ? 'var(--text-primary)' : 'var(--status-warn-text)' }}>
@@ -2138,9 +2272,15 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
                 )}
                 <div className="modal__actions">
                   <button className="modal__cancel" onClick={() => setDischargeModal(false)} disabled={discharging}>Cancel</button>
-                  <button ref={dischargePrimaryBtnRef} className="modal__confirm" onClick={handleDischarge} disabled={discharging}>
-                    {discharging ? 'Drafting summary…' : 'Confirm discharge'}
-                  </button>
+                  {endStayChosen ? (
+                    <button ref={dischargePrimaryBtnRef} className="modal__confirm" onClick={continueToEndStay}>
+                      Continue to end of stay
+                    </button>
+                  ) : (
+                    <button ref={dischargePrimaryBtnRef} className="modal__confirm" onClick={handleDischarge} disabled={discharging || !dischargeReady}>
+                      {discharging ? 'Drafting summary…' : 'Confirm discharge'}
+                    </button>
+                  )}
                 </div>
               </div>
             ) : (
@@ -2227,6 +2367,49 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
                 </div>
               </div>
               )}
+          </div>
+        </ModalOverlay>
+      )}
+
+      {/* End of stay (Beds and admissions on): LAMA, absconded or death chosen
+          on the discharge screen. No Escape or backdrop close: a half-typed
+          read-back of a death is closed with its own Cancel, never by a stray
+          tap. Done after an end goes back to the ward list, as the discharge
+          screen's Done does; after a reopen the chart reloads. Both screens
+          are keyed by the stay, so a chart reload onto another stay starts a
+          fresh screen with a new Idempotency-Key, never the old one's typing. */}
+      {endStayType && patient.admission_id && (
+        <ModalOverlay>
+          <div className="modal glass-card" role="dialog" aria-modal="true" aria-labelledby="end-stay-title" onClick={e => e.stopPropagation()}>
+            <EndStayDrawer
+              key={patient.admission_id}
+              titleId="end-stay-title"
+              admissionId={patient.admission_id}
+              patient={{ id: patientId, name: patient.name, mrn: patient.mrn, ward: patient.ward, bed: patient.bed }}
+              initialEndType={endStayType}
+              onClose={() => setEndStayType(null)}
+              onDone={(outcome) => {
+                setEndStayType(null)
+                if (outcome.reopened) void loadPatientData()
+                else onBack()
+              }}
+            />
+          </div>
+        </ModalOverlay>
+      )}
+
+      {/* Reopen a stay whose end was recorded in error. */}
+      {reopenOpen && patient.admission_id && (
+        <ModalOverlay>
+          <div className="modal glass-card" role="dialog" aria-modal="true" aria-labelledby="reopen-stay-title" onClick={e => e.stopPropagation()}>
+            <ReopenStayDialog
+              key={patient.admission_id}
+              titleId="reopen-stay-title"
+              admissionId={patient.admission_id}
+              patient={{ name: patient.name, mrn: patient.mrn, ward: patient.ward, bed: patient.bed }}
+              onClose={() => setReopenOpen(false)}
+              onDone={() => { setReopenOpen(false); void loadPatientData() }}
+            />
           </div>
         </ModalOverlay>
       )}

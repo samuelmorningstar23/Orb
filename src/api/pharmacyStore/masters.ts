@@ -10,6 +10,12 @@
  * The server owns every rule. This file only names the calls and their shapes:
  * whether a classification change applies now or waits for a second approver
  * is the server's answer (`applied` and `requested`), never worked out here.
+ *
+ * DRUG IDENTITY (grn-6). A drug's name, generic name, form and strength are
+ * added as a draft that a second pharmacist confirms, corrected only through a
+ * second pharmacist while nothing names the drug, and otherwise retired and
+ * replaced. The screening preview (`previewDrug`) is the server's own answer
+ * from the safety screens; this file never classifies a drug itself.
  */
 import {
   pharmacyStoreGet,
@@ -60,6 +66,78 @@ export interface PharmacyDrug {
   storage_label: string
   gst_label: string
   pending_requests: number
+  /** Words for identity_status, from the server (grn-6). */
+  identity_label?: string
+  /** True only for a confirmed drug: the one state anything may order. */
+  orderable_identity?: boolean
+}
+
+/** The four fields that decide how a drug is screened (grn-6). */
+export interface DrugIdentity {
+  name: string
+  generic_name: string
+  form: string
+  strength: string
+}
+
+export type IdentityStatus = 'draft' | 'active' | 'retired'
+
+/** Plain words for a drug's identity status, sentence case. */
+export const IDENTITY_STATUS_LABELS: Record<IdentityStatus, string> = {
+  draft: 'Waiting for a second pharmacist',
+  active: 'Confirmed for ordering',
+  retired: 'Retired',
+}
+
+/** Another drug a new identity would repeat. */
+export interface IdentityMatch {
+  id: string
+  name: string
+  generic_name: string | null
+  form: string | null
+  strength: string | null
+  identity_status: IdentityStatus
+}
+
+/** What the safety screens make of an identity: the server's answer. */
+export interface DrugScreening {
+  screened_as: string
+  classes: string[]
+  class_labels: string[]
+  /** null when the interaction table could not be read. */
+  interaction_recognised: boolean | null
+}
+
+export interface DrugPreview {
+  identity: DrugIdentity
+  screening: DrugScreening
+  same_name: IdentityMatch[]
+  same_identity: IdentityMatch[]
+}
+
+export interface IdentityRequest extends ClassificationRequest {
+  identity: DrugIdentity | null
+  previous_identity: DrugIdentity | null
+  screening: DrugScreening | null
+  requested_by_loader?: boolean
+  drug_identity_status?: IdentityStatus | null
+}
+
+export interface NewDrugInput extends DrugIdentity {
+  /** The pharmacist says this is another brand of a medicine already held. */
+  another_brand?: boolean
+  note?: string
+}
+
+export interface NewDrugResult {
+  drug: PharmacyDrug
+  request: IdentityRequest
+  screening: DrugScreening
+}
+
+export interface IdentityCorrectionInput extends DrugIdentity {
+  reason: string
+  another_brand?: boolean
 }
 
 /** The fields the write tier may change on a drug. Identity is not here. */
@@ -257,6 +335,53 @@ export function decideClassificationRequest(
 export function withdrawClassificationRequest(requestId: number) {
   return pharmacyStorePost<{ request: ClassificationRequest }>(
     `/classification-requests/${requestId}/withdraw`,
+  )
+}
+
+// ── Drug identity (grn-6) ────────────────────────────────────────────────────
+
+/** What the safety screens will make of this identity, and any drug it would
+ *  repeat. Saves nothing. */
+export function previewDrug(identity: DrugIdentity) {
+  return pharmacyStorePost<DrugPreview>('/drugs/preview', identity)
+}
+
+/** Add a drug as a draft; a different pharmacist confirms it. */
+export function addDrug(input: NewDrugInput) {
+  return pharmacyStorePost<NewDrugResult>('/drugs', input)
+}
+
+export function listIdentityRequests(decision: RequestDecision | '' = 'pending') {
+  return pharmacyStoreGet<{ requests: IdentityRequest[] }>('/identity-requests', { decision })
+}
+
+/** Confirming names the identity the pharmacist checked (`expected`); the
+ *  server refuses if the drug has moved since. Refusing needs a reason. */
+export function decideIdentityRequest(
+  requestId: number,
+  decision: 'approved' | 'refused',
+  options: { expected?: DrugIdentity; reason?: string } = {},
+) {
+  return pharmacyStorePost<{ request: IdentityRequest; drug: PharmacyDrug }>(
+    `/identity-requests/${requestId}/decision`, { decision, ...options },
+  )
+}
+
+export function withdrawIdentityRequest(requestId: number) {
+  return pharmacyStorePost<{ request: IdentityRequest; drug: PharmacyDrug }>(
+    `/identity-requests/${requestId}/withdraw`,
+  )
+}
+
+export function requestIdentityCorrection(drugId: string, input: IdentityCorrectionInput) {
+  return pharmacyStorePost<{ request: IdentityRequest; drug: PharmacyDrug }>(
+    `/drugs/${encodeURIComponent(drugId)}/identity-correction`, input,
+  )
+}
+
+export function retireDrug(drugId: string, input: { reason: string; replacement_drug_id?: string }) {
+  return pharmacyStorePost<{ drug: PharmacyDrug }>(
+    `/drugs/${encodeURIComponent(drugId)}/retire`, input,
   )
 }
 

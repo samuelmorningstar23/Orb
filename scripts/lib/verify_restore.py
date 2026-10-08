@@ -278,6 +278,15 @@ MODULE_TABLES: dict[str, tuple[str, ...]] = {
     "result quarantine": (
         "result_quarantine",
     ),
+    # ── migration 64 (server/migrations_his/m0064_lab_analysers.py) ──
+    # The analyser registry: each analyser allowed to send results, the hash
+    # of its key, and which Orb test each of its codes is. Configuration, no
+    # patient data. Empty until a site switches ORB_LAB on and registers an
+    # analyser. A restore that came back without them would leave every
+    # analyser refused at intake and lose who approved each code's mapping.
+    "lab analysers": (
+        "lab_instruments", "lab_instrument_test_map",
+    ),
     # ── migration 61 (server/migrations_his/m0061_med_order_store.py) ──
     # The medication-order store: one row per medication order and its
     # append-only ledger of who prescribed, verified, held, stopped and gave
@@ -294,6 +303,10 @@ MODULE_TABLES: dict[str, tuple[str, ...]] = {
     # doctor found, diagnosed and advised, and who signed it.
     "outpatient consultations": (
         "opd_consultations", "opd_consultation_addenda",
+        # migration 63 (m0063_patient_allergy_assessments.py): each allergy
+        # review, 'no known allergies' included. Without it a restore could
+        # not tell "asked, none known" from "never asked" again.
+        "patient_allergy_assessments",
     ),
     # ── migration 78 (the Orb Ward Record's rounds file) ──
     # Each ward's observation interval and grace window, set in writing by the

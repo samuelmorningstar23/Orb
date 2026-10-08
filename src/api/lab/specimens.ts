@@ -53,7 +53,11 @@ export interface CollectionSpecimen {
   label_printed_at: string | null
   recollection_needed: boolean
   rejection_code: string | null
+  /** The rejection reason in the laboratory's words (lis-9). */
+  rejection_display?: string | null
   rejection_note: string | null
+  /** The rejected sample this tube replaces, or null (lis-9). */
+  recollect_of?: string | null
   tests: CollectionTest[]
 }
 

@@ -49,6 +49,8 @@ the range when low <= value <= high, L below low, H above high; a value is
 critical when it is BELOW critical_low or ABOVE critical_high, compared at the
 test's reporting precision (half-up, as the NEWS2 charted-value ruling does).
 The display text says "below" and "above" for exactly that reason.
+lab_result_service.range_flag (lis-10) implements the range half of this for
+result entry.
 
 EVERY WRITE is one BEGIN IMMEDIATE transaction with its audit row inside it,
 category clinical_config (fail-closed): an audit that cannot be written rolls
@@ -688,12 +690,19 @@ def configuration_gaps(conn) -> dict:
 
 
 def applicable_range(conn, test_id: str, *, sex: Any, date_of_birth: Any,
-                     at: Optional[str] = None) -> RangeChoice:
+                     at: Optional[str] = None,
+                     version_at: Optional[str] = None) -> RangeChoice:
     """The approved reference range for a patient of this sex and date of
-    birth at `at` (the collection instant; now when not given)."""
+    birth at `at` (the collection instant; now when not given).
+
+    `version_at` picks WHICH approved version is read (the range in force at
+    that instant); it defaults to `at`. Result entry (lis-10) passes the
+    collection instant as `at`, so the patient's age is the age when the
+    sample was taken, and now as `version_at`, so a value is flagged against
+    the range the laboratory has approved when the value is entered."""
     at = at or utc_iso_now()
     rows = _list_versioned(conn, "lab_reference_ranges", test_id=test_id,
-                           include_retired=False, at=at)
+                           include_retired=False, at=version_at or at)
     return select_applicable(rows, sex=normalise_sex(sex),
                              age_days=age_days_at(date_of_birth, at))
 
@@ -719,10 +728,28 @@ def patient_demographics(conn, patient_id: str) -> dict:
 
 
 def applicable_range_for_patient(conn, test_id: str, patient_id: str, *,
-                                 at: Optional[str] = None) -> RangeChoice:
+                                 at: Optional[str] = None,
+                                 version_at: Optional[str] = None) -> RangeChoice:
     demo = patient_demographics(conn, patient_id)
     return applicable_range(conn, test_id, sex=demo["sex"],
-                            date_of_birth=demo["date_of_birth"], at=at)
+                            date_of_birth=demo["date_of_birth"], at=at,
+                            version_at=version_at)
+
+
+def coded_values(test: dict) -> list[str]:
+    """A coded test's list of allowed values, from coded_values_json. An
+    unreadable or missing list is empty, which refuses every value (a coded
+    result outside the list is never stored)."""
+    raw = (test or {}).get("coded_values_json")
+    if not raw:
+        return []
+    try:
+        values = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return []
+    if not isinstance(values, list):
+        return []
+    return [v.strip() for v in values if isinstance(v, str) and v.strip()]
 
 
 # ════════════════════════════════════════════════════════════════════════════

@@ -32,6 +32,11 @@ def reconcile_medication(name: str) -> Tuple[Optional[dict], float]:
     
     Returns (matched_medication_dict, score) where score is between 0.0 and 1.0.
     Returns (None, 0.0) if no match meets the 0.8 threshold.
+
+    Matches CONFIRMED drugs only (identity_status 'active', grn-6): this is an
+    ordering path (Relay and Sage cards confirm through it), so a draft waiting
+    for its second pharmacist, or a retired drug, is never the match. The
+    safety screens read every row on their own.
     """
     if not name or len(name.strip()) < 3:
         return None, 0.0
@@ -40,7 +45,9 @@ def reconcile_medication(name: str) -> Tuple[Optional[dict], float]:
     best_score = 0.0
 
     with db_session() as conn:
-        meds = conn.execute("SELECT * FROM helix_medication_master").fetchall()
+        meds = conn.execute(
+            "SELECT * FROM helix_medication_master WHERE identity_status = 'active'"
+        ).fetchall()
         
         for med in meds:
             med_dict = dict(med)
