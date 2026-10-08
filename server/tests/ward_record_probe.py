@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -77,6 +78,14 @@ GATEWAY_ASKED: list[str] = []
 EXPORTS_OF_STORED_DATA = {
     "/api/admin/compliance/data-principal/{patient_id}/export",
 }
+
+#: What only the medication round sends: a dose count with a number in it, a
+#: medication task (its schedule_kind), or the allergy block sentence. The Orb
+#: Ward Record has no medication round, so no route may send any of these
+#: (review, 9 October 2026). The first patient has a drug charted that her
+#: recorded allergy blocks, so a round that is still on is seen.
+MED_ROUND_SIGNS = re.compile(
+    r'"meds_(?:overdue|due_soon|allergy_blocked)":\s*\d|"schedule_kind"|Allergy block on')
 
 
 def _model_call(where: str):
@@ -266,6 +275,18 @@ def _seed() -> dict:
                VALUES (?, 'sepsis6', ?, 'vigil_auto', ?, 'active', 'vigil_auto')""",
             (pids[0], format_utc(now - timedelta(hours=2)), f"NEWS2 15 (>=7) {MARKER}"),
         )
+        # A drug charted a day ago, never given, that the first patient's
+        # recorded allergy blocks: with a medication round on, the shift board
+        # counts it overdue and blocked by allergy (MED_ROUND_SIGNS).
+        db.execute(
+            "INSERT INTO patient_allergies (patient_id, substance, substance_class, reaction, "
+            "severity, status) VALUES (?, 'penicillin', 'penicillins', 'anaphylaxis', 'severe', "
+            "'active')", (pids[0],))
+        db.execute(
+            "INSERT INTO medications (patient_id, drug_name, dosage, route, frequency, status, "
+            "prescribed_by, source, started_at) VALUES (?, 'Amoxicillin', '500 mg', 'Oral', "
+            "'Q6H', 'active', ?, 'clinician', ?)",
+            (pids[0], users["doctor"], format_utc(now - timedelta(hours=24))))
         db.execute(
             "INSERT INTO ward_observation_settings (ward, interval_minutes, grace_minutes, set_by, set_at) "
             "VALUES (?, 240, 30, ?, ?)",
@@ -325,7 +346,7 @@ def main() -> None:
                        "models": config.MODELS_ENABLED},
            "server_errors": [], "scoring_calls": [], "marker_leaks": [],
            "model_calls": [], "lane_errors": [], "skipped_streams": [], "calls": 0,
-           "spot": {}}
+           "spot": {}, "med_round_signs": []}
 
     with TestClient(app, raise_server_exceptions=False) as client:
         # The background lanes, run once by hand rather than waited for. Each
@@ -392,6 +413,8 @@ def main() -> None:
                 if ((MARKER in resp.text or SCORE_MARKER in resp.text)
                         and route.path not in EXPORTS_OF_STORED_DATA):
                     out["marker_leaks"].append(f"{role} GET {url}")
+                if resp.status_code < 400 and MED_ROUND_SIGNS.search(resp.text):
+                    out["med_round_signs"].append(f"{role} GET {url}")
                 for call in vigil_service.SWITCHED_OFF_CALLS[before:]:
                     out["scoring_calls"].append(f"{role} GET {url}: {call}")
                 if time.monotonic() - t0 > 20:
@@ -403,7 +426,7 @@ def main() -> None:
         for path in ("/api/sage/ward-brief", "/api/sage/insights", "/api/scribe/asr/status",
                      f"/api/vigil/patients/{pid}/timeline-projection",
                      "/api/relay/channels/none/sage_actions", f"/api/ipass/{pid}/draft",
-                     "/api/health/models"):
+                     "/api/health/models", f"/api/emar/patients/{pid}/administrations"):
             r = client.get(path, headers=doctor)
             try:
                 detail = r.json().get("detail") if r.status_code >= 400 else None

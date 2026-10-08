@@ -127,6 +127,20 @@ def test_the_handover_is_switched_off_only_under_the_profile(models_off_boot, wa
     assert models_off_boot["spot"][path][0] == 200
 
 
+def test_no_route_sends_the_medication_round_under_the_profile(ward_record_boot, models_off_boot):
+    # Review, 9 October 2026. The first patient has a drug charted that her
+    # allergy blocks. Under the profile no route sends a dose count, a
+    # medication task or an allergy block line, and the eMAR answers switched
+    # off; with the models switched off alone the round is there, which is
+    # what shows the scan can see one.
+    assert not ward_record_boot["med_round_signs"], _report(ward_record_boot["med_round_signs"])
+    assert any("/api/nurse/board" in hit for hit in models_off_boot["med_round_signs"]), (
+        models_off_boot["med_round_signs"])
+    path = "/api/emar/patients/{patient_id}/administrations"
+    assert ward_record_boot["spot"][path] == [404, "The medication round is switched off on this computer"]
+    assert models_off_boot["spot"][path][0] == 200
+
+
 def test_the_model_status_chip_is_told_the_models_are_off(ward_record_boot, models_off_boot):
     # Review, 9 October 2026: this checked only that the route answered.
     for boot in (ward_record_boot, models_off_boot):
