@@ -67,6 +67,14 @@ import News2Badge from '../../../components/News2Badge'
  *     all, live or after saving, because the record copies the sheet and
  *     scores nothing. With scoring switched off on this computer
  *     (useClinicalSwitches().scoringEnabled false) nobody sees a score.
+ *
+ *  6. NOTHING IS PRESELECTED (9 October 2026). ACVPU and air or oxygen start
+ *     unselected. A box left empty is sent empty and stored empty, never as
+ *     alert and never as on air, so the rounds file can count it as blank and
+ *     the score says the set is incomplete. A nurse at the bedside must choose
+ *     both before she can save (the server refuses her set otherwise). The
+ *     clerk also gets "Not recorded on the sheet", and a box she leaves empty
+ *     is sent empty.
  */
 
 /** What the sheet needs to know about the patient. The shift board passes its
@@ -128,6 +136,16 @@ const ACVPU: { value: string; label: string; hint: string }[] = [
   { value: 'unresponsive', label: 'Unresponsive', hint: 'U' },
 ]
 
+/** The clerk's answer for a box the paper sheet left empty. Sent as null. */
+const NOT_RECORDED = 'not-recorded'
+
+type OxygenChoice = 'air' | 'oxygen' | typeof NOT_RECORDED
+
+const OXYGEN: { value: OxygenChoice; label: string }[] = [
+  { value: 'air', label: 'On air' },
+  { value: 'oxygen', label: 'On oxygen' },
+]
+
 type DraftValues = Record<FieldKey, string>
 
 const EMPTY: DraftValues = {
@@ -137,8 +155,12 @@ const EMPTY: DraftValues = {
 
 interface Draft extends DraftEnvelope {
   values: DraftValues
-  consciousness: string
-  onOxygen: boolean
+  /** Null until chosen. Read back only from a draft that says `choices: 2`:
+   *  an older draft's alert and on air were the screen's preselection, not a
+   *  choice anyone made, so they come back unselected. */
+  consciousness?: string | null
+  oxygen?: OxygenChoice | null
+  choices?: 2
   savedAt: number
   /** The clerk's ticks and sheet time, so an interrupted copy comes back whole. */
   illegible?: IllegibleField[]
@@ -180,7 +202,15 @@ function readDraft(patientId: string, ownerId: string | null): Draft | null {
       localStorage.removeItem(key)
       return null
     }
-    return { ...parsed, values: { ...EMPTY, ...parsed.values } }
+    const chosen = parsed.choices === 2
+    const cons = chosen ? parsed.consciousness ?? null : null
+    const oxygen = chosen ? parsed.oxygen ?? null : null
+    return {
+      ...parsed,
+      values: { ...EMPTY, ...parsed.values },
+      consciousness: cons === NOT_RECORDED || ACVPU.some(a => a.value === cons) ? cons : null,
+      oxygen: oxygen === NOT_RECORDED || OXYGEN.some(o => o.value === oxygen) ? oxygen : null,
+    }
   } catch {
     return null
   }
@@ -198,8 +228,9 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
   // would briefly show the nurse an empty form they might start retyping.
   const [restored] = useState<Draft | null>(() => readDraft(patient.patient_id, ownerId))
   const [values, setValues] = useState<DraftValues>(restored?.values ?? EMPTY)
-  const [consciousness, setConsciousness] = useState(restored?.consciousness ?? 'alert')
-  const [onOxygen, setOnOxygen] = useState(restored?.onOxygen ?? false)
+  // Nothing preselected: null until a choice is made (point 6 above).
+  const [consciousness, setConsciousness] = useState<string | null>(restored?.consciousness ?? null)
+  const [oxygen, setOxygen] = useState<OxygenChoice | null>(restored?.oxygen ?? null)
   const [showRestoredNote, setShowRestoredNote] = useState(!!restored)
   const restoredAt = restored?.savedAt ?? null
 
@@ -234,11 +265,23 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
   const [error, setError] = useState('')
   const [confirmDiscard, setConfirmDiscard] = useState(false)
 
+  // Anything touched, for the draft and the discard question.
   const hasAnyValue = useMemo(
-    () => FIELDS.some(f => values[f.key].trim() !== '') || consciousness !== 'alert' || onOxygen
+    () => FIELDS.some(f => values[f.key].trim() !== '') || consciousness !== null || oxygen !== null
       || illegible.size > 0,
-    [values, consciousness, onOxygen, illegible],
+    [values, consciousness, oxygen, illegible],
   )
+  // A reading to record. "Not recorded on the sheet" is a choice, not a reading.
+  const hasReading = useMemo(
+    () => FIELDS.some(f => values[f.key].trim() !== '') || illegible.size > 0
+      || (consciousness !== null && consciousness !== NOT_RECORDED)
+      || (oxygen !== null && oxygen !== NOT_RECORDED),
+    [values, consciousness, oxygen, illegible],
+  )
+  // A nurse at the bedside must choose both. The clerk may leave either empty.
+  const needsConsciousness = !transcribing && consciousness === null && !illegible.has('consciousness')
+  const needsOxygen = !transcribing && oxygen === null && !illegible.has('on_oxygen')
+  const choiceMissing = needsConsciousness || needsOxygen
 
   /** Per-field range validation, so a fat-fingered keypad is caught before save. */
   const fieldErrors = useMemo(() => {
@@ -256,14 +299,19 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
   const hasFieldErrors = Object.keys(fieldErrors).length > 0 || sheetTimeError !== ''
 
   const buildPayload = useCallback((): ObservationInput => {
-    const payload: ObservationInput = { consciousness, on_oxygen: onOxygen }
+    // An empty box, or "Not recorded on the sheet", is sent as null: stored
+    // empty, never as alert or on air.
+    const payload: ObservationInput = {
+      consciousness: consciousness === null || consciousness === NOT_RECORDED ? null : consciousness,
+      on_oxygen: oxygen === 'oxygen' ? true : oxygen === 'air' ? false : null,
+    }
     for (const f of FIELDS) {
       const raw = values[f.key].trim()
       payload[f.key] = raw === '' || illegible.has(f.key) ? null : Number(raw)
     }
     if (illegible.size > 0) payload.illegible = Array.from(illegible)
     return payload
-  }, [values, consciousness, onOxygen, illegible])
+  }, [values, consciousness, oxygen, illegible])
 
   /** Tick or untick "Illegible" for one reading. A ticked reading is blanked,
    *  so a half-read number can never travel with the mark. */
@@ -289,7 +337,7 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
     }
     try {
       const draft: Draft = {
-        values, consciousness, onOxygen, savedAt: Date.now(), ownerId: ownerId ?? undefined,
+        values, consciousness, oxygen, choices: 2, savedAt: Date.now(), ownerId: ownerId ?? undefined,
         illegible: Array.from(illegible),
         sheetTime: transcribing ? sheetTime : undefined,
       }
@@ -298,14 +346,14 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
       // A full/blocked localStorage must never break charting — the in-memory
       // form is still authoritative for this session.
     }
-  }, [values, consciousness, onOxygen, illegible, sheetTime, transcribing, hasAnyValue,
+  }, [values, consciousness, oxygen, illegible, sheetTime, transcribing, hasAnyValue,
       patient.patient_id, ownerId])
 
   // ── Live NEWS2. Debounced, and every in-flight request is aborted when a
   //    newer one starts so a slow response can never overwrite a fresher score.
   // No preview request at all when no score is shown: the clerk holds no
   // vitals.read, and with scoring off the route answers 404.
-  const scoreable = hasAnyValue && !hasFieldErrors && showScore
+  const scoreable = hasReading && !hasFieldErrors && showScore
   // Whether a stale score is still in state is irrelevant — an unscoreable form
   // shows no score. Deriving that (rather than clearing state from an effect)
   // means there is no render in which an old NEWS2 sits above edited values.
@@ -352,7 +400,7 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
 
   const save = async () => {
     if (inFlightRef.current) return
-    if (hasFieldErrors || !hasAnyValue || saving) return
+    if (hasFieldErrors || !hasReading || choiceMissing || saving) return
     inFlightRef.current = true
     setSaving(true)
     setError('')
@@ -550,18 +598,21 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
           </div>
 
           <fieldset className="obs-segment">
-            <legend className="obs-segment__legend">Supplemental oxygen</legend>
-            <div className="obs-segment__options" role="group">
+            <legend className="obs-segment__legend">
+              Supplemental oxygen
+              {needsOxygen && <span className="obs-segment__hint">Choose one</span>}
+            </legend>
+            <div className="obs-segment__options" role="group" aria-label="Supplemental oxygen">
               {[
-                { value: false, label: 'On air' },
-                { value: true, label: 'On oxygen' },
+                ...OXYGEN,
+                ...(transcribing ? [{ value: NOT_RECORDED as OxygenChoice, label: 'Not recorded on the sheet' }] : []),
               ].map(opt => (
                 <button
-                  key={String(opt.value)}
+                  key={opt.value}
                   type="button"
-                  className={`obs-chip ${onOxygen === opt.value ? 'obs-chip--active' : ''}`}
-                  aria-pressed={onOxygen === opt.value}
-                  onClick={() => { setOnOxygen(opt.value); setShowRestoredNote(false) }}
+                  className={`obs-chip ${oxygen === opt.value ? 'obs-chip--active' : ''}`}
+                  aria-pressed={oxygen === opt.value}
+                  onClick={() => { setOxygen(opt.value); setShowRestoredNote(false) }}
                   disabled={saving || illegible.has('on_oxygen')}
                 >
                   {opt.label}
@@ -578,8 +629,9 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
                 const p = pointsFor(['Consciousness (ACVPU)'])
                 return p ? <span className="obs-field__points obs-field__points--danger">+{p}</span> : null
               })()}
+              {needsConsciousness && <span className="obs-segment__hint">Choose one</span>}
             </legend>
-            <div className="obs-segment__options" role="group">
+            <div className="obs-segment__options" role="group" aria-label="Consciousness (ACVPU)">
               {ACVPU.map(level => (
                 <button
                   key={level.value}
@@ -593,6 +645,17 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
                   {level.label}
                 </button>
               ))}
+              {transcribing && (
+                <button
+                  type="button"
+                  className={`obs-chip ${consciousness === NOT_RECORDED ? 'obs-chip--active' : ''}`}
+                  aria-pressed={consciousness === NOT_RECORDED}
+                  onClick={() => { setConsciousness(NOT_RECORDED); setShowRestoredNote(false) }}
+                  disabled={saving || illegible.has('consciousness')}
+                >
+                  Not recorded on the sheet
+                </button>
+              )}
             </div>
             {illegibleTick('consciousness', 'Consciousness')}
           </fieldset>
@@ -645,8 +708,14 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
             type="button"
             className="nurse-btn nurse-btn--primary"
             onClick={save}
-            disabled={saving || !hasAnyValue || hasFieldErrors}
-            title={!hasAnyValue ? 'Enter at least one reading' : hasFieldErrors ? 'Fix the highlighted readings' : undefined}
+            disabled={saving || !hasReading || hasFieldErrors || choiceMissing}
+            title={!hasReading
+              ? 'Enter at least one reading'
+              : hasFieldErrors
+                ? 'Fix the highlighted readings'
+                : choiceMissing
+                  ? 'Choose the level of consciousness and air or oxygen'
+                  : undefined}
           >
             {saving ? 'Recording…' : 'Record observations'}
           </button>

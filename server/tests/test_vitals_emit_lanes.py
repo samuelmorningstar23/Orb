@@ -192,7 +192,9 @@ async def _drain():
 
 
 def _chart(client, pid, headers, obs: dict, taken_at: str | None = None) -> dict:
-    body = dict(obs)
+    # A bedside nurse chooses ACVPU and air or oxygen on every set (nothing is
+    # preselected and the route refuses a set without them).
+    body = {"consciousness": "alert", "on_oxygen": False, **obs}
     if taken_at is not None:
         body["taken_at"] = taken_at
     resp = client.post(f"/api/nurse/patients/{pid}/observations", json=body, headers=headers)

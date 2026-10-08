@@ -50,8 +50,11 @@ function writeDraft(overrides: Record<string, unknown> = {}) {
       respiratory_rate: '18', spo2: '97', systolic_bp: '120',
       diastolic_bp: '80', heart_rate: '72', temperature: '36.8',
     },
+    // A draft saved since 9 October 2026 carries the nurse's own choices
+    // (nothing is preselected any more).
     consciousness: 'alert',
-    onOxygen: false,
+    oxygen: 'air',
+    choices: 2,
     savedAt: Date.now(),
     ownerId: 'NUR001',
     ...overrides,
@@ -204,7 +207,7 @@ describe('the SpO2 points chip follows the patient\'s scale', () => {
       { parameter: 'SpO2 (Scale 2)', value: 97, points: 3, note: 'Over-oxygenation on O2 (97%, Scale 2)' },
       { raw_news2: 5, level: 'elevated', spo2_scale: 2 },
     )
-    writeDraft({ onOxygen: true })
+    writeDraft({ oxygen: 'oxygen' })
     const scale2 = { ...PATIENT, on_scale_2: true } as unknown as NursePatientCard
     render(<ObsEntrySheet patient={scale2} onClose={vi.fn()} onRecorded={vi.fn()} />)
 
@@ -217,7 +220,7 @@ describe('the SpO2 points chip follows the patient\'s scale', () => {
 
   it('still shows the Scale 1 SpO2 points (control)', async () => {
     previewWith({ parameter: 'SpO2', value: 93, points: 2, note: 'Hypoxia (SpO2 93%)' }, { spo2_scale: 1 })
-    writeDraft({ onOxygen: true })
+    writeDraft({ oxygen: 'oxygen' })
     renderSheet()
 
     await waitFor(() =>

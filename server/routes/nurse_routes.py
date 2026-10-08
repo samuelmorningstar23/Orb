@@ -49,8 +49,13 @@ class ObservationRequest(BaseModel):
     respiratory_rate: Optional[float] = None
     temperature: Optional[float] = None
     spo2: Optional[float] = None
-    consciousness: str = "alert"        # ACVPU
-    on_oxygen: bool = False
+    # ACVPU and air or oxygen. None means the box was left empty, never alert
+    # and never on air (Orb Ward Record, 9 October 2026): a paper sheet can
+    # leave either box blank, and the rounds file counts that as blank. A nurse
+    # at the bedside must choose both (nurse_shift_service refuses her set
+    # otherwise); the ward clerk may send None for a box the sheet left empty.
+    consciousness: Optional[str] = None
+    on_oxygen: Optional[bool] = None
     # Stamped client-side when the nurse hits Save. Doubles as the dedupe key
     # for an offline replay — see nurse_shift_service.record_observation.
     # For the ward clerk it is the time written on the paper sheet.
@@ -214,6 +219,12 @@ def record_observations(
               if has_permission(user.get("role", ""), VITALS_WRITE)
               else nurse_shift_service.CLERK_SOURCE)
     try:
+        # At the bedside both boxes are a choice the nurse must make: nothing
+        # is preselected, and an empty one is refused in words she can act on.
+        # The clerk may leave a box empty when the paper sheet did.
+        if source == nurse_shift_service.OBS_SOURCE:
+            nurse_shift_service.require_bedside_choices(
+                payload, nurse_shift_service.normalise_illegible(illegible))
         return nurse_shift_service.record_observation(
             patient_id,
             user["id"],

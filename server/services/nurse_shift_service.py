@@ -794,19 +794,54 @@ def _clean_obs(obs: dict, illegible: tuple[str, ...] = ()) -> dict:
             raise ValueError(f"{field} must be between {lo:g} and {hi:g} {unit}")
         cleaned[field] = value
 
-    consciousness = str(obs.get("consciousness") or "alert").strip().lower()
-    if consciousness not in ACVPU_LEVELS:
+    # An EMPTY consciousness or oxygen box stays empty (None), never alert and
+    # never on air (Orb Ward Record, 9 October 2026). The scorer reads None as
+    # "not assessed": it adds no points and labels the set incomplete, a
+    # minimum. The rounds file counts it as blank. Whether a bedside nurse may
+    # leave one empty is decided by the observations route
+    # (require_bedside_choices), not here, because the live preview scores a
+    # half typed set.
+    raw_cons = obs.get("consciousness")
+    consciousness = (None if raw_cons is None or str(raw_cons).strip() == ""
+                     else str(raw_cons).strip().lower())
+    if consciousness is not None and consciousness not in ACVPU_LEVELS:
         raise ValueError(f"consciousness must be one of {list(ACVPU_LEVELS)}")
+    raw_o2 = obs.get("on_oxygen")
     cleaned["consciousness"] = None if "consciousness" in illegible else consciousness
-    cleaned["on_oxygen"] = None if "on_oxygen" in illegible else bool(obs.get("on_oxygen"))
+    cleaned["on_oxygen"] = (None if "on_oxygen" in illegible or raw_o2 is None or raw_o2 == ""
+                            else bool(raw_o2))
 
     # A set whose only entries are illegible marks is still a round on the
     # sheet, so it is recorded; a set with nothing at all is refused as before.
     if not illegible and all(cleaned[f] is None for f in OBS_RANGES) \
-            and consciousness == "alert" and not cleaned["on_oxygen"]:
+            and cleaned["consciousness"] is None and cleaned["on_oxygen"] is None:
         raise ValueError("an observation set must contain at least one reading")
 
     return cleaned
+
+
+def require_bedside_choices(obs: dict, illegible: tuple[str, ...] = ()) -> None:
+    """Refuse a bedside set with no ACVPU or no air or oxygen choice.
+
+    A nurse at the bedside looks at the patient, so she always has both
+    answers, and the sheet preselects neither. A box she left empty would be
+    stored as empty and score as an incomplete set, so it is refused instead,
+    in words she can act on. The ward clerk is not held to this: the paper
+    sheet she copies can leave either box blank. Asked by the observations
+    route of a caller who charts at the bedside (vitals.write), on the
+    submitted body. The readings are checked first (_clean_obs), so a number
+    out of range is named before a missing choice. Raises ValueError.
+    """
+    cleaned = _clean_obs(obs, illegible)
+    no_cons = cleaned["consciousness"] is None and "consciousness" not in illegible
+    no_o2 = cleaned["on_oxygen"] is None and "on_oxygen" not in illegible
+    if no_cons and no_o2:
+        raise ValueError("Choose the patient's level of consciousness (ACVPU) and whether "
+                         "they are on air or on oxygen, then save again.")
+    if no_cons:
+        raise ValueError("Choose the patient's level of consciousness (ACVPU), then save again.")
+    if no_o2:
+        raise ValueError("Choose whether the patient is on air or on oxygen, then save again.")
 
 
 def _on_scale_2(db, patient_id: str) -> bool:
@@ -860,13 +895,19 @@ def _same_reading(row, cleaned: dict) -> bool:
         if not _num_eq(row[field], cleaned[field]):
             return False
     if cleaned["consciousness"] is None:
-        # Marked illegible: only a row that also stored no ACVPU matches.
+        # Left empty or marked illegible: only a row that also stored no ACVPU
+        # matches.
         if row["consciousness"] is not None:
             return False
-    elif str(row["consciousness"] or "alert").strip().lower() != cleaned["consciousness"]:
+    elif row["consciousness"] is None:
+        # A stored empty box is not the same reading as a chosen level.
+        return False
+    elif str(row["consciousness"]).strip().lower() != cleaned["consciousness"]:
         return False
     if cleaned["on_oxygen"] is None:
         return row["on_oxygen"] is None
+    if row["on_oxygen"] is None:
+        return False
     return bool(row["on_oxygen"]) == bool(cleaned["on_oxygen"])
 
 

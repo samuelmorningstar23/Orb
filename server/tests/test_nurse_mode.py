@@ -614,7 +614,7 @@ def test_route_board_scopes_to_the_users_department(patient, nurse_user, client)
 
 def test_route_preview_then_record(patient, nurse_user, client):
     hdr = _auth(nurse_user)
-    obs = {"respiratory_rate": 26, "spo2": 89, "on_oxygen": True}
+    obs = {"respiratory_rate": 26, "spo2": 89, "on_oxygen": True, "consciousness": "alert"}
 
     preview = client.post(f"/api/nurse/patients/{patient}/news2-preview", json=obs, headers=hdr)
     assert preview.status_code == 200, preview.text
@@ -635,7 +635,8 @@ def test_route_validation_and_missing_patient(patient, nurse_user, client):
     assert "heart_rate" in bad.json()["detail"]
 
     missing = client.post("/api/nurse/patients/NOPE/observations",
-                          json={"heart_rate": 80}, headers=hdr)
+                          json={"heart_rate": 80, "consciousness": "alert",
+                                "on_oxygen": False}, headers=hdr)
     assert missing.status_code == 404
 
 
@@ -820,7 +821,7 @@ def test_build_board_will_not_default_to_the_whole_hospital():
 def test_route_auth_matrix(patient, nurse_user, client):
     """vitals.write is a nurse/doctor permission. An admin may read the ward but
     must not be able to chart a reading, and a pharmacist sees none of it."""
-    obs = {"heart_rate": 80}
+    obs = {"heart_rate": 80, "consciousness": "alert", "on_oxygen": False}
 
     for role in ("nurse", "doctor"):
         hdr = _user(role)

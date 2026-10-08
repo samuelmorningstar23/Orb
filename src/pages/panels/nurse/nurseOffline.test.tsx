@@ -246,7 +246,9 @@ describe('writing while offline', () => {
         diastolic_bp: '76', heart_rate: '96', temperature: '37.4',
       },
       consciousness: 'alert',
-      onOxygen: false,
+      // The draft format since 9 October 2026: the nurse's own choices.
+      oxygen: 'air',
+      choices: 2,
       savedAt: Date.now(),
       ownerId: NURSE_A,
     }))
@@ -272,7 +274,9 @@ describe('writing while offline', () => {
         diastolic_bp: '76', heart_rate: '96', temperature: '37.4',
       },
       consciousness: 'alert',
-      onOxygen: false,
+      // The draft format since 9 October 2026: the nurse's own choices.
+      oxygen: 'air',
+      choices: 2,
       savedAt: Date.now(),
       ownerId: NURSE_A,
     }))

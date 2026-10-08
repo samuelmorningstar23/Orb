@@ -161,8 +161,11 @@ export interface ObservationInput {
   respiratory_rate?: number | null;
   temperature?: number | null;
   spo2?: number | null;
-  consciousness?: string;
-  on_oxygen?: boolean;
+  /** ACVPU. null when the box is empty: stored empty, never as alert. A nurse
+   *  at the bedside must send one; the clerk may leave it empty. */
+  consciousness?: string | null;
+  /** null when the box is empty: stored empty, never as on air. */
+  on_oxygen?: boolean | null;
   /** Stamped when the nurse hits Save; also the server-side dedupe key. For
    *  the ward clerk it is the time written on the paper sheet. */
   taken_at?: string;

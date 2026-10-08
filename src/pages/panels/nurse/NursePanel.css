@@ -1422,3 +1422,10 @@ textarea.shift-input { min-height: 88px; resize: vertical; }
   margin: 0;
 }
 
+/* A choice the bedside nurse still has to make: ACVPU or air or oxygen, of
+   which nothing is preselected. Quiet until she tries to leave it empty, as
+   the Record button's own title says. */
+.obs-segment__hint {
+  font-weight: 400;
+  color: var(--text-secondary);
+}

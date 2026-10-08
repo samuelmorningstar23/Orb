@@ -138,7 +138,8 @@ _PERI_ARREST = {
     "consciousness": "voice", "on_oxygen": True,
 }
 _BENIGN = {"heart_rate": 74, "systolic_bp": 122, "diastolic_bp": 78,
-           "respiratory_rate": 16, "temperature": 36.8, "spo2": 98}
+           "respiratory_rate": 16, "temperature": 36.8, "spo2": 98,
+           "consciousness": "alert", "on_oxygen": False}
 
 
 def _charted(patient_id):

@@ -33,7 +33,10 @@ THE RULES, FROM THE SPEC, IN ONE PLACE:
 * A reading is BLANK when a counted set has nothing for respiratory rate,
   oxygen saturation, systolic blood pressure, heart rate, temperature,
   consciousness or air/oxygen, and that reading is not on the set's illegible
-  list. ILLEGIBLE is counted separately.
+  list. ILLEGIBLE is counted separately. An empty consciousness or oxygen box
+  is stored empty (9 October 2026), never as alert or on air, so those two
+  count as blank like the rest. A set stored before then with the entry
+  screen's old alert and on air defaults counts as filled in.
 * The clerk's entry lag (entered_at minus the sheet time) is reported per shift
   as a median and a maximum on its own line and NEVER counts as late.
 
@@ -677,26 +680,6 @@ def _rounds_for_segment(seg: dict, sets: list[dict], *, interval: timedelta,
     return rounds
 
 
-def _empty_acvpu_oxygen_filled_in() -> bool:
-    """True when the observation entry path stores an EMPTY consciousness box
-    as alert, or an empty oxygen box as air. Then a blank in those two can
-    never reach the database, and the file says so instead of printing a 0
-    that reads as "never left blank". Asked of the entry code itself (the
-    request body's defaults, then the service's cleaning), so the sentence
-    goes away by itself the day the entry path stores an empty box as empty.
-    When the entry code cannot be asked, the file claims nothing."""
-    try:
-        from routes.nurse_routes import ObservationRequest
-        from services.nurse_shift_service import _clean_obs
-
-        body = ObservationRequest(heart_rate=80).model_dump()
-        cleaned = _clean_obs(body)
-    except Exception:  # noqa: BLE001 - the file then makes no claim either way
-        logger.debug("could not ask the entry path about empty boxes", exc_info=True)
-        return False
-    return cleaned.get("consciousness") is not None or cleaned.get("on_oxygen") is not None
-
-
 def _median(values: list[float]) -> Optional[float]:
     return round(statistics.median(values), 1) if values else None
 
@@ -891,7 +874,6 @@ def compute_rounds(ward: str, start: Any, end: Any, *, now: Optional[datetime] =
             "sets_counted": sets_counted,
             "stays_with_unknown_end": unknown_ends,
             "vitals_columns": {c: c in cols for c in ("entered_at", "illegible", "voided_at")},
-            "empty_acvpu_oxygen_stored_as_alert_air": _empty_acvpu_oxygen_filled_in(),
         }
 
     if db is not None:
@@ -969,10 +951,6 @@ def header_lines(data: dict, *, reference: str, generated_at: str,
     if data.get("stays_with_unknown_end"):
         lines.append(("Stays with no recorded end",
                       f"{data['stays_with_unknown_end']}; counted up to their last set"))
-    if data.get("empty_acvpu_oxygen_stored_as_alert_air"):
-        lines.append(("Consciousness and air or oxygen",
-                      "the entry screen stores an empty box as alert and on air, so "
-                      "this file cannot count those two readings as blank"))
     if not data["vitals_columns"].get("illegible"):
         lines.append(("Illegible readings",
                       "this system does not record illegible readings yet"))

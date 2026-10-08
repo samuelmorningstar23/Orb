@@ -132,6 +132,9 @@ describe('a nurse at the bedside', () => {
     await new Promise(r => setTimeout(r, 400))
     expect(previewNews2).not.toHaveBeenCalled()
     expect(screen.getByText('Scoring is switched off on this computer. No score is shown.')).toBeTruthy()
+    // Nothing is preselected: the nurse chooses both before she can save.
+    fireEvent.click(screen.getByRole('button', { name: /Alert/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'On air' }))
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Record observations' }))
     })
