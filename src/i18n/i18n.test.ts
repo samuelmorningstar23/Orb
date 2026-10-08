@@ -29,6 +29,14 @@ describe('i18n', () => {
     expect(i18n.t('shell.signOut')).not.toBe('shell.signOut')
   })
 
+  it('the lines shown with scoring off name no NEWS2, score or handover', () => {
+    for (const key of ['subtitleScoringOff.vigil', 'subtitleWardRecord.shift']) {
+      const line = i18n.t(key)
+      expect(line).not.toBe(key)
+      expect(line).not.toMatch(/NEWS|score|band|handover/i)
+    }
+  })
+
   it('persists the chosen language to localStorage', async () => {
     await i18n.changeLanguage('hi')
     expect(localStorage.getItem(LANGUAGE_STORAGE_KEY)).toBe('hi')

@@ -156,6 +156,23 @@ describe('the rail under the Orb Ward Record profile', () => {
     expect(notPart(container)).toBeNull()
   })
 
+  it.each([
+    ['doctor', 'subtitleScoringOff.vigil'],
+    ['nurse', 'subtitleWardRecord.shift'],
+  ])('the line under the title on a %s home names no NEWS2 and no handover', async (role, key) => {
+    h.user = { id: 'U1', name: 'Ward Person', role, department: 'General Medicine' }
+    stubFetch(WARD_RECORD_HEALTH)
+    const container = await renderShell()
+    await waitFor(() => expect(container.querySelector('.shell__page-subtitle')!.textContent).toBe(key))
+  })
+
+  it('on an ordinary site the nurse keeps the usual line under the title', async () => {
+    h.user = { id: 'U1', name: 'Ward Person', role: 'nurse', department: 'General Medicine' }
+    stubFetch(ORDINARY_HEALTH)
+    const container = await renderShell()
+    expect(container.querySelector('.shell__page-subtitle')!.textContent).toBe('subtitle.shift')
+  })
+
   it('a pharmacist, left with no screen, gets the plain page and no blank body', async () => {
     h.user = { id: 'PH1', name: 'Pharma', role: 'pharmacist', department: undefined }
     stubFetch(WARD_RECORD_HEALTH)

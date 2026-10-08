@@ -71,6 +71,12 @@
     "opd": "Outpatient queue, consultations and prescriptions",
     "observations": "Copy each round from the paper observation sheet"
   },
+  "subtitleScoringOff": {
+    "vigil": "Patients and their vitals"
+  },
+  "subtitleWardRecord": {
+    "shift": "Ward tasks, observations and medication round"
+  },
   "shell": {
     "admitPatient": "Admit Patient",
     "signOut": "Sign Out",

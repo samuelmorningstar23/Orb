@@ -130,6 +130,18 @@ class PanelErrorBoundary extends Component<{ label: string; active: boolean; chi
   }
 }
 
+/* The line under the page title. With scoring switched off the ward list
+   scores nothing, so it must not promise NEWS2; under the Orb Ward Record
+   profile the shift has no handover, so its line does not name one. */
+function headerSubtitleKey(
+  tab: Tab,
+  clinical: { scoringEnabled: boolean; wardRecord: boolean },
+): string {
+  if (tab === 'vigil' && !clinical.scoringEnabled) return 'subtitleScoringOff.vigil'
+  if (tab === 'shift' && clinical.wardRecord) return 'subtitleWardRecord.shift'
+  return `subtitle.${tab}`
+}
+
 const NursePanel = lazy(() => import('./panels/nurse/NursePanel'))
 const RoundPanel = lazy(() => import('./panels/RoundPanel'))
 const HelixPanel = lazy(() => import('./panels/HelixPanel'))
@@ -519,7 +531,7 @@ export default function ClinicianShell() {
             <h1 className="shell__page-title">
               Orb {tabDef(headerTab)?.pillar}
             </h1>
-            <span className="shell__page-subtitle">{t(`subtitle.${headerTab}`)}</span>
+            <span className="shell__page-subtitle">{t(headerSubtitleKey(headerTab, clinical))}</span>
           </div>
           <div className="shell__header-right">
             {syncFailed > 0 ? (
