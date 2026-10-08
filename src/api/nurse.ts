@@ -288,6 +288,31 @@ export async function voidObservation(
   });
 }
 
+/** One patient on the ward clerk's list (GET /api/nurse/transcribe/patients). */
+export interface TranscribePatient {
+  patient_id: string;
+  name: string | null;
+  mrn: string | null;
+  ward: string | null;
+  bed: string | null;
+  /** When this stay began (UTC), or null when nothing records it. */
+  admitted_at: string | null;
+}
+
+export interface TranscribePatientList {
+  department: string | null;
+  patients: TranscribePatient[];
+}
+
+/**
+ * The admitted patients of the ward clerk's own department (vitals.transcribe).
+ * Works with the beds module switched off, unlike the bed board. Names, ward,
+ * bed and admission time only: nothing clinical.
+ */
+export async function getTranscribePatients(): Promise<TranscribePatientList> {
+  return apiFetch('/nurse/transcribe/patients');
+}
+
 /** Who is signed in — used to stamp the handover author line. */
 export function currentUserName(): string {
   return getUser()?.name ?? 'this shift';

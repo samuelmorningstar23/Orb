@@ -147,6 +147,7 @@ const ForecastPanel = lazy(() => import('./panels/ForecastPanel'))
 const AppointmentsPanel = lazy(() => import('./panels/AppointmentsPanel'))
 const SurgicalSuitePanel = lazy(() => import('./panels/SurgicalSuitePanel'))
 const AdminPanel = lazy(() => import('./panels/AdminPanel'))
+const WardObservationsPanel = lazy(() => import('./panels/WardObservationsPanel'))
 
 /** Publishes the shell's active tab into ActiveViewContext so every Sage
  *  surface knows what screen the clinician is on, and clears any stale panel
@@ -695,6 +696,20 @@ export default function ClinicianShell() {
           {shouldRenderPanel('admin') && (
             <div id={`panel-admin`} role="tabpanel" aria-labelledby={`nav-admin`} style={{ display: activeTab === 'admin' ? 'contents' : 'none' }}>
               <PanelErrorBoundary label="admin" active={activeTab === 'admin'}><AdminPanel /></PanelErrorBoundary>
+            </div>
+          )}
+          {/* The ward clerk's own Observations screen (a PERMISSION tab in
+              shellConfig): works with the beds module off. Scrolls like a
+              module panel. */}
+          {shouldRenderPanel('observations') && (
+            <div
+              id={`panel-observations`}
+              role="tabpanel"
+              aria-labelledby={`nav-observations`}
+              className="shell__module-scroll"
+              style={{ display: activeTab === 'observations' ? 'flex' : 'none' }}
+            >
+              <PanelErrorBoundary label="observations" active={activeTab === 'observations'}><WardObservationsPanel /></PanelErrorBoundary>
             </div>
           )}
           {/* The hospital-administration modules. Every branch above names ONE

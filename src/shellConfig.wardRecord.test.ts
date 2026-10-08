@@ -42,7 +42,7 @@ const MODELS_OFF: ClinicalSwitches = { ...DEFAULT_CLINICAL_SWITCHES, modelsEnabl
 const tabs = (role: string, clinical: ClinicalSwitches, modules = ALL_ON, department?: string) =>
   getAccessibleTabs(role, department, modules, ALL_INSTALLED, FEATURES_ON, featureTabInstalled, clinical)
 
-const SOLD: readonly Tab[] = ['vigil', 'shift', 'adt', 'admin']
+const SOLD: readonly Tab[] = ['vigil', 'shift', 'adt', 'observations', 'admin']
 const NEVER: readonly Tab[] = [
   'sage', 'scribe', 'lens', 'relay', 'orders', 'helix', 'pharmacy-verify', 'forecast', 'capacity',
   'command', 'coding', 'appointments', 'surgical-suite', 'today', 'round', 'opd',
@@ -68,14 +68,15 @@ describe('the rail under the Orb Ward Record profile', () => {
     expect(tabs('nurse', WARD_RECORD)).toEqual(['shift', 'vigil'])
     expect(tabs('doctor', WARD_RECORD)).toEqual(['vigil'])
     expect(tabs('admin', WARD_RECORD)).toEqual(['vigil', 'adt', 'admin'])
-    expect(tabs('ward_clerk', WARD_RECORD)).toEqual(['adt'])
+    // The clerk's own Observations tab sits beside Beds (9 October 2026).
+    expect(tabs('ward_clerk', WARD_RECORD)).toEqual(['adt', 'observations'])
     // Pharmacy, the Verify Queue and Sage are not part of it: nothing left.
     expect(tabs('pharmacist', WARD_RECORD)).toEqual([])
   })
 
-  it('shows Beds only while ORB_ADT is on', () => {
+  it('shows Beds only while ORB_ADT is on, and the clerk her Observations either way', () => {
     expect(tabs('admin', WARD_RECORD, ADT_OFF)).toEqual(['vigil', 'admin'])
-    expect(tabs('ward_clerk', WARD_RECORD, ADT_OFF)).toEqual([])
+    expect(tabs('ward_clerk', WARD_RECORD, ADT_OFF)).toEqual(['observations'])
   })
 
   it('a doctor whose home is Today lands on the ward list instead', () => {

@@ -238,8 +238,9 @@ describe('BedBoardPanel', () => {
       .not.toContain('adt')
     expect(getAccessibleTabs('admin', undefined, { ...DEFAULT_MODULE_FLAGS, adt: true },
       hospitalModuleInstalled)).toContain('adt')
+    // The clerk's own Observations tab (9 October 2026) sits beside Beds.
     expect(getAccessibleTabs('ward_clerk', 'General Medicine', { ...DEFAULT_MODULE_FLAGS, adt: true },
-      hospitalModuleInstalled)).toEqual(['adt'])
+      hospitalModuleInstalled)).toEqual(['adt', 'observations'])
   })
 })
 

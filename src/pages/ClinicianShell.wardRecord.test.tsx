@@ -146,7 +146,7 @@ describe('the rail under the Orb Ward Record profile', () => {
     ['doctor', 'General Medicine', ['vigil']],
     ['nurse', 'General Medicine', ['shift', 'vigil']],
     ['admin', undefined, ['vigil', 'adt', 'admin']],
-    ['ward_clerk', 'General Medicine', ['adt']],
+    ['ward_clerk', 'General Medicine', ['adt', 'observations']],
   ])('%s sees only the Ward Record screens', async (role, department, expected) => {
     h.user = { id: 'U1', name: 'Ward Person', role, department }
     stubFetch(WARD_RECORD_HEALTH)

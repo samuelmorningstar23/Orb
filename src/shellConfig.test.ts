@@ -203,7 +203,9 @@ describe('the primary CTA is gated on the permission, never on a role list', () 
 describe('every configured tab is renderable', () => {
   const everyConfiguredId = [...new Set(
     LEGACY.flatMap(([role, department]) => getAccessibleTabs(role, department))
-      .concat(getAccessibleTabs('clinician')),
+      .concat(getAccessibleTabs('clinician'))
+      // The clerk's Observations tab needs no module, so it is on her rail here.
+      .concat(getAccessibleTabs('ward_clerk', 'General Medicine')),
   )]
 
   it('has metadata in TABS (icon, pillar, label)', () => {
@@ -843,15 +845,27 @@ describe('the HIS roles: one screen each, live only while their feature is on', 
     for (const id of ['billing', 'payments', 'payer', 'vigil', 'relay', 'sage']) expect(tabs).not.toContain(id)
   })
 
-  it('the ward clerk gets exactly Beds with the module on and built, nothing otherwise', () => {
-    expect(getAccessibleTabs('ward_clerk', 'Cardiology', MODULES_ALL_ON, MODULES_ALL_INSTALLED)).toEqual(['adt'])
+  it('the ward clerk gets Beds with the module on and built, and her Observations tab either way', () => {
+    // Observations (9 October 2026) is a permission tab: it needs no module.
+    expect(getAccessibleTabs('ward_clerk', 'Cardiology', MODULES_ALL_ON, MODULES_ALL_INSTALLED))
+      .toEqual(['adt', 'observations'])
     expect(getRoleConfig('ward_clerk', 'Cardiology', MODULES_ALL_ON, MODULES_ALL_INSTALLED).home).toBe('adt')
-    expect(getAccessibleTabs('ward_clerk', 'Cardiology', MODULES_DEFAULT, MODULES_ALL_INSTALLED)).toEqual([])
-    expect(getAccessibleTabs('ward_clerk', 'Cardiology', MODULES_ALL_ON, MODULES_NONE_INSTALLED)).toEqual([])
+    expect(getAccessibleTabs('ward_clerk', 'Cardiology', MODULES_DEFAULT, MODULES_ALL_INSTALLED)).toEqual(['observations'])
+    expect(getRoleConfig('ward_clerk', 'Cardiology', MODULES_DEFAULT, MODULES_ALL_INSTALLED).home).toBe('observations')
+    expect(getAccessibleTabs('ward_clerk', 'Cardiology', MODULES_ALL_ON, MODULES_NONE_INSTALLED)).toEqual(['observations'])
+  })
+
+  it('the Observations tab goes only to an account that holds vitals.transcribe', () => {
+    for (const role of ['doctor', 'nurse', 'admin', 'pharmacist', 'receptionist', 'lab_technician', '', null]) {
+      expect(getAccessibleTabs(role, undefined, MODULES_ALL_ON, MODULES_ALL_INSTALLED, FEATURES_ALL_ON))
+        .not.toContain('observations')
+    }
   })
 
   it.each(HIS_ROLES)('%s never falls back to the clinical tabs it cannot open', role => {
-    expect(getAccessibleTabs(role, undefined, MODULES_DEFAULT, MODULES_NONE_INSTALLED, FEATURES_OFF)).toEqual([])
+    // The clerk keeps her own Observations tab, which needs no module.
+    expect(getAccessibleTabs(role, undefined, MODULES_DEFAULT, MODULES_NONE_INSTALLED, FEATURES_OFF))
+      .toEqual(role === 'ward_clerk' ? ['observations'] : [])
     expect(getRoleConfig(role).primaryAction).toBeNull()
     expect(getPrimaryAction(role)).toBeNull()
   })
@@ -897,13 +911,20 @@ describe('the HIS roles: one screen each, live only while their feature is on', 
 
 describe('the switched-off notice names why a HIS role has no screen', () => {
   it('says checking before the server answers', () => {
-    expect(getModuleOffNotice('ward_clerk', 'Cardiology', MODULES_DEFAULT, MODULES_ALL_INSTALLED, FEATURES_OFF, 'pending'))
-      .toEqual({ subject: 'adt', state: 'checking', home: 'adt' })
+    expect(getModuleOffNotice('lab_technician', undefined, MODULES_DEFAULT, MODULES_ALL_INSTALLED, FEATURES_OFF, 'pending'))
+      .toEqual({ subject: 'lab', state: 'checking', home: 'lab' })
+  })
+
+  it('is never shown to the ward clerk, who keeps her Observations tab with Beds off', () => {
+    for (const probe of ['pending', 'answered', 'failed'] as const) {
+      expect(getModuleOffNotice('ward_clerk', 'Cardiology', MODULES_DEFAULT, MODULES_ALL_INSTALLED, FEATURES_OFF, probe))
+        .toBeNull()
+    }
+    expect(getModuleOffNotice('ward_clerk', 'Cardiology', { ...MODULES_DEFAULT, adt: true }, MODULES_NONE_INSTALLED,
+      FEATURES_OFF, 'answered')).toBeNull()
   })
 
   it('says off once the server answers off', () => {
-    expect(getModuleOffNotice('ward_clerk', 'Cardiology', MODULES_DEFAULT, MODULES_ALL_INSTALLED, FEATURES_OFF, 'answered'))
-      .toEqual({ subject: 'adt', state: 'off', home: 'adt' })
     for (const role of LAB_ROLES) {
       expect(getModuleOffNotice(role, undefined, MODULES_DEFAULT, MODULES_ALL_INSTALLED, FEATURES_OFF, 'answered'))
         .toEqual({ subject: 'lab', state: 'off', home: 'lab' })
@@ -918,9 +939,9 @@ describe('the switched-off notice names why a HIS role has no screen', () => {
   })
 
   it('says unavailable when the feature is on but the screen cannot open', () => {
-    // ORB_ADT on, BedBoardPanel.tsx not yet in the build.
-    expect(getModuleOffNotice('ward_clerk', 'Cardiology', { ...MODULES_DEFAULT, adt: true }, MODULES_NONE_INSTALLED, FEATURES_OFF, 'answered'))
-      .toEqual({ subject: 'adt', state: 'unavailable', home: 'adt' })
+    // ORB_LAB on, LabPanel.tsx not yet in the build.
+    expect(getModuleOffNotice('pathologist', undefined, { ...MODULES_DEFAULT, lab: true }, MODULES_NONE_INSTALLED, FEATURES_OFF, 'answered'))
+      .toEqual({ subject: 'lab', state: 'unavailable', home: 'lab' })
     // Registration on, the Front Desk module switched off.
     expect(getModuleOffNotice('receptionist', undefined, { ...MODULES_DEFAULT, frontdesk: false }, MODULES_ALL_INSTALLED,
       { ...FEATURES_OFF, registration: true }, 'answered'))

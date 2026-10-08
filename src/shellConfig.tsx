@@ -1,5 +1,7 @@
 import { lazy, useSyncExternalStore, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react'
-import { hasPermission, PATIENT_WRITE, ROLE_FEATURE, type Permission, type RoleFeatureId } from './lib/roles'
+import {
+  hasPermission, PATIENT_WRITE, ROLE_FEATURE, VITALS_TRANSCRIBE, type Permission, type RoleFeatureId,
+} from './lib/roles'
 
 /**
  * THE SHELL'S ONE ROLE INPUT.
@@ -100,6 +102,11 @@ export type Tab =
    * first: the doctor's outpatient queue and consultation screen. See
    * FEATURE_TAB_IDS below. */
   | 'opd'
+  /* The ward clerk's own Observations screen (Orb Ward Record, 9 October
+   * 2026): she copies each round from the paper sheet. A PERMISSION tab (see
+   * PERMISSION_TABS): shown to an account holding vitals.transcribe, with the
+   * beds module on or off. */
+  | 'observations'
 
 /**
  * Rail grouping. Phase 1 renders every group as one flat list — the grouped
@@ -1035,9 +1042,37 @@ export const TABS: readonly TabDef[] = [
       </svg>
     ),
   },
+  {
+    id: 'observations', label: 'Observations', pillar: 'Observations',
+    icon: (
+      // A clipboard with ruled lines: the paper observation sheet the clerk
+      // copies from. Deliberately not a heart line, which would promise a
+      // monitor and a score this screen never shows.
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1"/>
+        <path d="M8.5 9.5h7"/><path d="M8.5 13h7"/><path d="M8.5 16.5h4"/>
+      </svg>
+    ),
+  },
 ]
 
 const TAB_BY_ID = new Map(TABS.map(tab => [tab.id, tab]))
+
+/**
+ * PERMISSION TABS: a tab shown to an account that holds one permission,
+ * whatever its role's opt-in module or feature says.
+ *
+ * Observations is the ward clerk's copy of the paper observation sheet (Orb
+ * Ward Record, 9 October 2026). Her role exists for the beds module (ORB_ADT),
+ * but copying the sheet does not need it: her patient list comes from
+ * GET /api/nurse/transcribe/patients, which answers with the beds module off.
+ * So this tab survives a switched-off role feature (getRoleConfig), and it
+ * shows only while the account holds vitals.transcribe, the permission every
+ * request it makes requires.
+ */
+export const PERMISSION_TABS: Readonly<Partial<Record<Tab, Permission>>> = {
+  observations: VITALS_TRANSCRIBE,
+}
 
 export function tabDef(id: Tab): TabDef | undefined {
   return TAB_BY_ID.get(id)
@@ -1351,14 +1386,16 @@ const ROLE_CONFIG: Record<string, ShellRoleConfig> = {
   },
   /* The ward clerk (adt-17): reads the bed board and moves patients between
      beds of the same department. No chart, no transfer between departments
-     (ADT-S8), no leave or absconded (ADT-S7). Needs the 'adt' module.
+     (ADT-S8), no leave or absconded (ADT-S7). Beds needs the 'adt' module.
      The Orb Ward Record (6 October 2026): she also copies observation rounds
-     from the paper sheet in the Beds panel's Observations view
-     (src/pages/panels/adt/ObservationsView.tsx, gated on vitals.transcribe).
-     That view lives inside this one tab, so the rail stays as it is. */
+     from the paper sheet. The Beds panel's Observations view
+     (src/pages/panels/adt/ObservationsView.tsx) does that while the beds module
+     is on; since 9 October 2026 she also has an Observations tab of her own
+     (a PERMISSION_TABS entry), which works with the beds module off, so a Ward
+     Record site does not have to switch beds on for her to key a round. */
   ward_clerk: {
     home: 'adt',
-    tabs: [t('adt', 'hospital')],
+    tabs: [t('adt', 'hospital'), t('observations', 'clinical')],
     primaryAction: null,
     floatingSage: false,
   },
@@ -1390,8 +1427,9 @@ const ROLE_CONFIG: Record<string, ShellRoleConfig> = {
  * With ORB_WARD_RECORD on (clinical.ward_record on /api/health) the rail shows
  * only what Orb Ward Record sells (SALES_PLAN_2026-10.md section 3, step 2):
  * the ward list and chart, with no scores (vigil); observation entry (the
- * nurse's shift); the clerk's observations view and the beds, inside Beds,
- * which still needs ORB_ADT; and Admin, which then shows only the Ward Record
+ * nurse's shift); the clerk's own Observations tab, which works with ORB_ADT
+ * off, and the beds, inside Beds, which still needs ORB_ADT; and Admin, which
+ * then shows only the Ward Record
  * sections (Data, Users, the audit log, the Flight Recorder, the Trust
  * Center). Downtime is a page of its own, opened from the chart. Every other
  * tab is hidden, and a direct visit to one shows the plain "Not part of Orb
@@ -1400,7 +1438,7 @@ const ROLE_CONFIG: Record<string, ShellRoleConfig> = {
  * With only the models switched off (ORB_MODELS_ENABLED), the three model
  * tabs go: their every route answers 404 "Switched off on this computer".
  */
-export const WARD_RECORD_TAB_IDS: readonly Tab[] = ['vigil', 'shift', 'adt', 'admin']
+export const WARD_RECORD_TAB_IDS: readonly Tab[] = ['vigil', 'shift', 'adt', 'observations', 'admin']
 
 /** The tabs that are a model, hidden while the models are switched off. */
 export const MODEL_TAB_IDS: readonly Tab[] = ['sage', 'scribe', 'lens']
@@ -1503,10 +1541,18 @@ export function getRoleConfig(
      EMPTY rail while that feature is off. The shell then shows the switched-off
      notice; the role never falls through to tabs it cannot open. */
   const roleLive = isRoleFeatureOn(key, modules, features)
-  const tabs = (!roleLive ? [] : isSurgeon && (key === 'doctor' || key === 'clinician')
-    ? [...DOCTOR_TABS, t('surgical-suite')]
-    : base.tabs
+  /* A PERMISSION tab (the clerk's Observations) needs no module or feature,
+     so it survives a switched-off role feature, and it shows only while the
+     account holds its permission. */
+  const tabs = (!roleLive ? base.tabs.filter(entry => PERMISSION_TABS[entry.id] !== undefined)
+    : isSurgeon && (key === 'doctor' || key === 'clinician')
+      ? [...DOCTOR_TABS, t('surgical-suite')]
+      : base.tabs
   )
+    .filter(entry => {
+      const needs = PERMISSION_TABS[entry.id]
+      return needs === undefined || hasPermission(needs, key)
+    })
     .filter(entry => entry.id !== 'today' || doctorHomeInstalled)
     /* A hospital-module tab survives only if its flag is on AND its panel is in
        the build. Either half missing means the tab is not there at all — never a

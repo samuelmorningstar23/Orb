@@ -32,7 +32,8 @@
     "adt": "Beds",
     "pharmacy-store": "Pharmacy store",
     "lab": "Laboratory",
-    "opd": "OPD"
+    "opd": "OPD",
+    "observations": "Observations"
   },
   "subtitle": {
     "admin": "System governance & audit traceability",
@@ -67,7 +68,8 @@
     "adt": "Bed board, admissions, transfers and the daily census",
     "pharmacy-store": "Drug purchasing, goods receipt, batches, expiry and stock",
     "lab": "Specimens, results, validation and reports",
-    "opd": "Outpatient queue, consultations and prescriptions"
+    "opd": "Outpatient queue, consultations and prescriptions",
+    "observations": "Copy each round from the paper observation sheet"
   },
   "shell": {
     "admitPatient": "Admit Patient",

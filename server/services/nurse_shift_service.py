@@ -1553,6 +1553,69 @@ def _record_observation_txn(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# The ward clerk's patient list (Orb Ward Record, 9 October 2026)
+# ─────────────────────────────────────────────────────────────────────────────
+def _stay_start_of(row) -> datetime | None:
+    """When a stay began: the admission's admitted_at (migration 58, written by
+    the beds module and back-timed to the arrival), else when the admission
+    row was written, else the patient row's admission_date. The rounds file
+    (ward_record_service._stay_segments) starts a stay the same way."""
+    keys = row.keys()
+    for key in ("admitted_at", "created_at", "admission_date"):
+        if key in keys:
+            when = _parse_ts(row[key])
+            if when is not None:
+                return when.astimezone(timezone.utc)
+    return None
+
+
+def _admission_time_cols(db) -> str:
+    """`a.admitted_at` when migration 58 has run, else NULL under that name."""
+    cols = {r[1] for r in db.execute("PRAGMA table_info(admissions)").fetchall()}
+    return "a.admitted_at" if "admitted_at" in cols else "NULL AS admitted_at"
+
+
+def transcribe_patients(department: str | None) -> list[dict]:
+    """The admitted patients the ward clerk may copy rounds for, in her
+    department (permissions.department_scope; None is unscoped, as everywhere).
+
+    Her own read, so her Observations screen works with the beds module
+    (ORB_ADT) switched off: name, hospital number, ward and bed, and when the
+    stay began. Nothing clinical: no reading, no score, no diagnosis."""
+    with db_session() as db:
+        params: tuple = ()
+        dept_clause = ""
+        if department:
+            dept_clause = " AND a.department = ?"
+            params = (department,)
+        rows = db.execute(
+            f"""SELECT p.id, p.name, p.mrn, p.ward, p.bed, p.admission_date,
+                       {_admission_time_cols(db)}, a.created_at
+                  FROM patients p
+                  JOIN admissions a ON a.patient_id = p.id AND a.status = 'active'
+                 WHERE p.status = 'admitted'{dept_clause}
+                 ORDER BY p.ward, p.bed, p.name, a.created_at DESC""",
+            params,
+        ).fetchall()
+    out: list[dict] = []
+    seen: set[str] = set()
+    for row in rows:
+        if row["id"] in seen:
+            continue
+        seen.add(row["id"])
+        start = _stay_start_of(row)
+        out.append({
+            "patient_id": row["id"],
+            "name": row["name"],
+            "mrn": row["mrn"],
+            "ward": row["ward"],
+            "bed": row["bed"],
+            "admitted_at": format_utc(start) if start else None,
+        })
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Entered in error (Orb Ward Record, 6 October 2026)
 # ─────────────────────────────────────────────────────────────────────────────
 class ObservationNotFound(LookupError):

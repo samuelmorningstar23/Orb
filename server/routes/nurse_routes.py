@@ -6,6 +6,7 @@ Three endpoints behind the ward-nurse home:
   POST /api/nurse/patients/{id}/observations  — record a nurse-taken obs set
   POST /api/nurse/patients/{id}/news2-preview — score a set WITHOUT saving it
   POST /api/nurse/observations/{id}/void       marks a set entered in error
+  GET  /api/nurse/transcribe/patients          the ward clerk's patient list
 
 Everything else nurse mode does (administering a med, drafting a handoff) goes
 through the endpoints that already own those workflows — /api/emar and
@@ -124,6 +125,53 @@ def get_board(
     )
 
     return nurse_shift_service.build_board(department)
+
+
+@router.get("/transcribe/patients")
+# Plain def: a database read, so it runs in the threadpool, off the event loop.
+def list_transcribe_patients(
+    request: Request,
+    # vitals.transcribe only: the ward clerk (Orb Ward Record, 9 October 2026).
+    # Her Observations screen used to read the bed board, which needs the beds
+    # module (ORB_ADT) switched on; this list works without it.
+    user: dict = Depends(require_permission("vitals.transcribe")),
+):
+    """The admitted patients of the clerk's own department: name, hospital
+    number, ward, bed and when the stay began. Nothing clinical.
+
+    SCOPE AS ON THE BOARD: the department comes from the authenticated user
+    (permissions.department_scope) and nothing in the request can widen it.
+    Audited as ``phi_access`` (fail-closed) before the list is built, as the
+    board is: it names every patient on the ward.
+    """
+    department = department_scope(user)
+    log_audit_event(
+        correlation_id=str(uuid.uuid4()),
+        event_category="phi_access",          # fail-closed
+        action_type="transcribe_patients_viewed",
+        outcome="success",
+        summary_message=(
+            f"Ward clerk patient list viewed for department "
+            f"{department or '(all, user has no department on record)'}"
+        ),
+        actor_user_id=user.get("id"),
+        actor_role=user.get("role"),
+        target_type="department",
+        target_id=department,
+        request_path=request.url.path,
+        http_method=request.method,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        metadata={
+            "department": department,
+            "hospital_wide": department is None,
+            "scope_source": "authenticated_user",
+        },
+    )
+    return {
+        "department": department,
+        "patients": nurse_shift_service.transcribe_patients(department),
+    }
 
 
 @router.post("/patients/{patient_id}/news2-preview")

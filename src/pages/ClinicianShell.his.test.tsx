@@ -7,8 +7,9 @@
  *
  *   1. the shell asks /api/health once, and a default site's rail is the same
  *      before and after the answer;
- *   2. a ward clerk or lab account whose module is off sees a plain notice,
- *      never a blank body, never the Patients and Messages fallback;
+ *   2. a lab account whose module is off sees a plain notice, never a blank
+ *      body, never the Patients and Messages fallback; a ward clerk with Beds
+ *      off keeps her own Observations tab instead (9 October 2026);
  *   3. the notice never says "switched off" when the server could not be asked;
  *   4. a receptionist with registration on gets Front Desk and nothing else;
  *   5. none of these accounts gets a Sage orb, the admit button, or a header
@@ -89,6 +90,7 @@ vi.mock('./panels/AbdmPanel.tsx', () => marker('abdm'))
 // adt-4a (W4-B) installed the Beds panel; like every other module panel here
 // it is a marker, so the rail is asserted without loading the real board.
 vi.mock('./panels/BedBoardPanel.tsx', () => marker('adt'))
+vi.mock('./panels/WardObservationsPanel', () => marker('observations'))
 
 import ClinicianShell from './ClinicianShell'
 import {
@@ -168,61 +170,57 @@ describe('the shell asks /api/health once, and a default site does not move', ()
 })
 
 describe('a ward clerk whose Beds module is off', () => {
+  /* Since 9 October 2026 the clerk has an Observations tab of her own (Orb
+     Ward Record), which needs no module. So with Beds off she gets that tab,
+     never the switched-off notice and never the unknown-role fallback. */
   beforeEach(() => {
     h.user = { id: 'WC1', name: 'Wanda Clerk', role: 'ward_clerk', department: 'Cardiology' }
   })
 
-  it('sees the switched-off notice once the server answers, and no tab at all', async () => {
+  it('keeps her Observations tab once the server answers, mounted, with no notice', async () => {
     stubFetch(DEFAULT_HEALTH)
     const container = await renderShell()
     await settle()
-    expect(railTabIds(container)).toEqual([])
-    const n = notice(container)
-    expect(n).toBeTruthy()
-    expect(n!.dataset.subject).toBe('adt')
-    expect(n!.dataset.state).toBe('off')
-    expect(n!.textContent).toContain('moduleOff.off')
+    expect(railTabIds(container)).toEqual(['observations'])
+    expect(notice(container)).toBeNull()
+    await waitFor(() => expect(container.querySelector('[data-testid="mounted-observations"]')).toBeTruthy())
     // Never the unknown-role fallback, whose panels would refuse the account.
     expect(container.querySelector('[data-testid="mounted-vigil"]')).toBeNull()
     expect(container.querySelector('[data-testid="mounted-relay"]')).toBeNull()
   })
 
-  it('never says off when the server could not be asked', async () => {
+  it('keeps it when the server could not be asked', async () => {
     stubFetch('down')
     const container = await renderShell()
     await settle()
-    expect(notice(container)!.dataset.state).toBe('unreachable')
+    expect(railTabIds(container)).toEqual(['observations'])
+    expect(notice(container)).toBeNull()
   })
 
-  it('a non-OK answer is "could not check", not "off"', async () => {
+  it('keeps it on a non-OK answer', async () => {
     stubFetch('non-ok')
     const container = await renderShell()
     await settle()
-    expect(notice(container)!.dataset.state).toBe('unreachable')
+    expect(railTabIds(container)).toEqual(['observations'])
+    expect(notice(container)).toBeNull()
   })
 
-  it('says the screen cannot open yet when Beds is on but its panel is not built', async () => {
+  it('gets Beds beside it when Beds is on and built', async () => {
     stubFetch({ ...DEFAULT_HEALTH, modules: { ...DEFAULT_HEALTH.modules, adt: true } })
     const container = await renderShell()
     await settle()
-    if (hospitalModuleInstalled.adt) {
-      // The day BedBoardPanel.tsx lands, Beds is the rail and the notice goes.
-      expect(railTabIds(container)).toEqual(['adt'])
-      expect(notice(container)).toBeNull()
-    } else {
-      expect(railTabIds(container)).toEqual([])
-      expect(notice(container)!.dataset.state).toBe('unavailable')
-    }
+    expect(railTabIds(container)).toEqual(hospitalModuleInstalled.adt ? ['adt', 'observations'] : ['observations'])
+    expect(notice(container)).toBeNull()
   })
 
-  it('gets no Sage orb, no admit button, and a header naming Beds, not Patients', async () => {
+  it('gets no Sage orb, no admit button, and a header naming Observations, not Patients', async () => {
     stubFetch(DEFAULT_HEALTH)
     const container = await renderShell()
     await settle()
     expect(container.querySelector('[data-testid="sage-orb"]')).toBeNull()
     expect(container.querySelector('#btn-admit-patient')).toBeNull()
-    expect(container.querySelector('.shell__page-title')!.textContent).toContain('Beds and admissions')
-    expect(container.querySelector('.shell__page-subtitle')!.textContent).toBe('subtitle.adt')
+    expect(container.querySelector('.shell__page-title')!.textContent).toContain('Observations')
+    expect(container.querySelector('.shell__page-subtitle')!.textContent).toBe('subtitle.observations')
   })
 
   it('is labelled by its own role in the user chip', async () => {
