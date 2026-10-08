@@ -66,7 +66,7 @@ vi.mock('../../components/vigil/PatientStory', () => ({ default: () => null }))
 vi.mock('../../components/ClinicalCourseTimeline', () => ({ ClinicalCourseTimeline: () => <div data-testid="course" /> }))
 
 import VigilPanel from './VigilPanel'
-import { dischargePatient, getPatientForecast, prefetchSageContext } from '../../api/client'
+import { dischargePatient, getAdministrations, getPatientForecast, prefetchSageContext } from '../../api/client'
 import { ActivePatientProvider } from '../../contexts/ActivePatientProvider'
 import { ActiveViewProvider } from '../../contexts/ActiveViewProvider'
 import { resetClinicalSwitches, setClinicalSwitches } from '../../shellConfig'
@@ -289,5 +289,28 @@ describe('a discharge with the models switched off (review, 9 October 2026)', ()
     expect(draft.parentElement).toHaveTextContent(
       'The drafting assistant is switched off on this computer, so this holds the recorded data only.')
     expect(draft.parentElement).not.toHaveTextContent('was unavailable')
+  })
+})
+
+describe('the medication list under the Ward Record profile (9 October 2026)', () => {
+  const MED = { id: 7, drug_name: 'Paracetamol', dosage: '1 g', route: 'Oral', frequency: 'QDS', status: 'active', unverified: false }
+
+  it('lists the charted drugs with no Administer button and asks for no administrations', async () => {
+    h.detail = { ...chartWithNoScore(), medications: [MED] }
+    act(() => { setClinicalSwitches({ scoring_enabled: false, models_enabled: false, ward_record: true }) })
+    vi.mocked(getAdministrations).mockClear()
+    await openChart()
+    await act(async () => { document.getElementById('btn-meds-reports')!.click() })
+    expect(await screen.findByText('Paracetamol')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /^Administer$/ })).toBeNull()
+    expect(getAdministrations).not.toHaveBeenCalled()
+  })
+
+  it('keeps the Administer button with only scoring off', async () => {
+    h.detail = { ...chartWithNoScore(), medications: [MED] }
+    act(() => { setClinicalSwitches({ scoring_enabled: false }) })
+    await openChart()
+    await act(async () => { document.getElementById('btn-meds-reports')!.click() })
+    expect(await screen.findByRole('button', { name: /^Administer$/ })).toBeTruthy()
   })
 })

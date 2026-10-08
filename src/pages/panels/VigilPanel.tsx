@@ -1114,6 +1114,8 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
   // after each recorded administration.
   const loadAdministrations = async () => {
     const seq = ++adminSeqRef.current
+    // Orb Ward Record has no medication round: every eMAR route is switched off.
+    if (wardRecord) { setAdministrations([]); return }
     try {
       const records = await getAdministrations(patientId)
       if (seq !== adminSeqRef.current) return
@@ -1131,7 +1133,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
     // The forecast is a model: not asked for while the models are switched off.
     if (modelsEnabled) getPatientForecast(patientId).then(setForecast).catch(() => {})
     loadProjection()
-  }, [patientId, loadProjection, modelsEnabled])
+  }, [patientId, loadProjection, modelsEnabled, wardRecord])
 
   /* Charted allergies for the Administer modal. Cleared to `null` on every
      patient change BEFORE the fetch, so a slow response can never leave the
@@ -2609,7 +2611,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
                                   Across charted allergy
                                 </span>
                               )}
-                              {m.status === 'active' && (
+                              {m.status === 'active' && !wardRecord && (
                                 <button
                                   className="modal__btn"
                                   disabled={!!m.unverified}
