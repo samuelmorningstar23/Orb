@@ -121,11 +121,15 @@ def compute_patient_state(patient_id: str) -> dict | None:
                ORDER BY timestamp DESC, id DESC LIMIT 8""",
             (patient_id,),
         ).fetchall()
+        # Scoring switched off (ORB_SCORING_ENABLED, the Orb Ward Record): no
+        # band stored before the switch is read, so the state names no risk
+        # level and no level history.
+        from services.vigil_service import scoring_enabled
         risk_rows = db.execute(
             """SELECT score, level, timestamp FROM risk_scores
                WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 6""",
             (patient_id,),
-        ).fetchall()
+        ).fetchall() if scoring_enabled() else []
 
     vit_rows = list(reversed(vit_rows))  # oldest→newest
     trends = {}
@@ -329,7 +333,14 @@ def update_ward_state(reason: str = "manual") -> dict:
 
 
 def get_patient_state(patient_id: str, recompute_if_missing: bool = True) -> dict | None:
-    """Latest persisted patient state; computes+persists one if none exists."""
+    """Latest persisted patient state; computes+persists one if none exists.
+
+    Scoring switched off (ORB_SCORING_ENABLED, the Orb Ward Record): computed
+    afresh and not persisted, because a state persisted before the switch names
+    the band stored then."""
+    from services.vigil_service import scoring_enabled
+    if not scoring_enabled():
+        return compute_patient_state(patient_id)
     st = _load_latest("patient", patient_id)
     if st is None and recompute_if_missing:
         return update_patient_state(patient_id, reason="on_demand")
@@ -337,6 +348,10 @@ def get_patient_state(patient_id: str, recompute_if_missing: bool = True) -> dic
 
 
 def get_ward_state(recompute_if_missing: bool = True) -> dict | None:
+    # Scoring switched off: computed afresh, as get_patient_state above.
+    from services.vigil_service import scoring_enabled
+    if not scoring_enabled():
+        return compute_ward_state()
     st = _load_latest("ward", HOSPITAL_ID)
     if st is None and recompute_if_missing:
         return update_ward_state(reason="on_demand")

@@ -491,3 +491,25 @@ def test_the_discharge_timeline_and_draft_carry_no_stored_band_with_scoring_off(
     timeline = json.dumps(discharge_service.build_patient_timeline(pid))
     assert MARKER not in timeline and "NEWS2" not in timeline
     assert list(discharge_service._draft_inputs(pid)["risks"]) == []
+
+
+# ── Review, 9 October 2026: Sage's temporal state ───────────────────────────
+# With only scoring switched off (the models on), Sage's per patient state read
+# the stored band and answered "current_risk_level": "critical", and a state
+# persisted before the switch kept answering it.
+
+def test_the_temporal_state_names_no_stored_band_with_scoring_off(monkeypatch):
+    from services import world_model_service
+    pid = _patient("SOF-WORLD")
+    doctor = _user("doctor")
+    _scoring(monkeypatch, True)
+    persisted = world_model_service.get_patient_state(pid)
+    assert persisted["current_risk_level"] == "critical"
+    _scoring(monkeypatch, False)
+    state = world_model_service.get_patient_state(pid)
+    assert state["current_risk_level"] == "unknown" and state["risk_level_history"] == []
+    ward = world_model_service.get_ward_state()
+    assert ward["risk_distribution"]["critical"] == 0
+    r = client.get(f"/api/sage/world/patient/{pid}", headers=_auth(doctor, "doctor"))
+    assert r.status_code == 200, r.text
+    assert "critical" not in r.text
