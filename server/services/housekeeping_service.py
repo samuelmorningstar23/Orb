@@ -1415,6 +1415,7 @@ def sync_discharge_turnarounds(
     scanned = 0
 
     from services import stay_times
+    from services.adt.core import carried_isolation
 
     with db_session() as db:
         units = db.execute(
@@ -1537,7 +1538,11 @@ def sync_discharge_turnarounds(
             # into an isolation room without knowing is an infection-control harm
             # and the PPE choice depends on it. The precaution TEXT is not copied.
             # Read from the stay that ended; for a patient with no admission
-            # row, the query this sweep always used.
+            # row, the query this sweep always used. The stored value is read
+            # the way ADT bed readiness reads it (adt core carried_isolation):
+            # admission_service stores a JSON list, so a stay with NO
+            # precautions holds the text '[]', which is not a precaution. A
+            # terminal flag raised on every discharge teaches staff to ignore it.
             if ended is not None:
                 iso_text = ended.get("isolation_precautions") or ""
             else:
@@ -1549,7 +1554,7 @@ def sync_discharge_turnarounds(
                     (source_ref,),
                 ).fetchone()
                 iso_text = (iso["isolation_precautions"] if iso else None) or ""
-            terminal = bool(str(iso_text).strip()) or bool(unit.get("is_isolation_room"))
+            terminal = carried_isolation(iso_text) or bool(unit.get("is_isolation_room"))
             clean_type = "terminal" if terminal else "standard"
 
             vacated_iso = (discharged_at or now).isoformat()

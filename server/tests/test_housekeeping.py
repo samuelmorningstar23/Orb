@@ -544,6 +544,71 @@ def test_a_terminal_clean_never_copies_the_precaution_text_out_of_the_chart():
     assert "terminal clean" in blob
 
 
+# admission_service.admit_patient stores isolation_precautions as
+# json.dumps(list), so a stay with no precautions holds the text '[]'. The
+# sweep once read any non-blank text as a precaution and raised a terminal
+# clean on every discharge through the admission form or Scribe quick-admit.
+_NO_PRECAUTION_VALUES = [None, "", "   ", "[]", '[""]', "null"]
+_PRECAUTION_VALUES = ['["Contact"]', '["Contact", "Droplet"]', "Contact precautions"]
+
+
+@pytest.mark.parametrize("stored", _NO_PRECAUTION_VALUES)
+def test_a_discharge_with_no_precautions_raises_a_standard_clean(stored):
+    ward = f"HK NoIso {uuid.uuid4().hex[:6].upper()}"
+    unit = _unit(ward, state="occupied", bed="N-1")
+    _, ds_id = _discharged_patient(ward=ward, bed="N-1", isolation=stored)
+    hk.sync_discharge_turnarounds(lookback_hours=24)
+
+    tasks = _tasks_for_discharge(ds_id)
+    assert len(tasks) == 1
+    assert tasks[0]["unit_id"] == unit["id"]
+    assert tasks[0]["clean_type"] == "standard", (
+        f"isolation_precautions {stored!r} names no precaution; a terminal clean "
+        "on every discharge teaches staff to ignore the terminal flag"
+    )
+    assert tasks[0]["expected_minutes"] == hk.expected_minutes_for("standard")
+    with db_session() as db:
+        note = db.execute(
+            "SELECT precaution_note FROM housekeeping_tasks WHERE id = ?",
+            (tasks[0]["id"],),
+        ).fetchone()["precaution_note"]
+    assert note is None
+
+
+@pytest.mark.parametrize("stored", _PRECAUTION_VALUES)
+def test_a_discharge_with_precautions_raises_a_terminal_clean(stored):
+    ward = f"HK YesIso {uuid.uuid4().hex[:6].upper()}"
+    _unit(ward, state="occupied", bed="Y-1")
+    _, ds_id = _discharged_patient(ward=ward, bed="Y-1", isolation=stored)
+    hk.sync_discharge_turnarounds(lookback_hours=24)
+
+    tasks = _tasks_for_discharge(ds_id)
+    assert len(tasks) == 1
+    assert tasks[0]["clean_type"] == "terminal"
+    assert tasks[0]["expected_minutes"] == hk.expected_minutes_for("terminal")
+    with db_session() as db:
+        row = db.execute(
+            "SELECT precaution_note, description FROM housekeeping_tasks WHERE id = ?",
+            (tasks[0]["id"],),
+        ).fetchone()
+    blob = f"{row['precaution_note']} {row['description']}".lower()
+    assert "terminal clean" in blob
+    # Only the boolean crosses: the precaution words stay in the chart.
+    assert "contact" not in blob and "droplet" not in blob
+
+
+@pytest.mark.parametrize("stored", ["[]", None])
+def test_an_isolation_room_is_a_terminal_clean_whatever_the_stay_carried(stored):
+    ward = f"HK IsoRoom {uuid.uuid4().hex[:6].upper()}"
+    _unit(ward, state="occupied", bed="R-1", isolation=True)
+    _, ds_id = _discharged_patient(ward=ward, bed="R-1", isolation=stored)
+    hk.sync_discharge_turnarounds(lookback_hours=24)
+
+    tasks = _tasks_for_discharge(ds_id)
+    assert len(tasks) == 1
+    assert tasks[0]["clean_type"] == "terminal"
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  5. THE DISCHARGE SWEEP — exactly one task per discharge
 # ═════════════════════════════════════════════════════════════════════════════
