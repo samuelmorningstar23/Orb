@@ -24,6 +24,15 @@ describe('insight times', () => {
     expect(line).toBe(`At ${formatUTCTime('2026-08-07T06:40:00+00:00')}: SpO2 trending down 96% to 91% over the last 3 readings.`)
   })
 
+  it('dates the detail with the time the reading was taken, not the sweep time', () => {
+    // A set copied in at 01:51 from a sheet that times it 22:50.
+    const line = datedDetail(insight({
+      observed_at: '2026-10-08T22:50:00+00:00', updated_at: '2026-10-09T01:51:00+00:00',
+    }))
+    expect(line).toBe(`At ${formatUTCTime('2026-10-08T22:50:00+00:00')}: SpO2 trending down 96% to 91% over the last 3 readings.`)
+    expect(line).not.toContain(formatUTCTime('2026-10-09T01:51:00+00:00'))
+  })
+
   it('falls back to the raise time for a row with no refresh time', () => {
     expect(datedDetail(insight())).toMatch(new RegExp(`^At ${formatUTCTime('2026-08-07 06:00:00')}: `))
   })

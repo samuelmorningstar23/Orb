@@ -112,16 +112,24 @@ def _recent_dedup_exists(db, dedup_key) -> bool:
     ).fetchone() is not None
 
 
-def _refresh_insight(db, dedup_key, detail, title=None, severity=None) -> None:
+def _refresh_insight(db, dedup_key, detail, title=None, severity=None,
+                     observed_at=None) -> None:
     """Rewrite the detail of the ACTIVE insight for this key with this sweep's
     numbers. The dedup guard used to stop a refire at the door, so a card raised
-    at SpO2 94 still read 94 an hour later beside a chart reading 88. updated_at
-    is the time the detail describes; the UI prints it.
+    at SpO2 94 still read 94 an hour later beside a chart reading 88.
+
+    `observed_at` is when the reading the detail describes was taken (the
+    vitals row's own timestamp, for a copied set the time on the sheet); the
+    UI prints it. updated_at is the sweep's clock and only orders and ages the
+    feed: printing it put "At 01:51 AM" on a set the sheet timed 22:50.
 
     A `title` and `severity` are rewritten too when given. Rule 1 stands a card
     down ("was critical", severity info), and a refire for that key must put
     "is critical" and its red dot back."""
     sets, args = ["detail = ?", "updated_at = ?"], [(detail or "")[:600], _now()]
+    if observed_at is not None:
+        sets.append("observed_at = ?")
+        args.append(observed_at)
     if title is not None:
         sets.append("title = ?")
         args.append(title[:200])
@@ -148,7 +156,7 @@ def _location(ward, bed) -> str:
 
 
 def _insert_insight(db, patient_id, itype, severity, title, detail, target_user, dedup_key,
-                    action_type=None, action_target=None):
+                    action_type=None, action_target=None, observed_at=None):
     """Atomic dedup-and-insert. A single INSERT ... WHERE NOT EXISTS so concurrent
     sweeps cannot both create the same insight — the previous check-then-insert raced
     (50 parallel evaluations produced duplicate active insights). SQLite serializes
@@ -161,8 +169,8 @@ def _insert_insight(db, patient_id, itype, severity, title, detail, target_user,
         from services.sage_feedback_service import is_pattern_suppressed
         if is_pattern_suppressed(itype, severity, db=db):
             # Not raised again, but a card already on the feed still gets this
-            # sweep's numbers (updated_at must stay the time the detail describes).
-            _refresh_insight(db, dedup_key, detail, title, severity)
+            # sweep's numbers, and the time they were taken.
+            _refresh_insight(db, dedup_key, detail, title, severity, observed_at)
             return None
     except Exception:
         pass  # suppression is an optimisation; never block a real insight on it
@@ -172,20 +180,20 @@ def _insert_insight(db, patient_id, itype, severity, title, detail, target_user,
         f"""INSERT INTO sage_insights
            (id, patient_id, insight_type, severity, title, detail,
             suggested_action_type, suggested_action_target, target_user_id, dedup_key,
-            state, created_at, updated_at)
-           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?
+            state, created_at, updated_at, observed_at)
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?
            WHERE NOT EXISTS (
                SELECT 1 FROM sage_insights WHERE {_DEDUP_SUPPRESSED_SQL}
            )""",
         (iid, patient_id, itype, severity, title[:200], (detail or "")[:600],
-         action_type, action_target, target_user, dedup_key, _now(), _now(),
+         action_type, action_target, target_user, dedup_key, _now(), _now(), observed_at,
          dedup_key, cutoff, flap_cutoff),
     )
     if cur.rowcount > 0:
         return iid
     # Suppressed. If that is because the same insight is still on the feed, it
     # gets this sweep's numbers rather than staying frozen at raise time.
-    _refresh_insight(db, dedup_key, detail, title, severity)
+    _refresh_insight(db, dedup_key, detail, title, severity, observed_at)
     return None
 
 
@@ -308,7 +316,8 @@ def _stood_down_id(db, dedup_key):
     return row["id"] if row else None
 
 
-def _stand_down(db, dedup_key, now, label, worst, band, was_title, no_longer) -> bool:
+def _stand_down(db, dedup_key, now, label, worst, band, was_title, no_longer,
+                observed_at=None) -> bool:
     """The latest observation is below `band`, the band of this Rule 1 card.
     Returns True when the card must stay on the feed (the caller keeps its key
     valid). `worst` is `_worst_case_level` of the latest row (None when the set
@@ -343,13 +352,14 @@ def _stand_down(db, dedup_key, now, label, worst, band, was_title, no_longer) ->
     if now.get("complete") is False:
         if worst is None or _level_rank(worst) >= _level_rank(band):
             _refresh_insight(db, dedup_key,
-                             f"Not confirmed recovered: {label}; not measured: {missing}.")
+                             f"Not confirmed recovered: {label}; not measured: {missing}.",
+                             observed_at=observed_at)
             return True
         detail = (f"{no_longer}: latest observation {label}; not measured: {missing}, "
                   f"which could not bring it to {band}.")
     else:
         detail = f"{no_longer}: latest observation {label}."
-    _refresh_insight(db, dedup_key, detail, was_title, STOOD_DOWN_SEVERITY)
+    _refresh_insight(db, dedup_key, detail, was_title, STOOD_DOWN_SEVERITY, observed_at)
     return False
 
 
@@ -377,6 +387,10 @@ def evaluate_patient(patient_id, raised_again=None) -> list:
         target = pat["attending_doctor_id"]
         loc = _location(pat["ward"], pat["bed"])
         name = pat["name"] or "Patient"
+        # When the latest reading was taken: the vitals row's own timestamp
+        # (for a copied set, the time on the paper sheet). Every rule below
+        # describes this row, so every card it raises or rewrites carries it.
+        read_at = vits[0]["timestamp"] if vits else None
 
         # Scored with NO session open (see _read_moment). A scoring failure (a
         # CfC checkpoint that will not run) must not cost the patient Rules 2-4,
@@ -439,7 +453,7 @@ def evaluate_patient(patient_id, raised_again=None) -> list:
                         db, patient_id, "deterioration", "critical",
                         f"{name} ({loc}) is critical",
                         _detail(label, _reasons(now, table), "Recommend immediate senior review"),
-                        target, crit_key)
+                        target, crit_key, observed_at=read_at)
                     if iid:
                         new_ids.append(iid)
                 elif (lvl_now == "elevated" and before_score is not None
@@ -449,7 +463,7 @@ def evaluate_patient(patient_id, raised_again=None) -> list:
                         f"{name} ({loc}) is deteriorating",
                         _detail(f"Rose from {news2_description(before_score, scale=False)} to {label}",
                                 _reasons(now, table), "Consider review"),
-                        target, elev_key)
+                        target, elev_key, observed_at=read_at)
                     if iid:
                         new_ids.append(iid)
                 elif lvl_now == "elevated":
@@ -458,7 +472,7 @@ def evaluate_patient(patient_id, raised_again=None) -> list:
                     # raised on.
                     _refresh_insight(
                         db, elev_key, _detail(label, _reasons(now, table), "Consider review"),
-                        f"{name} ({loc}) is deteriorating", "warning")
+                        f"{name} ({loc}) is deteriorating", "warning", read_at)
                 if flipping and raised_again is not None:
                     raised_again.append(flipping)
 
@@ -466,11 +480,11 @@ def evaluate_patient(patient_id, raised_again=None) -> list:
                 # leaves it open (see _stand_down).
                 if lvl_now != "critical" and _stand_down(
                         db, crit_key, now, label, worst, "critical",
-                        f"{name} ({loc}) was critical", "No longer critical"):
+                        f"{name} ({loc}) was critical", "No longer critical", read_at):
                     valid_keys.add(crit_key)
                 if lvl_now == "stable" and _stand_down(
                         db, elev_key, now, label, worst, "elevated",
-                        f"{name} ({loc}) was deteriorating", "No longer elevated"):
+                        f"{name} ({loc}) was deteriorating", "No longer elevated", read_at):
                     valid_keys.add(elev_key)
 
             # ── Rule 2: trajectory (SpO2 falling / RR rising over last 3 readings) ──
@@ -485,7 +499,7 @@ def evaluate_patient(patient_id, raised_again=None) -> list:
                         f"{name} ({loc}): SpO2 falling",
                         f"SpO2 trending down {charted_text(spo2[2], unit='%')} to "
                         f"{charted_text(spo2[0], unit='%')} over the last 3 readings.",
-                        target, f"{patient_id}:trajectory:spo2")
+                        target, f"{patient_id}:trajectory:spo2", observed_at=read_at)
                     if iid:
                         new_ids.append(iid)
                 if all(x is not None for x in rr) and rr[0] >= rr[1] >= rr[2] and (rr[0] - rr[2]) >= 4:
@@ -494,7 +508,7 @@ def evaluate_patient(patient_id, raised_again=None) -> list:
                         db, patient_id, "trajectory", "warning",
                         f"{name} ({loc}): respiratory rate rising",
                         f"RR climbing {charted_text(rr[2])} to {charted_text(rr[0])} over the last 3 readings.",
-                        target, f"{patient_id}:trajectory:rr")
+                        target, f"{patient_id}:trajectory:rr", observed_at=read_at)
                     if iid:
                         new_ids.append(iid)
 
@@ -530,7 +544,7 @@ def evaluate_patient(patient_id, raised_again=None) -> list:
                         f"Temp {charted_text(t, 1, unit='C')}, HR {charted_text(hr)}, RR {charted_text(rrate)}: "
                         f"meets SIRS, {len(met)} of 4 criteria ({', '.join(met)}; white cell count not "
                         "recorded in Orb). Consider sepsis screen + cultures.",
-                        target, f"{patient_id}:sepsis")
+                        target, f"{patient_id}:sepsis", observed_at=read_at)
                     if iid:
                         new_ids.append(iid)
 
