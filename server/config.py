@@ -481,6 +481,21 @@ SCORING_ENABLED = os.getenv("ORB_SCORING_ENABLED", "true").strip().lower() in ("
 # automatically; a clinician can still start a bundle by hand. Default on.
 SEPSIS_AUTOSTART = os.getenv("ORB_SEPSIS_AUTOSTART", "true").strip().lower() in ("1", "true", "yes", "on")
 
+# A set the ward clerk copies from the paper sheet (source clerk_transcribed)
+# whose sheet time is more than this many minutes before the moment it is keyed
+# raises nothing live, even with scoring on: no Relay alert, no escalation
+# chain (the write path's or the background sweep's), no sepsis bundle, and no
+# vitals:update unless it is the chart's newest set. It is still charted and
+# scored for the record, and the response says "Charted. Older than 2 hours,
+# so no alert was raised." An alert about a reading hours old pages people for
+# a patient who may since have been seen and treated. Default 120 (2 hours);
+# 0 makes every transcribed set record only.
+try:
+    TRANSCRIBED_LIVE_HOOK_MAX_AGE_MINUTES = max(
+        0, int(os.getenv("ORB_TRANSCRIBED_LIVE_HOOK_MAX_AGE_MINUTES", "120")))
+except ValueError:
+    TRANSCRIBED_LIVE_HOOK_MAX_AGE_MINUTES = 120
+
 # Whether any local model runs at all: Sage, Scribe drafting and its second
 # pass, Lens, Relay's ambient cards, Sage insights, the alert assessment, the
 # knowledge workers, speech transcription (Whisper) and every model warm-up at

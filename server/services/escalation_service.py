@@ -1414,7 +1414,14 @@ def scan_new_observations(*, department: str | None = None,
             ).fetchall()
         }
 
-        params: list = [cutoff]
+        # A set the ward clerk copied from a sheet more than the live hook
+        # limit before she keyed it (ORB_TRANSCRIBED_LIVE_HOOK_MAX_AGE_MINUTES)
+        # is record only: its write path raised no chain, and this net must not
+        # raise one either. Judged on keyed minus sheet time, as the write path
+        # judges it, so a set that was live when keyed is never re-judged here.
+        from services.nurse_shift_service import CLERK_SOURCE, transcribed_live_hook_max_age
+        record_only_minutes = transcribed_live_hook_max_age().total_seconds() / 60.0
+        params: list = [cutoff, CLERK_SOURCE, record_only_minutes]
         dept_sql = ""
         if department is not None:
             dept_sql = f" AND {PATIENT_DEPARTMENT_SQL} = ?"
@@ -1424,7 +1431,10 @@ def scan_new_observations(*, department: str | None = None,
             f"""SELECT v.*, p.on_scale_2 AS patient_on_scale_2
                   FROM vitals v
                   JOIN patients p ON p.id = v.patient_id
-                 WHERE p.status = 'admitted' AND v.timestamp >= ? AND v.voided_at IS NULL {dept_sql}
+                 WHERE p.status = 'admitted' AND v.timestamp >= ? AND v.voided_at IS NULL
+                   AND NOT (v.source IS ? AND v.entered_at IS NOT NULL
+                            AND (julianday(v.entered_at) - julianday(v.timestamp)) * 1440.0 > ?)
+                   {dept_sql}
                  ORDER BY v.id DESC LIMIT ?""",
             tuple(params),
         ).fetchall()

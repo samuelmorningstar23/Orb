@@ -44,7 +44,9 @@ def _mk_user(role, department):
 
 def _mk_patient(department):
     pid = f"WRVP{uuid.uuid4().hex[:8].upper()}"
-    now = datetime.now(timezone.utc).isoformat()
+    # Admitted three days ago: a copied set may not be timed before the stay
+    # began (nurse_shift_service.refuse_sheet_before_admission).
+    now = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
     with db_session() as db:
         db.execute(
             "INSERT OR IGNORE INTO users (id, name, role, password_hash) "
@@ -58,9 +60,10 @@ def _mk_patient(department):
             (pid, f"WRV {department}", f"MRN-{uuid.uuid4().hex[:8].upper()}", now),
         )
         db.execute(
-            "INSERT INTO admissions (patient_id, department, ward, bed, status, admitted_by) "
-            "VALUES (?, ?, 'WV-1', 'B-7', 'active', 'WRVADM')",
-            (pid, department),
+            "INSERT INTO admissions (patient_id, department, ward, bed, status, admitted_by, "
+            "created_at) "
+            "VALUES (?, ?, 'WV-1', 'B-7', 'active', 'WRVADM', ?)",
+            (pid, department, now),
         )
     return pid
 

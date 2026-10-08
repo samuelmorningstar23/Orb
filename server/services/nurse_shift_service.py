@@ -1295,7 +1295,8 @@ def _record_observation_txn(
     illegible_fields = normalise_illegible(illegible)
     illegible_text = ",".join(illegible_fields) or None
     cleaned = _clean_obs(obs, illegible_fields)
-    entered_at = format_utc(_now())
+    entered_dt = _now()
+    entered_at = format_utc(entered_dt)
     # ORB_SCORING_ENABLED off (the Orb Ward Record): the vitals row and its
     # audit entry are the whole write. No NEWS2 is computed, stored, returned or
     # logged, and nothing after the commit runs: no push, no sepsis bundle, no
@@ -1310,9 +1311,14 @@ def _record_observation_txn(
     stored_at = format_utc(observed_at)
     if observed_at > _now() + timedelta(minutes=5):
         raise ValueError("observation time cannot be in the future")
+    # A copied set whose sheet time is older than the live hook limit is
+    # recorded and scored but raises nothing live (transcribed_record_only).
+    record_only = transcribed_record_only(source, observed_at, entered_dt)
 
     with db_session() as db:
         scale_2 = _on_scale_2(db, patient_id)
+        if source == CLERK_SOURCE:
+            refuse_sheet_before_admission(db, patient_id, observed_at)
 
         superseded_id = None
         if taken_at:
@@ -1420,6 +1426,9 @@ def _record_observation_txn(
                 "single_param_3": news2["single_param_3"] if scoring else None,
                 "spo2_scale": news2["spo2_scale"] if scoring else None,
                 "scoring_enabled": scoring,
+                # False for a copied set older than the live hook limit: it
+                # raised no alert, escalation or bundle.
+                "live_hooks": scoring and not record_only,
                 "source": source,
                 "idempotency_key": idempotency_key,
                 "supersedes_vitals_id": superseded_id,
@@ -1462,6 +1471,31 @@ def _record_observation_txn(
 
     if is_latest:
         _push_vitals_update(patient_id, observed_at, cleaned, news2, source=source)
+
+    # A set copied from a sheet more than the live hook limit ago
+    # (ORB_TRANSCRIBED_LIVE_HOOK_MAX_AGE_MINUTES, default 2 hours): charted and
+    # scored for the record above, and pushed to an open chart only if it is
+    # the newest set, but no sepsis bundle, no Relay alert and no escalation.
+    # Paging the ward about a reading hours old summons people to a patient who
+    # may since have been seen and treated.
+    if record_only:
+        logger.info("nurse obs: patient %s copied set %s from %s recorded only (older than %s)",
+                    patient_id, vitals_id, stored_at, transcribed_live_hook_max_age())
+        result = {
+            "vitals_id": vitals_id,
+            "recorded_at": stored_at,
+            "news2": news2,
+            "schedule": obs_schedule(news2),
+            "replayed": False,
+            "source": source,
+            "entered_at": entered_at,
+            "illegible": list(illegible_fields),
+            "live_hooks": False,
+            "message": record_only_message(),
+        }
+        if superseded_id is not None:
+            result["supersedes_vitals_id"] = superseded_id
+        return result
 
     # Post-commit, non-raising: opening a sepsis bundle at NEWS2>=7 is documented
     # in sepsis_bundle_service as safe to call from any risk path, and a
@@ -1550,6 +1584,79 @@ def _record_observation_txn(
     if superseded_id is not None:
         result["supersedes_vitals_id"] = superseded_id
     return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Guards on a set copied from the paper sheet (Orb Ward Record, 9 October 2026)
+# ─────────────────────────────────────────────────────────────────────────────
+# A sheet time up to this long before the admission time is accepted. A patient
+# transferred in from another ward or hospital arrives with that place's sheet,
+# and its last round can be timed shortly before this stay began; an hour covers
+# a transfer's paperwork without letting a sheet from another stay through.
+SHEET_BEFORE_ADMISSION_ALLOWANCE = timedelta(minutes=60)
+
+SHEET_BEFORE_ADMISSION = "The time on the sheet is before this patient was admitted"
+
+
+def transcribed_live_hook_max_age() -> timedelta:
+    """ORB_TRANSCRIBED_LIVE_HOOK_MAX_AGE_MINUTES, read at call time."""
+    import config
+
+    minutes = getattr(config, "TRANSCRIBED_LIVE_HOOK_MAX_AGE_MINUTES", 120)
+    try:
+        return timedelta(minutes=max(0, int(minutes)))
+    except (TypeError, ValueError):
+        return timedelta(minutes=120)
+
+
+def transcribed_record_only(source: str | None, observed_at: datetime,
+                            entered_at: datetime) -> bool:
+    """True for a set the ward clerk copied whose sheet time was more than the
+    live hook limit before it was keyed. A bedside set is never record only."""
+    if source != CLERK_SOURCE:
+        return False
+    return entered_at - observed_at > transcribed_live_hook_max_age()
+
+
+def record_only_message() -> str:
+    """What the response says about a record only set, in the limit's words."""
+    minutes = int(transcribed_live_hook_max_age().total_seconds() // 60)
+    if minutes and minutes % 60 == 0:
+        hours = minutes // 60
+        age = f"{hours} hour" if hours == 1 else f"{hours} hours"
+    else:
+        age = f"{minutes} minutes"
+    return f"Charted. Older than {age}, so no alert was raised."
+
+
+def _stay_start(db, patient_id: str) -> datetime | None:
+    """When this patient's current stay began: the active admission, else the
+    newest one (the order permissions.PATIENT_DEPARTMENT_SQL uses), timed by
+    _stay_start_of. None when nothing records it."""
+    row = db.execute(
+        f"""SELECT {_admission_time_cols(db)}, a.created_at, p.admission_date
+              FROM patients p
+              LEFT JOIN admissions a ON a.patient_id = p.id
+             WHERE p.id = ?
+             ORDER BY (a.status = 'active') DESC, a.created_at DESC, a.rowid DESC
+             LIMIT 1""",
+        (patient_id,),
+    ).fetchone()
+    return _stay_start_of(row) if row is not None else None
+
+
+def refuse_sheet_before_admission(db, patient_id: str, observed_at: datetime) -> None:
+    """Refuse a copied set timed before this stay began. Raises ValueError.
+
+    Up to SHEET_BEFORE_ADMISSION_ALLOWANCE (60 minutes) before the admission
+    time is accepted, for a transfer sheet whose last round was taken on the
+    ward or at the hospital the patient came from. Earlier than that, the sheet
+    belongs to another stay or the time was misread, and keying it would put a
+    reading on this stay that the rounds file cannot place.
+    """
+    start = _stay_start(db, patient_id)
+    if start is not None and observed_at < start - SHEET_BEFORE_ADMISSION_ALLOWANCE:
+        raise ValueError(SHEET_BEFORE_ADMISSION)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
