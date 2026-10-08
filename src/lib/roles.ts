@@ -58,10 +58,11 @@ export const HELIX_RECEIVE = 'helix.receive' as const
  *  whose POST is already known to 403. */
 export const DISCHARGE_GENERATE = 'discharge.generate' as const
 export const DISCHARGE_PUBLISH = 'discharge.publish' as const
-/** Recording an observation set at the bedside (nurse, doctor), and marking a
- *  recorded set "entered in error". Mirrored so the clerk, who copies sets from
- *  the paper sheet under VITALS_TRANSCRIBE, is never offered the void action
- *  whose POST the server answers with 403 (Orb Ward Record, 6 October 2026). */
+/** Recording an observation set at the bedside (nurse, doctor), and marking
+ *  any recorded set "entered in error". The clerk, who copies sets from the
+ *  paper sheet under VITALS_TRANSCRIBE, is offered the void action only on her
+ *  own copies, the one case the server lets her strike out (Orb Ward Record,
+ *  6 and 9 October 2026). */
 export const VITALS_WRITE = 'vitals.write' as const
 /** Copying an observation set from the paper sheet: the ward clerk only. Her
  *  entry sheet asks for the time written on the sheet and shows no score. */

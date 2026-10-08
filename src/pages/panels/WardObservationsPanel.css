@@ -165,3 +165,54 @@
 @media (pointer: coarse) {
   .wobs-btn { min-height: 44px; }
 }
+
+/* Her own copies under a patient (9 October 2026). A struck out copy keeps its
+   text, struck through, in the quieter token; no opacity. */
+.wobs-row__actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wobs-copies {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.wobs-copies__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wobs-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+
+.wobs-copy__when {
+  font-size: var(--text-sm);
+  font-weight: 550;
+  color: var(--text-primary);
+}
+
+.wobs-copy__when--struck {
+  color: var(--text-secondary);
+  text-decoration: line-through;
+}
+
+.wobs-copy__struck {
+  font-size: var(--text-xs);
+  font-weight: 550;
+  color: var(--text-secondary);
+}

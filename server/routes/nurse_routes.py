@@ -7,6 +7,7 @@ Three endpoints behind the ward-nurse home:
   POST /api/nurse/patients/{id}/news2-preview — score a set WITHOUT saving it
   POST /api/nurse/observations/{id}/void       marks a set entered in error
   GET  /api/nurse/transcribe/patients          the ward clerk's patient list
+  GET  /api/nurse/transcribe/patients/{id}/my-copies  her own copies, 24 hours
 
 Everything else nurse mode does (administering a med, drafting a handoff) goes
 through the endpoints that already own those workflows — /api/emar and
@@ -34,6 +35,7 @@ from permissions import (
     department_scope,
     has_permission,
     patient_in_scope_blocking,
+    require_any_permission,
     require_patient_access,
     require_permission,
 )
@@ -174,6 +176,25 @@ def list_transcribe_patients(
     }
 
 
+@router.get("/transcribe/patients/{patient_id}/my-copies")
+# Plain def: a database read, so it runs in the threadpool, off the event loop.
+def list_own_copies(
+    patient_id: str,
+    # vitals.transcribe, on a patient of her own department (the same scope,
+    # 404 and denial row as every per-patient route), audited as a read.
+    user: dict = Depends(require_patient_access(
+        "vitals.transcribe", audit_action="transcribe_own_copies_viewed")),
+):
+    """The sets this ward clerk copied for this patient in the last 24 hours:
+    the time on the sheet, the readings and whether each is struck out, so she
+    can mark her own wrong copy entered in error. Nothing else, and never a
+    set someone else keyed."""
+    return {
+        "patient_id": patient_id,
+        "copies": nurse_shift_service.clerk_own_copies(patient_id, user["id"]),
+    }
+
+
 @router.post("/patients/{patient_id}/news2-preview")
 def preview_news2(
     patient_id: str,
@@ -299,10 +320,12 @@ def void_observation(
     vitals_id: int,
     req: VoidRequest,
     request: Request,
-    # vitals.write only: a nurse or doctor marks a set entered in error. The
-    # ward clerk (vitals.transcribe) keys sets but never strikes one out; a
-    # wrong copy goes back to the nurse in charge.
-    user: dict = Depends(require_permission("vitals.write")),
+    # vitals.write: a nurse or doctor marks any set in scope entered in error.
+    # vitals.transcribe alone (the ward clerk, Orb Ward Record): she strikes
+    # out her OWN copies only, a set of source clerk_transcribed that her
+    # account keyed (nurse_shift_service.void_observation own_copy_only), so a
+    # wrong copy never needs a nurse to correct it. Anything else is a 403.
+    user: dict = Depends(require_any_permission("vitals.write", "vitals.transcribe")),
 ):
     """Mark a recorded observation set as entered in error, with a reason.
 
@@ -338,10 +361,14 @@ def void_observation(
                       "vitals_id": vitals_id},
         )
         raise not_found
+    own_copy_only = not has_permission(user.get("role", ""), VITALS_WRITE)
     try:
-        return nurse_shift_service.void_observation(vitals_id, user["id"], req.reason)
+        return nurse_shift_service.void_observation(
+            vitals_id, user["id"], req.reason, own_copy_only=own_copy_only)
     except nurse_shift_service.ObservationNotFound:
         raise not_found
+    except nurse_shift_service.ObservationNotYours as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except nurse_shift_service.ObservationAlreadyVoided as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:

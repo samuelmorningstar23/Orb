@@ -319,6 +319,34 @@ export async function getTranscribePatients(): Promise<TranscribePatientList> {
   return apiFetch('/nurse/transcribe/patients');
 }
 
+/** One set the signed-in ward clerk copied from the paper sheet. */
+export interface OwnCopy {
+  vitals_id: number;
+  /** The time written on the sheet (UTC). */
+  taken_at: string;
+  readings: {
+    heart_rate: number | null;
+    systolic_bp: number | null;
+    diastolic_bp: number | null;
+    respiratory_rate: number | null;
+    temperature: number | null;
+    spo2: number | null;
+    consciousness: string | null;
+    on_oxygen: boolean | null;
+  };
+  /** True once it is marked entered in error. */
+  voided: boolean;
+}
+
+/**
+ * The sets the signed-in ward clerk copied for this patient in the last 24
+ * hours (vitals.transcribe), so she can strike out her own wrong copy. Only
+ * her own copies, and nothing clinical beyond the readings she typed.
+ */
+export async function getOwnCopies(patientId: string): Promise<{ patient_id: string; copies: OwnCopy[] }> {
+  return apiFetch(`/nurse/transcribe/patients/${encodeURIComponent(patientId)}/my-copies`);
+}
+
 /** Who is signed in — used to stamp the handover author line. */
 export function currentUserName(): string {
   return getUser()?.name ?? 'this shift';

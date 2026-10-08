@@ -1745,6 +1745,73 @@ class ObservationAlreadyVoided(ValueError):
     """The set was already marked entered in error."""
 
 
+class ObservationNotYours(PermissionError):
+    """The ward clerk tried to strike out a set she did not copy herself."""
+
+
+#: What the ward clerk is told when the set is not her own copy.
+NOT_YOUR_COPY = "You can only strike out a set you copied yourself."
+
+
+def observation_keyed_by(db, vitals_id: int, patient_id: str) -> str | None:
+    """Who keyed a manual observation set: the actor on its fail-closed
+    `observation_recorded` audit row, written in the same transaction as the
+    vitals insert (see _record_observation_txn), so every set keyed by hand
+    has exactly one. None when no such row names the set (a feed or Scribe
+    row, which this question is never asked of). The audit chain is the one
+    record of who keyed a set, so no column on vitals repeats it."""
+    row = db.execute(
+        "SELECT actor_user_id FROM audit_logs "
+        "WHERE patient_id = ? AND action_type = 'observation_recorded' "
+        "AND target_type = 'vitals' AND target_id = ? ORDER BY id ASC LIMIT 1",
+        (patient_id, str(vitals_id)),
+    ).fetchone()
+    return row["actor_user_id"] if row else None
+
+
+#: The readings the ward clerk sees on her own copies, and nothing else.
+_OWN_COPY_READINGS = ("heart_rate", "systolic_bp", "diastolic_bp", "respiratory_rate",
+                      "temperature", "spo2", "consciousness", "on_oxygen")
+
+
+def clerk_own_copies(patient_id: str, actor_id: str, *, hours: int = 24) -> list[dict]:
+    """The sets this account copied from the paper sheet for this patient in
+    the last `hours`, newest sheet time first: the vitals id (to strike one
+    out), the time on the sheet, the readings and whether it is struck out.
+    Nothing else: no score, no source, no reason, no other keyer's sets.
+
+    'Copied by her' is the actor on each set's observation_recorded audit row
+    (observation_keyed_by), joined here for the whole list in one read."""
+    since = format_utc(_now() - timedelta(hours=hours))
+    with db_session() as db:
+        rows = db.execute(
+            f"""SELECT v.id, v.timestamp, v.voided_at,
+                       {", ".join("v." + c for c in _OWN_COPY_READINGS)}
+                  FROM vitals v
+                  JOIN audit_logs a
+                    ON a.patient_id = v.patient_id
+                   AND a.action_type = 'observation_recorded'
+                   AND a.target_type = 'vitals'
+                   AND a.target_id = CAST(v.id AS TEXT)
+                 WHERE v.patient_id = ? AND v.source = ? AND v.entered_at >= ?
+                   AND a.actor_user_id = ?
+                 ORDER BY v.timestamp DESC, v.id DESC""",
+            (patient_id, CLERK_SOURCE, since, actor_id),
+        ).fetchall()
+    out = []
+    for r in rows:
+        readings = {c: r[c] for c in _OWN_COPY_READINGS}
+        if readings["on_oxygen"] is not None:
+            readings["on_oxygen"] = bool(readings["on_oxygen"])
+        out.append({
+            "vitals_id": r["id"],
+            "taken_at": r["timestamp"],
+            "readings": readings,
+            "voided": bool(r["voided_at"]),
+        })
+    return out
+
+
 def observation_patient(vitals_id: int) -> str | None:
     """The patient a stored observation set belongs to, or None."""
     with db_session() as db:
@@ -1752,8 +1819,16 @@ def observation_patient(vitals_id: int) -> str | None:
     return row["patient_id"] if row else None
 
 
-def void_observation(vitals_id: int, actor_id: str, reason: str) -> dict:
+def void_observation(vitals_id: int, actor_id: str, reason: str, *,
+                     own_copy_only: bool = False) -> dict:
     """Mark a stored observation set as entered in error.
+
+    `own_copy_only` is the ward clerk's rule (vitals.transcribe without
+    vitals.write): she may strike out a set only when it is a copy from the
+    paper sheet (source clerk_transcribed) AND her own account keyed it
+    (observation_keyed_by). Anything else raises ObservationNotYours, checked
+    inside the same transaction as the void, before the already-voided check,
+    so a set that is not hers tells her nothing more about it.
 
     The row is NEVER deleted or edited: voided_at, voided_by and void_reason
     are set and every latest, window and trend reader skips it from then on
@@ -1783,6 +1858,10 @@ def void_observation(vitals_id: int, actor_id: str, reason: str) -> dict:
         ).fetchone()
         if row is None:
             raise ObservationNotFound(f"observation {vitals_id} not found")
+        if own_copy_only and (
+                row["source"] != CLERK_SOURCE
+                or observation_keyed_by(db, vitals_id, row["patient_id"]) != actor_id):
+            raise ObservationNotYours(NOT_YOUR_COPY)
         if row["voided_at"]:
             raise ObservationAlreadyVoided(
                 "This set is already marked entered in error. Reload to see the record.")

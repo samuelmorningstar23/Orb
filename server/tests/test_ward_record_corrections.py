@@ -2,8 +2,9 @@
 
 An illegible reading on the paper sheet is keyed as illegible, stored empty and
 named in vitals.illegible, never guessed. A wrong set is marked entered in
-error with a reason by a nurse or doctor (vitals.write); the clerk cannot. The
-row stays in the table, and every latest, window and trend reader skips it.
+error with a reason by a nurse or doctor (vitals.write); the clerk may strike
+out only her own copies (tests/test_ward_record_clerk_void.py). The row stays
+in the table, and every latest, window and trend reader skips it.
 """
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -172,13 +173,15 @@ def test_a_doctor_may_void(client):
     assert r.status_code == 200
 
 
-def test_the_clerk_cannot_void(client):
+def test_the_clerk_cannot_void_a_nurses_set(client):
     pid = _mk_patient(DEPT_A)
+    nurse = _mk_user("nurse", DEPT_A)
     clerk = _mk_user("ward_clerk", DEPT_A)
-    out = _post(client, pid, clerk, "ward_clerk", _WRONG, minutes_ago=5)
+    out = _post(client, pid, nurse, "nurse", _WRONG, minutes_ago=5)
     r = client.post(f"/api/nurse/observations/{out['vitals_id']}/void",
                     json={"reason": "I typed it wrong"}, headers=_auth(clerk, "ward_clerk"))
     assert r.status_code == 403
+    assert r.json()["detail"] == "You can only strike out a set you copied yourself."
     assert _row(out["vitals_id"])["voided_at"] is None
 
 

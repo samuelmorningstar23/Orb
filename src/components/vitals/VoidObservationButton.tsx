@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { voidObservation } from '../../api/nurse'
-import { hasPermission, VITALS_WRITE } from '../../lib/roles'
+import { hasPermission, VITALS_TRANSCRIBE, VITALS_WRITE } from '../../lib/roles'
 import { assertOnlineForWrite } from '../../lib/offline/writeGuard'
 import './VoidObservationButton.css'
 
@@ -10,9 +10,11 @@ import './VoidObservationButton.css'
  *
  * Asks for a reason, then calls POST /api/nurse/observations/{id}/void. The set
  * stays on the record, struck out, and stops being anyone's latest reading.
- * Offered only to an account holding vitals.write (nurse, doctor): the ward
- * clerk copies sets but never strikes one out, and the server refuses her
- * anyway. Hiding the control is a courtesy; the server is the gate.
+ * Offered to an account holding vitals.write (nurse, doctor) on any set, and
+ * to the ward clerk (vitals.transcribe) only where the caller says the set is
+ * her own copy (`ownCopy`): the server lets her strike out a set she copied
+ * from the paper sheet herself and nothing else. Hiding the control is a
+ * courtesy; the server is the gate.
  */
 interface Props {
   vitalsId: number
@@ -20,16 +22,20 @@ interface Props {
   onVoided?: () => void
   /** What the set is, for the screen reader label, e.g. "the 14:00 observations". */
   what?: string
+  /** True when the signed-in ward clerk copied this set herself. */
+  ownCopy?: boolean
 }
 
-export default function VoidObservationButton({ vitalsId, onVoided, what = 'this observation set' }: Props) {
+export default function VoidObservationButton({
+  vitalsId, onVoided, what = 'this observation set', ownCopy = false,
+}: Props) {
   const [open, setOpen] = useState(false)
   const [reason, setReason] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const inFlight = useRef(false)
 
-  if (!hasPermission(VITALS_WRITE)) return null
+  if (!hasPermission(VITALS_WRITE) && !(ownCopy && hasPermission(VITALS_TRANSCRIBE))) return null
 
   const submit = async () => {
     if (inFlight.current) return

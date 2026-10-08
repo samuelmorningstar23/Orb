@@ -37,9 +37,24 @@ describe('Entered in error', () => {
     await waitFor(() => expect(onVoided).toHaveBeenCalled())
   })
 
-  it('is not shown to the ward clerk', () => {
+  it('is not shown to the ward clerk on a set that is not her own copy', () => {
     signIn('ward_clerk')
     const { container } = render(<VoidObservationButton vitalsId={12} />)
+    expect(container.textContent).toBe('')
+  })
+
+  it('is shown to the ward clerk on her own copy, and sends her reason', async () => {
+    signIn('ward_clerk')
+    render(<VoidObservationButton vitalsId={12} ownCopy />)
+    fireEvent.click(screen.getByRole('button', { name: /entered in error/i }))
+    fireEvent.change(screen.getByLabelText('Why is this set wrong?'), { target: { value: 'Pulse typed as 182, sheet says 82' } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Mark entered in error' })) })
+    expect(voidObservation).toHaveBeenCalledWith(12, 'Pulse typed as 182, sheet says 82')
+  })
+
+  it('is not shown on an own copy to a role that neither charts nor copies', () => {
+    signIn('pharmacist')
+    const { container } = render(<VoidObservationButton vitalsId={12} ownCopy />)
     expect(container.textContent).toBe('')
   })
 

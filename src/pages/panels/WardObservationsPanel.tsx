@@ -13,10 +13,21 @@
  *
  * The Beds panel keeps its own Observations view for a site with the beds
  * module on; both open the same sheet.
+ *
+ * Her own copies (9 October 2026): "Your copies" under a patient lists the
+ * sets she copied for that patient in the last 24 hours (GET
+ * /api/nurse/transcribe/patients/{id}/my-copies: sheet time, readings, struck
+ * out or not), each with "Entered in error", so she corrects her own wrong
+ * copy with a reason. The server lets her strike out her own copies only.
  */
 import { useCallback, useEffect, useState } from 'react'
 
-import { getTranscribePatients, type TranscribePatient } from '../../api/nurse'
+import {
+  getOwnCopies, getTranscribePatients, type OwnCopy, type TranscribePatient,
+} from '../../api/nurse'
+import VoidObservationButton from '../../components/vitals/VoidObservationButton'
+import { formatUTCDateTime } from '../../lib/datetime'
+import { bloodPressure, vitalTemperature, vitalWhole } from '../../lib/vitals'
 import ObsEntrySheet, { type ObsSheetPatient } from './nurse/ObsEntrySheet'
 import './nurse/NursePanel.css'
 import './WardObservationsPanel.css'
@@ -48,6 +59,29 @@ function messageFor(err: unknown): string {
     : 'The ward list could not be loaded.'
 }
 
+type Copies =
+  | { state: 'loading' }
+  | { state: 'ready'; rows: OwnCopy[] }
+  | { state: 'error'; message: string }
+
+/** The readings of one copy in plain words; a blank box reads "blank". */
+function readingsText(r: OwnCopy['readings']): string {
+  const blank = 'blank'
+  const acvpu = r.consciousness
+    ? r.consciousness.charAt(0).toUpperCase() + r.consciousness.slice(1)
+    : 'Consciousness blank'
+  const air = r.on_oxygen === null ? 'Air or oxygen blank' : r.on_oxygen ? 'On oxygen' : 'On air'
+  return [
+    `Pulse ${vitalWhole(r.heart_rate, blank)}`,
+    `BP ${bloodPressure(r.systolic_bp, r.diastolic_bp, blank)}`,
+    `Breathing ${vitalWhole(r.respiratory_rate, blank)}`,
+    `Temp ${vitalTemperature(r.temperature, blank)}`,
+    `SpO2 ${vitalWhole(r.spo2, blank)}`,
+    acvpu,
+    air,
+  ].join(' · ')
+}
+
 /** "Admitted 7 Oct, 14:20" on this computer's clock, or nothing. */
 function admittedText(iso: string | null): string | null {
   if (!iso) return null
@@ -62,6 +96,34 @@ export default function WardObservationsPanel() {
   const [load, setLoad] = useState<Load>({ state: 'loading' })
   const [sheetFor, setSheetFor] = useState<ObsSheetPatient | null>(null)
   const [outcome, setOutcome] = useState<string | null>(null)
+  // The patient whose copies are open, and those copies.
+  const [copiesFor, setCopiesFor] = useState<string | null>(null)
+  const [copies, setCopies] = useState<Copies>({ state: 'loading' })
+
+  const loadCopies = useCallback((patientId: string): Promise<void> => {
+    setCopies({ state: 'loading' })
+    return getOwnCopies(patientId).then(
+      body => { setCopies({ state: 'ready', rows: body.copies }) },
+      (err: unknown) => {
+        const status = (err as { status?: unknown } | null)?.status
+        setCopies({
+          state: 'error',
+          message: status === undefined || status === 0
+            ? 'Could not reach Orb. Check the connection and try again.'
+            : 'Your copies could not be loaded.',
+        })
+      },
+    )
+  }, [])
+
+  const toggleCopies = (patientId: string) => {
+    if (copiesFor === patientId) {
+      setCopiesFor(null)
+      return
+    }
+    setCopiesFor(patientId)
+    void loadCopies(patientId)
+  }
 
   const refresh = useCallback((): Promise<void> => getTranscribePatients().then(
     list => { setLoad({ state: 'ready', rows: [...list.patients].sort(byWardAndBed) }) },
@@ -111,23 +173,74 @@ export default function WardObservationsPanel() {
                     row.mrn,
                     admittedText(row.admitted_at),
                   ].filter(Boolean).join(' · ')
+                  const open = copiesFor === row.patient_id
                   return (
                     <li key={row.patient_id} className="wobs-row">
                       <span className="wobs-row__main">
                         <span className="wobs-row__name">{name}</span>
                         {meta && <span className="wobs-row__meta">{meta}</span>}
                       </span>
-                      <button
-                        type="button"
-                        className="wobs-btn"
-                        aria-label={`Copy from sheet for ${name}`}
-                        onClick={() => {
-                          setOutcome(null)
-                          setSheetFor({ patient_id: row.patient_id, name, bed: row.bed, mrn: row.mrn })
-                        }}
-                      >
-                        Copy from sheet
-                      </button>
+                      <span className="wobs-row__actions">
+                        <button
+                          type="button"
+                          className="wobs-btn"
+                          aria-expanded={open}
+                          aria-label={`Your copies for ${name}`}
+                          onClick={() => toggleCopies(row.patient_id)}
+                        >
+                          Your copies
+                        </button>
+                        <button
+                          type="button"
+                          className="wobs-btn"
+                          aria-label={`Copy from sheet for ${name}`}
+                          onClick={() => {
+                            setOutcome(null)
+                            setSheetFor({ patient_id: row.patient_id, name, bed: row.bed, mrn: row.mrn })
+                          }}
+                        >
+                          Copy from sheet
+                        </button>
+                      </span>
+                      {open && (
+                        <section className="wobs-copies" aria-label={`Your copies for ${name}, last 24 hours`}>
+                          {copies.state === 'loading' && <p className="wobs-note" role="status">Loading your copies</p>}
+                          {copies.state === 'error' && <p className="wobs-note" role="alert">{copies.message}</p>}
+                          {copies.state === 'ready' && copies.rows.length === 0 && (
+                            <p className="wobs-note">You have not copied a set for {name} in the last 24 hours.</p>
+                          )}
+                          {copies.state === 'ready' && copies.rows.length > 0 && (
+                            <ul className="wobs-copies__rows">
+                              {copies.rows.map(copy => {
+                                const when = formatUTCDateTime(copy.taken_at)
+                                return (
+                                  <li key={copy.vitals_id} className="wobs-copy">
+                                    <span className="wobs-row__main">
+                                      <span className={copy.voided ? 'wobs-copy__when wobs-copy__when--struck' : 'wobs-copy__when'}>
+                                        Sheet time {when}
+                                      </span>
+                                      <span className="wobs-row__meta">{readingsText(copy.readings)}</span>
+                                    </span>
+                                    {copy.voided ? (
+                                      <span className="wobs-copy__struck">Entered in error</span>
+                                    ) : (
+                                      <VoidObservationButton
+                                        vitalsId={copy.vitals_id}
+                                        ownCopy
+                                        what={`your copy timed ${when}`}
+                                        onVoided={() => {
+                                          setOutcome(`Your copy timed ${when} is marked entered in error. It stays on the record.`)
+                                          void loadCopies(row.patient_id)
+                                        }}
+                                      />
+                                    )}
+                                  </li>
+                                )
+                              })}
+                            </ul>
+                          )}
+                        </section>
+                      )}
                     </li>
                   )
                 })}
@@ -147,6 +260,7 @@ export default function WardObservationsPanel() {
             setOutcome(message
               ? `Observations saved for ${sheetFor.name}. ${message.replace(/^Charted\.\s*/, '')}`
               : `Observations saved for ${sheetFor.name}.`)
+            if (copiesFor === sheetFor.patient_id) void loadCopies(sheetFor.patient_id)
             setSheetFor(null)
           }}
         />
