@@ -1162,6 +1162,13 @@ async def generate_ai_recommendation(vitals_summary: str, risk_level: str, drive
     if time.monotonic() < _LLM_BREAKER["open_until"]:
         return _FALLBACK_RECOMMENDATION
 
+    # Models switched off (ORB_MODELS_ENABLED, or the Orb Ward Record): the
+    # static sentence, without taking a queue slot or asking the gateway, which
+    # would only refuse. The critical alert still goes out with scoring on.
+    from services.model_switch import models_enabled
+    if not models_enabled():
+        return _FALLBACK_RECOMMENDATION
+
     # AMBIENT TIER (verified 2026-07-31, unchanged): this per-alert garnish
     # already targets AMBIENT_LLM_MODEL directly, which is exactly the pattern
     # the other background jobs were moved to. Note num_ctx below is 4096 —

@@ -65,6 +65,10 @@ DEPT = "General Medicine"
 ROLES = ("admin", "doctor", "nurse", "ward_clerk", "pharmacist")
 
 MODEL_CALLS: list[str] = []
+#: Every call that reached the gateway while the models were switched off. The
+#: gateway refuses it, so it is not a model call, but a lane that still asks
+#: the gateway was not switched off where it starts (review, 9 October 2026).
+GATEWAY_ASKED: list[str] = []
 
 #: Routes that hand over EVERYTHING stored about a patient, by law, and so
 #: still carry a band stored before the profile was switched on: the data
@@ -78,6 +82,10 @@ EXPORTS_OF_STORED_DATA = {
 def _model_call(where: str):
     MODEL_CALLS.append(where + "\n" + "".join(traceback.format_stack(limit=10)[:-1]))
     raise RuntimeError(f"ward record probe: a model was called ({where})")
+
+
+def _gateway_asked(where: str) -> None:
+    GATEWAY_ASKED.append(where + "\n" + "".join(traceback.format_stack(limit=10)[:-2]))
 
 
 def _install_model_tripwires() -> None:
@@ -131,14 +139,22 @@ def _install_gateway_tripwires() -> None:
     async def _post(*a, **k):
         _refuse = getattr(ollama_gateway, "refuse_when_models_off", None)
         if _refuse is not None:
-            _refuse(k.get("purpose", "post"))
+            try:
+                _refuse(k.get("purpose", "post"))
+            except Exception:
+                _gateway_asked(f"ollama_gateway.post {k.get('purpose')}")
+                raise
         _model_call(f"ollama_gateway.post {k.get('purpose')}")
         return await real_post(*a, **k)
 
     def _stream(*a, **k):
         _refuse = getattr(ollama_gateway, "refuse_when_models_off", None)
         if _refuse is not None:
-            _refuse(k.get("purpose", "stream"))
+            try:
+                _refuse(k.get("purpose", "stream"))
+            except Exception:
+                _gateway_asked(f"ollama_gateway.stream {k.get('purpose')}")
+                raise
         _model_call(f"ollama_gateway.stream {k.get('purpose')}")
         return real_stream(*a, **k)
 
@@ -326,6 +342,10 @@ def main() -> None:
             yield "downtime ward packs", lambda: downtime_service.build_ward_print_packs("auto")
             yield "ward brief snapshot", ward_narrator._build_ward_snapshot
             yield "ward brief", lambda: ward_narrator.get_brief(None)
+            # The sentence a critical Relay alert carries (the simulator's
+            # alert lane asks for it on every critical tick).
+            yield "critical alert recommendation", lambda: vigil_service.generate_ai_recommendation(
+                "HR 135, RR 30", "critical", ["Respiratory rate 30"])
 
         try:
             lanes = list(_lanes())
@@ -409,6 +429,7 @@ def main() -> None:
                 out["scoring_calls"].append(f"background: {call}")
 
     out["model_calls"] = MODEL_CALLS
+    out["gateway_asked"] = GATEWAY_ASKED
     print("WRPROBE-RESULT " + json.dumps(out))
 
 

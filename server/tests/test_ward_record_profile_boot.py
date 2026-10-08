@@ -98,6 +98,14 @@ def test_no_model_is_called_with_the_models_switched_off(models_off_boot):
     assert not models_off_boot["model_calls"], _report(models_off_boot["model_calls"])
 
 
+def test_no_lane_asks_the_gateway_with_the_models_switched_off(models_off_boot, ward_record_boot):
+    # The gateway refuses with the models off, so a lane that still asks it
+    # makes no model call; but it was not switched off where it starts (the
+    # critical alert's recommendation sentence took a queue slot and asked).
+    for boot in (models_off_boot, ward_record_boot):
+        assert not boot["gateway_asked"], _report(boot["gateway_asked"])
+
+
 def test_no_route_answers_500_with_the_models_switched_off(models_off_boot):
     assert not models_off_boot["server_errors"], _report(models_off_boot["server_errors"])
     assert not models_off_boot["lane_errors"], _report(models_off_boot["lane_errors"])
