@@ -54,6 +54,8 @@ def spies(monkeypatch):
 
     def _push(*a, **k):
         calls["push"] += 1
+        # The risk the push carried (the fourth argument): None with scoring off.
+        calls["pushed_risk"] = a[3] if len(a) > 3 else k.get("news2")
         return False
 
     monkeypatch.setattr(nurse_shift_service, "dispatch_observation_alert", _relay)
@@ -124,7 +126,9 @@ def test_scoring_off_stores_the_set_and_nothing_else(client, spies, monkeypatch)
     body = r.json()
     assert body["news2"] is None and body["schedule"] is None
     assert _counts(pid) == {"vitals": 1, "risk_scores": 0, "bundles": 0, "escalations": 0}
-    assert spies == {"relay": 0, "escalation": 0, "bundle": 0, "push": 0}
+    # The open chart still gets the set, with no score (review, 9 October
+    # 2026: the set used to reach an open chart only on a reload).
+    assert spies == {"relay": 0, "escalation": 0, "bundle": 0, "push": 1, "pushed_risk": None}
     with db_session() as db:
         audit = db.execute(
             "SELECT metadata_json, summary_message FROM audit_logs WHERE action_type = "

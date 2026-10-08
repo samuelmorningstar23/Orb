@@ -1399,6 +1399,11 @@ def _record_observation_txn(
     if not scoring:
         logger.info("nurse obs: patient %s set %s recorded by %s (scoring switched off)",
                     patient_id, vitals_id, actor_id)
+        # Scoring switched off (the Orb Ward Record): the open chart still gets
+        # the new set, with risk None, as the simulator, monitor and Scribe
+        # lanes send it; the chart shows it with no score. Nothing pages.
+        if is_latest:
+            _push_vitals_update(patient_id, observed_at, cleaned, None, source=source)
         result = {
             "vitals_id": vitals_id,
             "recorded_at": stored_at,
