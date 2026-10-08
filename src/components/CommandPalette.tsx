@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../api/client';
 import { canSeeWardList } from '../lib/roles';
+import { useClinicalSwitches } from '../shellConfig';
 import './CommandPalette.css';
 
 /**
@@ -46,6 +47,9 @@ const optionId = (i: number) => `orb-cmdk-option-${i}`;
 export default function CommandPalette() {
   // Read from the stored session on every render, as the ward list gate is.
   const canSearch = canSeeWardList();
+  // Scoring switched off (the Orb Ward Record): no band dot beside a result,
+  // not even the calm one a patient with no band gets while scoring is on.
+  const { scoringEnabled } = useClinicalSwitches();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<PatientResult[]>([]);
@@ -249,11 +253,13 @@ export default function CommandPalette() {
                   selectPatient(p);
                 }}
               >
-                <span
-                  className="cmdk-risk-dot"
-                  style={{ background: riskColor(p.risk_level) }}
-                  aria-hidden="true"
-                />
+                {scoringEnabled && (
+                  <span
+                    className="cmdk-risk-dot"
+                    style={{ background: riskColor(p.risk_level) }}
+                    aria-hidden="true"
+                  />
+                )}
                 <span className="cmdk-option-main">
                   <span className="cmdk-option-name">{p.name}</span>
                   {p.diagnosis && (

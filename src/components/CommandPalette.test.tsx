@@ -20,6 +20,7 @@ const client = await import('../api/client')
 const apiFetch = vi.mocked(client.apiFetch)
 
 import CommandPalette from './CommandPalette'
+import { resetClinicalSwitches, setClinicalSwitches } from '../shellConfig'
 
 function signIn(role: string) {
   localStorage.setItem('orb_user', JSON.stringify({
@@ -93,5 +94,34 @@ describe('roles the search route refuses', () => {
     expect(pressCmdK()).toBe(false)
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(apiFetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('the band dot beside a result (review, 9 October 2026)', () => {
+  const result = [{ id: 'P1', name: 'Asha Rao', mrn: 'M1', bed: 'B-1', ward: 'W1', risk_level: null, diagnosis: null }]
+
+  async function search() {
+    vi.useFakeTimers()
+    signIn('nurse')
+    apiFetch.mockResolvedValue(result)
+    const view = render(<CommandPalette />)
+    pressCmdK()
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'As' } })
+    await act(async () => { vi.advanceTimersByTime(250) })
+    expect(screen.getByText('Asha Rao')).toBeInTheDocument()
+    return view
+  }
+
+  afterEach(() => { resetClinicalSwitches() })
+
+  it('with scoring on a result keeps its dot', async () => {
+    const { container } = await search()
+    expect(container.ownerDocument.querySelector('.cmdk-risk-dot')).not.toBeNull()
+  })
+
+  it('with scoring switched off a result has no band dot at all', async () => {
+    act(() => { setClinicalSwitches({ scoring_enabled: false, ward_record: true }) })
+    const { container } = await search()
+    expect(container.ownerDocument.querySelector('.cmdk-risk-dot')).toBeNull()
   })
 })
