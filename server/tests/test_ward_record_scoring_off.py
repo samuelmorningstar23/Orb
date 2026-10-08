@@ -574,3 +574,25 @@ def test_the_relay_list_is_not_ordered_by_a_stored_band_with_scoring_off(monkeyp
     _scoring(monkeypatch, False)
     # The newer conversation first, as for any two rooms with no band.
     assert _order() is False
+
+
+# ── Review, 9 October 2026: Sage's census and aggregate ─────────────────────
+# With only scoring switched off (the models on), Sage's ward census put the
+# stored band and drivers beside each patient, and the hospital aggregate gave
+# the distribution of the stored bands.
+
+def test_sage_census_and_aggregate_carry_no_stored_band_with_scoring_off(monkeypatch):
+    from services.sage_service import build_aggregate_context, get_relevant_context
+    pid = _patient("SOF-SAGE")
+    doctor = _user("doctor")
+    user = {"id": doctor, "role": "doctor", "department": DEPT, "name": "Scoring Off doctor"}
+    _scoring(monkeypatch, True)
+    context, *_ = get_relevant_context("give me an overview of all my patients", user)
+    assert MARKER in context
+    assert "Risk distribution" in build_aggregate_context()
+    _scoring(monkeypatch, False)
+    context, *_ = get_relevant_context("give me an overview of all my patients", user)
+    row = [ln for ln in context.splitlines() if pid[-4:] in ln]
+    assert row and "risk band" not in row[0], row
+    assert MARKER not in context
+    assert "Risk distribution" not in build_aggregate_context()
