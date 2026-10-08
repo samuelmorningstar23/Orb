@@ -933,20 +933,30 @@ def _shadow_alert_dropped(episode_id, patient_id: str, level: str, reason: str) 
 
 
 def _push_vitals_update(patient_id: str, observed_at: datetime, cleaned: dict,
-                        news2: dict, source: str = OBS_SOURCE) -> bool:
+                        news2: dict, source: str = OBS_SOURCE,
+                        live_hooks: bool = True) -> bool:
     """Schedule `vitals:update` for a committed nurse set. Never raises.
 
     The route is a sync `def`, so this runs in an anyio worker thread and the
     emit is handed to the event loop (ws.realtime.schedule_patient_vitals). The
     reading is already charted, so a failure here costs the live push, never the
     set.
+
+    `live_hooks=False` is a copied set older than the live hook limit
+    (transcribed_record_only) that is still the chart's newest set. The push
+    then carries `"live_hooks": false`, so the open chart shows it but the
+    browser's critical alert (src/services/criticalAlerts.ts) does not chime or
+    raise a notification that the patient "has entered CRITICAL status" about
+    a reading hours old. Every other push keeps the shared wire keys exactly.
     """
     try:
         from ws.realtime import schedule_patient_vitals, vitals_update_payload
         # The stored spelling, so the push matches the charted row byte for byte.
         row = {"patient_id": patient_id, "timestamp": format_utc(observed_at), **cleaned}
-        return schedule_patient_vitals(
-            "vitals:update", vitals_update_payload(row, news2, source=source))
+        payload = vitals_update_payload(row, news2, source=source)
+        if not live_hooks:
+            payload["live_hooks"] = False
+        return schedule_patient_vitals("vitals:update", payload)
     except Exception:
         logger.warning("nurse obs: vitals:update push failed for %s (the set is charted)",
                        patient_id, exc_info=True)
@@ -1470,7 +1480,9 @@ def _record_observation_txn(
         return result
 
     if is_latest:
-        _push_vitals_update(patient_id, observed_at, cleaned, news2, source=source)
+        # A record only set is marked on the wire, so no browser chimes for it.
+        _push_vitals_update(patient_id, observed_at, cleaned, news2, source=source,
+                            live_hooks=not record_only)
 
     # A set copied from a sheet more than the live hook limit ago
     # (ORB_TRANSCRIBED_LIVE_HOOK_MAX_AGE_MINUTES, default 2 hours): charted and

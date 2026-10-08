@@ -313,6 +313,12 @@ interface VitalsAlertPayload {
   patient_id?: string;
   patient_name?: string;
   risk?: { level?: string; raw_news2?: unknown } | null;
+  /** false on a set the ward clerk copied from a paper sheet more than the
+   *  live alert limit after it was taken (nurse_shift_service
+   *  transcribed_record_only, 2 hours by default). It is charted and shown,
+   *  but it raises no alert anywhere, so it raises none here either. Absent on
+   *  every other push. */
+  live_hooks?: boolean;
 }
 
 function onEmergencyIntake(data: EmergencyIntakePayload | null | undefined): void {
@@ -361,6 +367,10 @@ function onRelayMessage(msg: Partial<Message> | null | undefined): void {
 const lastLevelByPatient = new Map<string, string>();
 
 function onVitalsUpdate(vital: VitalsAlertPayload | null | undefined): void {
+  // A reading copied hours after it was taken: no chime, no notification, and
+  // the band it carries is not remembered as this patient's live state.
+  if (vital?.live_hooks === false) return;
+
   const level: string | undefined = vital?.risk?.level;
   const pid: string | undefined = vital?.patient_id;
 

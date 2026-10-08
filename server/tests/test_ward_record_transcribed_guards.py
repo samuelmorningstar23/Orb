@@ -252,3 +252,34 @@ def test_the_escalation_sweep_raises_no_chain_for_an_old_copied_set(client, monk
     monkeypatch.setattr(config, "TRANSCRIBED_LIVE_HOOK_MAX_AGE_MINUTES", 100000)
     escalation_service.scan_new_observations(department=DEPT)
     assert _count("SELECT COUNT(*) FROM clinical_escalations WHERE patient_id = ?", pid) == 1
+
+
+def test_the_push_of_an_old_newest_copied_set_is_marked_so_no_browser_chimes(client, monkeypatch):
+    """The open chart still gets an old copied set that is the newest, but the
+    push says live_hooks false, so src/services/criticalAlerts.ts raises no
+    'has entered CRITICAL status' notification about a reading hours old. A
+    recent copied set keeps the shared wire keys exactly."""
+    from services import escalation_service, sepsis_bundle_service
+    from ws import realtime
+
+    pushed: list[dict] = []
+    monkeypatch.setattr(realtime, "schedule_patient_vitals",
+                        lambda event, payload: pushed.append(payload) or True)
+    monkeypatch.setattr(nurse_shift_service, "dispatch_observation_alert", lambda *a, **k: False)
+    monkeypatch.setattr(escalation_service, "evaluate_observation", lambda *a, **k: None)
+    monkeypatch.setattr(sepsis_bundle_service, "maybe_autostart", lambda *a, **k: None)
+    clerk = _mk_user("ward_clerk")
+
+    old = _mk_patient(admitted=_ago(days=2))
+    r = _post(client, old, clerk, "ward_clerk", _NEWS2_12, _ago(hours=3))
+    assert r.status_code == 200 and r.json()["live_hooks"] is False
+    assert len(pushed) == 1
+    assert pushed[0]["patient_id"] == old
+    assert pushed[0]["risk"]["level"] == "critical"
+    assert pushed[0]["live_hooks"] is False
+
+    recent = _mk_patient(admitted=_ago(days=2))
+    r = _post(client, recent, clerk, "ward_clerk", _NEWS2_12, _ago(minutes=30))
+    assert r.status_code == 200 and "message" not in r.json()
+    assert len(pushed) == 2
+    assert "live_hooks" not in pushed[1]

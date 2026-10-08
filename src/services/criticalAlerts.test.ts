@@ -277,3 +277,24 @@ describe('criticalAlerts: the deterioration notification text', () => {
     expect(notifications[0].body).toBe('Patient P010 has entered CRITICAL status.');
   });
 });
+
+/**
+ * A set the ward clerk copied from the paper sheet more than 2 hours after it
+ * was taken raises no alert (nurse_shift_service.transcribed_record_only). The
+ * server still pushes it to an open chart when it is the newest set, marked
+ * `live_hooks: false`, and this module must not chime for it either.
+ */
+describe('criticalAlerts: a reading copied hours after it was taken', () => {
+  it('neither chimes nor notifies for a critical set marked live_hooks false', () => {
+    emit('vitals:update', { ...vitals('P011', 'critical'), live_hooks: false });
+    expect(chimes()).toBe(0);
+    expect(notifications).toHaveLength(0);
+  });
+
+  it('does not count it as the patient being critical already', () => {
+    emit('vitals:update', { ...vitals('P012', 'critical'), live_hooks: false });
+    // A live critical set after it is still news, and is announced.
+    emit('vitals:update', vitals('P012', 'critical'));
+    expect(notifications).toHaveLength(1);
+  });
+});
