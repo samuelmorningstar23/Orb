@@ -407,6 +407,9 @@ def main() -> None:
             r = client.get(path, headers=doctor)
             try:
                 detail = r.json().get("detail") if r.status_code >= 400 else None
+                if path == "/api/health/models" and r.status_code == 200:
+                    # What the status chip is told, not only that it answered.
+                    detail = r.json().get("models_enabled")
             except Exception:  # noqa: BLE001
                 detail = r.text[:80]
             out["spot"][path.replace(pid, "{patient_id}")] = [r.status_code, detail]

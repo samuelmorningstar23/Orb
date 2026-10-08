@@ -127,5 +127,7 @@ def test_the_handover_is_switched_off_only_under_the_profile(models_off_boot, wa
     assert models_off_boot["spot"][path][0] == 200
 
 
-def test_the_model_status_chip_is_told_the_models_are_off(ward_record_boot):
-    assert ward_record_boot["spot"]["/api/health/models"][0] == 200
+def test_the_model_status_chip_is_told_the_models_are_off(ward_record_boot, models_off_boot):
+    # Review, 9 October 2026: this checked only that the route answered.
+    for boot in (ward_record_boot, models_off_boot):
+        assert boot["spot"]["/api/health/models"] == [200, False]
