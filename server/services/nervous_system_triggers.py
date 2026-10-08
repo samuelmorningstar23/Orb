@@ -261,6 +261,11 @@ async def prewarm_patient_prefix(patient_id: str, facts: dict | None) -> bool:
 
     if not SAGE_PREWARM_ENABLED or not facts:
         return False
+    # Models switched off (ORB_MODELS_ENABLED, or the Orb Ward Record): there
+    # is no model to warm, so the gateway is not asked.
+    from services.model_switch import models_enabled
+    if not models_enabled():
+        return False
     # monotonic(), not loop.time(): the rate limit must hold across event loops
     # (and loop clocks are not comparable between loops).
     now = time.monotonic()
@@ -563,6 +568,12 @@ async def _extract_updates(note_id, patient_id: str, structured_text: str) -> di
     #
     # The residency guard below still applies: never resurrect an evicted tier;
     # fail closed (return {}) and let the signed note stand as source of truth.
+    # Models switched off (ORB_MODELS_ENABLED, or the Orb Ward Record): fail
+    # closed exactly like the residency guard below, without asking the
+    # gateway; the signed note stands as the source of truth.
+    from services.model_switch import models_enabled
+    if not models_enabled():
+        return {}
     from services.model_router import ambient_tier_evicted, select_chat_model
     model_choice = await select_chat_model()
     if await ambient_tier_evicted(model_choice.model):

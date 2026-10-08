@@ -393,3 +393,28 @@ def test_the_wrong_room_check_asks_no_model_with_the_models_off(models_off, monk
     room = room_fit_service.RosterPatient(patient_id="P1", name="Asha Rao", bed="4")
     assert asyncio.run(room_fit_service.adjudicate("Bed 4 needs a review", room, None)) is None
     assert asked == []
+
+
+# ── The event bus model lanes (review, 9 October 2026) ──────────────────────
+# Sage's prefix prewarm (on a chart open or a critical alert) and the signed
+# note extractor took a queue slot and asked the gateway with the models off.
+
+def test_the_prewarm_and_the_note_extractor_ask_no_model_with_the_models_off(models_off, monkeypatch):
+    from services import model_router, nervous_system_triggers as nst
+    asked = []
+
+    async def _post(*a, **k):
+        asked.append(k.get("purpose"))
+        raise AssertionError("the gateway was asked with the models switched off")
+
+    async def _choice(*a, **k):
+        asked.append("select_chat_model")
+        raise AssertionError("a model tier was chosen with the models switched off")
+
+    monkeypatch.setattr(ollama_gateway, "post", _post)
+    monkeypatch.setattr(model_router, "select_chat_model", _choice)
+    monkeypatch.setattr(config, "SAGE_PREWARM_ENABLED", True, raising=False)
+    nst._PREWARM_LAST.clear()
+    assert asyncio.run(nst.prewarm_patient_prefix("ANY", {"name": "Asha Rao"})) is False
+    assert asyncio.run(nst._extract_updates(1, "ANY", "Plan: start amoxicillin")) == {}
+    assert asked == []
