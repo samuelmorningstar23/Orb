@@ -20,7 +20,7 @@
  * out or not), each with "Entered in error", so she corrects her own wrong
  * copy with a reason. The server lets her strike out her own copies only.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   getOwnCopies, getTranscribePatients, type OwnCopy, type TranscribePatient,
@@ -99,12 +99,22 @@ export default function WardObservationsPanel() {
   // The patient whose copies are open, and those copies.
   const [copiesFor, setCopiesFor] = useState<string | null>(null)
   const [copies, setCopies] = useState<Copies>({ state: 'loading' })
+  // The patient whose copies were asked for last. An answer for any other
+  // patient is dropped: opening a second patient before the first one's list
+  // came back drew the first patient's copies, and their Entered in error
+  // buttons, under the second patient's name.
+  const copiesWanted = useRef<string | null>(null)
 
   const loadCopies = useCallback((patientId: string): Promise<void> => {
+    copiesWanted.current = patientId
     setCopies({ state: 'loading' })
     return getOwnCopies(patientId).then(
-      body => { setCopies({ state: 'ready', rows: body.copies }) },
+      body => {
+        if (copiesWanted.current !== patientId) return
+        setCopies({ state: 'ready', rows: body.copies })
+      },
       (err: unknown) => {
+        if (copiesWanted.current !== patientId) return
         const status = (err as { status?: unknown } | null)?.status
         setCopies({
           state: 'error',
@@ -118,6 +128,7 @@ export default function WardObservationsPanel() {
 
   const toggleCopies = (patientId: string) => {
     if (copiesFor === patientId) {
+      copiesWanted.current = null
       setCopiesFor(null)
       return
     }

@@ -162,4 +162,31 @@ describe('her own copies', () => {
     await act(async () => { fireEvent.click(yours) })
     expect(screen.getByText('You have not copied a set for Sita Devi in the last 24 hours.')).toBeTruthy()
   })
+
+  it('never draws one patient\'s copies under another patient whose list she opened after it', async () => {
+    const SECOND = { patient_id: 'P2', name: 'Ravi Kumar', mrn: 'UHID-2', ward: 'GM', bed: '5', admitted_at: null }
+    getTranscribePatients.mockResolvedValue({ department: 'General Medicine', patients: [PATIENT, SECOND] })
+    let answerFirst: (body: unknown) => void = () => {}
+    getOwnCopies.mockImplementation((patientId: string) => (patientId === 'P1'
+      ? new Promise(resolve => { answerFirst = resolve })
+      : Promise.resolve({
+        patient_id: 'P2',
+        copies: [{ vitals_id: 31, taken_at: '2026-10-08T22:50:00+00:00',
+          readings: { ...READINGS, heart_rate: 91 }, voided: false }],
+      })))
+    render(<WardObservationsPanel />)
+    const first = await screen.findByRole('button', { name: 'Your copies for Sita Devi' })
+    await act(async () => { fireEvent.click(first) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Your copies for Ravi Kumar' })) })
+    // The first patient's list comes back last.
+    await act(async () => {
+      answerFirst({
+        patient_id: 'P1',
+        copies: [{ vitals_id: 21, taken_at: '2026-10-08T21:50:00+00:00', readings: READINGS, voided: false }],
+      })
+    })
+    const list = screen.getByRole('region', { name: 'Your copies for Ravi Kumar, last 24 hours' })
+    expect(list.textContent).toContain('Pulse 91')
+    expect(list.textContent).not.toContain('Pulse 182')
+  })
 })
