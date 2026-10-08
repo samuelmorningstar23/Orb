@@ -2158,7 +2158,9 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
                   {dischargeSummary.review_status !== 'reviewed' && (
                     <p className="modal__text" style={{ marginTop: 4 }}>
                       {dischargeSummary.drafted_by === 'unavailable'
-                        ? 'The drafting assistant was unavailable, so this holds the recorded data only. '
+                        ? (modelsEnabled
+                          ? 'The drafting assistant was unavailable, so this holds the recorded data only. '
+                          : 'The drafting assistant is switched off on this computer, so this holds the recorded data only. ')
                         : 'Drafted by the assistant from the recorded chart. Check it against the chart. '}
                       The patient sees it only after you release it.
                     </p>

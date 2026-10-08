@@ -337,3 +337,33 @@ def test_the_forecast_lstm_is_still_asked_with_the_models_on(monkeypatch):
     monkeypatch.setattr(forecast_service, "_cache_prediction", lambda *a, **k: None)
     forecast_service.predict_patient_los("ANY")
     assert asked == [1]
+
+
+# ── The discharge summary (review, 9 October 2026) ──────────────────────────
+# A discharge with the models off took a queue slot and asked the gateway,
+# which refused; the stored summary then said the assistant "was unavailable",
+# which on an Orb Ward Record computer reads as a fault.
+
+def test_a_discharge_drafts_nothing_and_asks_no_gateway_with_the_models_off(models_off, monkeypatch):
+    from services import discharge_service
+    asked = []
+
+    async def _post(*a, **k):
+        asked.append(k.get("purpose"))
+        raise AssertionError("the gateway was asked with the models switched off")
+
+    monkeypatch.setattr(ollama_gateway, "post", _post)
+    assert asyncio.run(discharge_service.generate_discharge_summary("ANY")) == ""
+    assert asked == []
+
+
+def test_the_recorded_data_summary_says_drafting_is_switched_off(models_off):
+    from services import discharge_service
+    import uuid
+    pid = f"MSD{uuid.uuid4().hex[:8].upper()}"
+    with db_session() as db:
+        db.execute("INSERT INTO patients (id, name, mrn, status, age, sex) "
+                   "VALUES (?, 'Models Off Discharge', ?, 'admitted', 50, 'F')", (pid, f"MRN-{pid}"))
+    text = discharge_service.offline_discharge_summary(pid)
+    assert "switched off on this computer" in text
+    assert "unavailable" not in text

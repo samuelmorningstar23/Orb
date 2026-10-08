@@ -395,6 +395,13 @@ async def generate_discharge_summary(patient_id: str) -> str:
     """
     from database import run_db
 
+    # Models switched off (ORB_MODELS_ENABLED, or the Orb Ward Record): nothing
+    # is drafted and the gateway is not asked; the route stores the recorded
+    # data only (offline_discharge_summary), which then says so.
+    from services.model_switch import models_enabled
+    if not models_enabled():
+        return ""
+
     # Through the residency router: asking for LLM_MODEL by name silently
     # re-loaded a careful model an administrator had just unloaded. The careful
     # model or nothing: no discharge summary is drafted on the smaller model.
@@ -564,6 +571,17 @@ def offline_discharge_summary(patient_id: str) -> str:
             return "Patient not found."
         recorded = _recorded_context(db, patient_id)
     med_rec_text = _render_med_rec_text(build_medication_reconciliation(patient_id))
+    # Models switched off on this computer: say that, not that the assistant
+    # was unavailable, which reads as a fault.
+    from services.model_switch import models_enabled
+    if models_enabled():
+        course = "Not documented. The drafting assistant was unavailable, so no course was drafted."
+        footer = "Drafting assistant unavailable. This summary holds recorded data only."
+    else:
+        course = ("Not documented. The drafting assistant is switched off on this computer, "
+                  "so no course was drafted.")
+        footer = ("Drafting assistant switched off on this computer. "
+                  "This summary holds recorded data only.")
     return f"""DISCHARGE SUMMARY
 ═══════════════════
 
@@ -582,7 +600,7 @@ COMORBIDITIES:
 {recorded['comorbidities']}
 
 HOSPITAL COURSE:
-Not documented. The drafting assistant was unavailable, so no course was drafted.
+{course}
 
 CONDITION AT DISCHARGE:
 Not documented.
@@ -593,7 +611,7 @@ ATTENDING DOCTOR:
 {recorded['attending'] or 'Not recorded'}
 
 ---
-Drafting assistant unavailable. This summary holds recorded data only.
+{footer}
 """
 
 

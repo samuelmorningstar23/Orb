@@ -66,7 +66,7 @@ vi.mock('../../components/vigil/PatientStory', () => ({ default: () => null }))
 vi.mock('../../components/ClinicalCourseTimeline', () => ({ ClinicalCourseTimeline: () => <div data-testid="course" /> }))
 
 import VigilPanel from './VigilPanel'
-import { getPatientForecast, prefetchSageContext } from '../../api/client'
+import { dischargePatient, getPatientForecast, prefetchSageContext } from '../../api/client'
 import { ActivePatientProvider } from '../../contexts/ActivePatientProvider'
 import { ActiveViewProvider } from '../../contexts/ActiveViewProvider'
 import { resetClinicalSwitches, setClinicalSwitches } from '../../shellConfig'
@@ -270,5 +270,24 @@ describe('the board sort with scoring switched off', () => {
     await waitFor(() => expect(screen.getByText('Admitted · My Dept')).toBeTruthy())
     expect(screen.getByRole('button', { name: /Ward and bed/ })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Stability/ })).toBeNull()
+  })
+})
+
+describe('a discharge with the models switched off (review, 9 October 2026)', () => {
+  it('says drafting is switched off on this computer, not that the assistant was unavailable', async () => {
+    act(() => { setClinicalSwitches({ scoring_enabled: false, models_enabled: false, ward_record: true }) })
+    vi.mocked(dischargePatient).mockResolvedValue({
+      status: 'success', summary_id: 51, review_status: 'draft', drafted_by: 'unavailable',
+      summary: 'DISCHARGE SUMMARY\nRecorded data only.', discharged_at: T, timeline: [],
+      summary_url: null, qr_code_url: null, secure_link_issued: false, secure_link_reason: null,
+    } as never)
+    await openChart()
+    await act(async () => { screen.getByRole('button', { name: /^Discharge$/ }).click() })
+    await act(async () => { screen.getByRole('button', { name: /Confirm discharge/ }).click() })
+    const draft = await screen.findByTestId('discharge-draft')
+    expect(draft).toHaveTextContent('Recorded data only, not reviewed')
+    expect(draft.parentElement).toHaveTextContent(
+      'The drafting assistant is switched off on this computer, so this holds the recorded data only.')
+    expect(draft.parentElement).not.toHaveTextContent('was unavailable')
   })
 })
