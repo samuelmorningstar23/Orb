@@ -115,11 +115,15 @@ def get_channels_for_user(user_id: str, user_role: str) -> list:
         )
     """
 
-        rows = db.execute(sql + """ ORDER BY 
-            CASE WHEN rs.level = 'critical' THEN 0 
+        # Scoring switched off (the Orb Ward Record): the band stored before
+        # the switch does not order the list either, or a critical patient's
+        # room would still float to the top.
+        band_order = ("""CASE WHEN rs.level = 'critical' THEN 0 
                  WHEN rs.level = 'elevated' THEN 1 
                  ELSE 2 END,
-            last_activity DESC NULLS LAST,
+            """ if _scoring else "")
+        rows = db.execute(sql + """ ORDER BY 
+            """ + band_order + """last_activity DESC NULLS LAST,
             c.name""", (user_id, user_id, user_id)).fetchall()
         
         filtered = []

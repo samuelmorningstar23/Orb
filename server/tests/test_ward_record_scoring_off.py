@@ -543,3 +543,34 @@ def test_a_surgery_case_carries_no_stored_band_with_scoring_off(monkeypatch):
     assert [(s["risk_level"], s["risk_score"]) for s in _week()] == [(None, None)]
     detail = get_surgery_detail(sid)
     assert (detail["risk_level"], detail["risk_score"], detail["risk_drivers"]) == (None, None, [])
+
+
+# ── Review, 9 October 2026: the Relay channel order ─────────────────────────
+# The list stopped sending the stored band, but still ordered by it, so a case
+# room for a patient banded critical before the switch stayed on top.
+
+def test_the_relay_list_is_not_ordered_by_a_stored_band_with_scoring_off(monkeypatch):
+    from services.relay_service import get_channels_for_user
+    banded = _patient("SOF-RELAY")
+    plain = _patient("SOF-RELAY", stored_band=False)
+    admin = _user("admin")
+    rooms = {}
+    with db_session() as db:
+        for pid, minutes in ((banded, 120), (plain, 5)):
+            cid = f"SOFC{uuid.uuid4().hex[:8].upper()}"
+            rooms[pid] = cid
+            db.execute("INSERT INTO channels (id, name, type, patient_id) VALUES (?, ?, 'case_room', ?)",
+                       (cid, f"Case {pid}", pid))
+            db.execute("INSERT INTO messages (channel_id, sender_id, sender_name, sender_role, "
+                       "content, timestamp) VALUES (?, ?, 'Scoring Off admin', 'admin', 'Seen', ?)",
+                       (cid, admin, format_utc(_ago(minutes))))
+
+    def _order():
+        ids = [c["id"] for c in get_channels_for_user(admin, "admin")]
+        return ids.index(rooms[banded]) < ids.index(rooms[plain])
+
+    _scoring(monkeypatch, True)
+    assert _order() is True
+    _scoring(monkeypatch, False)
+    # The newer conversation first, as for any two rooms with no band.
+    assert _order() is False
