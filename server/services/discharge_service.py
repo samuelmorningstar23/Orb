@@ -234,11 +234,14 @@ def build_patient_timeline(patient_id: str) -> list:
             "detail": a["reviewed_text"][:200],
         })
 
-    # Risk alerts (critical only)
+    # Risk alerts (critical only). Scoring switched off (ORB_SCORING_ENABLED,
+    # the Orb Ward Record): a band stored before the switch is not put on the
+    # discharge timeline, which is stored with the summary.
+    from services.vigil_service import scoring_enabled
     risk_events = db.execute(
         "SELECT * FROM risk_scores WHERE patient_id = ? AND level = 'critical' ORDER BY timestamp ASC, id ASC",
         (patient_id,),
-    ).fetchall()
+    ).fetchall() if scoring_enabled() else []
     for r in risk_events:
         drivers = json.loads(r["drivers"]) if r["drivers"] else []
         timeline.append({
@@ -365,11 +368,13 @@ def _draft_inputs(patient_id: str) -> Optional[dict]:
             (patient_id,),
         ).fetchone()
 
-        # Risk history
+        # Risk history. None while scoring is switched off: the draft then
+        # names no NEWS2 band stored before the switch.
+        from services.vigil_service import scoring_enabled
         risks = db.execute(
             "SELECT score, level, drivers, timestamp FROM risk_scores WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 5",
             (patient_id,),
-        ).fetchall()
+        ).fetchall() if scoring_enabled() else []
 
         recorded = _recorded_context(db, patient_id)
     return {

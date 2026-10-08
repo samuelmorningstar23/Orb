@@ -474,3 +474,20 @@ def test_ipass_with_scoring_off_raises_no_deterioration_warning(monkeypatch):
     assert off["sections"]["situation_awareness"]["trend"] == "deteriorating"
     assert off["sections"]["situation_awareness"]["active_deterioration"] is False
     assert "ACTIVE DETERIORATION" not in off["plain_text"]
+
+
+# ── Review, 7 October 2026: the discharge summary ───────────────────────────
+# The discharge timeline (stored with the summary) and the draft's inputs read
+# every stored critical band, so a discharge on a scoring-off computer printed
+# "Critical Alert (NEWS2 band: critical)" with the stored drivers.
+
+def test_the_discharge_timeline_and_draft_carry_no_stored_band_with_scoring_off(monkeypatch):
+    from services import discharge_service
+    pid = _patient(f"SOF Discharge {uuid.uuid4().hex[:6]}")
+    _scoring(monkeypatch, True)
+    assert MARKER in json.dumps(discharge_service.build_patient_timeline(pid))
+    assert discharge_service._draft_inputs(pid)["risks"]
+    _scoring(monkeypatch, False)
+    timeline = json.dumps(discharge_service.build_patient_timeline(pid))
+    assert MARKER not in timeline and "NEWS2" not in timeline
+    assert list(discharge_service._draft_inputs(pid)["risks"]) == []
