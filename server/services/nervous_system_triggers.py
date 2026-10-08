@@ -704,6 +704,13 @@ def _screen_medications(patient_id, author_id, note_id, updates, note_text=None)
     """
     med_starts = []      # rows to chart as UNVERIFIED llm_extracted meds
     stop_proposals = []  # drug names PROPOSED for discontinuation (never auto-stopped)
+    # On an Orb Ward Record computer the drug chart stays on paper
+    # (services/drug_chart): a signed note charts no medicine and proposes no
+    # stop, and nothing is screened. The models are off there too, so this
+    # lane is not reached; this keeps it shut if it ever is.
+    from services.drug_chart import drug_chart_enabled
+    if not drug_chart_enabled():
+        return med_starts, stop_proposals
     for med in updates.get("medications", []):
         if not isinstance(med, dict):
             continue

@@ -10,6 +10,7 @@ import jwt
 
 from database import db_session
 from services.audit_service import log_audit_event
+from services.drug_chart import drug_chart_enabled
 from config import (
     DISCHARGE_ACCESS_MAX_ATTEMPTS, DISCHARGE_ACCESS_LOCK_MINUTES, DISCHARGE_JWT_SECRET, JWT_ALGORITHM,
 )
@@ -558,5 +559,8 @@ def get_verified_discharge_summary(token: str, access_grant: str, ip_address: st
             "comorbidities": comorbidities,
             "medications": medications,
             "unverified_medication_count": unverified_count,
+            # False on an Orb Ward Record computer: the reconciliation is empty
+            # there and the page prints no medicines section (services/drug_chart).
+            "drug_chart": drug_chart_enabled(),
             "site_name": site_name,
         }

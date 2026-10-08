@@ -33,6 +33,7 @@ from database import db_session
 # directly rather than vigil_service.get_patient_risk() so capture never pulls in
 # the optional CfC/torch overlay or any I/O beyond the DB.
 from services.vigil_service import compute_news2, scoring_enabled
+from services.drug_chart import drug_chart_enabled
 from services.news2_text import news2_description, news2_qualifiers
 from services.hospital_time import hospital_stamp
 from services.vital_charting import charted_text
@@ -87,8 +88,11 @@ def _build_summary(demo: dict, allergies: list, problems: list,
         f"{name} (MRN {mrn}{age_sex}){loc}",
         allergy_note,
         f"{len(problems)} active problem{'s' if len(problems) != 1 else ''}",
-        f"{len(medications)} active med{'s' if len(medications) != 1 else ''}",
     ]
+    # On an Orb Ward Record computer the drug chart stays on paper: the line
+    # says nothing about medicines (services/drug_chart).
+    if drug_chart_enabled():
+        parts.append(f"{len(medications)} active med{'s' if len(medications) != 1 else ''}")
     if news2 and news2.get("raw_news2") is not None:
         # 2026-10-02: name Scale 2, or "NEWS2 0 (stable)" reads as a Scale 1
         # score; SpO2 90 on air is 0 on Scale 2 and 3 on Scale 1. Since
@@ -157,7 +161,8 @@ def capture_snapshot(patient_id: str, created_by: str = "auto") -> dict:
 
         # Active medications. verified_by lets the downtime sheet say which
         # AI-extracted drugs no pharmacist has checked; without it they print
-        # like prescriptions.
+        # like prescriptions. None on an Orb Ward Record computer, whose drug
+        # chart stays on paper (services/drug_chart).
         medications = [
             _row_to_dict(r)
             for r in db.execute(
@@ -168,7 +173,7 @@ def capture_snapshot(patient_id: str, created_by: str = "auto") -> dict:
                    ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'prn' THEN 1 ELSE 2 END, drug_name""",
                 (patient_id,),
             ).fetchall()
-        ]
+        ] if drug_chart_enabled() else []
 
         # Latest vitals row (full row so the printout shows exactly what was recorded).
         # id DESC: on a same-timestamp tie the later write (a correction) is the latest.
@@ -332,6 +337,8 @@ def capture_snapshot(patient_id: str, created_by: str = "auto") -> dict:
             "lab_results": len(lab_results),
         },
     }
+    if not drug_chart_enabled():
+        snapshot = _without_drug_chart(snapshot)
     summary = _build_summary(demo, allergies, problems, medications, news2,
                              has_vitals=latest_vitals is not None)
 
@@ -775,6 +782,14 @@ async def run_nightly_fhir_self_export_async(created_by: str = "auto",
     )
 
 
+def _without_drug_chart(snapshot: dict) -> dict:
+    """A snapshot as an Orb Ward Record computer sends it: no medicines and no
+    medicine count, and drug_chart false so the downtime page draws no
+    medicines section (services/drug_chart)."""
+    counts = {k: v for k, v in (snapshot.get("counts") or {}).items() if k != "medications"}
+    return {**snapshot, "medications": [], "counts": counts, "drug_chart": False}
+
+
 def _envelope(row) -> dict:
     """Turn a patient_snapshots row into an API envelope with the parsed snapshot."""
     d = dict(row)
@@ -790,9 +805,14 @@ def _envelope(row) -> dict:
         # risk rows, no escalation chain, and the summary is said again
         # without the score.
         parsed = {**parsed, "news2": None, "recent_risk_scores": [], "open_escalations": []}
+    if isinstance(parsed, dict) and not drug_chart_enabled():
+        # A snapshot taken before the Orb Ward Record was switched on still
+        # holds the drug chart. While it is on nothing reads one back.
+        parsed = _without_drug_chart(parsed)
+    if isinstance(parsed, dict) and (not scoring_enabled() or not drug_chart_enabled()):
         summary = _build_summary(parsed.get("demographics") or {}, parsed.get("allergies") or [],
                                  parsed.get("problems") or [], parsed.get("medications") or [],
-                                 None, has_vitals=bool(parsed.get("latest_vitals")))
+                                 parsed.get("news2"), has_vitals=bool(parsed.get("latest_vitals")))
     return {
         "id": d.get("id"),
         "patient_id": d.get("patient_id"),
@@ -1309,8 +1329,10 @@ def _render_patient_page(item: dict, index: int, total: int,
         + (f" &nbsp;·&nbsp; <b>Escalation:</b> {esc_text}" if scoring else "")
         + "</div>"
         f"<h3>{'Latest vitals + NEWS2' if scoring else 'Latest vitals'}</h3>{_render_vitals_news2(snap)}"
-        f"<h3>Active medications ({len(meds)})</h3>{meds_html}"
-        f"<h3>Active problems ({len(problems)})</h3><p>{problems_html}</p>"
+        # On an Orb Ward Record computer the drug chart stays on paper: the
+        # pack has no medicines section at all (services/drug_chart).
+        + (f"<h3>Active medications ({len(meds)})</h3>{meds_html}" if drug_chart_enabled() else "")
+        + f"<h3>Active problems ({len(problems)})</h3><p>{problems_html}</p>"
         f"<h3>Recent lab results</h3>{_render_labs(snap)}"
         f"<h3>Recent chart notes</h3>{_render_documents(snap, names)}"
         f"<h3>Recent signed notes</h3>{notes_html}"

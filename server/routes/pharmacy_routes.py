@@ -17,8 +17,13 @@ from permissions import enforce_patient_scope, log_phi_read, require_permission
 from services import pharmacy_verification_service as pharmacy
 from services.audit_service import log_audit_event
 from services.drug_safety_service import formulary_interaction_coverage
+from services.drug_chart import require_drug_chart
 
-router = APIRouter(prefix="/api/pharmacy", tags=["Pharmacy Verification"])
+# The verification queue is drug chart rows. On an Orb Ward Record computer
+# every route answers 404 "The drug chart is not part of Orb Ward Record"
+# before any row is read (services/drug_chart).
+router = APIRouter(prefix="/api/pharmacy", tags=["Pharmacy Verification"],
+                   dependencies=[Depends(require_drug_chart)])
 
 
 class VerifyRequest(BaseModel):

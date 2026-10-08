@@ -168,6 +168,12 @@ class _Source:
         checked; a DB without `users` is not a DB Orb can serve at all."""
         return self.from_sql.split()[0].strip('"')
 
+    @property
+    def live_where_sql(self) -> str:
+        """`where_sql` as it applies right now. A subclass narrows it on a
+        switch (the medication orders under the Orb Ward Record)."""
+        return self.where_sql
+
 
 def _r_admission(r: dict) -> dict:
     bits = [b for b in (r.get("ward"), r.get("bed") and f"Bed {r['bed']}") if b]
@@ -237,6 +243,39 @@ class _ScoredSource(_Source):
     def base_table(self) -> str:
         from services.vigil_service import scoring_enabled
         return super().base_table if scoring_enabled() else ""
+
+
+@dataclass(frozen=True)
+class _DrugChartSource(_Source):
+    """A stream that IS the drug chart: medicines charted and doses given. On
+    an Orb Ward Record computer the drug chart stays on paper
+    (services/drug_chart), so it names no table and is left out of the rail
+    and the count, as a stream whose table does not exist is."""
+
+    @property
+    def base_table(self) -> str:
+        from services.drug_chart import drug_chart_enabled
+        return super().base_table if drug_chart_enabled() else ""
+
+
+#: The order rows that are not medication orders, for _OrderSource.
+_NOT_A_MEDICATION_ORDER = "o.order_type != 'medication'"
+
+
+@dataclass(frozen=True)
+class _OrderSource(_Source):
+    """An order stream. On an Orb Ward Record computer a medication order is
+    part of the drug chart, so its rows (and its status changes) are left out
+    of the rail and the count; every other order stays."""
+
+    @property
+    def live_where_sql(self) -> str:
+        from services.drug_chart import drug_chart_enabled
+        if drug_chart_enabled():
+            return self.where_sql
+        if self.where_sql:
+            return f"({self.where_sql}) AND {_NOT_A_MEDICATION_ORDER}"
+        return _NOT_A_MEDICATION_ORDER
 
 
 def _r_medication(r: dict) -> dict:
@@ -488,7 +527,7 @@ SOURCES: tuple[_Source, ...] = (
         where_sql="rs.level = 'critical'",
         render=_r_alert,
     ),
-    _Source(
+    _DrugChartSource(
         kind="medication",
         from_sql="medications m LEFT JOIN users u ON u.id = m.prescribed_by",
         patient_col="m.patient_id",
@@ -500,7 +539,7 @@ SOURCES: tuple[_Source, ...] = (
                      "u.name AS actor_name"),
         render=_r_medication,
     ),
-    _Source(
+    _DrugChartSource(
         kind="administration",
         from_sql=("medication_administrations ma "
                   "LEFT JOIN medications m ON m.id = ma.medication_id "
@@ -514,7 +553,7 @@ SOURCES: tuple[_Source, ...] = (
                      "m.drug_name AS drug_name", "u.name AS actor_name"),
         render=_r_administration,
     ),
-    _Source(
+    _OrderSource(
         kind="order",
         from_sql="orders o LEFT JOIN users u ON u.id = o.ordered_by",
         patient_col="o.patient_id",
@@ -527,7 +566,7 @@ SOURCES: tuple[_Source, ...] = (
                      "ORDER BY oe0.id LIMIT 1) AS created_status"),
         render=_r_order,
     ),
-    _Source(
+    _OrderSource(
         kind="order_event",
         from_sql=("order_events oe JOIN orders o ON o.id = oe.order_id "
                   "LEFT JOIN users u ON u.id = oe.actor_id"),
@@ -641,8 +680,8 @@ KINDS: tuple[str, ...] = tuple(s.kind for s in SOURCES)
 def _detail_sql(src: _Source, limit: int) -> str:
     cols = ", ".join(src.select_cols) if src.select_cols else "NULL AS actor_name"
     where = f"{src.patient_col} = ?"
-    if src.where_sql:
-        where = f"{where} AND {src.where_sql}"
+    if src.live_where_sql:
+        where = f"{where} AND {src.live_where_sql}"
     order = src.order_sql or f"{_norm(src.ts_col)} DESC"
     return (
         f"SELECT {src.id_col} AS row_id, {src.ts_col} AS ts, {cols} "
@@ -689,8 +728,8 @@ def _count_union_sql(patient_filter: str,
         if not src.countable:
             continue
         where = patient_filter.format(pcol=src.patient_col)
-        if src.where_sql:
-            where = f"({where}) AND {src.where_sql}"
+        if src.live_where_sql:
+            where = f"({where}) AND {src.live_where_sql}"
         parts.append(
             f"SELECT {src.patient_col} AS pid, {_norm(src.ts_col)} AS nts "
             f"FROM {src.from_sql} WHERE {where}"

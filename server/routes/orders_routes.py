@@ -16,8 +16,17 @@ from permissions import (department_scope, enforce_patient_scope, log_phi_read,
 from services import order_sets_service, orders_service, terminology_service
 from services.medication_safety_gate import enforce_medication_safety
 from services.order_sets_service import OrderSetBlocked, OrderSetError
+from services.drug_chart import DRUG_CHART_OFF, drug_chart_enabled, require_drug_chart
 
 router = APIRouter(prefix="/api/orders", tags=["Orders / CPOE"])
+
+
+def _refuse_medication_order(order: Optional[dict]) -> None:
+    """404 "The drug chart is not part of Orb Ward Record" for a medication
+    order on an Orb Ward Record computer, whose drug chart stays on paper
+    (services/drug_chart). Every other order is left as it is."""
+    if order and order.get("order_type") == "medication" and not drug_chart_enabled():
+        raise HTTPException(status_code=404, detail=DRUG_CHART_OFF)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -92,7 +101,7 @@ def _order_set_status(e: OrderSetError) -> int:
     return 404 if ("not found" in message or "Unknown order set" in message) else 400
 
 
-@router.get("/sets")
+@router.get("/sets", dependencies=[Depends(require_drug_chart)])
 def list_order_sets(user=Depends(require_permission(ORDER_READ))):
     """Every configured set. No patient, no PHI — the protocol list itself."""
     config = order_sets_service.get_config()
@@ -107,7 +116,7 @@ def list_order_sets(user=Depends(require_permission(ORDER_READ))):
     }
 
 
-@router.get("/sets/{set_id}")
+@router.get("/sets/{set_id}", dependencies=[Depends(require_drug_chart)])
 def get_order_set(set_id: str, user=Depends(require_permission(ORDER_READ))):
     """One set in full, with the codes this deployment cannot resolve flagged."""
     try:
@@ -117,7 +126,7 @@ def get_order_set(set_id: str, user=Depends(require_permission(ORDER_READ))):
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.post("/sets/{set_id}/preview")
+@router.post("/sets/{set_id}/preview", dependencies=[Depends(require_drug_chart)])
 def preview_order_set(
     set_id: str,
     req: OrderSetApplyRequest,
@@ -149,7 +158,7 @@ def preview_order_set(
     return result
 
 
-@router.post("/sets/{set_id}/apply")
+@router.post("/sets/{set_id}/apply", dependencies=[Depends(require_drug_chart)])
 def apply_order_set(
     set_id: str,
     req: OrderSetApplyRequest,
@@ -194,7 +203,7 @@ def apply_order_set(
     return {"status": "success", **result}
 
 
-@router.get("/sets/applications/{patient_id}")
+@router.get("/sets/applications/{patient_id}", dependencies=[Depends(require_drug_chart)])
 def list_order_set_applications(
     patient_id: str,
     user=Depends(
@@ -272,6 +281,9 @@ def create_order(req: CreateOrderRequest, user=Depends(require_permission(ORDER_
     # derivation, same 404-never-403 (a 403 confirms the patient exists), and
     # this is a `def` handler so the blocking check is already on FastAPI's
     # threadpool.
+    # On an Orb Ward Record computer a medication order is refused before the
+    # patient is read: the drug chart stays on paper (services/drug_chart).
+    _refuse_medication_order({"order_type": req.order_type})
     enforce_patient_scope(user, req.patient_id)
 
     safety: Optional[dict] = None
@@ -406,6 +418,10 @@ def list_patient_orders(
     from services import lab_order_service
 
     orders = orders_service.list_orders(patient_id, status)
+    if not drug_chart_enabled():
+        # The medication orders are the drug chart, which an Orb Ward Record
+        # computer keeps on paper; every other order is listed.
+        orders = [o for o in orders if o.get("order_type") != "medication"]
     with db_session() as db:
         lab_order_service.annotate_orders(db, orders)
     return {"orders": orders}
@@ -451,6 +467,7 @@ def _order_in_scope_or_404(order_id: str, user: dict) -> dict:
     order = orders_service.get_order(order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+    _refuse_medication_order(order)
     dept = department_scope(user)
     if dept is not None:
         with db_session() as db:
@@ -478,6 +495,7 @@ def _scope_by_order(order_id: str, user: dict) -> None:
     existing = orders_service.get_order(order_id)
     if not existing:
         return
+    _refuse_medication_order(existing)
     dept = department_scope(user)
     if dept is None:
         return

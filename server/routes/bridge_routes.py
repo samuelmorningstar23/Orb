@@ -39,6 +39,7 @@ from services.discharge_service import (
 )
 from services.vital_charting import as_charted
 from services.lens_service import REVIEWED_IMAGING_SQL
+from services.drug_chart import drug_chart_enabled, require_drug_chart
 from services.stay_times import latest_admission, summary_less_ends
 from datetime import datetime
 import json
@@ -240,14 +241,16 @@ def patient_reports(user: dict = Depends(require_patient_self())):
     """
     patient_id = _resolve_patient_id(user["id"])
 
+    drug_chart = drug_chart_enabled()
     with db_session() as db:
-        # Active medications
+        # Active medications. None on an Orb Ward Record computer, whose drug
+        # chart stays on paper (services/drug_chart).
         meds = db.execute(
             """SELECT drug_name, dosage, route, frequency, status, started_at
                FROM medications WHERE patient_id = ?
                ORDER BY started_at DESC""",
             (patient_id,),
-        ).fetchall()
+        ).fetchall() if drug_chart else []
 
         # Clinical documents (notes, ward rounds, etc.), lab results apart. The
         # portal built Lab History from imaging alone, so a patient whose
@@ -294,6 +297,8 @@ def patient_reports(user: dict = Depends(require_patient_self())):
     return {
         "patient_id": patient_id,
         "medications": [dict(m) for m in meds],
+        # False tells My Records to draw no Medications button.
+        "drug_chart": drug_chart,
         "clinical_documents": [_patient_document(d) for d in docs],
         "labs": [_patient_document(r) for r in labs],
         "discharge_summary": _patient_discharge_view(discharge),
@@ -347,7 +352,7 @@ def _patient_discharge_view(row) -> dict | None:
     }
 
 
-@router.get("/medications")
+@router.get("/medications", dependencies=[Depends(require_drug_chart)])
 def patient_medications(user: dict = Depends(require_patient_self())):
     """Get medications for the logged-in patient only."""
     patient_id = _resolve_patient_id(user["id"])

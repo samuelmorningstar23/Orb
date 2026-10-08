@@ -31,6 +31,7 @@ from services.stay_times import summary_less_ends_sql
 
 # The expected course is drafted by a model: 404 while the models are off.
 from services.model_switch import require_models_on
+from services.drug_chart import drug_chart_enabled, require_drug_chart
 
 router = APIRouter(prefix="/api/vigil", tags=["vigil"])
 
@@ -593,6 +594,7 @@ async def get_patient(
     # from one. `risk` is null and `risk_off_reason` says why, for the chart to
     # show in place of the badge; the stored risk history is not sent either.
     scoring = scoring_enabled()
+    drug_chart = drug_chart_enabled()
     risk = await _asyncio.to_thread(
         risk_for_row, vitals[0] if vitals else None,
         patient_id=patient_id, on_scale_2=on_scale_2,
@@ -659,13 +661,17 @@ async def get_patient(
         # Surface an explicit `unverified` flag on AI-extracted/agentic meds that a
         # pharmacist has not yet verified, so the UI never presents an unreviewed
         # AI medication as an equal to a clinician-confirmed active order.
+        # On an Orb Ward Record computer the drug chart stays on paper: no rows
+        # are sent, and drug_chart false tells the chart to draw no medicines
+        # at all, even before its own health probe answers (services/drug_chart).
         "medications": [
             {**dict(m),
              "unverified": (m["source"] in ("llm_extracted", "agentic")
                             if "source" in m.keys() else False)
                            and not (("verified_by" in m.keys()) and m["verified_by"])}
-            for m in medications
+            for m in (medications if drug_chart else [])
         ],
+        "drug_chart": drug_chart,
     }
 
 
@@ -775,7 +781,8 @@ async def add_patient_note(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-@router.get("/patients/{patient_id}/medication-reconciliation")
+@router.get("/patients/{patient_id}/medication-reconciliation",
+            dependencies=[Depends(require_drug_chart)])
 async def medication_reconciliation_route(
     patient_id: str,
     user: dict = Depends(
@@ -975,7 +982,7 @@ async def review_discharge_summary(
 
 
 
-@router.post("/patients/{patient_id}/medications")
+@router.post("/patients/{patient_id}/medications", dependencies=[Depends(require_drug_chart)])
 async def add_patient_medication(
     patient_id: str,
     data: dict,

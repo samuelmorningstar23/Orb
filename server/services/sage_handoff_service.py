@@ -142,6 +142,16 @@ def _savepoint(db, name: str):
         db.execute(f"RELEASE SAVEPOINT {name}")
 
 
+def _drug_chart_refusal():
+    """On an Orb Ward Record computer the drug chart stays on paper
+    (services/drug_chart): a medication handoff is blocked before any drug is
+    screened or charted, and the card says why in these words."""
+    from services.drug_chart import DRUG_CHART_OFF, drug_chart_enabled
+    if drug_chart_enabled():
+        return None
+    return HandoffBlocked(DRUG_CHART_OFF, {"blocking": True, "drug_chart": False})
+
+
 def prescreen_handoff(action: dict, actor_id: str):
     """The part of a dispatch that must run BEFORE the write transaction opens.
 
@@ -154,6 +164,9 @@ def prescreen_handoff(action: dict, actor_id: str):
     """
     if route_for_action(action.get("action_type")) != "helix":
         return None
+    blocked = _drug_chart_refusal()
+    if blocked is not None:
+        return blocked
     try:
         return _screen_helix(action, actor_id)
     except HandoffBlocked as e:
@@ -316,6 +329,9 @@ def _dispatch_to_helix(action: dict, actor_id: str) -> tuple:
     HandoffBlocked, with nothing charted, when the screen stops the order or
     cannot run.
     """
+    blocked = _drug_chart_refusal()
+    if blocked is not None:
+        raise blocked
     safety = _screen_helix(action, actor_id)
     with db_session() as db:
         return _write_helix(db, action, actor_id, safety)
@@ -407,6 +423,9 @@ def _write_helix(db, action: dict, actor_id: str, screened) -> tuple:
     Never commits. Returns ``(downstream_ref_id, safety, note)`` as
     _dispatch_to_helix does; re-raises a HandoffBlocked screen result.
     """
+    blocked = _drug_chart_refusal()
+    if blocked is not None:
+        raise blocked
     if isinstance(screened, HandoffBlocked):
         raise screened
     if screened is None:

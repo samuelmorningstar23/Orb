@@ -290,11 +290,14 @@ def _load_patient_context(patient_id: str) -> dict:
         # nullable, and ingestion/import paths do not always set it — so a whole
         # class of charted drugs was silently invisible to CDI, under-reporting
         # capture gaps. NULL is treated as active, matching the column DEFAULT.
+        # None on an Orb Ward Record computer, whose drug chart stays on
+        # paper (services/drug_chart): no drug is named as evidence.
+        from services.drug_chart import drug_chart_enabled
         for r in conn.execute(
             "SELECT drug_name FROM medications "
             "WHERE patient_id = ? AND (status IS NULL OR status != 'discontinued')",
             (patient_id,),
-        ).fetchall():
+        ).fetchall() if drug_chart_enabled() else []:
             if r["drug_name"]:
                 ctx["medications"].append(r["drug_name"])
 

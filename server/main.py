@@ -1111,7 +1111,12 @@ app.include_router(pharmacy_store_router)
 app.include_router(opd_router)
 app.include_router(registration_router)
 app.include_router(schedule_router)
-app.include_router(medorders_router)
+# The medication order store is the drug chart, which an Orb Ward Record
+# computer keeps on paper: every route answers 404 "The drug chart is not part
+# of Orb Ward Record" first (services/drug_chart). Declared here, not in
+# routes/medorders, which another build owns.
+from services.drug_chart import require_drug_chart as _require_drug_chart
+app.include_router(medorders_router, dependencies=[Depends(_require_drug_chart)])
 
 # ── Serve uploaded media (PHI) behind authentication ──
 # SECURITY: uploads contain medical images (Lens) and consultation audio

@@ -269,16 +269,24 @@ def build_medication_reconciliation(patient_id: str) -> dict:
     that a pharmacist has not yet verified so it is never silently carried onto a
     discharge script. The structured result is both returned (for the API/UI) and
     rendered into authoritative text injected into the summary prompt.
+
+    Empty on an Orb Ward Record computer, whose drug chart stays on paper
+    (services/drug_chart): nothing is read, and the stored summary then
+    carries no reconciliation block (med_rec_section).
     """
-    db = get_db()
-    try:
-        rows = db.execute(
-            """SELECT drug_name, dosage, route, frequency, status, source, verified_by
-               FROM medications WHERE patient_id = ? ORDER BY drug_name COLLATE NOCASE""",
-            (patient_id,),
-        ).fetchall()
-    finally:
-        db.close()
+    from services.drug_chart import drug_chart_enabled
+    if not drug_chart_enabled():
+        rows = []
+    else:
+        db = get_db()
+        try:
+            rows = db.execute(
+                """SELECT drug_name, dosage, route, frequency, status, source, verified_by
+                   FROM medications WHERE patient_id = ? ORDER BY drug_name COLLATE NOCASE""",
+                (patient_id,),
+            ).fetchall()
+        finally:
+            db.close()
 
     continued, stopped, unverified = [], [], []
     for r in rows:
@@ -316,6 +324,14 @@ def build_medication_reconciliation(patient_id: str) -> dict:
             "unverified": len(unverified),
         },
     }
+
+
+def med_rec_section(rec: dict) -> str:
+    """The reconciliation block for a stored summary, or nothing at all on an
+    Orb Ward Record computer, where the summary says nothing about medicines
+    (services/drug_chart)."""
+    from services.drug_chart import drug_chart_enabled
+    return _render_med_rec_text(rec) if drug_chart_enabled() else ""
 
 
 def _render_med_rec_text(rec: dict) -> str:
@@ -450,7 +466,7 @@ async def generate_discharge_summary(patient_id: str) -> str:
 
     # Authoritative medication reconciliation from the real medication record
     # (read in _draft_inputs, off the loop).
-    med_rec_text = _render_med_rec_text(inputs["med_rec"])
+    med_rec_text = med_rec_section(inputs["med_rec"])
 
     # The header lines are FILLED here, not left as slots. The model was asked
     # for "Discharge: [Today's date]" and "[Doctor name]" without being given
@@ -570,7 +586,7 @@ def offline_discharge_summary(patient_id: str) -> str:
         if patient is None:
             return "Patient not found."
         recorded = _recorded_context(db, patient_id)
-    med_rec_text = _render_med_rec_text(build_medication_reconciliation(patient_id))
+    med_rec_text = med_rec_section(build_medication_reconciliation(patient_id))
     # Models switched off on this computer: say that, not that the assistant
     # was unavailable, which reads as a fault.
     from services.model_switch import models_enabled

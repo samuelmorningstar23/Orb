@@ -6,8 +6,14 @@ from permissions import enforce_patient_scope, require_permission
 from services import helix_service
 from services.drug_safety_service import check_medication_safety
 from services.medication_safety_gate import enforce_medication_safety
+from services.drug_chart import require_drug_chart
 
-router = APIRouter(prefix="/api/helix", tags=["Helix Pharmacy"])
+# Helix is the pharmacy's side of the drug chart: orders, dispensing and the
+# ward receipt. On an Orb Ward Record computer the drug chart stays on paper,
+# so every route answers 404 "The drug chart is not part of Orb Ward Record"
+# before any order or patient is read (services/drug_chart).
+router = APIRouter(prefix="/api/helix", tags=["Helix Pharmacy"],
+                   dependencies=[Depends(require_drug_chart)])
 
 # ═══════════════════════════════════════════════════════════════════
 #  READ ENDPOINTS
