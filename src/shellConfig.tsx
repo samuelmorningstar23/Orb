@@ -1,6 +1,6 @@
 import { lazy, useSyncExternalStore, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react'
 import {
-  hasPermission, PATIENT_WRITE, ROLE_FEATURE, VITALS_TRANSCRIBE, type Permission, type RoleFeatureId,
+  hasPermission, PATIENT_WRITE, ROLE_FEATURE, ROLE_FEATURE_ALSO, VITALS_TRANSCRIBE, type Permission, type RoleFeatureId,
 } from './lib/roles'
 
 /**
@@ -690,6 +690,20 @@ export function isRoleFeatureOn(
 ): boolean {
   const feature = ROLE_FEATURE[normalizeRole(role)]
   return feature === undefined || roleFeatureOn(feature, modules, features)
+}
+
+/** True when User Management may create an account in `role` right now: its
+ *  feature is on, or its ROLE_FEATURE_ALSO switch is (the ward clerk on an
+ *  Orb Ward Record computer, with beds and admissions off). Mirrors the
+ *  server's refusal in routes/admin_users_routes._require_role_switch. */
+export function canStaffRole(
+  role: string | null | undefined,
+  modules: Readonly<Record<HospitalModuleId, boolean>> = currentModuleFlags(),
+  features: Readonly<Record<FeatureFlagId, boolean>> = currentFeatureFlags(),
+  clinical: Readonly<ClinicalSwitches> = currentClinicalSwitches(),
+): boolean {
+  if (isRoleFeatureOn(role, modules, features)) return true
+  return ROLE_FEATURE_ALSO[normalizeRole(role)] === 'ward_record' && clinical.wardRecord
 }
 
 /* ── Tab metadata ─────────────────────────────────────────────────────────── */

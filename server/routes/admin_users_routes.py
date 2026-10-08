@@ -46,7 +46,7 @@ import config
 from auth import get_current_user, hash_password, verify_password
 from database import SERVICE_ACCOUNT_IDS, db_session
 from permissions import DEPARTMENT_REQUIRED_ROLES, has_permission, require_permission
-from roles import ROLE_FEATURE, STORABLE_ROLES
+from roles import STORABLE_ROLES, role_switches
 from services.audit_service import log_audit_event
 
 router = APIRouter(prefix="/api/admin/users", tags=["admin-users"])
@@ -133,8 +133,10 @@ def _validate_role(role: str) -> None:
 _ROLE_SWITCH_OFF_WORDS: dict[str, str] = {
     "receptionist": ("The registration desk is switched off on this site, so a "
                      "receptionist account cannot be created."),
-    "ward_clerk": ("Beds and admissions is switched off on this site, so a ward "
-                   "clerk account cannot be created."),
+    # Either switch lets a ward clerk be staffed (roles.ROLE_FEATURE_ALSO).
+    "ward_clerk": ("Beds and admissions and Orb Ward Record are both switched off "
+                   "on this site. Ward clerks need Beds and admissions or Orb Ward "
+                   "Record switched on."),
     "lab_technician": ("The laboratory module is switched off on this site, so a "
                        "lab technician account cannot be created."),
     "pathologist": ("The laboratory module is switched off on this site, so a "
@@ -150,8 +152,8 @@ def _require_role_switch(role: str) -> None:
     Read at request time, so turning a module on takes effect without a
     restart of this check. An account that already holds the role is not
     touched: this guards creating one, and moving an account into one."""
-    switch = ROLE_FEATURE.get(role)
-    if switch is None or config.switch_enabled(switch):
+    switches = role_switches(role)
+    if not switches or any(config.switch_enabled(s) for s in switches):
         return
     raise HTTPException(
         status_code=400,

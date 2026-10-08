@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from '
 import type { FormEvent } from 'react'
 import { apiFetch } from '../../../api/client'
 import {
+  canStaffRole,
+  currentClinicalSwitches,
   currentFeatureFlags,
   currentModuleFlags,
-  isRoleFeatureOn,
   subscribeModuleFlags,
 } from '../../../shellConfig'
 import { useFocusTrap } from '../../../hooks/useFocusTrap'
@@ -36,7 +37,8 @@ interface UsersResponse {
 // The last five are the HIS roles (migration 48). Each can be created only
 // while its feature is on (server/roles.py ROLE_FEATURE, mirrored in
 // src/lib/roles.ts): the server refuses one whose feature is off, so this list
-// is filtered through `isRoleFeatureOn` before it is offered.
+// is filtered through `canStaffRole` before it is offered. The ward clerk is
+// also offered on an Orb Ward Record computer (ROLE_FEATURE_ALSO).
 const STAFF_ROLES = [
   'doctor', 'nurse', 'admin', 'pharmacist', 'cashier',
   'receptionist', 'ward_clerk', 'lab_technician', 'pathologist', 'phlebotomist',
@@ -65,7 +67,8 @@ const roleLabel = (role: string) => ROLE_LABELS[role] || role
 function useOfferedRoles(keep?: string): string[] {
   const modules = useSyncExternalStore(subscribeModuleFlags, currentModuleFlags)
   const features = useSyncExternalStore(subscribeModuleFlags, currentFeatureFlags)
-  return STAFF_ROLES.filter(r => r === keep || isRoleFeatureOn(r, modules, features))
+  const clinical = useSyncExternalStore(subscribeModuleFlags, currentClinicalSwitches)
+  return STAFF_ROLES.filter(r => r === keep || canStaffRole(r, modules, features, clinical))
 }
 
 // Mirrors permissions.DEPARTMENT_REQUIRED_ROLES: for these a blank department

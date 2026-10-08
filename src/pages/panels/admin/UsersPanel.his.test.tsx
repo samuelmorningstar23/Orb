@@ -17,7 +17,9 @@ vi.mock('../../../api/client', () => ({
 }))
 
 import UsersPanel from './UsersPanel'
-import { resetFeatureFlags, resetModuleFlags, setFeatureFlags, setModuleFlags } from '../../../shellConfig'
+import {
+  resetClinicalSwitches, resetFeatureFlags, resetModuleFlags, setClinicalSwitches, setFeatureFlags, setModuleFlags,
+} from '../../../shellConfig'
 
 const ADMIN = { id: 'ADM001', name: 'Asha Admin', role: 'admin', department: null, is_active: true, totp_enabled: true, is_self: true }
 const CLERK = { id: 'WC001', name: 'Wanda Clerk', role: 'ward_clerk', department: 'Cardiology', is_active: true, totp_enabled: false, is_self: false }
@@ -47,11 +49,13 @@ beforeEach(() => {
   apiFetch.mockReset()
   resetModuleFlags()
   resetFeatureFlags()
+  resetClinicalSwitches()
 })
 
 afterEach(() => {
   resetModuleFlags()
   resetFeatureFlags()
+  resetClinicalSwitches()
 })
 
 describe('the role picker offers a HIS role only while its feature is on', () => {
@@ -84,6 +88,13 @@ describe('the role picker offers a HIS role only while its feature is on', () =>
     setFeatureFlags({ registration: true })
     const { roleSelect } = await openCreate()
     expect(optionLabels(roleSelect)).toContain('Receptionist')
+  })
+
+  it('offers the ward clerk on an Orb Ward Record computer with Beds off, and no other HIS role', async () => {
+    serve([ADMIN])
+    setClinicalSwitches({ ward_record: true })
+    const { roleSelect } = await openCreate()
+    expect(optionValues(roleSelect)).toEqual(['doctor', 'nurse', 'admin', 'pharmacist', 'cashier', 'ward_clerk'])
   })
 
   it('follows the switch live, when the health answer lands after the panel opened', async () => {

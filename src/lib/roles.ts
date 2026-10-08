@@ -160,6 +160,17 @@ export const ROLE_FEATURE: Readonly<Partial<Record<string, RoleFeatureId>>> = {
   phlebotomist: 'lab',
 }
 
+/**
+ * A role that may ALSO be staffed while a second switch is on (mirror of
+ * server/roles.py ROLE_FEATURE_ALSO). The ward clerk can be made on an Orb
+ * Ward Record computer (the 'ward_record' clinical switch on /api/health) with
+ * beds and admissions off: the profile is sold around her copying the paper
+ * rounds. Any one switch on is enough (shellConfig.canStaffRole).
+ */
+export const ROLE_FEATURE_ALSO: Readonly<Partial<Record<string, 'ward_record'>>> = {
+  ward_clerk: 'ward_record',
+}
+
 /** Mirror of the server's role→permission map, restricted to the permissions
  *  above. A role absent from this table holds none of them — which is the right
  *  reading of an unknown role, because the server maps it to an empty set too

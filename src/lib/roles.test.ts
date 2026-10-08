@@ -50,6 +50,7 @@ import {
   REGISTRATION_WRITE,
   RELAY_EXECUTE_ACTION,
   ROLE_FEATURE,
+  ROLE_FEATURE_ALSO,
   SCHEDULE_MANAGE,
   WARD_INDENT_RAISE,
   WARD_RETURN_RECORD,
@@ -198,6 +199,16 @@ describe('the HIS mirror matches the server source', () => {
       Array.from(block![1].matchAll(/"([a-z_]+)":\s*"([a-z_-]+)"/g), m => [m[1], m[2]]),
     )
     expect(server).toEqual({ ...ROLE_FEATURE })
+  })
+
+  it('ROLE_FEATURE_ALSO is server/roles.py ROLE_FEATURE_ALSO, entry for entry', () => {
+    const roles = serverSource('roles.py')
+    const block = roles.match(/^ROLE_FEATURE_ALSO: dict\[str, str\] = \{([\s\S]*?)^\}/m)
+    expect(block, 'server/roles.py has no ROLE_FEATURE_ALSO block').toBeTruthy()
+    const server = Object.fromEntries(
+      Array.from(block![1].matchAll(/"([a-z_]+)":\s*"([a-z_-]+)"/g), m => [m[1], m[2]]),
+    )
+    expect(server).toEqual({ ...ROLE_FEATURE_ALSO })
   })
 
   it('every HIS role is a stored role on the server', () => {

@@ -85,6 +85,27 @@ ROLE_FEATURE: dict[str, str] = {
     "phlebotomist": "lab",
 }
 
+# A role that may ALSO be staffed while a second switch is on, whatever its
+# ROLE_FEATURE switch says. The ward clerk's home is beds and admissions
+# ('adt'), but Orb Ward Record (ORB_WARD_RECORD, SALES_PLAN_2026-10.md section
+# 3, step 2) is sold around her copying the paper rounds, and her Observations
+# tab works with ORB_ADT off. 'ward_record' is a profile switch id that
+# config.switch_enabled() understands. Strings only, as above.
+ROLE_FEATURE_ALSO: dict[str, str] = {
+    "ward_clerk": "ward_record",
+}
+
+
+def role_switches(role: str) -> tuple[str, ...]:
+    """Every switch that lets this role be staffed: its ROLE_FEATURE switch and
+    any ROLE_FEATURE_ALSO switch. Any one of them on is enough. Empty for a
+    role that needs no switch."""
+    first = ROLE_FEATURE.get(role)
+    if first is None:
+        return ()
+    also = ROLE_FEATURE_ALSO.get(role)
+    return (first, also) if also else (first,)
+
 
 def role_check_sql() -> str:
     """The users.role CHECK's IN-list, rendered identically at every site."""

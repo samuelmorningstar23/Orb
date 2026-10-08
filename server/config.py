@@ -1241,12 +1241,20 @@ def feature_flags() -> dict[str, bool]:
     return {f: feature_enabled(f) for f in FEATURE_FLAGS}
 
 
+# A deployment profile a role may be staffed under (roles.ROLE_FEATURE_ALSO):
+# switch id -> the constant that holds it, read at call time so a test that
+# patches the constant is seen. Never a module id or a feature id.
+PROFILE_SWITCHES = {"ward_record": "WARD_RECORD"}
+
+
 def switch_enabled(switch_id: str) -> bool:
-    """A feature id or a module id (default-on or opt-in), one question. Used by
-    roles.ROLE_FEATURE. An id that is neither is off: a typo must not unlock a
-    role."""
+    """A feature id, a module id (default-on or opt-in) or a profile id, one
+    question. Used by roles.ROLE_FEATURE and roles.ROLE_FEATURE_ALSO. An id
+    that is none of these is off: a typo must not unlock a role."""
     if switch_id in FEATURE_FLAGS:
         return feature_enabled(switch_id)
+    if switch_id in PROFILE_SWITCHES:
+        return bool(globals().get(PROFILE_SWITCHES[switch_id], False))
     return bool(enabled_modules().get(switch_id, False))
 
 
