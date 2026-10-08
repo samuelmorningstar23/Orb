@@ -112,6 +112,9 @@ def get_weekly_schedule(surgeon_id: str, days: int = 14) -> list:
             (surgeon_id, today.isoformat(), end_date.isoformat()),
         ).fetchall()
 
+    from services.vigil_service import scoring_enabled
+    scoring = scoring_enabled()
+
     # Group by date
     grouped: dict = {}
     day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -140,8 +143,10 @@ def get_weekly_schedule(surgeon_id: str, days: int = 14) -> list:
             "estimated_duration_min": r["estimated_duration_min"],
             "operating_room": r["operating_room"],
             "status": r["status"],
-            "risk_level": r["risk_level"] or "stable",
-            "risk_score": r["risk_score"],
+            # Scoring switched off (ORB_SCORING_ENABLED, the Orb Ward Record):
+            # no band, not the band stored before the switch and not "stable".
+            "risk_level": (r["risk_level"] or "stable") if scoring else None,
+            "risk_score": r["risk_score"] if scoring else None,
             "success_probability": r["success_probability"],
         })
 
@@ -169,6 +174,9 @@ def get_surgery_detail(surgery_id: str) -> dict:
 
         if not row:
             return None
+
+        from services.vigil_service import scoring_enabled
+        scoring = scoring_enabled()
 
         # Parse JSON fields
         def _parse_json(val, default=None):
@@ -228,9 +236,12 @@ def get_surgery_detail(surgery_id: str) -> dict:
             "risk_assessment": row["risk_assessment"],
             "possible_complications": _parse_json(row["possible_complications"]),
             "success_probability": row["success_probability"],
-            "risk_level": row["risk_level"] or "stable",
-            "risk_score": row["risk_score"],
-            "risk_drivers": _parse_json(row["risk_drivers"]),
+            # Scoring switched off: no band, score or drivers stored before the
+            # switch, so the case, its prep message and the assessment prompt
+            # name none (the prompt then reads "not recorded").
+            "risk_level": (row["risk_level"] or "stable") if scoring else None,
+            "risk_score": row["risk_score"] if scoring else None,
+            "risk_drivers": _parse_json(row["risk_drivers"]) if scoring else [],
             "notes": row["notes"],
             "imported_context": imported_context,
         }

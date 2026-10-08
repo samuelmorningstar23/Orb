@@ -513,3 +513,33 @@ def test_the_temporal_state_names_no_stored_band_with_scoring_off(monkeypatch):
     r = client.get(f"/api/sage/world/patient/{pid}", headers=_auth(doctor, "doctor"))
     assert r.status_code == 200, r.text
     assert "critical" not in r.text
+
+
+# ── Review, 9 October 2026: the Surgical Suite case ─────────────────────────
+# The surgeon's week and the case detail (which the prep message and the
+# assessment prompt read) carried the band stored before the switch, or
+# "stable" when there was none.
+
+def test_a_surgery_case_carries_no_stored_band_with_scoring_off(monkeypatch):
+    from services.surgery_service import get_surgery_detail, get_weekly_schedule
+    pid = _patient("SOF-SURG")
+    surgeon = _user("doctor")
+    sid = f"SOFS{uuid.uuid4().hex[:8].upper()}"
+    with db_session() as db:
+        db.execute(
+            """INSERT INTO surgeries (id, patient_id, surgeon_id, procedure_name, diagnosis,
+                                      scheduled_date, scheduled_time, status)
+               VALUES (?, ?, ?, 'Laparotomy', 'Perforation', ?, '09:00', 'scheduled')""",
+            (sid, pid, surgeon, datetime.now(timezone.utc).date().isoformat()))
+
+    def _week():
+        return [s for day in get_weekly_schedule(surgeon, days=2) for s in day["surgeries"]
+                if s["id"] == sid]
+
+    _scoring(monkeypatch, True)
+    assert [s["risk_level"] for s in _week()] == ["critical"]
+    assert MARKER in get_surgery_detail(sid)["risk_drivers"]
+    _scoring(monkeypatch, False)
+    assert [(s["risk_level"], s["risk_score"]) for s in _week()] == [(None, None)]
+    detail = get_surgery_detail(sid)
+    assert (detail["risk_level"], detail["risk_score"], detail["risk_drivers"]) == (None, None, [])
