@@ -118,3 +118,20 @@ def test_a_page_with_no_script_gets_the_switches_in_its_head():
     page = main.spa_index_with_switches("<html><head><title>Orb</title></head></html>",
                                         {"clinical": {}, "modules": {}, "features": {}})
     assert page.index("__ORB_SWITCHES__") < page.index("</head>")
+
+
+def test_a_rebuild_while_the_server_runs_serves_the_new_page(monkeypatch, tmp_path):
+    # npm run build empties dist/ and deletes the old hashed chunks. A copy of
+    # index.html held for the life of the process would keep naming chunks that
+    # are gone, so every screen would load blank until a restart.
+    monkeypatch.setattr(main, "_DIST_DIR", tmp_path)
+    monkeypatch.setattr(main, "_SPA_INDEX_TEXT", None)
+    monkeypatch.setattr(main, "_SPA_INDEX_STAMP", None)
+    index = tmp_path / "index.html"
+    index.write_text('<html><head><script type="module" src="/assets/index-OLD.js"></script></head></html>')
+    first = main._spa_index_response().body.decode()
+    assert "index-OLD.js" in first and "__ORB_SWITCHES__" in first
+    index.write_text('<html><head><script type="module" src="/assets/index-NEW-BUILD.js"></script></head></html>')
+    second = main._spa_index_response().body.decode()
+    assert "index-NEW-BUILD.js" in second and "index-OLD.js" not in second
+    assert "__ORB_SWITCHES__" in second

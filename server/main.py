@@ -1670,16 +1670,27 @@ def spa_index_with_switches(html: str, switches: dict) -> str:
 
 
 _SPA_INDEX_TEXT: str | None = None
+# The (modified time, size) of the index.html read into _SPA_INDEX_TEXT. A
+# rebuild while the server runs (npm run build empties dist/) replaces the file
+# and deletes the old hashed chunks; a copy held for the life of the process
+# would keep naming chunks that are gone, and every screen would load blank
+# until a restart. The file is read again only when it changed.
+_SPA_INDEX_STAMP: tuple[int, int] | None = None
 
 
 def _spa_index_response():
-    """index.html for this request: the file is read once per process, the
-    switches are written in per request. Never a 304, so a browser cannot keep
-    a page that carries switches from before a restart."""
-    global _SPA_INDEX_TEXT
+    """index.html for this request: the file is read once per build (again
+    only when it changes on disk), the switches are written in per request.
+    Never a 304, so a browser cannot keep a page that carries switches from
+    before a restart."""
+    global _SPA_INDEX_TEXT, _SPA_INDEX_STAMP
     from starlette.responses import HTMLResponse
-    if _SPA_INDEX_TEXT is None:
-        _SPA_INDEX_TEXT = (_DIST_DIR / "index.html").read_text(encoding="utf-8")
+    index = _DIST_DIR / "index.html"
+    stat_now = index.stat()
+    stamp = (stat_now.st_mtime_ns, stat_now.st_size)
+    if _SPA_INDEX_TEXT is None or _SPA_INDEX_STAMP != stamp:
+        _SPA_INDEX_TEXT = index.read_text(encoding="utf-8")
+        _SPA_INDEX_STAMP = stamp
     return HTMLResponse(spa_index_with_switches(_SPA_INDEX_TEXT, spa_switches()),
                         headers={"Cache-Control": "no-cache"})
 
