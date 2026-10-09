@@ -98,6 +98,31 @@ describe('OfflineBanner', () => {
     expect(text).toMatch(/no saved copy|nothing saved/i)
   })
 
+  it('says nothing during a first load on a connected device, which is not offline', () => {
+    // useOfflineSnapshot returns source none, online, not unreachable while the
+    // first answer is on its way. The banner used to say Offline, not live there,
+    // so it flashed on every sign in and reload.
+    const { container } = render(
+      <OfflineBanner
+        snapshot={snapshot({ data: null, source: 'none', online: true, unreachable: false })}
+        what="ward board"
+      />,
+    )
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it('still says the server cannot be reached when a connected device has nothing saved', () => {
+    render(
+      <OfflineBanner
+        snapshot={snapshot({ data: null, source: 'none', online: true, unreachable: true })}
+        what="ward board"
+      />,
+    )
+    const text = screen.getByRole('alert').textContent ?? ''
+    expect(text).toMatch(/can'?t reach|cannot reach/i)
+    expect(text).toMatch(/no saved copy|nothing saved/i)
+  })
+
   it('reads the age in hours once a copy is old enough to be dangerous', () => {
     render(
       <OfflineBanner

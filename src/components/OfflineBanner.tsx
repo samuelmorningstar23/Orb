@@ -66,7 +66,12 @@ export default function OfflineBanner({ snapshot, what, onRetry }: Props) {
 
   // Re-render on a slow tick so the age stays true while a nurse stands
   // looking at it. Only while degraded — a live view has nothing to age.
-  const degraded = source !== 'live'
+  // Connected, not failing and nothing yet is a first load in progress, which
+  // useOfflineSnapshot returns as source 'none'. It is not offline: saying
+  // Offline, not live there flashed the banner on every sign in and reload
+  // until the first answer came back (seen in a browser, 9 October 2026).
+  const loading = source === 'none' && snapshot.online && !unreachable
+  const degraded = source !== 'live' && !loading
   const now = useNow(TICK_MS, degraded)
 
   if (!degraded) return null
