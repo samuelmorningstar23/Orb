@@ -75,7 +75,7 @@
     "vigil": "Patients and their vitals"
   },
   "subtitleWardRecord": {
-    "shift": "Ward tasks, observations and medication round"
+    "shift": "Ward tasks and observations"
   },
   "shell": {
     "admitPatient": "Admit Patient",

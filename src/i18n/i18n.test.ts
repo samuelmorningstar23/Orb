@@ -37,6 +37,15 @@ describe('i18n', () => {
     }
   })
 
+  it('the Orb Ward Record shift line names no medication round, in English or Hindi', async () => {
+    // Orb Ward Record has no medication round (the eMAR is switched off), so
+    // the line under the nurse's My Shift title must not offer one.
+    expect(i18n.t('subtitleWardRecord.shift')).not.toMatch(/medication|medicine|dose|drug/i)
+    await i18n.changeLanguage('hi')
+    expect(i18n.t('subtitleWardRecord.shift')).not.toBe('subtitleWardRecord.shift')
+    expect(i18n.t('subtitleWardRecord.shift')).not.toMatch(/दवा/)
+  })
+
   it('persists the chosen language to localStorage', async () => {
     await i18n.changeLanguage('hi')
     expect(localStorage.getItem(LANGUAGE_STORAGE_KEY)).toBe('hi')
