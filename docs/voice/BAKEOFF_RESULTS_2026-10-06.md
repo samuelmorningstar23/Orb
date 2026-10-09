@@ -20,6 +20,10 @@ used. The raw per-clip results and summaries are in that folder under
   names the best local model still gets about 1 in 5 wrong. The published
   cloud medical models are roughly twice as good on the same keywords (vendor
   numbers, and our scoring is not yet the same as theirs).
+  **Corrected 9 October:** scored with Eka's own method, Qwen3-ASR 8-bit gets
+  8.1% keyword error against Deepgram's 7.65%, and 7.2% with a short drug
+  list. The "twice as good" came from my stricter scoring. See
+  `BAKEOFF_FOLLOWUPS_2026-10-09.md`.
 - **Nothing passes the plan's gates for notes or orders yet.** Sage questions
   are close. The next experiment is biasing the recogniser with the hospital's
   formulary, which is the one lever that targets drug names directly.
