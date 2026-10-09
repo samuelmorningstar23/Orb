@@ -115,6 +115,7 @@ vi.mock('./panels/NabhPanel.tsx', () => marker('nabh'))
 vi.mock('./panels/AbdmPanel.tsx', () => marker('abdm'))
 
 import ClinicianShell from './ClinicianShell'
+import { markSwitchesKnownForTests } from '../shellConfig'
 import {
   getAccessibleTabs, HOSPITAL_MODULE_IDS, OPT_IN_MODULE_IDS, hospitalModuleInstalled, currentModuleFlags, isOptInModule,
 } from '../shellConfig'
@@ -154,6 +155,11 @@ function mountedPanel(container: HTMLElement, id: string) {
     text: panel?.textContent?.trim() ?? '',
   }
 }
+
+// These screens render before any health probe answers. The switches count
+// as known, as on a page the server served; the startup rule itself is
+// tested in ClinicianShell.startup.test.tsx.
+beforeEach(() => { markSwitchesKnownForTests() })
 
 describe('the shell mounts every tab its rail advertises', () => {
   beforeEach(() => {

@@ -3,6 +3,7 @@ import ModuleOffNotice from '../components/ModuleOffNotice'
 import {
   currentFeatureFlags,
   currentHealthProbe,
+  currentSwitchesSource,
   refreshModuleFlags,
   subscribeModuleFlags,
   type ModuleOffState,
@@ -31,12 +32,18 @@ import {
 export default function OpdTokenBoard() {
   const features = useSyncExternalStore(subscribeModuleFlags, currentFeatureFlags)
   const probe = useSyncExternalStore(subscribeModuleFlags, currentHealthProbe)
+  const source = useSyncExternalStore(subscribeModuleFlags, currentSwitchesSource)
 
   useEffect(() => { void refreshModuleFlags() }, [])
 
+  /* The board draws no rail and no score, and its notice never guesses: it
+     says 'checking' until the switches are known and 'unreachable' when the
+     probe fails, so it needs no SwitchesGate. When the page carried the
+     switches (9 October 2026) they are the server's answer already, and the
+     board says 'off' on its first render instead of 'checking'. */
   const state: ModuleOffState = features.opd === true
     ? 'unavailable'
-    : probe === 'pending' ? 'checking' : probe === 'failed' ? 'unreachable' : 'off'
+    : probe === 'pending' && source !== 'page' ? 'checking' : probe === 'failed' ? 'unreachable' : 'off'
 
   return (
     <main

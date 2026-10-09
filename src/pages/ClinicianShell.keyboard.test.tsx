@@ -87,6 +87,7 @@ vi.mock('./panels/NabhPanel.tsx', () => marker('nabh'))
 vi.mock('./panels/AbdmPanel.tsx', () => marker('abdm'))
 
 import ClinicianShell from './ClinicianShell'
+import { markSwitchesKnownForTests } from '../shellConfig'
 import { HOSPITAL_MODULE_IDS, isOptInModule } from '../shellConfig'
 
 async function renderShell() {
@@ -112,6 +113,11 @@ afterEach(() => {
   cleanup()
   document.body.style.overflow = ''
 })
+
+// These screens render before any health probe answers. The switches count
+// as known, as on a page the server served; the startup rule itself is
+// tested in ClinicianShell.startup.test.tsx.
+beforeEach(() => { markSwitchesKnownForTests() })
 
 describe('with no dialog open, the shell leaves the keyboard alone', () => {
   it('lets Tab through to the browser so focus can move between fields', async () => {

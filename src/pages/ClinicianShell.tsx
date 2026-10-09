@@ -27,7 +27,6 @@ import {
   currentFeatureFlags,
   currentHealthProbe,
   currentModuleFlags,
-  refreshModuleFlags,
   subscribeModuleFlags,
   switchedOffTab,
   useClinicalSwitches,
@@ -37,6 +36,7 @@ import {
 } from '../shellConfig'
 import ModuleOffNotice from '../components/ModuleOffNotice'
 import NotInWardRecord from '../components/NotInWardRecord'
+import SwitchesGate from '../components/SwitchesGate'
 import SageFloatingAssistant from '../components/sage/SageFloatingAssistant'
 import CommandPalette from '../components/CommandPalette'
 import KeyboardShortcuts from '../components/KeyboardShortcuts'
@@ -173,7 +173,17 @@ function ViewTabSync({ activeTab }: { activeTab: string }) {
   return null
 }
 
+/* No rail item, panel or score is drawn on a guess (Samuel's ruling, 9
+   October 2026: fix the startup flash). SwitchesGate draws the neutral frame
+   until the computer's switches are known, from the page, the probe or the
+   copy this browser saved, and asks /api/health itself, once per mount, as
+   this shell used to. The shell below therefore mounts with the right
+   switches, so its landing tab is the right one from the first render. */
 export default function ClinicianShell() {
+  return <SwitchesGate><ClinicianShellBody /></SwitchesGate>
+}
+
+function ClinicianShellBody() {
   const { user, logout } = useAuth()
   const { t, i18n } = useTranslation()
   /* The rail is derived from the module and feature flags, which /api/health
@@ -189,7 +199,6 @@ export default function ClinicianShell() {
   /* The Orb Ward Record profile and the models switch take tabs off the rail
      too, so the rail re-derives when the probe reports them. */
   const clinical = useClinicalSwitches()
-  useEffect(() => { void refreshModuleFlags() }, [])
   /* One role input, one answer: everything role-dependent in this component
      comes through shellConfig. `user.role` must not appear in the JSX below —
      that rule is what stops the flag drift this file was refactored out of

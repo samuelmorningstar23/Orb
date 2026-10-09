@@ -23,6 +23,7 @@ vi.mock('../api/downtime', () => ({
 }))
 
 import DowntimeMode from './DowntimeMode'
+import { markSwitchesKnownForTests } from '../shellConfig'
 
 function renderPage() {
   return render(
@@ -77,6 +78,11 @@ async function spo2Label(): Promise<string> {
   const value = await screen.findByText('90%')
   return value.parentElement!.querySelector('.dt-vital__k')!.textContent ?? ''
 }
+
+// These screens render before any health probe answers. The switches count
+// as known, as on a page the server served; the startup rule itself is
+// tested in ClinicianShell.startup.test.tsx.
+beforeEach(() => { markSwitchesKnownForTests() })
 
 describe('the SpO₂ scale on the downtime page', () => {
   it('marks the badge and the SpO₂ label for a Scale 2 patient', async () => {

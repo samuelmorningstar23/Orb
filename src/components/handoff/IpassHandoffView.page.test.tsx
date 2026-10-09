@@ -19,6 +19,7 @@ vi.mock('../../api/ipass', () => ({
 
 import IpassHandoffView from './IpassHandoffView'
 import HandoffPage from '../../pages/HandoffPage'
+import { markSwitchesKnownForTests } from '../../shellConfig'
 
 const DRAFT = {
   patient_id: 'P-TEST-1',
@@ -58,6 +59,11 @@ beforeEach(() => {
   prepareReasonedAssessment.mockResolvedValue({ status: 'disabled', assessment: null })
   document.title = 'Orb'
 })
+
+// These screens render before any health probe answers. The switches count
+// as known, as on a page the server served; the startup rule itself is
+// tested in ClinicianShell.startup.test.tsx.
+beforeEach(() => { markSwitchesKnownForTests() })
 
 describe('the browser tab title', () => {
   it('names the patient and bed on the handoff page, and restores on leaving', async () => {

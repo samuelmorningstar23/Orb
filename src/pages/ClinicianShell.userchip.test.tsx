@@ -53,6 +53,12 @@ vi.mock('../components/vigil/PatientStory', () => ({ default: () => null }))
 vi.mock('../components/ClinicalCourseTimeline', () => ({ ClinicalCourseTimeline: () => null }))
 
 import ClinicianShell from './ClinicianShell'
+import { markSwitchesKnownForTests } from '../shellConfig'
+
+// These screens render before any health probe answers. The switches count
+// as known, as on a page the server served; the startup rule itself is
+// tested in ClinicianShell.startup.test.tsx.
+beforeEach(() => { markSwitchesKnownForTests() })
 
 describe('ClinicianShell sidebar user chip (§2.7)', () => {
   beforeEach(() => {

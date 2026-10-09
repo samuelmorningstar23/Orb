@@ -23,6 +23,7 @@ vi.mock('../api/downtime', () => ({
 }))
 
 import DowntimeMode from './DowntimeMode'
+import { markSwitchesKnownForTests } from '../shellConfig'
 
 const BASE = {
   schema_version: 1,
@@ -77,6 +78,11 @@ beforeEach(() => {
   getLatestSnapshot.mockReset()
   document.title = 'Orb'
 })
+
+// These screens render before any health probe answers. The switches count
+// as known, as on a page the server served; the startup rule itself is
+// tested in ClinicianShell.startup.test.tsx.
+beforeEach(() => { markSwitchesKnownForTests() })
 
 describe('schema 2 sections', () => {
   it('shows code status, the open escalation, labs and chart notes', async () => {
