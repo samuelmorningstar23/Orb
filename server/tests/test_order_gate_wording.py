@@ -1,0 +1,186 @@
+"""Sage's pre-model order gate reads the ways a ward round actually types an order.
+
+`detect_mutation_intent` decides, before any model runs, that a turn is an order:
+the turn is then buffered and the action-state override shows a drafted request
+or the unsupported-action message instead of the model's prose. Until 9 October
+2026 it read only orders whose verb came first, so "bed 13 give lasix 40 iv",
+"inj lasix 40 iv stat" and "lasix 40 iv de do" went to the model ungated, and a
+model that narrated the order ("Done. Furosemide 40 mg IV has been given and the
+order is placed.") was shown as written. The corpus and Samuel's three rulings of
+that day are in tests/order_gate_corpus.py.
+"""
+import json
+import time
+from unittest import mock
+
+import pytest
+
+from services.sage_service import detect_mutation_intent
+from tests import order_gate_corpus as c
+
+
+def _rows(families):
+    return [(fam, q) for fam, rows in families.items() for q in rows]
+
+
+# ── Orders ────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("family,query", _rows(c.HAND_ORDERS))
+def test_hand_built_orders_reach_the_gate(family, query):
+    assert detect_mutation_intent(query) is True, f"[{family}] {query!r}"
+
+
+@pytest.mark.parametrize("query", c.REVIEWER_ORDERS)
+def test_the_reviewers_ward_round_orders_reach_the_gate(query):
+    assert detect_mutation_intent(query) is True
+
+
+@pytest.mark.parametrize("query", c.POLITE_QUESTION_MARK_ORDERS)
+def test_a_polite_order_with_a_question_mark_is_still_an_order(query):
+    """Ruling 3 keeps the request marker ahead of the question mark."""
+    assert detect_mutation_intent(query) is True
+
+
+# ── Reads ─────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("family,query", _rows(c.HAND_READS))
+def test_hand_built_reads_are_not_orders(family, query):
+    assert detect_mutation_intent(query) is False, f"[{family}] {query!r}"
+
+
+@pytest.mark.parametrize("query", c.REVIEWER_QUESTIONS)
+def test_the_reviewers_realistic_questions_are_not_orders(query):
+    assert detect_mutation_intent(query) is False
+
+
+@pytest.mark.parametrize("query", c.QUESTION_MARK_PROPOSALS)
+def test_a_proposal_ending_in_a_question_mark_is_a_question(query):
+    """Ruling 3, 9 October 2026: "start metoprolol 25?" asks for judgement."""
+    assert detect_mutation_intent(query) is False
+
+
+@pytest.mark.parametrize("query", c.NOT_ORDERS_BY_RULING + c.REVIEWER_WORK_REQUESTS)
+def test_continue_plans_and_work_requests_stay_outside_the_gate(query):
+    assert detect_mutation_intent(query) is False
+
+
+def test_one_report_word_stops_a_prescription_line():
+    """Every verbless order line, wrapped in a report or a question, is a read.
+
+    Ruling 2 makes a bare line an order; this is the bound on it. A status line
+    carries a word the line has no use for ("on", "given", "running", "day 3"),
+    and that word alone must be enough.
+    """
+    lines = (c.HAND_ORDERS["drug-first, no verb"] + c.HAND_ORDERS["bed-first, no verb"])
+    tripped = [w.format(x=x) for x in lines for w in c.REPORT_WRAPPERS
+               if detect_mutation_intent(w.format(x=x))]
+    assert tripped == [], f"{len(tripped)} of {len(lines) * len(c.REPORT_WRAPPERS)}: {tripped[:10]}"
+
+
+# ── The blind sets ────────────────────────────────────────────────────────────
+# Rows the gate is known to miss are listed, so a row it used to catch and now
+# misses fails here; a known miss it starts catching is reported, not failed.
+
+BLIND_SETS = sorted(int(name[len("HELDOUT")]) for name in dir(c)
+                    if name.startswith("HELDOUT") and name.endswith("_ORDERS"))
+
+
+@pytest.mark.parametrize("n", BLIND_SETS)
+def test_blind_orders_caught_stay_caught(n):
+    orders, known = getattr(c, f"HELDOUT{n}_ORDERS"), getattr(c, f"KNOWN_MISSES_HELDOUT{n}")
+    missed = [q for q in orders if not detect_mutation_intent(q)]
+    assert sorted(set(missed) - set(known)) == []
+
+
+@pytest.mark.parametrize("n", BLIND_SETS)
+def test_blind_reads_are_not_orders(n):
+    reads, known = getattr(c, f"HELDOUT{n}_READS"), getattr(c, f"KNOWN_TRIPS_HELDOUT{n}")
+    tripped = [q for q in reads if detect_mutation_intent(q)]
+    assert sorted(set(tripped) - set(known)) == []
+
+
+def test_every_brand_the_name_matcher_knows_is_a_drug_to_the_gate():
+    """sage_service._BRAND_FLOOR lists brands that are never a patient's name.
+    Each is a drug, so the gate must read "stop the glycomet" as an order."""
+    from services import sage_service
+    unknown = sorted(b for b in sage_service._BRAND_FLOOR if not sage_service._is_gate_drug(b))
+    assert unknown == []
+    for brand in sorted(sage_service._BRAND_FLOOR):
+        assert detect_mutation_intent(f"stop the {brand}") is True, brand
+
+
+# ── Cost ──────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("text", [
+    "lasix 40 iv bd " * 35000,
+    "the patient is stable and comfortable today " * 12000,
+    "bed 13 " + "give lasix 40 iv and " * 25000,
+])
+def test_a_512_kb_message_costs_no_more_than_the_old_gate_did(text):
+    """The gate runs on the event loop. The old gate took up to ~0.2 s on 512 KB
+    here; the new checks are length-capped, so they add little on top of it."""
+    t = time.perf_counter()
+    detect_mutation_intent(text)
+    assert time.perf_counter() - t < 1.0
+
+
+# ── End to end: the narration no longer reaches the screen ───────────────────
+
+NARRATION = "NOACT|Done. Furosemide 40 mg IV has been given and the order is placed."
+
+
+def _narrating_model(prompt, context="", conversation_history=None, scope="simple", **kwargs):
+    """A model that ignores the order contract and says it gave the drug."""
+    async def gen():
+        info = kwargs.get("route_info")
+        if info is not None:
+            info.update(lane="local", provider="ollama", model="test")
+        yield NARRATION
+    return gen()
+
+
+def _shown(resp_text):
+    events = []
+    for frame in resp_text.split("\n\n"):
+        frame = frame.strip()
+        if frame.startswith("data: "):
+            try:
+                events.append(json.loads(frame[6:]))
+            except json.JSONDecodeError:
+                pass
+    return [e["content"] for e in events if "content" in e]
+
+
+def _no_patient_found(query, user, patient_id=None, history=None, *a, **kw):
+    """Retrieval with nobody matched. The route refuses a bed that another test
+    left in another department before any model runs ("That patient is outside
+    your department"), which is right, but is not what this test is about."""
+    return ("", "simple", [], "high", False, None, "GENERAL_MEDICAL")
+
+
+@pytest.mark.parametrize("query", [
+    "bed 13 give lasix 40 iv",
+    "13 give lasix 40 iv",
+    "bed 12: lasix 40 iv stat",
+    "lasix 40 iv bd for bed 12",
+    "inj lasix 40 iv stat",
+    "lasix 40 iv de do",
+])
+def test_a_narrated_order_is_replaced_by_the_safe_message(query):
+    from fastapi.testclient import TestClient
+    with mock.patch("config.INGESTION_MODE", "hybrid"):
+        from main import app
+    import routes.sage_routes as sage_routes
+    from services.helix_db import init_helix_db
+
+    init_helix_db()
+    client = TestClient(app)
+    token = client.post("/api/auth/login",
+                        json={"employee_id": "D001", "password": "password"}).json()["token"]
+    with mock.patch.object(sage_routes, "query_ollama", _narrating_model), \
+         mock.patch.object(sage_routes, "get_relevant_context", _no_patient_found):
+        r = client.post("/api/sage/query", headers={"Authorization": f"Bearer {token}"},
+                        json={"query": query})
+    assert r.status_code == 200, r.text
+    shown = _shown(r.text)
+    assert shown == [sage_routes.CHART_MUTATION_SAFE_MESSAGE], shown

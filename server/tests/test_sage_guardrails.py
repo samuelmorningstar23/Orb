@@ -119,7 +119,6 @@ POLITE_AND_EMBEDDED_ORDERS = [
     "for Mr Sharma in bed 3, stop the heparin",
     "he is bleeding, stop the heparin",
     "The patient is bleeding. Stop the heparin.",
-    "stop the heparin?",  # terse order that happens to carry a question mark
 ]
 
 # Passive / deontic orders scoped to THIS patient.
@@ -186,6 +185,9 @@ QUESTIONS_ABOUT_STOPPING = [
     "how long before surgery do we hold the warfarin",
     "would you stop heparin here?",
     "when do you discontinue the metoprolol",
+    # Was a "terse order" from 31 July. Samuel's ruling of 9 October 2026: a
+    # trailing "?" asks unless the message is polite (tests/order_gate_corpus.py).
+    "stop the heparin?",
 ]
 
 # Dosing / pharmacology questions — the brief's other two named cases.
@@ -321,16 +323,18 @@ def clean_formulary():
 
 
 def test_brand_names_are_missed_until_the_formulary_is_registered(clean_formulary):
-    """The built-in lexicon is international generics. Indian ward brand names
-    (Dolo = paracetamol, Monocef = ceftriaxone) are only reachable through the
-    hospital's own helix_medication_master catalogue."""
-    assert detect_mutation_intent("stop the Dolo") is False
-    assert detect_mutation_intent("hold the Monocef") is False
+    """The built-in lexicon is international generics plus the common ward brands
+    (services/order_wording.WARD_DRUG_NAMES, which since 9 October 2026 has Dolo
+    and Monocef). Any other brand (Zinetac = ranitidine, Sporlac = a probiotic)
+    is only reachable through the hospital's own helix_medication_master
+    catalogue."""
+    assert detect_mutation_intent("stop the Zinetac") is False
+    assert detect_mutation_intent("hold the Sporlac") is False
 
-    register_formulary_terms(["Dolo 650mg Tablet", "Monocef 1g Injection"])
+    register_formulary_terms(["Zinetac 150mg Tablet", "Sporlac Tablet"])
 
-    assert detect_mutation_intent("stop the Dolo") is True
-    assert detect_mutation_intent("hold the Monocef") is True
+    assert detect_mutation_intent("stop the Zinetac") is True
+    assert detect_mutation_intent("hold the Sporlac") is True
 
 
 def test_formulary_terms_do_not_break_the_question_side(clean_formulary):

@@ -21,6 +21,7 @@ from services.audit_service import log_audit_event
 from services.vital_charting import charted_text
 from services.news2_text import INCOMPLETE as _NEWS2_INCOMPLETE, news2_description
 from services.ward_reference import ward_named_in
+from services import order_wording
 
 logger = logging.getLogger("orb.sage")
 
@@ -639,7 +640,7 @@ def _classify_risk_level(query: str) -> str:
 #          the model ("A QUESTION IS NEVER AN ACTION … 'Should I start
 #          hydrocortisone?' is NOACT"), enforced deterministically.
 #   3. IMPERATIVE form — a mutation verb at a CLAUSE HEAD (start of the input,
-#      after . ; , — or after and/then/also/now/so/please/kindly/just, or after
+#      after . ; : , — or after and/then/also/now/so/please/kindly/just, or after
 #      a short leading "for <patient>" adjunct), with a drug or medication noun
 #      as its object.
 #        → an order.
@@ -694,6 +695,16 @@ _MED_NOUNS = (
 
 _MED_OBJECT = rf"(?:{_MED_NOUNS}|{_DRUG_NAMES}|{_DRUG_STEMS})"
 
+# The ward's brands and shorthand (services/order_wording.py), as an object for
+# the verb-led patterns, and the wider objects the round's own verbs take.
+_WARD_OBJECT = (
+    r"(?:"
+    + "|".join(re.escape(w) for w in sorted(order_wording.WARD_DRUG_NAMES, key=len, reverse=True))
+    + rf"|{order_wording.WARD_DRUG_PHRASES})"
+)
+_ANY_DRUG = rf"(?:{_MED_OBJECT}|{_WARD_OBJECT})"
+_ANY_THERAPY = rf"(?:{_MED_OBJECT}|{_WARD_OBJECT}|{order_wording.BLOOD_AND_FLUIDS})"
+
 # Verb families. STOP/CHANGE require an object (see _MED_OBJECT) because bare
 # "stop"/"hold" are common in ordinary chat ("hold on", "stop there").
 _STOP_VERBS = (
@@ -714,7 +725,7 @@ _ADD_VERBS = (
 # absorbs a short leading adjunct ("for Mr Sharma in bed 3 stop the heparin")
 # and a polite/request preamble ("can you please stop …", "I want you to stop …").
 _ORDER_HEAD = (
-    r"(?:^|[.;,—-]\s*"
+    r"(?:^|[.;:,—-]\s*"
     r"|\b(?:and|then|also|now|so|ok|okay|alright|right|yeah|yes|please|kindly|just)\s+"
     r"|^(?:for|in|re|regarding|about)\s+\S+(?:\s+\S+){0,4}\s+)"
     r"(?:(?:please|kindly|just)\s+"
@@ -766,9 +777,44 @@ MUTATION_PATTERNS = [
 
 _MUTATION_RE = [re.compile(p) for p in MUTATION_PATTERNS]
 
+# 7 to 10 (9 October 2026). What a ward round types that 1 to 6 did not read;
+# the shapes with no verb at the head are in services/order_wording.py. Kept
+# apart from 1 to 6 because they read only messages up to
+# order_wording.SCAN_MAX_CHARS: an order is short, and a pasted 512 KB note
+# must cost on the event loop what it did before.
+WARD_ORDER_PATTERNS = [
+    # 7. The ward's own drug names, which the generic list above never reaches:
+    #    "stop the ecosprin", "start inj meronem 1 g iv tds".
+    rf"{_ORDER_HEAD}(?:{_ADD_VERBS}|{_STOP_VERBS}|{_CHANGE_VERBS})\b{_GAP}\b{_WARD_OBJECT}\b",
+    # 8. The round's other verbs, each with a therapy object and a gap that stops
+    #    at a comma: "transfuse 2 units prbc", "nebulise with salbutamol", "slow
+    #    the drip to 30 ml/hr", "escalate to meropenem".
+    rf"{_ORDER_HEAD}(?:{order_wording.WARD_VERBS})\b[^.?!,]{{0,48}}?\b{_ANY_THERAPY}\b",
+    rf"{_ORDER_HEAD}{order_wording.ESCALATE}(?:{_ANY_DRUG})\b",
+    # 9. An order after a condition: "if grbs > 300 give actrapid 8 units sc".
+    #    Not after a subject, which asks: "if we give lasix will her k drop".
+    rf"^(?:if|unless|once)\s+(?:[^.?!]|(?<=\d)\.(?=\d)){{1,40}}?[\s,]"
+    rf"(?<!\bwe\s)(?<!\bi\s)(?<!\byou\s)(?<!\bthey\s)(?<!\bshe\s)(?<!\bhe\s)(?:then\s+)?"
+    rf"(?:{_ADD_VERBS}|{_STOP_VERBS}|{_CHANGE_VERBS}|{order_wording.WARD_VERBS})\b{_GAP}"
+    rf"\b{_ANY_THERAPY}\b",
+    # 10. A hold said as a negative: "no lasix today", "no more tramadol for him",
+    #     "no more pcm for bed 17, lft deranged", "don't give the metformin
+    #     tonight". "no lasix since yesterday" and "no lasix given today" report,
+    #     so only a time still to come, a patient and a reason may follow.
+    rf"^(?:no|nil)\s+(?:more\s+|further\s+)?(?:{_ANY_DRUG})"
+    rf"(?:\s+(?:today|tonight|now|for\s+now|for\s+(?:him|her|today|tonight)|from\s+now|"
+    rf"till\s+\S+(?:\s+\S+){{0,3}}))?"
+    rf"(?:\s+for\s+(?:bed\s+|cot\s+)?[a-z]{{0,4}}-?\d{{1,4}})?"
+    rf"(?:\s*,(?![^.?!]*\b(?:given|gave|received|charted|since|yesterday)\b)[^.?!]*)?\s*$",
+    rf"{_ORDER_HEAD}(?:do\s+not|don'?t|dont)\s+(?:give|start|add|restart|push|run)\b{_GAP}"
+    rf"\b{_ANY_THERAPY}\b",
+]
+
+_WARD_ORDER_RE = [re.compile(p) for p in WARD_ORDER_PATTERNS]
+
 # An utterance that ASKS. Leading discourse filler is skipped; the test is on the
-# grammatical lead, not on the question mark, because "stop the heparin?" is a
-# terse order and "when to stop heparin" is a question with no mark at all.
+# grammatical lead as well as the question mark, because "when to stop heparin"
+# is a question with no mark at all.
 _QUESTION_LEAD = re.compile(
     r"^(?:(?:so|and|but|ok|okay|hi|hey|hello|sage|doc|quick\s+q(?:uestion)?)[\s,]+)*"
     r"(?:"
@@ -794,10 +840,14 @@ _REQUEST_MARKER = re.compile(
     r"|\bgo\s+ahead\s+and\b"
 )
 
-# Input that OPENS with a mutation verb is imperative even with a question mark.
-_IMPERATIVE_LEAD = re.compile(
-    rf"^(?:please\s+|kindly\s+|just\s+)?(?:{_ADD_VERBS}|{_STOP_VERBS}|{_CHANGE_VERBS})\b"
-)
+# A QUESTION MARK ASKS, unless the message is polite (Samuel's ruling of 9
+# October 2026). From 31 July a message that opened with an order verb was an
+# order even with a question mark ("stop the heparin?" as a terse order). Two
+# corpora written blind on 9 October said otherwise: 10 of 10 such messages were
+# proposals asking for judgement ("start metoprolol 25?", "hold metformin?"), and
+# each got the unsupported-action message instead of an answer, while 0 of 300
+# orders ended in "?". The request marker above still wins, so "can you stop the
+# heparin?" and "please hold the warfarin?" stay orders.
 
 # ── Optional formulary widening (see refresh_formulary_terms_from_db) ──
 _FORMULARY_RE = None
@@ -884,15 +934,35 @@ def _is_question_form(q: str) -> bool:
     from
         "stop the heparin for this patient" → order,
     and it is why "should I stop the heparin?" is a question too: asking for
-    advice is not an instruction, exactly as the model contract states.
+    advice is not an instruction, exactly as the model contract states. So is
+    "start metoprolol 25?" (see the ruling under `_REQUEST_MARKER`).
     """
     if _REQUEST_MARKER.search(q):
         return False
     if _QUESTION_LEAD.match(q):
         return True
-    if q.rstrip(" \"')]}").endswith("?") and not _IMPERATIVE_LEAD.match(q):
+    if q.rstrip(" \"')]}").endswith("?"):
         return True
     return False
+
+
+_GATE_DRUG_TOKEN = re.compile(rf"^(?:{_DRUG_NAMES}|{_DRUG_STEMS})$")
+
+
+def _is_gate_drug(token: str) -> bool:
+    """One word that names a therapy, for services/order_wording.py."""
+    return (token in order_wording.WARD_DRUG_NAMES
+            or token in order_wording.LINE_ONLY_DRUG_WORDS
+            or token in _FORMULARY_TERMS
+            or bool(_GATE_DRUG_TOKEN.match(token)))
+
+
+def _matches_order_pattern(q: str, ward: bool = True) -> bool:
+    if any(pattern.search(q) for pattern in _MUTATION_RE):
+        return True
+    if _FORMULARY_RE is not None and _FORMULARY_RE.search(q):
+        return True
+    return ward and any(pattern.search(q) for pattern in _WARD_ORDER_RE)
 
 
 def detect_mutation_intent(query: str) -> bool:
@@ -900,17 +970,44 @@ def detect_mutation_intent(query: str) -> bool:
 
     Pure, DB-free and side-effect-free: it runs inline on the event loop for
     every Sage turn.
+
+    Sentence form first, then the order shapes, cheapest first:
+      * the verb-led patterns (MUTATION_PATTERNS, the formulary,
+        WARD_ORDER_PATTERNS);
+      * the same patterns after a leading patient reference: "bed 13 give lasix
+        40 iv" is read as "give lasix 40 iv";
+      * a prescription line with no verb at the head ("bed 12: lasix 40 iv
+        stat", "metformin stop"), an order after a reading ("hb 6.2, 2 prbc"),
+        and Hinglish ("lasix 40 iv de do"), all in services/order_wording.py.
+    Only patterns 1 to 6 read a message longer than SCAN_MAX_CHARS: an order is
+    short, and a pasted note must not pay for the rest on the event loop.
     """
     q = re.sub(r"\s+", " ", (query or "").lower()).strip()
     if not q:
         return False
+    short = len(q) <= order_wording.SCAN_MAX_CHARS
+    if short:
+        q = order_wording.repair(q, _is_gate_drug)
     if _is_question_form(q):
         return False
-    for pattern in _MUTATION_RE:
-        if pattern.search(q):
-            return True
-    if _FORMULARY_RE is not None and _FORMULARY_RE.search(q):
+    if _matches_order_pattern(q, ward=short):
         return True
+    if not short:
+        return False
+    rest = order_wording.after_patient_reference(q)
+    if rest and _matches_order_pattern(rest):
+        return True
+    # A polite order is read without its "can you please" and its "?", by the
+    # line readers only: the verb-led patterns already read the preamble, and
+    # pattern 4 would make every "please give ..." an order.
+    plain = order_wording.without_request(q)
+    for text in dict.fromkeys((q, plain)):
+        text_rest = order_wording.after_patient_reference(text)
+        if (order_wording.line_signals(text, _is_gate_drug)
+                or (text_rest and order_wording.line_signals(text_rest, _is_gate_drug))
+                or order_wording.reading_then_order(text, _is_gate_drug)
+                or order_wording.hinglish_order(text, _is_gate_drug)):
+            return True
     return False
 
 # ─── DYNAMIC SIZING ───
