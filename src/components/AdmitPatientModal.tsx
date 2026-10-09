@@ -3,7 +3,7 @@ import { admitPatient, apiFetch, type AdmissionResult } from '../api/client';
 import { useAuth } from '../App';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { formatClinicalDate, formatClinicalDateTime, localDateKey } from '../lib/datetime';
-import { currentModuleFlags, subscribeModuleFlags } from '../shellConfig';
+import { currentModuleFlags, subscribeModuleFlags, useClinicalSwitches } from '../shellConfig';
 import {
   BED_REFUSAL_CODES,
   EMPTY_BED_CHOICE,
@@ -103,6 +103,9 @@ function ChipInput({ chips, placeholder, onAdd, onRemove }: ChipInputProps) {
 }
 
 export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
+  /* On an Orb Ward Record computer the drug chart stays on paper: the form
+     asks for no current medicines (the server keeps none either). */
+  const { wardRecord } = useClinicalSwitches();
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>('identity');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -694,10 +697,12 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
                         <label>Comorbidities</label>
                         <ChipInput chips={formData.comorbidities} placeholder="Type comorbidity and press Enter..." onAdd={v => handleChipAdd('comorbidities', v)} onRemove={v => handleChipRemove('comorbidities', v)} />
                       </div>
-                      <div className="admit-form-group">
-                        <label>Current Medications</label>
-                        <ChipInput chips={formData.current_medications} placeholder="Type medication and press Enter..." onAdd={v => handleChipAdd('current_medications', v)} onRemove={v => handleChipRemove('current_medications', v)} />
-                      </div>
+                      {!wardRecord && (
+                        <div className="admit-form-group">
+                          <label>Current Medications</label>
+                          <ChipInput chips={formData.current_medications} placeholder="Type medication and press Enter..." onAdd={v => handleChipAdd('current_medications', v)} onRemove={v => handleChipRemove('current_medications', v)} />
+                        </div>
+                      )}
                       <div className="admit-form-group">
                         <label>Past Medical History</label>
                         <textarea className="admit-input" value={formData.past_medical_history} onChange={e => handleChange('past_medical_history', e.target.value)} />
