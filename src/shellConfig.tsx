@@ -604,6 +604,147 @@ export function useClinicalSwitches(): Readonly<ClinicalSwitches> {
   return useSyncExternalStore(subscribeModuleFlags, currentClinicalSwitches)
 }
 
+/* ── Switches known (Samuel's ruling, 9 October 2026: fix the startup flash) ───
+ *
+ * The defaults above assume every clinical switch is on, so a screen drawn
+ * before the server has said otherwise showed a Ward Record computer the full
+ * rail and the score widgets for a moment. The client no longer guesses. The
+ * switches are KNOWN once one of these has happened:
+ *
+ *   'page'   the page carried them: the server writes window.__ORB_SWITCHES__
+ *            into index.html (server/main.py spa_switches), read at module load
+ *            below, before the first render;
+ *   'probe'  /api/health answered (it always wins, whenever it answers);
+ *   'saved'  the probe failed, and this browser had saved the switches the
+ *            last time they became known (one localStorage key; they describe
+ *            the computer, not the person, so signing out keeps them);
+ *   'test'   a test said so (markSwitchesKnownForTests).
+ *
+ * Until then ClinicianShell, DowntimeMode and HandoffPage draw a neutral frame
+ * (SwitchesGate), and when the probe fails with nothing saved they say the
+ * server could not be reached, never the full menu.
+ */
+export type SwitchesSource = 'none' | 'page' | 'probe' | 'saved' | 'test'
+
+/** What the screens show while the switches are being learned. */
+export type StartupState = 'starting' | 'ready' | 'unreachable'
+
+/** The localStorage key holding the last switches this browser received. */
+export const SAVED_SWITCHES_KEY = 'orb_computer_switches'
+
+/** The switches as the server sends them, on the page and on /api/health. */
+interface ServerSwitches {
+  modules?: Partial<Record<HospitalModuleId, boolean>>
+  features?: Partial<Record<FeatureFlagId, boolean>>
+  clinical?: {
+    scoring_enabled?: unknown, lens_enabled?: unknown, sepsis_autostart?: unknown,
+    models_enabled?: unknown, ward_record?: unknown,
+  }
+}
+
+declare global {
+  interface Window {
+    /** Written into index.html by the server; see SwitchesSource 'page'. */
+    __ORB_SWITCHES__?: unknown
+  }
+}
+
+let switchesSource: SwitchesSource = 'none'
+
+/** True once the switches came from the page, the probe, the saved copy or a test. */
+export function currentSwitchesKnown(): boolean {
+  return switchesSource !== 'none'
+}
+
+/** Where the switches the client is acting on came from. */
+export function currentSwitchesSource(): SwitchesSource {
+  return switchesSource
+}
+
+export function currentStartupState(): StartupState {
+  if (switchesSource !== 'none') return 'ready'
+  return healthProbe === 'failed' ? 'unreachable' : 'starting'
+}
+
+/** The startup state as React state. */
+export function useStartupState(): StartupState {
+  return useSyncExternalStore(subscribeModuleFlags, currentStartupState)
+}
+
+/**
+ * Apply a server answer through the setters, validated exactly as the probe's
+ * answer always was: it counts only when it carries a 'modules' object, a key
+ * that is not a strict boolean changes nothing, and the module overrides are
+ * patched OVER the server's answer (a site that hides a module by build list
+ * or by window.__ORB_MODULES__ must not get it back; readModuleOverrides has
+ * already dropped any attempt to switch an opt-in module on, so the server
+ * alone can still do that). Returns the part worth saving, or null.
+ */
+function applyServerSwitches(body: unknown): ServerSwitches | null {
+  if (!body || typeof body !== 'object') return null
+  const b = body as ServerSwitches
+  if (!b.modules || typeof b.modules !== 'object') return null
+  setModuleFlags({ ...b.modules, ...readModuleOverrides() })
+  if (b.features && typeof b.features === 'object') setFeatureFlags(b.features)
+  if (b.clinical && typeof b.clinical === 'object') setClinicalSwitches(b.clinical)
+  return { modules: b.modules, features: b.features, clinical: b.clinical }
+}
+
+function setSwitchesSource(next: SwitchesSource): void {
+  if (switchesSource === next) return
+  switchesSource = next
+  for (const listener of moduleFlagListeners) listener()
+}
+
+function saveSwitches(switches: ServerSwitches): void {
+  try {
+    localStorage.setItem(SAVED_SWITCHES_KEY, JSON.stringify(switches))
+  } catch {
+    /* Storage unavailable or full: the page and the probe still work. */
+  }
+}
+
+/** Adopt the switches the server wrote into the page, if it wrote any.
+ *  Called once at module load; exported for tests. */
+export function adoptPageSwitches(): boolean {
+  try {
+    const page = typeof window !== 'undefined' ? window.__ORB_SWITCHES__ : undefined
+    const applied = applyServerSwitches(page)
+    if (!applied) return false
+    saveSwitches(applied)
+    setSwitchesSource('page')
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** When the probe fails and nothing else said what this computer runs, use the
+ *  switches this browser saved the last time it was told. */
+function adoptSavedSwitches(): void {
+  if (switchesSource !== 'none') return
+  try {
+    const raw = localStorage.getItem(SAVED_SWITCHES_KEY)
+    if (!raw) return
+    if (applyServerSwitches(JSON.parse(raw))) setSwitchesSource('saved')
+  } catch {
+    /* Storage unavailable or a damaged copy: nothing saved to use. */
+  }
+}
+
+/** For tests: the switches count as known, as they do on a page the server
+ *  served. Most screen tests render before any probe answers. */
+export function markSwitchesKnownForTests(): void {
+  setSwitchesSource('test')
+}
+
+/** For tests: back to not known, as on the Vite dev server before the probe. */
+export function resetSwitchesKnown(): void {
+  setSwitchesSource('none')
+}
+
+adoptPageSwitches()
+
 /**
  * Ask the server which modules this deployment runs.
  *
@@ -625,42 +766,45 @@ export async function refreshModuleFlags(
   fetchImpl: typeof fetch | undefined = typeof fetch === 'function' ? fetch : undefined,
   base = '/api',
 ): Promise<Readonly<Record<HospitalModuleId, boolean>>> {
-  if (!fetchImpl) {
+  /* A failed probe first falls back to the switches this browser saved, when
+     nothing else has said what this computer runs, and only then reports
+     'failed', so a screen never draws the could-not-reach message for the one
+     render between the two. */
+  const failed = () => {
+    adoptSavedSwitches()
     setHealthProbe('failed')
+  }
+  if (!fetchImpl) {
+    failed()
     return currentModuleFlags()
   }
   try {
     const resp = await fetchImpl(`${base}/health`, { headers: { Accept: 'application/json' } })
     if (!resp.ok) {
-      setHealthProbe('failed')
+      failed()
       return currentModuleFlags()
     }
-    const body = await resp.json() as {
-      modules?: Partial<Record<HospitalModuleId, boolean>>
-      features?: Partial<Record<FeatureFlagId, boolean>>
-      clinical?: {
-        scoring_enabled?: unknown, lens_enabled?: unknown, sepsis_autostart?: unknown,
-        models_enabled?: unknown, ward_record?: unknown,
-      }
-    }
-    if (body?.modules && typeof body.modules === 'object') {
-      /* The overrides are patched OVER the server's answer, not under it: a
-         site that hides a module by build list or by window.__ORB_MODULES__
-         must not get it back when the probe answers. readModuleOverrides has
-         already dropped any attempt to switch an opt-in module on, so the
-         server alone can still do that. */
-      setModuleFlags({ ...body.modules, ...readModuleOverrides() })
-      if (body.features && typeof body.features === 'object') setFeatureFlags(body.features)
-      if (body.clinical && typeof body.clinical === 'object') setClinicalSwitches(body.clinical)
+    /* Validated, applied (overrides over the server's answer) and saved the
+       same way as the switches the page carries: applyServerSwitches. */
+    const applied = applyServerSwitches(await resp.json())
+    if (applied) {
+      saveSwitches(applied)
+      setSwitchesSource('probe')
       setHealthProbe('answered')
     } else {
-      setHealthProbe('failed')
+      failed()
     }
   } catch {
     /* Offline, server down, or a proxy returning HTML. Keep the defaults. */
-    setHealthProbe('failed')
+    failed()
   }
   return currentModuleFlags()
+}
+
+/** The Try again button: back to 'pending' (the neutral frame) and ask again. */
+export function retryHealthProbe(): Promise<Readonly<Record<HospitalModuleId, boolean>>> {
+  setHealthProbe('pending')
+  return refreshModuleFlags()
 }
 
 /* ── Role features ────────────────────────────────────────────────────────────
@@ -1670,7 +1814,10 @@ export function getModuleOffNotice(
   if (getRoleConfig(key, department, modules, installed, features).tabs.length > 0) return null
   const home = (ROLE_CONFIG[key] ?? FALLBACK_CONFIG).home
   if (roleFeatureOn(subject, modules, features)) return { subject, state: 'unavailable', home }
-  const state: ModuleOffState = probe === 'pending' ? 'checking' : probe === 'failed' ? 'unreachable' : 'off'
+  /* The switches the server wrote into the page are its answer already, so a
+     page that carried them says 'off' at once rather than 'checking'. */
+  const pending = probe === 'pending' && switchesSource !== 'page'
+  const state: ModuleOffState = pending ? 'checking' : probe === 'failed' ? 'unreachable' : 'off'
   return { subject, state, home }
 }
 
