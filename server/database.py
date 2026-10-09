@@ -25,8 +25,12 @@ SCHEMA_VERSION = 6
 # gives them a real one: one admin password reset on bot_vigil (role 'doctor',
 # no department) would mint a hospital-wide doctor login. User Management hides
 # them and refuses every change to them; anything seeding a new bot adds it here.
+# 'system_lab' (lis-22) is the laboratory interface's identity: an external
+# laboratory's critical result is posted to the case room under it. It is
+# created inactive (is_active 0) by services/lab_critical_service.py and never
+# signs in.
 SERVICE_ACCOUNT_IDS: frozenset[str] = frozenset({
-    "system", "bot_vigil", "bot_lab", "bot_lens", "bot_scribe", "bot_bridge",
+    "system", "bot_vigil", "bot_lab", "bot_lens", "bot_scribe", "bot_bridge", "system_lab",
 })
 
 

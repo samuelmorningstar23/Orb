@@ -60,6 +60,20 @@ class TransitionNeedsInput(ValueError):
     supply (a reason to reject) or the order lacks (a dose to verify). 422."""
 
 
+class DispenseRefused(ValueError):
+    """A dispense the pharmacist shaped (a quantity or a batch, grn-14) that
+    the shelf refuses. Carries `code` and the HTTP `status` the route answers
+    (pharmacy_stock_service.DISPENSE_REFUSAL_STATUS): 422 for a request that
+    can never be met for this order (a batch of another drug, a quantity over
+    the site maximum), 409 for one the shelf cannot meet as asked right now.
+    Nothing was written."""
+
+    def __init__(self, message: str, code: str, status: int):
+        super().__init__(message)
+        self.code = code
+        self.status = status
+
+
 # The pharmacy steps that commit a drug to a patient, each re-screened for
 # allergy and interaction against the EFFECTIVE drug (the substitute when one is
 # set). Re-screened at every step, not once, because allergies are charted and
@@ -192,10 +206,13 @@ def _with_linked_orders(conn, rows: list[dict]) -> list[dict]:
     if not ids:
         return rows
     marks = ", ".join("?" for _ in ids)
+    # needs_verification (medorders-5c): whether the order still waits for a
+    # pharmacist's own check, so the screen can say so in words.
     found = {
-        o["id"]: dict(o) for o in conn.execute(
+        o["id"]: {**dict(o), "needs_verification": bool(o["needs_verification"])}
+        for o in conn.execute(
             f"SELECT mo.id, mo.status, mo.version, mo.verified_by, mo.verified_at, "
-            f"u.name AS verified_by_name FROM med_orders mo "
+            f"mo.needs_verification, u.name AS verified_by_name FROM med_orders mo "
             f"LEFT JOIN users u ON u.id = mo.verified_by WHERE mo.id IN ({marks})",
             tuple(ids),
         ).fetchall()
@@ -279,6 +296,109 @@ def get_order_transitions(order_id: str):
         return [dict(row) for row in rows]
 
 
+#: The medication-order events the pharmacy screen's timeline shows for a
+#: linked supply row (medorders-5c): the order's own life and its supply.
+#: Bedside events ('administered', 'not_given') are left out: they are the
+#: MAR, which the pharmacy desk does not read, and this screen must not widen
+#: who reads it.
+TIMELINE_ORDER_EVENT_KINDS = (
+    "created", "signed", "verified", "rejected", "held", "resumed", "stopped",
+    "completed", "cancelled", "amended", "adopted",
+    "supply_requested", "supply_reviewing", "supply_verified", "supply_rejected",
+    "dispensed", "received",
+)
+
+
+def order_timeline(order_id: str) -> Optional[dict]:
+    """The pharmacy screen's history of one supply row (medorders-5c), or
+    None for an unknown row. Read-only.
+
+    {order_id, patient_id, transitions, linked_order, order_events}:
+    `transitions` is the row's own Helix steps with who took them;
+    `linked_order` and `order_events` are filled only for a row LINKED to a
+    medication order (its state, who verified it and when, and its ledger,
+    oldest first, without the bedside events). An unlinked row reads nothing
+    from the order store."""
+    with db_session() as conn:
+        # A Helix table older than migration 61 has no link column: nothing
+        # on it can be linked.
+        link = ("med_order_id" if _has_column(conn, "helix_patient_med_orders", "med_order_id")
+                else "NULL AS med_order_id")
+        row = conn.execute(
+            f"SELECT id, patient_id, {link} FROM helix_patient_med_orders WHERE id = ?",
+            (order_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        transitions = [dict(r) for r in conn.execute(
+            """SELECT t.id, t.from_status, t.to_status, t.actor_id, t.created_at,
+                      u.name AS actor_name
+                 FROM helix_transitions t LEFT JOIN users u ON u.id = t.actor_id
+                WHERE t.order_id = ? ORDER BY t.created_at ASC, t.rowid ASC""",
+            (order_id,),
+        ).fetchall()]
+        out = {"order_id": row["id"], "patient_id": row["patient_id"],
+               "transitions": [_with_utc_offsets(t, ("created_at",)) for t in transitions],
+               "linked_order": None, "order_events": []}
+        if not row["med_order_id"]:
+            return out
+        linked = _with_linked_orders(conn, [{"med_order_id": row["med_order_id"]}])[0]
+        out["linked_order"] = linked.get("linked_order")
+        marks = ", ".join("?" for _ in TIMELINE_ORDER_EVENT_KINDS)
+        events = conn.execute(
+            f"""SELECT e.id, e.kind, e.from_status, e.to_status, e.actor_id, e.actor_role,
+                       e.reason, e.ref_type, e.ref_id, e.created_at, u.name AS actor_name
+                  FROM med_order_events e LEFT JOIN users u ON u.id = e.actor_id
+                 WHERE e.med_order_id = ? AND e.kind IN ({marks})
+                 ORDER BY e.created_at, e.id""",
+            (row["med_order_id"], *TIMELINE_ORDER_EVENT_KINDS),
+        ).fetchall()
+        out["order_events"] = [dict(e) for e in events]
+        return out
+
+
+def _has_column(conn, table: str, column: str) -> bool:
+    return column in {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def dispense_options(order_id: str) -> Optional[dict]:
+    """What the pharmacist may choose when dispensing this order (grn-14),
+    or None for an unknown order. Read-only; no patient data.
+
+    {order_id, enabled, max_units, medication_id, drug_name, lots}. With the
+    pharmacy store module off, `enabled` is False and nothing is listed: a
+    dispense is one unit, earliest expiry first. With it on, `max_units` is
+    ORB_PHARMACY_MAX_DISPENSE_UNITS and `lots` are the dispensable batches of
+    the EFFECTIVE drug (the substitute when one is set), earliest expiry
+    first, which is the only drug a batch may be chosen from."""
+    import config
+    with db_session() as conn:
+        order = conn.execute(
+            "SELECT id, medication_id, substitute_medication_id "
+            "FROM helix_patient_med_orders WHERE id = ?", (order_id,),
+        ).fetchone()
+        if order is None:
+            return None
+        effective = order["substitute_medication_id"] or order["medication_id"]
+        enabled = config.module_state("pharmacy-store") == "on"
+        lots = []
+        if enabled:
+            lots = [{"id": lot["id"], "lot_number": lot["lot_number"],
+                     "expiration_date": lot["expiration_date"],
+                     "quantity": int(lot["quantity"] or 0),
+                     "store_name": lot["store_name"]}
+                    for lot in stock.dispensable_lots(conn, effective,
+                                                      today=_expiry_cutoff())]
+        return {
+            "order_id": order["id"],
+            "enabled": enabled,
+            "max_units": int(config.PHARMACY_MAX_DISPENSE_UNITS) if enabled else 1,
+            "medication_id": effective,
+            "drug_name": _drug_name(conn, effective),
+            "lots": lots,
+        }
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  WRITE OPERATIONS — IDEMPOTENT STATE MACHINE
 # ═══════════════════════════════════════════════════════════════════
@@ -314,16 +434,32 @@ def insert_order(conn, patient_id: str, medication_id: str, dose: str, route: st
     return dict(conn.execute("SELECT * FROM helix_patient_med_orders WHERE id = ?", (order_id,)).fetchone())
 
 
+def resolve_by_name_in_txn(conn, medication_name: str) -> Optional[dict]:
+    """The confirmed formulary row whose name or generic name CONTAINS
+    `medication_name` (LIKE '%name%'), on the caller's connection, or None.
+
+    Exactly the lookup create_order has always made, moved here unchanged
+    (medorders-8) so the Sage handoff binds its supply row on its own
+    transaction to the same product create_order would have chosen.
+    Confirmed drugs only (grn-6): a draft or retired row that also matches
+    the name is never the one found. It is a NAME MATCH, not an exact binding:
+    a name can be contained in several products, and the first SQLite returns
+    is taken, as it always was. Exact binding for that lane is medorders-20.
+    """
+    med = conn.execute(
+        "SELECT id FROM helix_medication_master "
+        "WHERE (name LIKE ? OR generic_name LIKE ?) AND identity_status = ?",
+        (f"%{medication_name}%", f"%{medication_name}%", ORDERABLE_IDENTITY)
+    ).fetchone()
+    return dict(med) if med else None
+
+
 def create_order(patient_id: str, medication_name: str, dose: str, route: str, frequency: str, prescribed_by: str):
     """Create a new medication order in the Helix system."""
     with db_session() as conn:
         # Confirmed drugs only (grn-6): a draft or retired row that also
         # matches the name is never the one ordered.
-        med = conn.execute(
-            "SELECT id FROM helix_medication_master "
-            "WHERE (name LIKE ? OR generic_name LIKE ?) AND identity_status = ?",
-            (f"%{medication_name}%", f"%{medication_name}%", ORDERABLE_IDENTITY)
-        ).fetchone()
+        med = resolve_by_name_in_txn(conn, medication_name)
         if not med:
             raise ValueError(f"Medication {medication_name} not found in Helix master catalog.")
 
@@ -341,10 +477,21 @@ def transition_order_status(
     substitute_medication_id: str | None = None,
     scheduled_at: str | None = None,
     on_applied: Optional[Callable] = None,
+    dispense_quantity_units=None,
+    lot_id: str | None = None,
 ) -> dict:
     """
     Guarded, idempotent state transition engine.
-    
+
+    DISPENSE QUANTITY AND BATCH (grn-14, ruling GRN-R13: the pharmacist enters
+    it). With the pharmacy store module on, a 'dispensed' step takes
+    `dispense_quantity_units` (default 1, at most ORB_PHARMACY_MAX_DISPENSE_UNITS)
+    and an optional `lot_id`. The batch must be dispensable today and a batch
+    of the EFFECTIVE drug (the substitute when one is set), checked here under
+    the write lock; a batch holding too few units is refused, never split.
+    Refusals raise DispenseRefused (422 or 409). With the module off both are
+    ignored and a dispense is one unit, earliest expiry first, as before.
+
     Returns: {"ok": True, "order": {...}, "transition": {...}, "already_applied": bool}
     Raises: ValueError for illegal transitions or insufficient stock.
 
@@ -448,9 +595,18 @@ def transition_order_status(
 
         # ── Dispense: Atomic Inventory Decrement ──
         stock_movement_id = None
+        shaped = None
         if target_status == "dispensed":
             med_id = order["substitute_medication_id"] or order["medication_id"]
-            stock_movement_id = _atomic_dispense(conn, order_id, med_id, actor_id)
+            # grn-14: a quantity and a batch, honoured only with the pharmacy
+            # store module on (None otherwise: one unit, earliest expiry).
+            shaped = _shaped_dispense(dispense_quantity_units, lot_id)
+            if shaped is None:
+                stock_movement_id = _atomic_dispense(conn, order_id, med_id, actor_id)
+            else:
+                stock_movement_id = _atomic_dispense(
+                    conn, order_id, med_id, actor_id,
+                    units=shaped["units"], lot_id=shaped["lot_id"])
 
         # ── Apply Transition ──
         transition_id = str(uuid.uuid4())
@@ -487,19 +643,26 @@ def transition_order_status(
         )
 
         # ── Record Transition ──
-        payload_json = json.dumps({
+        transition_payload = {
             "pharmacist_notes": pharmacist_notes,
             "substitute_medication_id": substitute_medication_id,
             "scheduled_at": scheduled_at,
             "stock_movement_id": stock_movement_id,
-        })
+        }
+        if shaped is not None:
+            # grn-14: what the pharmacist asked for, beside the movement that
+            # records what left the shelf. Absent with the module off.
+            transition_payload["dispense_quantity_units"] = shaped["units"]
+            transition_payload["lot_id"] = shaped["lot_id"]
+        payload_json = json.dumps(transition_payload)
         conn.execute("""
             INSERT INTO helix_transitions (id, order_id, from_status, to_status, idempotency_key, actor_id, payload)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (transition_id, order_id, current_status, target_status, idempotency_key, actor_id, payload_json))
 
         if stock_movement_id:
-            _audit_dispense(conn, order, transition_id, stock_movement_id, actor_id)
+            _audit_dispense(conn, order, transition_id, stock_movement_id, actor_id,
+                            shaped=shaped)
 
         # ── Close the loop in Relay: tell the case room what pharmacy decided ──
         # Verified, rejected and a suggested substitute each change what the
@@ -854,15 +1017,56 @@ def _in_date_stock(conn, medication_id: str) -> int:
     return stock.dispensable_units(conn, medication_id, today=_expiry_cutoff())
 
 
-def _atomic_dispense(conn, order_id: str, medication_id: str, actor_id: str) -> str:
+def _shaped_dispense(dispense_quantity_units, lot_id) -> Optional[dict]:
+    """The pharmacist's quantity and batch for a dispense (grn-14), checked,
+    or None when the dispense is the default one: the pharmacy store module is
+    off (both fields are then IGNORED, so the dispense is exactly as before),
+    or neither field was sent.
+
+    The quantity is a whole number from 1 to ORB_PHARMACY_MAX_DISPENSE_UNITS
+    (ruling GRN-R13: pharmacist-entered and bounded; the default maximum is 1,
+    which is what a dispense has always moved). Raises DispenseRefused (422)
+    for anything else."""
+    import config
+    if config.module_state("pharmacy-store") != "on":
+        return None
+    if dispense_quantity_units is None and not lot_id:
+        return None
+    maximum = int(config.PHARMACY_MAX_DISPENSE_UNITS)
+    units = 1 if dispense_quantity_units is None else dispense_quantity_units
+    if isinstance(units, bool) or not isinstance(units, int):
+        raise DispenseRefused("Enter the number of units to dispense as a whole number.",
+                              "bad_quantity", stock.DISPENSE_REFUSAL_STATUS["bad_quantity"])
+    if units < 1 or units > maximum:
+        most = "1 unit" if maximum == 1 else f"{maximum} units"
+        raise DispenseRefused(
+            f"Dispense between 1 and {maximum} units at a time. This hospital allows at most "
+            f"{most} in one dispense.",
+            "quantity_out_of_range", 422)
+    if lot_id is not None and (not isinstance(lot_id, str) or not lot_id.strip()):
+        raise DispenseRefused("Choose a batch from the list, or leave it to the earliest expiry.",
+                              "lot_not_found", stock.DISPENSE_REFUSAL_STATUS["lot_not_found"])
+    return {"units": units, "lot_id": lot_id.strip() if lot_id else None,
+            "lot_choice": "pharmacist" if lot_id else "earliest_expiry",
+            "max_units": maximum}
+
+
+def _atomic_dispense(conn, order_id: str, medication_id: str, actor_id: str, *,
+                     units: int = 1, lot_id: str | None = None) -> str:
     """
     Take one unit for a dispense, earliest expiry first, from a dispensable lot
     only (in date, available, on the dispensing shelf). Runs inside the
     caller's transaction and writes through pharmacy_stock_service, the only
     writer of drug stock: a relative, guarded decrement plus its ledger row.
 
+    A shaped dispense (grn-14, module on) takes `units` from ONE lot: the
+    pharmacist's `lot_id`, checked to be a dispensable batch of
+    `medication_id` (the effective drug) holding enough units, or else the
+    earliest-expiry lot holding them all. Never split between lots.
+
     Returns: stock_movement_id
-    Raises: ValueError if there is no dispensable stock.
+    Raises: ValueError if there is no dispensable stock; DispenseRefused for a
+    shaped dispense the shelf refuses.
     """
     # The transition calls this inside its immediate session. A caller holding
     # a plain legacy-mode connection with no transaction open yet gets one here,
@@ -876,7 +1080,34 @@ def _atomic_dispense(conn, order_id: str, medication_id: str, actor_id: str) -> 
     # the FIRST one dispensed, and a lot with no expiry (NULL sorts first in
     # SQLite) went ahead of everything.
     today = _expiry_cutoff()
-    lot = stock.pick_fefo_lot(conn, medication_id, 1, today=today)
+    if units == 1 and lot_id is None:
+        lot = stock.pick_fefo_lot(conn, medication_id, 1, today=today)
+    else:
+        try:
+            lot = stock.choose_dispense_lot(conn, medication_id, units, lot_id=lot_id,
+                                            today=today)
+        except stock.StockError as e:
+            status = stock.DISPENSE_REFUSAL_STATUS.get(e.code)
+            if status is None:
+                raise
+            raise DispenseRefused(str(e), e.code, status) from None
+        if not lot and units > 1:
+            # No single batch holds them all. Never split: say what there is.
+            drug = _drug_name(conn, medication_id)
+            total = stock.dispensable_units(conn, medication_id, today=today)
+            if total >= units:
+                raise DispenseRefused(
+                    f"No single batch of {drug} holds {units} units ({total} in stock across "
+                    f"batches). A dispense is never split between batches: dispense fewer "
+                    f"units, or choose a batch.", "insufficient_lot_stock",
+                    stock.DISPENSE_REFUSAL_STATUS["insufficient_lot_stock"])
+            if total > 0:
+                raise DispenseRefused(
+                    f"Only {total} unit{'' if total == 1 else 's'} of {drug} "
+                    f"{'is' if total == 1 else 'are'} in stock; this dispense needs {units}. "
+                    f"Dispense fewer units, return to review to substitute, or reject.",
+                    "insufficient_lot_stock",
+                    stock.DISPENSE_REFUSAL_STATUS["insufficient_lot_stock"])
 
     if not lot:
         # Say why when there are units on the shelf that cannot be used, so the
@@ -895,12 +1126,13 @@ def _atomic_dispense(conn, order_id: str, medication_id: str, actor_id: str) -> 
             )
         raise ValueError(f"No stock of {drug}. Return to review to substitute, or reject.")
 
-    # One unit, a real decrement against a real lot, recorded as a dispense
-    # movement. The key makes a second dispense of the same order write
-    # nothing: an order leaves the shelf once.
+    # One unit (or the pharmacist's bounded quantity, grn-14), a real decrement
+    # against a real lot, recorded as a dispense movement. The key makes a
+    # second dispense of the same order write nothing: an order leaves the
+    # shelf once.
     try:
         movement = stock.post_movement(
-            conn, lot_id=lot["id"], movement_type="dispense", quantity_change=-1,
+            conn, lot_id=lot["id"], movement_type="dispense", quantity_change=-units,
             actor_id=actor_id, order_id=order_id, reference_type="helix_order",
             reference_id=order_id, idempotency_key=f"helix_order:{order_id}:dispense",
         )
@@ -912,13 +1144,19 @@ def _atomic_dispense(conn, order_id: str, medication_id: str, actor_id: str) -> 
     return movement["id"]
 
 
-def _audit_dispense(conn, order, transition_id: str, movement_id: str, actor_id: str) -> None:
+def _audit_dispense(conn, order, transition_id: str, movement_id: str, actor_id: str, *,
+                    shaped: Optional[dict] = None) -> None:
     """The dispense's own audit row, in the dispense's transaction (grn-4).
 
     clinical_access is fail-closed: if this row cannot be written,
     log_audit_event raises and the whole dispense rolls back, so no drug leaves
     the shelf unrecorded. Every id is written as a string (an int target_id is
-    hashed as a number but stored as TEXT, which breaks the audit chain)."""
+    hashed as a number but stored as TEXT, which breaks the audit chain).
+
+    A dispense the pharmacist shaped (grn-14, module on) also records the
+    batch number, who chose the batch ('pharmacist' or 'earliest_expiry'), the
+    units asked for and the site maximum. quantity_units and lot_id are read
+    from the movement itself, so they say what actually left the shelf."""
     from services.audit_service import log_audit_event
 
     movement = conn.execute(
@@ -952,6 +1190,12 @@ def _audit_dispense(conn, order, transition_id: str, movement_id: str, actor_id:
             "quantity_units": units,
             "store_id": (str(movement["store_id"])
                          if movement and movement["store_id"] is not None else None),
+            **({
+                "lot_number": movement["lot_number"] if movement else None,
+                "lot_choice": shaped["lot_choice"],
+                "requested_units": shaped["units"],
+                "max_dispense_units": shaped["max_units"],
+            } if shaped is not None else {}),
         },
     )
 

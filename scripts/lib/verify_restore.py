@@ -323,6 +323,15 @@ MODULE_TABLES: dict[str, tuple[str, ...]] = {
     "medication orders": (
         "med_orders", "med_order_events",
     ),
+    # ── migration 71 (server/migrations_his/m0071_med_order_schedule_times.py) ──
+    # The times a prescriber set for each medication order, and who set them.
+    # Empty until a site switches ORB_MED_ORDER_LIFECYCLE on and a prescriber
+    # sets times. A restore that came back without it would put every drug
+    # back on the times worked out from its frequency, silently moving doses
+    # the prescriber had timed.
+    "medication order times": (
+        "med_order_schedule_times",
+    ),
     # ── migration 62 (server/migrations_his/m0062_opd_consultations.py) ──
     # The outpatient consultation note for each OPD visit, signed and then
     # final, and its append-only addenda. Empty until a site switches ORB_OPD

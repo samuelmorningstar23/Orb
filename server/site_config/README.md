@@ -9,6 +9,7 @@ like code, and versioned like code.
 | `site.example.toml` | The annotated template for `site.toml`: hospital name, timezone, state, departments, escalation ladder | `services/site_config_service.py` |
 | `order_sets.json` | Named order sets / protocols (sepsis, ACS, DKA, post-op, asthma) | `services/order_sets_service.py` |
 | `seasonal_calendar.json` | Pulse's seasonal calendar: seasons, environmental conditions and disease seasons for each zone of India, with sources | `services/seasonal_calendar.py` |
+| `dose_times.example.json` | The template for `dose_times.json`: the hospital's standard administration times for each frequency, signed by the pharmacy lead and the physician champion (ruling MO-R8). Orb ships no times; with no `dose_times.json` the drug round works due times out from the frequency | `services/medorders/schedule.py` |
 
 ## Rules that apply to every file here
 
@@ -36,6 +37,6 @@ note about the monsoon.
 
 ## Pointing Orb at a different file
 
-Set `ORB_ORDER_SETS_FILE` (order sets) or `ORB_SEASONAL_CALENDAR_FILE` (the
-seasonal calendar) to an absolute path. Used by tests and by sites that keep
+Set `ORB_ORDER_SETS_FILE` (order sets), `ORB_SEASONAL_CALENDAR_FILE` (the
+seasonal calendar) or `ORB_DOSE_TIMES_FILE` (the dose times) to an absolute path. Used by tests and by sites that keep
 their configuration in their own configuration-management repository.

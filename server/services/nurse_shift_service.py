@@ -27,6 +27,22 @@ was used, and the UI must present these as a nurse's working list, never as an
 authoritative prescription schedule. Anything the parser cannot read is
 returned as ``unscheduled`` and is NEVER shown as overdue — a med we cannot
 time is a med we must not imply is late.
+
+SET TIMES (medorders-19, W8-I; ruling MO-R8, held for Samuel). One exception,
+and only while ORB_MED_ORDER_LIFECYCLE is on, for a drug LINKED to a
+medication order given a fixed number of times a day: when its prescriber set
+the times it is due, or the hospital has signed times for its frequency
+(server/site_config/dose_times.json), the due time comes from those times
+instead (services/medorders/schedule.py). Such a task carries ``due_source``
+('prescriber' or 'site_times') and ``set_times``; every other task is exactly
+as described above and carries neither key.
+
+THE PHARMACIST CHECK (medorders-11, W8-I; ruling MO-R1, held for Samuel). While
+ORB_MED_ORDER_VERIFY_BEFORE_DOSE is on, every task carries
+``pharmacist_check``: None when the bedside will not refuse the dose for want
+of a pharmacist's check, otherwise what the bedside will say
+(services/medorders/emar_check.pharmacist_check). The key is absent while the
+switch is off.
 """
 from __future__ import annotations
 
@@ -344,7 +360,7 @@ def _load_board_rows(department: str | None):
         # Active + PRN medications.
         meds = db.execute(
             f"""SELECT id, patient_id, drug_name, dosage, route, frequency, status,
-                       started_at, source, verified_by, notes
+                       started_at, source, verified_by, notes, med_order_id
                 FROM medications
                 WHERE patient_id IN ({marks}) AND status IN ('active', 'prn')
                 ORDER BY drug_name""",
@@ -353,6 +369,11 @@ def _load_board_rows(department: str | None):
         meds_by_patient: dict[str, list[dict]] = {}
         for m in meds:
             meds_by_patient.setdefault(m["patient_id"], []).append(dict(m))
+
+        # medorders-11 and medorders-19 (W8-I): the linked orders' state, for
+        # the pharmacist check and for set times. Read only while a switch
+        # that uses them is on, so with both off the board reads nothing new.
+        linked_orders = _load_linked_orders(db, meds_by_patient)
 
         # Last GIVEN administration per medication. 'not_given' rows are
         # excluded on purpose: a withheld dose does not reset the dosing clock,
@@ -426,8 +447,42 @@ def _load_board_rows(department: str | None):
             "ingredients": ingredient_map,
             "overrides": overrides_by_key,
             "last_obs": last_obs_by_patient,
+            "linked_orders": linked_orders,
         },
     )
+
+
+def _set_times_on() -> bool:
+    """Set times drive the board only in the lifecycle's authoritative mode."""
+    import config
+    return config.feature_enabled("med_order_lifecycle")
+
+
+def _load_linked_orders(db, meds_by_patient: dict[str, list[dict]]) -> dict[str, dict]:
+    """{order id: the order's status, priority, frequency and set times} for
+    every board row linked to a medication order, read in the board's own
+    session. Empty, with no query, while neither the lifecycle (set times) nor
+    the pharmacist check before the first dose is on."""
+    from services.medorders import emar_check
+    if not (_set_times_on() or emar_check.verify_before_dose_rule() is not None):
+        return {}
+    order_ids = sorted({m["med_order_id"] for rows in meds_by_patient.values()
+                        for m in rows if m.get("med_order_id")})
+    if not order_ids:
+        return {}
+    from services.medorders import schedule as med_schedule
+    found: dict[str, dict] = {}
+    for start in range(0, len(order_ids), 500):
+        chunk = order_ids[start:start + 500]
+        marks = ",".join("?" for _ in chunk)
+        for row in db.execute(
+            f"SELECT id, status, priority, frequency, is_prn, verified_by FROM med_orders "
+            f"WHERE id IN ({marks})", chunk).fetchall():
+            found[row["id"]] = dict(row)
+    authored = med_schedule.current_schedules_in_txn(db, found.keys())
+    for oid, order in found.items():
+        order["schedule"] = authored.get(oid)
+    return found
 
 
 def _score_from_vitals(vitals: dict | None, on_scale_2: bool) -> dict | None:
@@ -483,6 +538,29 @@ def _preview_allergy(
         )
 
 
+#: What the round says about a first stat or urgent dose the bedside will let
+#: go before the pharmacist's check (ruling MO-R1 (a)).
+FIRST_DOSE_BEFORE_CHECK_WORDS = (
+    "The first dose can be given before the pharmacist checks this order. It will be "
+    "marked as given before the pharmacist check, and the next dose waits for the check.")
+
+
+def _pharmacist_view(check: dict | None) -> dict | None:
+    """The board's line for the pharmacist check: None when the bedside will
+    not refuse or mark the dose for it, else {state, message, priority}.
+    'waiting' means the dose will be refused; 'first_dose_before_check' means
+    it will be allowed and marked."""
+    if not check or not check.get("required") or check.get("checked"):
+        return None
+    if not check.get("allowed"):
+        return {"state": "waiting", "message": check.get("message"),
+                "priority": check.get("priority")}
+    if check.get("before_check"):
+        return {"state": "first_dose_before_check", "message": FIRST_DOSE_BEFORE_CHECK_WORDS,
+                "priority": check.get("priority")}
+    return None
+
+
 def _build_med_task(
     med: dict,
     last_given: dict | None,
@@ -490,8 +568,16 @@ def _build_med_task(
     allergies: list[dict] | None = None,
     ingredients: list[str] | None = None,
     overrides: dict[tuple, dict] | None = None,
+    set_times: dict | None = None,
+    pharmacist: dict | None = None,
+    check_required: bool = False,
 ) -> dict:
-    """One eMAR row for the round, with a DERIVED due time (see module docstring)."""
+    """One eMAR row for the round, with a DERIVED due time (see module docstring).
+
+    `set_times` (services/medorders/schedule.board_schedule_for) replaces the
+    derived time for a linked order on set times; `pharmacist`
+    (emar_check.pharmacist_check) is the bedside's pharmacist-check answer,
+    shown while `check_required` (ORB_MED_ORDER_VERIFY_BEFORE_DOSE) is on."""
     schedule = parse_frequency(med.get("frequency"))
     last_given_at = _parse_ts((last_given or {}).get("last_given_at"))
     started_at = _parse_ts(med.get("started_at"))
@@ -504,7 +590,15 @@ def _build_med_task(
     # is exactly the gap a shadow-mode pilot needs to see.
     missed_slots = 0
 
-    if schedule["kind"] == "scheduled" and schedule["interval_minutes"]:
+    if set_times and schedule["kind"] == "scheduled":
+        # Set times (medorders-19): the next set time not yet covered by a
+        # dose, rolled forward the same way, from services/medorders/schedule.
+        from services.medorders import schedule as med_schedule
+        timed = med_schedule.scheduled_due(
+            set_times["times"], last_given_at=last_given_at, started_at=started_at, now=now)
+        due_at, due_basis, missed_slots = (
+            timed["due_at"], timed["due_basis"], timed["missed_slots"])
+    elif schedule["kind"] == "scheduled" and schedule["interval_minutes"]:
         anchor = last_given_at or started_at
         if anchor:
             interval = timedelta(minutes=schedule["interval_minutes"])
@@ -539,7 +633,15 @@ def _build_med_task(
         (med.get("source") in ("llm_extracted", "agentic")) and not med.get("verified_by")
     )
 
+    extra: dict = {}
+    if set_times and schedule["kind"] == "scheduled":
+        extra["due_source"] = set_times["source"]
+        extra["set_times"] = list(set_times["times"])
+    if check_required:
+        extra["pharmacist_check"] = _pharmacist_view(pharmacist)
+
     return {
+        **extra,
         "medication_id": med["id"],
         "drug_name": med["drug_name"],
         "dosage": med.get("dosage"),
@@ -596,6 +698,31 @@ def build_board(department: str | None) -> dict:
     ingredient_map = extra.get("ingredients", {})
     overrides_by_key = extra.get("overrides", {})
     last_obs_by_patient = extra.get("last_obs", {})
+    linked_orders = extra.get("linked_orders", {})
+    # medorders-11 and medorders-19 (W8-I): which linked drugs run on set
+    # times, and what the bedside's pharmacist check will say for each.
+    from services.medorders import emar_check
+    verify_rule = emar_check.verify_before_dose_rule()
+    set_times_on = _set_times_on()
+    site_times = None
+    if set_times_on and linked_orders:
+        from services.medorders import schedule as med_schedule
+        site_times = med_schedule.site_dose_times()
+
+    def _linked_extras(m: dict) -> dict:
+        order = linked_orders.get(m.get("med_order_id") or "")
+        out: dict = {"check_required": verify_rule is not None}
+        if order is None:
+            return out
+        if set_times_on:
+            from services.medorders import schedule as med_schedule
+            out["set_times"] = med_schedule.board_schedule_for(
+                order, order.get("schedule"), site_times)
+        if verify_rule is not None:
+            out["pharmacist"] = emar_check.pharmacist_check(
+                order, m, rule=verify_rule,
+                given_doses=(last_given_by_med.get(m["id"]) or {}).get("given_count", 0))
+        return out
 
     # Scoring switched off (the Orb Ward Record): no NEWS2 and no schedule
     # worked out from one. The due time is the ward's fixed interval from
@@ -661,6 +788,7 @@ def build_board(department: str | None) -> dict:
                 allergies=patient_allergies,
                 ingredients=ingredient_map.get(_norm_drug(m["drug_name"]), []),
                 overrides=overrides_by_key,
+                **_linked_extras(m),
             )
             for m in meds_by_patient.get(pid, [])
         ]

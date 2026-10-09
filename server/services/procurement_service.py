@@ -19,6 +19,14 @@ so the line between them is drawn structurally rather than by convention:
   answer "which lot did this patient's dose come from", which is a recall and a
   medication-safety question.
 
+  THE PHARMACY STORE (opt-in, ORB_PHARMACY_STORE, off by default) buys,
+  receives, classifies and moves drugs. It reuses this module's indent,
+  purchase order and goods receipt TABLES in the 'pharmacy' domain (see the
+  Domains note below), but every drug unit it receives or moves is written to
+  Helix's ledger by services/pharmacy_stock_service, never to this module's
+  stock_movements. A drug's schedule and NDPS class live in Helix's drug
+  master, set through the Pharmacy store; nothing here records them.
+
   PROCUREMENT (this module) owns EVERYTHING ELSE THE HOSPITAL BUYS. Surgical
   consumables, sutures, gloves, linen, lab reagents, CSSD items, housekeeping,
   stationery, PPE, implants, biomedical spares. It is PURCHASE-oriented: stock
@@ -1331,12 +1339,17 @@ def _upsert_inventory_item_core(
     reach the item master without it. It reads the catalogue through
     helix_service, which takes its own (nested, read-only) session."""
     if is_pharmacy:
+        # The drug's schedule and NDPS class are not Helix's: they are recorded
+        # in the Pharmacy store's drug master, which buys and receives drugs
+        # when that module is switched on (grn-18 corrected the old wording).
         raise PharmacyItemRefused(
             "drugs are not stocked here. Medication stock lives in Helix "
-            "(pharmacy), which tracks batch, expiry, schedule-H and dispensing "
-            "against a prescription. Two ledgers for the same drug is how two "
-            "systems end up disagreeing about how much of a controlled "
-            "substance exists. Add the medication in Helix instead."
+            "(pharmacy), which tracks batch, expiry and dispensing against a "
+            "prescription; where the Pharmacy store is switched on, drugs are "
+            "bought, received and classified (schedule and NDPS class) there. "
+            "Two ledgers for the same drug is how two systems end up "
+            "disagreeing about how much of a controlled substance exists. Add "
+            "the medication in Helix instead."
         )
     code = _clean(code, field_name="item code", required=True).upper()
     name = _clean(name, field_name="item name", required=True)
@@ -1727,6 +1740,56 @@ def _cancel_indent_core(db, indent_id: int, *, reason: Optional[str] = None,
         "UPDATE indent_lines SET status = 'cancelled' WHERE indent_id = ? "
         "AND status NOT IN ('received','ordered')", (indent_id,),
     )
+
+
+def _record_indent_issue_core(db, indent_id: int, *, issued: dict[int, int],
+                              domain: str = STORES_DOMAIN) -> None:
+    """Record stock handed over against an approved ISSUE indent (grn-21,
+    the pharmacy store's ward indents), on the caller's connection.
+
+    `issued` maps indent_lines.id to the quantity (milli) that has just left
+    the issuing store for it. Each line's issued total may never pass what was
+    approved for it, and the indent moves to 'converted' (its stock has been
+    sent) the first time anything is issued. Only an issue indent is issued;
+    a purchase indent becomes a purchase order instead. There is no public
+    wrapper: the pharmacy transfer service calls this inside the dispatch's
+    own immediate transaction. Another desk's indent is not found."""
+    row = _document_in_domain(db, "indents", indent_id, domain, "indent")
+    if row["indent_kind"] != "issue":
+        raise ProcurementError("only an issue indent is issued from a store",
+                               code="bad_indent_kind")
+    if row["status"] != "converted":
+        assert_transition("indent", row["status"], "converted")
+    lines = {int(r["id"]): r for r in db.execute(
+        "SELECT * FROM indent_lines WHERE indent_id = ?", (indent_id,)).fetchall()}
+    for line_id, quantity in sorted(issued.items()):
+        line = lines.get(int(line_id))
+        if line is None:
+            raise ProcurementError(f"indent {indent_id} has no line {line_id}", code="bad_line")
+        qty = assert_positive_quantity_milli(quantity, "issued quantity_milli")
+        already = int(line["issued_quantity_milli"] or 0)
+        approved = int(line["approved_quantity_milli"] or 0)
+        if already + qty > approved:
+            raise ProcurementError(
+                f"line {line['line_no']}: cannot issue {format_quantity(already + qty)} "
+                f"against an approval for {format_quantity(approved)}",
+                code="over_issue")
+        db.execute(
+            "UPDATE indent_lines SET issued_quantity_milli = ?, status = 'ordered' "
+            "WHERE id = ?", (already + qty, line["id"]))
+    if row["status"] != "converted":
+        db.execute("UPDATE indents SET status = 'converted' WHERE id = ?", (indent_id,))
+
+
+def _close_indent_core(db, indent_id: int, *, domain: str = STORES_DOMAIN) -> None:
+    """Close an issue indent whose stock has all been received (grn-21), on
+    the caller's connection. Lines that were issued read as received. Another
+    desk's indent is not found."""
+    row = _document_in_domain(db, "indents", indent_id, domain, "indent")
+    assert_transition("indent", row["status"], "closed")
+    db.execute("UPDATE indents SET status = 'closed' WHERE id = ?", (indent_id,))
+    db.execute("UPDATE indent_lines SET status = 'received' WHERE indent_id = ? "
+               "AND status = 'ordered'", (indent_id,))
 
 
 def get_indent(indent_id: int) -> Optional[dict]:

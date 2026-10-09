@@ -71,6 +71,8 @@ interface HospitalForecast {
   daily_forecasts: DailyForecast[]
   /** Empty when the hospital's state is not set or nothing is active today. */
   season?: SeasonContext[]
+  /** Where the bed count came from (adt-14); only while Beds and admissions is on. */
+  capacity_source?: CapacitySource
   summary: {
     avg_occupancy: number
     peak_day: string
@@ -97,10 +99,15 @@ interface DischargeRow {
   estimated_discharge_date: string
 }
 
+/** Where a bed count came from (adt-14), sent only while Beds and admissions
+ *  is on: 'from bed register' or 'site setting' (the server's words). */
+interface CapacitySource { source: string; words: string }
+
 interface CapacityData {
-  current: Record<string, { total: number; occupied: number; available: number; utilization_pct: number }>
+  current: Record<string, { total: number; occupied: number; available: number; utilization_pct: number; capacity_source?: CapacitySource }>
   projected_48h: Record<string, { projected_occupied: number; projected_available: number; projected_utilization_pct: number }>
   total: { capacity: number; occupied: number; available: number }
+  capacity_source?: CapacitySource
 }
 
 interface AdmissionPatterns {
@@ -377,7 +384,8 @@ export default function ForecastPanel() {
               value={hospitalData?.current_occupancy || 0}
               unit={`/ ${hospitalData?.total_capacity || 32}`}
               accent="var(--accent-amber)"
-              subtitle={`${hospitalData?.current_occupancy_pct?.toFixed(0)}% occupied`}
+              subtitle={`${hospitalData?.current_occupancy_pct?.toFixed(0)}% occupied`
+                + (hospitalData?.capacity_source ? `, beds ${hospitalData.capacity_source.words}` : '')}
             />
             <MetricCard
               label="Beds Available in 48h"
@@ -587,6 +595,13 @@ export default function ForecastPanel() {
                       {isOverloaded ? '⚠ FULL' : data.utilization_pct > 70 ? 'HIGH' : 'OK'}
                     </span>
                   </div>
+                  {/* Where this ward's bed count came from (adt-14). Sent only
+                      while Beds and admissions is on. */}
+                  {data.capacity_source && (
+                    <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      {data.total} beds, {data.capacity_source.words}
+                    </p>
+                  )}
 
                   {/* Bed grid */}
                   <div style={{
@@ -652,6 +667,11 @@ export default function ForecastPanel() {
               <div>
                 <div className="metric-mono" style={{ fontSize: '2rem', color: 'var(--accent-amber)' }}>{capacity.total.capacity}</div>
                 <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginTop: 4 }}>Total Capacity</div>
+                {capacity.capacity_source && (
+                  <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: 2 }}>
+                    Beds: {capacity.capacity_source.words}
+                  </div>
+                )}
               </div>
               <div>
                 <div className="metric-mono" style={{ fontSize: '2rem', color: capacity.total.occupied / capacity.total.capacity > 0.85 ? 'var(--status-danger)' : 'var(--text-primary)' }}>

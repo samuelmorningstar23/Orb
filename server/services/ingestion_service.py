@@ -312,7 +312,7 @@ def _persist_vitals_row(patient_raw_id, vital_events, event_id, source_label):
         return patient_id, vitals_map, observed_at, consciousness, on_oxygen, on_scale_2
 
 
-def _insert_observations_batch(events, event_id, source_label, correlation_id):
+def _insert_observations_batch(events, event_id, source_label, correlation_id, backfill=False):
     """Insert a batch of non-vital observations in one trip to the DB pool.
 
     Deliberately NOT one shared transaction. Each observation keeps its own
@@ -327,6 +327,9 @@ def _insert_observations_batch(events, event_id, source_label, correlation_id):
     OBX-4 sub-id, sender and order with another result in the same message is
     marked before anything is written: it supersedes nothing (lis-20,
     supersede_corrected_in_txn), whichever of the two is written first.
+
+    `backfill` is the payload's own flag (ingest_payload): an older result
+    replayed is stored in full but raises no interfaced critical (lis-22).
     """
     inserted = 0
     quarantined = 0
@@ -337,7 +340,8 @@ def _insert_observations_batch(events, event_id, source_label, correlation_id):
             sibling = (correcting and is_external_correction(evt)
                        and message_has_sibling_result(evt, events))
             if _insert_observation(evt, event_id, source_label, correlation_id,
-                                   sibling_in_message=sibling) == "quarantined":
+                                   sibling_in_message=sibling,
+                                   backfill=backfill) == "quarantined":
                 quarantined += 1
             else:
                 inserted += 1
@@ -784,7 +788,7 @@ async def _route_events(
     if non_vital_events:
         batch_inserted, batch_errors, quarantined = await run_db(
             _insert_observations_batch,
-            non_vital_events, event_id, source_label, correlation_id,
+            non_vital_events, event_id, source_label, correlation_id, backfill,
         )
         obs_inserted += batch_inserted
         errors.extend(batch_errors)
@@ -1217,6 +1221,7 @@ def _insert_observation(
     correlation_id: str = None,
     *,
     sibling_in_message: bool = False,
+    backfill: bool = False,
 ) -> str:
     """Insert a non-vital observation into the observations table.
 
@@ -1226,6 +1231,11 @@ def _insert_observation(
     stored with no patient. With ORB_RESULT_CORRECTIONS on, an HL7 OBX-11 'C'
     supersedes the earlier final result it corrects on the same transaction
     (lis-20, see write_observation_in_txn).
+
+    With ORB_LAB_CRITICAL_INTERFACED on, a stored result the sending
+    laboratory flagged HH, LL or AA then raises a critical callback (lis-22,
+    _raise_interfaced_critical), AFTER this commit: the result stands
+    whatever happens to the critical.
     """
     # A correction reads the results it may supersede and then writes; take
     # the write lock first so nothing lands in between (database.db_session).
@@ -1298,7 +1308,34 @@ def _insert_observation(
         target_id=str(obs_id),
         summary_message=f"Inserted observation: {evt.observation_name}"
     )
+    if patient_id and obs_id is not None:
+        _raise_interfaced_critical(evt, obs_id, backfill=backfill)
     return "inserted"
+
+
+def _raise_interfaced_critical(evt: CanonicalEvent, obs_id: int, *, backfill: bool) -> None:
+    """The interfaced critical callback for one stored result (lis-22).
+
+    BEHIND ORB_LAB_CRITICAL_INTERFACED (default off; works without ORB_LAB).
+    Only a result the sending laboratory itself flagged HH, LL or AA (OBX-8)
+    is looked at; everything else returns before any database work. The
+    service re-reads the stored row and decides (final or corrected, not
+    simulated, a result feed, not already raised), raises in its own
+    transaction, posts to the case room as system_lab and pushes it live.
+    A backfill never raises. Never raises out: the result is already stored,
+    and a failure is logged as an error by the service."""
+    import config
+    if backfill or not config.feature_enabled("lab_critical_interfaced"):
+        return
+    try:
+        from services import lab_critical_service
+        if lab_critical_service.interfaced_flag(evt.abnormal_flag, evt.raw_segment_ref) is None:
+            return
+        lab_critical_service.raise_interfaced_and_deliver(
+            obs_id, backfill=backfill, value_as_sent=evt.value)
+    except Exception:
+        logger.error("Interfaced laboratory critical for observation %s could not be raised",
+                     obs_id, exc_info=True)
 
 
 # ════════════════════════════════════════════

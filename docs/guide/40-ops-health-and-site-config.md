@@ -699,7 +699,7 @@ polling every 30 seconds writes 2,880 rows a day into the chain a compliance rev
 **On screen:** **nothing in Orb's own interface today.** No React component fetches it. In practice
 you reach it with `curl`, a browser, or a monitoring tool.
 **Permission:** `admin.overview`, the same permission that guards the governance dashboard, user
-management and backups. Held by the `admin` role only (`server/permissions.py:156`).
+management and backups. Held by the `admin` role only (`server/permissions.py:157`).
 `test_status_is_admin_only` (`test_ops_health.py:101`) asserts an anonymous caller gets 401/403 and a
 **nurse** gets 403.
 **Breaks if you change it:** widening this to any clinician hands every ward user the appliance's
@@ -1233,7 +1233,7 @@ mid-shift, that a day of charting is gone.
 | Receipt schema `orb.backup.verification/1` (`ops_health_service:80`) | **nobody today**, intended: `scripts/backup.sh` | `_read_receipt` (`:335`) | with no producer, every verified backup reports as unproven |
 | Backup filename `orb-backup-*.db` + `*-uploads.tar` | `scripts/backup.sh:64-65`, `:185` | `_check_backups` (`:365`, `:396`), `restore-drill.sh:53-54`, `standby-restore.sh:79-80`, `:364` | rename the prefix in one place and the status page reports "no backups at all" |
 | `ORB_BACKUP_DIR` | operator `.env` | all four resolvers: `config.BACKUP_DIR`, `ops_health_service._backup_dir` (`:118`), `routes/backup_routes._out_dir`, `scripts/backup_db._resolve_out_dir`, plus `backup.sh:60`, `restore-drill.sh:71`, `standby-restore.sh:81` | all default to `<repo>/backups` since 2026-08-15; `test_every_backup_dir_resolver_agrees` fails if one drifts |
-| `admin.overview` | `permissions.py:95`, granted to `admin` at `:156` | both ops endpoints, `/api/health/access` (`main.py:900`), backup routes, governance dashboard | widening it hands the appliance's weak points to every clinician |
+| `admin.overview` | `permissions.py:96`, granted to `admin` at `:156` | both ops endpoints, `/api/health/access` (`main.py:900`), backup routes, governance dashboard | widening it hands the appliance's weak points to every clinician |
 | `bootstrap_snapshot()` keys (`admins_active`, `admins_with_mfa`, `default_credential_accounts`, `state`) | `bootstrap_service:482` | `_check_access` (`:833-843`) | a renamed key silently degrades the access check to "not finished checking yet" |
 | `registry.status()` → `{count, sources[{running, stats{last_error, last_reading_at}}]}` | `vitals_source/registry.py:93` | `_check_integrations` (`:578-621`) | a shape change makes every feed read as "never delivered a reading" |
 | Sync `def` route handlers | `ops_routes.py:80`, `:94` | FastAPI threadpool; `tests/test_event_loop_discipline.py` | an `async def` here puts a whole-disk scan on the event loop and freezes every ward screen |

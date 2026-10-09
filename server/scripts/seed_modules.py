@@ -51,6 +51,12 @@ Usage (from server/):
 
 It is also called as the last step of scripts/seed_clinical_data.py, so
 `reset_db_and_seed.py` picks it up with no extra command.
+
+DRUGS ARE NOT SEEDED HERE. The pharmacy store (opt-in, ORB_PHARMACY_STORE) is
+seeded by scripts/seed_pharmacy_store.py, which reset_db_and_seed runs after
+seed_helix: seed_helix replaces every drug lot after this module has run, so a
+drug order received here would describe lots that no longer exist. It reuses
+SEED_MARKER and CODE_PREFIX below.
 """
 from __future__ import annotations
 

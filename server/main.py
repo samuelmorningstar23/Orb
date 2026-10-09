@@ -1288,13 +1288,12 @@ def serve_upload(filename: str, user: dict = Depends(get_current_user)):
 # ── Auth-protected /me endpoint ──
 @app.get("/api/auth/me", response_model=UserOut)
 async def get_me(user: dict = Depends(get_current_user)):
-    return UserOut(
-        id=user["id"],
-        name=user["name"],
-        role=user["role"],
-        department=user.get("department"),
-        registration_number=user.get("registration_number"),
-    )
+    # The same body the sign-in lanes return, facility included (multisite-5a).
+    # The facility label may read the facilities tables on a cache miss, so it
+    # is built off the event loop.
+    from database import run_db
+    from routes.auth_routes import user_out
+    return await run_db(user_out, user)
 
 # ── Health check ──
 @app.get("/api/health")

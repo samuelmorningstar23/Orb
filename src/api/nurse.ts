@@ -89,6 +89,25 @@ export interface MedTask {
   unverified: boolean;
   /** Absent only from a board cached before the field existed. */
   allergy?: MedAllergyPreview | null;
+  /** medorders-11 (ruling MO-R1): what the bedside's pharmacist check will
+   *  say. Present only while the server's 'med_order_verify_before_dose'
+   *  feature is on; null when the dose will not be refused or marked for it. */
+  pharmacist_check?: MedPharmacistCheck | null;
+  /** medorders-19 (ruling MO-R8): present only when the due time comes from
+   *  set times, the prescriber's or the hospital's signed times. */
+  due_source?: 'prescriber' | 'site_times';
+  /** The set times ('HH:MM', hospital clock) behind due_source. */
+  set_times?: string[];
+}
+
+/** The pharmacist check before the first dose, as the board sees it.
+ *  'waiting': the bedside will refuse the dose until a pharmacist checks the
+ *  order. 'first_dose_before_check': a first stat or urgent dose the bedside
+ *  will allow and mark as given before the check. */
+export interface MedPharmacistCheck {
+  state: 'waiting' | 'first_dose_before_check';
+  message: string | null;
+  priority: string | null;
 }
 
 export interface NursePatientCard {

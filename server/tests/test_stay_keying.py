@@ -623,21 +623,23 @@ STAY_KEYED_READER_AUDIT = (
      "symbol": "status = 'active'", "status": "correct_as_is",
      "note": "deduplicates on an ACTIVE bundle only, so a new stay can start one."},
     {"reader": "case rooms", "file": "services/admission_service.py",
-     "symbol": "'case_room'", "status": "opd-17c",
-     "note": "one room per patient (pinned above); readmission must reuse it with a "
-             "dividing line, never open a second."},
+     "symbol": "'case_room'", "status": "fixed_opd_17c",
+     "note": "one room per patient (pinned above); a readmission reuses it with a "
+             "READMISSION dividing line (READMISSION_DIVIDER), never opens a second "
+             "(tests/test_readmission_same_record.py)."},
     {"reader": "open escalation chains", "file": "services/escalation_service.py",
      "symbol": "def patient_escalations", "status": "opd-17c",
      "note": "chains are never closed by a discharge (R009 held), so a readmitted "
              "patient would inherit the earlier stay's open chains."},
     {"reader": "medication chart and eMAR", "file": "services/emar_service.py",
-     "symbol": "def record_administration", "status": "opd-17c",
+     "symbol": "def record_administration", "status": "fixed_opd_17c",
      "note": "discharge leaves medications 'active'; ruling OPD-S8 (a) closes them in "
-             "the readmission transaction."},
+             "the readmission transaction (admission_service."
+             "_close_previous_stay_medicines_on), so the eMAR refuses them."},
     {"reader": "Bridge medications", "file": "routes/bridge_routes.py",
      "symbol": "def patient_medications", "status": "opd-17c",
-     "note": "reads every stay's medicines (R029 (1)); a fresh one-time Bridge "
-             "password is due at readmission (R029 (2))."},
+     "note": "reads every stay's medicines (R029 (1), still open); the fresh one-time "
+             "Bridge password at readmission (R029 (2)) is built in opd-17c."},
     {"reader": "orders", "file": "services/orders_service.py",
      "symbol": "def list_orders", "status": "opd-17c",
      "note": "orders are keyed on the patient and not closed at discharge."},
@@ -645,9 +647,11 @@ STAY_KEYED_READER_AUDIT = (
      "symbol": "def build_ipass", "status": "opd-17c",
      "note": "latest vitals, risk, medications and notes by patient (ruling ADT-S9)."},
     {"reader": "board, NEWS2 and Sage latest vitals", "file": "services/vigil_service.py",
-     "symbol": "def scored_admitted_patients", "status": "opd-17c",
-     "note": "the previous stay's last set would read as latest until a new one is "
-             "charted (ruling ADT-S9, adt-18b); ORDER BY timestamp DESC, id DESC stays."},
+     "symbol": "def scored_admitted_patients", "status": "fixed_opd_17c",
+     "note": "the previous stay's rows are never the latest on the Vigil board, the "
+             "NEWS2 entry points, the chart and Sage (ruling ADT-S9 (a), "
+             "readmission_stay_starts_on); ORDER BY timestamp DESC, id DESC stays "
+             "(tests/test_adt_readmit_boundaries.py). Other lanes are in the W8-A report."},
     {"reader": "discharge summary timeline and reconciliation",
      "file": "services/discharge_service.py", "symbol": "def build_patient_timeline",
      "status": "opd-17c", "note": "reads the whole record, not this stay; "
@@ -669,7 +673,7 @@ STAY_KEYED_READER_AUDIT = (
      "note": "re-checks for an active stay inside its transaction; the index now "
              "backs that check (its comment that no index exists is stale; W6-C file)."},
 )
-AUDIT_STATUSES = {"fixed_here", "correct_as_is", "opd-17c"}
+AUDIT_STATUSES = {"fixed_here", "correct_as_is", "opd-17c", "fixed_opd_17c"}
 
 
 def test_every_audited_reader_points_at_code_that_exists():

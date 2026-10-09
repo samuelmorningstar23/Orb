@@ -20,10 +20,13 @@ import socketio
 from http.cookies import SimpleCookie
 from urllib.parse import urlsplit
 
+import config
 from database import db_session, run_db
 from config import CORS_ORIGINS, DEPLOYMENT_PROFILE
 from auth import decode_token, SESSION_COOKIE
-from permissions import department_scope, has_permission, PATIENT_READ_ALL, VITALS_READ
+from permissions import (
+    department_scope, has_permission, PATIENT_READ_ALL, REGISTRATION_READ, VITALS_READ,
+)
 from services.relay_service import get_channels_for_user
 
 logger = logging.getLogger("orb.ws")
@@ -234,6 +237,51 @@ def _authenticate(auth, environ=None) -> dict | None:
     return user
 
 
+# ── The outpatient queue nudge rooms (opd-9b) ────────────────────────────────
+# The front desk's queue used to re-read itself every ORB_OPD_QUEUE_POLL_SECONDS
+# because a desk account (the receptionist holds registration.* and no
+# vitals.read) joined no room the queue nudge reached. While the 'opd' feature
+# is on, every registration.read holder now joins 'opd:<their department>', or
+# 'opd:__all__' with no department: the same department_scope derivation as the
+# vitals rooms and the desk's own REST queue, never a value the client names.
+# The nudge is content-free ({department} and nothing else), so the room
+# carries no PHI; the desk refetches its queue over its scoped REST read.
+OPD_ROOM_PREFIX = "opd:"
+OPD_ALL_ROOM = "opd:__all__"
+
+
+def opd_desk_nudges_on() -> bool:
+    """Is the 'opd' feature on right now? Read at call time."""
+    try:
+        return bool(config.feature_enabled("opd"))
+    except Exception:  # noqa: BLE001 - a switch read must never break a handshake
+        return False
+
+
+def opd_desk_room(department: str | None) -> str:
+    """The opd room for a caller scoped to `department` (department_scope)."""
+    return f"{OPD_ROOM_PREFIX}{department}" if department else OPD_ALL_ROOM
+
+
+def queue_nudge_rooms(department: str) -> list[str]:
+    """Every room the clinic's queue nudge goes to: the clinic's vitals room
+    and the whole-census room (doctors and other vitals.read holders), and the
+    clinic's opd room and the all-clinics opd room (desk accounts). Emitted as
+    one list so a socket in two of them hears it once."""
+    return [f"dept:{department}", "dept:__all__",
+            opd_desk_room(department), OPD_ALL_ROOM]
+
+
+def receives_queue_nudges(role: str) -> bool:
+    """Would a socket for this role hear the queue nudge? A vitals.read holder
+    always does (its department room); a registration.read holder does while
+    the 'opd' feature is on (its opd room). The desk queue tells the screen,
+    which keeps its re-read only for an account that hears neither."""
+    if has_permission(role, VITALS_READ):
+        return True
+    return has_permission(role, REGISTRATION_READ) and opd_desk_nudges_on()
+
+
 def _self_patient_id(user_id: str) -> str | None:
     """Patient record owned by this login, or None when the account has none.
 
@@ -299,6 +347,10 @@ async def connect(sid, environ, auth=None):
         patient_id = await run_db(_self_patient_id, user["id"])
         if patient_id:
             await sio.enter_room(sid, f"patient-self:{patient_id}")
+    # opd-9b: the registration desk's queue nudge (see opd_desk_room). Never a
+    # vitals room: registration.read opens the queue, not the census.
+    if has_permission(role, REGISTRATION_READ) and opd_desk_nudges_on():
+        await sio.enter_room(sid, opd_desk_room(dept))
     logger.info("WS connected: %s (user=%s role=%s dept=%s)", sid, user["id"], role, dept or "-")
     return True
 

@@ -508,6 +508,9 @@ def record_administration(
       * the medication must exist and be an active order,
       * an AI/agentic med (source llm_extracted/agentic) with no pharmacist
         verification is not administrable,
+      * with ORB_MED_ORDER_VERIFY_BEFORE_DOSE on, a ward row linked to a
+        medication order needs the pharmacist's check before a 'given' dose,
+        whatever its source (ruling MO-R1, services/medorders/emar_check.py);
       * a 'not_given' record requires a non-empty reason.
 
     ALLERGY INTERLOCK (raises AllergyInterlockBlocked, not ValueError — the
@@ -582,7 +585,10 @@ def record_administration(
                 (idempotency_key,),
             ).fetchone()
             if existing:
-                return {**_hydrate(_fetch_administration(db, existing["id"])), "replayed": True}
+                (replay,) = _mark_before_check(
+                    [_hydrate(_fetch_administration(db, existing["id"]))],
+                    _before_check_administration_ids(db, med["patient_id"]))
+                return {**replay, "replayed": True}
 
         # ── The patient must still be an inpatient ────────────────────────────
         # Found 2026-08-06 by attack: a patient was discharged through
@@ -696,14 +702,22 @@ def record_administration(
             ).fetchone() if idempotency_key else None
             if not existing:
                 raise
-            return {**_hydrate(_fetch_administration(db, existing["id"])), "replayed": True}
+            (replay,) = _mark_before_check(
+                [_hydrate(_fetch_administration(db, existing["id"]))],
+                _before_check_administration_ids(db, med["patient_id"]))
+            return {**replay, "replayed": True}
 
         # The order-state check again, now that this transaction holds the
         # write lock: no hold can commit after this read, and one that
         # committed since the first read refuses here and rolls the dose back.
         # Then the order's bedside event, in this same transaction. Both are
-        # no-ops for an unlinked ward row.
-        linked_order = emar_check.check_dose_in_txn(db, med_id, status)
+        # no-ops for an unlinked ward row. The row just written is left out of
+        # the pharmacist check's dose count (medorders-11), so a first stat
+        # dose does not count itself, while a second nurse's 'first' dose,
+        # committed before this lock was taken, does.
+        linked_order = emar_check.check_dose_in_txn(
+            db, med_id, status, exclude_administration_id=inserted_id)
+        before_check = bool(linked_order and linked_order.get("before_pharmacist_check"))
         # A given dose names the supply row it came from only when exactly one
         # received, unused unit of the order is on the ward; otherwise its
         # event says 'supply not linked' (medorders-5b). Read here, under the
@@ -763,6 +777,7 @@ def record_administration(
                 f"Medication {med_id} ({record['drug_name']}) "
                 + (f"administered ({dose_given}, {route_given})" if status == "given"
                    else f"NOT given: {not_given_reason}")
+                + (" before the pharmacist check" if before_check else "")
                 + f" by {actor_id}"
             ),
             actor_user_id=actor_id,
@@ -797,6 +812,12 @@ def record_administration(
                 # saying 'supply not linked' (medorders-5b). Linked rows only.
                 **({"supply_helix_order_id": custody.get("helix_order_id")}
                    if linked_order and custody is not None else {}),
+                # A first stat or urgent dose given before the pharmacist's
+                # check (ruling MO-R1 (a), medorders-11). Absent otherwise.
+                **({"given_before_pharmacist_check": True,
+                    "first_dose_rule": linked_order.get("first_dose_rule"),
+                    "order_priority": linked_order.get("priority")}
+                   if before_check else {}),
             },
         )
 
@@ -914,12 +935,48 @@ def record_administration(
             " [OVERRIDDEN]" if allergy_screen.get("override") else "",
         )
     logger.info("eMAR: med %s %s by %s (patient %s)", med_id, status, actor_id, record["patient_id"])
+    if before_check:
+        record["given_before_pharmacist_check"] = True
     return {**record, "replayed": False}
+
+
+def _before_check_administration_ids(db, patient_id: str) -> set[int]:
+    """The patient's doses given before the pharmacist's check (ruling MO-R1
+    (a), medorders-11), read from the medication orders' bedside events. Empty
+    on a database that never ran the order store."""
+    found: set[int] = set()
+    for row in db.execute(
+        "SELECT ref_id, payload_json FROM med_order_events WHERE patient_id = ? "
+        "AND kind = 'administered' AND ref_type = 'medication_administration'",
+        (patient_id,),
+    ).fetchall():
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(payload, dict) and payload.get("before_pharmacist_check") is True:
+            try:
+                found.add(int(row["ref_id"]))
+            except (TypeError, ValueError):
+                continue
+    return found
+
+
+def _mark_before_check(records: list[dict], flagged: set[int]) -> list[dict]:
+    """Add given_before_pharmacist_check: True to the flagged records only, so
+    every other record keeps exactly its old shape."""
+    for rec in records:
+        if rec.get("id") in flagged:
+            rec["given_before_pharmacist_check"] = True
+    return records
 
 
 def list_administrations(patient_id: str) -> list[dict]:
     """All administration records for a patient, newest first, joined to the
-    medication (drug_name) and the administering user (administered_by_name)."""
+    medication (drug_name) and the administering user (administered_by_name).
+    A dose given before the pharmacist's check carries
+    given_before_pharmacist_check: True (medorders-11); no other record
+    changes shape."""
     with db_session() as db:
         rows = db.execute(
             """SELECT ma.*, m.drug_name, u.name AS administered_by_name
@@ -930,7 +987,8 @@ def list_administrations(patient_id: str) -> list[dict]:
                ORDER BY ma.administered_at DESC, ma.id DESC""",
             (patient_id,),
         ).fetchall()
-    return [_hydrate(r) for r in rows]
+        flagged = _before_check_administration_ids(db, patient_id) if rows else set()
+    return _mark_before_check([_hydrate(r) for r in rows], flagged)
 
 
 def administration_summary(med_id: int) -> dict:

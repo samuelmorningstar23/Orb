@@ -75,7 +75,7 @@ sequenceDiagram
 ### Flow 2: session lifecycle (login → socket → logout)
 
 1. `login()` POSTs credentials to `/auth/login`, then persists `token` → `orb_token` and `user` → `orb_user` (`src/api/client.ts:278-288`).
-2. It calls `authenticateSocket()` (`src/api/client.ts:592`, defined at `:57`), which re-points the socket.io handshake auth at the fresh token and forces a disconnect/reconnect (`src/api/client.ts:57-64`). The socket itself is a module-level singleton created on first import with `auth` as a *callback* that re-reads the token on every connection attempt (`src/api/client.ts:42-49`), but with `autoConnect: false` (`:43`), so it opens only once a token or session cookie exists (`:54`); the server's `connect` handler verifies the handshake before accepting (`server/ws/realtime.py:247`, guide 06-realtime).
+2. It calls `authenticateSocket()` (`src/api/client.ts:592`, defined at `:57`), which re-points the socket.io handshake auth at the fresh token and forces a disconnect/reconnect (`src/api/client.ts:57-64`). The socket itself is a module-level singleton created on first import with `auth` as a *callback* that re-reads the token on every connection attempt (`src/api/client.ts:42-49`), but with `autoConnect: false` (`:43`), so it opens only once a token or session cookie exists (`:54`); the server's `connect` handler verifies the handshake before accepting (`server/ws/realtime.py:295`, guide 06-realtime).
 3. On logout, `AppRoot.tsx:90` calls `deauthenticateSocket()` (`src/api/client.ts:60-65`) and clears storage via `clearToken()` (`src/api/client.ts:73-76`), so neither REST nor realtime keeps the old identity.
 4. Any 401 from any endpoint at any time repeats the logout effect automatically (Flow 1, step 5).
 
@@ -111,7 +111,7 @@ graph TD
 
 ### Flow 5: idempotency
 
-**Idempotency** means an operation applied more than once has the same effect as applying it once. Retries (offline replays, double-clicks, lost responses) make duplicates inevitable, so safety-critical writes need duplicate detection. Orb's mechanism is the **idempotency key**: a unique client-chosen string sent with the request; the server records it, and if the same key arrives again it returns the recorded outcome instead of re-executing. In this codebase the fully wired example is the Helix pharmacy order transition: `transitionHelixOrder` accepts an optional `idempotency_key` (`src/api/client.ts:1174-1185`), the route forwards it (`server/routes/helix_routes.py:80`, `:103`), and `transition_order_status` checks it against the `UNIQUE` column `helix_transitions.idempotency_key` (`server/services/helix_service.py:148-161`, `server/services/helix_db.py:73`), returning `already_applied: true` on a duplicate. The offline queue generates a UUID per queued request (`src/api/client.ts:219`) but, as its own comment admits (`src/api/client.ts:250-253`), never transmits it, so queued note/medication replays are *not* actually protected today (see Discrepancies).
+**Idempotency** means an operation applied more than once has the same effect as applying it once. Retries (offline replays, double-clicks, lost responses) make duplicates inevitable, so safety-critical writes need duplicate detection. Orb's mechanism is the **idempotency key**: a unique client-chosen string sent with the request; the server records it, and if the same key arrives again it returns the recorded outcome instead of re-executing. In this codebase the fully wired example is the Helix pharmacy order transition: `transitionHelixOrder` accepts an optional `idempotency_key` (`src/api/client.ts:1174-1185`), the route forwards it (`server/routes/helix_routes.py:133`, `:156`), and `transition_order_status` checks it against the `UNIQUE` column `helix_transitions.idempotency_key` (`server/services/helix_service.py:162-175`, `server/services/helix_db.py:73`), returning `already_applied: true` on a duplicate. The offline queue generates a UUID per queued request (`src/api/client.ts:219`) but, as its own comment admits (`src/api/client.ts:250-253`), never transmits it, so queued note/medication replays are *not* actually protected today (see Discrepancies).
 
 ## Function-by-function
 
@@ -140,7 +140,7 @@ graph TD
 #### socket: `src/api/client.ts:42`
 **Signature:** module constant → socket.io `Socket`
 **Does:** Creates the app-wide realtime WebSocket connection at module load, presenting the JWT in the handshake.
-**How it works:** 1. `io(API_HOST, { autoConnect: true, auth: (cb) => cb({ token: getToken() }) })` (`:43-46`). 2. Because `auth` is a callback, the *current* localStorage token is read on every (re)connection attempt. 3. A **WebSocket** is a persistent two-way TCP connection the server can push on; **socket.io** is a library layered on it adding rooms, reconnection, and a **handshake**, the initial exchange where this `auth` payload is delivered. 4. The server's `connect(sid, environ, auth)` handler verifies the token and refuses unauthenticated clients (`server/ws/realtime.py:165`; rationale comment `:29-138`).
+**How it works:** 1. `io(API_HOST, { autoConnect: true, auth: (cb) => cb({ token: getToken() }) })` (`:43-46`). 2. Because `auth` is a callback, the *current* localStorage token is read on every (re)connection attempt. 3. A **WebSocket** is a persistent two-way TCP connection the server can push on; **socket.io** is a library layered on it adding rooms, reconnection, and a **handshake**, the initial exchange where this `auth` payload is delivered. 4. The server's `connect(sid, environ, auth)` handler verifies the token and refuses unauthenticated clients (`server/ws/realtime.py:168`; rationale comment `:29-138`).
 **Why it exists:** One shared authenticated socket for the whole app; sending the JWT in the handshake makes realtime enforce the same identity as REST, otherwise any client could join any patient room (`:33-35`).
 **Data in/out:** handshake `auth = { token: string | null }` → connected socket (or a refused connection before login).
 **Talks to:** imported by VigilPanel, RelayPanel, SurgicalSuitePanel, SageAmbientSidebar, SageInsightsFeed, `useStreamingTranscription`, and others (they register `socket.on(...)` handlers, event catalog in guide 06-realtime).
@@ -310,7 +310,7 @@ graph TD
 An **MRN** (medical record number) is the hospital's permanent identifier for a patient; `risk_score`/`risk_level` come from the server's NEWS2-based deterioration scoring (NEWS2 = National Early Warning Score 2, a standard vitals-derived deterioration score).
 **Why it exists:** The census list and detail view are Vigil's two core reads; keeping the `Patient` type here gives every consumer one shared shape.
 **Talks to:** `getPatients`, VigilPanel and SagePanel; `getPatientDetail`, VigilPanel; `getPatientsList` re-uses `getPatients` (`:1685-1688`). `getPatientVitals` has **no in-repo caller** (dead export).
-**Change guide:** To add a census field, extend `Patient` (`:291`) and the server's list query (`server/routes/vigil_routes.py:36`); watch out, `getPatientDetail` returns `any`, so new consumers get no type help.
+**Change guide:** To add a census field, extend `Patient` (`:291`) and the server's list query (`server/routes/vigil_routes.py:37`); watch out, `getPatientDetail` returns `any`, so new consumers get no type help.
 **Gotchas:** none beyond the `any` typing.
 
 #### getPatientForecast: `src/api/client.ts:638`
@@ -566,7 +566,7 @@ The `Message` type carries provenance flags `is_bot`/`source` so automated posts
 #### createPatient: `src/api/client.ts:1771`
 **Signature:** `(data: any) → Promise<any>`
 **Does:** `POST /vigil/patients`, creates a patient record (used when Scribe dictation references an unknown patient).
-**Talks to:** ScribePanel. Server route verified (`server/routes/vigil_routes.py:495`).
+**Talks to:** ScribePanel. Server route verified (`server/routes/vigil_routes.py:519`).
 **How / Why / Data / Change guide / Gotchas:** trivial wrapper; untyped.
 
 #### triggerDeterioration / getEscalationStatus: `src/api/client.ts:1779` / `:1786`
@@ -630,11 +630,11 @@ Server: `server/routes/helix_routes.py` (prefix `/api/helix`, `:8`).
 #### transitionHelixOrder: `src/api/client.ts:1895`
 **Signature:** `(orderId: string, payload: {target_status, idempotency_key?, pharmacist_notes?, substitute_medication_id?, scheduled_at?}) → Promise<any>`
 **Does:** Advances a Helix pharmacy order through its guarded state machine (`pending → reviewing → verified → scheduled → dispensed → delivered`, with `reviewing → rejected|substitute_suggested` branches), optionally protected by an idempotency key.
-**How it works:** 1. POST to `/helix/orders/{id}/transition` (`:1181-1184`). 2. Server side, `transition_order_status` (`server/services/helix_service.py:129`) checks the key against the `UNIQUE` `helix_transitions.idempotency_key` column (`server/services/helix_db.py:73`) and short-circuits with `already_applied: true` if seen (`helix_service.py:150-161`); it validates the transition is legal and adjusts stock atomically.
+**How it works:** 1. POST to `/helix/orders/{id}/transition` (`:1181-1184`). 2. Server side, `transition_order_status` (`server/services/helix_service.py:143`) checks the key against the `UNIQUE` `helix_transitions.idempotency_key` column (`server/services/helix_db.py:73`) and short-circuits with `already_applied: true` if seen (`helix_service.py:164-175`); it validates the transition is legal and adjusts stock atomically.
 **Why it exists:** Medication state changes must be exactly-once: a double-submitted "dispense" (the `scheduled → dispensed` step, which is the only one that touches inventory) would decrement stock twice and record a phantom dose. This is the reference implementation of Flow 5.
 **Data in/out:** payload above → `{ok, order, transition, already_applied}`.
 **Talks to:** HelixOrderReviewModal (`src/components/helix/HelixOrderReviewModal.tsx:3`, call at `:101`).
-**Change guide, worked example (actually using the idempotency key):** HelixOrderReviewModal currently omits the key. To harden it: generate `const key = crypto.randomUUID()` once when the modal's confirm flow *starts* (not per attempt), pass `idempotency_key: key` in the payload at `HelixOrderReviewModal.tsx:101`, and reuse the same key on user retry after a timeout. Knock-on effects: retries now return `already_applied: true` instead of an "Illegal transition" error; watch out, the server *generates its own random key when none is supplied* (`helix_service.py:144-146`), which makes unkeyed retries look like brand-new operations, so the protection is only real when the client supplies the key.
+**Change guide, worked example (actually using the idempotency key):** HelixOrderReviewModal currently omits the key. To harden it: generate `const key = crypto.randomUUID()` once when the modal's confirm flow *starts* (not per attempt), pass `idempotency_key: key` in the payload at `HelixOrderReviewModal.tsx:121`, and reuse the same key on user retry after a timeout. Knock-on effects: retries now return `already_applied: true` instead of an "Illegal transition" error; watch out, the server *generates its own random key when none is supplied* (`helix_service.py:158-160`), which makes unkeyed retries look like brand-new operations, so the protection is only real when the client supplies the key.
 **Gotchas:** the server-generated-key trap above.
 
 ### `src/api/bundles.ts`
@@ -743,7 +743,7 @@ Purpose (header, `:1-7`): read/refresh a durable, local, read-only snapshot of a
 
 Purpose (header `:1-8`): the closed loop for AI-charted medications, list meds whose provenance is `llm_extracted`/`agentic` that no pharmacist has verified, then verify (optionally correcting the dose) or reject; every response carries a re-run drug-safety screen. Types: `SafetyAlert` `{type: allergy|interaction, severity: mild|moderate|severe, message, ...}` (`:11-19`), `PendingMedication` (`:21-33`, includes `safety_alerts` and `max_severity`), `VerifiedMedication` (`:35-48`, adds `verified_by/at`, `notes`), `VerifyResult` (`:50-55`), `RejectResult` (`:57-63`), both results carry `safety: {max_severity, blocking, safe}`.
 
-#### getPendingVerifications: `src/api/pharmacy.ts:92`
+#### getPendingVerifications: `src/api/pharmacy.ts:99`
 **Signature:** `() → Promise<PendingMedication[]>`
 **Does:** Lists all AI/agentic medications awaiting pharmacist verification, unwrapping `{pending}` (`:67-68`).
 **How it works:** GET `/pharmacy/pending`; server `server/routes/pharmacy_routes.py` (prefix `/api/pharmacy`, `:20`).
@@ -752,7 +752,7 @@ Purpose (header `:1-8`): the closed loop for AI-charted medications, list meds w
 **Talks to:** PharmacyVerifyQueue (`src/components/helix/PharmacyVerifyQueue.tsx:14-16`, call at `:125`).
 **Change guide / Gotchas:** none noteworthy.
 
-#### verifyMedication: `src/api/pharmacy.ts:106`
+#### verifyMedication: `src/api/pharmacy.ts:113`
 **Signature:** `(medId: number, corrections: {dosage?, route?, frequency?} = {}) → Promise<VerifyResult>`
 **Does:** Verifies a pending med, optionally correcting dose/route/frequency in the same action, turning it into an active order.
 **How it works:** POST `/pharmacy/{medId}/verify` with the corrections object as the body (empty object = verify as charted) (`:76-79`).
@@ -762,7 +762,7 @@ Purpose (header `:1-8`): the closed loop for AI-charted medications, list meds w
 **Change guide:** New correctable fields: extend the corrections parameter type and the server's accepted fields together.
 **Gotchas:** none noteworthy.
 
-#### rejectMedication: `src/api/pharmacy.ts:146`
+#### rejectMedication: `src/api/pharmacy.ts:153`
 **Signature:** `(medId: number, reason: string) → Promise<RejectResult>`
 **Does:** Rejects a pending med → status discontinued, with the reason recorded for the audit trail.
 **How it works:** POST `/pharmacy/{medId}/reject` body `{reason}` (`:84-87`).
@@ -813,7 +813,7 @@ Purpose (header `:1-8`): the closed loop for AI-charted medications, list meds w
 | `orb_user` | JSON `StoredUser` | `setUser` (`:90`) | `getUser` (`:95`), App session restore |
 | `orb_offline_queue` | JSON `OfflineRequest[]` | `queueRequest`/`processOfflineQueue` (`:216`, `:257`) | replay loop (`:229`) and ClinicianShell's badge (`ClinicianShell.tsx:277-286`) |
 
-**Socket contract:** handshake `auth: {token: <JWT or null>}` (`client.ts:43-46`); the server must verify it in `connect(sid, environ, auth)` and refuse unauthenticated clients (`server/ws/realtime.py:165`; full event catalog in guide 06-realtime).
+**Socket contract:** handshake `auth: {token: <JWT or null>}` (`client.ts:43-46`); the server must verify it in `connect(sid, environ, auth)` and refuse unauthenticated clients (`server/ws/realtime.py:168`; full event catalog in guide 06-realtime).
 
 **REST endpoints consumed**, grouped by server router (all prefixes verified in `server/routes/*.py`; routers mounted in `server/main.py:297-329`). Every path below is called with `Authorization: Bearer <clinician JWT>` except where noted.
 
@@ -862,7 +862,7 @@ Purpose (header `:1-8`): the closed loop for AI-charted medications, list meds w
 4. **`querySageVoice` swallows most streamed errors.** The `throw` at `src/api/client.ts:594` is only re-thrown when the message is exactly `'Voice agent query failed'` (`:596-598`); any other `data.error` text is discarded and a truncated response is returned as success.
 5. **Dead demo endpoints.** `triggerDeterioration` and `getEscalationStatus` (`src/api/client.ts:1058`, `:1065`) target `/api/demo/*`, but no demo router exists anywhere in `server/` and no component imports them, calling them would 404.
 6. **Dead exports (no in-repo callers, verified by grep):** `getPatientVitals` (`client.ts:627`), `getScribeConfig` (`:1184`), `getScribeNotes` (`:1188`), `getBridgeMedications`/`getBridgeDischarge`/`getBridgeDocuments` (`:1234`, `:1238`, `:1242`), `getPatientNotes` (`:1315`), `getDischargeSummary` (`:1581`), `getDischargedPatients` (`:1608`), `getHelixOrders`/`getHelixStockMovements`/`getHelixOrderTransitions` (`:1891`, `:1908`, `:1912`, HelixPanel uses raw `apiFetch` instead, `src/pages/panels/HelixPanel.tsx:7,27-28`), `listSnapshots`/`captureAll` (`downtime.ts:138`, `:143`), `getRecentHandoffs` (`ipass.ts:114`).
-7. **The idempotency key is optional and server-defaulted.** `transition_order_status` generates a random key when the client omits one (`server/services/helix_service.py:144-146`), and the only UI caller, HelixOrderReviewModal, omits it (`src/components/helix/HelixOrderReviewModal.tsx:101`, via `transitionHelixOrder` imported at `:3`), so the duplicate-protection machinery exists but is unused in practice.
+7. **The idempotency key is optional and server-defaulted.** `transition_order_status` generates a random key when the client omits one (`server/services/helix_service.py:158-160`), and the only UI caller, HelixOrderReviewModal, omits it (`src/components/helix/HelixOrderReviewModal.tsx:121`, via `transitionHelixOrder` imported at `:3`), so the duplicate-protection machinery exists but is unused in practice.
 8. **`authenticateSocket` downgrades the auth callback to a static object** (`src/api/client.ts:51` vs `:45`), so post-login reconnects present the login-time token instead of re-reading storage. Harmless today (tokens only change through `login`), but a trap for any future token-refresh feature.
 9. **Inconsistent error shapes:** `verifyDischargeAccess`/`getVerifiedDischargeSummary` throw the parsed JSON object rather than an `Error` (`src/api/client.ts:1147`, `:1158`); everything else throws `Error` instances. Callers that expect `.message` get `undefined`.
 10. **`StoredUser.registrationNumber` is never populated:** the server login payload uses snake_case `registration_number` (`src/api/client.ts:274`) and `login` stores that object verbatim (`:284`), so the camelCase field declared at `:86` stays undefined.

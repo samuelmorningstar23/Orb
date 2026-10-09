@@ -43,6 +43,8 @@ Sub-modules, one per concern, each exporting `router` (no prefix):
   verify     the verification queue, verify and reject (W6-D)
   lifecycle  hold, resume, stop (W6-D)
   supply     request from pharmacy (W7-E)
+  schedule   the times an order is due and the hospital's signed dose times
+             (W8-I); reads in record mode, the write takes the lifecycle
 """
 from fastapi import APIRouter, Depends
 
@@ -55,7 +57,7 @@ require_med_order_store = feature_gate("med_order_store")
 require_med_order_lifecycle = feature_gate("med_order_lifecycle")
 
 # Imported after the gates exist: the sub-modules import them from here.
-from routes.medorders import core, lifecycle, supply, verify  # noqa: E402
+from routes.medorders import core, lifecycle, schedule, supply, verify  # noqa: E402
 
 router = APIRouter(
     prefix="/api/medorders",
@@ -63,5 +65,5 @@ router = APIRouter(
     dependencies=[Depends(require_med_order_store)],
 )
 
-for _sub in (core, verify, lifecycle, supply):
+for _sub in (core, verify, lifecycle, supply, schedule):
     router.include_router(_sub.router)

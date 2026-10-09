@@ -455,6 +455,7 @@ export function subscribeModuleFlags(listener: () => void): () => void {
 export type FeatureFlagId =
   | 'registration'
   | 'opd'
+  | 'readmission'
   | 'adt_strict_locations'
   | 'pharmacy_ward_stock'
   | 'ndps_register'
@@ -466,13 +467,14 @@ export type FeatureFlagId =
   | 'lab_portal_reports'
   | 'med_order_store'
   | 'med_order_lifecycle'
+  | 'med_order_verify_before_dose'
   | 'multi_site'
 
 export const FEATURE_FLAG_IDS: readonly FeatureFlagId[] = [
-  'registration', 'opd', 'adt_strict_locations', 'pharmacy_ward_stock', 'ndps_register',
+  'registration', 'opd', 'readmission', 'adt_strict_locations', 'pharmacy_ward_stock', 'ndps_register',
   'lab_analyser_listener', 'result_quarantine', 'result_corrections', 'oru_order_link',
   'lab_critical_interfaced', 'lab_portal_reports', 'med_order_store', 'med_order_lifecycle',
-  'multi_site',
+  'med_order_verify_before_dose', 'multi_site',
 ]
 
 export const DEFAULT_FEATURE_FLAGS: Readonly<Record<FeatureFlagId, boolean>> =

@@ -15,6 +15,7 @@
     POST   /api/frontdesk/opd/boards                OPD mode: a new board; its key shown once
     POST   /api/frontdesk/opd/boards/{id}/revoke    OPD mode: switch a board's key off
     GET    /api/frontdesk/opd/board                 OPD mode: a board's screen, by device key
+    GET    /api/frontdesk/mis/daily                 OPD mode: the day summary, counts only
     GET    /api/frontdesk/transfers/destinations    departments with clinical cover
     POST   /api/frontdesk/transfers                 move a patient between wards
     GET    /api/frontdesk/patients/{patient_id}/movements   movement history
@@ -100,9 +101,14 @@ With the feature off every route here behaves exactly as before.
     never raises a charge;
   * visits carry their queue fields and the desk queue is in seeing order
     (priority, then token); its response says how often to re-read
-    (ORB_OPD_QUEUE_POLL_SECONDS) until live desk nudges land (opd-9b);
-  * after every change the clinic's open doctor queues get a content-free
-    'opd:queue_changed' {department} on the socket (opd_queue_service).
+    (ORB_OPD_QUEUE_POLL_SECONDS) and, since opd-9b, whether the caller's
+    socket hears the queue nudge ('live_updates'): the desk then re-reads on
+    the nudge and keeps the timed re-read only while its socket is down;
+  * after every change the clinic's open queues, the doctors' and (opd-9b)
+    the desk's, get a content-free 'opd:queue_changed' {department} on the
+    socket (opd_queue_service, ws.realtime.queue_nudge_rooms);
+  * the desk queue's read audit is written once per user per distinct set of
+    visible visits per 10 minutes, with the visit ids (ruling OPD-N12 (b)).
 
 ── WHO THE PATIENT IS (opd-6a, the 'registration' feature on) ──────────────
 With registration on, the desk finds a returning patient in the hospital-wide
@@ -171,15 +177,18 @@ from services.opd_queue_service import (
     ASSIGN_AUDIT_ACTION,
     ASSIGN_AUDIT_PREFIX,
     BOARD_KEY_HEADER,
+    QUEUE_READ_AUDIT_WINDOW_SECONDS,
     BoardError,
     QueueConflict,
     assign_visit,
     board_for_key,
     board_snapshot,
+    claim_queue_read_audit,
     create_display_board,
     list_display_boards,
     nudge_queue_changed,
     recall_visit,
+    release_queue_read_audit,
     revoke_display_board,
     skip_visit,
     update_queue_fields,
@@ -798,18 +807,41 @@ def opd_queue(
     except FrontDeskError as err:
         raise _bad_request(err)
 
+    queue_mode = result.get("opd_mode") is True
     if result["total"]:
-        log_phi_read(
-            request=request,
-            user=user,
-            action_type="opd_queue_viewed",
-            summary_message=(
-                f"OPD queue viewed ({result['total']} visits) for "
-                f"{dept or '(all, user has no department on record)'} "
-                f"on {result['visit_date']}"
-            ),
-            metadata={"result_count": result["total"], "visit_date": result["visit_date"]},
-        )
+        metadata = {"result_count": result["total"], "visit_date": result["visit_date"]}
+        claim = None
+        if queue_mode:
+            # Ruling OPD-N12 (b): one row per user per distinct set of visible
+            # visits per 10 minutes, with the visit ids (opd_queue_service).
+            visit_ids = [v["id"] for q in result["queues"] for v in q["visits"]]
+            claim = claim_queue_read_audit(user.get("id"), visit_ids)
+            metadata.update({
+                "visit_ids": sorted({str(v) for v in visit_ids}),
+                "dedupe_window_seconds": QUEUE_READ_AUDIT_WINDOW_SECONDS,
+            })
+        if not queue_mode or claim is not None:
+            try:
+                log_phi_read(
+                    request=request,
+                    user=user,
+                    action_type="opd_queue_viewed",
+                    summary_message=(
+                        f"OPD queue viewed ({result['total']} visits) for "
+                        f"{dept or '(all, user has no department on record)'} "
+                        f"on {result['visit_date']}"
+                    ),
+                    metadata=metadata,
+                )
+            except Exception:
+                release_queue_read_audit(claim)
+                raise
+    if queue_mode:
+        # opd-9b: whether this caller's socket hears the queue nudge. The desk
+        # re-reads on the nudge and keeps its timed re-read only when this is
+        # false or its socket is down.
+        from ws.realtime import receives_queue_nudges
+        result["live_updates"] = receives_queue_nudges(user.get("role", ""))
     return result
 
 
@@ -827,6 +859,29 @@ def opd_doctors(user: dict = Depends(require_desk_read())):
     employee ids of staff — so there is no `log_phi_read` here.
     """
     return {"doctors": list_consulting_doctors(department_scope(user))}
+
+
+@router.get("/mis/daily")
+def front_office_daily_summary(
+    date: str | None = None,
+    _opd: None = Depends(require_opd_feature),
+    user: dict = Depends(require_desk_read()),
+):
+    """The front office day summary (opd-18): one hospital-local day, counts only.
+
+    The 'opd' feature gate runs first (404 feature_disabled while it is off).
+    The clinic is the caller's own (department_scope), every clinic for an
+    account with no department; never a parameter. Aggregates only, with no
+    patient id, name or visit in the answer, so no phi_access row is written
+    (the census precedent). A day after today is 422.
+    """
+    from services import front_office_mis
+
+    try:
+        return front_office_mis.daily_summary(date, department=department_scope(user))
+    except front_office_mis.MisError as err:
+        raise HTTPException(status_code=err.status,
+                            detail={"error": err.code, "message": str(err)})
 
 
 @router.post("/opd/visits")

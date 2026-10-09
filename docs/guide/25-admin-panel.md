@@ -90,7 +90,7 @@ Every tab follows the same three-step lifecycle. `AdminOverview` is the canonica
 
 1. The component mounts. A `useState` triple holds `data`/`loading`/`error`. A `useEffect(() => fetchData(), [])` fires once on mount (`src/pages/panels/admin/AdminOverview.tsx:20`).
 2. `fetchData` calls a typed helper in `src/api/client.ts` (e.g. `getAdminOverview()`), which is a thin wrapper over `apiFetch`. `apiFetch` prepends `API_BASE` (`${API_HOST}/api`) and attaches the JWT from `localStorage` as `Authorization: Bearer …` (`src/api/client.ts:109`). On HTTP 401 it clears the token and reloads; on 403 it throws a structured permission error (`src/api/client.ts:116`).
-3. The server handler is gated by `Depends(require_permission("admin.overview"))`. If the caller's role lacks the permission, `require_permission` logs a `permission_denied` audit event and raises 403 *before* the handler body runs (`server/permissions.py:164`). Otherwise it returns the pre-aggregated JSON, which React drops into `setData`, flipping `loading` off and rendering cards.
+3. The server handler is gated by `Depends(require_permission("admin.overview"))`. If the caller's role lacks the permission, `require_permission` logs a `permission_denied` audit event and raises 403 *before* the handler body runs (`server/permissions.py:165`). Otherwise it returns the pre-aggregated JSON, which React drops into `setData`, flipping `loading` off and rendering cards.
 
 ```mermaid
 sequenceDiagram
@@ -336,7 +336,7 @@ The Impact tab is the only tab that sends user input back to the server (as quer
 **Signature:** `() -> bool`
 **Does:** True when `users.token_version` exists (enables logout-everywhere).
 **How it works:** `PRAGMA table_info(users)` and checks for the `token_version` column.
-**Talks to:** Reads the `users` schema (column added by migration, `database.py:1194`).
+**Talks to:** Reads the `users` schema (column added by migration, `database.py:1198`).
 **Gotchas:** None noteworthy.
 
 #### _build_controls: `server/services/compliance_service.py:233`
@@ -763,8 +763,8 @@ None. This subsystem is pure request/response; there are no socket.io emissions 
 ## Rebuild notes
 
 **Prerequisites (build these first):**
-1. **Auth + RBAC** (guide 03): `get_current_user`, `require_permission`, and `ROLE_PERMISSIONS` with an `admin` role holding `admin.overview` (`permissions.py:117`/`:128`). Every endpoint here depends on it.
-2. **Database + schema** (guide 04): the `db_session()` context manager and the tables listed above, including `model_registry` (`database.py:660`) and the `users.totp_enabled`/`token_version` columns.
+1. **Auth + RBAC** (guide 03): `get_current_user`, `require_permission`, and `ROLE_PERMISSIONS` with an `admin` role holding `admin.overview` (`permissions.py:118`/`:129`). Every endpoint here depends on it.
+2. **Database + schema** (guide 04): the `db_session()` context manager and the tables listed above, including `model_registry` (`database.py:664`) and the `users.totp_enabled`/`token_version` columns.
 3. **Audit log + flight recorder** (guide 05): `audit_logs` and `flight_recorder_service.verify_chain()` (compliance's tamper-evidence probe) and the `/api/audit/logs` endpoint (Security/Alerts tabs).
 4. **Ingestion** (guide 24): `ingestion_events` + `/api/ingest/status` (Overview + Ingestion tabs).
 5. **Frontend shell**: `apiFetch` with JWT injection (`client.ts:109`), the `AdminEmptyState` placeholders, and a shell that mounts `AdminPanel` for admins.

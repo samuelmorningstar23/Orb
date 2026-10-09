@@ -253,6 +253,159 @@ def pick_fefo_lot(conn, medication_id: str, units: int = 1, *, lot_id: Optional[
     return dict(row) if row else None
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+#  A dispense the pharmacist shapes: quantity and batch (grn-14)
+# ═════════════════════════════════════════════════════════════════════════════
+
+#: Every refusal choose_dispense_lot can give, with the HTTP status the Helix
+#: route answers. 422: the request names something that can never be
+#: dispensed for this order. 409: the shelf cannot meet it as asked right now
+#: (a dispense is never split between batches, so a smaller quantity or
+#: another batch may still work).
+DISPENSE_REFUSAL_STATUS: dict[str, int] = {
+    "bad_quantity": 422,
+    "lot_not_found": 422,
+    "lot_wrong_drug": 422,
+    "lot_not_dispensable": 422,
+    "insufficient_lot_stock": 409,
+}
+
+#: A lot status in the words a refusal uses ("Batch B12 is quarantined").
+_LOT_STATUS_WORDS = {
+    "quarantined": "quarantined",
+    "recalled": "recalled",
+    "nsq": "marked not of standard quality",
+    "pending_inspection": "waiting for inspection",
+    "written_off": "written off",
+    "returned_to_vendor": "returned to the vendor",
+}
+
+#: Where a lot off the dispensing shelf is held, in the refusal's words.
+_STORE_KIND_WORDS = {
+    "sub_store": "a sub-store",
+    "ndps_vault": "the NDPS vault",
+    "returns_quarantine": "returns quarantine",
+    "ward_imprest": "ward stock",
+    "crash_cart": "a crash cart",
+    "dispensing": "the dispensing pharmacy",
+}
+
+
+def _units_words(units: int) -> str:
+    return f"{units} unit" if units == 1 else f"{units} units"
+
+
+def _lot_label(lot: Any) -> str:
+    number = (lot["lot_number"] or "").strip() if lot["lot_number"] is not None else ""
+    return f"Batch {number}" if number else "This batch"
+
+
+def _not_dispensable_words(conn, lot: Any, today: str) -> str:
+    """Why a lot of the right drug cannot be dispensed today, for the
+    pharmacist: its status, then where it is, then its expiry."""
+    label = _lot_label(lot)
+    status = lot["status"] or "available"
+    if status != "available":
+        words = _LOT_STATUS_WORDS.get(status, "not available")
+        return f"{label} is {words}, so it cannot be dispensed. Choose another batch."
+    on_shelf = conn.execute(
+        f"SELECT 1 FROM helix_inventory_lots l WHERE l.id = ? AND {shelf_lot_sql('l')}",
+        (lot["id"],),
+    ).fetchone()
+    if on_shelf is None:
+        where = "another store"
+        if lot["store_id"] is not None:
+            store = conn.execute("SELECT pharmacy_kind, is_active FROM stores WHERE id = ?",
+                                 (lot["store_id"],)).fetchone()
+            if store is not None and store["is_active"] and store["pharmacy_kind"]:
+                where = _STORE_KIND_WORDS.get(store["pharmacy_kind"], "another store")
+            elif store is not None:
+                where = "a store that is switched off"
+        return (f"{label} is held in {where}, not on the dispensing shelf, so it cannot be "
+                f"dispensed from here. Choose another batch.")
+    expiry = lot["expiration_date"]
+    parsed = None
+    try:
+        parsed = date.fromisoformat(str(expiry)[:10]) if expiry else None
+    except ValueError:
+        parsed = None
+    if parsed is None:
+        return (f"{label} has no expiry date recorded, so it cannot be dispensed. "
+                "Choose another batch.")
+    if parsed.isoformat() < today:
+        return f"{label} expired on {parsed.isoformat()}, so it cannot be dispensed."
+    return f"{label} cannot be dispensed today. Choose another batch."
+
+
+def choose_dispense_lot(conn, medication_id: str, units: int, *,
+                        lot_id: Optional[str] = None,
+                        today: Optional[str] = None) -> Optional[dict]:
+    """The lot a dispense of `units` of `medication_id` takes, chosen on the
+    caller's connection under its write lock (grn-14). Writes nothing.
+
+    `medication_id` is the EFFECTIVE drug: the substitute when pharmacy set
+    one, else the drug prescribed. That is the precedence the drug-safety
+    screen uses, so the batch that leaves the shelf is always a batch of the
+    drug that was screened.
+
+    With `lot_id` (the pharmacist's choice), that lot only, or a StockError:
+      lot_not_found           no such lot;
+      lot_wrong_drug          the lot holds another drug, the drug prescribed
+                              included when a substitute is set;
+      lot_not_dispensable     not 'available' (quarantined, recalled, NSQ,
+                              waiting for inspection), not on the dispensing
+                              shelf (ward stock, a sub-store, returns
+                              quarantine), expired, or no expiry recorded;
+      insufficient_lot_stock  the lot holds fewer than `units`.
+    Without `lot_id`: the earliest-expiry dispensable lot holding at least
+    `units` (pick_fefo_lot), or None. Either way a dispense is NEVER split
+    between lots.
+    """
+    units = _whole(units, "units")
+    if units < 1:
+        raise StockError("A dispense takes at least one unit.", code="bad_quantity")
+    today = today or site_today()
+    if lot_id is None:
+        return pick_fefo_lot(conn, medication_id, units, today=today)
+    lot = conn.execute("SELECT * FROM helix_inventory_lots WHERE id = ?", (lot_id,)).fetchone()
+    if lot is None:
+        raise StockError("That batch is not in the pharmacy's stock. Reload the batches and "
+                         "choose again.", code="lot_not_found")
+    if lot["medication_id"] != medication_id:
+        raise StockError(f"{_lot_label(lot)} is a batch of another drug, not the drug this "
+                         "order dispenses. Choose a batch of this drug.",
+                         code="lot_wrong_drug")
+    on_date_and_shelf = conn.execute(
+        f"SELECT 1 FROM helix_inventory_lots l WHERE l.id = ? "
+        f"AND date(l.expiration_date) >= ? AND {shelf_lot_sql('l')}",
+        (lot_id, today),
+    ).fetchone()
+    if on_date_and_shelf is None:
+        raise StockError(_not_dispensable_words(conn, lot, today), code="lot_not_dispensable")
+    held = int(lot["quantity"] or 0)
+    if held < units:
+        raise StockError(
+            f"{_lot_label(lot)} holds {_units_words(held)}; this dispense needs "
+            f"{_units_words(units)}. A dispense is never split between batches: choose "
+            "another batch or a smaller quantity.", code="insufficient_lot_stock")
+    return dict(lot)
+
+
+def dispensable_lots(conn, medication_id: str, *, today: Optional[str] = None) -> list[dict]:
+    """Every lot of one drug a dispense could take today, earliest expiry
+    first (the order pick_fefo_lot reads them in), for the pharmacist's batch
+    picker. Lot fields and the store's name only: no patient data."""
+    rows = conn.execute(
+        f"SELECT l.id, l.lot_number, l.expiration_date, l.quantity, l.store_id, "
+        f"s.name AS store_name FROM helix_inventory_lots l "
+        f"LEFT JOIN stores s ON s.id = l.store_id "
+        f"WHERE l.medication_id = ? AND {dispensable_lot_sql('l')} "
+        f"ORDER BY date(l.expiration_date) ASC, l.rowid ASC",
+        (medication_id, today or site_today()),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def dispensable_units(conn, medication_id: str, *, today: Optional[str] = None) -> int:
     """Units of one drug a dispense could take today, across all its lots."""
     row = conn.execute(

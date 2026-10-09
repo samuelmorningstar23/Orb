@@ -118,12 +118,136 @@ interface PortalReport {
   source?: string | null
 }
 
+/** A laboratory report line as GET /api/bridge/lab-reports sends it (lis-29,
+ *  services/lab_portal_service._line). No values: those come with the report. */
+interface PortalLabReportLine {
+  accession: string
+  specimen_type: string | null
+  collected_at: string | null
+  reported_at: string | null
+  complete: boolean
+  status_text: string
+  simulated: boolean
+  tests: string[]
+  shown_count: number
+  test_count: number
+}
+
+/** One test on a laboratory report as the patient sees it. The flag is the
+ *  laboratory's printed word (High, Low, Critically high...), never a colour
+ *  or a code, in line with the portal vitals ruling (LIS-R11). */
+interface PortalLabTest {
+  name: string
+  panel_name: string | null
+  state: 'shown' | 'waiting' | 'corrected_waiting' | 'withdrawn' | 'cancelled'
+  state_text: string
+  value_text: string | null
+  unit: string | null
+  flag_text: string
+  reference_range_text: string | null
+  comment: string | null
+  reported_at: string | null
+  corrected: boolean
+  corrected_text: string | null
+  earlier: { value_text: string | null; unit: string | null; replaced_at: string | null }[]
+  simulated: boolean
+}
+
+/** GET /api/bridge/lab-reports/{accession}: one report as the patient sees it. */
+interface PortalLabReport {
+  accession: string
+  specimen_type: string | null
+  collected_at: string | null
+  reported_at: string | null
+  complete: boolean
+  status_text: string
+  simulated: boolean
+  simulated_text: string | null
+  tests: PortalLabTest[]
+  signatories: { name: string | null; registration_text: string | null }[]
+  notes: string[]
+}
+
 /** What the detail modal opens: a medication, a document or lab result, an
- *  imaging report, or the discharge summary. */
+ *  imaging report, a laboratory report, or the discharge summary. */
 type ReportDetail =
   | { type: 'med'; data: BridgeMedication }
   | { type: 'doc' | 'lab'; data: PortalReport }
+  | { type: 'lis'; data: PortalLabReportLine }
   | { type: 'discharge'; data: BridgeDischargeView }
+
+/** The words a patient reads on a laboratory report line. */
+function labReportLineMeta(line: PortalLabReportLine): string {
+  const parts = [`Laboratory report · ${formatClinicalDate(line.reported_at || line.collected_at)}`]
+  if (!line.complete) parts.push('Some results not available here yet')
+  if (line.simulated) parts.push('Simulated result, not from your care')
+  return parts.join(' · ')
+}
+
+/**
+ * One laboratory report as the patient sees it (lis-29), fetched when opened.
+ * Released results only, after a doctor's release or the site's delay (the
+ * server decides). The flag is printed in words with no colour of its own, and
+ * a test that is not available yet says so with no value.
+ */
+function PortalLabReportBody({ accession }: { accession: string }) {
+  const [report, setReport] = useState<PortalLabReport | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let live = true
+    apiFetch<{ report?: PortalLabReport }>(`/bridge/lab-reports/${encodeURIComponent(accession)}`)
+      .then(data => {
+        if (!live) return
+        if (data?.report) setReport(data.report)
+        else setFailed(true)
+      })
+      .catch(() => { if (live) setFailed(true) })
+    return () => { live = false }
+  }, [accession])
+
+  if (failed) return <span role="status">This report could not be loaded. Please try again later.</span>
+  if (!report) return <span role="status">Loading your report</span>
+  const line = { margin: '2px 0' }
+  return (
+    <div style={{ whiteSpace: 'normal' }} data-testid="portal-lab-report">
+      {report.simulated_text && <p style={line}>{report.simulated_text}</p>}
+      <p style={line}>{report.status_text}</p>
+      <ul style={{ listStyle: 'none', padding: 0, margin: '8px 0 0' }}>
+        {report.tests.map((t, i) => (
+          <li key={`${t.name}-${i}`} style={{ padding: '8px 0', borderTop: '1px solid var(--border-subtle)' }}>
+            <p style={{ ...line, fontWeight: 600, color: 'var(--text-primary)' }}>{t.name}</p>
+            {t.state === 'shown' ? (
+              <>
+                <p style={line}>Result: {t.value_text}{t.unit ? ` ${t.unit}` : ''}</p>
+                {t.flag_text && <p style={line}>Flag: {t.flag_text}</p>}
+                {t.reference_range_text && <p style={line}>Reference range: {t.reference_range_text}</p>}
+                {t.comment && <p style={line}>Laboratory comment: {t.comment}</p>}
+                {t.corrected_text && (
+                  <p style={line}>{t.corrected_text}{t.reported_at ? ` on ${formatClinicalDateTime(t.reported_at)}` : ''}</p>
+                )}
+                {t.earlier.map((e, j) => (
+                  <p key={j} style={line}>
+                    Result shown here before: {e.value_text}{e.unit ? ` ${e.unit}` : ''}
+                    {e.replaced_at ? `, corrected ${formatClinicalDateTime(e.replaced_at)}` : ''}
+                  </p>
+                ))}
+                {t.simulated && <p style={line}>Simulated result, not from your care</p>}
+              </>
+            ) : (
+              <p style={line}>{t.state_text}</p>
+            )}
+          </li>
+        ))}
+      </ul>
+      {report.signatories.length > 0 && (
+        <p style={{ ...line, marginTop: 8 }}>
+          Authorised by {report.signatories.map(s => `${s.name || 'Name not on file'}${s.registration_text ? ` (${s.registration_text})` : ''}`).join(', ')}
+        </p>
+      )}
+      {report.notes.map((n, i) => <p key={i} style={{ ...line, marginTop: i === 0 ? 8 : 2 }}>{n}</p>)}
+    </div>
+  )
+}
 
 /** An appointments row as /appointments/mine sends it
  *  (appointments_routes._serialize). */
@@ -266,6 +390,26 @@ export default function PatientShell() {
     }
   }, [])
 
+  /* ── Laboratory reports (lis-29, ORB_LAB_PORTAL_REPORTS, default off) ──
+     A 404 means the site has them switched off: Lab History is then exactly
+     what it was. Any other failure says so in Lab History rather than letting
+     the patient read "no reports". */
+  const [labReports, setLabReports] = useState<PortalLabReportLine[]>([])
+  const [labReportsState, setLabReportsState] = useState<'off' | 'ready' | 'failed'>('off')
+  const [labReportsNote, setLabReportsNote] = useState<string | null>(null)
+  const loadLabReports = useCallback(async () => {
+    try {
+      const data = await apiFetch<{ reports?: PortalLabReportLine[]; note?: string }>('/bridge/lab-reports')
+      setLabReports(Array.isArray(data?.reports) ? data.reports : [])
+      setLabReportsNote(typeof data?.note === 'string' ? data.note : null)
+      setLabReportsState('ready')
+    } catch (err) {
+      setLabReports([])
+      setLabReportsNote(null)
+      setLabReportsState((err as { status?: number } | null)?.status === 404 ? 'off' : 'failed')
+    }
+  }, [])
+
   const handleBook = async () => {
     if (!canBook || bookingState === 'confirming') return
     setBookingState('confirming')
@@ -373,9 +517,10 @@ export default function PatientShell() {
     loadStatus()
     loadReports()
     loadAppointments()
+    loadLabReports()
     const interval = setInterval(loadStatus, 30000)
     return () => clearInterval(interval)
-  }, [loadAppointments])
+  }, [loadAppointments, loadLabReports])
 
   const handleAsk = async () => {
     if (!question.trim() || asking) return
@@ -402,16 +547,24 @@ export default function PatientShell() {
   // Lab results and imaging in one list, newest first. Lab results arrive under
   // `labs`; this list used to read imaging alone, so a patient with charted
   // results was told there were none. A lab result opens like any document.
+  // Laboratory reports (lis-29) join the same list when the site has them on.
   const labHistory = useMemo(() => {
     const labs: PortalReport[] = reports?.labs ?? []
     const imaging: PortalReport[] = reports?.imaging_reports ?? []
-    const items = [
+    const items: ({ type: 'doc' | 'lab'; data: PortalReport } | { type: 'lis'; data: PortalLabReportLine })[] = [
       ...labs.map(data => ({ type: 'doc' as const, data })),
       ...imaging.map(data => ({ type: 'lab' as const, data })),
+      ...labReports.map(data => ({ type: 'lis' as const, data })),
     ]
-    const at = (item: { data: PortalReport }) => (item.data.created_at ? parseUTC(item.data.created_at).getTime() : 0)
+    const stamp = (item: (typeof items)[number]) => (item.type === 'lis'
+      ? (item.data.reported_at || item.data.collected_at)
+      : item.data.created_at)
+    const at = (item: (typeof items)[number]) => {
+      const value = stamp(item)
+      return value ? parseUTC(value).getTime() : 0
+    }
     return items.sort((a, b) => at(b) - at(a))
-  }, [reports])
+  }, [reports, labReports])
 
   // A local, so the discharge row's click handler keeps the null check.
   const dischargeSummary = reports?.discharge_summary
@@ -850,6 +1003,14 @@ export default function PatientShell() {
         >
             <h2 className="modal__title" id="portal-labs-title">Lab &amp; Imaging History</h2>
             <div className="modal__body" style={{ maxHeight: '70vh', display: 'flex', flexDirection: 'column' }}>
+              {labReportsState === 'ready' && labReportsNote && (
+                <p className="detail__note-date" style={{ margin: '0 0 8px' }} data-testid="portal-lab-note">{labReportsNote}</p>
+              )}
+              {labReportsState === 'failed' && (
+                <p className="detail__note-date" role="status" style={{ margin: '0 0 8px' }}>
+                  Your laboratory reports could not be loaded just now. Please try again later.
+                </p>
+              )}
               <div className="detail__reports-list" style={{ overflowY: 'auto' }}>
                 {reportsLoading ? (
                   <div className="bridge__report-panel">{[1,2,3].map(i => <div key={i} className="bridge__report-skeleton" style={{ marginBottom: 6 }} />)}</div>
@@ -868,6 +1029,11 @@ export default function PatientShell() {
                         <span className="detail__report-info bridge__report-item-body">
                           <span className="detail__report-title bridge__report-item-name">{item.data.title}</span>
                           <span className="detail__note-date bridge__report-item-meta">{item.data.type_label || 'Lab result'} · {formatClinicalDate(item.data.created_at)}{item.data.source === 'simulated' ? ' · Simulated result, not from your care' : ''}</span>
+                        </span>
+                      ) : item.type === 'lis' ? (
+                        <span className="detail__report-info bridge__report-item-body">
+                          <span className="detail__report-title bridge__report-item-name">{item.data.tests.join(', ') || item.data.specimen_type || 'Laboratory report'}</span>
+                          <span className="detail__note-date bridge__report-item-meta">{labReportLineMeta(item.data)}</span>
                         </span>
                       ) : (
                         <span className="detail__report-info bridge__report-item-body">
@@ -940,6 +1106,7 @@ export default function PatientShell() {
                 {selectedReportDetail.type === 'med' && selectedReportDetail.data.drug_name}
                 {selectedReportDetail.type === 'doc' && selectedReportDetail.data.title}
                 {selectedReportDetail.type === 'lab' && `${selectedReportDetail.data.image_type?.toUpperCase() || 'Report'}`}
+                {selectedReportDetail.type === 'lis' && `Laboratory report${selectedReportDetail.data.specimen_type ? `: ${selectedReportDetail.data.specimen_type}` : ''}`}
                 {selectedReportDetail.type === 'discharge' && 'Discharge Summary'}
               </h3>
               <button type="button" className="bridge__report-modal-close" onClick={closeDetail} aria-label="Close">
@@ -950,6 +1117,7 @@ export default function PatientShell() {
               {selectedReportDetail.type === 'med' && (<>{`Drug: ${selectedReportDetail.data.drug_name}\nDosage: ${selectedReportDetail.data.dosage}\nRoute: ${selectedReportDetail.data.route}\nFrequency: ${selectedReportDetail.data.frequency}\nStatus: ${selectedReportDetail.data.status}`}{selectedReportDetail.data.started_at && `\nStarted: ${formatClinicalDate(selectedReportDetail.data.started_at)}`}</>)}
               {selectedReportDetail.type === 'doc' && selectedReportDetail.data.content}
               {selectedReportDetail.type === 'lab' && (selectedReportDetail.data.analysis || 'No analysis available.')}
+              {selectedReportDetail.type === 'lis' && <PortalLabReportBody accession={selectedReportDetail.data.accession} />}
               {selectedReportDetail.type === 'discharge' && (
                 selectedReportDetail.data.summary
                 || selectedReportDetail.data.message
@@ -959,6 +1127,10 @@ export default function PatientShell() {
             <div className="bridge__report-modal-meta">
               {selectedReportDetail.type === 'doc' && `Type: ${selectedReportDetail.data.type_label || 'Clinical note'} · ${formatClinicalDateTime(selectedReportDetail.data.created_at)}${selectedReportDetail.data.source === 'simulated' ? ' · Simulated result, not from your care' : ''}`}
               {selectedReportDetail.type === 'lab' && `${selectedReportDetail.data.clinical_context || ''} · ${formatClinicalDateTime(selectedReportDetail.data.created_at)}`}
+              {selectedReportDetail.type === 'lis' && [
+                selectedReportDetail.data.collected_at ? `Collected ${formatClinicalDateTime(selectedReportDetail.data.collected_at)}` : '',
+                selectedReportDetail.data.reported_at ? `Reported ${formatClinicalDateTime(selectedReportDetail.data.reported_at)}` : '',
+              ].filter(Boolean).join(' · ')}
               {selectedReportDetail.type === 'discharge' && selectedReportDetail.data.discharged_at && `Discharged: ${formatClinicalDateTime(selectedReportDetail.data.discharged_at)}`}
             </div>
         </PortalModal>

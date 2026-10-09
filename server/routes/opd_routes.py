@@ -31,9 +31,18 @@ Built: GET /patients/{patient_id}/record (opd-7, W3-A); GET /my-queue
 POST /visits/{visit_id}/allergy-review (opd-10a, W5-A); GET
 /terminology/search, GET and POST /visits/{visit_id}/orders, POST
 /visits/{visit_id}/orders/{order_id}/cancel, GET /visits/{visit_id}/print
-(opd-11, W6-A).
+(opd-11, W6-A); GET and POST /visits/{visit_id}/prescriptions, POST
+/visits/{visit_id}/prescriptions/{order_id}/cancel and GET
+/visits/{visit_id}/prescriptions/print (opd-12, W8-C).
 
-Planned endpoints: POST /visits/{visit_id}/prescriptions (opd-12).
+PRESCRIPTIONS (opd-12) are medication orders in the shared store
+(services/medorders/outpatient.py: encounter_type 'op', no ward row, no Helix
+row). Each prescription route also needs ORB_MED_ORDER_STORE (404
+feature_disabled while it is off) and answers 404 on an Orb Ward Record
+computer, whose drug chart stays on paper (services/drug_chart). Writing or
+cancelling a line needs opd.consult AND medication.prescribe; reading and
+printing need opd.consult. A line is refused until the allergy review lets the
+note be signed (ruling OPD-S7 (a)).
 
 INVESTIGATIONS (opd-11) are orders tied to the visit (orders.opd_visit_id)
 through orders_service.create_order, never through /api/orders, and order sets
@@ -57,11 +66,14 @@ Saves, signing, addenda and completion are audited INSIDE their transaction
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 import config
 from database import db_session
 from permissions import (
+    MEDICATION_PRESCRIBE,
     OPD_CONSULT,
     department_scope,
     log_phi_read,
@@ -69,8 +81,11 @@ from permissions import (
     require_patient_access,
     require_permission,
 )
-from routes.opt_in_gates import require_opd_feature
+from routes.opt_in_gates import feature_gate, require_opd_feature
 from services import orders_service, registration_service, terminology_service
+from services.drug_chart import require_drug_chart
+from services.medorders import core as medorder_core
+from services.medorders import outpatient
 from services.audit_service import AuditWriteError, log_audit_event
 from services.clinical_time import utc_iso_now
 from services.orders_service import OpdVisitOrderRefused, OrderManagedByLab
@@ -895,3 +910,226 @@ def complete_with_disposition(
         raise _audit_unavailable()
     nudge_queue_changed(visit.get("department"))
     return visit
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  The outpatient prescription (opd-12, W8-C)
+# ═════════════════════════════════════════════════════════════════════════════
+# Lines are medication orders in the shared store (services/medorders/
+# outpatient.py), encounter_type 'op'. Never a medications row (the eMAR's
+# source), never a Helix supply row (outpatient dispensing is the pharmacy
+# epic's lane). Every route here is visit-addressed: the visit must be the
+# caller's clinic's (404 otherwise), derived from department_scope in the
+# route. The store switch and the Ward Record drug chart switch come before
+# the permission, so a site without the store, or an Orb Ward Record
+# computer, answers 404 before anything about a patient or a drug is read.
+
+#: ORB_MED_ORDER_STORE at request time (404 feature_disabled while off).
+_require_med_order_store = feature_gate("med_order_store")
+
+_PRESCRIPTION_GATES = [Depends(_require_med_order_store), Depends(require_drug_chart)]
+
+#: The longest Idempotency-Key a client may send for a line.
+_MAX_KEY_LENGTH = 128
+
+
+class PrescriptionLineIn(BaseModel):
+    """POST body of one prescription line. A field this route does not know
+    is refused (422), so nobody believes it was prescribed. The route is
+    never defaulted: the prescriber names it."""
+    model_config = ConfigDict(extra="forbid")
+    drug_name: str = Field(..., max_length=200)
+    dose: str = Field(..., max_length=60)
+    route: str = Field(..., max_length=40)
+    frequency: str = Field(..., max_length=60)
+    is_prn: bool = False
+    prn_indication: str | None = Field(None, max_length=200)
+    duration_days: int | None = Field(None, ge=1, le=outpatient.MAX_DURATION_DAYS)
+    quantity: int | None = Field(None, ge=1, le=outpatient.MAX_QUANTITY)
+    instructions: str | None = Field(None, max_length=500)
+    indication: str | None = Field(None, max_length=200)
+    # {acknowledged: true, reason}: the prescriber's written reason after a
+    # 428 drug_safety_acknowledgement_required.
+    safety_ack: dict | None = None
+
+
+class PrescriptionCancelIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(..., max_length=500)
+    # The line's version as the screen showed it; a later change is 409.
+    expected_version: int | None = None
+
+
+def _request_meta(request: Request) -> dict:
+    return {
+        "request_path": request.url.path,
+        "http_method": request.method,
+        "ip_address": request.client.host if request.client else None,
+        "user_agent": request.headers.get("user-agent"),
+    }
+
+
+def _prescription_refusal(err: "outpatient.PrescriptionRefused") -> HTTPException:
+    return HTTPException(status_code=err.status,
+                         detail={"error": err.code, "message": str(err), **err.extra})
+
+
+def _medorder_refusal(err: medorder_core.MedOrderError) -> HTTPException:
+    return HTTPException(status_code=err.http_status, detail=medorder_core.http_detail(err))
+
+
+def _line_key(request: Request, user: dict) -> str | None:
+    """The client's Idempotency-Key for this line, kept per prescriber so one
+    doctor's key can never replay another's line."""
+    raw = (request.headers.get("Idempotency-Key") or "").strip()
+    if not raw:
+        return None
+    if len(raw) > _MAX_KEY_LENGTH or not raw.isprintable():
+        raise _refuse(422, "bad_idempotency_key",
+                      f"The request key must be at most {_MAX_KEY_LENGTH} plain characters.")
+    return f"opd-rx:{user.get('id')}:{raw}"
+
+
+@router.get("/visits/{visit_id}/prescriptions", dependencies=_PRESCRIPTION_GATES)
+def visit_prescriptions(
+    visit_id: str,
+    request: Request,
+    user: dict = Depends(require_permission(OPD_CONSULT)),
+):
+    """The medicines prescribed on this visit, in every state (a cancelled
+    line says why). Bounded by the visit's clinic, like the visit's note and
+    investigations. Audited fail-closed (phi_access) with the line ids. The
+    stored screen is not returned: a visit id of any date reaches this read,
+    so it names no allergen."""
+    visit = _visit_in_clinic(visit_id, department_scope(user))
+    try:
+        result = outpatient.list_visit_prescriptions(visit_id)
+    except outpatient.PrescriptionRefused as err:
+        raise _prescription_refusal(err)
+    _phi_read(request, user, action_type=outpatient.LIST_AUDIT_ACTION,
+              summary_message=(f"Prescription on OPD visit {visit_id} viewed "
+                               f"({len(result['prescriptions'])} lines)"),
+              patient_id=visit.get("patient_id"), target_type="opd_visit", target_id=visit_id,
+              metadata={"order_ids": [p["id"] for p in result["prescriptions"]]})
+    return result
+
+
+@router.post("/visits/{visit_id}/prescriptions", status_code=201,
+             dependencies=_PRESCRIPTION_GATES)
+def write_visit_prescription(
+    visit_id: str,
+    data: PrescriptionLineIn,
+    request: Request,
+    user: dict = Depends(require_permission(OPD_CONSULT, MEDICATION_PRESCRIBE)),
+):
+    """Prescribe one medicine on this outpatient visit, signed by the caller
+    as its prescriber (opd-12).
+
+    Screened before anything is written: the allergy review first (ruling
+    OPD-S7 (a): 409 allergy_review_required until one lets the note be
+    signed), then the medication safety gate (allergy, interaction and dose,
+    entry point 'opd_prescription'; 428 until a prescriber acknowledges a
+    severe alert or a dose block with a reason) and the patient's other live
+    outpatient prescriptions. Refused: another clinic's visit (404); a visit
+    cancelled, finished, outside the OPD window, or a patient now admitted
+    (409); an allergy or drug charted while it was being checked (409
+    screen_stale). Written with its fail-closed audit row in one transaction.
+    Never a medications row, never a Helix row. A repeated Idempotency-Key
+    for the same line answers 200 with the line it wrote."""
+    _visit_in_clinic(visit_id, department_scope(user))
+    key = _line_key(request, user)
+    fields = data.model_dump(exclude={"safety_ack"})
+    try:
+        result = outpatient.write_prescription(
+            visit_id, fields, actor_id=user.get("id") or "", actor_role=user.get("role"),
+            safety_ack=data.safety_ack, idempotency_key=key, request_meta=_request_meta(request))
+    except outpatient.PrescriptionRefused as err:
+        raise _prescription_refusal(err)
+    except medorder_core.MedOrderError as err:
+        raise _medorder_refusal(err)
+    except AuditWriteError:
+        raise _audit_unavailable()
+    if result["replayed"]:
+        return JSONResponse(status_code=200, content=jsonable_encoder(result))
+    return result
+
+
+@router.post("/visits/{visit_id}/prescriptions/{order_id}/cancel",
+             dependencies=_PRESCRIPTION_GATES)
+def cancel_visit_prescription(
+    visit_id: str,
+    order_id: str,
+    data: PrescriptionCancelIn,
+    request: Request,
+    user: dict = Depends(require_permission(OPD_CONSULT, MEDICATION_PRESCRIBE)),
+):
+    """Cancel one prescribed medicine on this open visit, with a reason (at
+    least 3 characters). Refused once the visit is finished or cancelled, on
+    a visit outside the OPD window, once the patient is admitted (409), and
+    for a line of another visit (404). The answer says whether a print that
+    listed the line was already made, so the clinic takes that copy back."""
+    _visit_in_clinic(visit_id, department_scope(user))
+    try:
+        return outpatient.cancel_prescription(
+            visit_id, order_id, reason=data.reason, expected_version=data.expected_version,
+            actor_id=user.get("id") or "", actor_role=user.get("role"),
+            request_meta=_request_meta(request))
+    except outpatient.PrescriptionRefused as err:
+        raise _prescription_refusal(err)
+    except medorder_core.MedOrderError as err:
+        raise _medorder_refusal(err)
+    except AuditWriteError:
+        raise _audit_unavailable()
+
+
+@router.get("/visits/{visit_id}/prescriptions/print", dependencies=_PRESCRIPTION_GATES)
+def visit_prescription_print(
+    visit_id: str,
+    request: Request,
+    user: dict = Depends(require_permission(OPD_CONSULT)),
+):
+    """What the printed prescription carries, read as it is printed (audited
+    as a print, fail-closed, naming the lines printed).
+
+    The patient's name, UHID, age and sex; the allergy review as status,
+    label and time (never an allergen: a visit-addressed answer); the signed
+    note's diagnoses (a draft is never printed); the live lines; and each
+    prescriber's name and registration number. No date of birth, phone,
+    address, score or text written for the print. 409 no_prescriptions when
+    no line is live."""
+    visit = _visit_in_clinic(visit_id, department_scope(user))
+    try:
+        data = outpatient.print_lines(visit_id)
+    except outpatient.PrescriptionRefused as err:
+        raise _prescription_refusal(err)
+    names = _clinicians(data["prescriber_ids"])
+    _phi_read(request, user, action_type=outpatient.PRINT_AUDIT_ACTION,
+              summary_message=f"OPD prescription print for visit {visit_id}",
+              patient_id=visit.get("patient_id"), target_type="opd_visit", target_id=visit_id,
+              metadata={"kind": "prescription",
+                        "order_ids": [line["id"] for line in data["lines"]]})
+    try:
+        card = registration_service.uhid_card(visit["patient_id"])
+    except registration_service.RegistrationError:
+        card = {"name": visit.get("patient_name"), "uhid": visit.get("patient_mrn"),
+                "age": visit.get("patient_age"), "sex": visit.get("patient_sex")}
+    return {
+        "kind": "prescription",
+        "printed_at": utc_iso_now(),
+        "visit": {"id": visit["id"], "visit_date": visit.get("visit_date"),
+                  "department": visit.get("department"),
+                  "token_number": visit.get("token_number")},
+        "patient": {"name": card.get("name"), "uhid": card.get("uhid"),
+                    "age": card.get("age"), "sex": card.get("sex")},
+        "allergy_review": data["allergy_review"],
+        "diagnoses": data["diagnoses"],
+        "prescriptions": [
+            {k: line[k] for k in ("drug_name", "dose", "route", "frequency", "is_prn",
+                                  "prn_indication", "duration_days", "quantity",
+                                  "instructions", "prescribed_at", "prescriber_name")}
+            for line in data["lines"]
+        ],
+        "doctors": [{"name": (names.get(uid) or {}).get("name"),
+                     "registration_number": (names.get(uid) or {}).get("registration_number")}
+                    for uid in data["prescriber_ids"]],
+    }

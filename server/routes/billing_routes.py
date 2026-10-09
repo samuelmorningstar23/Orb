@@ -58,12 +58,15 @@ from permissions import (
     BILLING_READ,
     BILLING_TARIFF,
     BILLING_WRITE,
+    department_scope,
     enforce_patient_scope,
     log_phi_read,
     require_patient_access,
     require_permission,
 )
+from routes.opt_in_gates import require_opd_feature
 from services import billing_masters, billing_service
+from services.audit_service import AuditWriteError
 from services.billing_masters import MasterDataError
 from services.billing_service import BillingError
 from services.money import GST_EXEMPT, GST_TREATMENTS, QUANTITY_SCALE
@@ -384,6 +387,58 @@ def resolve_rate(
         on_date=on_date,
     )
     return resolution.as_dict()
+
+
+# ── Outpatients at the counter (opd-14, the 'opd' feature) ──────────────────
+
+@router.get("/op-patients")
+def list_op_patients(
+    request: Request,
+    date: Optional[str] = Query(None, max_length=10),
+    _opd: None = Depends(require_opd_feature),
+    user: dict = Depends(_read),
+):
+    """Outpatients with pending outpatient lines on one hospital-local day.
+
+    The Charges picker merges these with the ward and discharged patients, so
+    a walk-in who never had an admission can be billed at the counter. 404
+    feature_disabled while the 'opd' feature is off (the gate runs first), so
+    with it off the desk is exactly what it was.
+
+    The department is the caller's own (permissions.department_scope), never
+    a parameter. Names and UHIDs are PHI, so a non-empty answer writes one
+    fail-closed phi_access row naming every listed patient; if it cannot be
+    written nothing is returned (503).
+    """
+    dept = department_scope(user)
+    result = _handle(billing_service.list_op_patients, day=date, scope_department=dept)
+    if result["patients"]:
+        try:
+            log_phi_read(
+                request=request, user=user, action_type="billing_op_patients_listed",
+                summary_message=(
+                    f"Outpatients to bill on {result['date']} listed "
+                    f"({result['patient_count']} patients)"
+                ),
+                target_type="patient_list",
+                target_id=f"op-patients-{result['date']}",
+                metadata={
+                    "visit_date": result["date"],
+                    "patient_ids": [p["id"] for p in result["patients"]],
+                    "result_count": result["patient_count"],
+                    "truncated": result["truncated"],
+                },
+            )
+        except AuditWriteError:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "audit_unavailable",
+                    "message": ("The list could not be shown because the audit trail "
+                                "is not available. Try again in a moment."),
+                },
+            )
+    return result
 
 
 # ── Charge capture ───────────────────────────────────────────────────────────

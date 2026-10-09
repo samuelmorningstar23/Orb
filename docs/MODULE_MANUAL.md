@@ -495,7 +495,14 @@ How, concretely:
 
 **Status.** Pre-pilot. The state machine, idempotency, audit ledger, and stock deduction are real and tested; physical dispensing/delivery events are explicitly simulated (flagged `is_mock` in the DB so demo telemetry can't be mistaken for real supply-chain data), and each dispense deducts one unit regardless of quantity, demo-scale inventory, not a validated perpetual-inventory system.
 
-**Key code:** `server/services/helix_service.py`, `server/services/helix_db.py`, `server/routes/helix_routes.py`, `src/pages/panels/HelixPanel.tsx`
+**The pharmacy store (opt-in, off by default).** *Added 10 October 2026 (grn-18).* Behind `ORB_PHARMACY_STORE`, Helix gains a store: a drug master that records each drug's schedule and NDPS class, purchase orders and goods receipts (expiry typed twice, a licensed vendor, a second person to approve), transfers between the dispensing pharmacy, sub-stores and the NDPS vault, an NDPS register behind its own switch, returns to vendor, and ward stock. One service, `pharmacy_stock_service`, is the only writer of drug stock, so every lot's quantity is the sum of its ledger and `reconcile()` proves it. Helix dispenses only from the dispensing pharmacy (narcotics from the NDPS vault); stock in a sub-store, on its way, held or on a ward is dispensable nowhere.
+
+- **Ward stock** (grn-21, behind `ORB_PHARMACY_WARD_STOCK`, which stays off until ruling GRN-RS5 is confirmed): a ward store is filled only from an issue indent. The ward asks for drugs on its stock list (its par levels), someone else in the pharmacy decides, the pharmacist sends a FEFO plan from the dispensing pharmacy, and a nurse of that ward who did not send it confirms what arrived. Never ward stock, whatever the list says: unclassified or NDPS drugs, and the barred list, which starts from the drug-safety rules that cite the ISMP high-alert list plus concentrated electrolytes. A dose from ward stock still needs an active order on the drug chart.
+- **Seeds and retention** (grn-18): on a development box with the module on, the reseed creates the dispensing pharmacy (adopting the seed lots), one licensed vendor and one received order with a near-expiry batch, and no NDPS stock. Purchase orders, goods receipts and returns to vendor are mapped to GST's 72-month retention category, whose policy row the W168 retention work adds.
+
+**Status of the store.** Built and tested, every switch off by default; the safety defaults it was built with (GRN-RS1, RS2, RS3, RS5, RS6 and RS7; RS4 is not built) wait for Samuel's confirmation before any site switches them on.
+
+**Key code:** `server/services/helix_service.py`, `server/services/helix_db.py`, `server/routes/helix_routes.py`, `src/pages/panels/HelixPanel.tsx`; the store: `server/services/pharmacy_stock_service.py`, `server/services/pharmacy_transfer_service.py` (transfers and ward stock), `server/routes/pharmacy_store/`, `src/pages/panels/PharmacyStorePanel.tsx` and `src/pages/panels/pharmacyStore/`, `server/scripts/seed_pharmacy_store.py`
 
 ## 16. Admission & Discharge: the intake-to-exit spine
 
@@ -587,9 +594,11 @@ How, concretely:
 
 - **Guardrails worth naming:** ward scope is derived server-side from the authenticated user, the old `?department=` params were removed, so a client cannot widen scope from any request field; the board read is audited fail-closed *before* it is built; obs writes are idempotent on (patient, source, taken_at); even the persist-nothing NEWS2 preview is scope-checked, it previously leaked patient existence and the SpO2 Scale-2 flag (a diagnosis) to any `vitals.read` holder.
 
+- **Ward stock on the Deliveries tab** (grn-21, only while the pharmacy store and ward stock are both switched on, and only for `ward_stock.read`): below the patient deliveries, the ward's own stock store: what is on its way from the pharmacy (confirmed in the nurse's own name, never by the person who sent it, a short count with a reason; a delivery whose drug was made a controlled drug on its way is confirmed with a pharmacist witness and their signing PIN, and that drug is held, not for use), what the ward holds against its stock list, and a top-up request for drugs on that list. With either switch off the tab is unchanged.
+
 **Status.** Implemented and wired as the nurse landing tab; pre-pilot. Derived due times are explicitly a working list, not a prescription schedule.
 
-**Key code:** `server/routes/nurse_routes.py`, `server/services/nurse_shift_service.py`, `src/pages/panels/nurse/NursePanel.tsx`, `src/pages/panels/nurse/DeliveriesSheet.tsx`, `server/routes/helix_routes.py` (the `helix.receive` ward-receipt route)
+**Key code:** `server/routes/nurse_routes.py`, `server/services/nurse_shift_service.py`, `src/pages/panels/nurse/NursePanel.tsx`, `src/pages/panels/nurse/DeliveriesSheet.tsx`, `src/pages/panels/nurse/WardStockSection.tsx`, `server/routes/helix_routes.py` (the `helix.receive` ward-receipt route), `server/routes/pharmacy_store/ward.py` (ward stock)
 
 ## 20. Bridge: the patient's own window
 

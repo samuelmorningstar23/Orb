@@ -12,6 +12,8 @@
  *     review (ruling OPD-S7, AllergyReviewPanel); a signed note never changes
  *     and takes addenda only. A signed note can be printed.
  *   * INVESTIGATIONS (InvestigationsPanel) are ordered on the visit itself.
+ *   * THE PRESCRIPTION (PrescriptionPanel, opd-12) is written on the visit
+ *     too, after the allergy review, and never reaches the ward drug chart.
  *
  * OPD VITALS ARE PLAIN VALUES (rulings OPD-S3, OPD-S6): typed with their time,
  * shown as words, never scored, banded or coloured, never sent to the vitals
@@ -43,6 +45,7 @@ import AllergyReviewPanel from './AllergyReviewPanel'
 import DiagnosisPicker, { type DiagnosisDraft } from './DiagnosisPicker'
 import InvestigationsPanel from './InvestigationsPanel'
 import { OPD_VITAL_INPUTS, opdVitalsLine, type OpdVitalKey } from './opdVitals'
+import PrescriptionPanel from './PrescriptionPanel'
 import './ConsultationEditor.css'
 
 interface ConsultationEditorProps {
@@ -522,6 +525,13 @@ export default function ConsultationEditor({
 
       <InvestigationsPanel visitId={visitId}
         canOrder={visitOpen && !view.patient_admitted && view.visit_status !== 'cancelled'
+          && view.visit_status !== 'completed'} />
+
+      {/* opd-12: shows nothing where the medication-order store is off or the
+          drug chart is not part of this computer (the server answers 404). */}
+      <PrescriptionPanel visitId={visitId} allergyReview={review}
+        onReviewAllergies={onReviewAllergies}
+        canWrite={visitOpen && !view.patient_admitted && view.visit_status !== 'cancelled'
           && view.visit_status !== 'completed'} />
 
       {print && createPortal(

@@ -1007,7 +1007,9 @@ OPT_IN_MODULES = {
 # adt-6c. All three have landed (adt-6c in HIS wave 7: a confirmed Relay
 # transfer card moves the patient through the ADT writer under rule C, see
 # sage_handoff_service._transfer_through_adt_on), checked by tests only, not
-# yet in a browser. NABH indicators from the movement ledger wait on adt-13b.
+# yet in a browser. adt-13b landed in HIS wave 8: with ADT on, NABH QI-UTL-01
+# and QI-OUT-04 come from the movement ledger (nabh_service), and a period the
+# ledger does not cover is refused in words, never counted in part.
 ADT_ENABLED = _opt_in("ORB_ADT")
 # Pharmacy store: drug purchasing, goods receipt, batches and expiry, transfers,
 # stock take, NDPS register. Helix stays the only owner of drug stock.
@@ -1130,6 +1132,13 @@ FEATURE_FLAGS = {
     "registration": "ORB_REGISTRATION",
     # Outpatient consultations. Needs registration and the front desk module.
     "opd": "ORB_OPD",
+    # Readmitting a discharged patient onto their own record (opd-17c, W8-A),
+    # from the admission form and, with ORB_OPD on, from a clinic visit. Built
+    # to rulings OPD-S8 and ADT-S9 (a), held for Samuel's confirmation. Needs
+    # ORB_REGISTRATION. Several lanes outside the board, NEWS2 and Sage still
+    # read the previous stay's last observations as the latest (the W8-A
+    # report lists them), so keep it off until they do.
+    "readmission": "ORB_READMISSION",
     # Refuse a ward or bed that is not in the bed master (F104). Needs ORB_ADT.
     "adt_strict_locations": "ORB_ADT_STRICT_LOCATIONS",
     # Ward imprest and crash-cart drug stores (GRN-RS5). Needs ORB_PHARMACY_STORE.
@@ -1160,6 +1169,13 @@ FEATURE_FLAGS = {
     # the lifecycle on and the store off. Switching it off after use fails
     # closed: held drugs stay ungivable (ruling MO-R9).
     "med_order_lifecycle": "ORB_MED_ORDER_LIFECYCLE",
+    # Every medication order checked by a pharmacist before its first dose
+    # (ruling MO-R1, a safety ruling held for Samuel's confirmation; built to
+    # the strictest option named: no exceptions unless
+    # ORB_MED_ORDER_FIRST_DOSE_BEFORE_CHECK says otherwise). Needs
+    # ORB_MED_ORDER_LIFECYCLE; this file refuses to load with it on and the
+    # lifecycle off. Read at the bedside in services/medorders/emar_check.py.
+    "med_order_verify_before_dose": "ORB_MED_ORDER_VERIFY_BEFORE_DOSE",
     # More than one hospital site on this appliance (multi-site, ruling M1: one
     # appliance per legal entity). It gates GROWTH only: creating and closing a
     # facility, placing staff at a facility other than facility 1, group-wide
@@ -1182,12 +1198,17 @@ PHARMACY_NDPS_ON_FAILURE = _ndps_mode_raw if _ndps_mode_raw in _NDPS_FAILURE_MOD
 # be 'on', not 'draining'), or ('setting', name) for a value that must be set.
 FEATURE_PREREQUISITES = {
     "opd": (("feature", "registration"), ("module", "frontdesk")),
+    "readmission": (("feature", "registration"),),
     "adt_strict_locations": (("module", "adt"),),
     "pharmacy_ward_stock": (("module", "pharmacy-store"),),
     "ndps_register": (("module", "pharmacy-store"),
                       ("setting", "ORB_PHARMACY_NDPS_ON_FAILURE")),
     "lab_analyser_listener": (("module", "lab"),),
+    # Laboratory reports in the patient portal (lis-29): only while the
+    # laboratory is on, not while it drains (the strict reading, LIS-R11).
+    "lab_portal_reports": (("module", "lab"),),
     "med_order_lifecycle": (("feature", "med_order_store"),),
+    "med_order_verify_before_dose": (("feature", "med_order_lifecycle"),),
 }
 
 # Feature id -> the constant that holds its switch. Each constant is the
@@ -1197,6 +1218,7 @@ FEATURE_PREREQUISITES = {
 _FEATURE_CONSTANTS = {
     "registration": "REGISTRATION_ENABLED",
     "opd": "OPD_ENABLED",
+    "readmission": "READMISSION_ENABLED",
     "adt_strict_locations": "ADT_STRICT_LOCATIONS_ENABLED",
     "pharmacy_ward_stock": "PHARMACY_WARD_STOCK_ENABLED",
     "ndps_register": "PHARMACY_NDPS_REGISTER_ENABLED",
@@ -1208,12 +1230,14 @@ _FEATURE_CONSTANTS = {
     "lab_portal_reports": "LAB_PORTAL_REPORTS_ENABLED",
     "med_order_store": "MED_ORDER_STORE_ENABLED",
     "med_order_lifecycle": "MED_ORDER_LIFECYCLE_ENABLED",
+    "med_order_verify_before_dose": "MED_ORDER_VERIFY_BEFORE_DOSE_ENABLED",
     "multi_site": "MULTI_SITE_ENABLED",
 }
 
 _PREREQUISITE_WORDS = {
     ("feature", "registration"): "ORB_REGISTRATION is off",
     ("feature", "med_order_store"): "ORB_MED_ORDER_STORE is off",
+    ("feature", "med_order_lifecycle"): "ORB_MED_ORDER_LIFECYCLE is off",
     ("module", "frontdesk"): "the front desk module is off (ORB_FRONTDESK=0)",
     ("module", "adt"): "ORB_ADT is off",
     ("module", "pharmacy-store"): "ORB_PHARMACY_STORE is off",
@@ -1275,6 +1299,7 @@ _FEATURE_REQUESTED = {f: _opt_in(env) for f, env in FEATURE_FLAGS.items()}
 
 REGISTRATION_ENABLED = _FEATURE_REQUESTED["registration"]
 OPD_ENABLED = (_FEATURE_REQUESTED["opd"] and REGISTRATION_ENABLED and FRONTDESK_ENABLED)
+READMISSION_ENABLED = _FEATURE_REQUESTED["readmission"] and REGISTRATION_ENABLED
 ADT_STRICT_LOCATIONS_ENABLED = _FEATURE_REQUESTED["adt_strict_locations"] and ADT_ENABLED
 PHARMACY_WARD_STOCK_ENABLED = _FEATURE_REQUESTED["pharmacy_ward_stock"] and PHARMACY_STORE_ENABLED
 PHARMACY_NDPS_REGISTER_ENABLED = (_FEATURE_REQUESTED["ndps_register"] and PHARMACY_STORE_ENABLED
@@ -1284,9 +1309,11 @@ RESULT_QUARANTINE_ENABLED = _FEATURE_REQUESTED["result_quarantine"]
 RESULT_CORRECTIONS_ENABLED = _FEATURE_REQUESTED["result_corrections"]
 ORU_ORDER_LINK_ENABLED = _FEATURE_REQUESTED["oru_order_link"]
 LAB_CRITICAL_INTERFACED_ENABLED = _FEATURE_REQUESTED["lab_critical_interfaced"]
-LAB_PORTAL_REPORTS_ENABLED = _FEATURE_REQUESTED["lab_portal_reports"]
+LAB_PORTAL_REPORTS_ENABLED = _FEATURE_REQUESTED["lab_portal_reports"] and LAB_ENABLED
 MED_ORDER_STORE_ENABLED = _FEATURE_REQUESTED["med_order_store"]
 MED_ORDER_LIFECYCLE_ENABLED = _FEATURE_REQUESTED["med_order_lifecycle"] and MED_ORDER_STORE_ENABLED
+MED_ORDER_VERIFY_BEFORE_DOSE_ENABLED = (_FEATURE_REQUESTED["med_order_verify_before_dose"]
+                                        and MED_ORDER_LIFECYCLE_ENABLED)
 # No prerequisite. Read through feature_enabled("multi_site") at request time.
 MULTI_SITE_ENABLED = _FEATURE_REQUESTED["multi_site"]
 
@@ -1301,6 +1328,16 @@ if _FEATURE_REQUESTED["med_order_lifecycle"] and not MED_ORDER_STORE_ENABLED:
         "ORB_MED_ORDER_LIFECYCLE is on but ORB_MED_ORDER_STORE is off. The "
         "medication-order lifecycle needs the order store: set "
         "ORB_MED_ORDER_STORE=1 as well, or switch ORB_MED_ORDER_LIFECYCLE off."
+    )
+# The same reasoning for the pharmacist check before the first dose (ruling
+# MO-R1): a site that asked for it must not believe it is enforced while the
+# lifecycle it rides on is off.
+if _FEATURE_REQUESTED["med_order_verify_before_dose"] and not MED_ORDER_LIFECYCLE_ENABLED:
+    raise ValueError(
+        "ORB_MED_ORDER_VERIFY_BEFORE_DOSE is on but ORB_MED_ORDER_LIFECYCLE is off. "
+        "The pharmacist check before the first dose needs the medication-order "
+        "lifecycle: set ORB_MED_ORDER_STORE=1 and ORB_MED_ORDER_LIFECYCLE=1 as well, "
+        "or switch ORB_MED_ORDER_VERIFY_BEFORE_DOSE off."
     )
 
 
@@ -1412,6 +1449,48 @@ LAB_REQUIRE_DISTINCT_AUTHORISER = _module_enabled("ORB_LAB_REQUIRE_DISTINCT_AUTH
 #: How far back a specimen collection time may be set, in minutes (ruling
 #: LIS-R6, held for Samuel). 0, the default, refuses any back-dating.
 LAB_COLLECTION_BACKDATE_MINUTES = _int_setting("ORB_LAB_COLLECTION_BACKDATE_MINUTES", 0, minimum=0)
+
+# Medication orders.
+#: Which first doses may be given before the pharmacist's check while
+#: ORB_MED_ORDER_VERIFY_BEFORE_DOSE is on (ruling MO-R1, held for Samuel).
+#: 'none', the default, is the strictest option named: no dose of any order
+#: before the check. 'stat_urgent' is the architect's recommendation: the FIRST
+#: dose of an order whose priority is stat or urgent may be given at
+#: 'prescribed', is marked 'Given before pharmacist check', and every later
+#: dose waits for the check.
+MED_ORDER_FIRST_DOSE_BEFORE_CHECK = _choice_setting(
+    "ORB_MED_ORDER_FIRST_DOSE_BEFORE_CHECK", ("none", "stat_urgent"), "none")
+
+#: The longest delay ORB_LAB_PORTAL_DELAY_HOURS accepts: a year.
+LAB_PORTAL_DELAY_MAX_HOURS = 8760
+
+
+def _portal_delay_hours(env_name: str = "ORB_LAB_PORTAL_DELAY_HOURS"):
+    """How many hours after the laboratory reports a result it reaches the
+    patient portal by itself (ruling LIS-R11 (c), held for Samuel), or None.
+
+    None, the default and the strictest reading, means never by itself: only a
+    doctor's release puts a result in the portal. 0 would mean at once, which
+    is option (b) and was not chosen, so a value below 1, above a year, or not a
+    whole number reads as None and says so at boot."""
+    raw = (os.getenv(env_name) or "").strip()
+    if not raw:
+        return None
+    try:
+        hours = int(raw)
+    except ValueError:
+        hours = None
+    if hours is None or hours < 1 or hours > LAB_PORTAL_DELAY_MAX_HOURS:
+        _config_log.warning(
+            "%s=%r is not a whole number of hours from 1 to %d; laboratory reports "
+            "reach the patient portal only when a doctor releases them",
+            env_name, raw, LAB_PORTAL_DELAY_MAX_HOURS)
+        return None
+    return hours
+
+
+#: See _portal_delay_hours. Only read while ORB_LAB_PORTAL_REPORTS is on.
+LAB_PORTAL_DELAY_HOURS = _portal_delay_hours()
 
 
 # ── Discharge financial clearance: ADVISORY BY DEFAULT ───────────────────────

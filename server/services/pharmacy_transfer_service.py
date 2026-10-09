@@ -103,12 +103,61 @@ NUMBERS come from the pharmacy's own series, PHTRF (GRN-R11), drawn after the
 dispatch commits, as procurement stamps its documents. Migration 54 seeds the
 series unconfigured; the transfer carries number_series_configured so the
 screen says the number is a placeholder until the site sets its series up.
+
+WARD STOCK (grn-21, behind ORB_PHARMACY_WARD_STOCK, off until Samuel confirms
+ruling GRN-RS5). A ward imprest store is filled ONLY from an issue indent,
+never by a free transfer (create_transfer still refuses a ward store):
+  raise    the ward (ward_indent.raise, her own department) or the pharmacist
+           on the ward's behalf (pharmacy_store.write) asks the dispensing
+           pharmacy for drugs ON THAT STORE'S IMPREST LIST. The list is the
+           store's active par rows; a drug without one is refused. Whatever
+           the list says, a drug is refused when it is unclassified, a
+           narcotic or psychotropic (GRN-R14: NDPS stock never sits on a
+           ward), inactive or not confirmed, or on the barred list below.
+           One open indent per drug and store; a line asks for no more than
+           the par ceiling. Indent number PHIND, drawn after the commit.
+  decide   the pharmacy (write or approve tier), never the person who raised
+           it, approves in whole or in part, or refuses with a reason.
+  issue    a FEFO issue plan from the dispensing store becomes a transfer
+           draft carrying source_indent_ref; the pharmacist sends it with the
+           ordinary dispatch, which records what left against the indent.
+  receive  on the ward, by a ward_stock.receive holder of that store's
+           department who did not dispatch it (403 same_person). Short
+           receipt needs a reason. The pharmacy desk cannot receive a ward
+           transfer for the ward. When every line is in, the indent closes.
+A drug that became barred, unlisted, inactive or unconfirmed while on its way
+lands QUARANTINED in the ward store, counted and visible, never available.
+So does a drug classified narcotic or psychotropic while on its way, and that
+makes the whole transfer CONTROLLED: the nurse never holds
+pharmacy_store.ndps, so the ward receives it only with a WITNESS who does (an
+active pharmacist with a signing PIN, never the nurse and never the person who
+sent it, 403 witness_sent_it), whatever NDPS_WITNESS_ALWAYS says. The witness
+goes on the receipt's audit row and on the NDPS register entry. The units are
+then counted, held and visible, and the indent closes as for any receipt.
+A ward receipt never sticks on the ward's own lot of the same batch either: a
+ward has no screen to hold or release a lot, so where the ward store already
+holds that drug, batch and expiry under another status, both end under the
+stronger hold (_ward_same_batch: the ward's lot is held with a lot event
+naming the transfer, or the arriving units land held as it is), never the
+weaker. The pharmacy lane keeps its 409 lot_status_conflict.
+Ward lots are never dispensable by Helix (pharmacy_stock_service.shelf_lot_sql
+takes only the dispensing store and the NDPS vault), and giving a dose from
+ward stock still needs an active eMAR order: nothing here touches the eMAR.
+
+THE BARRED LIST (GRN-RS5 (b), strictest reading). It starts from
+drug_safety_service's curated dose and route rules: every rule whose source
+cites the ISMP high-alert list bars every drug its names match. Concentrated
+electrolytes are barred as well (CONCENTRATED_ELECTROLYTES and hypertonic
+saline over 0.9 per cent). The ruling's "unless named" exception (a barred
+drug approved by pharmacy and the medical lead for one store) is NOT built:
+a barred drug is never issued to a ward.
 """
 from __future__ import annotations
 
 import contextlib
 import contextvars
 import logging
+import re
 import uuid
 from typing import Any, Iterator, Mapping, Optional, Sequence
 
@@ -132,6 +181,17 @@ NUMBER_KIND = "pharmacy_transfer"
 #: Pharmacy store kinds a transfer may leave from or arrive at.
 TRANSFER_STORE_KINDS: tuple[str, ...] = (
     stock.DISPENSING_STORE_KIND, "sub_store", stock.NDPS_VAULT_KIND)
+
+#: Ward store kinds an issue indent fills (grn-21). Crash carts are grn-23, a
+#: later wave, so they are not filled here yet.
+WARD_STORE_KINDS: tuple[str, ...] = ("ward_imprest",)
+
+
+def ward_stock_on() -> bool:
+    """ORB_PHARMACY_WARD_STOCK, read at call time (GRN-RS5, off by default)."""
+    import config
+
+    return bool(config.feature_enabled("pharmacy_ward_stock"))
 
 #: pharmacy_transfers.status, as migration 54's CHECK spells it.
 STATUSES: tuple[str, ...] = (
@@ -330,8 +390,15 @@ def _store_by_id(conn, store_id: Any):
                         (store_id,)).fetchone()
 
 
-def _check_store(store: Mapping) -> None:
-    if store["pharmacy_kind"] not in TRANSFER_STORE_KINDS:
+def _check_store(store: Mapping, *, ward_ok: bool = False) -> None:
+    """A store a transfer may leave from or arrive at. A ward imprest store
+    only when `ward_ok` (the transfer carries a ward indent, grn-21) and only
+    while ward stock is switched on."""
+    if ward_ok and store["pharmacy_kind"] in WARD_STORE_KINDS:
+        if not ward_stock_on():
+            raise TransferError("ward stock is switched off on this site. Nothing was changed.",
+                                code="ward_stock_off")
+    elif store["pharmacy_kind"] not in TRANSFER_STORE_KINDS:
         raise TransferError(
             f"{_store_name(store)} does not take part in transfers. Transfers run between the "
             "dispensing pharmacy, sub-stores and the NDPS vault.", code="store_not_transferable")
@@ -585,6 +652,8 @@ def _plan_lines(conn, requests: list[dict], from_store: Mapping, to_store: Mappi
             raise TransferError(f"no drug {req['drug_id']!r} in the drug master",
                                 code="drug_not_found")
         _check_route(drug, from_store, to_store)
+        if to_store["pharmacy_kind"] in WARD_STORE_KINDS:
+            _check_ward_route(conn, drug, to_store)
         try:
             plan = issue_plan(conn, store_id=int(from_store["id"]), drug_id=drug["id"],
                               units=req["units"], today=today)
@@ -594,7 +663,8 @@ def _plan_lines(conn, requests: list[dict], from_store: Mapping, to_store: Mappi
             short.append({**exc.detail, "drug_name": _drug_name(drug)})
             continue
         for part in plan:
-            lines.append({"drug_id": drug["id"], **part})
+            lines.append({"drug_id": drug["id"], **part,
+                          "indent_line_id": req.get("indent_line_id")})
     if short:
         names = ", ".join(f"{s['drug_name']} ({s['usable_units']} usable, {s['asked_units']} "
                           "asked)" for s in short)
@@ -612,10 +682,10 @@ def _insert_lines(conn, transfer_id: int, lines: list[dict]) -> None:
     for n, line in enumerate(lines, start=1):
         conn.execute(
             "INSERT INTO pharmacy_transfer_lines (pharmacy_transfer_id, line_no, "
-            "helix_medication_id, from_lot_id, batch_no, expiry_date, quantity_units) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "helix_medication_id, from_lot_id, batch_no, expiry_date, quantity_units, "
+            "source_indent_line_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (transfer_id, n, line["drug_id"], line["lot_id"], line["batch_no"],
-             line["expiry_date"], line["units"]))
+             line["expiry_date"], line["units"], line.get("indent_line_id")))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -693,7 +763,8 @@ def _decorate(conn, row: Mapping, *, with_lines: bool = True) -> dict:
                                    if line["received_units"] is None)
                                if doc["status"] in IN_TRANSIT_STATUSES else 0)
     doc["controlled"] = _controlled(conn, doc, [line["helix_medication_id"] for line in lines])
-    doc["witness_required"] = witness_required(doc["controlled"])
+    doc["witness_required"] = _lane_witness_required(
+        doc["controlled"], "ward" if doc["to_store_kind"] in WARD_STORE_KINDS else "pharmacy")
     if with_lines:
         for line in lines:
             received = line["received_units"]
@@ -922,9 +993,44 @@ def _require_ndps(actor: Mapping, controlled: bool) -> None:
             code="ndps_permission_needed")
 
 
+def _lane_witness_required(controlled: bool, lane: str) -> bool:
+    """Does this receipt (or, on the pharmacy lane, this dispatch) need a
+    witness? A ward receipt of controlled stock always does, whatever
+    NDPS_WITNESS_ALWAYS says: the nurse never holds pharmacy_store.ndps, so the
+    witness is the one NDPS holder on it."""
+    if lane == "ward":
+        return bool(controlled)
+    return witness_required(controlled)
+
+
+def _require_lane_ndps(actor: Mapping, controlled: bool, lane: str) -> None:
+    """The NDPS permission on the person acting. On the ward lane the nurse
+    acts and the witness carries it (verify_witness checks the witness holds
+    pharmacy_store.ndps), so a ward receipt of a transfer that became
+    controlled on its way is never stranded for want of a grant a ward role
+    cannot have."""
+    if lane != "ward":
+        _require_ndps(actor, controlled)
+
+
+def _check_ward_witness(row: Mapping, witness_id: Any) -> None:
+    """A ward receipt's witness is never the person who sent the transfer:
+    the receipt is the independent count of what they sent. Checked before
+    the PIN, so a PIN is never asked for, or counted wrong, on a receipt that
+    cannot happen."""
+    wid = witness_id.strip() if isinstance(witness_id, str) else ""
+    if wid and row["dispatched_by"] is not None and wid == str(row["dispatched_by"]):
+        raise TransferError(
+            "the person who sent this transfer cannot witness its receipt. Ask another "
+            "pharmacist. Nothing was changed.", code="witness_sent_it")
+
+
 def _witness_for(actor: Mapping, transfer_id: int, leg: str, witness_id: Any, witness_pin: Any,
-                 audit_ctx: Optional[Mapping]) -> tuple[bool, Optional[str]]:
-    """(controlled, verified witness id or None), read before the write."""
+                 audit_ctx: Optional[Mapping], *,
+                 lane: str = "pharmacy") -> tuple[bool, Optional[str]]:
+    """(controlled, verified witness id or None), read before the write. On
+    the ward lane: no NDPS grant on the nurse, a witness whenever the transfer
+    is controlled, and never the person who sent it."""
     with db_session() as conn:
         row = _raw(conn, transfer_id)
         if row is None:
@@ -933,9 +1039,11 @@ def _witness_for(actor: Mapping, transfer_id: int, leg: str, witness_id: Any, wi
             "SELECT helix_medication_id FROM pharmacy_transfer_lines "
             "WHERE pharmacy_transfer_id = ?", (row["id"],)).fetchall()]
         controlled = _controlled(conn, row, drug_ids)
-    _require_ndps(actor, controlled)
-    if not witness_required(controlled):
+    _require_lane_ndps(actor, controlled, lane)
+    if not _lane_witness_required(controlled, lane):
         return controlled, None
+    if lane == "ward":
+        _check_ward_witness(row, witness_id)
     return controlled, verify_witness(actor=actor, witness_id=witness_id,
                                       witness_pin=witness_pin, transfer_id=int(row["id"]),
                                       leg=leg, audit_ctx=audit_ctx)
@@ -1032,17 +1140,22 @@ def replan_transfer(transfer_id: Any, *, actor: Mapping,
             "SELECT * FROM pharmacy_transfer_lines WHERE pharmacy_transfer_id = ? "
             "ORDER BY line_no", (row["id"],)).fetchall()]
         totals: dict[str, int] = {}
+        # A ward indent's transfer keeps each drug tied to its indent line.
+        indent_lines: dict[str, Any] = {}
         for line in old:
             totals[line["helix_medication_id"]] = (totals.get(line["helix_medication_id"], 0)
                                                    + int(line["quantity_units"]))
+            indent_lines.setdefault(line["helix_medication_id"], line["source_indent_line_ref"])
         from_store = _store_by_id(conn, row["from_store_id"])
         to_store = _store_by_id(conn, row["to_store_id"])
         if from_store is None or to_store is None:
             raise TransferError("a store on this transfer no longer exists",
                                 code="store_not_found")
-        _check_store(from_store)
-        _check_store(to_store)
-        requests = [{"drug_id": d, "units": u} for d, u in totals.items()]
+        ward_ok = row["source_indent_ref"] is not None
+        _check_store(from_store, ward_ok=ward_ok)
+        _check_store(to_store, ward_ok=ward_ok)
+        requests = [{"drug_id": d, "units": u, "indent_line_id": indent_lines.get(d)}
+                    for d, u in totals.items()]
         planned = _plan_lines(conn, requests, from_store, to_store, today)
         _require_ndps(actor, _controlled(conn, row, [line["drug_id"] for line in planned]))
         conn.execute("DELETE FROM pharmacy_transfer_lines WHERE pharmacy_transfer_id = ?",
@@ -1083,8 +1196,9 @@ def _dispatch_checks(conn, row: Mapping) -> Optional[tuple]:
     if from_store is None or to_store is None:
         raise TransferError("a store on this transfer no longer exists",
                             code="store_not_found")
-    _check_store(from_store)
-    _check_store(to_store)
+    ward_ok = row["source_indent_ref"] is not None
+    _check_store(from_store, ward_ok=ward_ok)
+    _check_store(to_store, ward_ok=ward_ok)
     drugs: dict[str, Any] = {}
     for line in lines:
         did = line["helix_medication_id"]
@@ -1094,6 +1208,10 @@ def _dispatch_checks(conn, row: Mapping) -> Optional[tuple]:
                 raise TransferError(f"no drug {did!r} in the drug master",
                                     code="drug_not_found")
             _check_route(drug, from_store, to_store)
+            if to_store["pharmacy_kind"] in WARD_STORE_KINDS:
+                # Read again at dispatch: a drug barred, taken off the list,
+                # retired or made NDPS since the plan never leaves for a ward.
+                _check_ward_route(conn, drug, to_store)
             drugs[did] = drug
     return lines, from_store, to_store, drugs
 
@@ -1181,6 +1299,11 @@ def dispatch_transfer(transfer_id: Any, *, actor: Mapping, witness_id: Any = Non
         if cur.rowcount != 1:
             raise TransferError("this transfer changed while you were working on it. Nothing "
                                 "was changed.", code="illegal_transition")
+        indent_id = row["source_indent_ref"]
+        if indent_id is not None:
+            # A ward indent's stock has left: record it against the indent in
+            # this same transaction (never more than was approved).
+            _record_indent_issue(conn, int(indent_id), lines)
         _audit(conn, actor, "pharmacy_transfer_dispatched",
                summary=f"Pharmacy transfer {tid} sent from {_store_name(from_store)} to "
                        f"{_store_name(to_store)}",
@@ -1188,7 +1311,8 @@ def dispatch_transfer(transfer_id: Any, *, actor: Mapping, witness_id: Any = Non
                metadata={"transfer_id": str(tid), "from_store_code": from_store["code"],
                          "to_store_code": to_store["code"], "controlled": now_controlled,
                          "witness_id": witness, "lines": moved,
-                         "units": sum(m["units"] for m in moved)},
+                         "units": sum(m["units"] for m in moved),
+                         "indent_id": str(indent_id) if indent_id is not None else None},
                audit_ctx=audit_ctx)
     from services import procurement_service as procurement
 
@@ -1231,11 +1355,39 @@ def receive_transfer(transfer_id: Any, *, lines: Any, actor: Mapping, witness_id
     store by one transfer_in; fewer units than were sent needs a reason, and
     more is refused. Lines not named stay in transit. A line whose lot is no
     longer available, or whose batch is recalled or NSQ anywhere, lands held
-    (_landing_status), never available."""
+    (_landing_status), never available.
+
+    A transfer to a ward store is received on the ward, never here
+    (received_on_the_ward): receive_ward_transfer."""
+    return _receive(transfer_id, lines=lines, actor=actor, witness_id=witness_id,
+                    witness_pin=witness_pin, audit_ctx=audit_ctx, lane="pharmacy")
+
+
+def _check_lane(conn, row: Mapping, actor: Mapping, lane: str):
+    """The receiving store, if this lane may receive into it. The pharmacy
+    lane never receives a ward transfer; the ward lane receives only a ward
+    transfer into a store the caller's department holds, and anything else is
+    answered as not found."""
+    to_store = _store_by_id(conn, row["to_store_id"])
+    is_ward = bool(to_store) and to_store["pharmacy_kind"] in WARD_STORE_KINDS
+    if lane == "ward":
+        if not is_ward or not _ward_store_visible(conn, actor, int(to_store["id"])):
+            raise TransferError(f"no transfer {row['id']}", code="not_found")
+    elif is_ward:
+        raise TransferError(
+            "this transfer goes to a ward. The ward receives it on its own screen, in the "
+            "name of the nurse who counts it. Nothing was changed.",
+            code="received_on_the_ward")
+    return to_store
+
+
+def _receive(transfer_id: Any, *, lines: Any, actor: Mapping, witness_id: Any,
+             witness_pin: Any, audit_ctx: Optional[Mapping], lane: str) -> dict:
     actor_id = _actor_id(actor)
     receipts = _clean_receipts(lines)
     with db_session() as conn:
         row = _load(conn, transfer_id)
+        _check_lane(conn, row, actor, lane)
         # Refusals that need no witness come first, so a witness's PIN is
         # never asked for, or counted wrong, on a receipt that cannot happen.
         if row["status"] not in IN_TRANSIT_STATUSES:
@@ -1247,7 +1399,7 @@ def receive_transfer(transfer_id: Any, *, lines: Any, actor: Mapping, witness_id
                 "you sent this transfer, so somebody else receives it. Nothing was changed.",
                 code="same_person")
     _, witness = _witness_for(actor, transfer_id, "receipt", witness_id, witness_pin,
-                              audit_ctx)
+                              audit_ctx, lane=lane)
     with db_session(immediate=True) as conn:
         row = _load(conn, transfer_id)
         tid = int(row["id"])
@@ -1259,7 +1411,7 @@ def receive_transfer(transfer_id: Any, *, lines: Any, actor: Mapping, witness_id
             raise TransferError(
                 "you sent this transfer, so somebody else receives it. Nothing was changed.",
                 code="same_person")
-        to_store = _store_by_id(conn, row["to_store_id"])
+        to_store = _check_lane(conn, row, actor, lane)
         if to_store is None:
             raise TransferError("the receiving store no longer exists", code="store_not_found")
         if not to_store["is_active"]:
@@ -1270,8 +1422,8 @@ def receive_transfer(transfer_id: Any, *, lines: Any, actor: Mapping, witness_id
             (tid,)).fetchall()}
         now_controlled = _controlled(conn, row, [line["helix_medication_id"]
                                                  for line in all_lines.values()])
-        _require_ndps(actor, now_controlled)
-        if witness_required(now_controlled) and witness is None:
+        _require_lane_ndps(actor, now_controlled, lane)
+        if _lane_witness_required(now_controlled, lane) and witness is None:
             raise TransferError("this transfer now carries controlled stock, so a witness is "
                                 "needed. Nothing was changed.", code="witness_required")
         received: list[dict] = []
@@ -1304,6 +1456,7 @@ def receive_transfer(transfer_id: Any, *, lines: Any, actor: Mapping, witness_id
                 to_lot_id = None
                 movement_id = None
                 landing, held_why = None, None
+                ward_lot_held = None
                 if got > 0:
                     _check_landing(_find_drug(conn, line["helix_medication_id"]),
                                    line["helix_medication_id"], to_store)
@@ -1313,6 +1466,12 @@ def receive_transfer(transfer_id: Any, *, lines: Any, actor: Mapping, witness_id
                     # while its units were on their way never lands available.
                     landing, held_why = _landing_status(
                         source, line, held_batches(conn, line["helix_medication_id"]))
+                    if to_store["pharmacy_kind"] in WARD_STORE_KINDS:
+                        landing, held_why = _ward_landing(conn, line, to_store, landing,
+                                                          held_why)
+                        landing, held_why, ward_lot_held = _ward_same_batch(
+                            conn, line, source, to_store, landing, held_why,
+                            actor_id=actor_id, transfer_id=tid)
                     try:
                         landed = stock.open_or_merge_lot(
                             conn, medication_id=line["helix_medication_id"],
@@ -1356,7 +1515,7 @@ def receive_transfer(transfer_id: Any, *, lines: Any, actor: Mapping, witness_id
                                  "received_units": got, "shortfall_units": qty - got,
                                  "reason": reason, "to_lot_id": to_lot_id,
                                  "movement_id": movement_id, "landed_status": landing,
-                                 "held_reason": held_why})
+                                 "held_reason": held_why, "ward_lot_held": ward_lot_held})
         pending = conn.execute(
             "SELECT COUNT(*) FROM pharmacy_transfer_lines WHERE pharmacy_transfer_id = ? "
             "AND received_units IS NULL", (tid,)).fetchone()[0]
@@ -1373,19 +1532,55 @@ def receive_transfer(transfer_id: Any, *, lines: Any, actor: Mapping, witness_id
                                                    actor_id=actor_id)
         held_units = sum(r["received_units"] for r in received
                          if r["landed_status"] not in (None, "available"))
+        # Units the ward already held of the same batch, held with them now.
+        ward_held_units = sum(r["ward_lot_held"]["units"] for r in received
+                              if r["ward_lot_held"])
+        indent_id = row["source_indent_ref"]
+        if indent_id is not None and new_status == "received":
+            # Every line of a ward indent's transfer is in: the indent closes.
+            _close_indent(conn, int(indent_id))
         _audit(conn, actor, "pharmacy_transfer_received",
                summary=(f"Pharmacy transfer {tid} received into {_store_name(to_store)}"
                         + (f", {shortfall} units short" if shortfall else "")
-                        + (f", {held_units} units held off the shelf" if held_units else "")),
+                        + (f", {held_units} units held off the shelf" if held_units else "")
+                        + (f", {ward_held_units} units of the same batch already on the ward "
+                           "held with them" if ward_held_units else "")),
                transfer_id=tid,
                metadata={"transfer_id": str(tid), "to_store_code": to_store["code"],
                          "status": new_status, "controlled": now_controlled,
                          "witness_id": witness, "dispatched_by": str(row["dispatched_by"]),
                          "lines": received, "shortfall_units": shortfall,
-                         "held_units": held_units},
+                         "held_units": held_units, "ward_held_units": ward_held_units,
+                         "lane": lane,
+                         "indent_id": str(indent_id) if indent_id is not None else None},
                audit_ctx=audit_ctx)
         doc = _decorate(conn, _load(conn, tid))
     return {"transfer": doc, "replayed": False}
+
+
+def receive_ward_transfer(transfer_id: Any, *, lines: Any, actor: Mapping,
+                          witness_id: Any = None, witness_pin: Any = None,
+                          audit_ctx: Optional[Mapping] = None) -> dict:
+    """Receive a pharmacy transfer on the ward (grn-21): the caller holds
+    ward_stock.receive, the receiving ward store belongs to the caller's
+    department (another ward's transfer is not found), and the caller did
+    not dispatch it (403 same_person). Short receipt needs a reason. What
+    arrived goes into the ward store, never onto the dispensing shelf.
+
+    A transfer that became controlled on its way (a drug classified narcotic
+    or psychotropic after it was sent; nothing controlled is ever sent to a
+    ward) is received here too, never stranded: with a witness holding
+    pharmacy_store.ndps who confirms with their signing PIN and did not send
+    it, and every NDPS line lands quarantined (_ward_landing). The witness is
+    ignored on a transfer that is not controlled."""
+    from permissions import WARD_STOCK_RECEIVE, has_permission
+
+    if not has_permission(str(actor.get("role") or ""), WARD_STOCK_RECEIVE):
+        raise TransferError(f"no transfer {transfer_id}", code="not_found")
+    if not ward_stock_on():
+        raise TransferError("ward stock is switched off on this site", code="ward_stock_off")
+    return _receive(transfer_id, lines=lines, actor=actor, witness_id=witness_id,
+                    witness_pin=witness_pin, audit_ctx=audit_ctx, lane="ward")
 
 
 def cancel_transfer(transfer_id: Any, *, reason: Any, actor: Mapping,
@@ -1418,3 +1613,1017 @@ def cancel_transfer(transfer_id: Any, *, reason: Any, actor: Mapping,
                metadata={"transfer_id": str(tid), "reason": why}, audit_ctx=audit_ctx)
         doc = _decorate(conn, _load(conn, tid))
     return {"transfer": doc, "replayed": False}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Ward stock: imprest stores, issue indents and ward receipt (grn-21)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# The rules are in the module note (WARD STOCK, THE BARRED LIST). Everything
+# here runs only through routes/pharmacy_store/ward.py, which sits behind
+# ORB_PHARMACY_STORE and ORB_PHARMACY_WARD_STOCK; each write checks the ward
+# switch again so no other caller can reach it while it is off. Nothing here
+# reads, writes or shows patient data.
+
+#: The pharmacy number series and procurement stamping kind for an indent.
+INDENT_NUMBER_SERIES = "PHIND"
+INDENT_NUMBER_KIND = "pharmacy_indent"
+
+#: An issue indent's status, in the words a ward reads (procurement's statuses).
+INDENT_STATUS_LABELS = {
+    "draft": "Draft",
+    "submitted": "Waiting for the pharmacy",
+    "approved": "Approved",
+    "partially_approved": "Approved in part",
+    "rejected": "Refused",
+    "converted": "Sent to the ward",
+    "closed": "Received",
+    "cancelled": "Cancelled",
+}
+
+#: Statuses of an indent still in play: a second request for the same drug
+#: and store waits until it is received, refused or cancelled.
+OPEN_INDENT_STATUSES: tuple[str, ...] = (
+    "draft", "submitted", "approved", "partially_approved", "converted")
+
+#: Transfer statuses that still tie up an indent (a draft not yet sent, or
+#: units on their way).
+LIVE_TRANSFER_STATUSES: tuple[str, ...] = ("draft", "dispatched", "partially_received")
+
+PRIORITIES: tuple[str, ...] = ("routine", "urgent", "emergency")
+
+#: Concentrated electrolytes barred from ward stock alongside the ISMP rules
+#: (GRN-RS5 names them). Matched as drug_safety_service matches: a phrase
+#: inside the drug's name or generic name, ignoring case. Hypertonic sodium
+#: chloride (above 0.9 per cent) is caught separately, by its strength.
+CONCENTRATED_ELECTROLYTES: tuple[str, ...] = (
+    "potassium chloride", "kcl", "potassium phosphate", "potassium dihydrogen phosphate",
+    "potassium acid phosphate", "potassium acetate", "magnesium sulphate",
+    "magnesium sulfate", "hypertonic saline", "hypertonic sodium chloride",
+)
+
+_PERCENT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+
+
+def _norm_text(value: Any) -> str:
+    return " ".join(str(value or "").lower().split())
+
+
+def _ismp_rules() -> list[dict]:
+    """drug_safety_service's dose and route rules whose source cites the ISMP
+    high-alert list. Read at call time, so a rule added there bars its drugs
+    here too."""
+    from services import drug_safety_service as safety
+
+    return [rule for rule in (*safety.DOSE_RULES, *safety.ROUTE_RULES)
+            if "ISMP" in str(rule.get("source") or "")]
+
+
+def barred_reason(drug: Mapping) -> Optional[str]:
+    """Why this drug may never be ward stock (GRN-RS5), as a clause ('a
+    high-alert medicine on the ISMP list'); None when it is not barred."""
+    keys = drug.keys() if hasattr(drug, "keys") else ()
+    names = [n for n in (_norm_text(drug["name"]),
+                         _norm_text(drug["generic_name"] if "generic_name" in keys else None))
+             if n]
+    for rule in _ismp_rules():
+        for name in names:
+            if (any(p in name for p in rule["match"])
+                    and not any(bad in name for bad in rule.get("exclude", ()))):
+                return "a high-alert medicine on the ISMP list"
+    strength = _norm_text(drug["strength"] if "strength" in keys else None)
+    for name in names:
+        if any(p in name for p in CONCENTRATED_ELECTROLYTES):
+            return "a concentrated electrolyte"
+        if "sodium chloride" in name or "saline" in name:
+            for match in _PERCENT.finditer(f"{name} {strength}"):
+                if float(match.group(1)) > 0.9:
+                    return "a concentrated electrolyte"
+    return None
+
+
+def _par_row(conn, store_id: int, drug_id: str):
+    return conn.execute(
+        "SELECT * FROM pharmacy_par_levels WHERE store_id = ? AND helix_medication_id = ? "
+        "AND is_active = 1", (store_id, drug_id)).fetchone()
+
+
+def ward_route_problem(conn, drug: Mapping, store: Mapping) -> Optional[dict]:
+    """Why this drug may not go to this ward store, as {code, message, why}
+    (why is a short clause for a hold reason); None when it may. Read at
+    every step: raise, decide, plan, dispatch and receipt."""
+    name = _drug_name(drug)
+    store_name = _store_name(store)
+    if drug["drug_schedule"] is None or drug["ndps_category"] is None:
+        return {"code": "drug_unclassified",
+                "message": f"{name} is not classified. The pharmacy records its schedule and "
+                           "NDPS class before it can be ward stock.",
+                "why": "the drug is not classified"}
+    if _is_ndps(drug):
+        return {"code": "ndps_not_ward_stock",
+                "message": f"{name} is a narcotic or psychotropic drug. It is never kept as "
+                           "ward stock; the pharmacy dispenses it for each patient.",
+                "why": "the drug is a narcotic or psychotropic drug"}
+    barred = barred_reason(drug)
+    if barred:
+        return {"code": "high_alert_barred",
+                "message": f"{name} is {barred}, so it is not kept as ward stock. The "
+                           "pharmacy dispenses it for each patient.",
+                "why": f"the drug is {barred}"}
+    if not drug["is_active"]:
+        return {"code": "drug_inactive",
+                "message": f"{name} is marked inactive in the drug master.",
+                "why": "the drug is marked inactive"}
+    if (drug["identity_status"] or "active") != "active":
+        return {"code": "drug_not_confirmed",
+                "message": f"{name} is a {drug['identity_status']} drug, not confirmed for use.",
+                "why": "the drug is not confirmed for use"}
+    par = _par_row(conn, int(store["id"]), drug["id"])
+    if par is None or int(par["par_units"] or 0) <= 0:
+        return {"code": "not_on_imprest_list",
+                "message": f"{name} is not on the stock list for {store_name}. The pharmacy "
+                           "sets the list (par levels) before a ward can hold a drug.",
+                "why": f"the drug is not on the stock list for {store_name}"}
+    return None
+
+
+def _check_ward_route(conn, drug: Mapping, store: Mapping) -> None:
+    problem = ward_route_problem(conn, drug, store)
+    if problem:
+        raise TransferError(problem["message"] + " Nothing was changed.", code=problem["code"],
+                            detail={"drug_id": drug["id"]})
+
+
+def _ward_landing(conn, line: Mapping, store: Mapping, landing: str,
+                  held_why: Optional[str]) -> tuple[str, Optional[str]]:
+    """At a ward receipt: a drug that may no longer be ward stock (barred,
+    taken off the list, inactive, unconfirmed or NDPS since it was sent) lands
+    held, never available, so it is counted and visible but never used. A
+    stronger hold already found (recalled, NSQ) is kept."""
+    drug = _find_drug(conn, line["helix_medication_id"])
+    if drug is None:
+        why = "the drug is no longer in the drug master"
+    else:
+        problem = ward_route_problem(conn, drug, store)
+        if problem is None:
+            return landing, held_why
+        why = problem["why"]
+    status = landing if landing and landing != "available" else LANDING_HOLD_STATUS
+    return status, "; ".join(w for w in (held_why, why) if w)
+
+
+#: A ward lot's status and the arriving units' status, strongest hold first:
+#: a ward receipt brings both under the stronger (_ward_same_batch).
+_WARD_BATCH_RANK = {**_HOLD_RANK, "available": len(_HOLD_RANK)}
+
+
+def _ward_same_batch(conn, line: Mapping, source: Optional[Mapping], store: Mapping,
+                     landing: str, held_why: Optional[str], *, actor_id: str,
+                     transfer_id: int) -> tuple[str, Optional[str], Optional[dict]]:
+    """At a ward receipt: the ward store may already hold this drug, batch and
+    expiry as its one lot of that batch, under another status. Units are never
+    merged across statuses (open_or_merge_lot refuses, lot_status_conflict),
+    and a ward has no screen to hold or release a lot, so that refusal would
+    keep the units on their way for good (a drug made NDPS on its way, landing
+    quarantined, onto the ward's available lot of the same batch). Instead
+    both end under the STRONGER of the two (recalled, then NSQ, then
+    quarantined, then available): the ward's lot is held as the arriving
+    units are, by pharmacy_stock_service.set_lot_status with a lot event
+    naming this transfer, or the arriving units land held as the ward's lot
+    is. Nothing held is ever made available. Any other status (written off,
+    returned, waiting for inspection) is left to open_or_merge_lot's refusal.
+    Returns (landing, held_why, the ward lot held now as {lot_id, from_status,
+    to_status, units}, or None)."""
+    try:
+        batch = stock._text(line["batch_no"] or (source["lot_number"] if source else None))
+        expiry = stock._date_text(line["expiry_date"], "expiry date")
+    except stock.StockError:
+        return landing, held_why, None
+    if not batch:
+        return landing, held_why, None
+    twin = stock._same_identity_lot(conn, line["helix_medication_id"], batch, expiry,
+                                    int(store["id"]))
+    if twin is None or twin["status"] == landing:
+        return landing, held_why, None
+    if twin["status"] not in _WARD_BATCH_RANK or landing not in _WARD_BATCH_RANK:
+        return landing, held_why, None
+    allowed = landing in stock.LOT_STATUS_TRANSITIONS.get(twin["status"], frozenset())
+    if _WARD_BATCH_RANK[twin["status"]] < _WARD_BATCH_RANK[landing] or not allowed:
+        # The ward already holds this batch at least as strongly (or under a
+        # hold it cannot leave): the arriving units join it there.
+        why = (f"batch {batch} is already held in this ward store as "
+               f"{_lot_status_words(twin['status'])}")
+        return twin["status"], "; ".join(w for w in (held_why, why) if w), None
+    try:
+        stock.set_lot_status(
+            conn, twin["id"], landing, actor_id=actor_id,
+            reason=(f"Held with pharmacy transfer {transfer_id}, which brought more of this "
+                    f"batch: {held_why or _lot_status_words(landing)}"),
+            reference_type=REFERENCE_TYPE, reference_id=str(transfer_id))
+    except stock.StockError as exc:
+        raise TransferError(f"line {line['line_no']}: {exc}",
+                            code=getattr(exc, "code", None) or "stock_error",
+                            detail={"line_no": line["line_no"]}) from exc
+    return landing, held_why, {"lot_id": twin["id"], "from_status": twin["status"],
+                               "to_status": landing, "units": int(twin["quantity"] or 0)}
+
+
+# ── Who sees which ward store ────────────────────────────────────────────────
+
+def _role(actor: Mapping) -> str:
+    return str(actor.get("role") or "")
+
+
+def _holds(actor: Mapping, permission: str) -> bool:
+    from permissions import has_permission
+
+    return has_permission(_role(actor), permission)
+
+
+def _is_desk(actor: Mapping) -> bool:
+    """The pharmacy desk (pharmacy_store.read) sees every ward store; a ward
+    account sees its own department's only."""
+    from permissions import PHARMACY_STORE_READ
+
+    return _holds(actor, PHARMACY_STORE_READ)
+
+
+def _ward_scope_sql(actor: Mapping, alias: str = "s") -> tuple[str, tuple]:
+    """The condition on stores `alias` for the ward stores this caller sees.
+    `alias` is a literal from this module. A ward account with no department
+    on record sees none (a blank department is not every ward here)."""
+    if _is_desk(actor):
+        return "1 = 1", ()
+    from permissions import department_scope
+
+    dept = department_scope(dict(actor))
+    if dept is None:
+        return "0 = 1", ()
+    return f"lower(trim(COALESCE({alias}.department, ''))) = lower(trim(?))", (dept,)
+
+
+def _ward_kinds_sql(alias: str = "s") -> str:
+    return f"{alias}.pharmacy_kind IN ({','.join(repr(k) for k in WARD_STORE_KINDS)})"
+
+
+def _ward_store_visible(conn, actor: Mapping, store_id: int) -> bool:
+    cond, params = _ward_scope_sql(actor, "s")
+    return conn.execute(
+        f"SELECT 1 FROM stores s WHERE s.id = ? AND {_ward_kinds_sql('s')} AND {cond}",
+        (store_id, *params)).fetchone() is not None
+
+
+def _visible_ward_stores(conn, actor: Mapping) -> list[dict]:
+    cond, params = _ward_scope_sql(actor, "s")
+    return [dict(r) for r in conn.execute(
+        f"SELECT s.id, s.code, s.name, s.department, s.ward, s.pharmacy_kind, s.is_active "
+        f"FROM stores s WHERE {_ward_kinds_sql('s')} AND {cond} "
+        "ORDER BY s.is_active DESC, s.name, s.code", params).fetchall()]
+
+
+def _ward_store_by_code(conn, actor: Mapping, code: Any):
+    text = (code or "").strip().upper() if isinstance(code, str) else ""
+    if not text:
+        raise TransferError("choose the ward store", code="store_required")
+    cond, params = _ward_scope_sql(actor, "s")
+    row = conn.execute(
+        f"SELECT s.* FROM stores s WHERE upper(s.code) = ? AND {_ward_kinds_sql('s')} "
+        f"AND {cond}", (text, *params)).fetchone()
+    if row is None:
+        raise TransferError(f"no ward store {code!r}", code="not_found")
+    return row
+
+
+def _dispensing_store(conn):
+    row = conn.execute(f"SELECT {_STORE_COLUMNS} FROM stores WHERE pharmacy_kind = ? "
+                       "AND is_active = 1", (stock.DISPENSING_STORE_KIND,)).fetchone()
+    if row is None:
+        raise TransferError("this site has no dispensing pharmacy in use, so nothing can be "
+                            "issued to a ward. Nothing was changed.",
+                            code="no_dispensing_store")
+    return row
+
+
+def _require_ward_stock_on() -> None:
+    if not ward_stock_on():
+        raise TransferError("ward stock is switched off on this site. Nothing was changed.",
+                            code="ward_stock_off")
+
+
+def _audit_indent(conn, actor: Mapping, action: str, *, summary: str, indent_id: int,
+                  metadata: dict, audit_ctx: Optional[Mapping]) -> None:
+    """One 'security' row for an indent action, in the caller's transaction
+    (fail-closed)."""
+    from services import audit_service
+
+    ctx = audit_ctx or {}
+    audit_service.log_audit_event(
+        correlation_id=str(uuid.uuid4()), event_category="security", action_type=action,
+        outcome="success", db=conn, summary_message=summary,
+        actor_user_id=str(actor.get("id")) if actor.get("id") is not None else None,
+        actor_role=actor.get("role"), target_type="pharmacy_indent", target_id=str(indent_id),
+        request_path=ctx.get("request_path"), http_method=ctx.get("http_method"),
+        ip_address=ctx.get("ip_address"), metadata=metadata)
+
+
+def _procurement_failure(exc: Exception) -> TransferError:
+    return TransferError(str(exc), code=getattr(exc, "code", None) or "indent_error")
+
+
+# ── Indents: reading ─────────────────────────────────────────────────────────
+
+def _indent_row(conn, indent_id: Any, actor: Mapping):
+    """An issue indent of the pharmacy desk whose ward store this caller
+    sees; anything else (a stores indent, a purchase indent, another ward's)
+    is not found, worded as one that does not exist."""
+    try:
+        iid = int(indent_id)
+    except (TypeError, ValueError):
+        raise TransferError(f"no indent {indent_id}", code="not_found") from None
+    row = conn.execute(
+        "SELECT * FROM indents WHERE id = ? AND domain = 'pharmacy' AND indent_kind = 'issue'",
+        (iid,)).fetchone()
+    if row is None or row["store_id"] is None or not _ward_store_visible(
+            conn, actor, int(row["store_id"])):
+        raise TransferError(f"no indent {indent_id}", code="not_found")
+    return row
+
+
+def _units(milli: Any) -> Optional[int]:
+    return None if milli is None else int(milli) // 1000
+
+
+def _decorate_indent(conn, indent_id: int) -> dict:
+    from services import procurement_service as procurement
+
+    doc = procurement._get_indent_core(conn, indent_id, domain=procurement.PHARMACY_DOMAIN)
+    if doc is None:
+        raise TransferError(f"no indent {indent_id}", code="not_found")
+    store = conn.execute("SELECT department FROM stores WHERE id = ?",
+                         (doc.get("store_id"),)).fetchone()
+    issuing = _store_by_id(conn, doc.get("issuing_store_id"))
+    doc["store_department"] = store["department"] if store else None
+    doc["issuing_store_code"] = issuing["code"] if issuing else None
+    doc["issuing_store_name"] = _store_name(issuing) if issuing else None
+    names = _user_names(conn, {doc.get("requested_by"), doc.get("approved_by")})
+    doc["requested_by_name"] = names.get(str(doc.get("requested_by"))) if doc.get(
+        "requested_by") else None
+    doc["approved_by_name"] = names.get(str(doc.get("approved_by"))) if doc.get(
+        "approved_by") else None
+    doc["status_label"] = INDENT_STATUS_LABELS.get(doc["status"], doc["status"])
+    row = conn.execute("SELECT is_configured FROM document_number_series WHERE series_code = ?",
+                       (INDENT_NUMBER_SERIES,)).fetchone()
+    doc["number_series_configured"] = bool(row and row["is_configured"])
+    drug_ids = [line.get("helix_medication_id") for line in doc["lines"]]
+    masters = {}
+    if drug_ids:
+        marks = ",".join("?" for _ in drug_ids)
+        masters = {r["id"]: r for r in conn.execute(
+            f"SELECT id, name, form, strength, dispense_unit FROM helix_medication_master "
+            f"WHERE id IN ({marks})", tuple(drug_ids)).fetchall()}
+    for line in doc["lines"]:
+        master = masters.get(line.get("helix_medication_id"))
+        line["drug_id"] = line.get("helix_medication_id")
+        line["drug_name"] = (master["name"] if master else None) or line.get("description")
+        line["dispense_unit"] = master["dispense_unit"] if master else None
+        line["requested_units"] = _units(line.get("quantity_milli"))
+        line["approved_units"] = _units(line.get("approved_quantity_milli"))
+        line["issued_units"] = _units(line.get("issued_quantity_milli")) or 0
+        approved = line["approved_units"] or 0
+        # Only an approved line not yet sent is still to issue: a line sent in
+        # part was cut at the issue, and a new indent asks for the rest.
+        line["remaining_units"] = (max(approved - line["issued_units"], 0)
+                                   if line.get("status") == "approved" else 0)
+    doc["transfers"] = [
+        {"id": r["id"], "transfer_number": r["transfer_number"], "status": r["status"],
+         "status_label": STATUS_LABELS.get(r["status"], r["status"])}
+        for r in conn.execute("SELECT id, transfer_number, status FROM pharmacy_transfers "
+                              "WHERE source_indent_ref = ? ORDER BY id", (indent_id,)).fetchall()]
+    live = [t for t in doc["transfers"] if t["status"] in LIVE_TRANSFER_STATUSES]
+    doc["live_transfer"] = live[-1] if live else None
+    return doc
+
+
+def get_ward_indent(indent_id: Any, *, actor: Mapping) -> dict:
+    with db_session() as conn:
+        row = _indent_row(conn, indent_id, actor)
+        return _decorate_indent(conn, int(row["id"]))
+
+
+def list_ward_indents(*, actor: Mapping, status: Optional[str] = None,
+                      store_code: Optional[str] = None, limit: int = 100) -> list[dict]:
+    """Issue indents for the ward stores this caller sees, newest first.
+    `status` is one indent status or 'open' (not yet received, refused or
+    cancelled)."""
+    cond, params = _ward_scope_sql(actor, "s")
+    sql = (f"SELECT i.id FROM indents i JOIN stores s ON s.id = i.store_id "
+           f"WHERE i.domain = 'pharmacy' AND i.indent_kind = 'issue' AND {_ward_kinds_sql('s')} "
+           f"AND {cond}")
+    args: list[Any] = list(params)
+    if status:
+        if status == OPEN_FILTER:
+            sql += f" AND i.status IN ({','.join('?' for _ in OPEN_INDENT_STATUSES)})"
+            args.extend(OPEN_INDENT_STATUSES)
+        elif status in INDENT_STATUS_LABELS:
+            sql += " AND i.status = ?"
+            args.append(status)
+        else:
+            raise TransferError(f"unknown indent status {status!r}", code="bad_value")
+    if store_code:
+        sql += " AND upper(s.code) = ?"
+        args.append(str(store_code).strip().upper())
+    sql += " ORDER BY i.id DESC LIMIT ?"
+    args.append(max(1, min(int(limit), 500)))
+    with db_session() as conn:
+        return [_decorate_indent(conn, int(r["id"])) for r in conn.execute(sql, args).fetchall()]
+
+
+# ── Ward stock: what each ward store holds against its list ─────────────────
+
+def _store_stock(conn, store: Mapping, today: str) -> dict:
+    sid = int(store["id"])
+    drugs: dict[str, dict] = {}
+
+    def entry(drug_id: str, master: Optional[Mapping]) -> dict:
+        found = drugs.get(drug_id)
+        if found is None:
+            found = drugs[drug_id] = {
+                "drug_id": drug_id,
+                "drug_name": (master["name"] if master else None) or drug_id,
+                "form": master["form"] if master else None,
+                "strength": master["strength"] if master else None,
+                "dispense_unit": master["dispense_unit"] if master else None,
+                "listed": False, "par_units": None, "max_units": None,
+                "on_hand_units": 0, "held_units": 0, "expired_units": 0,
+                "in_transit_units": 0, "requested_units": 0, "earliest_expiry": None,
+                "problem": None, "lots": []}
+        return found
+
+    master_cols = "m.name, m.form, m.strength, m.dispense_unit"
+    for par in conn.execute(
+            f"SELECT p.*, {master_cols} FROM pharmacy_par_levels p "
+            "LEFT JOIN helix_medication_master m ON m.id = p.helix_medication_id "
+            "WHERE p.store_id = ? AND p.is_active = 1", (sid,)).fetchall():
+        item = entry(par["helix_medication_id"], par)
+        item["listed"] = int(par["par_units"] or 0) > 0
+        item["par_units"] = int(par["par_units"] or 0)
+        item["max_units"] = par["max_units"]
+    for lot in conn.execute(
+            f"SELECT l.*, {master_cols} FROM helix_inventory_lots l "
+            "LEFT JOIN helix_medication_master m ON m.id = l.medication_id "
+            "WHERE l.store_id = ? AND l.quantity > 0 "
+            "ORDER BY date(l.expiration_date) ASC, l.rowid ASC", (sid,)).fetchall():
+        item = entry(lot["medication_id"], lot)
+        units = int(lot["quantity"] or 0)
+        expiry = str(lot["expiration_date"] or "")[:10] or None
+        expired = not expiry or expiry < today
+        if lot["status"] != "available":
+            item["held_units"] += units
+        elif expired:
+            item["expired_units"] += units
+        else:
+            item["on_hand_units"] += units
+            if expiry and (item["earliest_expiry"] is None or expiry < item["earliest_expiry"]):
+                item["earliest_expiry"] = expiry
+        item["lots"].append({
+            "lot_id": lot["id"], "batch_no": lot["lot_number"], "expiry_date": expiry,
+            "units": units, "status": lot["status"],
+            "status_label": ("expired" if lot["status"] == "available" and expired
+                             else _lot_status_words(lot["status"]))})
+    marks = ",".join("?" for _ in IN_TRANSIT_STATUSES)
+    for r in conn.execute(
+            f"SELECT tl.helix_medication_id AS drug_id, SUM(tl.quantity_units) AS units, "
+            f"{master_cols} FROM pharmacy_transfer_lines tl "
+            "JOIN pharmacy_transfers t ON t.id = tl.pharmacy_transfer_id "
+            "LEFT JOIN helix_medication_master m ON m.id = tl.helix_medication_id "
+            f"WHERE t.to_store_id = ? AND t.status IN ({marks}) AND tl.received_units IS NULL "
+            "GROUP BY tl.helix_medication_id", (sid, *IN_TRANSIT_STATUSES)).fetchall():
+        entry(r["drug_id"], r)["in_transit_units"] += int(r["units"] or 0)
+    open_marks = ",".join("?" for _ in OPEN_INDENT_STATUSES)
+    for r in conn.execute(
+            "SELECT l.helix_medication_id AS drug_id, l.status AS line_status, "
+            "l.quantity_milli, l.approved_quantity_milli, l.issued_quantity_milli, "
+            f"i.status AS indent_status, {master_cols} FROM indent_lines l "
+            "JOIN indents i ON i.id = l.indent_id "
+            "LEFT JOIN helix_medication_master m ON m.id = l.helix_medication_id "
+            "WHERE i.domain = 'pharmacy' AND i.indent_kind = 'issue' AND i.store_id = ? "
+            f"AND i.status IN ({open_marks}) AND l.status IN ('pending', 'approved')",
+            (sid, *OPEN_INDENT_STATUSES)).fetchall():
+        asked = (r["approved_quantity_milli"] if r["approved_quantity_milli"] is not None
+                 else r["quantity_milli"])
+        waiting = max(int(asked or 0) - int(r["issued_quantity_milli"] or 0), 0) // 1000
+        entry(r["drug_id"], r)["requested_units"] += waiting
+    full = {r["id"]: r for r in conn.execute(
+        "SELECT * FROM helix_medication_master WHERE id IN (" + ",".join(
+            "?" for _ in drugs) + ")", tuple(drugs)).fetchall()} if drugs else {}
+    for drug_id, item in drugs.items():
+        master = full.get(drug_id)
+        problem = (ward_route_problem(conn, master, store) if master is not None
+                   else {"code": "drug_not_found", "message": "Not in the drug master."})
+        item["problem"] = ({"code": problem["code"], "message": problem["message"]}
+                           if problem else None)
+        if item["listed"]:
+            short = item["par_units"] - item["on_hand_units"] - item["in_transit_units"] \
+                - item["requested_units"]
+            item["below_par"] = item["on_hand_units"] < item["par_units"]
+            item["top_up_units"] = max(short, 0) if problem is None else 0
+        else:
+            item["below_par"] = False
+            item["top_up_units"] = 0
+    lines = sorted(drugs.values(), key=lambda d: (not d["listed"], str(d["drug_name"]).lower()))
+    return {"store": {"id": sid, "code": store["code"], "name": _store_name(store),
+                      "department": store["department"], "ward": store["ward"],
+                      "is_active": bool(store["is_active"])},
+            "drugs": lines}
+
+
+def ward_stock(*, actor: Mapping, store_code: Optional[str] = None,
+               today: Optional[str] = None) -> dict:
+    """Each ward store this caller sees, with every drug on its list and
+    every drug it holds: units on hand (available and in date), held, expired,
+    on their way and already asked for, the par level and what a top-up would
+    ask for. Read-only, no patient data."""
+    today = today or stock.site_today()
+    with db_session() as conn:
+        stores = _visible_ward_stores(conn, actor)
+        if store_code:
+            wanted = str(store_code).strip().upper()
+            stores = [s for s in stores if str(s["code"]).upper() == wanted]
+            if not stores:
+                raise TransferError(f"no ward store {store_code!r}", code="not_found")
+        out = [_store_stock(conn, s, today) for s in stores]
+    from permissions import (
+        PHARMACY_STORE_APPROVE, PHARMACY_STORE_WRITE, WARD_INDENT_RAISE, WARD_STOCK_RECEIVE,
+    )
+    return {"today": today, "stores": out,
+            "may_raise": _holds(actor, WARD_INDENT_RAISE) or _holds(actor, PHARMACY_STORE_WRITE),
+            "may_receive": _holds(actor, WARD_STOCK_RECEIVE),
+            "may_decide": (_holds(actor, PHARMACY_STORE_WRITE)
+                           or _holds(actor, PHARMACY_STORE_APPROVE)),
+            "may_issue": _holds(actor, PHARMACY_STORE_WRITE),
+            "priorities": list(PRIORITIES)}
+
+
+def _ward_witnesses(conn, *, exclude: Sequence[Any]) -> list[dict]:
+    """Who may witness a controlled ward receipt: active people whose role
+    holds pharmacy_store.ndps, with a signing PIN, never anyone in `exclude`
+    (the nurse receiving, the person who sent it). verify_witness and
+    _check_ward_witness hold the same rules at the receipt. Names only, no
+    patient data."""
+    from permissions import PHARMACY_STORE_NDPS, ROLE_PERMISSIONS
+
+    roles = sorted(r for r, perms in ROLE_PERMISSIONS.items()
+                   if isinstance(r, str) and PHARMACY_STORE_NDPS in perms)
+    if not roles:
+        return []
+    skip = sorted({str(x) for x in exclude if x}) or [""]
+    role_marks = ",".join("?" for _ in roles)
+    skip_marks = ",".join("?" for _ in skip)
+    return [{"id": u["id"], "name": u["name"] or u["id"]} for u in conn.execute(
+        f"SELECT id, name FROM users WHERE role IN ({role_marks}) "
+        "AND (is_active IS NULL OR is_active = 1) "
+        f"AND id NOT IN ({skip_marks}) AND pin_hash IS NOT NULL AND pin_hash <> '' "
+        "ORDER BY name, id LIMIT 500", (*roles, *skip)).fetchall()]
+
+
+def ward_transfers_awaiting(*, actor: Mapping) -> list[dict]:
+    """Transfers on their way to a ward store this caller sees, oldest
+    first, each with its lines (what to count on arrival). A transfer that
+    became controlled on its way also carries `witnesses`: who may witness
+    its receipt (_ward_witnesses)."""
+    cond, params = _ward_scope_sql(actor, "s")
+    marks = ",".join("?" for _ in IN_TRANSIT_STATUSES)
+    with db_session() as conn:
+        rows = conn.execute(
+            f"SELECT t.* FROM pharmacy_transfers t JOIN stores s ON s.id = t.to_store_id "
+            f"WHERE t.status IN ({marks}) AND {_ward_kinds_sql('s')} AND {cond} "
+            "ORDER BY t.id ASC LIMIT 200", (*IN_TRANSIT_STATUSES, *params)).fetchall()
+        out = [_decorate(conn, r) for r in rows]
+        for doc in out:
+            if doc["witness_required"]:
+                doc["witnesses"] = _ward_witnesses(
+                    conn, exclude=(actor.get("id"), doc.get("dispatched_by")))
+        return out
+
+
+# ── Indents: writing ─────────────────────────────────────────────────────────
+
+def _indent_resolver(drugs: Mapping[str, Any]):
+    """The drug catalogue answer procurement's indent core asks for, from the
+    rows this service already checked. Quantities are dispense units."""
+    def resolve(db, item_code: str):
+        drug = drugs.get((item_code or "").upper())
+        if drug is None:
+            return None
+        return {"code": drug["id"], "name": _drug_name(drug), "helix_medication_id": drug["id"],
+                "uom": drug["dispense_unit"] or "unit", "units_per_pack": None}
+    return resolve
+
+
+def _open_indent_for(conn, store_id: int, drug_id: str) -> Optional[int]:
+    marks = ",".join("?" for _ in OPEN_INDENT_STATUSES)
+    row = conn.execute(
+        "SELECT i.id FROM indents i JOIN indent_lines l ON l.indent_id = i.id "
+        "WHERE i.domain = 'pharmacy' AND i.indent_kind = 'issue' AND i.store_id = ? "
+        "AND upper(l.helix_medication_id) = upper(?) "
+        f"AND i.status IN ({marks}) AND l.status IN ('pending', 'approved', 'ordered') "
+        "ORDER BY i.id DESC LIMIT 1", (store_id, drug_id, *OPEN_INDENT_STATUSES)).fetchone()
+    return int(row["id"]) if row else None
+
+
+def raise_ward_indent(*, store_code: Any, lines: Any, actor: Mapping,
+                      priority: Any = "routine", remarks: Any = None,
+                      audit_ctx: Optional[Mapping] = None) -> dict:
+    """Ask the dispensing pharmacy for drugs on a ward store's list. The ward
+    (ward_indent.raise, its own department's store) or the pharmacist on the
+    ward's behalf (pharmacy_store.write, any ward store). Submitted at once;
+    the PHIND number is drawn after the commit. Returns {"indent"}."""
+    from permissions import PHARMACY_STORE_WRITE, WARD_INDENT_RAISE
+    from services import procurement_service as procurement
+
+    actor_id = _actor_id(actor)
+    _require_ward_stock_on()
+    on_behalf = _holds(actor, PHARMACY_STORE_WRITE)
+    if not (on_behalf or _holds(actor, WARD_INDENT_RAISE)):
+        raise TransferError("you cannot ask the pharmacy for ward stock", code="permission_denied")
+    requests = _clean_requests(lines)
+    prio = priority if isinstance(priority, str) and priority in PRIORITIES else None
+    if prio is None:
+        raise TransferError(f"priority is one of {', '.join(PRIORITIES)}", code="bad_value")
+    note = _text(remarks, "remarks")
+    with db_session(immediate=True) as conn:
+        store = _ward_store_by_code(conn, actor, store_code)
+        if not store["is_active"]:
+            raise TransferError(f"{_store_name(store)} is closed. Nothing was changed.",
+                                code="store_inactive")
+        dispensing = _dispensing_store(conn)
+        drugs: dict[str, Any] = {}
+        for req in requests:
+            drug = _find_drug(conn, req["drug_id"])
+            if drug is None:
+                raise TransferError(f"no drug {req['drug_id']!r} in the drug master",
+                                    code="drug_not_found")
+            _check_ward_route(conn, drug, store)
+            par = _par_row(conn, int(store["id"]), drug["id"])
+            ceiling = int(par["max_units"] if par["max_units"] is not None else par["par_units"])
+            if req["units"] > ceiling:
+                raise TransferError(
+                    f"{_drug_name(drug)}: {req['units']} units is more than this store keeps "
+                    f"({ceiling} at most). Nothing was changed.", code="over_par",
+                    detail={"drug_id": drug["id"], "max_units": ceiling})
+            waiting = _open_indent_for(conn, int(store["id"]), drug["id"])
+            if waiting is not None:
+                raise TransferError(
+                    f"{_drug_name(drug)} is already asked for on an open indent for this store. "
+                    "Wait for it to arrive, or cancel it first. Nothing was changed.",
+                    code="already_requested",
+                    detail={"drug_id": drug["id"], "indent_id": waiting})
+            drugs[str(drug["id"]).upper()] = drug
+        core_lines = [{"item_code": str(drugs[r["drug_id"].upper()]["id"]).upper(),
+                       "quantity_milli": r["units"] * 1000}
+                      for r in requests]
+        # The resolver is keyed on the upper-cased id the core asks with.
+        try:
+            indent_id = procurement._create_indent_core(
+                conn, store_code=store["code"], department=store["department"],
+                ward=store["ward"], priority=prio, lines=core_lines, requested_by=actor_id,
+                remarks=note, submit=True, domain=procurement.PHARMACY_DOMAIN,
+                indent_kind="issue", issuing_store_code=dispensing["code"],
+                resolve_line=_indent_resolver(drugs))
+        except procurement.ProcurementError as exc:
+            raise _procurement_failure(exc) from exc
+        _audit_indent(conn, actor, "pharmacy_ward_indent_raised",
+                      summary=f"Ward indent raised for {_store_name(store)} "
+                              f"({len(requests)} drugs)",
+                      indent_id=indent_id,
+                      metadata={"indent_id": str(indent_id), "store_code": store["code"],
+                                "issuing_store_code": dispensing["code"], "priority": prio,
+                                "on_behalf_of_ward": on_behalf and not _holds(
+                                    actor, WARD_INDENT_RAISE),
+                                "drugs": [{"drug_id": r["drug_id"], "units": r["units"]}
+                                          for r in requests]},
+                      audit_ctx=audit_ctx)
+    if procurement._stamp_document_number(INDENT_NUMBER_KIND, indent_id) is None:
+        logger.error("ward indent %s was raised but not numbered; stamp it again", indent_id)
+    with db_session() as conn:
+        return {"indent": _decorate_indent(conn, indent_id)}
+
+
+def _clean_approvals(raw: Any) -> dict[int, int]:
+    """{line_no: units} from [{line_no, units}]."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, (list, tuple)):
+        raise TransferError("approvals is a list of lines", code="bad_value")
+    out: dict[int, int] = {}
+    for n, item in enumerate(raw, start=1):
+        if not isinstance(item, Mapping):
+            raise TransferError("each approval is an object", code="bad_line")
+        line_no = _whole(item.get("line_no"), f"approval {n} line", minimum=1, maximum=10_000)
+        if line_no in out:
+            raise TransferError("a line is approved once", code="duplicate_line")
+        out[line_no] = _whole(item.get("units"), f"approval {n} units", minimum=0)
+    return out
+
+
+def decide_ward_indent(indent_id: Any, *, actor: Mapping, approvals: Any = None,
+                       reject: bool = False, reason: Any = None,
+                       audit_ctx: Optional[Mapping] = None) -> dict:
+    """The pharmacy's decision on a submitted ward indent (write or approve
+    tier), never by the person who raised it (403 same_person). A line not
+    named is approved in full; 0 refuses it; reject refuses the whole indent
+    with a reason. A drug that may no longer be ward stock cannot be
+    approved. Returns {"indent"}."""
+    from permissions import PHARMACY_STORE_APPROVE, PHARMACY_STORE_WRITE
+    from services import procurement_service as procurement
+
+    actor_id = _actor_id(actor)
+    _require_ward_stock_on()
+    if not (_holds(actor, PHARMACY_STORE_WRITE) or _holds(actor, PHARMACY_STORE_APPROVE)):
+        raise TransferError("only the pharmacy decides a ward indent", code="permission_denied")
+    if not isinstance(reject, bool):
+        raise TransferError("reject is yes or no", code="bad_value")
+    units = _clean_approvals(approvals)
+    why = _text(reason, "the reason", required=reject)
+    with db_session(immediate=True) as conn:
+        row = _indent_row(conn, indent_id, actor)
+        iid = int(row["id"])
+        if str(row["requested_by"] or "") == actor_id:
+            raise TransferError("you raised this indent, so someone else in the pharmacy "
+                                "decides it. Nothing was changed.", code="same_person")
+        store = conn.execute("SELECT * FROM stores WHERE id = ?", (row["store_id"],)).fetchone()
+        lines = {int(r["line_no"]): r for r in conn.execute(
+            "SELECT * FROM indent_lines WHERE indent_id = ? ORDER BY line_no", (iid,)).fetchall()}
+        if not reject:
+            for line_no, line in lines.items():
+                asked = units.get(line_no, _units(line["quantity_milli"]))
+                if not asked:
+                    continue
+                drug = _find_drug(conn, line["helix_medication_id"])
+                if drug is None:
+                    raise TransferError(f"line {line_no}: the drug is no longer in the drug "
+                                        "master. Approve it as 0.", code="drug_not_found",
+                                        detail={"line_no": line_no})
+                problem = ward_route_problem(conn, drug, store)
+                if problem:
+                    raise TransferError(
+                        f"line {line_no}: {problem['message']} Approve it as 0. Nothing was "
+                        "changed.", code=problem["code"], detail={"line_no": line_no})
+        try:
+            procurement._decide_indent_core(
+                conn, iid, approvals={k: v * 1000 for k, v in units.items()}, reject=reject,
+                reason=why, actor=actor_id, domain=procurement.PHARMACY_DOMAIN)
+        except procurement.ProcurementError as exc:
+            raise _procurement_failure(exc) from exc
+        after = conn.execute("SELECT status FROM indents WHERE id = ?", (iid,)).fetchone()
+        _audit_indent(conn, actor, "pharmacy_ward_indent_decided",
+                      summary=f"Ward indent {iid} {INDENT_STATUS_LABELS.get(after['status'], after['status']).lower()}",
+                      indent_id=iid,
+                      metadata={"indent_id": str(iid), "status": after["status"],
+                                "reject": reject, "reason": why,
+                                "approvals": {str(k): v for k, v in units.items()},
+                                "requested_by": str(row["requested_by"] or "")},
+                      audit_ctx=audit_ctx)
+        doc = _decorate_indent(conn, iid)
+    return {"indent": doc}
+
+
+def cancel_ward_indent(indent_id: Any, *, actor: Mapping, reason: Any,
+                       audit_ctx: Optional[Mapping] = None) -> dict:
+    """Withdraw a ward indent, with a reason. The ward may withdraw its own
+    department's indent until the pharmacy has decided it; the pharmacy until
+    stock is on its way. Never while a transfer for it is still live (cancel
+    the transfer draft first). Returns {"indent"}."""
+    from permissions import PHARMACY_STORE_WRITE, WARD_INDENT_RAISE
+    from services import procurement_service as procurement
+
+    _actor_id(actor)
+    _require_ward_stock_on()
+    desk = _holds(actor, PHARMACY_STORE_WRITE)
+    if not (desk or _holds(actor, WARD_INDENT_RAISE)):
+        raise TransferError("you cannot withdraw a ward indent", code="permission_denied")
+    why = _text(reason, "a reason for cancelling", required=True)
+    with db_session(immediate=True) as conn:
+        row = _indent_row(conn, indent_id, actor)
+        iid = int(row["id"])
+        allowed = ("draft", "submitted", "approved", "partially_approved") if desk \
+            else ("draft", "submitted")
+        if row["status"] not in allowed:
+            raise TransferError(
+                f"a {INDENT_STATUS_LABELS.get(row['status'], row['status']).lower()} indent is "
+                "not cancelled here" + ("" if desk else "; ask the pharmacy") + ".",
+                code="illegal_transition")
+        live = conn.execute(
+            f"SELECT id FROM pharmacy_transfers WHERE source_indent_ref = ? AND status IN "
+            f"({','.join('?' for _ in LIVE_TRANSFER_STATUSES)}) LIMIT 1",
+            (iid, *LIVE_TRANSFER_STATUSES)).fetchone()
+        if live is not None:
+            raise TransferError("a transfer for this indent is still open. Cancel its draft "
+                                "first. Nothing was changed.", code="transfer_open",
+                                detail={"transfer_id": live["id"]})
+        try:
+            procurement._cancel_indent_core(conn, iid, reason=why,
+                                            domain=procurement.PHARMACY_DOMAIN)
+        except procurement.ProcurementError as exc:
+            raise _procurement_failure(exc) from exc
+        _audit_indent(conn, actor, "pharmacy_ward_indent_cancelled",
+                      summary=f"Ward indent {iid} cancelled", indent_id=iid,
+                      metadata={"indent_id": str(iid), "reason": why,
+                                "status_before": row["status"]},
+                      audit_ctx=audit_ctx)
+        doc = _decorate_indent(conn, iid)
+    return {"indent": doc}
+
+
+# ── Issuing: the FEFO plan and the transfer ──────────────────────────────────
+
+def _issuable(conn, row: Mapping) -> list[dict]:
+    """The approved lines of an indent with what is still to issue."""
+    return [dict(r) | {"remaining_units": max(
+                int(r["approved_quantity_milli"] or 0) - int(r["issued_quantity_milli"] or 0),
+                0) // 1000}
+            for r in conn.execute(
+                "SELECT * FROM indent_lines WHERE indent_id = ? AND status = 'approved' "
+                "ORDER BY line_no", (row["id"],)).fetchall()]
+
+
+def ward_issue_plan(indent_id: Any, *, actor: Mapping, today: Optional[str] = None) -> dict:
+    """What issuing this indent would take from the dispensing pharmacy, line
+    by line: the FEFO lots, or why a line cannot go (short stock, or the drug
+    may no longer be ward stock). Read-only."""
+    today = today or stock.site_today()
+    with db_session() as conn:
+        row = _indent_row(conn, indent_id, actor)
+        store = conn.execute("SELECT * FROM stores WHERE id = ?", (row["store_id"],)).fetchone()
+        dispensing = _dispensing_store(conn)
+        out = []
+        for line in _issuable(conn, row):
+            drug = _find_drug(conn, line["helix_medication_id"])
+            item = {"line_no": line["line_no"], "indent_line_id": line["id"],
+                    "drug_id": line["helix_medication_id"],
+                    "drug_name": _drug_name(drug) if drug else line["description"],
+                    "approved_units": _units(line["approved_quantity_milli"]),
+                    "issued_units": _units(line["issued_quantity_milli"]) or 0,
+                    "remaining_units": line["remaining_units"],
+                    "usable_units": 0, "plan": [], "problem": None}
+            if drug is None:
+                item["problem"] = {"code": "drug_not_found",
+                                   "message": "The drug is no longer in the drug master."}
+            else:
+                problem = route_problem(drug, dispensing, store) or ward_route_problem(
+                    conn, drug, store)
+                if problem:
+                    item["problem"] = {"code": problem["code"], "message": problem["message"]}
+                lots = usable_lots(conn, int(dispensing["id"]), drug["id"], today=today)
+                item["usable_units"] = sum(int(lot["quantity"] or 0) for lot in lots)
+                if item["problem"] is None and item["remaining_units"]:
+                    try:
+                        item["plan"] = issue_plan(conn, store_id=int(dispensing["id"]),
+                                                  drug_id=drug["id"],
+                                                  units=item["remaining_units"], today=today)
+                    except TransferError as exc:
+                        item["problem"] = {"code": exc.code, "message": str(exc)}
+            out.append(item)
+        doc = _decorate_indent(conn, int(row["id"]))
+    return {"indent": doc, "today": today,
+            "from_store": {"code": dispensing["code"], "name": _store_name(dispensing)},
+            "lines": out}
+
+
+def _clean_issue_lines(raw: Any) -> Optional[dict[int, int]]:
+    if raw is None:
+        return None
+    if not isinstance(raw, (list, tuple)) or not raw:
+        raise TransferError("name at least one line to issue", code="empty_document")
+    out: dict[int, int] = {}
+    for n, item in enumerate(raw, start=1):
+        if not isinstance(item, Mapping):
+            raise TransferError("each issued line is an object", code="bad_line")
+        line_no = _whole(item.get("line_no"), f"issued line {n}", minimum=1, maximum=10_000)
+        if line_no in out:
+            raise TransferError("a line is issued once", code="duplicate_line")
+        out[line_no] = _whole(item.get("units"), f"issued line {n} units", minimum=0)
+    return out
+
+
+def issue_ward_indent(indent_id: Any, *, actor: Mapping, lines: Any = None,
+                      remarks: Any = None, idempotency_key: Any = None,
+                      audit_ctx: Optional[Mapping] = None) -> dict:
+    """Turn an approved ward indent into a transfer draft from the dispensing
+    pharmacy, with its FEFO plan (the write tier). `lines` ([{line_no,
+    units}]) issues less than approved; by default everything still to issue.
+    Nothing moves until the draft is dispatched (POST /transfers/{id}/
+    dispatch), which records the units against the indent. One live transfer
+    per indent. Returns {"transfer", "indent", "replayed"}."""
+    from permissions import PHARMACY_STORE_WRITE
+
+    actor_id = _actor_id(actor)
+    _require_ward_stock_on()
+    if not _holds(actor, PHARMACY_STORE_WRITE):
+        raise TransferError("only the pharmacy issues ward stock", code="permission_denied")
+    chosen = _clean_issue_lines(lines)
+    note = _text(remarks, "remarks")
+    key = _text(idempotency_key, "request key")
+    today = stock.site_today()
+    with db_session(immediate=True) as conn:
+        row = _indent_row(conn, indent_id, actor)
+        iid = int(row["id"])
+        if key:
+            prior = conn.execute("SELECT * FROM pharmacy_transfers WHERE idempotency_key = ?",
+                                 (key,)).fetchone()
+            if prior is not None:
+                if prior["source_indent_ref"] != iid or str(prior["created_by"]) != actor_id:
+                    raise TransferError("this request key was already used for a different "
+                                        "transfer. Nothing was changed.",
+                                        code="idempotency_conflict")
+                return {"transfer": _decorate(conn, prior),
+                        "indent": _decorate_indent(conn, iid), "replayed": True}
+        if row["status"] not in ("approved", "partially_approved"):
+            raise TransferError(
+                f"a {INDENT_STATUS_LABELS.get(row['status'], row['status']).lower()} indent is "
+                "not issued", code="illegal_transition")
+        live = conn.execute(
+            f"SELECT id FROM pharmacy_transfers WHERE source_indent_ref = ? AND status IN "
+            f"({','.join('?' for _ in LIVE_TRANSFER_STATUSES)}) LIMIT 1",
+            (iid, *LIVE_TRANSFER_STATUSES)).fetchone()
+        if live is not None:
+            raise TransferError("this indent already has a transfer open. Send or cancel that "
+                                "one first. Nothing was changed.", code="transfer_open",
+                                detail={"transfer_id": live["id"]})
+        to_store = _store_by_id(conn, row["store_id"])
+        if to_store is None:
+            raise TransferError("the ward store no longer exists", code="store_not_found")
+        if not to_store["is_active"]:
+            raise TransferError(f"{_store_name(to_store)} is closed. Nothing was changed.",
+                                code="store_inactive")
+        from_store = _dispensing_store(conn)
+        _check_store(from_store)
+        _check_store(to_store, ward_ok=True)
+        issuable = {int(line["line_no"]): line for line in _issuable(conn, row)}
+        if chosen is not None:
+            unknown = sorted(set(chosen) - set(issuable))
+            if unknown:
+                raise TransferError(f"line {unknown[0]} is not approved on this indent",
+                                    code="bad_line", detail={"line_no": unknown[0]})
+        requests = []
+        for line_no, line in sorted(issuable.items()):
+            units = chosen.get(line_no, 0) if chosen is not None else line["remaining_units"]
+            if units > line["remaining_units"]:
+                raise TransferError(
+                    f"line {line_no}: {units} units is more than the {line['remaining_units']} "
+                    "still to issue. Nothing was changed.", code="over_issue",
+                    detail={"line_no": line_no})
+            if units:
+                requests.append({"drug_id": line["helix_medication_id"], "units": units,
+                                 "indent_line_id": int(line["id"])})
+        if not requests:
+            raise TransferError("nothing on this indent is left to issue", code="nothing_to_issue")
+        planned = _plan_lines(conn, requests, from_store, to_store, today)
+        tid = conn.execute(
+            "INSERT INTO pharmacy_transfers (from_store_id, to_store_id, status, created_by, "
+            "idempotency_key, remarks, source_indent_ref) VALUES (?, ?, 'draft', ?, ?, ?, ?)",
+            (from_store["id"], to_store["id"], actor_id, key, note, iid)).lastrowid
+        _insert_lines(conn, tid, planned)
+        _audit(conn, actor, "pharmacy_transfer_created",
+               summary=f"Ward indent {iid} planned for issue from {_store_name(from_store)} to "
+                       f"{_store_name(to_store)} ({len(requests)} drugs)",
+               transfer_id=tid,
+               metadata={"transfer_id": str(tid), "indent_id": str(iid),
+                         "from_store_code": from_store["code"],
+                         "to_store_code": to_store["code"], "controlled": False,
+                         "drugs": [{"drug_id": r["drug_id"], "units": r["units"]}
+                                   for r in requests],
+                         "plan": [{"lot_id": p["lot_id"], "drug_id": p["drug_id"],
+                                   "units": p["units"]} for p in planned]},
+               audit_ctx=audit_ctx)
+        doc = _decorate(conn, _load(conn, tid))
+        indent = _decorate_indent(conn, iid)
+    return {"transfer": doc, "indent": indent, "replayed": False}
+
+
+def _record_indent_issue(conn, indent_id: int, lines: Sequence[Mapping]) -> None:
+    """At dispatch: the units each indent line sent, recorded on the indent
+    (procurement's core refuses more than was approved)."""
+    from services import procurement_service as procurement
+
+    issued: dict[int, int] = {}
+    for line in lines:
+        ref = line.get("source_indent_line_ref")
+        if ref is None:
+            raise TransferError(f"line {line['line_no']} has lost its indent line",
+                                code="bad_line", detail={"line_no": line["line_no"]})
+        issued[int(ref)] = issued.get(int(ref), 0) + int(line["quantity_units"]) * 1000
+    try:
+        procurement._record_indent_issue_core(conn, indent_id, issued=issued,
+                                              domain=procurement.PHARMACY_DOMAIN)
+    except procurement.ProcurementError as exc:
+        raise _procurement_failure(exc) from exc
+
+
+def _close_indent(conn, indent_id: int) -> None:
+    from services import procurement_service as procurement
+
+    try:
+        procurement._close_indent_core(conn, indent_id, domain=procurement.PHARMACY_DOMAIN)
+    except procurement.ProcurementError as exc:
+        raise _procurement_failure(exc) from exc

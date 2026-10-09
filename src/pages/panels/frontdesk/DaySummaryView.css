@@ -1,0 +1,90 @@
+/* Front Desk, Day summary (opd-18). Flat, tokens only, no opacity. */
+
+.ds-view {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.ds-controls {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  align-items: end;
+}
+
+.ds-controls .fd-card__title,
+.ds-controls .fd-hint {
+  grid-column: 1 / -1;
+}
+
+.ds-controls__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ds-tiles {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  margin: 0;
+}
+
+.ds-tile {
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  min-width: 0;
+}
+
+.ds-tile dt {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.ds-tile dd {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 650;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.ds-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums lining-nums;
+  white-space: nowrap;
+}
+
+.ds-clinic-row td {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ds-lists {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.ds-list {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.ds-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}

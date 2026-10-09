@@ -12,10 +12,12 @@ module is what happens to the token after that, while the 'opd' feature is on
     'call' route is its alias), which in OPD mode also counts the call and
     clears a skip;
   * a content-free nudge, 'opd:queue_changed' {department}, pushed to the
-    clinic's socket room after every change, so an open doctor queue refetches
-    over its own scoped REST read (nudge_queue_changed). The payload is the
-    department and nothing else: the socket never carries a name, a token or a
-    visit id;
+    clinic's socket rooms after every change, so an open doctor queue and
+    (opd-9b) an open desk queue refetch over their own scoped REST read
+    (nudge_queue_changed). The payload is the department and nothing else:
+    the socket never carries a name, a token or a visit id;
+  * the desk queue's read audit, once per user per distinct set of visible
+    visits per 10 minutes (ruling OPD-N12 (b), claim_queue_read_audit);
   * the waiting-room token board (opd-9, W7-B): per-board device keys and the
     name-free snapshot a board shows (see 'The waiting-room token board').
 
@@ -57,8 +59,11 @@ row commits with the change and a repeat writes its own row too.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import threading
+import time
 from typing import Any, Callable, Iterable, Optional
 
 import config
@@ -98,9 +103,14 @@ __all__ = [
     "COMPLETION_DISPOSITIONS",
     "DEFAULT_PRIORITY_CATEGORIES",
     "QUEUE_NUDGE_EVENT",
+    "QUEUE_READ_AUDIT_WINDOW_SECONDS",
     "QueueConflict",
     "assign_visit",
     "cancel_reason_label",
+    "claim_queue_read_audit",
+    "queue_read_fingerprint",
+    "release_queue_read_audit",
+    "reset_queue_read_audit",
     "list_my_queue",
     "nudge_queue_changed",
     "priority_categories",
@@ -355,12 +365,14 @@ async def _emit_queue_changed(department: str) -> None:
     from ws import realtime
 
     payload = queue_nudge_payload(department)
-    # The rooms the socket layer already keeps: a vitals.read holder joins
+    # The rooms the socket layer keeps: a vitals.read holder joins
     # 'dept:<their department>' (or 'dept:__all__' with none), which is every
-    # doctor. Desk accounts get their own room in opd-9b; until then the desk
-    # polls every ORB_OPD_QUEUE_POLL_SECONDS.
-    await realtime.sio.emit(QUEUE_NUDGE_EVENT, payload, room=f"dept:{department}")
-    await realtime.sio.emit(QUEUE_NUDGE_EVENT, payload, room="dept:__all__")
+    # doctor; a registration.read holder joins 'opd:<their department>' (or
+    # 'opd:__all__') while the feature is on (opd-9b), which is every desk
+    # account. ONE emit to the list, so a socket in two of the rooms (a doctor
+    # holds both permissions) is told once.
+    await realtime.sio.emit(QUEUE_NUDGE_EVENT, payload,
+                            room=realtime.queue_nudge_rooms(department))
 
 
 def nudge_queue_changed(department: Optional[str]) -> bool:
@@ -376,6 +388,79 @@ def nudge_queue_changed(department: Optional[str]) -> bool:
     except Exception as exc:  # noqa: BLE001 - a nudge must never fail a write
         logger.warning("%s not pushed: %s", QUEUE_NUDGE_EVENT, exc)
         return False
+
+
+# ── The desk queue's read audit, once per unchanged view (ruling OPD-N12) ───
+# OPD-N12 (b), the architect's recommendation, applied while the 'opd' feature
+# is on: an unchanged desk queue re-read writes no new phi_access row. One row
+# per user per DISTINCT SET OF VISIBLE VISITS per 10 minutes, with the visit
+# ids in its metadata. The disclosure of a re-read is identical (the same
+# person saw the same visits), and a polling desk wrote about 1,200 rows per
+# screen per day, while audit already drives appliance storage. A change to
+# the visible set (a new walk-in, a visit gone) is a new disclosure and is
+# written at once. With the feature off every non-empty read is audited, as
+# it always was.
+#
+# Held in this process, not in the database: a restart forgets it, which only
+# ever writes one row more, never one fewer. A key is claimed before the
+# audit write and released if the write fails, so a refused write never
+# silences the next read.
+QUEUE_READ_AUDIT_WINDOW_SECONDS = 600
+_QUEUE_READ_AUDIT_MAX_KEYS = 5000
+_queue_read_audited: dict[tuple[str, str], float] = {}
+_queue_read_lock = threading.Lock()
+
+
+def queue_read_fingerprint(visit_ids: Iterable[Any]) -> str:
+    """A stable name for a set of visit ids (order and repeats ignored)."""
+    ids = sorted({str(v) for v in visit_ids if v})
+    return hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest()
+
+
+def claim_queue_read_audit(user_id: Any, visit_ids: Iterable[Any], *,
+                           now: Optional[float] = None) -> Optional[tuple]:
+    """Should this queue read write its phi_access row? Returns a claim (pass
+    it to release_queue_read_audit if the write then fails) when it should,
+    None when the same user was audited for the same visits less than
+    QUEUE_READ_AUDIT_WINDOW_SECONDS ago. A read with no user id is always
+    audited."""
+    stamp = time.monotonic() if now is None else float(now)
+    uid = str(user_id or "").strip()
+    if not uid:
+        return ("", "", stamp)
+    key = (uid, queue_read_fingerprint(visit_ids))
+    with _queue_read_lock:
+        last = _queue_read_audited.get(key)
+        if last is not None and stamp - last < QUEUE_READ_AUDIT_WINDOW_SECONDS:
+            return None
+        if len(_queue_read_audited) >= _QUEUE_READ_AUDIT_MAX_KEYS:
+            cutoff = stamp - QUEUE_READ_AUDIT_WINDOW_SECONDS
+            for stale in [k for k, t in _queue_read_audited.items() if t <= cutoff]:
+                del _queue_read_audited[stale]
+            if len(_queue_read_audited) >= _QUEUE_READ_AUDIT_MAX_KEYS:
+                # Every key is live: forget the oldest half. That can only
+                # cause a row to be written again, never a row to be skipped.
+                for old in sorted(_queue_read_audited, key=_queue_read_audited.get)[
+                        :_QUEUE_READ_AUDIT_MAX_KEYS // 2]:
+                    del _queue_read_audited[old]
+        _queue_read_audited[key] = stamp
+    return (key[0], key[1], stamp)
+
+
+def release_queue_read_audit(claim: Optional[tuple]) -> None:
+    """Undo a claim whose audit write failed, so the next read writes it."""
+    if not claim or not claim[0]:
+        return
+    key = (claim[0], claim[1])
+    with _queue_read_lock:
+        if _queue_read_audited.get(key) == claim[2]:
+            del _queue_read_audited[key]
+
+
+def reset_queue_read_audit() -> None:
+    """Forget every claim (tests, and nothing else)."""
+    with _queue_read_lock:
+        _queue_read_audited.clear()
 
 
 # ── Queue actions ────────────────────────────────────────────────────────────

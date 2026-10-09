@@ -1319,6 +1319,74 @@ LAB_INDICATOR_SPEC: dict[str, dict] = {
     },
 }
 
+#: OPTIONAL indicators from the bed movement record (adt-13b). Shown ONLY while
+#: Beds and admissions is not off (ORB_ADT, config.module_state('adt')), so a
+#: site without it sees exactly the nine indicators above, and the two entries
+#: below stay on the gap list (NOT_COLLECTED_CATALOGUE) where they always were.
+#: Kept out of INDICATOR_SPEC and INDICATOR_IDS for the same reason as the
+#: laboratory indicators. The figures come from services/adt_census_service,
+#: the same code the census on the Beds screen reads, and count ONLY wards and
+#: periods on or after each ward's wards.ledger_complete_from: a period that
+#: starts earlier is refused with words, never counted in part.
+ADT_INDICATOR_SPEC: dict[str, dict] = {
+    "bed_occupancy": {
+        "code": "QI-UTL-01",
+        "label": "Bed occupancy",
+        "unit": "%",
+        "definition": (
+            "Patients present at the stroke of midnight that ends each day, added up "
+            "over the days of the period, divided by available bed-days (each bed set up "
+            "in Bed setup, counted by the part of the day it was set up and not recorded "
+            "out of service), × 100. Whole hospital-local days only, and only when every "
+            "ward counted had its bed register marked complete before the period began."),
+        "denominator_label": "available bed-days",
+        "numerator_label": "patients at midnight, added over the days",
+        "direction": "neutral",
+        "n_required": 30,
+        "is_proxy": False,
+        "sources": ["patient_movements", "admissions", "wards", "housekeeping_units"],
+        "caveat": (
+            "COUNTED ONLY WHERE THE BED REGISTER IS COMPLETE. A ward's figures start when "
+            "its bed register was marked complete in Bed setup; a period that starts "
+            "earlier is refused, not counted in part. The denominator takes off only the "
+            "out-of-service time housekeeping recorded, so a bed out of use that nobody "
+            "recorded stays in it and lowers this figure. Patients in temporary extra beds "
+            "are counted at midnight but their beds are not in the denominator, so the "
+            "figure can pass 100 per cent. The detail also gives the midnight census over "
+            "licensed beds and inpatient days over available beds."),
+    },
+    "icu_return_48h": {
+        "code": "QI-OUT-04",
+        "label": "Return to intensive care within 48 hours",
+        "unit": "%",
+        "definition": (
+            "Moves out of an intensive care ward (ward type ICU, NICU or PICU) to another "
+            "ward in the period after which the patient was back on an intensive care ward "
+            "within 48 hours, in the same stay or a new admission, divided by moves out "
+            "whose outcome is decidable. Moves out less than 48 hours ago, and patients who "
+            "died or left the hospital within the 48 hours, are excluded and counted "
+            "separately."),
+        "denominator_label": "moves out of intensive care with the 48 hours decided",
+        "numerator_label": "back in intensive care within 48 hours",
+        "direction": "lower_is_better",
+        "n_required": 10,
+        "is_proxy": False,
+        "sources": ["patient_movements", "admissions", "wards"],
+        "caveat": (
+            "ONLY RETURNS TO THIS HOSPITAL'S INTENSIVE CARE WARDS, and only moves the bed "
+            "movement record holds. A patient who left the hospital within the 48 hours "
+            "may have been taken into intensive care somewhere else, so they are left out "
+            "of the denominator rather than counted as not returned, which would lower "
+            "this rate. A patient who died within the 48 hours is left out the same way. "
+            "A move to a place that is not set up in Bed setup is not seen as leaving "
+            "intensive care."),
+    },
+}
+
+#: The gap-list codes the two indicators above replace while Beds and
+#: admissions is not off. With it off the gap list is exactly as it was.
+_LEDGER_INDICATOR_CODES = frozenset(spec["code"] for spec in ADT_INDICATOR_SPEC.values())
+
 #: NABH indicators a hospital WILL be asked for and Orb cannot compute today.
 #: This is the gap list, shipped as data rather than left in a slide deck: the
 #: honest half of an evidence pack is the half that says what is missing.
@@ -1375,6 +1443,9 @@ SOURCE_LABELS: dict[str, str] = {
     "lab_specimens": "Laboratory specimens",
     "lab_tests": "Laboratory test catalogue",
     "lab_critical_events": "Critical-result log",
+    "patient_movements": "Bed movement record",
+    "wards": "Bed setup",
+    "housekeeping_units": "Housekeeping's bed record",
 }
 
 
@@ -1389,7 +1460,8 @@ def _source_labels(sources) -> list[str]:
 
 
 def _new_indicator(indicator_id: str) -> dict:
-    spec = INDICATOR_SPEC.get(indicator_id) or LAB_INDICATOR_SPEC[indicator_id]
+    spec = (INDICATOR_SPEC.get(indicator_id) or LAB_INDICATOR_SPEC.get(indicator_id)
+            or ADT_INDICATOR_SPEC[indicator_id])
     return {
         "id": indicator_id,
         "code": spec["code"],
@@ -2492,6 +2564,441 @@ def _lab_indicators(db, start: datetime, end: datetime, ward: Optional[str]) -> 
             _lab_critical_ack_in_window(db, start, end, ward)]
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# Indicators from the bed movement record (adt-13b)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# THE RULE. A ward's movement record is trustworthy only from
+# wards.ledger_complete_from (stamped when the bed manager marks its register
+# complete: every patient on it linked to a bed). Everything below counts a
+# ward only for a period that starts on or after that moment, and a period
+# that straddles it is REFUSED WITH WORDS, never counted in part: a part-count
+# is a different period from the one printed on the pack. Where the record
+# does not cover a period, the inpatient days fall back to the admissions
+# (_inpatient_days, its own stated bias) and say why.
+#
+# THE BIAS RULE IS KEPT. What residual bias the record carries can only make
+# the hospital look worse: a stay recorded as ended with no time closes at its
+# last movement (fewer inpatient days, higher rates); encounters a history
+# import filed and patients with no admission row are left out (fewer days);
+# a patient who left the hospital or died within 48 hours of leaving intensive
+# care is left out of the return-to-ICU denominator (a higher rate), and a
+# return in a NEW admission counts as a return.
+#
+# The counting itself is services/adt_census_service's (census_on and its
+# stay reader), so the pack and the Beds census cannot drift apart on how a
+# stay, a ward or a midnight is read.
+
+#: The longest period the bed occupancy indicator counts in one go.
+_LEDGER_MAX_DAYS = 366
+
+_LEDGER_DAYS_METHOD = (
+    "Counted from the bed movement record, one stay at a time: the hours each admission "
+    "spent inside the period (on the chosen ward, when a ward is chosen), divided by 24. "
+    "Every ward counted had its bed register marked complete in Bed setup before the "
+    "period began. A stay still open counts to the end of the period, or to now; a stay "
+    "recorded as ended with no end time is closed at its last recorded movement. "
+    "Admissions filed by a history import, and patients with no admission record, are "
+    "left out; both can only lower the inpatient days, which raises every rate computed "
+    "on them."
+)
+
+
+def adt_indicators_on() -> bool:
+    """The bed movement indicators appear only while Beds and admissions
+    (ORB_ADT) is not off. Read at call time."""
+    import config
+    try:
+        return config.module_state("adt") != "off"
+    except Exception:  # pragma: no cover - a config without modules is off
+        return False
+
+
+def _gap_catalogue() -> list[dict]:
+    """The gap list as this site prints it. While the bed movement indicators
+    are shown, QI-UTL-01 and QI-OUT-04 are indicators with their own state and
+    reasons and leave the list; with Beds and admissions off it is
+    NOT_COLLECTED_CATALOGUE exactly."""
+    ledger = adt_indicators_on()
+    return [dict(g) for g in NOT_COLLECTED_CATALOGUE
+            if not (ledger and g["code"] in _LEDGER_INDICATOR_CODES)]
+
+
+def _codes_words(wards: list[dict]) -> str:
+    return ", ".join(sorted(str(w.get("code") or w.get("id")) for w in wards))
+
+
+def _ledger_context(db, start: datetime, end: datetime, ward: Optional[str]) -> dict:
+    """Everything the three ledger readers share, read once: the wards of Bed
+    setup, the chosen ward, the stays overlapping the period (and the 48 hours
+    after it, for a return to intensive care), and which wards' registers were
+    not complete when the period began.
+
+    `gaps_scope` is what the inpatient days need (the chosen ward, else every
+    ward that existed in the period and was switched on or held a stay in
+    it); `gaps_all` is that hospital-wide list whatever the ward filter, which
+    a return to intensive care always needs, because a patient leaves it for
+    any ward and comes back from any ward."""
+    from services import adt_census_service as census
+    from services.hospital_time import hospital_timezone
+
+    now = _now()
+    ctx: dict[str, Any] = {
+        "start": start, "end": end, "horizon": min(end, now), "now": now,
+        "ward": ward, "tz": hospital_timezone(), "problem": None, "wards": [],
+        "chosen": None, "icu": set(), "stays": [], "ended_without_time": 0,
+        "gaps_scope": [], "gaps_all": [],
+    }
+    has_wards = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wards'").fetchone()
+    cols = ({r[1] for r in db.execute("PRAGMA table_info(wards)").fetchall()}
+            if has_wards else set())
+    if "ledger_complete_from" not in cols:
+        ctx["problem"] = "no_wards"
+        return ctx
+    wards = [dict(r) for r in db.execute("SELECT * FROM wards ORDER BY LOWER(code)").fetchall()]
+    if not wards:
+        ctx["problem"] = "no_wards"
+        return ctx
+    ctx["wards"] = wards
+    ctx["icu"] = {w["id"] for w in wards if (w.get("ward_type") or "") in census.ICU_WARD_TYPES}
+    if ward:
+        chosen = next((w for w in wards if _ward_key(w.get("code")) == _ward_key(ward)), None)
+        if chosen is None:
+            ctx["problem"] = "ward_not_in_setup"
+            return ctx
+        ctx["chosen"] = chosen
+
+    until = min(now, end + census.RETURN_WINDOW)
+    if until > start:
+        stays, no_end_time = census._load_stays(db, since=start, until=until,
+                                                wards=census._Wards(wards))
+        ctx["stays"] = stays
+        ctx["ended_without_time"] = no_end_time
+
+    held = {seg[0] for stay in ctx["stays"] for seg in stay.segments
+            if seg[0] and seg[1] < end and seg[2] > start}
+    needed = [w for w in wards
+              if (_dt(w.get("created_at")) or start) < end
+              and (w.get("is_active") or w["id"] in held)]
+
+    def incomplete(w: dict) -> bool:
+        complete_from = _dt(w.get("ledger_complete_from"))
+        return complete_from is None or complete_from > start
+
+    ctx["gaps_all"] = [w for w in needed if incomplete(w)]
+    ctx["gaps_scope"] = ([ctx["chosen"]] if ctx["chosen"] is not None and incomplete(ctx["chosen"])
+                         else [] if ctx["chosen"] is not None else ctx["gaps_all"])
+    return ctx
+
+
+def _ledger_problem_words(ctx: dict, what: str) -> str:
+    """Why the bed movement record cannot answer `what` for this period."""
+    if ctx["problem"] == "no_wards":
+        return f"No ward is set up in Bed setup yet, so {what} cannot be read from it."
+    if ctx["problem"] == "ward_not_in_setup":
+        return (f"{str(ctx['ward']).strip()} is not a ward in Bed setup, so {what} cannot be "
+                "read from the bed movement record for it.")
+    if ctx["problem"] == "unreadable":
+        return f"The bed movement record could not be read, so {what} cannot be counted from it."
+    return ""
+
+
+def _ledger_bed_days(ctx: dict, fallback: dict) -> dict:
+    """The inpatient-days denominator from the bed movement record when it
+    covers the whole period for the chosen ward (or the hospital), else the
+    admissions figure with the reason it was used instead."""
+    words = _ledger_problem_words(ctx, "inpatient days")
+    if not words and ctx["gaps_scope"]:
+        words = ("The bed register was not complete for the whole period on "
+                 f"{_codes_words(ctx['gaps_scope'])}, so inpatient days cannot be read from the "
+                 "bed movement record.")
+    if not words and ctx["horizon"] <= ctx["start"]:
+        words = "The period has not started, so there are no inpatient days to read."
+    if words:
+        return {**fallback, "ledger": {"used": False,
+                                       "reason": words + " They are counted from the admissions."}}
+
+    chosen = ctx["chosen"]
+    start, horizon = ctx["start"], ctx["horizon"]
+    hours = 0.0
+    patients: set[str] = set()
+    stays = open_stays = 0
+    for stay in ctx["stays"]:
+        shared = sum(_overlap_hours(s0, s1, start, horizon)
+                     for ward_id, s0, s1 in stay.segments
+                     if chosen is None or ward_id == chosen["id"])
+        if shared <= 0:
+            continue
+        hours += shared
+        patients.add(stay.patient_id)
+        stays += 1
+        if stay.end is None:
+            open_stays += 1
+    return {
+        "inpatient_days": round(hours / 24.0, 1),
+        "patients": len(patients),
+        "stays": stays,
+        "open_stays": open_stays,
+        "assumed_ends": 0,
+        "ended_without_time": ctx["ended_without_time"],
+        "source": "bed_movement_record",
+        "method": _LEDGER_DAYS_METHOD,
+    }
+
+
+def _bed_occupancy(db, ctx: dict) -> dict:
+    """QI-UTL-01: the census's NABH occupancy (ruling ADT-P4: midnight census
+    over available beds) for the period's whole hospital-local days, from
+    services/adt_census_service.census_on. Refused with words when any day of
+    the period falls before a counted ward's register was complete."""
+    from services import adt_census_service as census
+
+    indicator = _new_indicator("bed_occupancy")
+    tz, now = ctx["tz"], ctx["now"]
+    first = ctx["start"].date()
+    asked_last = (ctx["end"] - timedelta(days=1)).date()
+    last = min(asked_last, now.astimezone(tz).date() - timedelta(days=1))
+    not_ended = max(0, (asked_last - max(last, first - timedelta(days=1))).days)
+    indicator["excluded"] = {
+        "days_not_ended": not_ended,
+        "why": ("Occupancy counts the patients present at midnight, so a day that has not "
+                "ended yet cannot be counted."),
+    }
+    indicator["detail"] = {"method": census.METHODS["occupancy"],
+                           "beds_method": census.METHODS["beds"]}
+
+    words = _ledger_problem_words(ctx, "bed occupancy")
+    if words:
+        indicator["state"] = "not_collected" if ctx["problem"] == "no_wards" else "not_computable"
+        indicator["blockers"] = [words]
+        return _finalise(indicator)
+    if first > last:
+        indicator["blockers"] = ["No whole day of this period has ended yet. Bed occupancy "
+                                 "counts whole days only."]
+        return _finalise(indicator)
+    if (last - first).days + 1 > _LEDGER_MAX_DAYS:
+        indicator["blockers"] = [f"Choose a period of at most {_LEDGER_MAX_DAYS} days for bed "
+                                 "occupancy."]
+        return _finalise(indicator)
+
+    chosen = ctx["chosen"]
+    out = census.census_on(db, first_day=first, last_day=last,
+                           wards=[chosen] if chosen is not None else ctx["wards"],
+                           all_wards=ctx["wards"], hospital=chosen is None, tz=tz, now=now)
+    ward_rows = out["wards"]
+    complete = [w for w in ward_rows if (w.get("totals") or {}).get("status") == "complete"]
+    incomplete = [w for w in ward_rows if w not in complete]
+    scope = ward_rows[0] if chosen is not None else (out.get("hospital") or {})
+    totals = scope.get("totals") or {}
+    indicator["detail"].update({
+        "first_day": first.isoformat(),
+        "last_day": last.isoformat(),
+        "days_counted": totals.get("complete_days", 0),
+        # Listed only for wards complete for the WHOLE period.
+        "by_ward": [{
+            "code": w.get("code"), "name": w.get("name"),
+            "occupancy": (w["totals"].get("occupancy") or {}).get("nabh"),
+            "midnight_census_total": w["totals"].get("midnight_census_total"),
+            "available_bed_days": w["totals"].get("available_bed_days"),
+        } for w in complete],
+        "wards_not_counted": [{
+            "code": w.get("code"), "name": w.get("name"),
+            "first_complete_day": w.get("first_complete_day"),
+            "reason": next((d.get("reason") for d in w.get("days") or []
+                            if d.get("status") != "complete"), None),
+        } for w in incomplete],
+    })
+
+    if totals.get("status") != "complete":
+        if chosen is not None:
+            code = chosen.get("code")
+            words = (f"The bed register of {code} has not been marked complete in Bed setup, so "
+                     "its bed occupancy is not counted yet."
+                     if not chosen.get("ledger_complete_from") else
+                     f"The bed register of {code} was not complete for the whole period, so its "
+                     "bed occupancy cannot be counted for it. Choose a period that starts on or "
+                     "after the first full day after the register was marked complete.")
+            first_complete = ward_rows[0].get("first_complete_day")
+        else:
+            blocking = [w for w in incomplete if w.get("is_active")] or incomplete
+            words = ("Bed occupancy for the hospital needs every ward's bed register complete "
+                     "for the whole period. Not complete for all of it: "
+                     f"{_codes_words(blocking)}. Choose a period that starts after those "
+                     "registers were marked complete, or choose one ward.")
+            days = [w.get("first_complete_day") for w in blocking]
+            first_complete = max(days) if days and all(days) else None
+        indicator["detail"]["first_complete_day"] = first_complete
+        indicator["blockers"] = [words]
+        return _finalise(indicator)
+
+    available = float(totals.get("available_bed_days") or 0.0)
+    census_total = int(totals.get("midnight_census_total") or 0)
+    occupancy = totals.get("occupancy") or {}
+    indicator["numerator"] = census_total
+    indicator["denominator"] = round(available, 2)
+    indicator["n_observed"] = int(available)
+    indicator["detail"].update({
+        "average_midnight_census": totals.get("average_midnight_census"),
+        "licensed_bed_days": totals.get("licensed_bed_days"),
+        "inpatient_days": totals.get("inpatient_days"),
+        "occupancy_over_licensed_beds": occupancy.get("licensed"),
+        "occupancy_from_inpatient_days": occupancy.get("hours"),
+    })
+    if chosen is None:
+        indicator["detail"]["not_on_a_ward"] = sum(
+            int(d.get("not_on_a_ward") or 0) for d in scope.get("days") or [])
+    if available <= 0:
+        indicator["state"] = "not_collected"
+        indicator["blockers"] = ["No bed was set up in Bed setup for this period, so there is "
+                                 "nothing to divide by."]
+        return _finalise(indicator)
+    indicator["value"] = occupancy.get("nabh")
+    indicator["display"] = (f"{indicator['value']:.1f}%"
+                            if indicator["value"] is not None else None)
+    indicator["state"] = "reported"
+    return _finalise(indicator)
+
+
+def _icu_return_48h(ctx: dict) -> dict:
+    """QI-OUT-04: moves out of an intensive care ward to another ward inside
+    the period, and how many of those patients were back on an intensive care
+    ward within 48 hours, in the same stay or a new admission. Undecidable
+    moves are excluded, never counted as 'not returned': still inside the 48
+    hours, died within them, or left the hospital within them."""
+    from services import adt_census_service as census
+
+    indicator = _new_indicator("icu_return_48h")
+    window = census.RETURN_WINDOW
+    indicator["detail"] = {"method": census.METHODS["return_to_icu"],
+                           "return_window_hours": int(window.total_seconds() // 3600)}
+
+    words = _ledger_problem_words(ctx, "a return to intensive care")
+    if words:
+        indicator["state"] = "not_collected" if ctx["problem"] == "no_wards" else "not_computable"
+        indicator["blockers"] = [words]
+        return _finalise(indicator)
+    icu = ctx["icu"]
+    chosen = ctx["chosen"]
+    if not icu:
+        indicator["state"] = "not_collected"
+        indicator["blockers"] = ["No intensive care ward (ward type ICU, NICU or PICU) is set up "
+                                 "in Bed setup, so no move out of intensive care can be seen."]
+        return _finalise(indicator)
+    if chosen is not None and chosen["id"] not in icu:
+        indicator["blockers"] = [f"{chosen.get('code')} is not an intensive care ward, so no "
+                                 "return to intensive care is counted for it."]
+        return _finalise(indicator)
+    if ctx["gaps_all"]:
+        indicator["blockers"] = [
+            "A return to intensive care needs every ward's bed register complete for the whole "
+            "period, because a patient leaves intensive care for any ward and comes back from "
+            f"any ward. Not complete for all of it: {_codes_words(ctx['gaps_all'])}. Choose a "
+            "period that starts after those registers were marked complete."]
+        return _finalise(indicator)
+
+    start, horizon, now = ctx["start"], ctx["horizon"], ctx["now"]
+    # Every moment each patient came onto an intensive care ward, in any stay.
+    entries: dict[str, list[tuple[datetime, str]]] = {}
+    for stay in ctx["stays"]:
+        for ward_id, s0, _s1 in stay.segments:
+            if ward_id in icu:
+                entries.setdefault(stay.patient_id, []).append((s0, stay.id))
+
+    moved = returned = in_new_stay = not_returned = pending = died = left = 0
+    for stay in ctx["stays"]:
+        known = [seg for seg in stay.segments if seg[0] is not None]
+        for (w_prev, _p0, p1), (w_next, _n0, _n1) in zip(known, known[1:]):
+            if w_prev == w_next or w_prev not in icu or w_next in icu:
+                continue
+            if chosen is not None and w_prev != chosen["id"]:
+                continue
+            if not (start <= p1 < horizon):
+                continue
+            moved += 1
+            back = [(t, sid) for t, sid in entries.get(stay.patient_id, [])
+                    if p1 < t <= p1 + window]
+            if back:
+                returned += 1
+                if all(sid != stay.id for _t, sid in back):
+                    in_new_stay += 1
+                continue
+            if stay.end is not None and stay.end <= p1 + window and stay.end_type != "routine":
+                if stay.end_type == "death":
+                    died += 1
+                else:
+                    left += 1
+                continue
+            if now - p1 < window:
+                pending += 1
+                continue
+            not_returned += 1
+
+    decidable = returned + not_returned
+    indicator["numerator"] = returned
+    indicator["denominator"] = decidable
+    indicator["n_observed"] = decidable
+    indicator["excluded"] = {
+        "still_inside_48_hours": pending,
+        "died_within_48_hours": died,
+        "left_the_hospital_within_48_hours": left,
+        "why": ("A move out of intensive care less than 48 hours ago cannot yet be known not to "
+                "return; a patient who died or left the hospital within the 48 hours can never "
+                "be known. Counting any of them as not returned would lower this rate."),
+    }
+    indicator["detail"].update({
+        "moves_out_of_intensive_care": moved,
+        "returned_within_48_hours": returned,
+        "returned_in_a_new_admission": in_new_stay,
+        "not_returned": not_returned,
+    })
+    if moved == 0:
+        indicator["state"] = "not_collected"
+        indicator["blockers"] = ["No patient moved out of an intensive care ward to another ward "
+                                 "in this period, so there is no return to count."]
+        return _finalise(indicator)
+    if decidable == 0:
+        indicator["state"] = "insufficient_data"
+        return _finalise(indicator)
+    indicator["value"] = _pct(returned, decidable)
+    indicator["display"] = f"{indicator['value']:.1f}%"
+    indicator["state"] = "reported"
+    return _finalise(indicator)
+
+
+def _ledger_or_none(db, start: datetime, end: datetime, ward: Optional[str]) -> Optional[dict]:
+    """The shared ledger read while Beds and admissions is not off, else None.
+    A record that cannot be read gives the indicators a reason, never a
+    failed pack: the nine indicators above must still print."""
+    if not adt_indicators_on():
+        return None
+    try:
+        return _ledger_context(db, start, end, ward)
+    except Exception:  # noqa: BLE001 - the pack must still print
+        logger.exception("NABH: the bed movement record could not be read")
+        now = _now()
+        return {"start": start, "end": end, "horizon": min(end, now), "now": now,
+                "ward": ward, "tz": timezone.utc, "problem": "unreadable", "wards": [],
+                "chosen": None, "icu": set(), "stays": [], "ended_without_time": 0,
+                "gaps_scope": [], "gaps_all": []}
+
+
+def _ledger_indicators(db, ctx: dict) -> list[dict]:
+    """QI-UTL-01 and QI-OUT-04, each with its own state."""
+    out: list[dict] = []
+    for indicator_id, compute in (("bed_occupancy", lambda: _bed_occupancy(db, ctx)),
+                                  ("icu_return_48h", lambda: _icu_return_48h(ctx))):
+        try:
+            out.append(compute())
+        except Exception:  # noqa: BLE001 - one indicator never sinks the pack
+            logger.exception("NABH: %s could not be computed", indicator_id)
+            failed = _new_indicator(indicator_id)
+            failed["blockers"] = ["This indicator could not be computed from the bed movement "
+                                  "record. The error is in the server log."]
+            out.append(_finalise(failed))
+    return out
+
+
 def indicators(
     *, period_start: Optional[str] = None, period_end: Optional[str] = None,
     ward: Optional[str] = None, db: Any = None,
@@ -2508,6 +3015,12 @@ def indicators(
     def _work(conn) -> dict:
         usage = _register_in_use(conn, start, end, ward)
         bed_days = _inpatient_days(conn, start, end, ward)
+        # Beds and admissions (adt-13b): the inpatient days come from the bed
+        # movement record when it covers the whole period, else from the
+        # admissions as before, with the reason. None while the module is off.
+        ledger = _ledger_or_none(conn, start, end, ward)
+        if ledger is not None:
+            bed_days = _ledger_bed_days(ledger, bed_days)
         disposition_base = _disposition_base(conn, start, end, ward)
 
         computed = [
@@ -2527,6 +3040,8 @@ def indicators(
             _readmission(conn, start, end, ward),
             _incident_closure(conn, start, end, ward, usage),
         ]
+        if ledger is not None:
+            computed.extend(_ledger_indicators(conn, ledger))
         if lab_indicators_on():
             computed.extend(_lab_indicators(conn, start, end, ward))
 
@@ -2555,7 +3070,7 @@ def indicators(
                 },
             },
             "register_usage": usage,
-            "not_collected_catalogue": [dict(g) for g in NOT_COLLECTED_CATALOGUE],
+            "not_collected_catalogue": _gap_catalogue(),
             "attestation": PACK_ATTESTATION,
         }
 
@@ -2631,7 +3146,7 @@ def build_evidence_pack(
                 "discharge_events_observed": dispositions["discharge_events_observed"],
                 "coverage": dispositions["coverage"],
             },
-            "not_collected": [dict(g) for g in NOT_COLLECTED_CATALOGUE],
+            "not_collected": _gap_catalogue(),
             "anonymity_statement": ANONYMITY_STATEMENT,
             "limitations": _limitations(dash, include_patient_identifiers),
         }
@@ -2688,16 +3203,31 @@ def _limitations(dash: dict, include_patient_identifiers: bool) -> list[str]:
             "record, so their stay was closed at their last recorded vital. That "
             "understates inpatient-days and therefore overstates every rate "
             "computed per 1,000 inpatient-days.")
+    if bed_days.get("ended_without_time"):
+        out.append(
+            f"{bed_days['ended_without_time']} stay(s) in the bed movement record were recorded "
+            "as ended with no end time, so each was closed at its last recorded movement, else "
+            "at its start. That understates inpatient-days and therefore overstates every rate "
+            "computed per 1,000 inpatient-days.")
+    if (bed_days.get("ledger") or {}).get("reason"):
+        out.append(bed_days["ledger"]["reason"])
     coverage = dash["denominators"]["dispositions"]
     if coverage["discharge_events_observed"] and coverage["coverage"] < 1.0:
         out.append(
             f"Discharge dispositions were recorded for {coverage['coverage'] * 100:.0f}% "
             f"of the {coverage['discharge_events_observed']} discharge events Orb "
             "observed. Mortality and LAMA are computed on recorded dispositions only.")
-    out.append(
-        "Ward attribution uses each patient's CURRENT ward, not the ward they "
-        "occupied on each day, so a ward-filtered pack attributes a whole stay to "
-        "where the patient is now.")
+    if bed_days.get("source") == "bed_movement_record":
+        out.append(
+            "Inpatient days were counted from the bed movement record, on the ward where "
+            "each patient lay hour by hour. The other ward-filtered figures use each "
+            "patient's CURRENT ward, so a ward-filtered pack attributes those to where the "
+            "patient is now.")
+    else:
+        out.append(
+            "Ward attribution uses each patient's CURRENT ward, not the ward they "
+            "occupied on each day, so a ward-filtered pack attributes a whole stay to "
+            "where the patient is now.")
     if include_patient_identifiers:
         out.append(
             "THIS PACK CONTAINS PATIENT IDENTIFIERS. It is PHI: handle, transmit "
@@ -2896,9 +3426,10 @@ def meta() -> dict:
              "definition": v["definition"], "direction": v["direction"],
              "is_proxy": v["is_proxy"], "sources": _source_labels(v["sources"])}
             for k, v in (list(INDICATOR_SPEC.items())
+                         + (list(ADT_INDICATOR_SPEC.items()) if adt_indicators_on() else [])
                          + (list(LAB_INDICATOR_SPEC.items()) if lab_indicators_on() else []))
         ],
-        "not_collected_catalogue": [dict(g) for g in NOT_COLLECTED_CATALOGUE],
+        "not_collected_catalogue": _gap_catalogue(),
         "anonymity_statement": ANONYMITY_STATEMENT,
         "attestation": PACK_ATTESTATION,
         # Ward names only, no patient data: what the ward selects offer, so the

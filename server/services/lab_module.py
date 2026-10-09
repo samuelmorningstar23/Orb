@@ -136,7 +136,15 @@ def open_work_counts(conn) -> dict:
                       cancelled;
     tests             order items not yet released or cancelled;
     results           results entered or technically validated, not released;
-    critical_results  critical-result notifications not yet closed.
+    critical_results  critical-result notifications not yet closed. An
+                      interfaced critical (lis-22) counts only while
+                      ORB_LAB_CRITICAL_INTERFACED is off: while it is on, its
+                      own switch keeps the critical surfaces open, and a site
+                      that never ran the laboratory must not read as a
+                      laboratory draining its work. Switched off with one
+                      still open, it keeps the surfaces open the same way an
+                      open laboratory critical does (ruling LIS-R21 applied
+                      to the interfaced switch, the strictest option).
     """
     tables = _table_names(conn)
     counts = dict(_EMPTY_COUNTS)
@@ -153,9 +161,11 @@ def open_work_counts(conn) -> dict:
             f"SELECT COUNT(*) FROM lab_results WHERE status IN ({_placeholders(OPEN_RESULT_STATUSES)})",
             OPEN_RESULT_STATUSES).fetchone()[0] or 0)
     if "lab_critical_notifications" in tables:
+        lane_sql = (" AND COALESCE(source_lane, '') != 'interfaced'"
+                    if config.feature_enabled("lab_critical_interfaced") else "")
         counts["critical_results"] = int(conn.execute(
             "SELECT COUNT(*) FROM lab_critical_notifications "
-            f"WHERE status IN ({_placeholders(OPEN_CRITICAL_STATUSES)})",
+            f"WHERE status IN ({_placeholders(OPEN_CRITICAL_STATUSES)}){lane_sql}",
             OPEN_CRITICAL_STATUSES).fetchone()[0] or 0)
     return counts
 

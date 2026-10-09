@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from database import db_session, run_db
 from typing import Dict, Any, Optional
 
-from services.helix_service import insert_order
+from services.helix_service import insert_order, resolve_by_name_in_txn
 from services.scribe_service import save_scribe_note
 
 logger = logging.getLogger("orb.sage_handoff")
@@ -266,7 +266,8 @@ def _dispatch_handoff(db, handoff_id: str, action: dict, actor_id: str, screened
         elif module == "helix":
             target_module = "helix"
             with _savepoint(db, "handoff_adapter"):
-                downstream_ref_id, safety, error_summary = _write_helix(db, action, actor_id, screened)
+                downstream_ref_id, safety, error_summary = _write_helix(
+                    db, action, actor_id, screened, handoff_id=handoff_id)
             safety_json = json.dumps(safety)
             new_status = "accepted"
         elif module == "scribe":
@@ -417,11 +418,17 @@ def _screen_helix(action: dict, actor_id: str) -> dict:
         ) from e
 
 
-def _write_helix(db, action: dict, actor_id: str, screened) -> tuple:
+def _write_helix(db, action: dict, actor_id: str, screened, *,
+                 handoff_id: Optional[str] = None) -> tuple:
     """Chart the drug and place the Helix order on ``db``, after a screen that
     has already run (``screened``, from _screen_helix / prescreen_handoff).
     Never commits. Returns ``(downstream_ref_id, safety, note)`` as
     _dispatch_to_helix does; re-raises a HandoffBlocked screen result.
+
+    With ORB_MED_ORDER_STORE on (medorders-8), the drug is also a medication
+    order: _write_helix_through_store writes the chart row, the order and its
+    supply row together, and a fault after the chart row leaves none of them.
+    With the store off, exactly as before.
     """
     blocked = _drug_chart_refusal()
     if blocked is not None:
@@ -432,6 +439,10 @@ def _write_helix(db, action: dict, actor_id: str, screened) -> tuple:
         # Fail closed: an order may never be written without a screen behind it.
         raise RuntimeError("No drug-safety screen ran for this order, so nothing was charted.")
     safety = screened
+
+    from services.medorders import ai_lanes
+    if ai_lanes.store_on():
+        return _write_helix_through_store(db, action, actor_id, safety, handoff_id)
 
     patient_id = action.get("patient_id")
     target_med = action.get("target", "Unknown Medication")
@@ -454,16 +465,13 @@ def _write_helix(db, action: dict, actor_id: str, screened) -> tuple:
     # Then create the Helix pharmacy order (best-effort — a non-formulary drug is still
     # charted and visible in Vigil; only the pharmacy order is skipped). On this
     # transaction, through insert_order: create_order commits in a session of
-    # its own. The drug is found by name exactly as create_order finds it:
+    # its own. The drug is found by name exactly as create_order finds it
+    # (helix_service.resolve_by_name_in_txn, the one copy of that lookup):
     # confirmed drugs only (grn-6), so a draft waiting for its second
     # pharmacist never shadows the confirmed drug of the same name.
     try:
         with _savepoint(db, "handoff_order"):
-            med = db.execute(
-                "SELECT id FROM helix_medication_master "
-                "WHERE (name LIKE ? OR generic_name LIKE ?) AND identity_status = 'active'",
-                (f"%{target_med}%", f"%{target_med}%")
-            ).fetchone()
+            med = resolve_by_name_in_txn(db, target_med)
             if not med:
                 raise ValueError(f"Medication {target_med} not found in Helix master catalog.")
             order = insert_order(
@@ -485,6 +493,35 @@ def _write_helix(db, action: dict, actor_id: str, screened) -> tuple:
         note = (f"Charted for review, but not sent to pharmacy: {str(e).rstrip('.')}. "
                 "Place the order in Helix.")
         return "charted-only", _safety_summary(safety), note
+
+
+def _write_helix_through_store(db, action: dict, actor_id: str, safety: dict,
+                               handoff_id: Optional[str]) -> tuple:
+    """The Sage lane with the medication-order store on (medorders-8): the
+    chart row, the order and its supply row in ONE write on ``db``
+    (services/medorders/ai_lanes.write_sage_order_in_txn). The product is
+    found by the same name match as before (helix_service.resolve_by_name_in_txn),
+    so the drug sent to pharmacy is unchanged; no match is still
+    'charted-only', with the same note. Unlike the store-off lane, nothing
+    here is best-effort: a failure after the chart row raises, the handoff's
+    savepoint rolls every row back, and the card reads 'failed'. Never
+    commits."""
+    from services.medorders import ai_lanes
+
+    patient_id = action.get("patient_id")
+    target_med = action.get("target", "Unknown Medication")
+    dose, route, frequency = _helix_order_fields(action)
+    written = ai_lanes.write_sage_order_in_txn(
+        db, patient_id=patient_id, drug_name=target_med, dose=dose, route=route,
+        frequency=frequency, actor_id=actor_id, safety=safety,
+        sage_action_id=action.get("id"), sage_handoff_id=handoff_id)
+    if written.supply is None:
+        logger.warning("charted '%s' but Helix order failed: %s", target_med, written.not_sent)
+        note = (f"Charted for review, but not sent to pharmacy: {written.not_sent}. "
+                "Place the order in Helix.")
+        return "charted-only", _safety_summary(safety), note
+    return written.supply["id"], _safety_summary(safety), None
+
 
 def _dispatch_to_scribe(action: dict, actor_id: str, db) -> str:
     """Dispatches a document action to the Scribe service, on ``db``. Returns the Scribe note_id."""

@@ -304,6 +304,14 @@ def _mirror_correction_in_txn(conn, order: Mapping, ward_row: Mapping, *,
         actor_role=actor_role, entry_point=entry_point, from_status=order["status"],
         to_status=order["status"], lane=LANE_LEGACY, event_id=event_id,
         extra={**dict(extra), "amended_fields": sorted(changes)}, request_meta=request_meta)
+    if "frequency" in changes:
+        # Times a prescriber set were written for the old frequency: they stop
+        # applying in this same transaction (ruling MO-R8, W8-I).
+        from services.medorders import schedule as med_schedule
+        med_schedule.supersede_for_frequency_change_in_txn(
+            conn, after_order, frequency_before=changes["frequency"]["before"],
+            actor_id=actor_id, actor_role=actor_role, entry_point=entry_point, extra=extra,
+            request_meta=request_meta, now=now)
     return event_id
 
 

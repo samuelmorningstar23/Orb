@@ -6,7 +6,7 @@ Orb is a hospital operating system, which means it handles Protected Health Info
 
 **The problem.** A plain log table is worthless as evidence: anyone with database access can `UPDATE` a row to hide what they did. You cannot make tampering *impossible* on a machine the attacker controls, but you can make it *evident*, arrange the data so that any edit, however small, is mathematically detectable. Orb does this with two independent layers:
 
-1. **DB triggers**, `BEFORE UPDATE`/`BEFORE DELETE` triggers on `audit_logs` abort any mutation attempt (`server/database.py:399-409`). A *trigger* is a small piece of SQL the database runs automatically before/after an operation; here it calls `RAISE(ABORT, ...)`, which cancels the statement. This stops the application's own DB connection from rewriting history.
+1. **DB triggers**, `BEFORE UPDATE`/`BEFORE DELETE` triggers on `audit_logs` abort any mutation attempt (`server/database.py:403-413`). A *trigger* is a small piece of SQL the database runs automatically before/after an operation; here it calls `RAISE(ABORT, ...)`, which cancels the statement. This stops the application's own DB connection from rewriting history.
 2. **A per-row hash chain**, each row stores a SHA-256 digest of its own content *prefixed by the previous row's digest* (`server/services/audit_service.py:48-63`). Even an attacker who edits the SQLite file on disk with a hex editor (bypassing the triggers entirely) leaves a detectable break, because recomputing the hashes no longer matches what is stored.
 
 The flight recorder is the *read side*: it never writes, it merges `audit_logs` with the event-bus write-ahead log (`event_log`) and order state transitions (`order_events`) into one scrubber-friendly timeline, and re-runs chain verification on demand (`server/services/flight_recorder_service.py:14-21`).
@@ -66,7 +66,7 @@ Orb's concrete contract (`server/services/audit_service.py:40-63`):
 - **Canonicalization**: the selected fields are serialized with `json.dumps(..., sort_keys=True, separators=(",", ":"), default=str)` (`audit_service.py:54-59`). Sorted keys plus no-whitespace separators mean the same logical row always produces byte-identical JSON, essential, because SHA-256 hashes bytes, not meaning.
 - **Algorithm**: `row_hash = SHA256( (prev_hash or "") .encode() + canonical_json.encode() )` (`audit_service.py:60-63`).
 - **Genesis**: the very first sealed row has `prev_hash = NULL` in the DB; the hash computation substitutes the empty string (`audit_service.py:61`). Verification treats `last_hash is None` as an always-valid link (`flight_recorder_service.py:104`).
-- **Legacy rows**: `prev_hash`/`row_hash` were added by a later migration (`server/database.py:1439-1444`), so old rows may have `row_hash = NULL`. A NULL-hash row is legitimate **only as a contiguous prefix** before sealing began; a NULL appearing *after* any sealed row is treated as tampering (`flight_recorder_service.py:89-100`).
+- **Legacy rows**: `prev_hash`/`row_hash` were added by a later migration (`server/database.py:1443-1448`), so old rows may have `row_hash = NULL`. A NULL-hash row is legitimate **only as a contiguous prefix** before sealing began; a NULL appearing *after* any sealed row is treated as tampering (`flight_recorder_service.py:89-100`).
 
 ### Flow 1: writing a sealed audit row
 
@@ -127,7 +127,7 @@ sequenceDiagram
 **Does:** Defines exactly which columns, in which order, participate in every row's hash.
 **How it works:** A frozen tuple consumed by `compute_audit_row_hash`; order and membership are declared "part of the chain contract, do NOT reorder without a schema bump" (`audit_service.py:39-40`).
 **Why it exists:** Hashing `SELECT *` would break the moment a column is added by migration; an explicit list makes the sealed surface stable and shared between writer and verifier.
-**Data in/out:** field names matching `audit_logs` columns (`server/database.py:409-435`).
+**Data in/out:** field names matching `audit_logs` columns (`server/database.py:413-439`).
 **Talks to:** read by `compute_audit_row_hash`; mirrored by `_AUDIT_SELECT` in the flight recorder (`flight_recorder_service.py:38-44`).
 **Change guide:** To seal a new column, append it to `_HASH_FIELDS` **and** to the `INSERT` at `audit_service.py:144-158` **and** to `_AUDIT_SELECT` at `flight_recorder_service.py:38`, then every pre-existing sealed row will fail verification (its stored hash was computed without the field, and `row.get(k)` now returns the new column's value instead of `None` for old rows only if the column is NULL... which serializes as `null` and *changes the canonical JSON*). So a field addition requires either resealing dev data or versioning the hash (e.g. a `hash_v` column selecting field sets).
 **Gotchas:** `row.get(k)` means a *missing* key and a `None` value serialize identically (`null`), which is what keeps writer dicts and DB-row dicts hash-compatible.
@@ -141,7 +141,7 @@ sequenceDiagram
 3. Feeds `(prev_hash or "").encode()` then the canonical JSON into one SHA-256 and returns the hex digest (`audit_service.py:60-63`).
 **Why it exists:** One shared implementation is the whole trust story, if verification used even a slightly different serialization (key order, whitespace), every row would "look tampered."
 **Data in/out:** in: any dict carrying the 20 keys (writer's fresh dict or `dict(sqlite3.Row)`); out: hex string.
-**Talks to:** called by `log_audit_event._do_insert` (`audit_service.py:142`), `flight_recorder_service._broken_audit_ids` (`flight_recorder_service.py:103`), `database.verify_audit_chain` (`server/database.py:1266`), and `reseal_audit_chain.py:54,78`.
+**Talks to:** called by `log_audit_event._do_insert` (`audit_service.py:142`), `flight_recorder_service._broken_audit_ids` (`flight_recorder_service.py:103`), `database.verify_audit_chain` (`server/database.py:1270`), and `reseal_audit_chain.py:54,78`.
 **Gotchas:** `default=str` silently stringifies anything non-JSON (e.g. if a caller ever passed a `datetime` for `timestamp`); harmless today because writers pass strings/ints/None, but it means type drift changes bytes and therefore hashes.
 
 ### `AuditWriteError`: `server/services/audit_service.py:60`
@@ -164,8 +164,8 @@ sequenceDiagram
 5. If `db` was supplied, the caller's connection/transaction runs `_do_insert` (caller must hold the write lock; `audit_service.py:160-163`). Otherwise a fresh connection with `isolation_level = None` (manual transaction control) runs `BEGIN IMMEDIATE; _do_insert; COMMIT`, with `ROLLBACK` on error and `close()` in `finally` (`audit_service.py:171-185`).
 6. On any exception: `logger.critical(...)`, then raise `AuditWriteError` if fail-closed, else swallow (`audit_service.py:355-366`).
 **Why it exists:** The single choke point for the append-only log; the `BEGIN IMMEDIATE` design specifically fixes the read-then-write race where two concurrent writers chained off the same `prev_hash`.
-**Data in/out:** in: the audit vocabulary above; out: one `audit_logs` row (schema at `server/database.py:409-435`; `outcome` is CHECK-constrained to `success|failure|partial_success|denied` at `database.py:427`).
-**Talks to:** called from ~15 modules, heavy users are `services/ingestion_service.py` (10 call sites), `services/discharge_access_service.py` (10), `routes/scribe_routes.py` (11), `routes/auth_routes.py` (7), `permissions.py` (permission-denied events, `permissions.py:186-203`), `services/audit_middleware.py`, and `main.py:409` (media views). Calls `database.get_db` and `compute_audit_row_hash`.
+**Data in/out:** in: the audit vocabulary above; out: one `audit_logs` row (schema at `server/database.py:413-439`; `outcome` is CHECK-constrained to `success|failure|partial_success|denied` at `database.py:431`).
+**Talks to:** called from ~15 modules, heavy users are `services/ingestion_service.py` (10 call sites), `services/discharge_access_service.py` (10), `routes/scribe_routes.py` (11), `routes/auth_routes.py` (7), `permissions.py` (permission-denied events, `permissions.py:187-204`), `services/audit_middleware.py`, and `main.py:409` (media views). Calls `database.get_db` and `compute_audit_row_hash`.
 **Change guide:** Worked example, *add a new fail-closed category `"prescription"`*: add the string to `_FAIL_CLOSED_CATEGORIES` at `audit_service.py:43-45`; every caller that logs with `event_category="prescription"` must now be prepared to catch `AuditWriteError` and abort its action, or it will crash with an unhandled 500 when the audit DB is unavailable. Since 2026-09-04 that is the live state of `authentication`: none of its call sites in `routes/auth_routes.py` catch `AuditWriteError`, so a login whose audit write fails returns an unhandled 500 and issues no token. Worked example, *record which downstream system consumed an event*: pass it in `metadata={"consumer": ...}`; do **not** add a column unless you also follow the `_HASH_FIELDS` change guide above.
 **Gotchas:** (a) An invalid `outcome` string violates the CHECK constraint and the whole event is rejected, for a fail-soft category that means the event is silently lost (a critical log line is the only trace). (b) When passing `db=`, the *caller* must already hold the SQLite write lock (be inside a write transaction); a caller that only did reads so far still holds no lock, reopening the prev-hash race. (c) The timestamp is text ISO-8601 UTC; sorting is lexicographic in SQL, which works only because the format is fixed-width UTC.
 
@@ -290,8 +290,8 @@ sequenceDiagram
 4. Derives the count query by `query.replace("SELECT *", "SELECT COUNT(id) as total", 1).split(" ORDER BY")[0]` with `params[:-2]` (dropping limit/offset) so `total` reflects the filter, enabling the UI's pagination (`audit_routes.py:57-60`).
 **Why it exists:** The one query surface for both `AuditLogTable` (generic filters) and `CorrelationTrace` (single `correlation_id`).
 **Data in/out:** rows are raw table dicts (all 23 columns incl. `prev_hash`/`row_hash`); frontend type `AuditLog` at `src/api/client.ts:1803-1821`.
-**Talks to:** `permissions.require_permission` (only the `admin` role holds `audit.read`, constant at `permissions.py:92`, granted at `:156`); called by `getAuditLogs` (`src/api/client.ts:1837`).
-**Change guide:** Worked example, *add an `actor_user_id` filter*: add `actor_user_id: Optional[str] = Query(None)` to the signature and an `AND actor_user_id = ?` clause after `audit_routes.py:43`; then extend `AuditFilters` + the params builder in `src/api/client.ts:1070-1080,1116-1129`, and add an input to `AuditLogTable`. Knock-on: consider an index, existing indexes cover correlation/action/patient/timestamp/category only (`database.py:390-394`); an unindexed filter forces a table scan.
+**Talks to:** `permissions.require_permission` (only the `admin` role holds `audit.read`, constant at `permissions.py:93`, granted at `:156`); called by `getAuditLogs` (`src/api/client.ts:1837`).
+**Change guide:** Worked example, *add an `actor_user_id` filter*: add `actor_user_id: Optional[str] = Query(None)` to the signature and an `AND actor_user_id = ?` clause after `audit_routes.py:43`; then extend `AuditFilters` + the params builder in `src/api/client.ts:1070-1080,1116-1129`, and add an input to `AuditLogTable`. Knock-on: consider an index, existing indexes cover correlation/action/patient/timestamp/category only (`database.py:394-398`); an unindexed filter forces a table scan.
 **Gotchas:** The string-surgery count query silently breaks if the base query's prefix ever changes from exactly `SELECT *`, keep the `replace` in sync.
 
 ### `server/routes/flight_recorder_routes.py`
@@ -317,7 +317,7 @@ The router: `APIRouter(prefix="/api/flight-recorder", tags=["flight-recorder"])`
 **Does:** Full raw row behind one timeline entry.
 **How it works:** Validates `source ∈ {audit, event, order}` explicitly (`flight_recorder_routes.py:50-51`), then delegates to `get_event_detail` and maps `None` → 404.
 **Talks to:** consumed by `FlightRecorder.tsx:89`.
-**Gotchas:** `event_id` is a string path param; SQLite compares it against integer ids with type affinity, so `"12"` matches row 12, do not "fix" this by casting without checking `event_log.event_id`, which is a TEXT UUID (`database.py:555`).
+**Gotchas:** `event_id` is a string path param; SQLite compares it against integer ids with type affinity, so `"12"` matches row 12, do not "fix" this by casting without checking `event_log.event_id`, which is a TEXT UUID (`database.py:559`).
 
 ### `server/services/flight_recorder_service.py`
 
@@ -374,7 +374,7 @@ The router: `APIRouter(prefix="/api/flight-recorder", tags=["flight-recorder"])`
 1. Clamps `limit` to 1-5000 (`flight_recorder_service.py:170`).
 2. Computes the broken-id set once so each audit row can carry `chain_ok` (`flight_recorder_service.py:174`).
 3. **audit**: filtered `_AUDIT_SELECT` query, newest-first per-source `LIMIT`; `target` is `"{target_type}:{target_id}"`, falling back to `request_path`; `chain_ok = row_hash is not None and id not in broken` (`flight_recorder_service.py:177-208`).
-4. **event**: the event bus's write-ahead log (`event_log`, every message published on Orb's internal pub/sub bus is durably journaled there; schema at `database.py:554-563`). `actor` = `source_node` (which subsystem emitted it), `action` = `event_type`, `target` = `topic`, `detail` = `_summarize_payload(payload)`, `chain_ok = None`, not hash-chained (`flight_recorder_service.py:211-238`).
+4. **event**: the event bus's write-ahead log (`event_log`, every message published on Orb's internal pub/sub bus is durably journaled there; schema at `database.py:558-567`). `actor` = `source_node` (which subsystem emitted it), `action` = `event_type`, `target` = `topic`, `detail` = `_summarize_payload(payload)`, `chain_ok = None`, not hash-chained (`flight_recorder_service.py:211-238`).
 5. **order**: `order_events` LEFT JOINed to `orders` for `patient_id`/description; `action` = `order_{new_status}`, `detail` = reason or `"{description}: prior → new"`; `chain_ok = None` (`flight_recorder_service.py:241-273`).
 6. Sorts everything by `(_parse_ts(ts), source, str(id))` ascending, then keeps the **last** `limit` entries so the scrubber shows the most recent window while still playing forward (`flight_recorder_service.py:276-279`).
 **Why it exists:** Investigating an incident means correlating "the audit row says X changed" with "the event bus dispatched Y" and "the order flipped to Z", one merged tape beats three tabs.
@@ -491,7 +491,7 @@ The router: `APIRouter(prefix="/api/flight-recorder", tags=["flight-recorder"])`
 **Why it exists:** A correlation ID is only useful if you can *see* the causal story; this is the "what happened after that HL7 message arrived" view.
 **Data in/out:** `AuditLog[]` from `GET /api/audit/logs?correlation_id=...`.
 **Talks to:** mounted as the `trace` tab, fed by `AuditLogTable.onTraceClick` (`AdminPanel.tsx:89, 63-66`).
-**Change guide:** To trace beyond audit rows (event bus entries share `correlation_id`, `database.py:562`), fetch `/api/flight-recorder/timeline` filtered client-side by correlation, the timeline shape already includes `correlation_id`.
+**Change guide:** To trace beyond audit rows (event bus entries share `correlation_id`, `database.py:566`), fetch `/api/flight-recorder/timeline` filtered client-side by correlation, the timeline shape already includes `correlation_id`.
 **Gotchas:** `fetchTrace` is used inside the effect but not memoized and not in the dependency array (`CorrelationTrace.tsx:29-35`), works because it only reads state setters and the passed id.
 
 ### The four test files: invariants pinned down
@@ -534,7 +534,7 @@ Invariants: the timeline merges all three sources, is non-decreasing by `_parse_
 - `services.flight_recorder_service.verify_chain`, the Trust Center's `audit_hash_chain` control (`compliance_service.py:74-78`).
 - `services.crypto_service.{write_encrypted, read_decrypted, materialize_plaintext, is_encryption_enabled}`, Lens (`lens_routes.py:101-117`), Scribe (`scribe_routes.py:339-400`), the `/uploads` endpoint (`main.py:428-431`), Trust Center (`compliance_service.py:57-58`).
 
-**DB tables:** writes `audit_logs` (insert-only; schema `database.py:362-388`, triggers `:399-409`, hash-column migration `:880-889`, indexes `:390-394`); reads `event_log` (`database.py:554-563`), `order_events` + `orders` join (`database.py:699-707`).
+**DB tables:** writes `audit_logs` (insert-only; schema `database.py:366-392`, triggers `:399-409`, hash-column migration `:880-889`, indexes `:390-394`); reads `event_log` (`database.py:558-567`), `order_events` + `orders` join (`database.py:703-711`).
 
 **Config:** `ORB_AUDIT_SIMULATION_EVENTS` (`config.py:181`), `ORB_UPLOAD_ENCRYPTION_KEY` (`config.py:61`), `ORB_REQUIRE_UPLOAD_ENCRYPTION` (read live, `crypto_service.py:84`), `ORB_DEPLOYMENT_PROFILE` (`config.py:86`, gates the reseal script).
 
@@ -542,7 +542,7 @@ Invariants: the timeline merges all three sources, is non-decreasing by `_parse_
 
 ## Rebuild notes
 
-**Prerequisites:** the SQLite layer with `db_session`/`get_db` and WAL mode (`database.py:800-829`), the `audit_logs` schema with its append-only triggers and hash columns, the `event_log`/`order_events`/`orders` tables (guide 04-database-schema); JWT auth (`decode_token`) and the RBAC permission matrix with `require_permission` (guide 03-auth-rbac); the frontend `apiFetch` wrapper and admin panel shell (guides 02-api-client, 01-app-shell).
+**Prerequisites:** the SQLite layer with `db_session`/`get_db` and WAL mode (`database.py:804-833`), the `audit_logs` schema with its append-only triggers and hash columns, the `event_log`/`order_events`/`orders` tables (guide 04-database-schema); JWT auth (`decode_token`) and the RBAC permission matrix with `require_permission` (guide 03-auth-rbac); the frontend `apiFetch` wrapper and admin panel shell (guides 02-api-client, 01-app-shell).
 
 **Build order:**
 1. `audit_logs` schema + triggers + `prev_hash`/`row_hash` migration.
@@ -557,7 +557,7 @@ Invariants: the timeline merges all three sources, is non-decreasing by `_parse_
 
 ## Discrepancies and open questions
 
-1. **`database.verify_audit_chain` is dead code missing the FR-1 fix.** It is defined at `server/database.py:1928` but has no callers anywhere (the live verifier is `flight_recorder_service.verify_chain`; the Trust Center uses that too, `compliance_service.py:76`). Worse, it still resets `last_hash = None` on **any** NULL `row_hash` (`database.py:1958`), the exact "null the hash to restart the chain" evasion that `_broken_audit_ids` was hardened against (`flight_recorder_service.py:89-100`). If anyone ever wires it back up, it would pass a tampered log. The docstrings in `audit_service.py:9`, `:107` and `:184` still point readers at this stale function.
+1. **`database.verify_audit_chain` is dead code missing the FR-1 fix.** It is defined at `server/database.py:1932` but has no callers anywhere (the live verifier is `flight_recorder_service.verify_chain`; the Trust Center uses that too, `compliance_service.py:76`). Worse, it still resets `last_hash = None` on **any** NULL `row_hash` (`database.py:1962`), the exact "null the hash to restart the chain" evasion that `_broken_audit_ids` was hardened against (`flight_recorder_service.py:89-100`). If anyone ever wires it back up, it would pass a tampered log. The docstrings in `audit_service.py:9`, `:107` and `:184` still point readers at this stale function.
 2. **Split correlation IDs per request.** The middleware mints/uses its own correlation ID (`audit_middleware.py:58`) but does not propagate it (e.g. via `request.state`) to route handlers, and routes like ingestion generate their own per-payload IDs (`ingestion_service.py:123-148`). One HTTP request therefore produces audit rows under two different correlation IDs, and `CorrelationTrace` shows only half the story for either ID.
 3. **The middleware safety net is fail-soft.** `api_mutation` is not in `_FAIL_CLOSED_CATEGORIES` (`audit_service.py:31`) and the middleware additionally swallows every audit exception at `logger.debug` level (`audit_middleware.py:87-88`), so if the audit DB is unavailable, mutations proceed unlogged with almost no operational signal. Whether the "no mutation goes unlogged" guarantee (`audit_middleware.py:8-9`) should be best-effort is a policy question worth revisiting.
 4. **Deleting the newest audit row is undetectable by the chain.** A hash chain proves nothing about its own tail: the last row has no successor whose `prev_hash` would break. The DB triggers block in-app deletion, and the Trust Center remediation text suggests exporting chain checkpoints to a WORM store (`compliance_service.py:303-304`), but no checkpoint-export mechanism exists in the codebase.

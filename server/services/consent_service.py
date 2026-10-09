@@ -724,7 +724,28 @@ _RETENTION_SOURCES: dict[str, list[tuple[str, str, str]]] = {
     "consent_record": [
         ("consent_records", "patient_id", "granted_at"),
     ],
+    # GST books of account (grn-18, mapped with the W168 retention owner): the
+    # purchase orders and goods receipts of BOTH desks (the stores desk and,
+    # with ORB_PHARMACY_STORE on, the pharmacy desk share the same document
+    # tables), and the pharmacy's returns to vendor. CGST Act 2017
+    # s.36 and CGST Rules 2017 r.56 and r.57 keep them for 72 months from the
+    # due date of the annual return for the year they belong to. No patient
+    # column: these are the hospital's purchase records, not anyone's chart,
+    # and the review skips them (and says so) when it is asked about one
+    # patient. The category is listed here ahead of its retention_policies row,
+    # which W168 adds in its own migration (category GST_RETENTION_CATEGORY,
+    # erasable 0, the citation above); until that row exists the review does
+    # not show the category at all, exactly as for a table not yet created.
+    "gst_tax_record": [
+        ("purchase_orders", None, "created_at"),
+        ("goods_receipts", None, "received_at"),
+        ("pharmacy_vendor_returns", None, "created_at"),
+    ],
 }
+
+#: The retention category the GST mapping above is registered under; W168's
+#: migration inserts its retention_policies row with this exact name.
+GST_RETENTION_CATEGORY = "gst_tax_record"
 
 
 # ════════════════════════════════════════════════════════════════

@@ -63,7 +63,7 @@ Also referenced (owned elsewhere, contracts described here): `src/print.css` (gu
 
 1. A clinician clicks the "Admit Patient" CTA in `ClinicianShell` (`src/pages/ClinicianShell.tsx:371`, `id="btn-admit-patient"`), which sets `isAdmittingPatient` and mounts `AdmitPatientModal` (`ClinicianShell.tsx:616`, imported at `:4`).
 2. The clinician fills a 7-tab wizard (Identity → Admission → Clinical → History → Vitals → Notes → Review) and confirms. One `admitPatient(payload)` call fires `POST /api/admissions/admit`.
-3. `process_admission` (`server/routes/admission_routes.py:53`) RBAC-gates on `patient.write`, then calls `admit_patient(data, user)`.
+3. `process_admission` (`server/routes/admission_routes.py:54`) RBAC-gates on `patient.write`, then calls `admit_patient(data, user)`.
 4. `admit_patient` opens **one `db_session()` transaction** (`admission_service.py:33`) and writes, in order: the patient's Bridge login user, the `patients` identity row, the `admissions` event row, the `patient_profiles` longitudinal row, optional initial `vitals` + a seeded `risk_scores` row, a Relay `case_room` channel + system message, and a `sage_room_memory` row. Either all succeed or all roll back, a patient is never half-admitted.
 5. The service returns the new IDs plus a **one-time Bridge credential** (`patient_login_id` + `temporary_password`) that exists only in this response.
 6. The modal shows a credential hand-off screen (the password is never retrievable again), then `onSuccess` reloads the page to refresh every panel.
@@ -88,10 +88,10 @@ sequenceDiagram
 
 ### Flow B: Discharge (generate + freeze)
 
-1. A clinician hits DISCHARGE in Vigil → `POST /api/vigil/patients/{id}/discharge` (`vigil_routes.py:713`, permission `discharge.generate`), or an ambient agent runs the `discharge` action in Relay (`relay_routes.py:977`).
+1. A clinician hits DISCHARGE in Vigil → `POST /api/vigil/patients/{id}/discharge` (`vigil_routes.py:742`, permission `discharge.generate`), or an ambient agent runs the `discharge` action in Relay (`relay_routes.py:977`).
 2. `build_patient_timeline()` assembles a chronological event list (admission, notes, scribe notes, imaging, critical alerts).
 3. `build_medication_reconciliation()` splits the **real charted medications** into continue / stopped / unverified, deterministically, never from the LLM.
-4. `generate_discharge_summary()` builds an LLM prompt that embeds that reconciliation *verbatim* and asks the model for prose. If the LLM call raises, the **caller** substitutes a static fallback template (`vigil_routes.py:739-761`; Relay's equivalent is `relay_routes.py:1077-1079` composing its fallback in phase C).
+4. `generate_discharge_summary()` builds an LLM prompt that embeds that reconciliation *verbatim* and asks the model for prose. If the LLM call raises, the **caller** substitutes a static fallback template (`vigil_routes.py:768-790`; Relay's equivalent is `relay_routes.py:1077-1079` composing its fallback in phase C).
 5. `discharge_patient()` **atomically** flips `status → 'discharged'` (bailing if already discharged), saves the summary + timeline, and mints a secure access token + QR code.
 
 ### Flow C: Patient reads their summary later
@@ -123,9 +123,9 @@ sequenceDiagram
 
 **Why it exists:** Orb's modules are only useful if they all "see" a patient at the same instant. Doing the inserts in one transaction guarantees no module ever holds a dangling reference to a patient another module doesn't know about. Seeding vitals+risk inline is what makes a freshly admitted patient appear on the Vigil board without waiting for the simulator.
 **Data in/out:** In: the flattened `AdmissionRequest` dict + the authenticated `user` dict. Out: `{success, patient_id, admission_id, channel_id, mrn, patient_login_id, temporary_password}`.
-**Talks to:** `db_session` (database), `hash_password` (auth), `secrets`/`uuid`, `compute_news2` (`services.vigil_service`). Callers: `process_admission` (`server/routes/admission_routes.py:65`) and the two provenance tests.
+**Talks to:** `db_session` (database), `hash_password` (auth), `secrets`/`uuid`, `compute_news2` (`services.vigil_service`). Callers: `process_admission` (`server/routes/admission_routes.py:66`) and the two provenance tests.
 **Change guide:**
-- *To capture the patient's date of birth at admission* (needed for discharge access, see Discrepancies), add a `date_of_birth` field to `AdmissionRequest` and a form field in the modal, then add `date_of_birth` to the `patients` INSERT column list at `:41-68`. Knock-on: the column already exists (`database.py:42`); without this, discharge-access DOB verification can never succeed for normally-admitted patients.
+- *To capture the patient's date of birth at admission* (needed for discharge access, see Discrepancies), add a `date_of_birth` field to `AdmissionRequest` and a form field in the modal, then add `date_of_birth` to the `patients` INSERT column list at `:41-68`. Knock-on: the column already exists (`database.py:46`); without this, discharge-access DOB verification can never succeed for normally-admitted patients.
 - *To notify other sessions in real time on admission*, use the already-imported `sio` (`:7`, currently unused) to emit **after** the `with` block commits, never inside the transaction.
 - *Footgun:* every `db.execute` here shares one connection/transaction; adding an early `return` inside the `with` will silently skip later inserts and leave a partial record shape that downstream code assumes is complete.
 **Gotchas:** The vitals+risk block swallows exceptions by design, a bug in `compute_news2` will not surface at admission, only in the log. Timestamps are UTC ISO strings; do not mix in naive `datetime.now()`. `diagnosis` falls back to `chief_complaint`, so an admission with only a complaint still has a non-null diagnosis everywhere downstream.
@@ -166,7 +166,7 @@ Structured allergies and a problem list are the *coded* clinical core. The free-
 
 #### resolve_problem: `server/services/clinical_records_service.py:104`
 **Signature:** `resolve_problem(problem_id) -> bool`, sets `status='resolved'` and stamps `resolved_at`; returns whether a row matched.
-**Change guide:** *To add an "inactive" (not-resolved) state*, the `problem_list.status` CHECK already permits `'inactive'` (`database.py:611`), add a service function mirroring `resolve_problem` that sets it. Watch out: `list_problems` only hides `resolved`, so `inactive` rows would still appear unless you widen the filter.
+**Change guide:** *To add an "inactive" (not-resolved) state*, the `problem_list.status` CHECK already permits `'inactive'` (`database.py:615`), add a service function mirroring `resolve_problem` that sets it. Watch out: `list_problems` only hides `resolved`, so `inactive` rows would still appear unless you widen the filter.
 
 ### discharge_service.py
 
@@ -176,7 +176,7 @@ Structured allergies and a problem list are the *coded* clinical core. The free-
 **How it works:** Opens a raw connection with `get_db()`; appends an admission event from `patients` (`:29-36`); appends each `clinical_documents` note (content truncated to 200 chars) (`:39-49`); appends each `scribe_notes` entry (`:52-62`); appends each `lens_analyses` imaging interpretation (`:65-75`); appends **critical-only** `risk_scores` alerts with their drivers (`:78-89`); closes the connection (`:91`); sorts by `timestamp` with a null-safe key (`:94`).
 **Why it exists:** A discharge summary and the patient portal both need a single ordered story of the stay, drawn from tables that never share a schema.
 **Data in/out:** Out: `list[{timestamp, type, title, detail}]`, `type ∈ {admission, note, scribe, imaging, alert}`.
-**Talks to:** `get_db`. Callers: `discharge_patient_route` (`vigil_routes.py:737`), Relay discharge action (`relay_routes.py:1075`, off-loop via `run_db`).
+**Talks to:** `get_db`. Callers: `discharge_patient_route` (`vigil_routes.py:766`), Relay discharge action (`relay_routes.py:1075`, off-loop via `run_db`).
 **Gotchas:** Manual `get_db()`/`db.close()` with no `try/finally`, an exception between open and close leaks the connection. Risk drivers are `json.loads`-ed and re-joined, so malformed JSON in `risk_scores.drivers` would raise here.
 
 #### build_medication_reconciliation: `server/services/discharge_service.py:100`
@@ -190,7 +190,7 @@ Structured allergies and a problem list are the *coded* clinical core. The free-
 5. Returns `{continued, stopped, unverified, counts}` (`:146-155`).
 **Why it exists:** Medication reconciliation is the single highest-value discharge intervention; making it deterministic and pharmacist-aware means the LLM can *describe* the meds but can never *invent* them.
 **Data in/out:** Out: three lists of entry dicts + a counts object.
-**Talks to:** `get_db`. Callers: `generate_discharge_summary` (`:224`) and the previewable route `GET /api/vigil/patients/{id}/medication-reconciliation` (`vigil_routes.py:696`, guarded by `require_patient_access("discharge.generate")` at `:700`). Exercised by `test_audit_fixes.py:190` and `test_tier1_small_closes.py:77`.
+**Talks to:** `get_db`. Callers: `generate_discharge_summary` (`:224`) and the previewable route `GET /api/vigil/patients/{id}/medication-reconciliation` (`vigil_routes.py:720`, guarded by `require_patient_access("discharge.generate")` at `:700`). Exercised by `test_audit_fixes.py:190` and `test_tier1_small_closes.py:77`.
 **Change guide:** *To add a "held" medication bucket*, add an `elif status == "held"` branch at `:136-145` and a corresponding line in `_render_med_rec_text`. Knock-on: the patient-portal meds list (`discharge_access_service.py:253-256`) does **not** use this function, so held meds would show there as active unless you also change that query.
 
 #### _render_med_rec_text: `server/services/discharge_service.py:158`
@@ -230,9 +230,9 @@ Structured allergies and a problem list are the *coded* clinical core. The free-
 7. Returns `{"status":"success", "summary_url", "qr_path"}` (`:391`).
 **Why it exists:** Discharge must be exactly-once (double-clicking DISCHARGE must not mint two links) and must leave a durable, later-readable artifact.
 **Data in/out:** In: patient id, author id, the generated summary, the timeline list. Out: status + URL + QR path.
-**Talks to:** `generate_qr_code`, `log_audit_event`, config TTL / `PUBLIC_APP_BASE_URL`. Callers: `vigil_routes.py:763`, `relay_routes.py:987`.
+**Talks to:** `generate_qr_code`, `log_audit_event`, config TTL / `PUBLIC_APP_BASE_URL`. Callers: `vigil_routes.py:792`, `relay_routes.py:987`.
 **Change guide:** *To lengthen link validity*, set `ORB_DISCHARGE_ACCESS_TTL_DAYS` (config `:409`), no code change. Footgun: because the audit `correlation_id` is the hash, you cannot recover a lost patient link from the audit trail, reissue instead.
-**Gotchas:** The secret is the `raw_token` in the URL and it is **never** written to disk; `discharge_access_service.get_token_record` (`:68`) hashes whatever it is given and matches on `token_hash`. Legacy rows that stored plaintext in `token_id` are scrubbed by an `init_db()` migration (`server/database.py:1878-1880`) that sets `token_id := token_hash`. The status flip happens first precisely so summary/token inserts can't race a second discharge.
+**Gotchas:** The secret is the `raw_token` in the URL and it is **never** written to disk; `discharge_access_service.get_token_record` (`:68`) hashes whatever it is given and matches on `token_hash`. Legacy rows that stored plaintext in `token_id` are scrubbed by an `init_db()` migration (`server/database.py:1882-1884`) that sets `token_id := token_hash`. The status flip happens first precisely so summary/token inserts can't race a second discharge.
 
 ### discharge_access_service.py
 
@@ -285,7 +285,7 @@ This module is the **security boundary** for patient self-service. It never trus
 **Signature:** Pydantic model. **Does:** Validates and types the admission payload. Required fields: `name`, `admission_source`, `admission_type`, `department`, `ward`, `bed`, `attending_doctor_id`, `chief_complaint`. Everything else (age, sex, contacts, history arrays, vitals dict, notes) is optional with defaults. Array fields default to `[]`; `code_status` defaults `"full_code"`; `vitals` is a free-form `Dict[str, Any]`.
 **Gotchas:** `bed` is required here but the modal marks it optional, and there is **no `date_of_birth` field**, the schema is the reason DOB is never captured.
 
-#### process_admission: `server/routes/admission_routes.py:53` (decorator) / `:54` (`def`)
+#### process_admission: `server/routes/admission_routes.py:54` (decorator) / `:54` (`def`)
 **Signature:** `process_admission(payload: AdmissionRequest, background_tasks, user=Depends(require_permission("patient.write"))) -> dict`
 **Does:** RBAC-gates admission and delegates to the service. **How it works:** requires `patient.write`; calls `admit_patient(payload.dict(), user)`; on any exception prints a traceback and raises `HTTP 500` with the raw error text (`:68-70`). **Route:** `POST /api/admissions/admit`. **Talks to:** `admit_patient`; frontend `admitPatient()` (`src/api/client.ts:712`). **Gotchas:** the injected `background_tasks` is never used; returning `str(e)` in the 500 `detail` leaks internal error text to the client.
 
@@ -314,7 +314,7 @@ This module is the **security boundary** for patient self-service. It never trus
 
 ### AdmitPatientModal.tsx
 
-#### AdmitPatientModal: `src/components/AdmitPatientModal.tsx:56`
+#### AdmitPatientModal: `src/components/AdmitPatientModal.tsx:69`
 **Signature:** `AdmitPatientModal({ onClose, onSuccess }) -> JSX`
 **Does:** A 7-tab admission wizard that collects the whole `AdmissionRequest`, validates per-tab, submits, and then hands off the patient's one-time login.
 **How it works:**
@@ -345,7 +345,7 @@ Scoped, BEM-style styling for the modal. The backdrop uses a 16px `backdrop-filt
 **How it works:** local `formatDate` produces `DD/MM/YYYY` (or `--/--/----` for bad dates) (`:38-46`); derives admission/discharge date strings and a synthetic `IP NO` (`:48-50`); renders the title, a 3-column patient table (Name/Age-Sex/Ward, RegNo/IP-NO/DOD, DOA/DOS/Doctor), diagnosis, history/examination sections, a hospital-course block fed by `hospitalCourse`, an ordered discharge-medication list, an optional timeline table, and a signature block (`:52-184`).
 **Why it exists:** Both the clinician "PRINT RECORD" flow and the patient portal need the *same* paper-like layout; this is the single shared component, and its stable class names are what `print.css` and `DischargeAccess.css` style.
 **Data in/out:** In: `patient` header, `medications[]`, optional `aiAssessment`/`hospitalCourse`/`timeline`. Out: JSX.
-**Talks to:** used by `VigilPanel` (portaled into `document.body`, `VigilPanel.tsx:1622`) and by `DischargeAccess` (`DischargeAccess.tsx:71`). Its `.discharge-print-layout` contract is styled by `src/print.css` and `DischargeAccess.css`.
+**Talks to:** used by `VigilPanel` (portaled into `document.body`, `VigilPanel.tsx:1641`) and by `DischargeAccess` (`DischargeAccess.tsx:71`). Its `.discharge-print-layout` contract is styled by `src/print.css` and `DischargeAccess.css`.
 **Gotchas, clinically important:** the component prints **fabricated defaults** when data is absent: hard-coded negatives "No H/o Diabetes Mellitus / Hypertension / CAD / TB / Asthma" (`:90-94`), a default doctor "Dr. Vikram Rathore" (`:74`) and a "Conservatively Managed by the clinical team" default (`:82`), a literal "FOR 5 DAYS" on every med (`:139`), and fixed normal exam findings (`:106-119`). None of these are gated on real data, so a summary can print statements that contradict the patient (see Discrepancies).
 
 ### DischargeAccess.tsx
@@ -368,7 +368,7 @@ Scoped, BEM-style styling for the modal. The backdrop uses a 16px `backdrop-filt
 A deliberately **light**, self-contained stylesheet (system fonts, `#f4f6f8` background), it does not use the app's dark design tokens because the patient portal must look like a clean hospital document, not the clinical OS. It styles the verification card (`:11-103`), the success header/portal chrome (`:112-152`), and, critically, re-styles the shared `.discharge-print-layout` for on-screen viewing under `.discharge-access-success` (`:236-317`), forcing black-on-white so the portal preview matches the printed page.
 
 ### print.css (contract, owned by guide 27): `src/print.css:24`
-`DischargePrintView` and `HandoffPrintView` are React **portals** (rendered into `document.body`, outside `#root`) so at print time they sit as siblings of the dark app shell. The `@media print` block (`:24-243`) sets A4/Letter margins, hides `.shell`/modals/widgets, then `visibility:hidden`s everything and re-reveals only `.discharge-print-layout` / `.handoff-print-layout`, anchoring it at the page origin with black-on-white, shadow-free styling. The two-pass hide-then-reveal also covers the `DischargeAccess` page where the layout is nested inside `#root` rather than portaled. **Trigger:** `VigilPanel`'s "PRINT RECORD" button sets `printType='discharge'` then `setTimeout(() => window.print(), 100)` (`VigilPanel.tsx:873`), the 100 ms delay lets the portal mount first (a mount race; see Discrepancies).
+`DischargePrintView` and `HandoffPrintView` are React **portals** (rendered into `document.body`, outside `#root`) so at print time they sit as siblings of the dark app shell. The `@media print` block (`:24-243`) sets A4/Letter margins, hides `.shell`/modals/widgets, then `visibility:hidden`s everything and re-reveals only `.discharge-print-layout` / `.handoff-print-layout`, anchoring it at the page origin with black-on-white, shadow-free styling. The two-pass hide-then-reveal also covers the `DischargeAccess` page where the layout is nested inside `#root` rather than portaled. **Trigger:** `VigilPanel`'s "PRINT RECORD" button sets `printType='discharge'` then `setTimeout(() => window.print(), 100)` (`VigilPanel.tsx:887`), the 100 ms delay lets the portal mount first (a mount race; see Discrepancies).
 
 ### Tests
 
@@ -384,7 +384,7 @@ End-to-end via `TestClient`. Fixtures seed a patient with `date_of_birth='1990-0
 
 | Method | Full path | Handler | Auth |
 |---|---|---|---|
-| POST | `/api/admissions/admit` | `process_admission` (`server/routes/admission_routes.py:53`) | `patient.write` |
+| POST | `/api/admissions/admit` | `process_admission` (`server/routes/admission_routes.py:54`) | `patient.write` |
 | GET | `/api/patients/{patient_id}/allergies` | `get_allergies` (`server/routes/clinical_records_routes.py:19`) | `patient.read_all` |
 | POST | `/api/patients/{patient_id}/allergies` | `post_allergy` (`:25`) | `patient.write` |
 | DELETE | `/api/patients/{patient_id}/allergies/{allergy_id}` | `delete_allergy` (`:47`) | `patient.write` |
@@ -399,8 +399,8 @@ End-to-end via `TestClient`. Fixtures seed a patient with `date_of_birth='1990-0
 
 | Method | Full path | Delegates to |
 |---|---|---|
-| POST | `/api/vigil/patients/{patient_id}/discharge` | `build_patient_timeline` → `generate_discharge_summary` → `discharge_patient` (`vigil_routes.py:366`) |
-| GET | `/api/vigil/patients/{patient_id}/medication-reconciliation` | `build_medication_reconciliation` (`vigil_routes.py:350`) |
+| POST | `/api/vigil/patients/{patient_id}/discharge` | `build_patient_timeline` → `generate_discharge_summary` → `discharge_patient` (`vigil_routes.py:386`) |
+| GET | `/api/vigil/patients/{patient_id}/medication-reconciliation` | `build_medication_reconciliation` (`vigil_routes.py:370`) |
 
 **Exported service functions other subsystems import:** `admit_patient`; `add_allergy`/`list_allergies` (read by `drug_safety_service`); `build_patient_timeline`, `build_medication_reconciliation`, `generate_discharge_summary`, `discharge_patient` (Vigil + Relay); `verify_discharge_access`, `get_verified_discharge_summary` (public routes).
 
@@ -413,7 +413,7 @@ End-to-end via `TestClient`. Fixtures seed a patient with `date_of_birth='1990-0
 ## Rebuild notes
 
 **Prerequisites (must exist first):**
-- The database layer and schema, the twelve tables above (guide 04), including the `date_of_birth` migration on `patients` (`database.py:1100-1104`).
+- The database layer and schema, the twelve tables above (guide 04), including the `date_of_birth` migration on `patients` (`database.py:1104-1108`).
 - Auth/RBAC: `require_permission`, `hash_password`/`verify_password`, and `JWT_SECRET` (`ORB_JWT_SECRET`) + `JWT_ALGORITHM` (guide 03).
 - Config values: `DISCHARGE_ACCESS_TTL_DAYS`, `DISCHARGE_ACCESS_MAX_ATTEMPTS`, `DISCHARGE_ACCESS_LOCK_MINUTES`, `PUBLIC_APP_BASE_URL` (`config.py:184-187`).
 - Neighbor services referenced at runtime: `vigil_service.compute_news2`, `drug_safety_service.classify_drug`/`check_medication_safety`, `llm_queue_service.llm_queue`, `audit_service.log_audit_event`.
@@ -433,6 +433,6 @@ End-to-end via `TestClient`. Fixtures seed a patient with `date_of_birth='1990-0
 2. **The `invalid_dob` UI reads a field the server intentionally removed.** `DischargeAccess.tsx:38` renders `detail.attempts_remaining`, but the service deliberately stopped returning it as an anti-brute-force measure (`discharge_access_service.py:164-166`). The patient sees "You have undefined attempts remaining."
 3. **The patient-facing summary mislabels the MRN and skips reconciliation.** `get_verified_discharge_summary` selects `p.id AS mrn` (`discharge_access_service.py:232`), so the "MRN" shown to the patient is the internal `PAT-…` id; and its meds query (`:237-241`) is a plain `status='active'` select, not `build_medication_reconciliation`, so PRN/unverified safety handling is absent on the patient's copy.
 4. **`DischargePrintView` prints fabricated clinical defaults.** Hard-coded negatives "No H/o Diabetes Mellitus / Hypertension / CAD / TB / Asthma" (`DischargePrintView.tsx:90-94`), default doctor "Dr. Vikram Rathore" (`:74`; the MANAGEMENT line at `:82` defaults to "the clinical team"), literal "FOR 5 DAYS" per med (`:139`), and fixed normal exam findings (`:106-119`) render even with no real data, a summary for a diabetic can print "No H/o Diabetes Mellitus". Clinically misleading.
-5. **The `token_hash` column is dead.** `discharge_patient` stores `sha256(token_id)` (`discharge_service.py:328`, schema `database.py:184`), but lookup uses the raw `token_id` (`discharge_access_service.py:60-63`). The comment in `test_discharge_access.py:44-50` calls hashing "the intended hardened lookup," so this is a known, unfinished hardening. Not directly exploitable (the `token_id` is a 32-byte urlsafe secret), but the hash column adds no protection as used, and the raw secret also lands in the audit `correlation_id` (`discharge_service.py:363-371`).
-6. **`generate_discharge_summary` can return `""` without triggering the fallback.** On empty LLM output it returns `""` (`discharge_service.py:300-304`) rather than raising, so the caller's `try/except` template fallback (`vigil_routes.py:390-412`) does not fire and an empty summary can be persisted.
-7. **Minor:** `admission_service` imports `sio` but never uses it (`server/services/admission_service.py:7`); `process_admission` injects an unused `background_tasks` (`server/routes/admission_routes.py:56`) and leaks raw exception text in its 500 `detail` (`:70`); `build_patient_timeline` (`server/services/discharge_service.py:23`) manages the connection without a `try/finally`, leaking it on error; the `window.print()` call in `VigilPanel` (`src/pages/panels/VigilPanel.tsx:518`) runs on a `setTimeout`, a mount race that could print before the portal exists on a slow render.
+5. **The `token_hash` column is dead.** `discharge_patient` stores `sha256(token_id)` (`discharge_service.py:328`, schema `database.py:188`), but lookup uses the raw `token_id` (`discharge_access_service.py:60-63`). The comment in `test_discharge_access.py:44-50` calls hashing "the intended hardened lookup," so this is a known, unfinished hardening. Not directly exploitable (the `token_id` is a 32-byte urlsafe secret), but the hash column adds no protection as used, and the raw secret also lands in the audit `correlation_id` (`discharge_service.py:363-371`).
+6. **`generate_discharge_summary` can return `""` without triggering the fallback.** On empty LLM output it returns `""` (`discharge_service.py:300-304`) rather than raising, so the caller's `try/except` template fallback (`vigil_routes.py:410-436`) does not fire and an empty summary can be persisted.
+7. **Minor:** `admission_service` imports `sio` but never uses it (`server/services/admission_service.py:7`); `process_admission` injects an unused `background_tasks` (`server/routes/admission_routes.py:57`) and leaks raw exception text in its 500 `detail` (`:70`); `build_patient_timeline` (`server/services/discharge_service.py:23`) manages the connection without a `try/finally`, leaking it on error; the `window.print()` call in `VigilPanel` (`src/pages/panels/VigilPanel.tsx:532`) runs on a `setTimeout`, a mount race that could print before the portal exists on a slow render.

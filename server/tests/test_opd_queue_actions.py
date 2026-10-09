@@ -733,7 +733,9 @@ def test_the_nudge_carries_only_the_department(staff, opd_on, nudges, monkeypatc
     for event, payload, room in emitted:
         assert event == oq.QUEUE_NUDGE_EVENT == "opd:queue_changed"
         assert set(payload) == {"department"} and payload["department"] == DEPT_A
-        assert room in (f"dept:{DEPT_A}", "dept:__all__")
+        # opd-9b: one emit to the clinic's rooms, the doctors' vitals rooms and
+        # the desk's opd rooms, so a socket in two of them hears it once.
+        assert room == [f"dept:{DEPT_A}", "dept:__all__", f"opd:{DEPT_A}", "opd:__all__"]
     assert oq.queue_nudge_payload("X") == {"department": "X"}
 
 

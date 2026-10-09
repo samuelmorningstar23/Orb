@@ -78,6 +78,9 @@ REGISTRY: dict[str, tuple[str, str]] = {
     "routes/bridge_routes.py": ("labelled", "the patient portal: 'On hold', nothing more"),
     "services/fhir_export_service.py": ("labelled", "FHIR MedicationRequest 'on-hold'"),
     "services/sage_service.py": ("labelled", "the Sage patient context"),
+    "services/admission_service.py": (
+        "labelled", "the readmission's list of earlier-stay medicines it stopped, for "
+                    "re-prescribing (opd-17c); a held one is marked was_on_hold"),
     "services/sage_ambient_service.py": ("labelled", "the ambient Relay context"),
     # Screening sets: kept.
     "services/drug_safety_service.py": (

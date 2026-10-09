@@ -32,6 +32,19 @@ import {
   OpdObservationsReference,
   RefusedVisitPanel,
 } from './AdmitExistingParts';
+import {
+  previewReadmissionNote,
+  readmitCandidatesOf,
+  readmitPatient,
+  type ReadmissionFields,
+  type ReadmitCandidate,
+} from '../api/readmission';
+import {
+  ReadmissionNote,
+  ReadmitIdentityPanel,
+  ReadmitOffer,
+  StoppedMedicinesNote,
+} from './ReadmitParts';
 import './AdmitPatientModal.css';
 
 /** opd-17a: admit the registered outpatient of this open clinic visit onto
@@ -65,8 +78,9 @@ interface AdmissionOptions {
   master?: AdmissionMaster;
 }
 
-/** What the admission answers with Beds and admissions on, beyond the base. */
-type AdmissionAnswer = AdmissionResult & {
+/** What the admission answers with Beds and admissions on, beyond the base,
+ *  and for a readmission onto the same record (opd-17c). */
+type AdmissionAnswer = AdmissionResult & ReadmissionFields & {
   replayed?: boolean;
   location_warning?: string | null;
 };
@@ -139,7 +153,7 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
   const [error, setError] = useState<string | null>(null);
   // What the clinician must act on now the patient is admitted: the one-time
   // Bridge login (shown ONCE) and whether a discharge link will be possible.
-  const [credential, setCredential] = useState<{ login: string | null; password: string | null; dobRecorded: boolean; bedWarning: string | null; locationWarning?: string | null; replayed?: boolean } | null>(null);
+  const [credential, setCredential] = useState<{ login: string | null; password: string | null; dobRecorded: boolean; bedWarning: string | null; locationWarning?: string | null; replayed?: boolean; readmission?: ReadmissionFields | null } | null>(null);
   // Department, attending and bed come from lists the server also checks
   // against: a typed department put the patient on nobody's board, and a typed
   // doctor id failed as a raw error after the whole form was filled.
@@ -167,6 +181,17 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
   // refused one is the visit and the refusal alone, nothing about the patient.
   const record = preview && preview.admittable ? preview : null;
   const refusedVisit = preview && !preview.admittable ? preview : null;
+  // opd-17c: a discharged patient whose clinic visit admits them onto their
+  // record. The server's words for what that does, or null.
+  const visitReadmissionNote = record ? previewReadmissionNote(record) : null;
+  // Readmission onto the same record (opd-17c, server switch 'readmission').
+  // A new admission the patient index refuses may list records that can be
+  // readmitted; choosing one turns this form into a readmission of that
+  // record, with its own Idempotency-Key and the same stated-identity check.
+  const [readmitCandidates, setReadmitCandidates] = useState<ReadmitCandidate[]>([]);
+  const [readmitTarget, setReadmitTarget] = useState<ReadmitCandidate | null>(null);
+  const [readmitKey, setReadmitKey] = useState(newIdempotencyKey);
+  const readmitting = !existing && readmitTarget !== null;
 
   // Focus-trap for the modal. Escape closes the active surface: on the credential
   // hand-off screen that means finishing (onSuccess), otherwise cancelling. While
@@ -333,10 +358,12 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
   const dobInvalid = formData.date_of_birth !== '' && dobAge === null;
   const ageMismatch = dobAge !== null && formData.age !== '' && Number(formData.age) !== dobAge;
   const ageInvalid = formData.age !== '' && !ageInRange(formData.age);
-  const statedIdentity = existing ? statedIdentityPayload(stated) : null;
+  const statedIdentity = existing || readmitting ? statedIdentityPayload(stated) : null;
   const isIdentityValid = existing
     ? !!record && statedIdentity !== null
-    : formData.name.trim() !== '' && !nameTooShort && formData.age !== '' && !ageInvalid && formData.sex !== '' && !dobInvalid;
+    : readmitting
+      ? statedIdentity !== null
+      : formData.name.trim() !== '' && !nameTooShort && formData.age !== '' && !ageInvalid && formData.sex !== '' && !dobInvalid;
   const departmentListed = !!options?.departments.includes(formData.department);
   const attending = options?.doctors.find(d => d.id === formData.attending_doctor_id);
   // With the bed picker the place is valid when the picker has everything the
@@ -426,6 +453,41 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
           setBedChoice(prev => ({ ...prev, terminalAuthoriserPin: '' }));
         }
         result = await admitExistingPatient(body, admitKey);
+      } else if (readmitting && readmitTarget) {
+        // Readmission onto the same record (opd-17c): the record's identity
+        // is kept, so none is sent, only what the patient stated for the
+        // check; no observations (the ward charts a fresh set); this
+        // readmission's one Idempotency-Key.
+        setRefusal(null);
+        const body = {
+          patient_id: readmitTarget.patient_id,
+          identity_check: statedIdentity,
+          admission_source: formData.admission_source,
+          admission_type: formData.admission_type,
+          department: formData.department,
+          ward: formData.ward,
+          bed: formData.bed,
+          attending_doctor_id: formData.attending_doctor_id,
+          referring_clinician: formData.referring_clinician || undefined,
+          chief_complaint: formData.chief_complaint,
+          initial_diagnosis: formData.initial_diagnosis || undefined,
+          triage_severity: parseInt(formData.triage_severity) || undefined,
+          comorbidities: formData.comorbidities,
+          allergies: formData.allergies,
+          ...(wardRecord ? {} : { current_medications: formData.current_medications }),
+          past_medical_history: formData.past_medical_history || undefined,
+          past_surgical_history: formData.past_surgical_history || undefined,
+          admitting_notes: formData.admitting_notes || undefined,
+          nursing_notes: formData.nursing_notes || undefined,
+          isolation_precautions: formData.isolation_precautions,
+          code_status: formData.code_status,
+          ...(master ? bedChoicePayload(master, bedChoice) : {}),
+          ...(master && admittedAt ? { admitted_at: new Date(admittedAt).toISOString() } : {}),
+        };
+        if (master && bedChoice.terminalAuthoriserPin) {
+          setBedChoice(prev => ({ ...prev, terminalAuthoriserPin: '' }));
+        }
+        result = await readmitPatient(body, readmitKey);
       } else if (master) {
         // Beds and admissions on: the place from the picker, the admission
         // time when set back, and this form's one Idempotency-Key.
@@ -457,7 +519,10 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
       const bedWarning: string | null = result?.bed_warning || null;
       const locationWarning: string | null = result?.location_warning || null;
       const replayed = result?.replayed === true;
-      if (result?.temporary_password || !dobRecorded || bedWarning || locationWarning || replayed) {
+      // A readmission always stops here: the earlier stay's medicines it
+      // stopped are listed for the prescriber (ruling OPD-S8 (a)).
+      const readmission = result?.readmission === true ? result : null;
+      if (result?.temporary_password || !dobRecorded || bedWarning || locationWarning || replayed || readmission) {
         setCredential({
           login: result?.patient_login_id ?? null,
           password: result?.temporary_password ?? null,
@@ -465,6 +530,7 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
           bedWarning,
           locationWarning,
           replayed,
+          readmission,
         });
         setIsSubmitting(false);
       } else {
@@ -473,6 +539,11 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
     } catch (err) {
       const message = (err instanceof Error ? err.message : '') || 'Failed to admit patient';
       const code = (err as { detail?: { error?: unknown } } | null)?.detail?.error;
+      if (!existing && !readmitting) {
+        // The patient index refused a new chart: offer the records the server
+        // says may be readmitted (empty while readmission is switched off).
+        setReadmitCandidates(readmitCandidatesOf((err as { detail?: unknown } | null)?.detail));
+      }
       if (master && typeof code === 'string' && BED_REFUSAL_CODES.has(code)) {
         // The bed changed under the form (taken, retired, a clean raised) or
         // the server wants words the picker did not have: show its words by
@@ -495,13 +566,18 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
         <div className="admit-modal admit-modal--credential glass-card" ref={modalRef} role="dialog" aria-modal="true" aria-labelledby="admit-credential-title">
           <div className="admit-modal__header">
             <div className="admit-modal__title-group">
-              <h2 className="admit-modal__title" id="admit-credential-title">Patient admitted ✓</h2>
+              <h2 className="admit-modal__title" id="admit-credential-title">{credential.readmission ? 'Patient readmitted ✓' : 'Patient admitted ✓'}</h2>
               {credential.password && (
-                <span className="admit-modal__subtitle">Give the patient their one-time Bridge portal login now. It cannot be shown again.</span>
+                <span className="admit-modal__subtitle">
+                  {credential.readmission?.portal_password_reissued
+                    ? 'Give the patient their new one-time Bridge portal password now. The one from their earlier stay no longer works, and this one cannot be shown again.'
+                    : 'Give the patient their one-time Bridge portal login now. It cannot be shown again.'}
+                </span>
               )}
             </div>
           </div>
           <div className="admit-modal__body admit-modal__body--stack">
+            {credential.readmission && <StoppedMedicinesNote result={credential.readmission} />}
             {credential.bedWarning && (
               <p
                 role="note"
@@ -577,8 +653,8 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
         {/* Header */}
         <div className="admit-modal__header">
           <div className="admit-modal__title-group">
-            <h2 className="admit-modal__title" id="admit-modal-title">{existing ? 'Admit from outpatients' : 'Admit Patient'}</h2>
-            <span className="admit-modal__subtitle">{existing ? 'Onto the patient\u2019s own record, which keeps its hospital number' : 'Create clinical admission record across Orb modules'}</span>
+            <h2 className="admit-modal__title" id="admit-modal-title">{existing ? 'Admit from outpatients' : readmitting ? 'Readmit patient' : 'Admit Patient'}</h2>
+            <span className="admit-modal__subtitle">{existing || readmitting ? 'Onto the patient\u2019s own record, which keeps its hospital number' : 'Create clinical admission record across Orb modules'}</span>
           </div>
           <button className="admit-modal__close" onClick={onClose} aria-label="Close">&times;</button>
         </div>
@@ -594,7 +670,7 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
                 { id: 'admission', label: 'Admission', valid: isAdmissionValid },
                 { id: 'clinical', label: 'Clinical', valid: isClinicalValid },
                 { id: 'history', label: 'History', valid: true },
-                { id: 'vitals', label: existing ? 'Observations' : 'Vitals', valid: true },
+                { id: 'vitals', label: existing || readmitting ? 'Observations' : 'Vitals', valid: true },
                 { id: 'notes', label: 'Notes', valid: true },
                 { id: 'review', label: 'Review', valid: isFormValid }
               ].map(tab => (
@@ -620,7 +696,10 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
                   refusedVisit ? (
                     <RefusedVisitPanel visit={refusedVisit.visit} refusal={refusedVisit.refusal} />
                   ) : record ? (
-                    <ExistingIdentityPanel preview={record} stated={stated} onChange={setStated} />
+                    <>
+                      {visitReadmissionNote !== null && <ReadmissionNote note={visitReadmissionNote} />}
+                      <ExistingIdentityPanel preview={record} stated={stated} onChange={setStated} />
+                    </>
                   ) : (
                     <p role={previewError ? 'alert' : 'status'} className={previewError ? 'admit-modal__error' : undefined}>
                       {previewError ?? 'Loading the patient\u2019s record\u2026'}
@@ -628,7 +707,16 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
                   )
                 )}
 
-                {activeTab === 'identity' && !existing && (
+                {activeTab === 'identity' && readmitting && readmitTarget && (
+                  <ReadmitIdentityPanel
+                    candidate={readmitTarget}
+                    stated={stated}
+                    onChange={setStated}
+                    onCancel={() => { setReadmitTarget(null); setStated(EMPTY_STATED_IDENTITY); setError(null); }}
+                  />
+                )}
+
+                {activeTab === 'identity' && !existing && !readmitting && (
                   <div className="admit-modal__section">
                     <div className="admit-modal__grid">
                       <div className="admit-form-group" style={{ gridColumn: '1 / -1' }}>
@@ -807,7 +895,7 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
                       {existing && record && <ChartedAllergiesNote preview={record} />}
                       {existing && record && !wardRecord && <OpdMedicinesReference preview={record} />}
                       <div className="admit-form-group">
-                        <label>{existing ? 'Add allergies' : 'Allergies'}</label>
+                        <label>{existing || readmitting ? 'Add allergies' : 'Allergies'}</label>
                         <ChipInput chips={formData.allergies} placeholder="Type allergy and press Enter..." onAdd={v => handleChipAdd('allergies', v)} onRemove={v => handleChipRemove('allergies', v)} />
                       </div>
                       <div className="admit-form-group">
@@ -840,7 +928,17 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
                       : <p role="status">{'Loading the patient\u2019s record\u2026'}</p>
                 )}
 
-                {activeTab === 'vitals' && !existing && (
+                {activeTab === 'vitals' && readmitting && (
+                  <div className="admit-modal__section">
+                    <p className="admit-existing__hint" role="note">
+                      No observations are sent with a readmission. The earlier stay&rsquo;s
+                      observations are not current: the ward charts a fresh set when the patient
+                      arrives.
+                    </p>
+                  </div>
+                )}
+
+                {activeTab === 'vitals' && !existing && !readmitting && (
                   <div className="admit-modal__section">
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginBottom: 16 }}>Entering initial vitals will immediately compute risk scores and display the patient in Vigil.</p>
                     <div className="admit-modal__grid">
@@ -917,8 +1015,30 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
 
                 {activeTab === 'review' && (
                   <div className="admit-modal__section">
+                    {!existing && !readmitting && (
+                      <ReadmitOffer
+                        candidates={readmitCandidates}
+                        onChoose={c => {
+                          setReadmitTarget(c);
+                          setStated(EMPTY_STATED_IDENTITY);
+                          setReadmitKey(newIdempotencyKey());
+                          setError(null);
+                          setActiveTab('identity');
+                        }}
+                      />
+                    )}
                     <div className="admit-review-grid">
-                      {existing ? (
+                      {readmitting && readmitTarget ? (
+                        <div className="admit-review-section">
+                          <h3>Patient on file</h3>
+                          <div className="admit-review-list">
+                            <div className="admit-review-item"><span>Name</span><span>{readmitTarget.name}</span></div>
+                            <div className="admit-review-item"><span>UHID</span><span>{readmitTarget.uhid ?? '-'}</span></div>
+                            <div className="admit-review-item"><span>Identity</span><span>{statedIdentity ? 'Checked against the record when you admit' : 'Not confirmed yet'}</span></div>
+                            <div className="admit-review-item"><span>Readmission</span><span>Earlier medicines are stopped and listed for you</span></div>
+                          </div>
+                        </div>
+                      ) : existing ? (
                         <div className="admit-review-section">
                           <h3>Patient on file</h3>
                           <div className="admit-review-list">
@@ -983,6 +1103,11 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
                   <>
                     <span className="admit-summary-value">{record?.patient.name ?? <span className="admit-summary-value--empty">{refusedVisit ? 'Cannot be admitted from this visit' : 'Loading the record...'}</span>}</span>
                     <span className="admit-summary-label">{record?.patient.age != null ? `${record.patient.age}y` : ''} {record?.patient.sex ?? ''}</span>
+                  </>
+                ) : readmitting && readmitTarget ? (
+                  <>
+                    <span className="admit-summary-value">{readmitTarget.name}</span>
+                    <span className="admit-summary-label">{readmitTarget.age != null ? `${readmitTarget.age}y` : ''} {readmitTarget.sex ?? ''}</span>
                   </>
                 ) : (
                   <>

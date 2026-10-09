@@ -44,6 +44,13 @@ from services.medorders import held as held_labels
 from services.stay_times import latest_admission, summary_less_ends
 from datetime import datetime
 import json
+# Laboratory reports in the portal (lis-29), the section at the end of this file.
+import uuid
+from pydantic import BaseModel, ConfigDict, StrictInt
+from permissions import DISCHARGE_PUBLISH, LAB_READ, ORDER_READ, require_patient_access
+from routes.opt_in_gates import feature_gate
+from services import lab_portal_service as lab_portal
+from services.audit_service import AuditWriteError
 
 router = APIRouter(prefix="/api/bridge", tags=["bridge"])
 
@@ -733,4 +740,203 @@ def cancel_appointment(appointment_id: str, user: dict = Depends(require_patient
     patient_id = _resolve_patient_id(user["id"])
     _cancel_own_appointment(appointment_id, patient_id)
     return {"id": appointment_id, "status": "cancelled"}
+
+
+# ─── Laboratory reports (lis-29, ORB_LAB_PORTAL_REPORTS) ─────────────────────
+#
+# Behind the feature 'lab_portal_reports' (default OFF; it also needs the
+# laboratory module on). Off, every route below answers 404 feature_disabled
+# and Bridge is exactly as it was: My Records keeps its Lab History from
+# clinical documents and imaging only. The gate is the first dependency of
+# every route here.
+#
+# When a result reaches the patient is decided in one place,
+# services/lab_portal_service.py (ruling LIS-R11 (c), strictest reading, held
+# for Samuel before go-live): a doctor's release of the report as they read it,
+# or the site's delay after the laboratory released it (ORB_LAB_PORTAL_DELAY_HOURS,
+# unset by default, which means a doctor's release only). A critical value
+# reaches the portal only by a doctor's release. Flags are words, never colour.
+#
+# Two patient routes (self-scoped: the record is resolved from the login, and
+# another patient's sample is the same 404 as an unknown one) and two ward
+# routes (require_patient_access: department scope, 404 outside it):
+#   GET  /lab-reports                                 the patient's list, no values
+#   GET  /lab-reports/{accession}                     one report as the patient sees it
+#   GET  /patients/{patient_id}/lab-reports           what the portal shows, per report
+#   POST /patients/{patient_id}/lab-reports/{accession}/release
+#                                                     a doctor releases a report as read
+# Every answer that discloses a report writes a fail-closed phi_access row
+# (503 and nothing shown when it cannot); the release writes a fail-closed
+# clinical_access row in its own transaction.
+
+_lab_portal_gate = feature_gate("lab_portal_reports")
+
+
+def _lab_portal_refusal(err: "lab_portal.PortalReportError") -> HTTPException:
+    return HTTPException(status_code=err.status,
+                         detail={"error": err.code, "message": err.message})
+
+
+def _lab_portal_audit_unavailable() -> HTTPException:
+    return HTTPException(status_code=503, detail={
+        "error": "audit_unavailable",
+        "message": ("Your laboratory reports cannot be shown just now. "
+                    "Please try again in a moment.")})
+
+
+def _request_meta(request: Request) -> dict:
+    return {
+        "request_path": request.url.path,
+        "http_method": request.method,
+        "ip_address": request.client.host if request.client else None,
+        "user_agent": request.headers.get("user-agent"),
+    }
+
+
+def _audit_own_lab_read(request: Request, user: dict, patient_id: str, *, action: str,
+                        summary: str, target_type: str, target_id: str,
+                        metadata: dict) -> None:
+    """A patient reading their own laboratory report: phi_access, fail-closed
+    (log_audit_event raises AuditWriteError and the answer is not sent)."""
+    meta = _request_meta(request)
+    log_audit_event(
+        correlation_id=str(uuid.uuid4()),
+        event_category="phi_access",
+        action_type=action,
+        outcome="success",
+        summary_message=summary,
+        actor_user_id=user.get("id"),
+        actor_role=user.get("role"),
+        patient_id=patient_id,
+        target_type=target_type,
+        target_id=target_id,
+        metadata={"self_access": True, **metadata},
+        **meta,
+    )
+
+
+def _audit_other_patients_sample(request: Request, user: dict, patient_id: str,
+                                 other_patient_id: str, accession: str) -> None:
+    """A patient login asked for a sample recorded against someone else. The
+    answer is the plain 404; the trail records the attempt on the other
+    patient's record."""
+    log_audit_event(
+        correlation_id=str(uuid.uuid4()),
+        event_category="authorization",
+        action_type="portal_lab_report_denied",
+        outcome="denied",
+        summary_message="Patient portal: a laboratory report of another patient was asked for",
+        actor_user_id=user.get("id"),
+        actor_role=user.get("role"),
+        patient_id=other_patient_id,
+        target_type="lab_report",
+        target_id=accession,
+        metadata={"asked_by_patient_id": patient_id, "reason": "another_patients_sample"},
+        **_request_meta(request),
+    )
+
+
+@router.get("/lab-reports", dependencies=[Depends(_lab_portal_gate)])
+def patient_lab_reports(request: Request, user: dict = Depends(require_patient_self())):
+    """The patient's own laboratory reports that have reached the portal,
+    newest collection first, as list lines with no values, and the one line
+    that says when reports appear here."""
+    patient_id = _resolve_patient_id(user["id"])
+    with db_session() as db:
+        lines = lab_portal.patient_reports(db, patient_id)
+    if lines:
+        try:
+            _audit_own_lab_read(
+                request, user, patient_id, action="portal_lab_reports_listed",
+                summary=f"Patient portal: own laboratory reports listed ({len(lines)})",
+                target_type="lab_reports", target_id=patient_id,
+                metadata={"count": len(lines),
+                          "accessions": [line["accession"] for line in lines]})
+        except AuditWriteError:
+            raise _lab_portal_audit_unavailable()
+    return {"reports": lines, "note": lab_portal.portal_note(lab_portal.delay_hours())}
+
+
+@router.get("/lab-reports/{accession}", dependencies=[Depends(_lab_portal_gate)])
+def patient_lab_report(accession: str, request: Request,
+                       user: dict = Depends(require_patient_self())):
+    """One of the patient's own reports as they see it. An unknown sample,
+    another patient's sample and a report with nothing in the portal yet are
+    the same 404."""
+    patient_id = _resolve_patient_id(user["id"])
+    try:
+        with db_session() as db:
+            report, shown_ids = lab_portal.patient_report(db, patient_id, accession)
+    except lab_portal.PortalReportError as err:
+        other = err.extra.get("other_patient_id")
+        if other:
+            _audit_other_patients_sample(request, user, patient_id, other,
+                                         err.extra.get("accession") or str(accession)[:64])
+        raise _lab_portal_refusal(err)
+    try:
+        _audit_own_lab_read(
+            request, user, patient_id, action="portal_lab_report_viewed",
+            summary=f"Patient portal: own laboratory report {report['accession']} viewed",
+            target_type="lab_report", target_id=report["accession"],
+            metadata={"result_ids": shown_ids, "complete": report["complete"]})
+    except AuditWriteError:
+        raise _lab_portal_audit_unavailable()
+    return {"report": report}
+
+
+@router.get("/patients/{patient_id}/lab-reports", dependencies=[Depends(_lab_portal_gate)])
+def ward_portal_lab_reports(
+        patient_id: str,
+        user: dict = Depends(require_patient_access(
+            LAB_READ, ORDER_READ, any_of=True,
+            audit_action="portal_lab_reports_state_viewed"))):
+    """For the ward: each laboratory report of one patient and what of it the
+    patient's portal shows (shown, partly shown, waiting for the delay, or
+    waiting for a doctor's release), with the result ids a doctor names when
+    releasing. The guard checks the department (404 outside it) and writes the
+    read audit row."""
+    with db_session() as db:
+        exists = db.execute("SELECT 1 FROM patients WHERE id = ?", (patient_id,)).fetchone()
+        if exists is None:
+            raise HTTPException(status_code=404, detail="Patient not found")
+        reports = lab_portal.portal_states(db, patient_id)
+    return {"patient_id": patient_id, "delay_hours": lab_portal.delay_hours(),
+            "reports": reports}
+
+
+class PortalReleaseIn(BaseModel):
+    """The released results on the report the doctor read, by id (the
+    'live_result_ids' of the ward answer above, or the result ids of the
+    laboratory report). Anything else in the body is refused."""
+    model_config = ConfigDict(extra="forbid")
+    seen_result_ids: list[StrictInt]
+
+
+@router.post("/patients/{patient_id}/lab-reports/{accession}/release",
+             dependencies=[Depends(_lab_portal_gate)])
+def release_lab_report_to_portal(
+        patient_id: str, accession: str, body: PortalReleaseIn, request: Request,
+        # discharge.publish: the doctor's permission that already releases a
+        # reviewed discharge summary to the portal. Ward-scoped like every
+        # other {patient_id} write.
+        user: dict = Depends(require_patient_access(DISCHARGE_PUBLISH))):
+    """A doctor releases one laboratory report, as they read it, to the
+    patient's portal. 409 report_changed (nothing written) when a result was
+    released, amended or withdrawn since the doctor's screen loaded."""
+    try:
+        with db_session(immediate=True) as db:
+            result = lab_portal.release_in_txn(
+                db, patient_id, accession, seen_result_ids=body.seen_result_ids,
+                actor=user, request_meta=_request_meta(request))
+    except lab_portal.PortalReportError as err:
+        raise _lab_portal_refusal(err)
+    except AuditWriteError:
+        raise HTTPException(status_code=503, detail={
+            "error": "audit_unavailable",
+            "message": ("The report was not released because the audit trail is not "
+                        "available. Try again in a moment.")})
+    with db_session() as db:
+        portal = next((r["portal"] for r in lab_portal.portal_states(db, patient_id)
+                       if r["accession"] == result["accession"]), None)
+    return {**result, "portal": portal}
 

@@ -807,14 +807,29 @@ def _persist_extraction(note_id, patient_id, author_id, updates, med_starts, sto
         # the pharmacist verification queue — the med is visible on the
         # chart but nothing becomes a trusted order until a pharmacist
         # verifies (pharmacy_verification_service).
+        #
+        # With ORB_MED_ORDER_STORE on (medorders-8), each charted start is also
+        # a medication order, linked to its chart row, in this transaction
+        # (services/medorders/ai_lanes): prescribed, needs a pharmacist, the
+        # note's author as prescriber, no supply row. A failure writing it
+        # rolls the whole extraction back, so no chart row is left without
+        # its order. Held ruling W111 is untouched: never a draft.
+        from services.medorders import ai_lanes
+        through_store = ai_lanes.store_on() and bool(med_starts)
         for m in med_starts:
-            db.execute(
+            cur = db.execute(
                 """INSERT INTO medications (patient_id, drug_name, dosage, route, frequency, status, prescribed_by, source, notes,
                                             source_note_id, source_sentence)
                    VALUES (?, ?, ?, ?, ?, 'active', ?, 'llm_extracted', ?, ?, ?)""",
                 (patient_id, m["drug"], m["dosage"], m["route"], m["frequency"], author_id, m["notes"],
                  m.get("source_note_id"), m.get("source_sentence"))
             )
+            if through_store:
+                ai_lanes.write_scribe_order_in_txn(
+                    db, medication_id=cur.lastrowid, patient_id=patient_id, author_id=author_id,
+                    note_id=note_id, drug_name=m["drug"],
+                    dose=m["dosage"], route=m["route"], frequency=m["frequency"],
+                    notes=m["notes"], source_sentence=m.get("source_sentence"))
         for drug in stop_proposals:
             db.execute(
                 """INSERT INTO clinical_documents (patient_id, doc_type, title, content, author_id, created_at)

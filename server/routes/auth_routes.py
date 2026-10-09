@@ -388,6 +388,39 @@ def _decode_mfa_enroll_ticket(raw: str) -> dict | None:
     return payload
 
 
+def _user_field(user, key: str):
+    """One field of a users row (sqlite3.Row) or a user dict; None if absent."""
+    keys = user.keys()
+    return user[key] if key in keys else None
+
+
+def user_out(user) -> UserOut:
+    """The public user body every sign-in lane and /api/auth/me return.
+
+    Built from the same users row the lane already loaded. `facility`
+    (multisite-5a) is the facility the account works at, from
+    facility_service.user_facility, which reads only the row's id, role and
+    department plus cached maps. BLOCKING on a cache miss: plain-def routes
+    call it directly, async code through run_db. A failure to work out the
+    label never fails the sign-in: it is a label, and what the account may
+    see is decided on every request by permissions.facility_scope."""
+    facility = None
+    try:
+        from services import facility_service
+        facility = facility_service.user_facility(user)
+    except Exception as e:
+        logger.warning("Could not work out the facility label for %s: %s",
+                       _user_field(user, "id"), e)
+    return UserOut(
+        id=user["id"],
+        name=user["name"],
+        role=user["role"],
+        department=_user_field(user, "department"),
+        registration_number=_user_field(user, "registration_number"),
+        facility=facility,
+    )
+
+
 @router.post("/login", response_model=TokenResponse)
 def login(credentials: UserLogin, request: Request, response: Response):
     """Authenticate user and return JWT token.
@@ -636,13 +669,7 @@ def login(credentials: UserLogin, request: Request, response: Response):
 
     return TokenResponse(
         token=token,
-        user=UserOut(
-            id=user["id"],
-            name=user["name"],
-            role=user["role"],
-            department=user["department"],
-            registration_number=user["registration_number"],
-        ),
+        user=user_out(user),
     )
 
 
@@ -997,13 +1024,7 @@ def refresh(request: Request, response: Response, user: dict = Depends(get_curre
     )
     return TokenResponse(
         token=token,
-        user=UserOut(
-            id=user["id"],
-            name=user["name"],
-            role=user["role"],
-            department=user["department"],
-            registration_number=user["registration_number"],
-        ),
+        user=user_out(user),
     )
 
 
@@ -1509,13 +1530,7 @@ def pin_login(credentials: PinLogin, request: Request, response: Response):
 
     return TokenResponse(
         token=token,
-        user=UserOut(
-            id=user["id"],
-            name=user["name"],
-            role=user["role"],
-            department=user["department"],
-            registration_number=user["registration_number"],
-        ),
+        user=user_out(user),
     )
 
 

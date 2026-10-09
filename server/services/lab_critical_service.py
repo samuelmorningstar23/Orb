@@ -8,8 +8,7 @@ release steps, whose routes answer 404 then. The Critical results screen,
 the callback log and the sweep stay open while the module drains (ruling
 LIS-R21: switching the laboratory off must never hide an open critical), and
 the gate on their routes (require_lab_critical_surface) also opens them while
-ORB_LAB_CRITICAL_INTERFACED is on, for the interfaced lane (lis-22, not built
-here).
+ORB_LAB_CRITICAL_INTERFACED is on, for the interfaced lane (lis-22, below).
 
 GO-LIVE IS HELD. Whether these surfaces sit inside held ruling R023's
 intended-use scope is ruling LIS-R20, for Samuel. They are built as the
@@ -30,11 +29,12 @@ confirmed by Samuel before go-live)
   LIS-R3      A callback closes a critical only when the laboratory logs it
               with the name and role of the person told, how they were told
               (phone or in person) and that they read the value back
-              (closure (i)). The ward's in-app read-back acknowledgement
-              (closure (ii)) is lis-16. A Relay post, or any reply to it,
-              never closes one. A post that could not be delivered (no case
-              room, a discharged patient's closed room, a failed write)
-              makes the tier due at once.
+              (closure (i)), or when a clinician on the patient's ward
+              acknowledges it on the ward card with the name of the person
+              told and a read-back (closure (ii), lis-16, acknowledge()). A
+              Relay post, or any reply to it, never closes one. A post that
+              could not be delivered (no case room, a discharged patient's
+              closed room, a failed write) makes the tier due at once.
   LIS-R19 (c) Discharge and transfer never close a notification. A
               discharged patient's case room is closed to every clinician,
               so nothing is posted there; the delivery is recorded as not
@@ -106,6 +106,42 @@ value a callback reads back follow the chain to the version that stands now
 amended twice says the third version's value, and one whose newest version
 was withdrawn says it was withdrawn.
 
+THE WARD CARD (lis-16, list_for_ward and acknowledge). The open criticals of
+the patients in the caller's ward (permissions.scope_patient_ids_sql, which
+follows PATIENT_DEPARTMENT_SQL: the active admission first, else the latest,
+so a transferred patient's critical moves to the new ward and a discharged
+patient's stays on the last ward, shown without a bed and marked
+discharged). The card shows what the laboratory said: its value, its own flag
+and the limit its pathologist agreed (for the interfaced lane, the sending
+laboratory's flag and the reference range it sent), and whether the value is
+preliminary. Orb adds no severity and no score of its own. A clinician
+holding lab.critical_ack acknowledges one with the name of the person who
+was told, how they were told (on the ward screen, or a phone call from the
+laboratory) and a read-back, in one immediate transaction with its 'acknowledged'
+event (metadata closure 'ward_read_back') and a fail-closed clinical_access
+audit row ('lab_critical_acknowledged'). That closes it, so the ladder stops.
+A patient outside the caller's ward is 404, exactly like a critical that does
+not exist.
+
+INTERFACED CRITICALS (lis-22, raise_interfaced and raise_interfaced_and_deliver).
+BEHIND ORB_LAB_CRITICAL_INTERFACED (default off; it works without ORB_LAB;
+ruling LIS-R22 applied as the build default, go-live held with LIS-R1, LIS-R3
+and LIS-R20). An external laboratory's result that arrives over the
+interface, is final or corrected, is not simulated and not a backfill, belongs
+to a patient Orb resolved, comes from a result feed (not a monitor's device
+metric) and carries the sending laboratory's own OBX-8 flag HH, LL or AA
+raises one notification in the 'interfaced' lane, keyed on the observation.
+Orb never works out a flag of its own here: it passes on the sender's. The
+post goes to the case room as the service identity system_lab (a users row
+that can never sign in, listed in database.SERVICE_ACCOUNT_IDS), shown as
+'Laboratory interface', is_bot 1, source 'lab_interface'. The same ladder, the
+same sweep and the same ward acknowledgement apply. A resent message never
+raises twice: one notification per observation, and none for a result of the
+same patient, test, sender and order (the filler number, else the placer
+number the sender supplied, else the collection time) with the same value
+raised in the last INTERFACED_DEDUPE_HOURS. A corrected result with a
+different critical value raises a new one that names the earlier value.
+
 Every write is one immediate transaction with its clinical_access audit row
 inside it (fail-closed).
 """
@@ -122,16 +158,18 @@ from typing import Any, Optional
 import config
 from database import db_session
 from db_backend import DBIntegrityError
-from permissions import LAB_CRITICAL_LOG, has_permission
-from services import case_room_alerts, lab_module
+from permissions import LAB_CRITICAL_ACK, LAB_CRITICAL_LOG, has_permission
+from services import case_room_alerts, lab_module, lab_observations
 from services.audit_service import log_audit_event
 from services.clinical_time import format_utc, parse_to_utc, utc_iso_now
 
 logger = logging.getLogger("orb.lab.critical")
 
-#: The lane a laboratory-raised critical belongs to (the schema's other lane,
-#: 'interfaced', is lis-22).
+#: The lane a laboratory-raised critical belongs to.
 SOURCE_LANE_LIS = "lis"
+#: The lane of a critical an external laboratory flagged on a result that
+#: arrived over the interface (lis-22).
+SOURCE_LANE_INTERFACED = "interfaced"
 #: How the laboratory appears in the case room.
 SENDER_NAME = "Laboratory"
 SENDER_ROLE = "laboratory"
@@ -150,6 +188,51 @@ RECIPIENT_ROLES = {
 #: How the laboratory told them. 'in_app' is the ward's own acknowledgement
 #: (lis-16), never a laboratory callback.
 CALLBACK_METHODS = {"phone": "Phone", "in_person": "In person"}
+
+#: How the ward was told, for its own acknowledgement on the ward card
+#: (lis-16): read on the ward screen, or a phone call from the laboratory
+#: (ruling LIS-R22: an external laboratory's own call is logged as the ward's
+#: read-back acknowledgement). Stored in lab_critical_notifications.method.
+WARD_ACK_METHODS = {"in_app": "Read on the ward screen",
+                    "phone": "Phone call from the laboratory"}
+#: The metadata closure of the 'acknowledged' event each closure writes
+#: (lab_tat_service reads them: anything but the laboratory's callback counts
+#: as a ward read-back).
+CLOSURE_LABORATORY_CALLBACK = "laboratory_callback"
+CLOSURE_WARD_READ_BACK = "ward_read_back"
+#: The recipient role a ward acknowledgement records when none is chosen,
+#: from the acknowledging account's role.
+_WARD_ROLE_DEFAULT = {"nurse": "nurse", "doctor": "doctor", "clinician": "doctor"}
+#: The most open criticals the ward card lists.
+WARD_LIST_CAP = 100
+
+#: The laboratory's own flag, in words, for the ward card. HH, LL and AA are
+#: the critical flags (HL7 table 0078); the others can stand on a result whose
+#: value changed after it was raised. Orb never works one out for itself.
+LAB_FLAG_WORDS = {"HH": "Critical high", "LL": "Critical low", "AA": "Critical abnormal",
+                  "H": "High", "L": "Low", "A": "Abnormal"}
+
+#: The service identity an interfaced critical is posted as (lis-22). A users
+#: row that can never sign in (is_active 0 and a password no login matches),
+#: listed in database.SERVICE_ACCOUNT_IDS so User Management refuses every
+#: change to it. Created the first time an interfaced critical is posted.
+SYSTEM_LAB_ID = "system_lab"
+SYSTEM_LAB_NAME = "Laboratory interface"
+#: Its role on the users row: a laboratory role with no Relay, Sage or
+#: patient.read_all grant, and no department.
+SYSTEM_LAB_ROLE = "lab_technician"
+INTERFACED_SENDER_NAME = "Laboratory interface"
+INTERFACED_MESSAGE_SOURCE = "lab_interface"
+#: OBX-8 flags that raise an interfaced critical (HL7 table 0078: above the
+#: upper panic limit, below the lower panic limit, critically abnormal).
+INTERFACED_CRITICAL_FLAGS = ("HH", "LL", "AA")
+#: Result statuses that raise one: final or corrected (HL7 OBX-11 F and C,
+#: and the FHIR and free-text spellings the adapters write; FHIR 'amended' is
+#: the parent of 'corrected'). A preliminary result raises nothing.
+INTERFACED_RAISING_STATUSES = ("f", "final", "c", "corrected", "amended")
+#: How far back a resent result is looked for, so the same result sent twice
+#: never raises twice.
+INTERFACED_DEDUPE_HOURS = 24
 
 #: Delivery outcomes recorded on a notification, in words for the screen.
 DELIVERY_POSTED = "posted"
@@ -691,6 +774,379 @@ def record_withdrawal_in_txn(conn, result: dict, *, actor: dict, now: str,
 
 
 # ════════════════════════════════════════════════════════════════════════════
+#  Interfaced results (lis-22)
+# ════════════════════════════════════════════════════════════════════════════
+
+#: The columns the interfaced lane reads of one stored result. The table is
+#: named through lab_observations.from_sql, and only by id: this lane reads
+#: the one row it raised for, superseded or not, never a list of results.
+_OBS_COLUMNS = ("ob.id, ob.patient_id, ob.source, ob.observation_code, "
+                "ob.observation_code_system, ob.observation_name, ob.value_text, "
+                "ob.value_numeric, ob.unit, ob.reference_range, ob.abnormal_flag, ob.status, "
+                "ob.observed_at, ob.raw_segment_ref, ob.obr_placer, ob.obr_filler, "
+                "ob.hl7_sender, ob.superseded_by, ob.lab_result_id")
+
+
+def _observation(conn, observation_id: Any) -> Optional[dict]:
+    try:
+        oid = int(observation_id)
+    except (TypeError, ValueError):
+        return None
+    row = conn.execute(
+        f"SELECT {_OBS_COLUMNS} FROM {lab_observations.from_sql('ob')} WHERE ob.id = ?",
+        (oid,)).fetchone()
+    return dict(row) if row is not None else None
+
+
+def _raw_obx_field(raw: Any, index: int) -> Optional[str]:
+    """Field `index` of a raw HL7 OBX segment written with the standard
+    separators, or None for anything else."""
+    text = str(raw or "")
+    if not text.startswith("OBX|"):
+        return None
+    parts = text.split("|")
+    return parts[index] if len(parts) > index else None
+
+
+def interfaced_flag(abnormal_flag: Any, raw_segment: Any = None) -> Optional[str]:
+    """The sending laboratory's own critical flag on one result: 'HH', 'LL'
+    or 'AA', or None. Reads the stored flag (the code before any '^') and,
+    for an HL7 result, every repetition of OBX-8 in the raw segment, because
+    the adapter stores only the first. Orb never works one out for itself."""
+    found: list[str] = []
+    first = str(abnormal_flag or "").split("^", 1)[0].strip().upper()
+    if first:
+        found.append(first)
+    raw8 = _raw_obx_field(raw_segment, 8)
+    if raw8:
+        for rep in raw8.split("~"):
+            code = rep.split("^", 1)[0].strip().upper()
+            if code:
+                found.append(code)
+    for code in INTERFACED_CRITICAL_FLAGS:
+        if code in found:
+            return code
+    return None
+
+
+_SN_COMPARATORS = ("", "<", ">", "<=", ">=", "=", "<>")
+_SN_NUMBER = re.compile(r"^[+-]?\d+(?:\.\d+)?$")
+
+
+def _as_sent(value: Any) -> str:
+    """A value as the sender wrote it. A structured numeric keeps its
+    comparator ('>^600' reads '>600', '^7.1' reads '7.1'); a coded value
+    reads as its text ('POS^Positive^L' reads 'Positive')."""
+    text = str(value if value is not None else "").strip()
+    if "^" not in text:
+        return text
+    parts = [part.strip() for part in text.split("^")]
+    if parts[0] in _SN_COMPARATORS and len(parts) > 1 and _SN_NUMBER.match(parts[1]):
+        return "".join(part for part in parts if part)
+    return parts[1] if len(parts) > 1 and parts[1] else parts[0]
+
+
+def _observation_value(row: dict, value_as_sent: Any = None) -> str:
+    """'7.10 mmol/L': an interfaced result as the sending laboratory wrote it
+    (its own precision), with its unit, at most VALUE_TOLD_MAX characters so
+    a callback or an acknowledgement can name it."""
+    text = _as_sent(value_as_sent) if value_as_sent is not None else ""
+    if not text:
+        raw5 = _raw_obx_field(row.get("raw_segment_ref"), 5)
+        if raw5:
+            text = _as_sent(raw5.split("~", 1)[0])
+    if not text:
+        shown = lab_observations.display_value(row)
+        if isinstance(shown, float):
+            text = format(shown, "g")
+        elif shown is not None:
+            text = str(shown).strip()
+    shown = value_display({"value_text": text, "unit": row.get("unit")})
+    return re.sub(r"\s+", " ", shown).strip()[:VALUE_TOLD_MAX]
+
+
+def _interfaced_skip(row: Optional[dict]) -> Optional[str]:
+    """Why a stored result raises no interfaced critical, or None when it
+    does: no row, no patient, a simulator's row, a result Orb's own
+    laboratory released (the 'lis' lane's), not final or corrected, replaced
+    or voided, a monitor's device metric, or no critical flag from the
+    sender."""
+    if row is None:
+        return "not_found"
+    if not row.get("patient_id"):
+        return "no_patient"
+    source = str(row.get("source") or "").strip().lower()
+    if source == lab_observations.SIMULATED_SOURCE:
+        return "simulated"
+    if row.get("lab_result_id") is not None:
+        return "laboratory_released"
+    status = str(row.get("status") or "final").strip().lower()
+    if status not in INTERFACED_RAISING_STATUSES:
+        return "not_final"
+    if row.get("superseded_by") is not None or status in lab_observations.VOID_OBSERVATION_STATUSES:
+        return "not_live"
+    from services import result_quarantine_service
+    if not result_quarantine_service.takes_result(row.get("source"),
+                                                  row.get("observation_code_system")):
+        return "device_metric"
+    if interfaced_flag(row.get("abnormal_flag"), row.get("raw_segment_ref")) is None:
+        return "not_flagged"
+    return None
+
+
+def _instant(value: Any):
+    try:
+        return parse_to_utc(value) if value else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _same_result(a: dict, b: dict) -> bool:
+    """Whether two stored results are the same result of the same order: the
+    same filler number (OBR-3); or, when either has none, the same placer
+    number the sender supplied (OBR-2); or, when neither carries a number at
+    all, the same collection instant."""
+    fa, fb = (a.get("obr_filler") or "").strip(), (b.get("obr_filler") or "").strip()
+    pa, pb = (a.get("obr_placer") or "").strip(), (b.get("obr_placer") or "").strip()
+    if fa and fb:
+        return fa == fb
+    if pa and pb and pa == pb:
+        return True
+    if not (fa or pa) and not (fb or pb):
+        ia, ib = _instant(a.get("observed_at")), _instant(b.get("observed_at"))
+        if ia is not None and ib is not None:
+            return ia == ib
+        return bool(a.get("observed_at")) and a.get("observed_at") == b.get("observed_at")
+    return False
+
+
+def _interfaced_earlier(conn, row: dict, shown: str, now: str) -> tuple[Optional[dict],
+                                                                          Optional[dict]]:
+    """(duplicate, earlier) among the interfaced criticals raised for this
+    patient and test in the last INTERFACED_DEDUPE_HOURS: `duplicate` is one
+    already raised for the same result (same sender and order) with the same
+    value, so nothing is raised again; `earlier` the latest one for the same
+    result with another value, which a new critical names."""
+    since = _plus_minutes(now, -60 * INTERFACED_DEDUPE_HOURS)
+    code = (row.get("observation_code") or "").strip()
+    rows = conn.execute(
+        f"""SELECT n.id, n.value_display, n.status, n.test_name, n.test_code,
+                   ob.obr_filler, ob.obr_placer, ob.hl7_sender, ob.observed_at
+            FROM lab_critical_notifications n
+            LEFT JOIN {lab_observations.from_sql('ob')} ON ob.id = n.observation_id
+            WHERE n.source_lane = ? AND n.patient_id = ? AND COALESCE(n.test_code, '') = ?
+              AND julianday(n.raised_at) >= julianday(?)
+            ORDER BY julianday(n.raised_at) DESC, n.rowid DESC""",
+        (SOURCE_LANE_INTERFACED, row["patient_id"], code, since)).fetchall()
+    earlier = None
+    for r in rows:
+        r = dict(r)
+        if not code and (r.get("test_name") or "") != (row.get("observation_name") or ""):
+            continue
+        if (r.get("hl7_sender") or "").strip() != (row.get("hl7_sender") or "").strip():
+            continue
+        if not _same_result(r, row):
+            continue
+        if r["value_display"] == shown:
+            return r, None
+        earlier = earlier or r
+    return None, earlier
+
+
+def ensure_system_lab_user(conn) -> None:
+    """The users row an interfaced critical is posted as (messages.sender_id
+    names a user). Created with a password no login matches and is_active 0,
+    and kept inactive: this identity never signs in."""
+    conn.execute(
+        "INSERT OR IGNORE INTO users (id, name, role, department, password_hash, is_active) "
+        "VALUES (?, ?, ?, NULL, 'system', 0)",
+        (SYSTEM_LAB_ID, SYSTEM_LAB_NAME, SYSTEM_LAB_ROLE))
+    conn.execute("UPDATE users SET is_active = 0 WHERE id = ? AND COALESCE(is_active, 1) != 0",
+                 (SYSTEM_LAB_ID,))
+
+
+_SYSTEM_LAB_ACTOR = {"id": SYSTEM_LAB_ID, "role": "system"}
+
+
+def raise_interfaced(observation_id: Any, *, backfill: bool = False, value_as_sent: Any = None,
+                     now: Optional[str] = None) -> Optional[str]:
+    """Raise the interfaced critical for one stored result, in its own
+    immediate transaction, with its 'raised' event and a fail-closed
+    clinical_access audit row ('lab_critical_raised', actor system_lab).
+    Returns the notification id to deliver, or None when nothing is raised:
+    ORB_LAB_CRITICAL_INTERFACED off, a backfill, a result that does not
+    qualify (_interfaced_skip), one already raised for this result, or the
+    same result and value raised in the last INTERFACED_DEDUPE_HOURS.
+
+    Called by the ingestion pipeline AFTER the result committed, so a failure
+    here raises out to the caller (which logs it) and never undoes the
+    result. `value_as_sent` is the value as the message carried it (OBX-5),
+    shown in preference to the stored number so the laboratory's own
+    precision is kept."""
+    if backfill or not config.feature_enabled("lab_critical_interfaced"):
+        return None
+    stamp = now or utc_iso_now()
+    with db_session(immediate=True) as conn:
+        if not _tables_present(conn):
+            return None
+        row = _observation(conn, observation_id)
+        if _interfaced_skip(row) is not None:
+            return None
+        oid = int(row["id"])
+        if conn.execute("SELECT 1 FROM lab_critical_notifications WHERE observation_id = ?",
+                        (oid,)).fetchone() is not None:
+            return None
+        if conn.execute("SELECT 1 FROM patients WHERE id = ?",
+                        (row["patient_id"],)).fetchone() is None:
+            return None
+        shown = _observation_value(row, value_as_sent)
+        duplicate, earlier = _interfaced_earlier(conn, row, shown, stamp)
+        if duplicate is not None:
+            logger.info("Interfaced critical for result %s not raised again: the same result "
+                        "was raised as %s", oid, duplicate["id"])
+            return None
+        from permissions import PATIENT_DEPARTMENT_SQL
+        patient = conn.execute(
+            f"SELECT p.id, {PATIENT_DEPARTMENT_SQL} AS department FROM patients p WHERE p.id = ?",
+            (row["patient_id"],)).fetchone()
+        flag = interfaced_flag(row.get("abnormal_flag"), row.get("raw_segment_ref"))
+        test_name = (row.get("observation_name") or row.get("observation_code") or "Result").strip()
+        policy = policy_snapshot()
+        ensure_system_lab_user(conn)
+        nid = f"LC-{uuid.uuid4().hex[:20]}"
+        try:
+            conn.execute(
+                """INSERT INTO lab_critical_notifications
+                   (id, source_lane, observation_id, patient_id, test_code, test_name,
+                    value_display, preliminary, raised_at, raised_by, raised_in_department,
+                    current_tier, tier_due_at, delivery_status, policy_json, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 1, ?, ?, ?, 'open')""",
+                (nid, SOURCE_LANE_INTERFACED, oid, row["patient_id"],
+                 row.get("observation_code"), test_name, shown, stamp, SYSTEM_LAB_ID,
+                 patient["department"] if patient is not None else None,
+                 due_at(stamp, policy["tiers"], 1), DELIVERY_PENDING,
+                 json.dumps(policy, default=str)))
+        except DBIntegrityError:
+            # Raised for this result in the meantime.
+            return None
+        metadata = {"source_lane": SOURCE_LANE_INTERFACED, "observation_id": oid,
+                    "trigger": "interfaced", "lab_flag": flag, "value_display": shown,
+                    "result_status": row.get("status"), "source": row.get("source"),
+                    "reference_range": row.get("reference_range"),
+                    "obr_filler": row.get("obr_filler"), "obr_placer": row.get("obr_placer"),
+                    "sender": row.get("hl7_sender"), "observed_at": row.get("observed_at"),
+                    "ladder_configured": policy["configured"]}
+        if earlier is not None:
+            # The sending laboratory reported a different value for this
+            # result earlier (a correction).
+            metadata.update(previous_notification_id=earlier["id"],
+                            previous_value_display=earlier["value_display"])
+        _event(conn, nid, row["patient_id"], "raised", tier=1, actor_id=SYSTEM_LAB_ID, now=stamp,
+               detail=(f"Critical result from the sending laboratory: {test_name} {shown}"
+                       + (f" (changed from {earlier['value_display']} reported earlier)"
+                          if earlier is not None else "")),
+               metadata=metadata)
+        _audit(conn, action="lab_critical_raised",
+               summary=f"Interfaced laboratory critical result raised: {test_name} {shown}",
+               actor=_SYSTEM_LAB_ACTOR, notification_id=nid, patient_id=row["patient_id"],
+               metadata=metadata)
+    return nid
+
+
+def raise_interfaced_and_deliver(observation_id: Any, *, backfill: bool = False,
+                                 value_as_sent: Any = None) -> dict:
+    """raise_interfaced, then deliver it to the case room and push it live.
+    NEVER raises: the result is already stored. A failure to raise is logged
+    as an error and answered {raised: False, error: True}."""
+    try:
+        nid = raise_interfaced(observation_id, backfill=backfill, value_as_sent=value_as_sent)
+    except Exception:
+        logger.error("Interfaced laboratory critical for result %s could not be raised; the "
+                     "result is stored and nobody was told by Orb", observation_id, exc_info=True)
+        return {"raised": False, "error": True, "notification_id": None}
+    if nid is None:
+        return {"raised": False, "error": False, "notification_id": None}
+    (answer,) = deliver_all([nid])
+    return {"raised": True, "error": False, **answer}
+
+
+def _interfaced_now(conn, n: dict) -> dict:
+    """What has happened to an interfaced result since its critical was
+    raised, from the sending laboratory's own corrections: {status, changed,
+    text, value_now}. A correction replaced the stored result when its
+    superseded_by is set (ORB_RESULT_CORRECTIONS); the chain is followed to
+    the result that stands now."""
+    row = _observation(conn, n.get("observation_id"))
+    if row is None:
+        return {"status": None, "changed": False, "text": None, "value_now": None}
+    head, seen = row, {int(row["id"])}
+    while head.get("superseded_by") is not None and len(seen) < CHAIN_MAX:
+        nxt = _observation(conn, head["superseded_by"])
+        if nxt is None or int(nxt["id"]) in seen:
+            break
+        head = nxt
+        seen.add(int(nxt["id"]))
+    status = str(head.get("status") or "final").strip().lower()
+    told = n.get("value_display")
+    replaced = int(head["id"]) != int(row["id"])
+    if status in lab_observations.VOID_OBSERVATION_STATUSES and status != "superseded":
+        return {"status": "withdrawn", "changed": True, "value_now": None,
+                "text": ("Withdrawn by the sending laboratory after this was raised. Check the "
+                         "chart before acting on it.")}
+    if status == "superseded" or (head.get("superseded_by") is not None):
+        return {"status": "corrected", "changed": True, "value_now": None,
+                "text": ("Corrected by the sending laboratory after this was raised. Check the "
+                         "chart for the corrected value.")}
+    if replaced:
+        now_value = _observation_value(head)
+        if now_value == told:
+            return {"status": "corrected", "changed": False, "value_now": now_value,
+                    "text": ("Corrected by the sending laboratory after this was raised; the "
+                             "value is unchanged.")}
+        return {"status": "corrected", "changed": True, "value_now": now_value,
+                "text": (f"Corrected by the sending laboratory after this was raised: now "
+                         f"{now_value}. Check the chart.")}
+    corrected = status in ("c", "corrected", "amended")
+    return {"status": "corrected" if corrected else "final", "changed": False,
+            "value_now": told,
+            "text": ("Corrected result from the sending laboratory" if corrected
+                     else "Final result from the sending laboratory")}
+
+
+def _interfaced_message_text(conn, n: dict) -> str:
+    """The case-room words for an interfaced critical: the sending
+    laboratory's value, its own flag and the reference range it sent, and
+    what the ward does next. No score and no severity of Orb's own."""
+    patient = conn.execute("SELECT name, mrn FROM patients WHERE id = ?",
+                           (n["patient_id"],)).fetchone()
+    name = (patient["name"] if patient is not None else None) or "this patient"
+    uhid = patient["mrn"] if patient is not None and patient["mrn"] else None
+    who = name + (f", UHID {uhid}" if uhid else "")
+    row = _observation(conn, n.get("observation_id")) or {}
+    flag = interfaced_flag(row.get("abnormal_flag"), row.get("raw_segment_ref"))
+    flag_words = (LAB_FLAG_WORDS.get(flag) or "Critical").lower()
+    reference = (row.get("reference_range") or "").strip()
+    range_words = f"; its reference range is {reference}" if reference else ""
+    tiers = _policy(n)["tiers"]
+    tier = int(n.get("current_tier") or 1)
+    climbing = ""
+    if tier > 1:
+        calling = _tier_words(tiers, tier)
+        climbing = ("Not yet acknowledged with a read-back. "
+                    + (f"Now calling: {calling}. " if calling else ""))
+    since = _interfaced_now(conn, n)
+    state = ""
+    if since.get("changed") and since.get("text"):
+        state = f" {since['text']}"
+    elif since.get("status") == "corrected":
+        state = " This is a corrected result."
+    return (f"{climbing}Critical result from the sending laboratory for {who}: "
+            f"{n['test_name']} {n['value_display']}, flagged {flag_words} by the sending "
+            f"laboratory{range_words}.{state} Orb passes on the laboratory's own flag. "
+            "Acknowledge it with a read-back on the ward screen, or phone the laboratory.")
+
+
+# ════════════════════════════════════════════════════════════════════════════
 #  Delivery
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -750,6 +1206,8 @@ def _message_text(conn, n: dict) -> str:
     happens next."""
     from services.hospital_time import hospital_stamp
 
+    if n.get("source_lane") == SOURCE_LANE_INTERFACED:
+        return _interfaced_message_text(conn, n)
     patient = conn.execute("SELECT name, mrn FROM patients WHERE id = ?",
                            (n["patient_id"],)).fetchone()
     result = _head_row(conn, n.get("result_id"))
@@ -933,14 +1391,24 @@ def deliver_in_txn(conn, notification_id: str, *, now: str) -> dict:
                           attempt=attempt)
         out["reason"] = REASON_CASE_ROOM_CLOSED
         return out
-    sender = n.get("raised_by")
+    # The laboratory lane posts as the technologist who validated the result;
+    # the interfaced lane as the service identity system_lab (lis-22), marked
+    # as automated (is_bot), because no person in this hospital sent it.
+    interfaced = n.get("source_lane") == SOURCE_LANE_INTERFACED
+    if interfaced:
+        ensure_system_lab_user(conn)
+        sender = SYSTEM_LAB_ID
+    else:
+        sender = n.get("raised_by")
     if not sender or conn.execute("SELECT 1 FROM users WHERE id = ?", (sender,)).fetchone() is None:
         _mark_undelivered(conn, n, DELIVERY_FAILED, DELIVERY_FAILED, now, attempt=attempt)
         out["reason"] = DELIVERY_FAILED
         return out
     logged, message_id, channel_id, msg_data = case_room_alerts.persist_case_room_alert(
-        n["patient_id"], _message_text(conn, n), sender_id=sender, sender_name=SENDER_NAME,
-        sender_role=SENDER_ROLE, is_bot=False, source=MESSAGE_SOURCE, db=conn,
+        n["patient_id"], _message_text(conn, n), sender_id=sender,
+        sender_name=INTERFACED_SENDER_NAME if interfaced else SENDER_NAME,
+        sender_role=SENDER_ROLE, is_bot=interfaced,
+        source=INTERFACED_MESSAGE_SOURCE if interfaced else MESSAGE_SOURCE, db=conn,
         message_type=MESSAGE_TYPE, idempotency_key=key)
     if not logged:
         _mark_undelivered(conn, n, DELIVERY_NO_CASE_ROOM, DELIVERY_NO_CASE_ROOM, now,
@@ -1070,16 +1538,19 @@ def _open_notification(conn, notification_id: str, dept: Optional[str]) -> dict:
     return n
 
 
-def _value_shown(value_told: Any) -> str:
+def _value_shown(value_told: Any, *, ward: bool = False) -> str:
     """The value a callback or an attempt says its screen showed as told to
     the ward, required (422 'value_told_required'): the stale-screen guard,
-    like `expected` on a laboratory result."""
+    like `expected` on a laboratory result. `ward` words it for the ward
+    card's acknowledgement."""
     shown = _clean(value_told, limit=VALUE_TOLD_MAX)
     if not shown:
         raise LabCriticalError(
             "value_told_required",
-            "This screen did not say which value the call was about. Reload Critical results "
-            "and log the call again.", status=422)
+            ("This screen did not say which value you read back. Reload the screen and "
+             "acknowledge it again." if ward else
+             "This screen did not say which value the call was about. Reload Critical results "
+             "and log the call again."), status=422)
     return shown
 
 
@@ -1214,21 +1685,130 @@ def log_attempt(notification_id: str, *, actor: dict, method: Any, note: Any,
 
 
 # ════════════════════════════════════════════════════════════════════════════
+#  The ward's acknowledgement (lis-16)
+# ════════════════════════════════════════════════════════════════════════════
+
+def _ward_told_as_shown(conn, n: dict, shown: str) -> str:
+    """_told_as_shown in the ward's words: refused 409 'value_changed' (nothing
+    is written) when the value the laboratory has now told the ward is not the
+    value this screen showed."""
+    told = _told(n, _changes(conn, n["id"]))
+    if _clean(told, limit=VALUE_TOLD_MAX) != shown:
+        raise LabCriticalError(
+            "value_changed",
+            f"The value changed after this screen loaded: the laboratory now reports "
+            f"{_told_phrase(n['test_name'], told)}. Nothing was recorded. Read the new value "
+            "and acknowledge it again.",
+            value_told=told, value_shown=shown)
+    return told
+
+
+def acknowledge(notification_id: str, *, actor: dict, recipient_name: Any, read_back: Any,
+                value_told: Any, method: Any = "in_app", recipient_role: Any = None,
+                caller_name: Any = None, note: Any = None, dept: Optional[str] = None,
+                request_meta: Optional[dict] = None) -> dict:
+    """Close a critical with the ward's own read-back acknowledgement (ruling
+    LIS-R3, closure (ii)), in ONE immediate transaction: who was told (a
+    name, required, 422 'recipient_required'; a role from RECIPIENT_ROLES,
+    defaulting from the account's own role), how (WARD_ACK_METHODS: read on
+    the ward screen, or a phone call from the laboratory, whose caller may be
+    named), and that the value was read back, which is required (422
+    'read_back_required'). The notification becomes 'acknowledged', which
+    stops its ladder; an 'acknowledged' event (metadata closure
+    'ward_read_back') and a fail-closed clinical_access audit row
+    ('lab_critical_acknowledged') land with it.
+
+    Only an account holding lab.critical_ack (403 otherwise), and only for a
+    patient on the caller's ward (`dept`, department_scope): any other is
+    404, exactly like a critical that does not exist. A closed one is 409
+    'already_closed'. `value_told` is the value the screen showed (required);
+    a different value told since is 409 'value_changed' and writes
+    nothing."""
+    if not actor or not actor.get("id") or not has_permission(actor.get("role", ""),
+                                                              LAB_CRITICAL_ACK):
+        raise LabCriticalError(
+            "permission_denied",
+            "Only a nurse or a doctor on the patient's ward acknowledges a critical result.",
+            status=403)
+    name = _clean(recipient_name, limit=NAME_MAX)
+    if len(name) < 2:
+        raise LabCriticalError("recipient_required",
+                               "Type the name of the person who was told.", status=422)
+    how = str(method or "in_app").strip()
+    if how not in WARD_ACK_METHODS:
+        raise LabCriticalError("method_required", "Choose how you were told.", status=422,
+                               allowed=list(WARD_ACK_METHODS))
+    role = str(recipient_role or "").strip() or _WARD_ROLE_DEFAULT.get(str(actor.get("role") or ""))
+    if role and role not in RECIPIENT_ROLES:
+        raise LabCriticalError("recipient_role_required",
+                               "Choose the role of the person who was told.", status=422,
+                               allowed=list(RECIPIENT_ROLES))
+    if read_back is not True:
+        raise LabCriticalError(
+            "read_back_required",
+            "Read the result back before you acknowledge it. Nothing was recorded.",
+            status=422)
+    shown = _value_shown(value_told, ward=True)
+    caller = _clean(caller_name, limit=NAME_MAX) or None
+    text = _clean(note, limit=NOTE_MAX) or None
+    actor_id = actor["id"]
+    with db_session(immediate=True) as conn:
+        n = _open_notification(conn, notification_id, dept)
+        told = _ward_told_as_shown(conn, n, shown)
+        now = utc_iso_now()
+        moved = conn.execute(
+            """UPDATE lab_critical_notifications
+               SET status = 'acknowledged', acknowledged_at = ?, acknowledged_by = ?,
+                   recipient_name = ?, recipient_role = ?, method = ?, read_back = 1
+               WHERE id = ? AND status = 'open'""",
+            (now, actor_id, name, role or None, how, n["id"]))
+        if moved.rowcount != 1:
+            raise LabCriticalError("already_closed", "This critical result is already closed.")
+        tier = int(n["current_tier"])
+        detail = {"closure": CLOSURE_WARD_READ_BACK, "recipient_name": name,
+                  "recipient_role": role or None, "method": how, "caller_name": caller,
+                  "read_back": True, "note": text, "value_told": told,
+                  "source_lane": n["source_lane"], "tier": tier}
+        _event(conn, n["id"], n["patient_id"], "acknowledged", tier=tier, actor_id=actor_id,
+               now=now,
+               detail=(f"Acknowledged on the ward by {name}"
+                       + (f" ({RECIPIENT_ROLES[role]})" if role else "")
+                       + f": {WARD_ACK_METHODS[how].lower()}"
+                       + (f" ({caller})" if caller and how == "phone" else "")
+                       + ", read back"),
+               metadata=detail)
+        _audit(conn, action="lab_critical_acknowledged",
+               summary=(f"Laboratory critical result acknowledged on the ward with a read-back: "
+                        f"{_told_phrase(n['test_name'], told)}"),
+               actor=actor, notification_id=n["id"], patient_id=n["patient_id"],
+               metadata={**detail, "closes": True}, request_meta=request_meta)
+        view = _ward_views(conn, [n["id"]])[0]
+    lab_module.refresh_drain_state()
+    return {"notification": view}
+
+
+# ════════════════════════════════════════════════════════════════════════════
 #  The laboratory's Critical results screen
 # ════════════════════════════════════════════════════════════════════════════
 
-_LIST_SELECT = """
+#: The interfaced lane's stored result is joined by id through
+#: lab_observations.from_sql (lis-22): its flag, the reference range the
+#: sending laboratory sent, and the raw segment the flag is read back from.
+_LIST_SELECT = f"""
     SELECT n.*, p.name AS patient_name, p.mrn, p.ward, p.bed, p.status AS patient_status,
            (SELECT MAX(ds.discharged_at) FROM discharge_summaries ds
              WHERE ds.patient_id = n.patient_id) AS discharged_at,
            r.status AS result_status, r.value_text AS result_value_text, r.unit AS result_unit,
-           r.superseded_by_result_id, r.critical_limit_id,
+           r.superseded_by_result_id, r.critical_limit_id, r.abnormal_flag AS result_flag,
            cl.display_text AS critical_limit_text,
+           ob.abnormal_flag AS obs_flag, ob.reference_range AS obs_reference_range,
+           ob.raw_segment_ref AS obs_raw_segment,
            ru.name AS raised_by_name, au.name AS acknowledged_by_name
     FROM lab_critical_notifications n
     JOIN patients p ON p.id = n.patient_id
     LEFT JOIN lab_results r ON r.id = n.result_id
     LEFT JOIN lab_critical_limits cl ON cl.id = r.critical_limit_id
+    LEFT JOIN {lab_observations.from_sql('ob')} ON ob.id = n.observation_id
     LEFT JOIN users ru ON ru.id = n.raised_by
     LEFT JOIN users au ON au.id = n.acknowledged_by"""
 
@@ -1236,22 +1816,29 @@ _LIST_SELECT = """
 def _add_heads(conn, rows: dict[str, dict]) -> None:
     """Put on each listed row the version of its result that stands now
     (head_*): the raised version itself, or for an amended one the version at
-    the head of its chain (head_result_id), never one hop."""
+    the head of its chain (head_result_id), never one hop. head_flag and
+    head_limit_text are that version's own flag and approved limit (the ward
+    card shows the laboratory's flag as it stands)."""
     for row in rows.values():
         head = None
         if row.get("result_id") is not None and row.get("superseded_by_result_id") is not None:
             hid = head_result_id(conn, row["result_id"])
             if hid is not None and hid != int(row["result_id"]):
-                got = conn.execute("SELECT id, status, value_text, unit FROM lab_results "
-                                   "WHERE id = ?", (hid,)).fetchone()
+                got = conn.execute(
+                    "SELECT r.id, r.status, r.value_text, r.unit, r.abnormal_flag, "
+                    "cl.display_text AS limit_text FROM lab_results r "
+                    "LEFT JOIN lab_critical_limits cl ON cl.id = r.critical_limit_id "
+                    "WHERE r.id = ?", (hid,)).fetchone()
                 head = dict(got) if got is not None else None
         if head is None:
             row.update(head_id=row.get("result_id"), head_status=row.get("result_status"),
                        head_value_text=row.get("result_value_text"),
-                       head_unit=row.get("result_unit"))
+                       head_unit=row.get("result_unit"), head_flag=row.get("result_flag"),
+                       head_limit_text=row.get("critical_limit_text"))
         else:
             row.update(head_id=head["id"], head_status=head["status"],
-                       head_value_text=head["value_text"], head_unit=head["unit"])
+                       head_value_text=head["value_text"], head_unit=head["unit"],
+                       head_flag=head["abnormal_flag"], head_limit_text=head["limit_text"])
 
 
 def _value_now(row: dict) -> Optional[str]:
@@ -1367,7 +1954,34 @@ def _events_by_notification(conn, ids: list[str]) -> dict[str, list[dict]]:
     return out
 
 
-def _view(row: dict, events: list[dict], now: str) -> dict:
+def _lab_flag(row: dict) -> Optional[str]:
+    """The laboratory's own flag on a listed row as it stands: the head
+    version's flag for the laboratory lane, the sending laboratory's critical
+    flag for the interfaced lane. None when there is none."""
+    if row.get("source_lane") == SOURCE_LANE_INTERFACED:
+        return interfaced_flag(row.get("obs_flag"), row.get("obs_raw_segment"))
+    flag = str(row.get("head_flag", row.get("result_flag")) or "").strip().upper()
+    return flag or None
+
+
+def _closure(events: list[dict]) -> Optional[str]:
+    """How a closed critical was closed: the metadata closure of its latest
+    'acknowledged' event (CLOSURE_LABORATORY_CALLBACK or
+    CLOSURE_WARD_READ_BACK)."""
+    for e in reversed(events):
+        if e["event_type"] == "acknowledged":
+            return e["metadata"].get("closure")
+    return None
+
+
+def _ack_method_text(method: Optional[str], closure: Optional[str]) -> Optional[str]:
+    if closure == CLOSURE_WARD_READ_BACK:
+        return WARD_ACK_METHODS.get(method or "")
+    return CALLBACK_METHODS.get(method or "")
+
+
+def _view(row: dict, events: list[dict], now: str,
+          interfaced_now: Optional[dict] = None) -> dict:
     policy = _policy(row)
     tiers = policy["tiers"]
     tier = int(row.get("current_tier") or 1)
@@ -1404,6 +2018,18 @@ def _view(row: dict, events: list[dict], now: str) -> dict:
         except ValueError:
             due_now = True   # an unreadable due time reads as due, never as not yet
     discharged = row.get("patient_status") == "discharged"
+    interfaced = row.get("source_lane") == SOURCE_LANE_INTERFACED
+    if interfaced:
+        # The sending laboratory's own corrections (lis-22): no Orb result.
+        since = interfaced_now or {}
+        value_now = since.get("value_now")
+        result_now = {"status": since.get("status"), "changed": bool(since.get("changed")),
+                      "text": since.get("text")}
+    else:
+        value_now = _value_now(row)
+        result_now = _result_now(row, told=told, changes=changes)
+    flag = _lab_flag(row)
+    closure = _closure(events) if row.get("status") == "acknowledged" else None
     return {
         "id": row["id"],
         "status": row["status"],
@@ -1420,12 +2046,18 @@ def _view(row: dict, events: list[dict], now: str) -> dict:
         "critical_limit_text": row.get("critical_limit_text"),
         "preliminary": bool(row.get("preliminary")),
         "result_id": row.get("result_id"),
+        "observation_id": row.get("observation_id"),
+        # The laboratory's own flag (the sending laboratory's, for the
+        # interfaced lane) and, for the interfaced lane, the reference range
+        # it sent. Never a flag Orb worked out.
+        "lab_flag": {"code": flag, "text": LAB_FLAG_WORDS.get(flag)} if flag else None,
+        "reference_range": (row.get("obs_reference_range") or None) if interfaced else None,
         # The value the ward was last sent for this critical, and the result's
         # value as it now stands (None while it is back on the bench or after
         # a withdrawal).
         "value_told": told,
-        "value_now": _value_now(row),
-        "result_now": _result_now(row, told=told, changes=changes),
+        "value_now": value_now,
+        "result_now": result_now,
         "changes": [{"at": c["at"], "by_name": c["by_name"], "from_value": c.get("from_value"),
                      "to_value": c.get("to_value"),
                      "still_critical": bool(c.get("still_critical")),
@@ -1450,24 +2082,158 @@ def _view(row: dict, events: list[dict], now: str) -> dict:
                           "recipient_role": row.get("recipient_role"),
                           "recipient_role_text": RECIPIENT_ROLES.get(row.get("recipient_role") or ""),
                           "method": row.get("method"),
-                          "method_text": CALLBACK_METHODS.get(row.get("method") or ""),
-                          "read_back": bool(row.get("read_back"))}
+                          "method_text": _ack_method_text(row.get("method"), closure),
+                          "read_back": bool(row.get("read_back")),
+                          # 'laboratory_callback' or 'ward_read_back' (lis-16).
+                          "closure": closure}
                          if row.get("status") == "acknowledged" else None),
         "events": [{"type": e["event_type"], "tier": e["tier"], "at": e["at"],
                     "detail": e["detail"], "by_name": e["by_name"]} for e in events],
     }
 
 
-def _views(conn, ids: list[str], *, now: Optional[str] = None) -> list[dict]:
+def _load(conn, ids: list[str]) -> tuple[dict, dict, dict]:
+    """The listed rows (with their heads), their events and, for the
+    interfaced lane, what the sending laboratory has done since."""
     if not ids:
-        return []
+        return {}, {}, {}
     marks = ", ".join("?" for _ in ids)
     rows = {r["id"]: dict(r) for r in conn.execute(
         f"{_LIST_SELECT} WHERE n.id IN ({marks})", tuple(ids)).fetchall()}
     _add_heads(conn, rows)
     events = _events_by_notification(conn, [i for i in ids if i in rows])
+    since = {i: _interfaced_now(conn, row) for i, row in rows.items()
+             if row.get("source_lane") == SOURCE_LANE_INTERFACED}
+    return rows, events, since
+
+
+def _views(conn, ids: list[str], *, now: Optional[str] = None) -> list[dict]:
+    if not ids:
+        return []
+    rows, events, since = _load(conn, ids)
     stamp = now or utc_iso_now()
-    return [_view(rows[i], events.get(i, []), stamp) for i in ids if i in rows]
+    return [_view(rows[i], events.get(i, []), stamp, since.get(i)) for i in ids if i in rows]
+
+
+# ── The ward card (lis-16) ───────────────────────────────────────────────────
+
+def _ward_state(row: dict, *, interfaced_now: Optional[dict]) -> tuple[bool, Optional[str]]:
+    """(preliminary, the words for how the result stands) for the ward card,
+    read from the result as it stands (never from the notification's
+    preliminary column alone, as _message_text reads it)."""
+    if row.get("source_lane") == SOURCE_LANE_INTERFACED:
+        since = interfaced_now or {}
+        if since.get("status") == "corrected" and not since.get("changed"):
+            return False, "Corrected result from the sending laboratory"
+        return False, ("Final result from the sending laboratory"
+                       if since.get("status") in (None, "final") else None)
+    status = row.get("head_status", row.get("result_status"))
+    if status == "withdrawn":
+        return False, None
+    if status == "entered":
+        return False, ("The laboratory is checking this result again, so the value may change. "
+                       "It will phone with the checked result.")
+    if status == "tech_validated" or (status != "released" and row.get("preliminary")):
+        return True, "Preliminary, not yet authorised"
+    return False, "Authorised"
+
+
+def _ward_change(row: dict, changes: list[dict], told: str, *,
+                 interfaced_now: Optional[dict]) -> Optional[str]:
+    """What changed after the ward was first told, in words, or None."""
+    if row.get("source_lane") == SOURCE_LANE_INTERFACED:
+        since = interfaced_now or {}
+        return since.get("text") if since.get("changed") else None
+    if told == WITHDRAWN_TOLD:
+        return ("Withdrawn: the laboratory says this result was entered in error and it is no "
+                "longer on the chart. Do not act on it.")
+    if not changes:
+        return None
+    last = changes[-1]
+    if last.get("still_critical"):
+        return (f"Changed after it was first reported: was {last.get('from_value')}, now "
+                f"{told}, still critical.")
+    return (f"Corrected: now {told}, which is not critical. It was reported as critical at "
+            f"{last.get('critical_value') or row.get('value_display')}.")
+
+
+def _ward_view(row: dict, events: list[dict], interfaced_now: Optional[dict] = None) -> dict:
+    """One critical as the ward card shows it: the patient (no bed once
+    discharged), the value the laboratory told the ward, its own flag and
+    the limit its pathologist agreed (for the interfaced lane the sending
+    laboratory's flag and reference range), whether it is preliminary, and
+    what changed since. No tier, no due time, no score and no severity of
+    Orb's own."""
+    changes = [{**e["metadata"], "at": e["at"]} for e in events
+               if e["event_type"] == "escalated" and e["metadata"].get("reason") == CHANGE_REASON]
+    told = _told(row, changes)
+    interfaced = row.get("source_lane") == SOURCE_LANE_INTERFACED
+    discharged = row.get("patient_status") == "discharged"
+    preliminary, state = _ward_state(row, interfaced_now=interfaced_now)
+    withdrawn = told == WITHDRAWN_TOLD
+    flag = None if withdrawn else _lab_flag(row)
+    closure = _closure(events) if row.get("status") == "acknowledged" else None
+    return {
+        "id": row["id"],
+        "status": row["status"],
+        "source_lane": row["source_lane"],
+        "sender": "Sending laboratory" if interfaced else SENDER_NAME,
+        "patient": {"id": row["patient_id"], "name": row.get("patient_name"),
+                    "mrn": row.get("mrn"),
+                    # No bed for a discharged patient: it is someone else's now.
+                    "bed": None if discharged else row.get("bed"),
+                    "discharged": discharged,
+                    "discharged_at": row.get("discharged_at") if discharged else None},
+        "test_name": row["test_name"],
+        "value_display": row["value_display"],
+        # What an acknowledgement reads back, and names (value_told).
+        "value_told": told,
+        "withdrawn": withdrawn,
+        "lab_flag": {"code": flag, "text": LAB_FLAG_WORDS.get(flag)} if flag else None,
+        "critical_limit_text": (None if interfaced or withdrawn
+                                else row.get("head_limit_text", row.get("critical_limit_text"))),
+        "reference_range": (row.get("obs_reference_range") or None) if interfaced else None,
+        "preliminary": preliminary,
+        "state_text": state,
+        "change_text": _ward_change(row, changes, told, interfaced_now=interfaced_now),
+        "raised_at": row["raised_at"],
+        "acknowledged": ({"at": row.get("acknowledged_at"),
+                          "by_name": row.get("acknowledged_by_name"),
+                          "recipient_name": row.get("recipient_name"),
+                          "method": row.get("method"),
+                          "method_text": _ack_method_text(row.get("method"), closure),
+                          "closure": closure}
+                         if row.get("status") == "acknowledged" else None),
+    }
+
+
+def _ward_views(conn, ids: list[str]) -> list[dict]:
+    rows, events, since = _load(conn, ids)
+    return [_ward_view(rows[i], events.get(i, []), since.get(i)) for i in ids if i in rows]
+
+
+def list_for_ward(conn, *, dept: Optional[str], limit: int = WARD_LIST_CAP) -> dict:
+    """The ward card (lis-16): every open critical of a patient in `dept`,
+    the caller's department_scope (required keyword; None only for an
+    account with no department, which reads hospital-wide by the existing
+    convention), filtered in SQL before the LIMIT. The department is
+    PATIENT_DEPARTMENT_SQL's: the active admission first, else the latest,
+    so a transferred patient's critical is on the new ward and a discharged
+    patient's on the last one. The most overdue first, as the laboratory
+    sees them. A read: the route audits the patients returned."""
+    from permissions import scope_patient_ids_sql
+
+    empty = {"open": [], "methods": WARD_ACK_METHODS, "recipient_roles": RECIPIENT_ROLES}
+    if not _tables_present(conn):
+        return empty
+    limit = max(1, min(int(limit or WARD_LIST_CAP), WARD_LIST_CAP))
+    scope_sql, params = scope_patient_ids_sql(dept)
+    ids = [r[0] for r in conn.execute(
+        f"""SELECT n.id FROM lab_critical_notifications n
+            WHERE n.status = 'open' AND n.patient_id IN ({scope_sql})
+            ORDER BY julianday({_DUE_SQL}) ASC, julianday(n.raised_at) ASC, n.id
+            LIMIT ?""", (*tuple(params), limit)).fetchall()]
+    return {**empty, "open": _ward_views(conn, ids)}
 
 
 #: When an open notification is due, for ordering the screen: tier_due_at,

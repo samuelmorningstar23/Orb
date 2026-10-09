@@ -1,0 +1,14 @@
+{
+  "about": "The template for dose_times.json, the hospital's standard administration times for each frequency (ruling MO-R8, held for Samuel). Orb ships no times of its own: until a hospital signs a copy of this file as server/site_config/dose_times.json, the drug round works each due time out from the frequency and the last dose, as it always has. To use it: copy this file to dose_times.json; under 'times' keep only the frequencies the hospital writes, spelled exactly as prescribers write them (TDS and Q8H are different orders, and each spelling the hospital uses needs its own line); replace every HH:MM with a time on the 24-hour clock, one time for each dose a day, at least 2 hours apart (a frequency given more often than every 2 hours, such as Q1H, cannot have set times and keeps the worked-out times); set 'version'; have the pharmacy lead and the physician champion add their names and the date they approved it; restart Orb. Times apply only to drugs on the medication-order lifecycle (ORB_MED_ORDER_LIFECYCLE). A prescriber can still set different times for one order. A file Orb cannot use stops the server at start and names the problem, so a wrong file never passes for no file.",
+  "version": "",
+  "signed": {
+    "pharmacy": {"name": "", "date": ""},
+    "physician_champion": {"name": "", "date": ""}
+  },
+  "times": {
+    "OD": ["HH:MM"],
+    "BD": ["HH:MM", "HH:MM"],
+    "TDS": ["HH:MM", "HH:MM", "HH:MM"],
+    "QDS": ["HH:MM", "HH:MM", "HH:MM", "HH:MM"]
+  }
+}

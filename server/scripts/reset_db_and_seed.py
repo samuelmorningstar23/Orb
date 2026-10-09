@@ -380,6 +380,22 @@ def reset_and_seed():
     print("═══ Seeding Helix Pharmacy Catalog ═══")
     seed_helix()
     print("═══ Helix Seeding Complete! ═══\n")
+
+    # 4.6. The pharmacy store (grn-18): its dispensing pharmacy adopts the lots
+    #      seed_helix just opened, then one licensed vendor and one received
+    #      order. After seed_helix (which replaces every lot) and before
+    #      seed_pharmacy_queue (whose dispenses then come off the adopted
+    #      shelf). Only on a dev box with ORB_PHARMACY_STORE on, and silent
+    #      otherwise, so a reseed without the module writes and prints exactly
+    #      what it did before.
+    from scripts.seed_pharmacy_store import seed_pharmacy_store, should_seed
+    if should_seed():
+        print("═══ Seeding the pharmacy store ═══")
+        try:
+            seed_pharmacy_store()
+        except Exception as exc:  # a dev seed; the rest of the reseed still runs
+            print(f"  x Pharmacy store not seeded: {exc}")
+        print("═══ Pharmacy store seeding complete ═══\n")
     
     # 5. Randomize admission dates across a ROLLING 3-day window ending now.
     #    (The banner used to read "May 21-23, 2026" — a leftover from when the

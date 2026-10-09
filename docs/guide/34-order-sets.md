@@ -71,7 +71,7 @@ graph TD
 ![Orders panel, dark](../screenshots/doc001-04-orders-dark-full.png)
 ![Orders panel, light](../screenshots/doc001-04-orders-light-full.png)
 
-*The Order Sets screen is the second tab of the Orders panel, the "Order sets" toggle at the top (`src/components/orders/OrdersPanel.tsx:33`).*
+*The Order Sets screen is the second tab of the Orders panel, the "Order sets" toggle at the top (`src/components/orders/OrdersPanel.tsx:36`).*
 
 ---
 
@@ -461,7 +461,7 @@ The file header states the rule this screen enforces **by its shape**: a set is 
 **Signature:** `({patientId?, selectedPatientId?, onSelectPatient?, onApplied?}) -> JSX`
 **Does:** The whole screen.
 **On screen:** header + patient picker, provenance line, protocol cards (left), detail pane (right) headed by the patient banner (`PatientBannerView`, `:105`: name, bed, ward, MRN and allergies, or a warning when the allergy list could not be read), applications history (bottom).
-**How it is mounted:** `src/components/orders/OrdersPanel.tsx:15` lazily imports it; the `view === 'sets'` branch at `:253-273` renders it inside a `Suspense` with the fallback "Loading protocols…". The toggle is `OrdersViewSwitch` (`:18`), whose "Order sets" tab is at `:35`. When hosted inside a patient chart the `patientId` prop fixes the patient and the picker is hidden (`src/components/orders/OrderSetsPanel.tsx:399`). From the Orders tab the patient is shared: `OrdersPanel` passes `selectedPatientId` and `onSelectPatient`, the picker stays visible, and a patient picked here is the one the order list shows on return. `patientId` is derived on every render (`:221-228`), never copied into state, because everything downstream of it is patient-specific. `onApplied` lets the host refresh its order list after an apply.
+**How it is mounted:** `src/components/orders/OrdersPanel.tsx:18` lazily imports it; the `view === 'sets'` branch at `:253-273` renders it inside a `Suspense` with the fallback "Loading protocols…". The toggle is `OrdersViewSwitch` (`:18`), whose "Order sets" tab is at `:35`. When hosted inside a patient chart the `patientId` prop fixes the patient and the picker is hidden (`src/components/orders/OrderSetsPanel.tsx:399`). From the Orders tab the patient is shared: `OrdersPanel` passes `selectedPatientId` and `onSelectPatient`, the picker stays visible, and a patient picked here is the one the order list shows on return. `patientId` is derived on every render (`:221-228`), never copied into state, because everything downstream of it is patient-specific. `onApplied` lets the host refresh its order list after an apply.
 
 #### The protocol-list effect: `src/components/orders/OrderSetsPanel.tsx:255`
 **Does:** Loads the sets once on mount and builds `configNote` from `config.config_version` (`:262-270`).

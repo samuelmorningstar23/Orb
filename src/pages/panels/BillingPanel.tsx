@@ -7,7 +7,10 @@
  *              and print a document.
  *   CHARGES    one patient's running bill: what has been captured, what the
  *              clinical record contains that has NOT been captured, and the
- *              discharge advisory.
+ *              discharge advisory. With the server's 'opd' feature on, the
+ *              day's outpatients with lines to bill join the picker (opd-14);
+ *              "Bill this visit" and the counter form bill them as outpatient
+ *              bills, which never take a line recorded for a stay.
  *   PRICE LIST the masters: service items, tariff plans, packages.
  *
  * THREE RULES THIS FILE IS BUILT ON
@@ -33,7 +36,7 @@
  * status TEXT uses --status-x-text, modals portal to document.body, and every
  * amount is rendered in tabular-lining figures so columns line up.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
 import { useDataChanged } from '../../hooks/useDataChanged'
@@ -41,11 +44,12 @@ import { apiFetch } from '../../api/client'
 import * as billing from '../../api/billing'
 import type {
   BillingConfig, CaptureResult, Charge, DischargeAdvisory, FinancialSummary,
-  Invoice, PrintView, ServiceItem, TariffPlan,
+  Invoice, OpPatient, PrintView, ServiceItem, TariffPlan,
 } from '../../api/billing'
 import { MoneyError, formatInr, formatInrOrUnset, toPaise } from '../../lib/money'
 import { formatClinicalDate, formatClinicalDateTime } from '../../lib/datetime'
 import { humaniseEnum, plural } from '../../lib/humanise'
+import { currentFeatureFlags, subscribeModuleFlags } from '../../shellConfig'
 import './BillingPanel.css'
 
 type TabId = 'bills' | 'charges' | 'prices'
@@ -61,6 +65,10 @@ interface WardPatient {
   discharged?: boolean
   final_bill_raised?: boolean
   has_pending_charges?: boolean
+  /** From the outpatient counter list (opd-14, the 'opd' feature): a walk-in
+   *  with outpatient lines to bill and no stay. */
+  outpatient?: boolean
+  opVisits?: OpPatient['visits']
 }
 
 /** The message an apiFetch rejection carries, without ever showing "[object Object]". */
@@ -683,6 +691,133 @@ function AddChargeModal({ patientId, admissionId, items, onClose, onDone }: {
   )
 }
 
+interface CounterLine { key: number; code: string; qty: string }
+
+/**
+ * The outpatient counter form (opd-14): type what the patient is paying for,
+ * get one issued bill. It posts through the existing counter route
+ * (billing.createOpdInvoice), which prices each line from the tariff, refuses
+ * an unpriced item rather than billing it at zero, and raises the bill over
+ * exactly the lines it just posted, as an outpatient bill with no admission.
+ */
+function OpdCounterModal({ patientId, patientName, items, onClose, onDone }: {
+  patientId: string
+  patientName: string
+  items: ServiceItem[]
+  onClose: () => void
+  onDone: (invoiceId: number | null) => void
+}) {
+  const [lines, setLines] = useState<CounterLine[]>([{ key: 1, code: '', qty: '1' }])
+  const nextKey = useRef(2)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const update = (key: number, patch: Partial<CounterLine>) =>
+    setLines(rows => rows.map(r => (r.key === key ? { ...r, ...patch } : r)))
+
+  const submit = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const body = lines.map((line, i) => {
+        const quantity = Number(line.qty.replace(/,/g, '').trim())
+        if (!line.qty.trim() || !Number.isFinite(quantity)) {
+          throw new Error(`Line ${i + 1}: quantity must be a number, e.g. 1 or 0.5`)
+        }
+        const quantityMilli = Math.round(quantity * 1000)
+        if (!Number.isSafeInteger(quantityMilli) || quantityMilli <= 0) {
+          throw new Error(`Line ${i + 1}: quantity must be greater than zero`)
+        }
+        return { service_code: line.code, quantity_milli: quantityMilli }
+      })
+      const res = await billing.createOpdInvoice(patientId, { lines: body, issue: true })
+      onDone(res.invoice.id)
+      onClose()
+    } catch (err) {
+      setError(errorText(err))
+      // A line the server priced before it refused a later one stays as a
+      // pending charge: the running bill below is re-read so it shows.
+      onDone(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const ready = lines.every(l => l.code && l.qty.trim())
+
+  return (
+    <Modal title={`Counter bill: ${patientName}`} onClose={onClose}>
+      {error && <p className="bill-error" role="alert">{error}</p>}
+      <p className="bill-muted">
+        Each line is priced from the tariff. An item with no price is refused, never
+        billed at ₹0. The bill is issued as an outpatient bill.
+      </p>
+      {lines.map((line, i) => {
+        const selected = items.find(item => item.code === line.code)
+        return (
+          <fieldset className="bill-fieldset" key={line.key} data-testid="counter-line">
+            <legend className="bill-field__label">Line {i + 1}</legend>
+            <label className="bill-field" htmlFor={`counter-item-${line.key}`}>
+              <span className="bill-field__label">Service item</span>
+              <select
+                id={`counter-item-${line.key}`} className="bill-input" value={line.code}
+                onChange={e => update(line.key, { code: e.target.value })}
+              >
+                <option value="">Choose an item…</option>
+                {items.map(item => (
+                  <option key={item.code} value={item.code}>
+                    {item.name} ({item.code})
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selected && (
+              <p className="bill-muted bill-tiny">
+                List rate:{' '}
+                <Money paise={selected.rate_is_configured ? selected.default_rate_paise : null} />
+              </p>
+            )}
+            <label className="bill-field" htmlFor={`counter-qty-${line.key}`}>
+              <span className="bill-field__label">Quantity</span>
+              <input
+                id={`counter-qty-${line.key}`} className="bill-input" inputMode="decimal"
+                value={line.qty} onChange={e => update(line.key, { qty: e.target.value })}
+              />
+            </label>
+            {lines.length > 1 && (
+              <div className="bill-actions">
+                <button
+                  type="button" className="bill-btn bill-btn--quiet" disabled={busy}
+                  onClick={() => setLines(rows => rows.filter(r => r.key !== line.key))}
+                >
+                  Remove line {i + 1}
+                </button>
+              </div>
+            )}
+          </fieldset>
+        )
+      })}
+      <div className="bill-actions">
+        <button
+          type="button" className="bill-btn" disabled={busy}
+          onClick={() => {
+            const key = nextKey.current++
+            setLines(rows => [...rows, { key, code: '', qty: '1' }])
+          }}
+        >
+          Add another line
+        </button>
+        <button
+          type="button" className="bill-btn bill-btn--primary"
+          disabled={busy || !ready} onClick={submit}
+        >
+          Bill and issue
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
 /* The selected patient is OWNED BY THE PANEL, not by this tab.
    The panel unmounts whichever tab is not showing, so while `patientId` lived
    here a clerk part-way through capturing charges lost the patient every time
@@ -715,6 +850,11 @@ function ChargesTab(
      is admitted elsewhere in the shell, so a new admission can be billed. */
   const [patientsRev, setPatientsRev] = useState(0)
   useDataChanged(() => setPatientsRev(n => n + 1))
+  /* Outpatients at the counter (opd-14): only while the server's 'opd'
+     feature is on, as the shell's health probe last read it. Off, the picker
+     asks for nothing new. */
+  const features = useSyncExternalStore(subscribeModuleFlags, currentFeatureFlags)
+  const opdOn = features.opd === true
   useEffect(() => {
     const ward = apiFetch<WardPatient[]>('/vigil/patients?limit=100')
       .then(rows => (Array.isArray(rows) ? rows : []))
@@ -722,7 +862,12 @@ function ChargesTab(
     const discharged = apiFetch<WardPatient[]>('/vigil/discharged?limit=100')
       .then(rows => (Array.isArray(rows) ? rows : []))
       .catch(() => [] as WardPatient[])
-    void Promise.all([ward, discharged]).then(([onWard, gone]) => {
+    const outpatients = opdOn
+      ? billing.listOpPatients()
+        .then(res => (Array.isArray(res?.patients) ? res.patients : []))
+        .catch(() => [] as OpPatient[])
+      : Promise.resolve([] as OpPatient[])
+    void Promise.all([ward, discharged, outpatients]).then(([onWard, gone, walkIns]) => {
       const seen = new Set(onWard.map(p => p.id))
       const unbilled: WardPatient[] = []
       for (const p of gone) {
@@ -730,9 +875,20 @@ function ChargesTab(
         seen.add(p.id)
         unbilled.push({ ...p, discharged: true })
       }
-      setPatients([...onWard, ...unbilled])
+      /* A walk-in already listed (on a ward, or discharged with something to
+         bill) keeps that entry and its stay; the rest are outpatients. */
+      const counter: WardPatient[] = []
+      for (const p of walkIns) {
+        if (seen.has(p.id)) continue
+        seen.add(p.id)
+        counter.push({
+          id: p.id, name: p.name, mrn: p.mrn ?? undefined, admission_id: null,
+          outpatient: true, opVisits: p.visits,
+        })
+      }
+      setPatients([...onWard, ...unbilled, ...counter])
     })
-  }, [patientsRev])
+  }, [patientsRev, opdOn])
 
   /* The stay the bill belongs to. Every charge, capture and invoice raised
      here carries it, so an inpatient line is billed as inpatient: with no
@@ -741,8 +897,16 @@ function ChargesTab(
     () => patients.find(p => p.id === patientId)?.admission_id ?? null,
     [patients, patientId],
   )
+  const outpatient = useMemo(
+    () => patients.find(p => p.id === patientId && p.outpatient) ?? null,
+    [patients, patientId],
+  )
+  const isOutpatient = outpatient !== null
+  const [counterOpen, setCounterOpen] = useState(false)
 
-  const load = useCallback(async (pid: string, admission: string | null) => {
+  /* An outpatient has no stay to discharge, so the discharge advisory is not
+     asked for and not shown. */
+  const load = useCallback(async (pid: string, admission: string | null, noStay = false) => {
     if (!pid) return
     setBusy(true)
     setError(null)
@@ -750,7 +914,7 @@ function ChargesTab(
       const res = await billing.listCharges(pid)
       setCharges(res.charges)
       setSummary(res.summary)
-      setAdvisory(await billing.getDischargeAdvisory(pid, admission ?? undefined))
+      setAdvisory(noStay ? null : await billing.getDischargeAdvisory(pid, admission ?? undefined))
     } catch (err) {
       setError(errorText(err))
     } finally {
@@ -759,10 +923,22 @@ function ChargesTab(
   }, [])
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
-  useEffect(() => { if (patientId) void load(patientId, admissionId) }, [patientId, admissionId, load])
+  useEffect(() => { if (patientId) void load(patientId, admissionId, isOutpatient) }, [patientId, admissionId, isOutpatient, load])
 
   const pending = useMemo(
     () => charges.filter(c => c.status === 'pending'), [charges],
+  )
+
+  /* What "Bill this visit" bills: the outpatient's pending OUTPATIENT lines,
+     no admission. A line recorded for a stay is never one of them (the server
+     refuses it on an outpatient bill as well). */
+  const visitLines = useMemo(
+    () => pending.filter(c => (c.admission_id ?? null) === null && c.encounter_type === 'op'),
+    [pending],
+  )
+  const strayLines = useMemo(
+    () => pending.filter(c => (c.admission_id ?? null) === null && c.encounter_type !== 'op'),
+    [pending],
   )
 
   /* What "Interim bill" and "Final bill" will take, and what they will not.
@@ -791,7 +967,7 @@ function ChargesTab(
     try {
       const res = await billing.captureClinicalCharges(patientId, { dry_run: dryRun, admission_id: admissionId })
       setCapture(res)
-      if (!dryRun) await load(patientId, admissionId)
+      if (!dryRun) await load(patientId, admissionId, isOutpatient)
     } catch (err) {
       setError(errorText(err))
     } finally {
@@ -808,7 +984,7 @@ function ChargesTab(
       await billing.cancelCharge(chargeId, reason)
       setCancelling(null)
       setCancelReason('')
-      await load(patientId, admissionId)
+      await load(patientId, admissionId, isOutpatient)
     } catch (err) {
       setError(errorText(err))
     } finally {
@@ -833,12 +1009,39 @@ function ChargesTab(
           }
         : { invoice_type: invoiceType, admission_id: admissionId })
       setOpenInvoice(res.invoice.id)
-      await load(patientId, admissionId)
+      await load(patientId, admissionId, isOutpatient)
     } catch (err) {
       setError(errorText(err))
     } finally {
       setBusy(false)
     }
+  }
+
+  /* opd-14: the outpatient's own lines, by id, as an outpatient bill with no
+     admission. The picker is not re-read here, so the patient stays selected
+     with their running bill; the counter list drops a fully billed walk-in
+     the next time the tab opens. */
+  const billVisit = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await billing.createInvoice(patientId, {
+        invoice_type: 'final',
+        encounter_type: 'op',
+        charge_ids: visitLines.map(c => c.id),
+      })
+      setOpenInvoice(res.invoice.id)
+      await load(patientId, null, true)
+    } catch (err) {
+      setError(errorText(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const counterDone = (invoiceId: number | null) => {
+    if (invoiceId !== null) setOpenInvoice(invoiceId)
+    void load(patientId, null, true)
   }
 
   return (
@@ -849,10 +1052,10 @@ function ChargesTab(
           <span className="bill-field__label">Patient</span>
           <select
             id="charges-patient" className="bill-input" value={patientId}
-            onChange={e => { setPatientId(e.target.value); setCapture(null) }}
+            onChange={e => { setPatientId(e.target.value); setCapture(null); setCounterOpen(false) }}
           >
             <option value="">Choose a patient…</option>
-            {patients.filter(p => !p.discharged).map(p => (
+            {patients.filter(p => !p.discharged && !p.outpatient).map(p => (
               <option key={p.id} value={p.id}>
                 {p.name} ({p.mrn || p.id})
               </option>
@@ -862,6 +1065,15 @@ function ChargesTab(
                 {patients.filter(p => p.discharged).map(p => (
                   <option key={p.id} value={p.id}>
                     {p.name} ({p.mrn || p.id}), discharged
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {patients.some(p => p.outpatient) && (
+              <optgroup label="Outpatients today, still to be billed">
+                {patients.filter(p => p.outpatient).map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.mrn || p.id}), outpatient
                   </option>
                 ))}
               </optgroup>
@@ -922,6 +1134,38 @@ function ChargesTab(
 
           {advisory && <AdvisoryCard advisory={advisory} />}
 
+          {outpatient && (
+            <div className="bill-capture" data-testid="outpatient-visit">
+              <h3 className="bill-subhead">Outpatient visit</h3>
+              {(outpatient.opVisits ?? []).length > 0 ? (
+                <ul className="bill-list">
+                  {(outpatient.opVisits ?? []).map((v, i) => (
+                    <li key={`${v.department}-${v.token_number}-${i}`}>
+                      <span>
+                        {v.department}, {v.doctor_name || 'no doctor assigned'}, token {v.token_number}
+                      </span>
+                      <span className="bill-muted">{humaniseEnum(v.status)}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="bill-muted">No outpatient visit recorded today.</p>
+              )}
+              <p className="bill-muted">
+                {visitLines.length === 0
+                  ? 'No outpatient charges are waiting to be billed.'
+                  : `Bill this visit bills ${plural(visitLines.length, 'pending outpatient charge')} as an outpatient bill.`}
+              </p>
+              {strayLines.length > 0 && (
+                <p className="bill-notice bill-notice--warn">
+                  {plural(strayLines.length, 'pending charge')} with no admission{' '}
+                  {strayLines.length === 1 ? 'is' : 'are'} recorded as inpatient, so this
+                  visit's bill leaves {strayLines.length === 1 ? 'it' : 'them'} out.
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="bill-actions">
             <button type="button" className="bill-btn" disabled={busy}
                     onClick={() => runCapture(true)}>
@@ -935,16 +1179,32 @@ function ChargesTab(
                     onClick={() => setAdding(true)}>
               Add a charge
             </button>
-            <button type="button" className="bill-btn bill-btn--primary"
-                    disabled={busy || stayPending.length === 0}
-                    onClick={() => raise('interim')}>
-              Interim bill
-            </button>
-            <button type="button" className="bill-btn bill-btn--primary"
-                    disabled={busy || stayPending.length === 0}
-                    onClick={() => raise('final')}>
-              Final bill
-            </button>
+            {outpatient ? (
+              <>
+                <button type="button" className="bill-btn" disabled={busy}
+                        onClick={() => setCounterOpen(true)}>
+                  Counter bill
+                </button>
+                <button type="button" className="bill-btn bill-btn--primary"
+                        disabled={busy || visitLines.length === 0}
+                        onClick={billVisit}>
+                  Bill this visit
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="bill-btn bill-btn--primary"
+                        disabled={busy || stayPending.length === 0}
+                        onClick={() => raise('interim')}>
+                  Interim bill
+                </button>
+                <button type="button" className="bill-btn bill-btn--primary"
+                        disabled={busy || stayPending.length === 0}
+                        onClick={() => raise('final')}>
+                  Final bill
+                </button>
+              </>
+            )}
           </div>
 
           {otherPending.map(group => (
@@ -962,7 +1222,9 @@ function ChargesTab(
                   : (group.admission === null
                     ? 'are not linked to this admission, for example an outpatient consultation before it'
                     : (admissionId ? 'belong to another admission' : 'belong to an admission'))}.
-                The interim and final bills above do not include {group.rows.length === 1 ? 'it' : 'them'}.
+                {outpatient
+                  ? ` This visit's bill does not include ${group.rows.length === 1 ? 'it' : 'them'}.`
+                  : ` The interim and final bills above do not include ${group.rows.length === 1 ? 'it' : 'them'}.`}
               </p>
               <ul className="bill-list">
                 {group.rows.map(c => (
@@ -1139,14 +1401,23 @@ function ChargesTab(
           admissionId={admissionId}
           items={items}
           onClose={() => setAdding(false)}
-          onDone={() => { void load(patientId, admissionId) }}
+          onDone={() => { void load(patientId, admissionId, isOutpatient) }}
+        />
+      )}
+      {counterOpen && outpatient && (
+        <OpdCounterModal
+          patientId={patientId}
+          patientName={outpatient.name}
+          items={items}
+          onClose={() => setCounterOpen(false)}
+          onDone={counterDone}
         />
       )}
       {openInvoice !== null && (
         <InvoiceDetail
           invoiceId={openInvoice}
           onClose={() => setOpenInvoice(null)}
-          onChanged={() => { void load(patientId, admissionId) }}
+          onChanged={() => { void load(patientId, admissionId, isOutpatient) }}
         />
       )}
     </section>

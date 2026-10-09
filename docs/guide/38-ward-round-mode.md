@@ -717,7 +717,7 @@ The docstring (`:1-21`) states the PHI posture: transcription is **always** the 
 **On screen:** the round itself. Note the branch keeps the panel **mounted and hidden** (`display: 'none'`) once visited, which is exactly why `onKeyDown` is bound to the panel root rather than to `window`.
 **Breaks if you change it:** import it eagerly and 1,200 lines of round CSS plus the whole subsystem land in the main bundle for every user including nurses, who do not have this tab. Remove the error boundary and a render error in one column takes down the shell.
 
-#### Role tab order: `src/shellConfig.tsx:672` (doctors), `:856` (surgeons)
+#### Role tab order: `src/shellConfig.tsx:674` (doctors), `:856` (surgeons)
 **Does:** Ward Round sits **third** for doctors, after Today and the patient roster, and **second** for surgeons, after the roster. Nurses do not get the item at all.
 **On screen:** the vertical position of the "Ward Round" item in the left sidebar. The app opens on each role's `home` (`getLandingTab`, `:1015`), which is `today` for doctors (`:833`) and `vigil` for surgeons (`:854`), so tab order no longer decides the landing panel.
 **Why (stated at `:662-671`):** a doctor is not always rounding, it is roughly an hour of a long day, so the round is one tap away and never the thing the app opens on.
@@ -729,7 +729,7 @@ The docstring (`:1-21`) states the PHI posture: transcription is **always** the 
 
 | Contract | Producer | Consumer | Breaks how |
 |---|---|---|---|
-| `NursePatientCard`, `news2`, `obs_overdue`, `meds_overdue`, `medications[].unverified`, `allergies[]` | `src/api/nurse.ts:94`, `/nurse/board` (guide 22) | `currentIssues` (`src/components/round/roundSummary.ts:152`), `decisionsToday` (`:253`), `AllergyStrip` | a renamed field silently produces "No active issues", a confident all-clear from a missing key |
+| `NursePatientCard`, `news2`, `obs_overdue`, `meds_overdue`, `medications[].unverified`, `allergies[]` | `src/api/nurse.ts:113`, `/nurse/board` (guide 22) | `currentIssues` (`src/components/round/roundSummary.ts:152`), `decisionsToday` (`:253`), `AllergyStrip` | a renamed field silently produces "No active issues", a confident all-clear from a missing key |
 | `Patient`, `admission_date`, `risk_score`, `risk_level` | `src/api/client.ts:754`, `/vigil/patients` (guide 07) | `mergeRoster` (`roundQueue.ts:163-168`) | a missing `admission_date` drops "Day N" from the header |
 | `SageInsight.state` + `severity` | `src/api/client.ts:1038` (guide 09) | `CLOSED_INSIGHT_STATES` (`src/components/round/roundSummary.ts:33`), `SEVERITY_CLASS` | a new closed state Orb does not know keeps resolved insights on the round forever |
 | `StoryEvent.timestamp` as bare UTC | `src/api/client.ts:1811` | `changesSince` via `parseUTC` (`src/lib/datetime.ts:17`) | parsing as local time shifts every overnight event by the offset |

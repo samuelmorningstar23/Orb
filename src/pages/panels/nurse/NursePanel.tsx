@@ -26,6 +26,7 @@ import OfflineBanner from '../../../components/OfflineBanner'
 import VoidObservationButton from '../../../components/vitals/VoidObservationButton'
 import NotOnWardChip from '../../../components/adt/NotOnWardChip'
 import { notOnWardWords } from '../../../api/adt/presence'
+import CriticalLabCard from '../../../components/lab/CriticalLabCard'
 import './NursePanel.css'
 
 /* ═══════════════════════════════════════════════════
@@ -627,6 +628,14 @@ export default function NursePanel() {
           )}
         </div>
       )}
+
+      {/* Critical laboratory results for this ward (lis-16): the laboratory's own
+          value, flag and agreed limit, with the ward's read-back acknowledgement.
+          Above the tabs so no view hides it. Renders nothing, and asks nothing,
+          unless the laboratory module or the interfaced critical switch is on
+          and this account holds lab.critical_ack; renders nothing on a ward with
+          no open critical. */}
+      <CriticalLabCard />
 
       {/* role="tablist" is a promise that the arrow keys work and that the strip
           holds ONE tab stop. Both halves were missing: a nurse on a screen

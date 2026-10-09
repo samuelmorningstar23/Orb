@@ -133,6 +133,8 @@ def _assemble_feature_sequence(patient_id: str, feature_order, mean, std):
                ORDER BY timestamp DESC, id DESC LIMIT 24""",
             (patient_id,),
         ).fetchall()
+        # A readmission's earlier stay is not this stay's history (ADT-S9).
+        rows = this_stay_rows(rows, current_stay_start_on(db, patient_id))
         prow = db.execute("SELECT age FROM patients WHERE id = ?", (patient_id,)).fetchone()
 
     if not rows or len(rows) < 3:
@@ -846,6 +848,195 @@ def risk_for_row(row, *, patient_id: str, on_scale_2: bool) -> dict:
     return score_vitals_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
 
 
+# ── A readmission's previous stay is never 'latest' (ADT-S9 (a), W8-A) ───────
+# A patient readmitted onto the same record (opd-17c, ORB_READMISSION) keeps
+# every vitals and risk_scores row of the earlier stay, keyed on the patient.
+# Until a set is charted in the new stay, every "latest" reader would print the
+# last stay's set, and score it, as if it were taken now. Ruling ADT-S9 (a),
+# built as the safety default: the previous stay's rows are shown only with
+# their date and a 'previous stay' label, never as the current latest.
+#
+# THE RULE. A patient on an active admission who also has an ended admission
+# has a boundary: the start of the current stay (services/stay_times: the
+# admission's admitted_at, else its created_at). A vitals or risk row from
+# before it belongs to an earlier stay. Every reader keeps its ORDER BY
+# timestamp DESC, id DESC and drops those rows AFTER reading: newest first,
+# every row of this stay comes before every row of an earlier one, so what is
+# left is exactly this stay's newest rows. A patient with one stay (everyone
+# who has not been readmitted) has no boundary, and every reader gives exactly
+# the answer it gave before. A row whose time cannot be read is never current.
+# The same rule as the stay-keyed NABH and scorecard readers (W6-B): a vital
+# belongs to the stay whose [start, next start) holds it.
+#
+# THE STAYS NEVER OVERLAP. A readmission's admission time is refused before
+# the earlier stay ended (admission_service._check_readmission_time_on), so
+# the boundary is the stay start. For any rows written before that refusal
+# existed, the boundary is also never earlier than an earlier stay's recorded
+# end (_earlier_stay_ends_on): a set charted while the earlier stay was still
+# open is that stay's, whatever the later admission time says.
+
+#: The words a screen puts beside anything from the earlier stay.
+PREVIOUS_STAY_LABEL = "Previous stay"
+
+
+def _earlier_stay_ends_on(db, patient_ids) -> dict:
+    """{patient_id: the latest recorded end of an earlier stay, an aware UTC
+    datetime}: an ended admission's admissions.discharged_at, or a discharge
+    summary keyed to that stay (discharge_summaries.admission_id, migration
+    65). A history import's encounters are left out, as the stay-keyed census
+    leaves them out, and so is any end after now: a time not yet reached ended
+    nothing, and counting it would hide this stay's own sets. Absent for a
+    patient with no such end. Never writes."""
+    from datetime import datetime, timezone
+
+    from services.clinical_time import parse_to_utc
+
+    ids = sorted({str(p) for p in patient_ids if p})
+    if not ids:
+        return {}
+    acols = {r[1] for r in db.execute("PRAGMA table_info(admissions)").fetchall()}
+    scols = {r[1] for r in db.execute("PRAGMA table_info(discharge_summaries)").fetchall()}
+    native = " AND e.import_run_id IS NULL" if "import_run_id" in acols else ""
+    now = datetime.now(timezone.utc)
+    out: dict = {}
+    for i in range(0, len(ids), 400):
+        chunk = ids[i:i + 400]
+        marks = ",".join("?" for _ in chunk)
+        sql = ("SELECT e.patient_id, e.discharged_at AS ended_at FROM admissions e "
+               f"WHERE e.status <> 'active' AND e.discharged_at IS NOT NULL{native} "
+               f"AND e.patient_id IN ({marks})")
+        args = list(chunk)
+        if "admission_id" in scols:
+            sql += (" UNION ALL SELECT e.patient_id, ds.discharged_at AS ended_at "
+                    "FROM discharge_summaries ds JOIN admissions e ON e.id = ds.admission_id "
+                    f"WHERE e.status <> 'active' AND ds.discharged_at IS NOT NULL{native} "
+                    f"AND e.patient_id IN ({marks})")
+            args += chunk
+        for row in db.execute(sql, tuple(args)).fetchall():
+            try:
+                ended = parse_to_utc(row["ended_at"])
+            except (TypeError, ValueError):
+                continue
+            if ended <= now and (row["patient_id"] not in out
+                                 or ended > out[row["patient_id"]]):
+                out[row["patient_id"]] = ended
+    return out
+
+
+def readmission_stay_starts_on(db, patient_ids=None) -> dict:
+    """{patient_id: start of the current stay, an aware UTC datetime} for each
+    patient on an active admission who also has an ended one (a readmission
+    onto the same record). Absent for everyone else. `patient_ids` None means
+    every such patient. Takes the caller's connection; never writes.
+
+    The boundary is never earlier than an earlier stay's recorded end
+    (_earlier_stay_ends_on): stays that overlap, which a readmission can no
+    longer be given, still never show the earlier stay's sets as current."""
+    from services.clinical_time import parse_to_utc
+
+    sql = ("SELECT a.patient_id, COALESCE(a.admitted_at, a.created_at) AS stay_start "
+           "FROM admissions a WHERE a.status = 'active' "
+           "AND EXISTS (SELECT 1 FROM admissions e WHERE e.patient_id = a.patient_id "
+           "AND e.rowid <> a.rowid AND e.status <> 'active')")
+    args: tuple = ()
+    if patient_ids is not None:
+        wanted = sorted({str(p) for p in patient_ids if p})
+        if not wanted:
+            return {}
+        sql += f" AND a.patient_id IN ({','.join('?' for _ in wanted)})"
+        args = tuple(wanted)
+    out: dict = {}
+    for row in db.execute(sql, args).fetchall():
+        try:
+            out[row["patient_id"]] = parse_to_utc(row["stay_start"])
+        except (TypeError, ValueError):
+            # An unreadable stay start: nothing before now can be shown as
+            # this stay's, so the boundary is the latest possible one.
+            from datetime import datetime, timezone
+            logger.warning("Readmission boundary: unreadable stay start %r for %s",
+                           row["stay_start"], row["patient_id"])
+            out[row["patient_id"]] = datetime.now(timezone.utc)
+    if out:
+        for pid, ended in _earlier_stay_ends_on(db, list(out)).items():
+            if ended > out[pid]:
+                logger.debug("Readmission boundary: the stay of %s starts before an "
+                             "earlier stay ended; bounded at that end", pid)
+                out[pid] = ended
+    return out
+
+
+def current_stay_start_on(db, patient_id: str):
+    """The current stay's start for a readmitted patient, else None."""
+    return readmission_stay_starts_on(db, [patient_id]).get(patient_id)
+
+
+def from_previous_stay(timestamp, stay_start) -> bool:
+    """True when a row taken at `timestamp` predates `stay_start` (None: no
+    boundary, nothing is from a previous stay). An unreadable time is never
+    current, so it counts as the previous stay's."""
+    if stay_start is None:
+        return False
+    from services.clinical_time import parse_to_utc
+
+    try:
+        return parse_to_utc(timestamp) < stay_start
+    except (TypeError, ValueError):
+        return True
+
+
+def this_stay_rows(rows, stay_start) -> list:
+    """`rows` without the ones from before `stay_start`, order kept. On a
+    newest-first read that is exactly this stay's newest rows."""
+    if stay_start is None:
+        return list(rows)
+    return [r for r in rows if not from_previous_stay(_row_value(r, "timestamp"), stay_start)]
+
+
+def previous_stay_on(db, patient_id: str, stay_start, *, risk: bool = False) -> dict | None:
+    """What a screen may show of the previous stay, labelled and dated: the
+    last observation set taken before this stay began, and with `risk` the
+    last stored risk row. None for a patient who was not readmitted.
+
+    Nothing here is scored or banded afresh: the last set is the values as
+    stored, so no screen can print a previous stay's NEWS2 as the patient's
+    current one. `risk` is for callers that already checked scoring is on."""
+    if stay_start is None:
+        return None
+    from services.clinical_time import format_utc
+
+    bound = format_utc(stay_start)
+    last = db.execute(
+        "SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL AND timestamp < ? "
+        "ORDER BY timestamp DESC, id DESC LIMIT 1",
+        (patient_id, bound),
+    ).fetchone()
+    out = {
+        "label": PREVIOUS_STAY_LABEL,
+        "this_stay_started_at": bound,
+        "last_observed_at": last["timestamp"] if last else None,
+        "last_vitals": ({
+            "timestamp": last["timestamp"],
+            "heart_rate": last["heart_rate"],
+            "systolic_bp": last["systolic_bp"],
+            "diastolic_bp": last["diastolic_bp"],
+            "spo2": last["spo2"],
+            "temperature": last["temperature"],
+            "respiratory_rate": last["respiratory_rate"],
+            "previous_stay": True,
+        } if last else None),
+    }
+    if risk:
+        row = db.execute(
+            "SELECT score, level, drivers, timestamp FROM risk_scores "
+            "WHERE patient_id = ? AND timestamp < ? ORDER BY timestamp DESC, id DESC LIMIT 1",
+            (patient_id, bound),
+        ).fetchone()
+        out["last_risk"] = ({
+            "level": row["level"], "timestamp": row["timestamp"], "previous_stay": True,
+        } if row else None)
+    return out
+
+
 # ── The ward's scored rows: ONE read for the board and the Sage brief ────────
 # The Vigil board (GET /api/vigil/patients) and the Sage ward brief rendered
 # above it (sage_narrator_service) both say who on the ward is critical. The
@@ -879,8 +1070,10 @@ def scored_admitted_patients(department: str | None) -> list[tuple]:
     the whole hospital; otherwise only that admission department.
 
     Returns (patient, vitals, news2) triples. `patient` is the patients row as a
-    dict plus `attending_doctor_name` and `admission_department`. `vitals` is the
-    latest vitals row as a dict, or None. `news2` is `score_vitals_row` with the
+    dict plus `attending_doctor_name` and `admission_department`, and for a
+    readmitted patient `previous_stay` (previous_stay_on). `vitals` is the
+    latest vitals row of the current stay as a dict, or None (ruling ADT-S9:
+    an earlier stay's set is never the latest). `news2` is `score_vitals_row` with the
     overlay ON on the patient's own SpO2 scale, or None when nothing is recorded
     (never a stub score: that is why this does not use `risk_for_row`).
 
@@ -920,6 +1113,16 @@ def scored_admitted_patients(department: str | None) -> list[tuple]:
                 scope_args,
             ).fetchall()
         }
+        # A readmitted patient's latest row from the earlier stay is not their
+        # latest (ADT-S9 (a)): newest first, so no row means none this stay.
+        # The patient row carries the dated, labelled previous stay instead.
+        stay_starts = readmission_stay_starts_on(db, [p["id"] for p in patients])
+        previous_stays = {pid: previous_stay_on(db, pid, start)
+                          for pid, start in stay_starts.items()}
+        for pid, start in stay_starts.items():
+            held = latest_vitals.get(pid)
+            if held is not None and from_previous_stay(held.get("timestamp"), start):
+                del latest_vitals[pid]
 
     # ORB_SCORING_ENABLED off (the Orb Ward Record): no NEWS2 is computed, so
     # every triple carries news2 None and the board falls back to ward, then
@@ -929,6 +1132,8 @@ def scored_admitted_patients(department: str | None) -> list[tuple]:
     scored = []
     for p in patients:
         patient = dict(p)
+        if patient["id"] in previous_stays:
+            patient["previous_stay"] = previous_stays[patient["id"]]
         vitals = latest_vitals.get(patient["id"])
         news2 = score_vitals_row(
             vitals, patient_id=patient["id"], on_scale_2=bool(patient["on_scale_2"]),
@@ -989,6 +1194,10 @@ def get_patient_risk(patient_id: str) -> dict:
                ORDER BY timestamp DESC, id DESC LIMIT 1""",
             (patient_id,),
         ).fetchone()
+        # An earlier stay's last set is not this stay's latest (ADT-S9 (a)).
+        if row is not None and from_previous_stay(
+                row["timestamp"], current_stay_start_on(db, patient_id)):
+            row = None
         prow = db.execute(
             "SELECT on_scale_2 FROM patients WHERE id = ?", (patient_id,)
         ).fetchone()
@@ -1011,11 +1220,15 @@ def is_latest_vitals_row(db, patient_id: str, vitals_id: int) -> bool:
     transaction, where its INSERT is visible.
     """
     row = db.execute(
-        "SELECT id FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+        "SELECT id, timestamp FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
         "ORDER BY timestamp DESC, id DESC LIMIT 1",
         (patient_id,),
     ).fetchone()
-    return row is not None and row["id"] == vitals_id
+    if row is None or row["id"] != vitals_id:
+        return False
+    # A set back-charted into a readmitted patient's earlier stay is never the
+    # latest, even with nothing charted in this stay yet (ADT-S9 (a)).
+    return not from_previous_stay(row["timestamp"], current_stay_start_on(db, patient_id))
 
 
 
@@ -1044,6 +1257,17 @@ def get_vitals_trend(patient_id: str, hours: int = 6) -> dict:
     prev_cutoff = (now - timedelta(hours=hours*2)).isoformat()
 
     with db_session() as db:
+        # A readmitted patient's trend never reaches back into the earlier
+        # stay (ADT-S9 (a)): both windows start no earlier than this stay.
+        # Unchanged for a patient with one stay.
+        stay_start = current_stay_start_on(db, patient_id)
+        if stay_start is not None:
+            from services.clinical_time import format_utc
+            # A microsecond before the start, so a set taken at the very
+            # start of the stay is in the recent window ('>').
+            floor = stay_start - timedelta(microseconds=1)
+            recent_cutoff = format_utc(max(now - timedelta(hours=hours), floor))
+            prev_cutoff = format_utc(max(now - timedelta(hours=hours * 2), floor))
         recent = db.execute(
             """SELECT AVG(heart_rate) as avg_hr, AVG(systolic_bp) as avg_sbp,
                       AVG(spo2) as avg_spo2, AVG(respiratory_rate) as avg_rr

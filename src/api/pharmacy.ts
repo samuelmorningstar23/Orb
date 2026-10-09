@@ -6,7 +6,14 @@
  * optional dose correction) or reject them. Each response carries the re-run
  * drug-safety screen so the pharmacist sees allergy/interaction alerts.
  */
-import { apiFetch, buildHeaders } from './client';
+import {
+  apiFetch,
+  buildHeaders,
+  type HelixTransitionResult,
+  type MedicationSafety,
+  type SafetyAck,
+} from './client';
+import type { HelixLinkedOrder, HelixOrderEvent } from './medorders';
 
 export interface SafetyAlert {
   type: 'allergy' | 'interaction';
@@ -174,4 +181,91 @@ export interface SourceNote {
 /** Read the signed note behind one queue row. The read is audited server side. */
 export async function getSourceNote(medId: number): Promise<SourceNote> {
   return apiFetch<SourceNote>(`/pharmacy/${medId}/source-note`);
+}
+
+// ── The Helix review: dispense quantity and batch (grn-14) ────────────────────
+
+/** A batch the pharmacist may dispense from: dispensable today and a batch of
+ *  the drug the order would dispense (the substitute when one is set). */
+export interface DispenseLot {
+  id: string;
+  lot_number: string | null;
+  /** "YYYY-MM-DD", a calendar date (formatClinicalDateKey). */
+  expiration_date: string | null;
+  quantity: number;
+  store_name: string | null;
+}
+
+/** GET /helix/orders/{id}/dispense-options. With the pharmacy store module
+ *  off, `enabled` is false, `max_units` is 1 and no batch is listed: a
+ *  dispense is one unit, earliest expiry first. */
+export interface HelixDispenseOptions {
+  order_id: string;
+  enabled: boolean;
+  /** The site maximum per dispense (ORB_PHARMACY_MAX_DISPENSE_UNITS). */
+  max_units: number;
+  medication_id: string;
+  drug_name: string;
+  /** Earliest expiry first. */
+  lots: DispenseLot[];
+}
+
+export async function getHelixDispenseOptions(orderId: string): Promise<HelixDispenseOptions> {
+  return apiFetch<HelixDispenseOptions>(`/helix/orders/${encodeURIComponent(orderId)}/dispense-options`);
+}
+
+/** A dispense the pharmacist shaped. `lot_id` null or absent leaves the batch
+ *  to the earliest expiry. The server refuses a batch of another drug or one
+ *  that cannot be dispensed (422) and a batch holding too few units (409),
+ *  never splitting a dispense between batches. */
+export interface HelixDispenseRequest {
+  dispense_quantity_units: number;
+  lot_id?: string | null;
+  idempotency_key?: string;
+  pharmacist_notes?: string;
+  safety_ack?: SafetyAck;
+}
+
+/** POST /helix/orders/{id}/transition to 'dispensed' with a quantity and a
+ *  batch. The same route and the same errors as transitionHelixOrder (a
+ *  severe alert throws the typed 428 error; a refusal carries `status` and
+ *  `detail`), sent only while the pharmacy store module is on. */
+export async function dispenseHelixOrder(
+  orderId: string,
+  request: HelixDispenseRequest,
+): Promise<HelixTransitionResult & { safety?: MedicationSafety }> {
+  const body: Record<string, unknown> = { target_status: 'dispensed', ...request };
+  if (!request.lot_id) delete body.lot_id;
+  return apiFetch(`/helix/orders/${encodeURIComponent(orderId)}/transition`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+// ── The Helix review: the order's history (medorders-5c) ──────────────────────
+
+/** One pharmacy step on a supply row, with who took it. */
+export interface HelixTimelineStep {
+  id: string;
+  from_status: string;
+  to_status: string;
+  actor_id: string | null;
+  actor_name: string | null;
+  /** ISO with an offset. */
+  created_at: string;
+}
+
+/** GET /helix/orders/{id}/timeline. `linked_order` and `order_events` are
+ *  filled only for a supply row linked to a medication order; the order's
+ *  bedside doses are never included. */
+export interface HelixOrderTimeline {
+  order_id: string;
+  patient_id: string;
+  transitions: HelixTimelineStep[];
+  linked_order: HelixLinkedOrder | null;
+  order_events: HelixOrderEvent[];
+}
+
+export async function getHelixOrderTimeline(orderId: string): Promise<HelixOrderTimeline> {
+  return apiFetch<HelixOrderTimeline>(`/helix/orders/${encodeURIComponent(orderId)}/timeline`);
 }

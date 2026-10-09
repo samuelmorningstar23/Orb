@@ -421,12 +421,47 @@ export const createInvoice = (patientId: string, body: {
   admission_id?: string | null
   invoice_type?: 'interim' | 'final' | 'advance'
   charge_ids?: number[]
+  /** 'op' bills outpatient lines only (no admission): the server refuses an
+   *  inpatient line named on it. Omit it for every other bill. */
+  encounter_type?: 'op'
   interstate?: boolean
   issue?: boolean
   notes?: string | null
 }) => post(`/billing/patients/${encodeURIComponent(patientId)}/invoices`, body) as
   Promise<{ invoice: Invoice }>
 
+/** One outpatient with something still to bill on the day (opd-14). */
+export interface OpPatient {
+  id: string
+  name: string
+  mrn: string | null
+  inpatient_now: boolean
+  visits: { department: string; doctor_name: string | null; token_number: number; status: string }[]
+  /** The pending outpatient lines of the day: what "Bill this visit" bills. */
+  charge_ids: number[]
+  pending_charge_count: number
+  /** Lines nobody has priced. While non-zero the total is incomplete. */
+  unpriced_charge_count: number
+  priced_total_paise: number
+  priced_total_display: string
+}
+
+export interface OpPatientsDay {
+  date: string
+  patients: OpPatient[]
+  patient_count: number
+  truncated: boolean
+}
+
+/** Outpatients with pending outpatient lines on one hospital day (today when
+ *  no date). 404 feature_disabled while the 'opd' feature is off. */
+export const listOpPatients = (date?: string) =>
+  apiFetch<OpPatientsDay>(
+    `/billing/op-patients${date ? `?date=${encodeURIComponent(date)}` : ''}`,
+  )
+
+/** The outpatient counter form: the lines typed at the counter, priced, billed
+ *  and issued in one call. The server bills exactly the lines it just posted. */
 export const createOpdInvoice = (patientId: string, body: {
   lines: { service_code: string; quantity_milli?: number; description?: string }[]
   issue?: boolean

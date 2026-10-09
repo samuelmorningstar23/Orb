@@ -1196,17 +1196,25 @@ def build_aggregate_context(query: str = "") -> str:
         # Scoring switched off (the Orb Ward Record): no distribution of the
         # bands stored before the switch.
         from services.vigil_service import scoring_enabled as _scoring_on
+        from services.vigil_service import from_previous_stay, readmission_stay_starts_on
         risk_rows = db.execute(
-            """SELECT r.level AS level, COUNT(*) AS n
+            """SELECT p.id AS patient_id, r.level AS level, r.timestamp AS timestamp
                FROM patients p
                INNER JOIN risk_scores r ON r.id = (
                    SELECT rs2.id FROM risk_scores rs2 WHERE rs2.patient_id = p.id
                    ORDER BY rs2.timestamp DESC, rs2.id DESC LIMIT 1)
-               WHERE p.status = 'admitted'
-               GROUP BY r.level"""
+               WHERE p.status = 'admitted'"""
         ).fetchall() if _scoring_on() else []
-        if risk_rows:
-            dist = {r["level"]: r["n"] for r in risk_rows}
+        # A readmitted patient's latest row from the earlier stay is not their
+        # band now (ruling ADT-S9 (a)), so it is not counted.
+        _starts = (readmission_stay_starts_on(db, [r["patient_id"] for r in risk_rows])
+                   if risk_rows else {})
+        dist: dict = {}
+        for r in risk_rows:
+            if from_previous_stay(r["timestamp"], _starts.get(r["patient_id"])):
+                continue
+            dist[r["level"]] = dist.get(r["level"], 0) + 1
+        if dist:
             lines.append(
                 f"Risk distribution: critical {dist.get('critical', 0)}, "
                 f"elevated {dist.get('elevated', 0)}, stable {dist.get('stable', 0)}."
@@ -3040,6 +3048,16 @@ def _fresh_risk_and_observations(db, patient_id: str) -> tuple[dict | None, list
             "ORDER BY timestamp DESC, id DESC LIMIT 6",
             (patient_id,),
         ).fetchall()
+        # Readmitted onto the same record: the earlier stay's rows are not
+        # this stay's latest (ruling ADT-S9 (a), vigil_service). No-op otherwise.
+        from services.vigil_service import (
+            current_stay_start_on, from_previous_stay, this_stay_rows,
+        )
+        _stay_start = current_stay_start_on(db, patient_id)
+        if _stay_start is not None:
+            rows = this_stay_rows(rows, _stay_start)
+            if risk is not None and from_previous_stay(risk["timestamp"], _stay_start):
+                risk = None
         if not rows:
             return None, []
         v = rows[0]
@@ -3104,6 +3122,10 @@ def _authoritative_news2_line(db, patient_id: str, name: str | None = None) -> s
             "ORDER BY timestamp DESC, id DESC LIMIT 1",
             (patient_id,),
         ).fetchone()
+        # An earlier stay's last set is not this stay's NEWS2 (ADT-S9 (a)).
+        from services.vigil_service import current_stay_start_on, from_previous_stay
+        if v and from_previous_stay(v["timestamp"], current_stay_start_on(db, patient_id)):
+            return None
         if not v:
             return None
         keys = v.keys()
@@ -3139,6 +3161,11 @@ def _authoritative_news2_line(db, patient_id: str, name: str | None = None) -> s
 #: Put in front of a lab or imaging line the simulator wrote (source =
 #: 'simulated', migration 46), so the chart block says what it is.
 SIMULATED_RESULT_PREFIX = "[SIMULATED RESULT, not a real lab or image] "
+
+#: How the MISSING DATA line starts for a readmitted patient with nothing
+#: charted in the new stay yet (ruling ADT-S9 (a)); it names the previous
+#: stay's last set with its time, as not current.
+PREVIOUS_STAY_MISSING = "No observations charted this stay yet"
 
 
 def _assemble_patient_context(db, patient_id: str, dept: str | None) -> dict | None:
@@ -3235,6 +3262,15 @@ def _assemble_patient_context(db, patient_id: str, dept: str | None) -> dict | N
 
     # Vitals (last 6 for trend)
     vitals = db.execute("SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL ORDER BY timestamp DESC, id DESC LIMIT 6", (patient_id,)).fetchall()
+    # Readmitted onto the same record (ruling ADT-S9 (a)): only this stay's
+    # rows are current; the earlier stay is named with its date, never as
+    # the latest. No-op for a patient with one stay.
+    from services.vigil_service import (
+        current_stay_start_on, from_previous_stay, previous_stay_on, this_stay_rows,
+    )
+    _stay_start = current_stay_start_on(db, patient_id)
+    if _stay_start is not None:
+        vitals = this_stay_rows(vitals, _stay_start)
     if vitals:
         context["completeness"]["has_vitals"] = True
         lines, trends = _vitals_context(vitals)
@@ -3243,11 +3279,18 @@ def _assemble_patient_context(db, patient_id: str, dept: str | None) -> dict | N
             context["vital_trends"] = trends
     else:
         context["completeness"]["missing"].append("No recent vitals")
-        
+        _earlier = previous_stay_on(db, patient_id, _stay_start)
+        if _earlier and _earlier["last_observed_at"]:
+            context["completeness"]["missing"].append(
+                f"{PREVIOUS_STAY_MISSING}: the last set is from the previous stay, taken "
+                f"{_earlier['last_observed_at']} (UTC), and is not current")
+
     # Scoring switched off (the Orb Ward Record): no stored band is read and
     # no NEWS2 is computed, so the context carries no risk block.
     from services.vigil_service import scoring_enabled as _scoring_enabled
     risk = db.execute("SELECT * FROM risk_scores WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 1", (patient_id,)).fetchone() if _scoring_enabled() else None
+    if risk is not None and from_previous_stay(risk["timestamp"], _stay_start):
+        risk = None
     if risk:
         context["completeness"]["has_risk_score"] = True
         context["risk"] = {
@@ -3696,7 +3739,7 @@ def get_relevant_context(query: str, user: dict, patient_id: str = None, history
         all_vitals = {}
         for v in db.execute(*_scope_sql("""
             SELECT v.id, v.patient_id, v.heart_rate, v.systolic_bp, v.diastolic_bp,
-                   v.spo2, v.temperature, v.respiratory_rate
+                   v.spo2, v.temperature, v.respiratory_rate, v.timestamp
             FROM vitals v
             INNER JOIN (SELECT patient_id, MAX(timestamp) AS max_ts
                         FROM vitals WHERE voided_at IS NULL GROUP BY patient_id) latest
@@ -3716,7 +3759,7 @@ def get_relevant_context(query: str, user: dict, patient_id: str = None, history
         # band stored before the switch.
         from services.vigil_service import scoring_enabled as _scoring_on
         for r in db.execute(*_scope_sql("""
-            SELECT r.patient_id, r.score, r.level, r.drivers
+            SELECT r.patient_id, r.score, r.level, r.drivers, r.timestamp
             FROM patients p
             INNER JOIN risk_scores r ON r.id = (
                 SELECT rs2.id FROM risk_scores rs2 WHERE rs2.patient_id = p.id
@@ -3727,6 +3770,18 @@ def get_relevant_context(query: str, user: dict, patient_id: str = None, history
             # equality join returned every tied row, and this dict kept
             # whichever one SQLite happened to yield last.
             all_risks[r['patient_id']] = r
+
+        # Readmitted onto the same record (ruling ADT-S9 (a)): a latest row
+        # from the earlier stay means nothing charted this stay, so the census
+        # line carries none. No-op for patients with one stay.
+        from services.vigil_service import from_previous_stay, readmission_stay_starts_on
+        for _pid, _start in readmission_stay_starts_on(db, list(all_demographics)).items():
+            _held = all_vitals.get(_pid)
+            if _held is not None and from_previous_stay(_held["timestamp"], _start):
+                del all_vitals[_pid]
+            _held = all_risks.get(_pid)
+            if _held is not None and from_previous_stay(_held["timestamp"], _start):
+                del all_risks[_pid]
 
         # ── Compact single-line-per-patient context ──
         # Headed by the department, not "HOSPITAL", because that is what it is —
@@ -4143,8 +4198,10 @@ def get_relevant_context(query: str, user: dict, patient_id: str = None, history
                         if isinstance(_comp, dict):
                             _comp["has_vitals"] = True
                             if isinstance(_comp.get("missing"), list):
-                                _comp["missing"] = [m for m in _comp["missing"]
-                                                    if m != "No recent vitals"]
+                                _comp["missing"] = [
+                                    m for m in _comp["missing"]
+                                    if m != "No recent vitals"
+                                    and not str(m).startswith(PREVIOUS_STAY_MISSING)]
             except Exception as parse_err:
                 logger.warning("Cache parsing error: %s", parse_err)
                 patient_context_dict = _assemble_patient_context(db, matched_patient_id, dept)

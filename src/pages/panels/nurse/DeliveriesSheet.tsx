@@ -5,6 +5,7 @@ import {
   type AwaitingReceiptOrder,
 } from '../../../api/client'
 import { clockTime } from './time'
+import WardStockSection from './WardStockSection'
 
 /* ═══════════════════════════════════════════════════
    DELIVERIES — the ward end of a pharmacy dispense
@@ -23,6 +24,13 @@ import { clockTime } from './time'
    It is not a pharmacy view. A nurse holds `helix.receive` and no other Helix
    permission, and the endpoint behind it returns only orders for patients
    already on her ward — no inventory, no formulary, no other ward's orders.
+
+   ─── WARD STOCK (grn-21) ───
+   Below the deliveries, ./WardStockSection shows the ward's own stock store
+   when the pharmacy store and ward stock are switched on: transfers on their
+   way, what the ward holds against its stock list, and a top-up request.
+   That is a different chain from this one (stock for the ward, not a dose
+   for a patient) and helix.receive alone reaches none of it.
 
    ─── THE ONE RULE FROM NursePanel THAT BINDS HARDEST HERE ───
    A section that FAILED must never render as empty. "Nothing is in transit"
@@ -175,6 +183,12 @@ export default function DeliveriesSheet() {
         cannot record receipt of its own dispatch, so this is the only place the chain
         closes.
       </p>
+
+      {/* The ward's own stock store (grn-21). Renders nothing unless the
+          pharmacy store and ward stock are both switched on and this account
+          holds ward_stock.read, so with either switch off this tab is
+          unchanged. */}
+      <WardStockSection />
     </div>
   )
 }

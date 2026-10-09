@@ -42,6 +42,7 @@ logger = logging.getLogger("orb.command_center")
 from services.forecast_service import (
     WARD_CAPACITY,
     _normalize_ward,
+    capacity_source_summary,
 )
 
 
@@ -200,6 +201,14 @@ def _census_and_acuity(patients: list[dict]) -> tuple[dict, dict]:
         "occupancy_pct": round(total_admitted / _total_capacity() * 100, 1) if _total_capacity() else 0.0,
         "by_ward": by_ward,
     }
+    # Where the bed counts came from (adt-14): 'from bed register' or 'site
+    # setting', only while Beds and admissions is on (None, nothing added, off).
+    source = capacity_source_summary()
+    if source is not None:
+        census["capacity_source"] = {k: source[k] for k in ("source", "words")}
+        for row in by_ward:
+            row["capacity_source"] = source["by_ward"].get(
+                row["ward"], {"source": "site_setting", "words": "site setting"})
     acuity = {
         "critical": totals["critical"],
         "elevated": totals["elevated"],

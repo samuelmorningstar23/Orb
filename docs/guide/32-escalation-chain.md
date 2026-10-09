@@ -18,7 +18,7 @@ The escalation chain fixes that. A qualifying observation opens a **chain**: an 
 
 | Term | Meaning in Orb |
 |---|---|
-| **NEWS2** | *National Early Warning Score 2*, the RCP's aggregate deterioration score from six vitals. Computed in exactly one place, `compute_news2` (`server/services/vigil_service.py:343`). This module never re-derives it. |
+| **NEWS2** | *National Early Warning Score 2*, the RCP's aggregate deterioration score from six vitals. Computed in exactly one place, `compute_news2` (`server/services/vigil_service.py:345`). This module never re-derives it. |
 | **Single-parameter 3** | RCP's rule that any *one* vital scoring 3 warrants urgent review even if the total is low. Carried on `compute_news2`'s output as `single_param_3`. |
 | **Chain** | One escalation. A row in `clinical_escalations` plus its append-only history in `escalation_events`. |
 | **Tier** | A rung of the ladder: `{tier, role, label, timeout_minutes, entry_min_news2}`. Configured per site. |
@@ -36,10 +36,10 @@ graph TD
   EVAL --> NOTIFY[_notify<br/>escalation_service.py:723]
   NOTIFY --> RELAY[Relay case room<br/>_persist_relay_alert]
   CLOCK[advance_due<br/>escalation_service.py:872] --> CE
-  READ[GET /api/vigil/escalations<br/>vigil_routes.py:948] --> CLOCK
+  READ[GET /api/vigil/escalations<br/>vigil_routes.py:977] --> CLOCK
   READ --> SCAN
-  ACK[POST .../acknowledge<br/>vigil_routes.py:1035] --> CE
-  RES[POST .../resolve<br/>vigil_routes.py:1054] --> CE
+  ACK[POST .../acknowledge<br/>vigil_routes.py:1064] --> CE
+  RES[POST .../resolve<br/>vigil_routes.py:1083] --> CE
   UI[no React component calls these] -.->|MISSING| READ
 ```
 
@@ -128,7 +128,7 @@ The module docstring (`:1-88`) is required reading and is not repeated here in f
 #### `tier_policy`: `escalation_service.py:140`
 **Signature:** `() -> list[dict]`
 **Does:** Returns this site's ladder, parsed from the `ORB_ESCALATION_TIERS` environment variable (a JSON list), falling back to `_DEFAULT_TIER_POLICY`.
-**On screen:** the whole policy is returned in the board payload as `policy` (`vigil_routes.py:1071`), so a board could render "Ward nurse, 10 min → Duty registrar, 15 min → Consultant". Nothing consumes it today.
+**On screen:** the whole policy is returned in the board payload as `policy` (`vigil_routes.py:1100`), so a board could render "Ward nurse, 10 min → Duty registrar, 15 min → Consultant". Nothing consumes it today.
 **How it works:** read **at call time, not at import** (`:150`), an operator editing the ladder should not need a restart. Each entry is validated: role must be non-empty, `timeout_minutes` must be `> 0` or `null`, `entry_min_news2` coerced to int. The last tier's timeout is forced to `None` (`:182`). Any exception falls back to the default and logs at ERROR (`:184-189`).
 **Why it exists:** A malformed policy must not stop escalation. Refusing to escalate because someone fat-fingered a `.env` would turn a config typo into the exact clinical failure the module exists to prevent.
 **Breaks if you change it:** make the fallback raise instead of log and a bad `.env` silently disables deterioration alerting on the whole appliance. Move the `os.getenv` to module import and a site config change stops taking effect until restart, while tests that set the variable per-case start bleeding into each other.
@@ -136,7 +136,7 @@ The module docstring (`:1-88`) is required reading and is not repeated here in f
 #### `news2_threshold`: `escalation_service.py:195`
 **Signature:** `() -> int`
 **Does:** The aggregate NEWS2 at or above which a chain is raised. Default `5`, overridable with `ORB_ESCALATION_NEWS2_THRESHOLD`.
-**On screen:** returned as `news2_threshold` in the board payload (`vigil_routes.py:1072`) so a UI can say "showing everything at or above 5". Unused today.
+**On screen:** returned as `news2_threshold` in the board payload (`vigil_routes.py:1101`) so a UI can say "showing everything at or above 5". Unused today.
 **How it works:** `int(os.getenv(...))` with a logged fallback to 5 on a non-integer.
 **Why it exists:** 5 is the RCP urgent-response threshold ("registered nurse to urgently inform the medical team"). A site that finds it noisy raises it.
 **Breaks if you change it:** raising the default silently reduces the number of chains raised across every ward and every test that asserts on a NEWS2-5 case; it does **not** affect the single-parameter rule, which is a separate flag.
@@ -270,7 +270,7 @@ On the last tier (`climbs=False`, no timeout) the fourth line reads "This alert 
 #### `advance_due`: `escalation_service.py:921`
 **Signature:** `(*, now=None, limit=500) -> list[dict]`
 **Does:** Advances every open chain whose current tier has timed out. Returns the chains that moved.
-**On screen:** nothing today. It is called on every `GET /api/vigil/escalations` (`vigil_routes.py:1042`), so once a board exists, simply looking at it ticks the clock. Each advance also posts a fresh Relay message.
+**On screen:** nothing today. It is called on every `GET /api/vigil/escalations` (`vigil_routes.py:1071`), so once a board exists, simply looking at it ticks the clock. Each advance also posts a fresh Relay message.
 **How it works:** three deliberate phases.
 - **Phase 1 (`:808`)** works out the whole walk with no writes, one tier at a time, so a chain unattended for hours records *every* crossed timeout rather than one jump. Collapsing that would hide exactly what an incident review needs.
 - **Phase 2 (`:827`, the `UPDATE` at `:933`)** claims the move with one conditional `UPDATE` guarded on both `status = 'open'` and the `current_tier` we read. `rowcount == 0` means someone acknowledged in the gap; the loop `continue`s and records **nothing**.
@@ -373,19 +373,19 @@ The section header comment (`:952-975`) states two rules worth keeping. **Every 
 
 And the permission model: reading is `alert.read`; acknowledging and resolving require `alert.read` **and** `vitals.write`, which resolves to `{doctor, clinician, nurse}`. An administrator can see an unanswered deterioration and cannot silently clear it. The header is honest that this combination stands in for a dedicated `escalation.acknowledge` permission that does not exist yet.
 
-#### `EscalationAcknowledgeIn`: `vigil_routes.py:1186`
+#### `EscalationAcknowledgeIn`: `vigil_routes.py:1215`
 **Signature:** `class EscalationAcknowledgeIn(BaseModel)`, one optional field, `note: str | None`
 **Does:** The acknowledge request body.
 **On screen:** would be a free-text "note" box in an acknowledge dialog.
 **Why it exists:** It deliberately carries **no patient id**. The chain names the patient; letting a request name one is the caller-named-scope hole `server/tests/test_caller_named_patient_scope.py` exists to catch.
 **Breaks if you add a `patient_id`:** you have reintroduced a class of bug the test suite specifically hunts.
 
-#### `EscalationResolveIn`: `vigil_routes.py:1193`
+#### `EscalationResolveIn`: `vigil_routes.py:1222`
 **Signature:** `class EscalationResolveIn(BaseModel)`, `reason: str` (required), `category: str | None`
 **Does:** The resolve request body. `reason` being required at the Pydantic layer means a missing reason is a 422 before the handler runs; a *blank* reason is a 400 from the service.
 **Breaks if you make `reason` optional:** the dismiss button returns.
 
-#### `_escalation_or_404`: `vigil_routes.py:1198`
+#### `_escalation_or_404`: `vigil_routes.py:1227`
 **Signature:** `(escalation_id, user, include_events=True) -> dict`
 **Does:** Loads a chain and proves the caller's ward owns its patient.
 **On screen:** the difference between a detail drawer opening and a "not found" state.
@@ -393,35 +393,35 @@ And the permission model: reading is `alert.read`; acknowledging and resolving r
 **Why it exists:** 404 on both "no such escalation" and "not your ward", never 403. `require_patient_access` cannot be used here because the id on the path is a **surrogate**, an escalation id that resolves to a patient.
 **Breaks if you change it:** returning 403 for a cross-ward chain confirms that a chain (and therefore a deteriorating patient) exists on another ward.
 
-#### `GET /api/vigil/escalations`: `vigil_routes.py:1137` (`list_escalations_route`)
+#### `GET /api/vigil/escalations`: `vigil_routes.py:1166` (`list_escalations_route`)
 **Signature:** query `include_resolved: bool = False`, `limit: int = 200` (1–500); guard `require_permission("alert.read")` → `{escalations, open_count, policy, news2_threshold}`
 **Does:** The board. Returns everything on this ward that a deterioration alert is still waiting on.
 **On screen:** **nothing today.** This endpoint has no caller under `src/`. It is designed to feed an escalation board, most naturally a strip or tab inside `src/pages/panels/VigilPanel.tsx`, next to the patient list.
 **How it works:** the read is also a tick of the mechanism. `advance_due()` runs **unscoped** on every call (`:1042`); `scan_new_observations(department=dept)` runs **only** when the caller has a department (`:1043`). Then `list_escalations`, then a `log_phi_read` audit row (`:1050`) carrying `result_count`, `open_count` and the patient ids, but only when rows came back.
 **Breaks if you change it:** removing the `advance_due()` call means nothing ever advances a tier unless somebody hits the sweep endpoint. Scoping `advance_due` to the department means an escalation on a ward nobody has open never climbs. Removing the `if rows:` guard would write a PHI-read audit row for every empty poll, which on a 30-second polling board is thousands of meaningless audit rows a day.
 
-#### `GET /api/vigil/escalations/{escalation_id}`: `vigil_routes.py:1202` (`get_escalation_route`)
+#### `GET /api/vigil/escalations/{escalation_id}`: `vigil_routes.py:1231` (`get_escalation_route`)
 **Signature:** guard `require_permission("alert.read")` → the chain dict with `events`
 **Does:** One chain and every recorded step.
 **On screen:** nothing today; designed for a detail drawer.
 **How it works:** `_escalation_or_404` then a `log_phi_read` with the chain's status and tier.
 **Breaks if you change it:** dropping `_escalation_or_404` in favour of a bare `get_escalation` removes the ward check, and any `alert.read` holder can read any ward's deteriorating patients by id.
 
-#### `POST /api/vigil/escalations/{escalation_id}/acknowledge`: `vigil_routes.py:1035`
+#### `POST /api/vigil/escalations/{escalation_id}/acknowledge`: `vigil_routes.py:1064`
 **Signature:** body `EscalationAcknowledgeIn`; guard `require_permission("alert.read", "vitals.write")`
 **Does:** Records the acknowledgement.
 **On screen:** nothing today. Would be the primary button on a board row.
 **How it works:** ward check, then `escalation_service.acknowledge`. `EscalationNotFound` → 404, `ValueError` (already resolved) → 400.
 **Breaks if you change it:** widening the guard to `alert.read` alone lets an administrator clear a clinical alert they cannot act on.
 
-#### `POST /api/vigil/escalations/{escalation_id}/resolve`: `vigil_routes.py:1054`
+#### `POST /api/vigil/escalations/{escalation_id}/resolve`: `vigil_routes.py:1083`
 **Signature:** body `EscalationResolveIn`; guard `require_permission("alert.read", "vitals.write")`
 **Does:** Closes the chain with a reason.
 **On screen:** nothing today. Would be a dialog with a text box and a category dropdown.
 **How it works:** identical shape to acknowledge; a blank reason surfaces as HTTP 400 with the service's message.
 **Breaks if you change it:** see `resolve`.
 
-#### `POST /api/vigil/escalations/sweep`: `vigil_routes.py:1075`
+#### `POST /api/vigil/escalations/sweep`: `vigil_routes.py:1104`
 **Signature:** guard `require_permission("alert.read")` → `{advanced, raised, swept_at, department}`
 **Does:** One tick for an ops caller or a scheduler.
 **On screen:** nothing, deliberately, counts only, no patient, no score, no name.
@@ -429,7 +429,7 @@ And the permission model: reading is `alert.read`; acknowledging and resolving r
 **Breaks if you change it:** this is the only thing that makes escalations advance when nobody is looking at a board. If you ever build the board, keep this endpoint, a ward with every tablet asleep still needs the ladder to climb.
 **Gotchas:** nothing in Orb calls this on a timer today. There is no background task and no cron line. See *Discrepancies*.
 
-#### `GET /api/vigil/patients/{patient_id}/escalations`: `vigil_routes.py:1092`
+#### `GET /api/vigil/patients/{patient_id}/escalations`: `vigil_routes.py:1121`
 **Signature:** query `include_resolved: bool = True`; guard `require_patient_access("alert.read", audit_action="patient_escalations_viewed")` → `{patient_id, escalations}`
 **Does:** Escalation history for one patient, for the chart rather than the board.
 **On screen:** nothing today. Would sit in the patient detail view in `VigilPanel`.
@@ -459,9 +459,9 @@ And the permission model: reading is `alert.read`; acknowledging and resolving r
 
 | Contract | Producer | Consumer | Breaks how |
 |---|---|---|---|
-| The NEWS2 dict shape (`raw_news2`, `level`, `drivers`, `single_param_3`, `complete`, `missing_parameters`) | `vigil_service.compute_news2` (`server/services/vigil_service.py:343`) | `qualifies` (`server/services/escalation_service.py:263`), `evaluate_observation` (`:505`), `scan_new_observations` (`:1273`) | rename `raw_news2` and `qualifies` silently returns False for every patient, total, silent loss of escalation |
+| The NEWS2 dict shape (`raw_news2`, `level`, `drivers`, `single_param_3`, `complete`, `missing_parameters`) | `vigil_service.compute_news2` (`server/services/vigil_service.py:345`) | `qualifies` (`server/services/escalation_service.py:263`), `evaluate_observation` (`:505`), `scan_new_observations` (`:1273`) | rename `raw_news2` and `qualifies` silently returns False for every patient, total, silent loss of escalation |
 | `ORB_ESCALATION_*` environment variables | `site_config_service._to_env` (`server/services/site_config_service.py:519`) | `tier_policy` (`:138`), `news2_threshold` (`:193`), `_honour_single_param_3` (`:208`), `_lookback_minutes` (`:215`), `_relay_notify_enabled` (`:228`) | a `site.toml` tier list that is not a JSON array makes `tier_policy` fall back to the default and log, the site's timings silently do not apply |
-| Ward boundary | `permissions.PATIENT_DEPARTMENT_SQL` + `department_scope` | `_patient_context` (`:301`), `list_escalations` (`:1048`), `vigil_routes.py:1041` | any second derivation of "which ward" drifts from this one |
+| Ward boundary | `permissions.PATIENT_DEPARTMENT_SQL` + `department_scope` | `_patient_context` (`:301`), `list_escalations` (`:1048`), `vigil_routes.py:1070` | any second derivation of "which ward" drifts from this one |
 | Relay case room delivery | `ingestion_service._persist_relay_alert` | `_notify` (`:717`), `nurse_shift_service.dispatch_observation_alert` (`:710`) | a patient with no case room means the escalation message reaches nobody; logged at ERROR, chain still exists |
 | Fail-closed audit | `audit_service.log_audit_event` with `event_category="clinical_access"` | `_audit` (`:475`) | an audit failure rolls back the escalation state change, by design |
 | Partial unique index | `migrations.py:676` | the `DBIntegrityError` branch in `evaluate_observation` (`:660`) | drop the index and the race branch becomes dead code while duplicate chains appear |
@@ -496,7 +496,7 @@ These are real, current, and load-bearing. An investor's engineer will find them
 
 4. **`getEscalationStatus` in `src/api/client.ts:1786` is not this feature.** It calls `/demo/escalation-status/{patientId}`, for which **no server route exists** (grep finds none), and no component imports it. Same for `triggerDeterioration` (`src/api/client.ts:1779`). They are leftovers from a demo harness. An engineer grepping "escalation" in the frontend will find them first and reach the wrong conclusion.
 
-5. **The permission is a placeholder.** Acknowledge and resolve are gated on the *combination* `alert.read` + `vitals.write` rather than a dedicated `escalation.acknowledge`. The route header says so at `vigil_routes.py:970-975`. The combination is strictly narrower than either permission alone, so it fails safe, but it is not the permission the feature deserves.
+5. **The permission is a placeholder.** Acknowledge and resolve are gated on the *combination* `alert.read` + `vitals.write` rather than a dedicated `escalation.acknowledge`. The route header says so at `vigil_routes.py:999-1004`. The combination is strictly narrower than either permission alone, so it fails safe, but it is not the permission the feature deserves.
 
 6. **`RESOLUTION_CATEGORIES` is not enforced.** `resolve` lower-cases and stores whatever it is given (`:1099`). Any pilot analysis grouping by category must handle values outside the tuple.
 

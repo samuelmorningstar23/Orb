@@ -101,6 +101,7 @@ __all__ = [
     # charge capture
     "add_charge",
     "list_charges",
+    "list_op_patients",
     "cancel_charge",
     "capture_clinical_charges",
     "post_bed_day_charges",
@@ -749,6 +750,123 @@ def list_charges(
     return [_decorate_charge(r) for r in rows]
 
 
+#: The most outpatients one counter list names (opd-14). A day with more says
+#: so (`truncated`) rather than quietly dropping the rest.
+OP_PATIENTS_LIMIT = 200
+
+
+def list_op_patients(
+    *,
+    day: Optional[str] = None,
+    scope_department: Optional[str] = None,
+    limit: int = OP_PATIENTS_LIMIT,
+) -> dict:
+    """Outpatients with something still to bill on one hospital-local day (opd-14).
+
+    A patient is listed when they have at least one PENDING outpatient line
+    (encounter_type 'op', no admission) whose service day, read in the
+    hospital's time zone, is `day` (today when None). Each entry carries the
+    patient's name and UHID, that day's outpatient visits (clinic, doctor,
+    token, status), how many lines are pending and unpriced, the priced total,
+    and the ids of exactly those lines: the counter's "Bill this visit" bills
+    those ids as an outpatient invoice, never an inpatient line.
+
+    `scope_department` is permissions.department_scope(user), never a request
+    value. A scoped reader sees only patients inside its department by the
+    house rule (permissions.scope_patient_ids_sql), which is the same rule the
+    per-patient billing routes apply, so nothing is listed that the desk could
+    not then open.
+
+    Read-only. The route audits the read (phi_access) when anyone is listed.
+    """
+    from permissions import scope_patient_ids_sql
+
+    if day is None or not str(day).strip():
+        when = hospital_today()
+    else:
+        try:
+            when = date.fromisoformat(str(day).strip())
+        except ValueError as exc:
+            raise BillingError("date must be YYYY-MM-DD", code="invalid_input") from exc
+    target = when.isoformat()
+    # service_date holds either a bare local day or a UTC instant; a local day
+    # is never more than a day from the UTC date it was stored under, so this
+    # window catches every candidate and the exact day is decided below.
+    lo = (when - timedelta(days=1)).isoformat()
+    hi = (when + timedelta(days=2)).isoformat()
+    cap = max(1, min(int(limit), OP_PATIENTS_LIMIT))
+
+    scope_clause, scope_params = "", ()
+    if scope_department is not None:
+        scope_sql, scope_params = scope_patient_ids_sql(scope_department)
+        scope_clause = f" AND ec.patient_id IN ({scope_sql})"
+    with db_session() as db:
+        rows = db.execute(
+            f"""SELECT ec.id, ec.patient_id, ec.total_paise, ec.rate_is_configured,
+                       ec.service_date, p.name AS patient_name, p.mrn AS patient_mrn
+                  FROM encounter_charges ec
+                  JOIN patients p ON p.id = ec.patient_id
+                 WHERE ec.status = ? AND ec.encounter_type = 'op'
+                   AND ec.admission_id IS NULL
+                   AND ec.service_date >= ? AND ec.service_date < ?{scope_clause}
+                 ORDER BY ec.id""",
+            (_CHARGE_BILLABLE, lo, hi, *scope_params),
+        ).fetchall()
+
+        by_patient: dict[str, dict] = {}
+        for r in rows:
+            if _local_day_of_stored(r["service_date"]) != target:
+                continue
+            entry = by_patient.setdefault(r["patient_id"], {
+                "id": r["patient_id"],
+                "name": r["patient_name"],
+                "mrn": r["patient_mrn"],
+                "charge_ids": [],
+                "pending_charge_count": 0,
+                "unpriced_charge_count": 0,
+                "priced_total_paise": 0,
+            })
+            entry["charge_ids"].append(int(r["id"]))
+            entry["pending_charge_count"] += 1
+            if int(r["rate_is_configured"] or 0) == 1:
+                entry["priced_total_paise"] += int(r["total_paise"] or 0)
+            else:
+                entry["unpriced_charge_count"] += 1
+
+        ordered = sorted(by_patient.values(),
+                         key=lambda e: ((e["name"] or "").casefold(), e["id"]))
+        truncated = len(ordered) > cap
+        listed = ordered[:cap]
+
+        has_visits = _table_exists(db, "opd_visits")
+        for entry in listed:
+            entry["inpatient_now"] = db.execute(
+                "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
+                (entry["id"],),
+            ).fetchone() is not None
+            entry["visits"] = [
+                {
+                    "department": v["department"],
+                    "doctor_name": v["doctor_name"],
+                    "token_number": v["token_number"],
+                    "status": v["status"],
+                }
+                for v in (db.execute(
+                    "SELECT department, doctor_name, token_number, status FROM opd_visits "
+                    "WHERE patient_id = ? AND visit_date = ? ORDER BY registered_at, id",
+                    (entry["id"], target),
+                ).fetchall() if has_visits else [])
+            ]
+            entry["priced_total_display"] = format_inr(entry["priced_total_paise"])
+
+    return {
+        "date": target,
+        "patients": listed,
+        "patient_count": len(listed),
+        "truncated": truncated,
+    }
+
+
 def cancel_charge(charge_id: int, *, reason: str, actor: Optional[str] = None) -> dict:
     """Cancel an unbilled charge. A charge already on an invoice cannot be cancelled.
 
@@ -1273,6 +1391,18 @@ def create_invoice(
             "through create_credit_note)",
             code="invalid_input",
         )
+    # AN OUTPATIENT BILL TAKES OUTPATIENT LINES ONLY (opd-14). A caller that
+    # names the encounter 'op' (the counter's "Bill this visit", the OPD
+    # counter form) gets exactly that patient's outpatient lines with no
+    # admission: an inpatient line is never swept or named onto it. Callers
+    # that do not name the encounter are unchanged.
+    op_bill = _clean(encounter_type).lower() == "op"
+    if op_bill and _clean(admission_id):
+        raise BillingError(
+            "an outpatient bill carries no admission; bill the stay from its "
+            "admission instead",
+            code="op_bill_with_admission",
+        )
 
     with db_session() as db:
         if idempotency_key:
@@ -1320,12 +1450,30 @@ def create_invoice(
                     "some charges are not pending (already billed or cancelled)",
                     code="charge_not_billable", detail={"charges": not_pending},
                 )
+            if op_bill:
+                not_outpatient = [
+                    int(r["id"]) for r in rows
+                    if r["admission_id"] or (r["encounter_type"] or "") != "op"
+                ]
+                if not_outpatient:
+                    raise BillingError(
+                        "an outpatient bill takes outpatient lines only; "
+                        f"charge(s) {not_outpatient} belong to a stay or another encounter",
+                        code="charge_encounter_mismatch",
+                        detail={"charge_ids": not_outpatient},
+                    )
         else:
             if admission_id:
                 rows = db.execute(
                     "SELECT * FROM encounter_charges WHERE admission_id = ? AND status = ? "
                     "ORDER BY id",
                     (admission_id, _CHARGE_BILLABLE),
+                ).fetchall()
+            elif op_bill:
+                rows = db.execute(
+                    "SELECT * FROM encounter_charges WHERE patient_id = ? AND status = ? "
+                    "AND admission_id IS NULL AND encounter_type = 'op' ORDER BY id",
+                    (patient_id, _CHARGE_BILLABLE),
                 ).fetchall()
             else:
                 rows = db.execute(

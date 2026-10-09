@@ -529,7 +529,7 @@ two screen files described the same function differently, they were describing w
 **Confirmed dead-on-arrival citations** (each checked: defined exactly once, called
 nowhere), these are correctly documented as dead, not mis-cited:
 
-- `src/pages/panels/VigilPanel.tsx::VitalCard`, defined at `VigilPanel.tsx:2064`, zero usages in `src/`.
+- `src/pages/panels/VigilPanel.tsx::VitalCard`, defined at `VigilPanel.tsx:2083`, zero usages in `src/`.
 - `server/services/surgery_service.py::get_weekly_schedule`, defined at `:10`, zero callers in `server/`. It is the only producer of `is_today` in the tree, which is why the Surgical Suite's Today badge never renders.
 - `src/api/ipass.ts::getRecentHandoffs`, defined at `:114`, zero callers in `src/`. Its route (`server/routes/ipass_routes.py::recent_handoffs`, `:75-83`) is live and unreached.
 

@@ -473,7 +473,7 @@ Module helpers: `SEV_DOT` (`:5`) maps severity→dot color; `actLabel(i)` (`:11`
 7. Render: returns `null` if there are no insights and no toast (the card vanishes entirely). Otherwise a glass card with a header + count, optional toast, the visible insights (top 4 or all), each showing a severity dot, title, detail, an optional ⚡ act button, and a dismiss button; a "Show N more" toggle when >4.
 **Why it exists:** The clinician-facing surface of Proactive, the only place insights become visible and actionable.
 **Data in/out:** consumes `SageInsight[]`; calls three client functions; listens to the `sage:insight` socket event.
-**Talks to:** `getSageInsights`/`transitionInsight`/`actOnInsight` (`client.ts:856-870`); rendered in `VigilPanel.tsx:266`.
+**Talks to:** `getSageInsights`/`transitionInsight`/`actOnInsight` (`client.ts:856-870`); rendered in `VigilPanel.tsx:270`.
 **Change guide (worked example).** *To show more than 4 insights before "Show more":* change `insights.slice(0, 4)` at `:77` and the `> 4`/`- 4` at `:116–118`. Knock-on: purely visual; watch out, three literals must stay in sync or the "Show N more" count will be wrong.
 **Gotchas:**
 - **Optimistic removal** in `handleDismiss` runs *before* the network call; if the call fails, `load()` restores the true state, but for a moment the item is gone. Acceptable for a low-stakes dismiss.

@@ -1,8 +1,9 @@
 """Orb Hospital OS — Helix API Routes"""
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-from typing import Optional
-from permissions import MEDICATION_VERIFY, ROLE_PERMISSIONS, enforce_patient_scope, require_permission
+from typing import Any, Optional
+from permissions import (MEDICATION_VERIFY, ROLE_PERMISSIONS, enforce_patient_scope,
+                         log_phi_read, require_permission)
 from services import helix_service
 from services.medorders import core as medorder_store
 from services.medorders import supply as medorder_supply
@@ -50,6 +51,58 @@ def get_stock_movements(user=Depends(require_permission("helix.read"))):
 def get_order_transitions(order_id: str, user=Depends(require_permission("helix.read"))):
     """Get transition history for a specific order."""
     return {"transitions": helix_service.get_order_transitions(order_id)}
+
+
+@router.get("/orders/{order_id}/timeline")
+def get_order_timeline(order_id: str, request: Request,
+                       user=Depends(require_permission("helix.read"))):
+    """The review screen's history of one supply row (medorders-5c): its own
+    Helix steps with who took them, and, for a row LINKED to a medication
+    order, the order's state, who verified it and when, and its ledger (the
+    bedside doses left out: the pharmacy desk does not read the MAR).
+
+    Scoped like /safety (a no-op for the department-less central pharmacy
+    account, a 404 for an account tied to another ward). A linked row's order
+    events are PHI the pharmacy desk did not read before, so that read goes on
+    the audit chain (phi_access, fail-closed) before it is returned. An
+    unlinked row reads nothing from the order store and is not audited, like
+    /transitions."""
+    patient_id = helix_service.order_patient_id(order_id)
+    if not patient_id:
+        raise HTTPException(status_code=404, detail="Order not found")
+    enforce_patient_scope(user, patient_id)
+    timeline = helix_service.order_timeline(order_id)
+    if timeline is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+    linked = timeline.get("linked_order")
+    if linked:
+        log_phi_read(
+            request=request, user=user, action_type="helix_order_timeline_viewed",
+            summary_message=(f"Medication order {linked['id']} history viewed from the "
+                             f"pharmacy review of supply {order_id}"),
+            patient_id=timeline["patient_id"], target_type="med_order",
+            target_id=str(linked["id"]),
+            metadata={"helix_order_id": str(order_id),
+                      "event_count": len(timeline["order_events"])},
+        )
+    return timeline
+
+
+@router.get("/orders/{order_id}/dispense-options")
+def get_dispense_options(order_id: str, user=Depends(require_permission("helix.read"))):
+    """What the pharmacist may choose at dispense (grn-14): the site maximum
+    and the dispensable batches of the drug this order would dispense (the
+    substitute when one is set), earliest expiry first. With the pharmacy
+    store module off, `enabled` is false and no batch is listed. No patient
+    data; scoped like /safety."""
+    patient_id = helix_service.order_patient_id(order_id)
+    if not patient_id:
+        raise HTTPException(status_code=404, detail="Order not found")
+    enforce_patient_scope(user, patient_id)
+    options = helix_service.dispense_options(order_id)
+    if options is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return options
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -202,6 +255,12 @@ class TransitionRequest(BaseModel):
     substitute_medication_id: Optional[str] = None
     scheduled_at: Optional[str] = None
     safety_ack: Optional[dict] = None
+    # grn-14: read only on a 'dispensed' step with the pharmacy store module
+    # on, and checked by the service there. Typed loosely on purpose: with the
+    # module off they are ignored, so a body that carries them must answer
+    # exactly as it did before they existed.
+    dispense_quantity_units: Optional[Any] = None
+    lot_id: Optional[Any] = None
 
 
 @router.get("/orders/{order_id}/safety")
@@ -309,6 +368,16 @@ def transition_order(order_id: str, req: TransitionRequest, request: Request,
     rejection of an order still waiting for its pharmacist moves the order too
     (medication.verify only). Those refusals use the store's body
     (core.http_detail). An unlinked row is exactly as before.
+
+    DISPENSE QUANTITY AND BATCH (grn-14). With the pharmacy store module on, a
+    'dispensed' step may carry `dispense_quantity_units` (1 to
+    ORB_PHARMACY_MAX_DISPENSE_UNITS, default 1) and `lot_id` (a batch from GET
+    /orders/{id}/dispense-options). The batch must be a dispensable batch of
+    the drug that was screened (the substitute when one is set): 422
+    lot_wrong_drug, lot_not_dispensable, lot_not_found, bad_quantity or
+    quantity_out_of_range; 409 insufficient_lot_stock when the batch (or, with
+    no batch named, any one batch) holds too few units, never split. Both
+    fields are ignored with the module off.
     """
     # Scoped like /receive: a no-op for the department-less central pharmacy
     # account, a real boundary for an account tied to one ward.
@@ -388,6 +457,8 @@ def transition_order(order_id: str, req: TransitionRequest, request: Request,
             substitute_medication_id=req.substitute_medication_id,
             scheduled_at=req.scheduled_at,
             on_applied=hook,
+            dispense_quantity_units=req.dispense_quantity_units,
+            lot_id=req.lot_id,
         )
         if safety is not None:
             result["safety"] = safety
@@ -409,6 +480,9 @@ def transition_order(order_id: str, req: TransitionRequest, request: Request,
         )
     except helix_service.TransitionNeedsInput as e:
         raise HTTPException(status_code=422, detail={"error": "order_incomplete", "message": str(e)})
+    except helix_service.DispenseRefused as e:
+        # grn-14: a quantity or batch the shelf refuses. Nothing was written.
+        raise HTTPException(status_code=e.status, detail={"error": e.code, "message": str(e)})
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

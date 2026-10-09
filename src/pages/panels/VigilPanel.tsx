@@ -35,6 +35,7 @@ import { observedAt, observedBefore, vitalTemperature, vitalWhole } from '../../
 import VoidObservationButton from '../../components/vitals/VoidObservationButton'
 import { currentModuleFlags, subscribeModuleFlags, useClinicalSwitches } from '../../shellConfig'
 import EndStayDrawer from '../../components/adt/EndStayDrawer'
+import ChartLabReports from '../../components/lab/ChartLabReports'
 import NotOnWardChip from '../../components/adt/NotOnWardChip'
 import ReopenStayDialog from '../../components/adt/ReopenStayDialog'
 // The discharge screen's 'How the stay ended' fields use its classes too.
@@ -155,6 +156,9 @@ interface HouseCensus {
   total_admitted: number
   total_capacity: number
   occupancy_pct: number
+  /** Where the bed count came from (adt-14): 'from bed register', 'site
+   *  setting', or both by ward. Sent only while Beds and admissions is on. */
+  capacity_source_words?: string
 }
 
 async function fetchPatientsPage(
@@ -283,17 +287,20 @@ export default function VigilPanel({ role }: { role?: string | null }) {
   const [census, setCensus] = useState<HouseCensus | null>(null)
   const loadCensus = useCallback(() => {
     if (!showOccupancy) return
-    apiFetch<{ census?: Partial<HouseCensus> }>('/command-center/')
+    apiFetch<{ census?: Partial<HouseCensus> & { capacity_source?: { words?: unknown } } }>('/command-center/')
       .then(snap => {
         const c = snap?.census
         // A capacity of 0 or a missing figure is NOT 0% occupancy — it is a site
         // whose bed count Orb has not been told. Held as null so the tile says so.
         if (c && typeof c.total_capacity === 'number' && c.total_capacity > 0
             && typeof c.occupancy_pct === 'number') {
+          const sourceWords = c.capacity_source?.words
           setCensus({
             total_admitted: Number(c.total_admitted) || 0,
             total_capacity: c.total_capacity,
             occupancy_pct: c.occupancy_pct,
+            ...(typeof sourceWords === 'string' && sourceWords
+              ? { capacity_source_words: sourceWords } : {}),
           })
         } else {
           setCensus(null)
@@ -461,6 +468,13 @@ export default function VigilPanel({ role }: { role?: string | null }) {
                 ? `Bed Occupancy · ${census.total_admitted}/${census.total_capacity}`
                 : 'Bed Occupancy · capacity unknown'}
             </span>
+            {/* Where the bed count came from (adt-14), only while Beds and
+                admissions is on: the server's words, copied. */}
+            {census?.capacity_source_words && (
+              <span className="orb-metric-label" style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                Beds: {census.capacity_source_words}
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -1118,6 +1132,11 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
   // Diag Reports & Lab Reports modals
   const [diagReportsModalOpen, setDiagReportsModalOpen] = useState(false)
   const [labReportsModalOpen, setLabReportsModalOpen] = useState(false)
+  /* The laboratory's own reports (lis-14) join the Labs dialog while Orb's
+     laboratory is on or draining; with it off the dialog is exactly as it was. */
+  const labModuleOn = useSyncExternalStore(subscribeModuleFlags, currentModuleFlags).lab === true
+  const [lisReportCount, setLisReportCount] = useState(0)
+  const [lisReportOpen, setLisReportOpen] = useState(false)
   const [medsListModalOpen, setMedsListModalOpen] = useState(false)
   const [storyOpen, setStoryOpen] = useState(false)
   const [selectedLabForGraph, setSelectedLabForGraph] = useState<LabTrend | null>(null)
@@ -2640,9 +2659,9 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
             <h2 className="modal__title" id="lab-reports-modal-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--status-danger)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3h6v7l4 9H5l4-9V3z"/><line x1="9" y1="3" x2="15" y2="3"/></svg>
               Lab Reports
-              <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)', marginLeft: 'auto' }}>{allLabReports.length} total</span>
+              <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)', marginLeft: 'auto' }}>{allLabReports.length + (labModuleOn ? lisReportCount : 0)} total</span>
             </h2>
-            <div className="modal__body" style={{ maxHeight: '72vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal__body" style={{ maxHeight: '72vh', display: 'flex', flexDirection: 'column', ...(labModuleOn ? { overflowY: 'auto' as const } : {}) }}>
               <div className="reports-modal__search">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" style={{ color: 'var(--text-muted)', flexShrink: 0 }}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                 <input 
@@ -2658,11 +2677,21 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
                   <button className="reports-modal__clear" aria-label="Clear search" onClick={() => setLabSearchQuery('')}>✕</button>
                 )}
               </div>
+              {labModuleOn && (
+                <ChartLabReports patientId={patientId} query={labSearchQuery}
+                  onCount={setLisReportCount} onOpenChange={setLisReportOpen} />
+              )}
+              {labModuleOn && !lisReportOpen && (
+                <h3 style={{ margin: '4px 0 0', fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Filed in the chart</h3>
+              )}
+              {!(labModuleOn && lisReportOpen) && (
               <div className="reports-modal__list">
                 {!filteredLabReports?.length ? (
                   <div className="reports-modal__empty">
                     <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" style={{ opacity: 0.2 }}><path d="M9 3h6v7l4 9H5l4-9V3z"/><line x1="9" y1="3" x2="15" y2="3"/></svg>
-                    <span>No lab reports {labSearchQuery ? 'match your search' : 'available'}</span>
+                    <span>{labModuleOn
+                      ? `Nothing filed in the chart${labSearchQuery ? ' matches your search' : ''}`
+                      : `No lab reports ${labSearchQuery ? 'match your search' : 'available'}`}</span>
                   </div>
                 ) : (
                   filteredLabReports.map((a, i: number) => {
@@ -2692,6 +2721,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
                   })
                 )}
               </div>
+              )}
             </div>
             <div className="modal__actions">
               <button className="modal__btn modal__btn--ghost" style={{ padding: '8px 16px', borderRadius: 8 }} onClick={() => setLabReportsModalOpen(false)}>Close</button>

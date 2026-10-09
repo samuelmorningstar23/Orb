@@ -1,0 +1,25 @@
+/* Readmitting a discharged patient onto their record (opd-17c). Flat, no
+   opacity, no colour: plain reference text and ordinary buttons. */
+
+.readmit-offer__list {
+  list-style: none;
+  padding-left: 0;
+}
+
+.readmit-offer__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.readmit__action {
+  min-height: 24px;
+}
+
+@media (pointer: coarse) {
+  .readmit__action {
+    min-height: 44px;
+  }
+}

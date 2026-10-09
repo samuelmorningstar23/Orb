@@ -19,8 +19,9 @@ from database import get_db, db_session, run_db
 from datetime import datetime, timedelta, timezone
 from services.clinical_time import format_utc
 from services.vigil_service import (
-    SCORING_OFF_REASON, get_vitals_trend, risk_for_row, scored_admitted_patients,
-    scoring_enabled,
+    SCORING_OFF_REASON, current_stay_start_on, from_previous_stay, get_vitals_trend,
+    previous_stay_on, risk_for_row, scored_admitted_patients, scoring_enabled,
+    this_stay_rows,
 )
 from services.medication_safety_gate import enforce_medication_safety
 from services.medorders import chart_lane
@@ -156,18 +157,34 @@ def _load_patient_bundle(patient_id: str):
                ORDER BY (status = 'active') DESC, created_at DESC, rowid DESC LIMIT 1""",
             (patient_id,),
         ).fetchone()
+        # Readmitted onto the same record (ruling ADT-S9 (a)): the chart's
+        # observations and risk history are this stay's, so vitals[0], the set
+        # the command bar prints and scores, is never the earlier stay's. The
+        # earlier stay's last set comes back on its own, dated and labelled.
+        # None, and every list unchanged, for a patient with one stay.
+        stay_start = current_stay_start_on(db, patient_id)
+        previous_stay = None
+        if stay_start is not None:
+            vitals = this_stay_rows(vitals, stay_start)
+            risk_history = this_stay_rows(risk_history, stay_start)
+            previous_stay = previous_stay_on(db, patient_id, stay_start,
+                                             risk=scoring_enabled())
         return (patient, vitals, notes, scribe_notes, risk_history,
                 lens_analyses, medications, lab_observations,
-                profile, problems, admission)
+                profile, problems, admission, previous_stay)
 
 
 def _load_latest_risk(patient_id: str):
     with db_session() as db:
         risk = db.execute(
-            """SELECT level FROM risk_scores WHERE patient_id = ?
+            """SELECT level, timestamp FROM risk_scores WHERE patient_id = ?
                ORDER BY timestamp DESC, id DESC LIMIT 1""",
             (patient_id,),
         ).fetchone()
+        # A readmitted patient's earlier stay is not their latest (ADT-S9 (a)).
+        if risk is not None and from_previous_stay(
+                risk["timestamp"], current_stay_start_on(db, patient_id)):
+            return None
         return risk
 
 
@@ -179,12 +196,15 @@ def _load_recent_vitals(patient_id: str, hours: int):
     cutoff = format_utc(datetime.now(timezone.utc) - timedelta(hours=hours))
     db = get_db()
     try:
-        return db.execute(
+        rows = db.execute(
             """SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL
                AND timestamp > ?
                ORDER BY timestamp ASC, id ASC""",
             (patient_id, cutoff),
         ).fetchall()
+        # The sparkline is this stay's: a readmitted patient's earlier stay
+        # never draws into it (ADT-S9 (a)). Unchanged for one stay.
+        return this_stay_rows(rows, current_stay_start_on(db, patient_id))
     finally:
         db.close()
 
@@ -395,6 +415,10 @@ def list_patients(
             "risk_level": news2["level"] if news2 else None,
             "risk_drivers": list(news2["drivers"]) if news2 else [],
             "attending_doctor_name": p["attending_doctor_name"],
+            # Readmitted onto the same record only (ADT-S9 (a)): `news2` and
+            # `news2_at` are this stay's; the earlier stay's last set is here,
+            # dated and labelled. Absent for a patient with one stay.
+            **({"previous_stay": p["previous_stay"]} if p.get("previous_stay") else {}),
         }
         for p, vitals, news2 in scored[offset:offset + limit]
     ]
@@ -603,7 +627,7 @@ async def get_patient(
     """Get full patient details with vitals, notes, risk, and trends."""
     (patient, vitals, notes, scribe_notes, risk_history,
      lens_analyses, medications, lab_observations,
-     profile, problems, admission) = await run_db(_load_patient_bundle, patient_id)
+     profile, problems, admission, previous_stay) = await run_db(_load_patient_bundle, patient_id)
 
     # Score vitals[0], the row the command bar shows. This used to call
     # get_patient_risk(patient_id), which re-reads "the latest" row in its own
@@ -702,6 +726,11 @@ async def get_patient(
             for m in (medications if drug_chart else [])
         ],
         "drug_chart": drug_chart,
+        # Readmitted onto the same record only (ruling ADT-S9 (a)): the earlier
+        # stay's last set, and its last band while scores are on, with their
+        # dates and the 'Previous stay' label. Never scored here, never in
+        # `vitals` or `risk_history`. Absent for a patient with one stay.
+        **({"previous_stay": previous_stay} if previous_stay is not None else {}),
     }
 
 

@@ -121,6 +121,10 @@ The flag exists at all so a post-pilot site that has moved billing into Orb can 
 
 **The known seam:** IV fluids and disposables, which some sites class as pharmacy and some as stores. Whichever a site picks, it must pick **one**, and the choice is visible as the item's presence or absence in this module's master.
 
+**The pharmacy store shares the documents, not the stock (corrected 10 October 2026, grn-18).** The old wording in `procurement_service.py` and `ProcurementPanel.tsx` said Helix tracks "schedule-H"; it did not. A drug's schedule and NDPS class are now recorded in Helix's drug master through the **Pharmacy store** module (`ORB_PHARMACY_STORE`, opt-in and off by default; §8, "The pharmacy store"), which also buys and receives drugs. It reuses this module's indent, purchase order and goods receipt *tables* in a separate `pharmacy` domain (`procurement_service.py`, the Domains note): every core that loads a document by id refuses the other desk's document as not found, a receipt takes its domain from its order, the store master is partitioned by `pharmacy_kind`, and the pharmacy branch of a receipt never writes `stock_movements` or `inventory_items`. Every drug unit it receives lands in Helix's ledger through `pharmacy_stock_service`, so the two-ledgers rule above still holds. The stores desk's screens and lists show stores documents only; a ward's issue indent for drugs (grn-21) never appears on them.
+
+**Retention.** Purchase orders and goods receipts of both desks, and the pharmacy's returns to vendor, are mapped to the `gst_tax_record` retention category (CGST Act 2017 s.36, 72 months from the annual return's due date) in `consent_service._RETENTION_SOURCES`; the category's policy row comes with the W168 retention migration.
+
 ### 16.8 Front desk: OPD **and transfers**
 
 `server/services/frontdesk_service.py:1-42`. Two jobs, because one desk does both.

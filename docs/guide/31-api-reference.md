@@ -124,15 +124,15 @@ Take a typical call: `GET /api/vigil/patients` from the ward board.
    a GET passes straight through (`audit_middleware.py:49`).
 3. **Routing.** FastAPI matches the path to the handler registered by
    `vigil_router` (mounted at `main.py:298`), i.e. `list_patients` in
-   `vigil_routes.py:36`.
+   `vigil_routes.py:37`.
 4. **Dependency resolution.** The handler declares
    `user = Depends(require_permission("patient.read_all"))`. FastAPI runs that
-   factory's inner `_checker` (`permissions.py:176`), which itself depends on
+   factory's inner `_checker` (`permissions.py:177`), which itself depends on
    `get_current_user` (`auth.py:75`). `get_current_user` decodes the JWT,
    re-reads the user row from SQLite, and checks the token version. If any step
    fails it raises `HTTPException(401)` and the body never runs.
 5. **Permission check.** `_checker` looks up the role's permission set in
-   `ROLE_PERMISSIONS` (`permissions.py:93`); if `patient.read_all` is missing it
+   `ROLE_PERMISSIONS` (`permissions.py:94`); if `patient.read_all` is missing it
    writes a `permission_denied` audit event and raises `HTTPException(403)`.
 6. **Handler body.** Runs the SQL, shapes the JSON, returns it. FastAPI
    serialises the return value to a JSON response.
@@ -171,7 +171,7 @@ which one guards each route:
    staffer) or `Depends(require_permission(...))` / `Depends(require_role(...))`
    (specific capability). This is the vast majority of routes.
 2. **Patient self-scope**, `Depends(require_patient_self())`
-   (`permissions.py:224`): the caller must have role `patient`; the service
+   (`permissions.py:225`): the caller must have role `patient`; the service
    layer additionally scopes every query to that patient's own `user_id`. Only
    the `/api/bridge/*` routes use this.
 3. **Machine-to-machine API key**, the `X-API-Key` header, constant-time
@@ -274,27 +274,27 @@ current even if the token is stale, this is deliberate and load-bearing for
 authz. The `device_id` it may attach is for **audit metadata only**; the actor is
 always `user["id"]`, never the device (`auth.py:472-473`).
 
-#### require_permission: `server/permissions.py:376`
+#### require_permission: `server/permissions.py:377`
 **Signature:** `(*permissions) -> dependency`
 **Does:** builds a dependency that requires the caller's role to hold **all**
 listed permissions.
-**How it works:** the inner `_checker` (`permissions.py:388`) resolves
+**How it works:** the inner `_checker` (`permissions.py:389`) resolves
 `get_current_user`, computes `missing = permissions - ROLE_PERMISSIONS[role]`,
 and if anything is missing writes a `permission_denied` audit event and raises
 `403` with a structured body (`{error, message, required, missing}`).
 **Why it exists:** least-privilege enforcement in one auditable place, instead of
 scattered `if role == ...` checks.
-**Talks to:** `ROLE_PERMISSIONS` (`permissions.py:104`), `log_audit_event`.
-**Gotchas:** the 403 body here is a **dict** (`permissions.py:428`), whereas most
+**Talks to:** `ROLE_PERMISSIONS` (`permissions.py:105`), `log_audit_event`.
+**Gotchas:** the 403 body here is a **dict** (`permissions.py:429`), whereas most
 other errors use a string `detail`. The frontend must handle both shapes, see
 Conventions.
 
-#### require_patient_self: `server/permissions.py:523`
+#### require_patient_self: `server/permissions.py:524`
 **Signature:** `() -> dependency`
 **Does:** requires role `patient`; returns the user dict for self-scoped queries.
 **Gotchas:** this only checks the *role*, not that a given `patient_id` in the
 path belongs to the caller. The Bridge routes never take a `patient_id` from the
-client, they resolve it from `user_id` server-side (`bridge_routes.py:70`), so
+client, they resolve it from `user_id` server-side (`bridge_routes.py:77`), so
 ownership is enforced by construction, not by this dependency.
 
 #### require_role: `server/auth.py:493`
@@ -340,9 +340,9 @@ log.
    (`is_ip_rate_limited`, `auth_routes.py:61`); 5 failures in 15 min → `429`.
    Localhost in the `dev` profile is exempt (`auth_routes.py:65`).
 2. Looks up the user by id (employee id for staff, patient id for patients) and
-   verifies the password with a **constant-work** helper that always runs one bcrypt op so a missing user and a wrong password cost the same (`verify_password_ct`, `auth.py:185`; the plain `verify_password` is at `:163`, and the constant-work rationale is at `auth_routes.py:412`). Wrong → record attempt, audit `login_failure`, `401`.
-3. **MFA gate** (`auth_routes.py:456`): if the role is in `MFA_REQUIRED_ROLES`
-   but the user has not enrolled → `403 "mfa_enrollment_required"` (`auth_routes.py:487`). If MFA is
+   verifies the password with a **constant-work** helper that always runs one bcrypt op so a missing user and a wrong password cost the same (`verify_password_ct`, `auth.py:185`; the plain `verify_password` is at `:163`, and the constant-work rationale is at `auth_routes.py:445`). Wrong → record attempt, audit `login_failure`, `401`.
+3. **MFA gate** (`auth_routes.py:489`): if the role is in `MFA_REQUIRED_ROLES`
+   but the user has not enrolled → `403 "mfa_enrollment_required"` (`auth_routes.py:520`). If MFA is
    enabled but no code was supplied → `401 "mfa_required"` (this is *not*
    counted toward lockout, it is a normal two-step flow). A wrong code →
    `401 "Invalid MFA code"` and counts toward lockout.
@@ -350,7 +350,7 @@ log.
    single-use by persisting `totp_last_step`, so a code (or an earlier in-window
    code) cannot be replayed.
 5. On success: clears the lockout bucket, auto-upgrades a legacy password hash to
-   bcrypt if needed (`auth_routes.py:537`), mints the token with the current
+   bcrypt if needed (`auth_routes.py:570`), mints the token with the current
    `token_version`, audits `login_success`, returns `{token, user}`.
 **Data in/out:** in `UserLogin{employee_id, password, totp_code?}`; out
 `TokenResponse{token, user: UserOut}`.
@@ -366,7 +366,7 @@ get `403` at login until they enrol.
 `auth_routes.py:26-38`), credential stuffing across many IPs is unthrottled; noted
 as a deferred fix in the code.
 
-#### logout: `server/routes/auth_routes.py:856` (route decorator `:855`)
+#### logout: `server/routes/auth_routes.py:883` (route decorator `:855`)
 **Does:** revokes **every** outstanding session for the user by
 `UPDATE users SET token_version = token_version + 1`. Because
 `get_current_user` compares each token's `tv` claim to this counter, all
@@ -380,52 +380,52 @@ it is all-or-nothing.
 | Method | Path | Auth | Request | Response | Purpose | Handler |
 |---|---|---|---|---|---|---|
 | GET | `/api/vigil/test-stream` | **public** | n/a | SSE token stream | Hard-coded SSE demo. See Discrepancies. | `vigil_routes.py:13` |
-| GET | `/api/vigil/patients` | perm: patient.read_all | n/a | `[{id,name,mrn,bed,ward,department,risk_score,...}]` | Admitted patients (dept-scoped) with latest risk. | `vigil_routes.py:36` |
-| GET | `/api/vigil/discharged` | perm: patient.read_all | n/a | `[patient+discharge]` | Discharged patients. | `vigil_routes.py:97` |
-| GET | `/api/vigil/patients/{patient_id}` | perm: patient.read_all | n/a | `{patient,risk,trend,vitals,notes,scribe_notes,risk_history,lens_analyses,medications}` | Full patient detail + CfC risk inference. | `vigil_routes.py:111` |
-| GET | `/api/vigil/patients/{patient_id}/vitals` | perm: vitals.read | `?hours=6` | `[vital rows]` | Recent vitals for sparklines. | `vigil_routes.py:217` |
-| GET | `/api/vigil/patients/{patient_id}/notes` | perm: patient.read_all | n/a | `[note]` | Clinical notes. | `vigil_routes.py:245` |
-| POST | `/api/vigil/patients/{patient_id}/notes` | perm: patient.read_all | `{content, doc_type?, title?}` | `{status,id}` | Add a clinical note. | `vigil_routes.py:258` |
-| GET | `/api/vigil/patients/{patient_id}/analysis` | perm: patient.read_all | n/a | SSE token stream | AI patient analysis (5-min cache + dedup). | `vigil_routes.py:282` |
-| GET | `/api/vigil/patients/{patient_id}/medication-reconciliation` | perm: discharge.generate | n/a | reconciliation object | Discharge med reconciliation preview. | `vigil_routes.py:350` |
-| POST | `/api/vigil/patients/{patient_id}/discharge` | perm: discharge.generate | n/a | discharge result | Discharge patient (summary+timeline+QR). | `vigil_routes.py:366` |
-| GET | `/api/vigil/patients/{patient_id}/discharge-summary` | perm: discharge.read | n/a | `{summary,timeline,qr_code_url,discharged_at}` | Fetch discharge summary. | `vigil_routes.py:418` |
-| POST | `/api/vigil/patients/{patient_id}/medications` | perm: medication.write | `{drug_name,dosage,frequency,route?,status?}` | `{status,id}` | Add a medication. | `vigil_routes.py:441` |
-| GET | `/api/vigil/patients/{patient_id}/qr` | perm: discharge.read | n/a | PNG image | Discharge QR image. | `vigil_routes.py:470` |
-| POST | `/api/vigil/patients` | perm: patient.write | `{name, ward?, bed?, diagnosis?, age?, sex?, mrn?, attending_doctor_id?}` | `{id,user_id,channel_id,temporary_password,message}` | Create patient + Bridge account + Relay case room. | `vigil_routes.py:495` |
+| GET | `/api/vigil/patients` | perm: patient.read_all | n/a | `[{id,name,mrn,bed,ward,department,risk_score,...}]` | Admitted patients (dept-scoped) with latest risk. | `vigil_routes.py:37` |
+| GET | `/api/vigil/discharged` | perm: patient.read_all | n/a | `[patient+discharge]` | Discharged patients. | `vigil_routes.py:98` |
+| GET | `/api/vigil/patients/{patient_id}` | perm: patient.read_all | n/a | `{patient,risk,trend,vitals,notes,scribe_notes,risk_history,lens_analyses,medications}` | Full patient detail + CfC risk inference. | `vigil_routes.py:112` |
+| GET | `/api/vigil/patients/{patient_id}/vitals` | perm: vitals.read | `?hours=6` | `[vital rows]` | Recent vitals for sparklines. | `vigil_routes.py:237` |
+| GET | `/api/vigil/patients/{patient_id}/notes` | perm: patient.read_all | n/a | `[note]` | Clinical notes. | `vigil_routes.py:265` |
+| POST | `/api/vigil/patients/{patient_id}/notes` | perm: patient.read_all | `{content, doc_type?, title?}` | `{status,id}` | Add a clinical note. | `vigil_routes.py:278` |
+| GET | `/api/vigil/patients/{patient_id}/analysis` | perm: patient.read_all | n/a | SSE token stream | AI patient analysis (5-min cache + dedup). | `vigil_routes.py:302` |
+| GET | `/api/vigil/patients/{patient_id}/medication-reconciliation` | perm: discharge.generate | n/a | reconciliation object | Discharge med reconciliation preview. | `vigil_routes.py:370` |
+| POST | `/api/vigil/patients/{patient_id}/discharge` | perm: discharge.generate | n/a | discharge result | Discharge patient (summary+timeline+QR). | `vigil_routes.py:386` |
+| GET | `/api/vigil/patients/{patient_id}/discharge-summary` | perm: discharge.read | n/a | `{summary,timeline,qr_code_url,discharged_at}` | Fetch discharge summary. | `vigil_routes.py:442` |
+| POST | `/api/vigil/patients/{patient_id}/medications` | perm: medication.write | `{drug_name,dosage,frequency,route?,status?}` | `{status,id}` | Add a medication. | `vigil_routes.py:465` |
+| GET | `/api/vigil/patients/{patient_id}/qr` | perm: discharge.read | n/a | PNG image | Discharge QR image. | `vigil_routes.py:494` |
+| POST | `/api/vigil/patients` | perm: patient.write | `{name, ward?, bed?, diagnosis?, age?, sex?, mrn?, attending_doctor_id?}` | `{id,user_id,channel_id,temporary_password,message}` | Create patient + Bridge account + Relay case room. | `vigil_routes.py:519` |
 
-#### get_patient: `server/routes/vigil_routes.py:500` (route decorator `:499`)
+#### get_patient: `server/routes/vigil_routes.py:524` (route decorator `:499`)
 **Signature:** `(patient_id, user=Depends(perm patient.read_all)) -> dict`
 **Does:** returns the complete clinical picture for one patient in a single call.
 **How it works:** in one `db_session` it fetches the patient row, last 288
 vitals (24h at 5-min cadence), clinical + scribe notes, last 50 risk scores,
 lens analyses, and medications. Then it runs the CfC neural-net risk inference
 **off the event loop** via `asyncio.to_thread(get_patient_risk, ...)`
-(`vigil_routes.py:516`) so the synchronous Torch/MPS call does not stall live
+(`vigil_routes.py:540`) so the synchronous Torch/MPS call does not stall live
 telemetry, and shapes everything into one JSON object.
 **Why it exists:** the patient card needs everything at once; one round-trip
 beats ten.
 **Data out:** the big object listed in the table. Note the `medications` list
-adds an `unverified` flag (`vigil_routes.py:552`) for AI-extracted meds a
+adds an `unverified` flag (`vigil_routes.py:576`) for AI-extracted meds a
 pharmacist has not confirmed, so the UI never shows an unreviewed AI med as
 equal to a clinician order.
 **Talks to:** `get_patient_risk`, `get_vitals_trend` (vigil_service; see the
 Vigil guide). Called by the patient detail view.
 **Gotchas:** offloading the CfC call is deliberate, reverting it to a direct
 call reintroduces event-loop stalls on every card open (comment at
-`vigil_routes.py:510-512`).
+`vigil_routes.py:534-536`).
 
-#### create_patient: `server/routes/vigil_routes.py:856` (route decorator `:853`)
+#### create_patient: `server/routes/vigil_routes.py:885` (route decorator `:853`)
 **Does:** in one transaction creates (1) a `patient`-role user account with a
 **unique one-time password** (`secrets.token_urlsafe(9)`, never a shared
 default), (2) the `patients` row, (3) a Relay `case_room` channel, and (4) an
 initial admission message. Returns `temporary_password` **exactly once**, only
-its bcrypt hash is stored (`vigil_routes.py:881`, hashed at `:884`).
+its bcrypt hash is stored (`vigil_routes.py:910`, hashed at `:884`).
 **Change guide:** to change the id format, edit the `PAT`/`CH-` prefixes at
-`vigil_routes.py:872` and `:899`; knock-on: any code that pattern-matches ids (there is little) and
+`vigil_routes.py:901` and `:928`; knock-on: any code that pattern-matches ids (there is little) and
 existing rows keep the old format. Footgun: the temp password is unrecoverable, 
 if the caller loses it the patient must be re-credentialed.
-**Gotchas:** the security comment (`vigil_routes.py:877-880`) records that the old
+**Gotchas:** the security comment (`vigil_routes.py:906-909`) records that the old
 code seeded a shared `"patient123"` password; do not reintroduce a default.
 
 ---
@@ -645,11 +645,11 @@ case it to prompt the acknowledgement, not treat it as a generic error.
 |---|---|---|---|---|---|---|
 | GET | `/api/bridge/status` | patient-self | n/a | status object | Patient's own status in plain language. | `bridge_routes.py:26` |
 | GET | `/api/bridge/vitals` | patient-self | n/a | `{vitals}` | Simplified own vitals. | `bridge_routes.py:37` |
-| POST | `/api/bridge/ask` | patient-self | `{question}` | SSE token stream | Ask a question; plain-language answer. | `bridge_routes.py:47` |
-| GET | `/api/bridge/reports` | patient-self | n/a | `{medications,clinical_documents,discharge_summary,imaging_reports}` | Aggregated own reports. | `bridge_routes.py:80` |
-| GET | `/api/bridge/medications` | patient-self | n/a | `{medications}` | Own medications. | `bridge_routes.py:131` |
-| GET | `/api/bridge/discharge` | patient-self | n/a | `{discharge_summary,timeline,discharged_at}` | Own discharge summary. | `bridge_routes.py:148` |
-| GET | `/api/bridge/documents` | patient-self | n/a | `{documents}` | Own clinical documents. | `bridge_routes.py:178` |
+| POST | `/api/bridge/ask` | patient-self | `{question}` | SSE token stream | Ask a question; plain-language answer. | `bridge_routes.py:54` |
+| GET | `/api/bridge/reports` | patient-self | n/a | `{medications,clinical_documents,discharge_summary,imaging_reports}` | Aggregated own reports. | `bridge_routes.py:87` |
+| GET | `/api/bridge/medications` | patient-self | n/a | `{medications}` | Own medications. | `bridge_routes.py:138` |
+| GET | `/api/bridge/discharge` | patient-self | n/a | `{discharge_summary,timeline,discharged_at}` | Own discharge summary. | `bridge_routes.py:155` |
+| GET | `/api/bridge/documents` | patient-self | n/a | `{documents}` | Own clinical documents. | `bridge_routes.py:185` |
 
 Every handler resolves `patient_id` from `user_id` via `_resolve_patient_id`
 (`bridge_routes.py:12`), never from a client-supplied id, this is how ownership
@@ -739,7 +739,7 @@ status to signal parse outcome**: 200 parsed/duplicate, 207 partial, 422 failed
 
 | Method | Path | Auth | Request | Response | Purpose | Handler |
 |---|---|---|---|---|---|---|
-| POST | `/api/admissions/admit` | perm: patient.write | `AdmissionRequest` (large model, `admission_routes.py:10`) | admission result | Transactional admission across modules. | `admission_routes.py:53` |
+| POST | `/api/admissions/admit` | perm: patient.write | `AdmissionRequest` (large model, `admission_routes.py:10`) | admission result | Transactional admission across modules. | `admission_routes.py:54` |
 
 **audit_routes.py, `/api/audit`**
 
@@ -772,14 +772,14 @@ status to signal parse outcome**: 200 parsed/duplicate, 207 partial, 422 failed
 
 | Method | Path | Auth | Request | Response | Purpose | Handler |
 |---|---|---|---|---|---|---|
-| GET | `/api/helix/catalog` | perm: helix.read | n/a | `{catalog}` | Medication master catalog. | `helix_routes.py:14` |
-| GET | `/api/helix/inventory` | perm: helix.read | n/a | `{inventory}` | Inventory lots. | `helix_routes.py:19` |
-| GET | `/api/helix/orders/pending` | perm: helix.read | n/a | `{orders}` | Orders awaiting verification. | `helix_routes.py:24` |
-| GET | `/api/helix/orders` | perm: helix.read | n/a | `{orders}` | All orders. | `helix_routes.py:29` |
-| GET | `/api/helix/stock-movements` | perm: helix.read | n/a | `{movements}` | Stock movement log. | `helix_routes.py:34` |
-| GET | `/api/helix/orders/{order_id}/transitions` | perm: helix.read | n/a | `{transitions}` | Order transition history. | `helix_routes.py:39` |
-| POST | `/api/helix/orders/approve` | perm: helix.write | `{patient_name,medication,dose?,route?,frequency?}` | `{status,order}` | Approve a drafted med → Helix order. | `helix_routes.py:56` |
-| POST | `/api/helix/orders/{order_id}/transition` | perm: helix.write | `{target_status,idempotency_key?,pharmacist_notes?,substitute_medication_id?,scheduled_at?}` | order result | Guarded order state transition. | `helix_routes.py:85` |
+| GET | `/api/helix/catalog` | perm: helix.read | n/a | `{catalog}` | Medication master catalog. | `helix_routes.py:15` |
+| GET | `/api/helix/inventory` | perm: helix.read | n/a | `{inventory}` | Inventory lots. | `helix_routes.py:20` |
+| GET | `/api/helix/orders/pending` | perm: helix.read | n/a | `{orders}` | Orders awaiting verification. | `helix_routes.py:25` |
+| GET | `/api/helix/orders` | perm: helix.read | n/a | `{orders}` | All orders. | `helix_routes.py:30` |
+| GET | `/api/helix/stock-movements` | perm: helix.read | n/a | `{movements}` | Stock movement log. | `helix_routes.py:35` |
+| GET | `/api/helix/orders/{order_id}/transitions` | perm: helix.read | n/a | `{transitions}` | Order transition history. | `helix_routes.py:40` |
+| POST | `/api/helix/orders/approve` | perm: helix.write | `{patient_name,medication,dose?,route?,frequency?}` | `{status,order}` | Approve a drafted med → Helix order. | `helix_routes.py:109` |
+| POST | `/api/helix/orders/{order_id}/transition` | perm: helix.write | `{target_status,idempotency_key?,pharmacist_notes?,substitute_medication_id?,scheduled_at?}` | order result | Guarded order state transition. | `helix_routes.py:138` |
 
 **pulse_routes.py, `/api/pulse`**
 
@@ -945,8 +945,8 @@ Other subsystems depend on these exact facts:
 
 - **Auth contract.** Every protected route trusts `get_current_user`
   (`auth.py:75`) to return the authoritative user dict and to reject revoked
-  tokens; `require_permission` (`permissions.py:164`) enforces the
-  `ROLE_PERMISSIONS` map (`permissions.py:93`). Changing a permission's role
+  tokens; `require_permission` (`permissions.py:165`) enforces the
+  `ROLE_PERMISSIONS` map (`permissions.py:94`). Changing a permission's role
   membership silently widens/narrows every route guarded by it. See guide
   03-auth-rbac.
 - **Router prefixes** (verified in `main.py:297-329`): the full path of any route
@@ -955,7 +955,7 @@ Other subsystems depend on these exact facts:
   (`sage_routes`, `sage_proactive_routes`); their paths do not collide.
 - **Error envelope.** Most errors are `{"detail": "<string>"}` (FastAPI default).
   Permission denials are the exception: `{"detail": {error, message, required,
-  missing}}` (`permissions.py:206`). Malformed JSON bodies return
+  missing}}` (`permissions.py:207`). Malformed JSON bodies return
   `{"detail": "Malformed JSON in request body"}` at `400` via a global handler
   (`main.py:264`).
 - **Ingestion envelope.** All `/api/ingest/*` write endpoints return
@@ -976,7 +976,7 @@ Other subsystems depend on these exact facts:
   server→client emits; the inbound socket handlers (`join`, `send_message`,
   `typing`) live in `ws/realtime.py` and belong to guide 06.
 - **Id formats.** Patients `PAT<6 hex upper>`, patient users `P<6 hex>`, channels
-  `CH-<6 hex upper>` (`vigil_routes.py:504-531`); Sage actions/insights and many
+  `CH-<6 hex upper>` (`vigil_routes.py:528-555`); Sage actions/insights and many
   correlation ids are full UUID4 strings; scribe/medication/allergy ids are
   auto-increment integers. Audit query and ingestion status support
   `limit`/`offset` pagination; most other list endpoints do not paginate.
@@ -1040,7 +1040,7 @@ schemes and the audit path, the whole HTTP boundary is then live.
    gated.
 
 3. **Vigil analysis cache disabled.** `get_patient_analysis`
-   (`vigil_routes.py:282`) has its 5-minute cache short-circuit commented out
+   (`vigil_routes.py:302`) has its 5-minute cache short-circuit commented out
    "for debugging" (lines 295-309), so every open regenerates the LLM analysis
    despite the docstring claiming a cache. The in-flight dedup still works.
 
@@ -1059,7 +1059,7 @@ schemes and the audit path, the whole HTTP boundary is then live.
    mirrors the login limiter (`pin_security.py:100` onward, 15-minute window at `:40`).
 
 5. **Write routes guarded by read permission.** `POST
-   /api/vigil/patients/{id}/notes` (`vigil_routes.py:258`) requires only
+   /api/vigil/patients/{id}/notes` (`vigil_routes.py:278`) requires only
    `patient.read_all`, and the care-bundle start/complete/cancel routes
    (`bundle_routes.py:27,46,64`) require `alert.read` to *write* bundle state.
    These are read-permission gates on write operations, likely intentional
@@ -1071,7 +1071,7 @@ schemes and the audit path, the whole HTTP boundary is then live.
    migration, and the decline path hard-codes a demo fallback user
    (`surgery_routes.py:345`). Schema creation belongs in `init_db`/migrations.
 
-7. **`get_patient_vitals` leaks its connection on error.** `vigil_routes.py:217`
+7. **`get_patient_vitals` leaks its connection on error.** `vigil_routes.py:237`
    uses raw `get_db()` + manual `db.close()` (not the `db_session` context
    manager), so an exception between open and close leaks the connection, the
    same pattern the code elsewhere (`lens_routes.py:155`) explicitly moved away
@@ -1084,7 +1084,7 @@ schemes and the audit path, the whole HTTP boundary is then live.
    (`_confirm_lock` is per process), left a `pending` Helix order with no
    `agentic_med_confirm` audit row naming it. `_persist_confirmation`
    (`server/routes/relay_routes.py:1273`) now claims the action, inserts the order
-   through `helix_service.insert_order` (`server/services/helix_service.py:219`) and
+   through `helix_service.insert_order` (`server/services/helix_service.py:236`) and
    writes the audit row in one transaction, and the claim bumps `version` so a
    racing dismissal cannot overwrite it. Regression tests:
    `server/tests/test_agentic_confirm_race.py`.

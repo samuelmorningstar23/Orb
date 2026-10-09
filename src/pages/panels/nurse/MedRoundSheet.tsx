@@ -56,11 +56,36 @@ interface Group {
    only WARNS on the repeat, so a second nurse could chart it twice. */
 const isStatGiven = (m: MedTask) => m.schedule_kind === 'stat' && m.due_basis === 'stat_given'
 
+/* medorders-11 (ruling MO-R1): the bedside will refuse this dose until a
+   pharmacist has checked the order. The AI-extracted line already says so for
+   its own orders, so this one is for every other linked order. */
+const waitingForPharmacist = (m: MedTask) =>
+  !m.unverified && m.pharmacist_check?.state === 'waiting'
+
+/* A first stat or urgent dose the bedside will let go before the pharmacist's
+   check, and mark as such. */
+const firstDoseBeforeCheck = (m: MedTask) =>
+  m.pharmacist_check?.state === 'first_dose_before_check'
+
+/** The record of a dose the server marked as given before the pharmacist's
+ *  check (medorders-11). The key is absent on every other record. */
+type MarkedRecord = AdministrationRecord & { given_before_pharmacist_check?: boolean }
+const givenBeforeCheck = (r: AdministrationRecord | undefined) =>
+  (r as MarkedRecord | undefined)?.given_before_pharmacist_check === true
+
+/** Where a set due time came from, in the round's words (medorders-19). */
+function setTimeWords(m: MedTask): string | null {
+  if (m.due_source === 'prescriber') return "time set by the prescriber"
+  if (m.due_source === 'site_times') return "hospital's set time"
+  return null
+}
+
 export default function MedRoundSheet({ patient, focusMedicationId, offline, onClose, onAdministered }: Props) {
   // Never straight into the modal for a stat dose already given: the row below
   // offers no Administer button, and a deep link must not be a way around that.
   const [administering, setAdministering] = useState<MedTask | null>(
-    () => patient.medications.find(m => m.medication_id === focusMedicationId && !isStatGiven(m)) ?? null,
+    () => patient.medications.find(m => m.medication_id === focusMedicationId && !isStatGiven(m)
+      && !waitingForPharmacist(m)) ?? null,
   )
   // Meds charted during this sheet's lifetime, so a nurse working down the list
   // sees what they have already given without a full board refresh.
@@ -108,8 +133,13 @@ export default function MedRoundSheet({ patient, focusMedicationId, offline, onC
     }
     const byDue = (a: MedTask, b: MedTask) =>
       (a.minutes_until_due ?? 1e9) - (b.minutes_until_due ?? 1e9)
+    // Set times (medorders-19) are not derived, so the hint stops saying so
+    // once any late dose runs on them.
+    const overdueHint = overdue.some(m => m.due_source)
+      ? 'Past the due time by more than 15 minutes'
+      : 'Past the derived due time by more than 15 minutes'
     return [
-      { id: 'overdue', title: 'Overdue', hint: 'Past the derived due time by more than 15 minutes', meds: overdue.sort(byDue) },
+      { id: 'overdue', title: 'Overdue', hint: overdueHint, meds: overdue.sort(byDue) },
       { id: 'soon', title: 'Due now', hint: 'Due within the next 30 minutes', meds: soon.sort(byDue) },
       { id: 'later', title: 'Later this shift', hint: '', meds: later.sort(byDue) },
       { id: 'prn', title: 'As required (PRN)', hint: 'Available when indicated, never due, never late', meds: prn },
@@ -208,6 +238,7 @@ export default function MedRoundSheet({ patient, focusMedicationId, offline, onC
                           ) : (
                             <>
                               {dueLabel(med)}
+                              {setTimeWords(med) && <> ({setTimeWords(med)})</>}
                               {med.last_given_at && <> · last given {formatClinicalDateTime(med.last_given_at)}</>}
                             </>
                           )}
@@ -218,6 +249,20 @@ export default function MedRoundSheet({ patient, focusMedicationId, offline, onC
                         {med.unverified && (
                           <span className="med-row__blocked">
                             AI-extracted order: a pharmacist must verify it before it can be given.
+                          </span>
+                        )}
+                        {/* medorders-11: the bedside's pharmacist check, said
+                            before the walk to the bed. */}
+                        {!statDone && !given && waitingForPharmacist(med) && (
+                          <span className="med-row__blocked">
+                            Waiting for a pharmacist to check this order. It cannot be given yet.
+                          </span>
+                        )}
+                        {!statDone && !given && firstDoseBeforeCheck(med) && (
+                          <span className="med-row__blocked">
+                            {med.pharmacist_check?.priority === 'urgent' ? 'Urgent' : 'Stat'} order:
+                            the first dose can be given before the pharmacist checks it. It will be
+                            marked as given before the check, and the next dose waits for the check.
                           </span>
                         )}
                         {/* The board ran the bedside allergy screen already. A
@@ -242,6 +287,9 @@ export default function MedRoundSheet({ patient, focusMedicationId, offline, onC
                                 Across charted allergy
                               </span>
                             )}
+                            {givenBeforeCheck(statRecord) && (
+                              <span className="med-row__blocked">Given before pharmacist check</span>
+                            )}
                           </>
                         ) : given ? (
                           <>
@@ -260,14 +308,21 @@ export default function MedRoundSheet({ patient, focusMedicationId, offline, onC
                                 Across charted allergy
                               </span>
                             )}
+                            {/* medorders-11: never silent either. A first
+                                stat or urgent dose given before the
+                                pharmacist's check says so on the round. */}
+                            {givenBeforeCheck(given) && (
+                              <span className="med-row__blocked">Given before pharmacist check</span>
+                            )}
                           </>
                         ) : (
                           <button
                             type="button"
                             className="nurse-btn nurse-btn--secondary nurse-btn--compact"
                             onClick={() => setAdministering(med)}
-                            disabled={med.unverified}
-                            title={med.unverified ? 'Blocked: awaiting pharmacist verification' : undefined}
+                            disabled={med.unverified || waitingForPharmacist(med)}
+                            title={med.unverified || waitingForPharmacist(med)
+                              ? 'Blocked: awaiting pharmacist verification' : undefined}
                           >
                             Administer
                           </button>
@@ -280,10 +335,18 @@ export default function MedRoundSheet({ patient, focusMedicationId, offline, onC
             </section>
           ))}
 
-          <p className="nurse-footnote">
-            Due times are derived from each order's frequency and the last charted dose. Orb holds no
-            prescriber-authored administration schedule. Treat them as a working list, not a prescription.
-          </p>
+          {patient.medications.some(m => m.due_source) ? (
+            <p className="nurse-footnote">
+              Due times marked as set come from the prescriber or the hospital's signed dose times.
+              The others are derived from each order's frequency and the last charted dose. Treat them
+              as a working list, and check the prescription.
+            </p>
+          ) : (
+            <p className="nurse-footnote">
+              Due times are derived from each order's frequency and the last charted dose. Orb holds no
+              prescriber-authored administration schedule. Treat them as a working list, not a prescription.
+            </p>
+          )}
         </div>
 
         <footer className="nurse-sheet__actions">

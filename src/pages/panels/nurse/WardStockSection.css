@@ -1,0 +1,184 @@
+/* WardStockSection.css: the ward's own stock store on the Deliveries tab
+ * (grn-21), Orb "Quiet Clinical" (flat).
+ *
+ *  - No `opacity` for any state; quiet text is a quieter token.
+ *  - Status words use --status-x-text on an ordinary surface, never a tinted
+ *    fill behind small text.
+ *  - Tap targets are at least 24px, and 44px under `pointer: coarse`
+ *    (.shift-input and .nurse-btn already carry --tap-min).
+ *  - Nothing scrolls the page sideways: rows wrap.
+ */
+
+.ward-stock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: var(--home-col-max);
+  min-width: 0;
+}
+
+.ward-stock__block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.ward-stock__heading {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.ward-stock__muted {
+  font-size: var(--text-sm);
+  font-weight: 450;
+  color: var(--text-secondary);
+}
+
+.ward-stock__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ward-stock__row,
+.ward-stock__transfer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+}
+
+.ward-stock__transfer {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.ward-stock__transfer-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.ward-stock__row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ward-stock__problem {
+  font-size: var(--text-sm);
+  color: var(--status-warn-text);
+}
+
+.ward-stock__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ward-stock__chip {
+  display: inline-block;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-subtle);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.ward-stock__chip--warn { color: var(--status-warn-text); }
+.ward-stock__chip--danger { color: var(--status-danger-text); }
+.ward-stock__chip--muted { color: var(--text-secondary); }
+
+.ward-stock__lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ward-stock__line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+  min-width: 0;
+}
+
+.ward-stock__line-drug {
+  flex: 1 1 220px;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ward-stock__field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.ward-stock__field--wide {
+  flex: 1 1 100%;
+}
+
+.ward-stock__field--wide .shift-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.ward-stock__count {
+  width: 6.5em;
+}
+
+.ward-stock__pick {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 24px;
+  flex: 1 1 220px;
+  color: var(--text-primary);
+}
+
+.ward-stock__pick input {
+  width: 20px;
+  height: 20px;
+}
+
+.ward-stock__actions,
+.ward-stock__cancel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+}
+
+.ward-stock__requests,
+.ward-stock__topup,
+.ward-stock__unlisted,
+.ward-stock__witness {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+@media (pointer: coarse) {
+  .ward-stock__pick { min-height: 44px; }
+  .ward-stock__pick input { width: 28px; height: 28px; }
+}

@@ -57,6 +57,10 @@ unlinked admission or a doubled bed.
     leaves zero new beds and zero events.
   * Registered beds start 'vacant_dirty' (housekeeping's rule: registering a
     bed is inventory, not a claim that somebody cleaned it).
+  * After a write that can change a ward's bed count (a ward, beds, a bed
+    class, the site import, a retirement, register complete) commits, the
+    capacity screens re-read their counts (adt-14, _refresh_capacity): with
+    Beds and admissions on, a register-complete ward's count comes from here.
   * Beds already typed into the housekeeping register on this ward with the
     same label are never duplicated. Registering one is refused with words
     unless the bed manager asks to adopt them, which links the existing row and
@@ -270,6 +274,27 @@ def _audit(db, actor: dict, action: str, summary: str, *, target_type: str,
         user_agent=meta.get("user_agent"),
         metadata=metadata or None,
     )
+
+
+def _refresh_capacity() -> None:
+    """Re-read the capacity screens' bed counts after a master write (adt-14).
+
+    With Beds and admissions on, a ward whose register is complete takes its
+    bed count from this register (forecast_service.refresh_ward_capacity), so
+    a bed registered, retired or reclassed, or a register marked complete,
+    must reach Command Center, the Vigil occupancy tile, the forecast and
+    housekeeping readiness without a restart. Called AFTER the write's session
+    has committed, never inside it: the refresh opens a session of its own.
+    Never raises: the write has already committed, and a capacity figure a
+    moment stale is a smaller problem than a saved bed reported as failed."""
+    try:
+        import config
+        if config.module_state("adt") != "on":
+            return
+        from services.forecast_service import refresh_ward_capacity
+        refresh_ward_capacity()
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.exception("capacity refresh after a bed setup write failed")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -599,6 +624,7 @@ def save_ward(data: dict, *, actor: dict, ward_id: str | None = None,
             raise BedMasterConflict(f"Ward {code} could not be saved because it clashes with "
                                     "one already set up. Nothing was changed.",
                                     code="duplicate_code") from exc
+        _refresh_capacity()
         return _ward_out(row, covering)
 
     changes: dict[str, list] = {}
@@ -661,6 +687,8 @@ def save_ward(data: dict, *, actor: dict, ward_id: str | None = None,
     except DBIntegrityError as exc:
         raise BedMasterConflict("That change clashes with a ward already set up. Nothing was "
                                 "changed.", code="duplicate_code") from exc
+    if changes:
+        _refresh_capacity()
     return _ward_out(row, covering)
 
 
@@ -1007,6 +1035,7 @@ def register_beds(data: dict, *, actor: dict, request_meta: dict | None = None) 
         raise BedMasterConflict("One of these beds clashes with a unit already on the "
                                 "housekeeping register. Nothing was saved.",
                                 code="unit_codes_taken") from exc
+    _refresh_capacity()
     return {
         "ward_id": ward["id"],
         "ward_code": ward["code"],
@@ -1145,6 +1174,7 @@ def update_bed(bed_id: str, data: dict, *, actor: dict, request_meta: dict | Non
     except DBIntegrityError as exc:
         raise BedMasterConflict("That label clashes with a unit already on the housekeeping "
                                 "register. Nothing was changed.", code="unit_codes_taken") from exc
+    _refresh_capacity()
     return _bed_out(after)
 
 
@@ -1240,6 +1270,7 @@ def save_bed_class(data: dict, *, actor: dict, code: str | None = None,
     except DBIntegrityError as exc:
         raise BedMasterConflict("That bed class clashes with one already set up. Nothing was "
                                 "changed.", code="duplicate_code") from exc
+    _refresh_capacity()
     return _bool(out, "is_critical_care", "counts_in_census", "is_active")
 
 
@@ -1313,6 +1344,8 @@ def import_site_config_wards(*, actor: dict, request_meta: dict | None = None) -
     except DBIntegrityError as exc:
         raise BedMasterConflict("A ward in the site configuration clashes with one already set "
                                 "up. Nothing was saved.", code="duplicate_code") from exc
+    if created:
+        _refresh_capacity()
     return {"created": created, "existing": existing, "conflicts": conflicts,
             "skipped": skipped, "file_present": bool(cfg.present), "message": None}
 
@@ -1386,6 +1419,7 @@ def retire_bed(bed_id: str, data: dict | None = None, *, actor: dict,
         _audit(db, actor, "bed_master_bed_retired", f"Bed {unit['unit_code']} retired",
                target_type="bed", target_id=bed_id, request_meta=request_meta, metadata=detail)
         after = db.execute("SELECT * FROM housekeeping_units WHERE id = ?", (bed_id,)).fetchone()
+    _refresh_capacity()
     return _bed_out(after)
 
 
@@ -1667,6 +1701,8 @@ def mark_register_complete(ward_id: str, data: dict | None = None, *, actor: dic
                f"Ward {ward['code']} bed register marked complete",
                target_type="ward", target_id=ward_id, request_meta=request_meta, metadata=detail)
         row = db.execute("SELECT * FROM wards WHERE id = ?", (ward_id,)).fetchone()
+    # From now on the capacity screens read this ward's count from the register.
+    _refresh_capacity()
     return _ward_out(row, covering)
 
 

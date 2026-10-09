@@ -86,9 +86,9 @@ sequenceDiagram
 
 For a *clear* question the screen returns `None`, and the service instead streams tokens from the LLM (Flow B'):
 
-1. `handleAsk()` calls `askBridge(question, onChunk)` (`PatientShell.tsx:134`).
-2. `askBridge` POSTs to `/api/bridge/ask` and then reads the response as **SSE**, each `data: {...}` line is parsed, and each `content` chunk is appended and pushed to `onChunk`, which does `setAnswer(partial)` so the answer types out live (`src/api/client.ts:766-795`, `PatientShell.tsx:134-136`).
-3. Server side, `patient_ask` builds the patient context, then wraps `answer_patient_question` in a `StreamingResponse` that emits `data: {"content": ...}` per chunk and a final `data: {"done": true}` (`bridge_routes.py:61-73`).
+1. `handleAsk()` calls `askBridge(question, onChunk)` (`PatientShell.tsx:258`).
+2. `askBridge` POSTs to `/api/bridge/ask` and then reads the response as **SSE**, each `data: {...}` line is parsed, and each `content` chunk is appended and pushed to `onChunk`, which does `setAnswer(partial)` so the answer types out live (`src/api/client.ts:766-795`, `PatientShell.tsx:258-260`).
+3. Server side, `patient_ask` builds the patient context, then wraps `answer_patient_question` in a `StreamingResponse` that emits `data: {"content": ...}` per chunk and a final `data: {"done": true}` (`bridge_routes.py:68-80`).
 4. `answer_patient_question` first runs `screen_for_red_flags`. **Only if it returns `None`** does it build a fenced context block, acquire a slot on the shared LLM queue, and stream from Ollama's `/api/chat` (`bridge_service.py:178-244`).
 
 ---
@@ -174,7 +174,7 @@ This file has four functions plus module-level safety constants. Read the consta
 8. Outer `finally` always calls `llm_queue.release()` (`:243-244`) so a slot is never leaked.
 **Why it exists:** it is the safe, streamed answer engine. The two-layer defense (deterministic screen + fenced context) is the reason a patient chatbot is acceptable in a clinical setting.
 **Data in/out:** in: question string + the `get_patient_status_simple` dict. Out: a stream of text chunks. The route wraps each chunk as `data: {"content": chunk}` SSE.
-**Talks to:** `screen_for_red_flags`, `_emit_emergency_event`, `services.llm_queue_service.llm_queue`, Ollama at `OLLAMA_BASE_URL`. Called by `patient_ask` (`bridge_routes.py:62`).
+**Talks to:** `screen_for_red_flags`, `_emit_emergency_event`, `services.llm_queue_service.llm_queue`, Ollama at `OLLAMA_BASE_URL`. Called by `patient_ask` (`bridge_routes.py:69`).
 **Change guide:** *To change the assistant's tone*, edit `BRIDGE_SYSTEM_PROMPT` (`:100`). *To pass more clinical context* into the answer, add fields inside the fence at `:192-208`, but always route them through `_safe()`. Footgun: if you ever add context that itself contains the fence markers, `_safe` only strips exactly ` ``` `/`<<<`/`>>>`; novel injection sequences would not be caught.
 **Gotchas:** priority 2 means under heavy clinical LLM load a patient may wait for their answer; the 120s timeout is the ceiling. The red-flag `yield` path never touches the queue, so emergencies are always instant.
 
@@ -184,7 +184,7 @@ This file has four functions plus module-level safety constants. Read the consta
 
 `router = APIRouter(prefix="/api/bridge", tags=["bridge"])` (`:9`), registered in `server/main.py:303`. **Every** handler below takes `user: dict = Depends(require_patient_self())`, the gate that (a) requires a valid JWT and (b) requires `role == "patient"` (see guide 03-auth-rbac). Full paths therefore start with `/api/bridge`.
 
-#### _resolve_patient_id: `bridge_routes.py:70`
+#### _resolve_patient_id: `bridge_routes.py:77`
 **Signature:** `_resolve_patient_id(user_id: str) -> str`
 **Does:** translates the logged-in user's id into the patient-record id, enforcing that a patient can only resolve *their own*.
 **How it works:** opens a `db_session()`, selects `id FROM patients WHERE user_id = ?` (`:17-20`); raises `404 "No patient record found for your account"` if none (`:21-22`); else returns the id (`:23`).
@@ -195,7 +195,7 @@ This file has four functions plus module-level safety constants. Read the consta
 
 ---
 
-#### patient_status: `bridge_routes.py:88`: `GET /api/bridge/status`
+#### patient_status: `bridge_routes.py:95`: `GET /api/bridge/status`
 **Signature:** `patient_status(user = Depends(require_patient_self())) -> dict`
 **Does:** returns the lay-language dashboard for the logged-in patient.
 **How it works:** calls `get_patient_status_simple(user["id"])` and returns it verbatim (`:33-34`).
@@ -205,7 +205,7 @@ This file has four functions plus module-level safety constants. Read the consta
 
 ---
 
-#### patient_vitals: `bridge_routes.py:99`: `GET /api/bridge/vitals`
+#### patient_vitals: `bridge_routes.py:106`: `GET /api/bridge/vitals`
 **Signature:** `patient_vitals(user = Depends(require_patient_self())) -> {"vitals": {...}}`
 **Does:** returns just the simplified vitals sub-object.
 **How it works:** calls `get_patient_status_simple(user["id"])` and returns only `status.get("vitals", {})` (`:43-44`).
@@ -213,7 +213,7 @@ This file has four functions plus module-level safety constants. Read the consta
 
 ---
 
-#### patient_ask: `bridge_routes.py:109`: `POST /api/bridge/ask`
+#### patient_ask: `bridge_routes.py:116`: `POST /api/bridge/ask`
 **Signature:** `async patient_ask(request: Request, user = Depends(require_patient_self())) -> StreamingResponse`
 **Does:** the chatbot endpoint, streams a plain-language answer back as SSE.
 **How it works:**
@@ -228,7 +228,7 @@ This file has four functions plus module-level safety constants. Read the consta
 
 ---
 
-#### patient_reports: `bridge_routes.py:143`: `GET /api/bridge/reports`
+#### patient_reports: `bridge_routes.py:150`: `GET /api/bridge/reports`
 **Signature:** `patient_reports(user = Depends(require_patient_self())) -> dict`
 **Does:** the aggregate "My Records" payload, medications + clinical documents + discharge summary + imaging reports in one call.
 **How it works:**
@@ -242,7 +242,7 @@ This file has four functions plus module-level safety constants. Read the consta
 
 ---
 
-#### patient_medications: `bridge_routes.py:194`: `GET /api/bridge/medications`
+#### patient_medications: `bridge_routes.py:201`: `GET /api/bridge/medications`
 **Signature:** `patient_medications(user = Depends(require_patient_self())) -> {"medications": [...]}`
 **Does:** medications only, sorted `active` → `prn` → everything else, then newest first (`:138-142`).
 **Talks to:** `_resolve_patient_id`; reads `medications`. Frontend export `getBridgeMedications` exists (`src/api/client.ts:754`) but has **no in-repo caller** (PatientShell uses the aggregate `reports`). Dead path, see Discrepancies.
@@ -250,7 +250,7 @@ This file has four functions plus module-level safety constants. Read the consta
 
 ---
 
-#### patient_discharge: `bridge_routes.py:211`: `GET /api/bridge/discharge`
+#### patient_discharge: `bridge_routes.py:218`: `GET /api/bridge/discharge`
 **Signature:** `patient_discharge(user = Depends(require_patient_self())) -> dict`
 **Does:** the latest discharge summary, with its timeline JSON parsed.
 **How it works:** resolve patient_id; select the latest `discharge_summaries` row (`:154-158`); if none, return `{"discharge_summary": null, "message": "No discharge summary available yet."}` (`:161-162`); else parse `timeline_json` (guarded against bad JSON → `None`) and return `{discharge_summary, timeline, discharged_at}` (`:164-175`).
@@ -259,7 +259,7 @@ This file has four functions plus module-level safety constants. Read the consta
 
 ---
 
-#### patient_documents: `bridge_routes.py:241`: `GET /api/bridge/documents`
+#### patient_documents: `bridge_routes.py:248`: `GET /api/bridge/documents`
 **Signature:** `patient_documents(user = Depends(require_patient_self())) -> {"documents": [...]}`
 **Does:** the 30 latest clinical documents (`:184-188`).
 **Talks to:** reads `clinical_documents`. Frontend `getBridgeDocuments` (`src/api/client.ts:762`) exists but is uncalled; portal uses the aggregate. Dead path.
@@ -318,7 +318,7 @@ One default-exported component plus one module helper. It imports `useAuth` from
 **Why it exists / BUG:** this is a **front-end-only mock**. There is *no* API call, *no* persistence, *no* Bridge endpoint for booking, the confirmation animation is a timer. A patient who "confirms" an appointment has saved nothing; the clinician `AppointmentsPanel` will never show it. See Discrepancies. `handleReset` uses `setSelectedDate(null as any)` (`:91`), an unnecessary cast since the state is already typed `Date | null`.
 **Change guide:** *To make booking real*, add a `POST /api/bridge/appointments` route + service that writes to a new `appointments` table scoped by `_resolve_patient_id`, then replace the `setTimeout` in `handleBook` with a real `await`. Knock-on: the clinician `AppointmentsPanel` currently reads the *forecast* service, not an appointments table, so you'd also need to unify those two sources for a patient booking to appear clinician-side.
 
-##### Report modals + detail modal: `PatientShell.tsx:427-575`
+##### Report modals + detail modal: `PatientShell.tsx:580-728`
 **Does:** show medications / documents / labs / discharge as scrollable lists; clicking a row opens a detail modal.
 **How it works:** each modal reads its slice of `reports` (e.g. `reports.medications`), shows skeletons while `reportsLoading`, an empty state if the slice is empty, or a list of `bridge__report-item` rows. Clicking sets `selectedReportDetail = { type, data }`; the detail modal (`:548-575`) switches on `type` to render meds/doc/lab/discharge fields. Dates are formatted with `new Date(...).toLocaleDateString()` (browser locale/timezone).
 **Gotchas:** the labs modal reads `reports.imaging_reports` (from `lens_analyses`), "Lab & Imaging History" is really *imaging* analyses, since Bridge has no separate labs query. The discharge detail shows `data.summary` but no timeline (the aggregate endpoint doesn't return `timeline_json`).
@@ -369,7 +369,7 @@ This is the liquid-glass stylesheet for the portal. It is presentational; the lo
 |---|---|---|
 | Layout | `:1-88` | `.bridge__content` is a centered single column, `max-width: 800px`, deliberately narrow and calm vs the full-bleed clinician grid. |
 | Header | `:26-76` | Sticky glass header; logout button turns gold on hover. |
-| Cards | `:108-155`, `:253-265` | `.bridge__card` glass cards; status badge variants `--ok/--warn/--danger` are the classes `PatientShell.tsx:145-147` selects between. |
+| Cards | `:108-155`, `:253-265` | `.bridge__card` glass cards; status badge variants `--ok/--warn/--danger` are the classes `PatientShell.tsx:269-271` selects between. |
 | Ask input | `:157-200` | The gold send button (`--accent-deep` → `--accent-amber` on hover). |
 | Vitals | `:202-227` | 2-column grid; `tabular-nums` so numbers align. |
 | Answer | `:229-251` | `white-space: pre-wrap`, why the streamed answer keeps line breaks. |
@@ -395,7 +395,7 @@ This is the liquid-glass stylesheet for the portal. It is presentational; the lo
 | GET | `/api/bridge/documents` | 30 latest clinical documents | `getBridgeDocuments` export exists, uncalled |
 
 **Consumed from other subsystems:**
-- `require_patient_self`, `server/permissions.py:224` (guide 03).
+- `require_patient_self`, `server/permissions.py:225` (guide 03).
 - Auth login + JWT, `POST /api/auth/login`, `create_token` (guide 03).
 - `services.event_bus` topic `bridge.emergency.flag` (published), guide 06-realtime.
 - `services.llm_queue_service.llm_queue` + Ollama `/api/chat`, LLM queue / guide 09.
@@ -410,7 +410,7 @@ This is the liquid-glass stylesheet for the portal. It is presentational; the lo
 ## Rebuild notes
 
 **Prerequisites (must exist first):**
-1. Auth + RBAC (guide 03): `get_current_user`, the `patient` role in `ROLE_PERMISSIONS` (holding `bridge.read_own` + `bridge.ask`, `permissions.py:130-132`), and `require_patient_self` (`permissions.py:224`).
+1. Auth + RBAC (guide 03): `get_current_user`, the `patient` role in `ROLE_PERMISSIONS` (holding `bridge.read_own` + `bridge.ask`, `permissions.py:131-133`), and `require_patient_self` (`permissions.py:225`).
 2. The login endpoint that issues a JWT keyed on the patient's `id` (`auth_routes.py:97`), and a `users` row per patient whose `id` matches a `patients.user_id`.
 3. The DB schema/tables listed above (guide 04-database-schema).
 4. The event bus (guide 06) and the LLM queue + Ollama (guide 09) for the chatbot; the app shell + auth context + api client (guides 01, 02).
@@ -441,7 +441,7 @@ This is the liquid-glass stylesheet for the portal. It is presentational; the lo
 
 6. **Discharge timeline is unreachable from the portal.** Only `/api/bridge/discharge` parses and returns `timeline_json`; the aggregate `/reports` (which the portal actually uses) selects only `summary, discharged_at`. So the portal's discharge modal can never show a timeline unless it starts calling the (currently dead) `/discharge` endpoint.
 
-7. **`require_patient_self` docstring overstates its check.** It claims to combine a `bridge.read_own` permission check with ownership validation (`permissions.py:225-231`), but the code only checks `role != "patient"` (`:239`); it does no permission lookup, and ownership is delegated to each route's `_resolve_patient_id`/`user["id"]` scoping. Equivalent today only because the patient role happens to hold `bridge.read_own`. (Also noted in guide 03-auth-rbac.)
+7. **`require_patient_self` docstring overstates its check.** It claims to combine a `bridge.read_own` permission check with ownership validation (`permissions.py:226-232`), but the code only checks `role != "patient"` (`:239`); it does no permission lookup, and ownership is delegated to each route's `_resolve_patient_id`/`user["id"]` scoping. Equivalent today only because the patient role happens to hold `bridge.read_own`. (Also noted in guide 03-auth-rbac.)
 
 8. **`AppointmentsPanel` bypasses the shared api client.** It defines its own `getToken`/`apiFetch` (`AppointmentsPanel.tsx:5-15`), so it skips the shared client's 401 auto-logout and structured-403 handling; expired sessions surface only as a generic error.
 

@@ -4,9 +4,9 @@ Orb stores everything, patients, vitals, chat messages, AI outputs, audit trails
 
 ## Purpose and neighbors
 
-Orb is designed as a **local-first** hospital operating system: the entire clinical record lives on one machine inside the hospital, so the ward keeps working "when the EHR/network/LLM is down, a capability cloud-only systems structurally cannot offer" (`server/database.py:643-646`). That design goal drives three data-layer decisions, all verifiable in code:
+Orb is designed as a **local-first** hospital operating system: the entire clinical record lives on one machine inside the hospital, so the ward keeps working "when the EHR/network/LLM is down, a capability cloud-only systems structurally cannot offer" (`server/database.py:647-650`). That design goal drives three data-layer decisions, all verifiable in code:
 
-1. **SQLite, not a client-server database (e.g. PostgreSQL).** The database is a single file whose path comes from one env var (`ORB_DB_PATH`, default `server/orb.db`, `server/config.py:22`). There is no database server to install, operate, or lose connectivity to; backup is copying one file (safely, see the backup tools below). The same file also hosts the RAG vector index via the `sqlite-vec` loadable extension (RAG, *Retrieval-Augmented Generation*, where an LLM's answers are grounded in documents retrieved from a search index; the `clinical_knowledge_vec` virtual table is created by `server/services/clinical_knowledge.py:554`, outside this guide's scope). The `sqlite-vec` dependency is explicitly cited as a constraint on the data layer's evolution (`server/database.py:752-754`, `859-868`).
+1. **SQLite, not a client-server database (e.g. PostgreSQL).** The database is a single file whose path comes from one env var (`ORB_DB_PATH`, default `server/orb.db`, `server/config.py:22`). There is no database server to install, operate, or lose connectivity to; backup is copying one file (safely, see the backup tools below). The same file also hosts the RAG vector index via the `sqlite-vec` loadable extension (RAG, *Retrieval-Augmented Generation*, where an LLM's answers are grounded in documents retrieved from a search index; the `clinical_knowledge_vec` virtual table is created by `server/services/clinical_knowledge.py:554`, outside this guide's scope). The `sqlite-vec` dependency is explicitly cited as a constraint on the data layer's evolution (`server/database.py:756-758`, `859-868`).
 2. **Raw SQL, not an ORM.** Every service opens a connection with `get_db()` / `db_session()` and writes parameterized SQL strings directly. No code comment states "we rejected ORMs because X", so treat this as inference: the schema uses SQLite-specific features (CHECK-constraint rebuilds, `PRAGMA` introspection, append-only triggers, WAL tuning, a loadable vector extension) that ORMs abstract poorly, and the whole backend follows the same pattern (85+ files import `get_db`/`db_session`).
 3. **Schema and migrations live in one place.** `init_db()` in `database.py` both creates the schema and upgrades old databases in-place; `migrate.py` is only a CLI wrapper around it (`server/migrate.py:2-17`).
 
@@ -46,10 +46,10 @@ graph LR
 A **migration** is a change applied to an existing database's structure (new table, new column, widened constraint) so old data survives a code upgrade. Orb's migrations are *additive and idempotent*: each block first inspects the live database (via `PRAGMA table_info` or `sqlite_master`) and only acts if the change is missing, so running `init_db()` a hundred times is safe (`server/migrate.py:14-16`).
 
 1. `main.py`'s FastAPI lifespan handler calls `init_db()` before anything else (`server/main.py:213`). (FastAPI is the Python web framework serving Orb's REST API; the "lifespan" is its startup/shutdown hook.)
-2. `init_db()` chmods the DB file and its WAL sidecars to owner-only 0o600 (`server/database.py:1430`, helper at `:1280`).
-3. It runs the entire `SCHEMA` script, every `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, and the two append-only triggers, in one `executescript` call (`server/database.py:1433`). On a fresh file this builds the whole database; on an existing file the `IF NOT EXISTS` guards make it a no-op.
+2. `init_db()` chmods the DB file and its WAL sidecars to owner-only 0o600 (`server/database.py:1434`, helper at `:1280`).
+3. It runs the entire `SCHEMA` script, every `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, and the two append-only triggers, in one `executescript` call (`server/database.py:1437`). On a fresh file this builds the whole database; on an existing file the `IF NOT EXISTS` guards make it a no-op.
 4. Seventeen migration blocks then run in order (detailed under `init_db` below), each guarded by introspection.
-5. Finally the applied version is recorded in the `schema_version` ledger table via `INSERT OR IGNORE` keyed on the `SCHEMA_VERSION` constant (currently **5**, `server/database.py:17`, written at `:1897-1900`), giving an auditable record of which baseline generations this file has seen. Then, and this is the step earlier editions missed, `init_db` calls `run_pending_migrations(conn)` (`server/database.py:1909-1910`), which applies every unapplied numbered migration from `server/migrations.py` against its own `schema_migrations` ledger.
+5. Finally the applied version is recorded in the `schema_version` ledger table via `INSERT OR IGNORE` keyed on the `SCHEMA_VERSION` constant (currently **5**, `server/database.py:17`, written at `:1897-1900`), giving an auditable record of which baseline generations this file has seen. Then, and this is the step earlier editions missed, `init_db` calls `run_pending_migrations(conn)` (`server/database.py:1913-1914`), which applies every unapplied numbered migration from `server/migrations.py` against its own `schema_migrations` ledger.
 
 ```mermaid
 sequenceDiagram
@@ -74,7 +74,7 @@ sequenceDiagram
 ### Flow 2: request-time data access
 
 1. A route or service calls `get_db()` (manual close) or enters `with db_session() as conn:` (auto commit/rollback/close).
-2. `get_db()` (`server/database.py:1008`) returns a **per-thread pooled connection when `ORB_DB_POOL` is enabled**, and otherwise opens a fresh connection per call, the default, thread-safe model the tests exercise (docstring, `:1011-1014`). Either way it sets a row factory so rows are dict-like and applies performance/safety PRAGMAs, most importantly `journal_mode=WAL` and `foreign_keys=ON` (`server/database.py:997-1005`). WAL (*Write-Ahead Logging*) is a SQLite mode where writes go to a sidecar `-wal` file so readers never block a writer and vice versa; combined with `busy_timeout=30000` (retry a locked write for up to 30 s) this is what makes one file safe for a multi-threaded FastAPI server.
+2. `get_db()` (`server/database.py:1012`) returns a **per-thread pooled connection when `ORB_DB_POOL` is enabled**, and otherwise opens a fresh connection per call, the default, thread-safe model the tests exercise (docstring, `:1011-1014`). Either way it sets a row factory so rows are dict-like and applies performance/safety PRAGMAs, most importantly `journal_mode=WAL` and `foreign_keys=ON` (`server/database.py:1001-1009`). WAL (*Write-Ahead Logging*) is a SQLite mode where writes go to a sidecar `-wal` file so readers never block a writer and vice versa; combined with `busy_timeout=30000` (retry a locked write for up to 30 s) this is what makes one file safe for a multi-threaded FastAPI server.
 3. The caller executes parameterized SQL (`?` placeholders, never f-strings, to prevent SQL injection) and the connection is closed at the end of the operation.
 
 ### Flow 3: seeding a demo hospital
@@ -88,7 +88,7 @@ sequenceDiagram
 
 ## The tables
 
-SQLite only enforces a `REFERENCES` clause (a **foreign key**, FK, a column that must match a primary key in another table) when the connection has `PRAGMA foreign_keys=ON`. Connections from `get_db()` do (`server/database.py:805`); the standalone scripts (`cleanup_data.py`, `reset_db_and_seed.py`, `seed_helix.py`) use raw `sqlite3.connect` where FKs default to **off**. Several tables (all `sage_*` ambient tables except `sage_decision_cache`, plus `audit_logs`, `event_log`, `hospital_forecasts`, `admission_history`) have **no** `REFERENCES` clauses at all, their relationships are by naming convention only. Each table below states which kind it is. Unless noted, `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` columns store UTC strings like `2026-05-21 08:00:00` written by SQLite itself, while application code usually writes ISO-8601 strings with `+00:00` offsets, a mixed format every consumer must tolerate.
+SQLite only enforces a `REFERENCES` clause (a **foreign key**, FK, a column that must match a primary key in another table) when the connection has `PRAGMA foreign_keys=ON`. Connections from `get_db()` do (`server/database.py:809`); the standalone scripts (`cleanup_data.py`, `reset_db_and_seed.py`, `seed_helix.py`) use raw `sqlite3.connect` where FKs default to **off**. Several tables (all `sage_*` ambient tables except `sage_decision_cache`, plus `audit_logs`, `event_log`, `hospital_forecasts`, `admission_history`) have **no** `REFERENCES` clauses at all, their relationships are by naming convention only. Each table below states which kind it is. Unless noted, `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` columns store UTC strings like `2026-05-21 08:00:00` written by SQLite itself, while application code usually writes ISO-8601 strings with `+00:00` offsets, a mixed format every consumer must tolerate.
 
 ### Domain A: Identity and the patient core
 
@@ -104,7 +104,7 @@ erDiagram
     patients ||--o{ patient_snapshots : "patient_id (convention)"
 ```
 
-#### `users`: `server/database.py:35`
+#### `users`: `server/database.py:39`
 Every account: clinicians, admins, pharmacists, and patient portal logins. Consumed by the auth subsystem (guide 03-auth-rbac).
 
 | Column | Type | Meaning |
@@ -114,16 +114,16 @@ Every account: clinicians, admins, pharmacists, and patient portal logins. Consu
 | `role` | TEXT NOT NULL, CHECK in (`doctor`,`nurse`,`admin`,`patient`,`pharmacist`) | Drives RBAC (*role-based access control*, permissions granted by role) |
 | `department` | TEXT | e.g. `Cardiology` |
 | `registration_number` | TEXT | Medical council registration |
-| `password_hash` | TEXT NOT NULL | Seeded as unsalted SHA-256; auth upgrades to bcrypt on first login (`server/routes/auth_routes.py:529-539`) |
-| `pin_hash` | TEXT | Per-user PIN hash for agentic co-sign. **The universal default is gone (schema v5).** Boot used to seed `sha256("1234")` for every clinician without a PIN, one well-known 4-digit code as the sole human gate on medication dispatch. `init_db` now *revokes* that hash instead, once, ledger-gated on `schema_version >= 5` (`server/database.py:1494-1516`). A NULL `pin_hash` means co-sign is unavailable for that user, fail closed. |
+| `password_hash` | TEXT NOT NULL | Seeded as unsalted SHA-256; auth upgrades to bcrypt on first login (`server/routes/auth_routes.py:562-572`) |
+| `pin_hash` | TEXT | Per-user PIN hash for agentic co-sign. **The universal default is gone (schema v5).** Boot used to seed `sha256("1234")` for every clinician without a PIN, one well-known 4-digit code as the sole human gate on medication dispatch. `init_db` now *revokes* that hash instead, once, ledger-gated on `schema_version >= 5` (`server/database.py:1498-1520`). A NULL `pin_hash` means co-sign is unavailable for that user, fail closed. |
 | `created_at` | TIMESTAMP default now | n/a |
-| `totp_secret`, `totp_enabled` | TEXT / INTEGER (migration, `server/database.py:1834-1836`) | MFA, TOTP is the 6-digit rotating code from an authenticator app |
-| `token_version` | INTEGER default 0 (migration, `server/database.py:1838`) | Bumped to revoke all of a user's JWTs (a *JWT* is a signed login token the client presents on each request) |
-| `totp_last_step` | INTEGER default -1 (migration, `server/database.py:1843`) | Highest consumed TOTP time-step, preventing code replay |
+| `totp_secret`, `totp_enabled` | TEXT / INTEGER (migration, `server/database.py:1838-1840`) | MFA, TOTP is the 6-digit rotating code from an authenticator app |
+| `token_version` | INTEGER default 0 (migration, `server/database.py:1842`) | Bumped to revoke all of a user's JWTs (a *JWT* is a signed login token the client presents on each request) |
+| `totp_last_step` | INTEGER default -1 (migration, `server/database.py:1847`) | Highest consumed TOTP time-step, preventing code replay |
 
-A special row `('system', 'Orb Sage', 'admin', 'IT', 'system_hash')` is upserted on every boot so AI/bot writes satisfy `sender_id` FKs (`server/database.py:1888-1889`).
+A special row `('system', 'Orb Sage', 'admin', 'IT', 'system_hash')` is upserted on every boot so AI/bot writes satisfy `sender_id` FKs (`server/database.py:1892-1893`).
 
-#### `patients`: `server/database.py:34`
+#### `patients`: `server/database.py:38`
 The live patient census, one row per person, mutated in place on transfer/discharge.
 
 | Column | Type | Meaning |
@@ -137,29 +137,29 @@ The live patient census, one row per person, mutated in place on transfer/discha
 | `diagnosis` | TEXT | Working diagnosis (free text) |
 | `status` | TEXT default `admitted`, CHECK in (`admitted`,`discharged`,`transferred`) | n/a |
 | `age` | INTEGER | n/a |
-| `date_of_birth` | DATE (base schema `server/database.py:45`; also an additive migration for legacy DBs, `server/database.py:1726`) | n/a |
-| `sex`, `phone`, `emergency_contact_name`, `emergency_contact_phone`, `address` | TEXT (base schema, `server/database.py:46-50`) | Demographics/contacts |
+| `date_of_birth` | DATE (base schema `server/database.py:49`; also an additive migration for legacy DBs, `server/database.py:1730`) | n/a |
+| `sex`, `phone`, `emergency_contact_name`, `emergency_contact_phone`, `address` | TEXT (base schema, `server/database.py:50-54`) | Demographics/contacts |
 | `attending_doctor_id` | TEXT REF users(id) | The responsible doctor |
 | `created_at` | TIMESTAMP default now | n/a |
-| `on_scale_2` | INTEGER default 0 (migration only, `server/database.py:1786`) | NEWS2 "Scale 2" flag for COPD patients, changes how Vigil scores SpO2 |
+| `on_scale_2` | INTEGER default 0 (migration only, `server/database.py:1790`) | NEWS2 "Scale 2" flag for COPD patients, changes how Vigil scores SpO2 |
 
-#### `admissions`: `server/database.py:69`
+#### `admissions`: `server/database.py:73`
 One row per admission episode with the full intake record (who admitted, triage, initial vitals). FKs to `patients` and `users` (enforced on `get_db` connections). Columns: `id` (TEXT PK), `patient_id`*, `admitted_by`*, `admission_source`, `admission_type`, `department`, `ward`, `bed`, `attending_doctor_id` (REF users), `referring_clinician`, `chief_complaint`, `initial_diagnosis`, `triage_severity` (INTEGER, 1=emergency…3=standard per `seed_clinical_data.py:32`), `admitting_notes`, `nursing_notes`, `isolation_precautions`, `code_status` (default `full_code`), `initial_vitals_json` (JSON blob of first vitals), `status` (CHECK `active`/`discharged`/`transferred`), `created_at`. (* = NOT NULL + REFERENCES.)
 
-#### `patient_profiles`: `server/database.py:93`
-Longitudinal narrative per patient, keyed 1:1 on `patient_id` (PK + REF patients). Columns `comorbidities`, `past_medical_history`, `past_surgical_history`, `allergies`, `current_medications`, `family_history`, `social_history` are free-text/JSON strings, plus `updated_at`. Note the comment at `server/database.py:586-588`: the free-text `allergies` here is *narrative*; the coded source of truth for safety checks is `patient_allergies`.
+#### `patient_profiles`: `server/database.py:97`
+Longitudinal narrative per patient, keyed 1:1 on `patient_id` (PK + REF patients). Columns `comorbidities`, `past_medical_history`, `past_surgical_history`, `allergies`, `current_medications`, `family_history`, `social_history` are free-text/JSON strings, plus `updated_at`. Note the comment at `server/database.py:590-592`: the free-text `allergies` here is *narrative*; the coded source of truth for safety checks is `patient_allergies`.
 
-#### `patient_allergies`: `server/database.py:714`
-Structured, coded allergies, one row per (patient, substance), `UNIQUE(patient_id, substance)` (`server/database.py:600`). Columns: `id` (INTEGER PK AUTOINCREMENT), `patient_id`* REF patients, `substance` (normalized lowercase), `substance_class`, `reaction`, `severity` (CHECK `mild`/`moderate`/`severe`/`unknown`), `status` (CHECK `active`/`inactive`/`resolved`), `source` (default `clinician`; also `llm_extracted`/`ingested_fhir`, provenance for AI-written rows), `recorded_by` REF users, `recorded_at`. Index `idx_allergies_patient (patient_id, status)` (`server/database.py:727`). Used for order-time allergy checking in Helix.
+#### `patient_allergies`: `server/database.py:718`
+Structured, coded allergies, one row per (patient, substance), `UNIQUE(patient_id, substance)` (`server/database.py:604`). Columns: `id` (INTEGER PK AUTOINCREMENT), `patient_id`* REF patients, `substance` (normalized lowercase), `substance_class`, `reaction`, `severity` (CHECK `mild`/`moderate`/`severe`/`unknown`), `status` (CHECK `active`/`inactive`/`resolved`), `source` (default `clinician`; also `llm_extracted`/`ingested_fhir`, provenance for AI-written rows), `recorded_by` REF users, `recorded_at`. Index `idx_allergies_patient (patient_id, status)` (`server/database.py:731`). Used for order-time allergy checking in Helix.
 
-#### `problem_list`: `server/database.py:730`
-Active/resolved coded clinical problems. Columns: `id`, `patient_id`* REF patients, `problem`, `icd10_code`, `snomed_code` (ICD-10 and SNOMED are standard clinical coding systems), `status` (CHECK `active`/`resolved`/`inactive`), `onset_date`, `source` (provenance as above), `recorded_by` REF users, `recorded_at`, `resolved_at`. Index `idx_problems_patient` (`server/database.py:743`).
+#### `problem_list`: `server/database.py:734`
+Active/resolved coded clinical problems. Columns: `id`, `patient_id`* REF patients, `problem`, `icd10_code`, `snomed_code` (ICD-10 and SNOMED are standard clinical coding systems), `status` (CHECK `active`/`resolved`/`inactive`), `onset_date`, `source` (provenance as above), `recorded_by` REF users, `recorded_at`, `resolved_at`. Index `idx_problems_patient` (`server/database.py:747`).
 
-#### `medications`: `server/database.py:229`
-Prescriptions. Columns: `id`, `patient_id`* REF patients, `drug_name`, `dosage`, `route` (default `Oral`), `frequency`, `status` (CHECK `active`/`discontinued`/`prn`), `prescribed_by` REF users, `notes`, `started_at`. Migration-added provenance: `source` (default `clinician`, an `llm_extracted`/`agentic` med is not trusted until verified), `verified_by`, `verified_at` (`server/database.py:1177-1184`). Index `idx_meds_patient` (`server/database.py:480`).
+#### `medications`: `server/database.py:233`
+Prescriptions. Columns: `id`, `patient_id`* REF patients, `drug_name`, `dosage`, `route` (default `Oral`), `frequency`, `status` (CHECK `active`/`discontinued`/`prn`), `prescribed_by` REF users, `notes`, `started_at`. Migration-added provenance: `source` (default `clinician`, an `llm_extracted`/`agentic` med is not trusted until verified), `verified_by`, `verified_at` (`server/database.py:1181-1188`). Index `idx_meds_patient` (`server/database.py:484`).
 
-#### `patient_snapshots`: `server/database.py:772`
-Durable read-only copies of the essential clinical picture for downtime resilience (the local-first flagship, comment at `server/database.py:643-646`). Columns: `id`, `patient_id`* REF patients, `snapshot_json` (full serialized snapshot), `summary`, `created_by` (user id or `'auto'`), `created_at`. Index `idx_snapshots_patient (patient_id, created_at DESC)` (`server/database.py:780`).
+#### `patient_snapshots`: `server/database.py:776`
+Durable read-only copies of the essential clinical picture for downtime resilience (the local-first flagship, comment at `server/database.py:647-650`). Columns: `id`, `patient_id`* REF patients, `snapshot_json` (full serialized snapshot), `summary`, `created_by` (user id or `'auto'`), `created_at`. Index `idx_snapshots_patient (patient_id, created_at DESC)` (`server/database.py:784`).
 
 ### Domain B: Monitoring, ingestion, and forecasting
 
@@ -176,32 +176,32 @@ erDiagram
     event_log }o..o{ patients : "patient_id (convention)"
 ```
 
-#### `vitals`: `server/database.py:106`
-Time-series vital signs, the highest-volume table. Columns: `id` (INTEGER PK AUTOINCREMENT), `patient_id`* REF patients, `timestamp`* (caller-supplied, NOT defaulted), `heart_rate`, `systolic_bp`, `diastolic_bp`, `spo2`, `temperature`, `respiratory_rate` (all REAL), `consciousness` (TEXT default `alert`). Migration-added: `source` (default `simulated`, `server/database.py:1041-1043`), `source_event_id` REF ingestion_events (`server/database.py:1044-1046`), `on_oxygen` (INTEGER default 0, so NEWS2 scores supplemental O2 from recorded data, `server/database.py:1167-1172`). Index `idx_vitals_patient (patient_id, timestamp DESC)` (`server/database.py:472`).
+#### `vitals`: `server/database.py:110`
+Time-series vital signs, the highest-volume table. Columns: `id` (INTEGER PK AUTOINCREMENT), `patient_id`* REF patients, `timestamp`* (caller-supplied, NOT defaulted), `heart_rate`, `systolic_bp`, `diastolic_bp`, `spo2`, `temperature`, `respiratory_rate` (all REAL), `consciousness` (TEXT default `alert`). Migration-added: `source` (default `simulated`, `server/database.py:1045-1047`), `source_event_id` REF ingestion_events (`server/database.py:1048-1050`), `on_oxygen` (INTEGER default 0, so NEWS2 scores supplemental O2 from recorded data, `server/database.py:1171-1176`). Index `idx_vitals_patient (patient_id, timestamp DESC)` (`server/database.py:476`).
 
-#### `risk_scores`: `server/database.py:120`
-Vigil's computed deterioration scores. Columns: `id`, `patient_id`* REF patients, `timestamp` (default now), `score` (REAL NOT NULL), `level` (CHECK `critical`/`elevated`/`stable`), `drivers` (JSON array of top risk drivers). Index `idx_risk_patient` (`server/database.py:474`).
+#### `risk_scores`: `server/database.py:124`
+Vigil's computed deterioration scores. Columns: `id`, `patient_id`* REF patients, `timestamp` (default now), `score` (REAL NOT NULL), `level` (CHECK `critical`/`elevated`/`stable`), `drivers` (JSON array of top risk drivers). Index `idx_risk_patient` (`server/database.py:478`).
 
-#### `ingestion_events`: `server/database.py:376`
-Raw provenance / dead-letter table for external data feeds (a *dead-letter* table keeps every inbound payload, including failures, so nothing is silently lost). Columns: `id`, `received_at`, `source_type`* (`hl7`/`json`/`csv_replay`/`simulated`, HL7 is the hospital-integration messaging standard), `source_name`, `external_message_id` (sender dedup key), `patient_identifier_raw`, `encounter_identifier_raw`, `raw_payload` (full original payload), `payload_format`, `parse_status` (CHECK `received`/`parsed`/`partially_parsed`/`failed`/`duplicate`), `parse_error`, `fingerprint` (SHA-256 for dedup), `correlation_id`, `processed_at`, `adapter_name`, `vitals_inserted`, `observations_inserted`. Indexes on `fingerprint` and `(parse_status, received_at DESC)` (`server/database.py:487-488`). No FKs, this table exists *before* patient resolution.
+#### `ingestion_events`: `server/database.py:380`
+Raw provenance / dead-letter table for external data feeds (a *dead-letter* table keeps every inbound payload, including failures, so nothing is silently lost). Columns: `id`, `received_at`, `source_type`* (`hl7`/`json`/`csv_replay`/`simulated`, HL7 is the hospital-integration messaging standard), `source_name`, `external_message_id` (sender dedup key), `patient_identifier_raw`, `encounter_identifier_raw`, `raw_payload` (full original payload), `payload_format`, `parse_status` (CHECK `received`/`parsed`/`partially_parsed`/`failed`/`duplicate`), `parse_error`, `fingerprint` (SHA-256 for dedup), `correlation_id`, `processed_at`, `adapter_name`, `vitals_inserted`, `observations_inserted`. Indexes on `fingerprint` and `(parse_status, received_at DESC)` (`server/database.py:491-492`). No FKs, this table exists *before* patient resolution.
 
-#### `observations`: `server/database.py:398`
-Structured lab/OBX results. Columns: `id`, `patient_id` REF patients (**nullable** until identity resolution), `encounter_id`, `source` (default `unknown`), `source_event_id` REF ingestion_events, `observation_code` + `observation_code_system` (LOINC, the standard lab-test coding system, or local), `observation_name`*, `value_text`, `value_numeric`, `unit`, `reference_range`, `abnormal_flag`, `status` (default `final`), `observed_at`, `recorded_at`, `panel_name`, `obr_group_id`, `raw_segment_ref`, `created_at`. Indexes `idx_observations_patient (patient_id, observed_at DESC)` and `idx_observations_source` (`server/database.py:489-490`).
+#### `observations`: `server/database.py:402`
+Structured lab/OBX results. Columns: `id`, `patient_id` REF patients (**nullable** until identity resolution), `encounter_id`, `source` (default `unknown`), `source_event_id` REF ingestion_events, `observation_code` + `observation_code_system` (LOINC, the standard lab-test coding system, or local), `observation_name`*, `value_text`, `value_numeric`, `unit`, `reference_range`, `abnormal_flag`, `status` (default `final`), `observed_at`, `recorded_at`, `panel_name`, `obr_group_id`, `raw_segment_ref`, `created_at`. Indexes `idx_observations_patient (patient_id, observed_at DESC)` and `idx_observations_source` (`server/database.py:493-494`).
 
-#### `care_bundles`: `server/database.py:748`
-Sepsis/deterioration bundle timers: a Vigil critical alert or manual start opens a bundle; each element column records completion against 1 h/3 h targets (comment `server/database.py:620-622`). Columns: `id`, `patient_id`* REF patients, `bundle_type` (default `sepsis6`), `triggered_at`, `triggered_by` (user id or `'vigil_auto'`), `trigger_reason`, six element timestamps (`lactate_at`, `cultures_at`, `antibiotics_at`, `fluids_at`, `oxygen_at`, `urine_output_at`; NULL = outstanding), `status` (CHECK `active`/`completed`/`cancelled`/`expired`), `completed_at`, `source`. Index `idx_bundles_patient` (`server/database.py:766`).
+#### `care_bundles`: `server/database.py:752`
+Sepsis/deterioration bundle timers: a Vigil critical alert or manual start opens a bundle; each element column records completion against 1 h/3 h targets (comment `server/database.py:624-626`). Columns: `id`, `patient_id`* REF patients, `bundle_type` (default `sepsis6`), `triggered_at`, `triggered_by` (user id or `'vigil_auto'`), `trigger_reason`, six element timestamps (`lactate_at`, `cultures_at`, `antibiotics_at`, `fluids_at`, `oxygen_at`, `urine_output_at`; NULL = outstanding), `status` (CHECK `active`/`completed`/`cancelled`/`expired`), `completed_at`, `source`. Index `idx_bundles_patient` (`server/database.py:770`).
 
-#### `forecast_predictions`: `server/database.py:270`
-Cached per-patient LSTM output (an LSTM is a recurrent neural network for sequences). Columns: `id`, `patient_id`* REF patients, `predicted_los_days`* (length of stay), `discharge_probability`*, `acuity_trajectory`* (CHECK `improving`/`stable`/`worsening`), `confidence`*, `feature_snapshot`, `created_at`. Index `idx_forecast_patient` (`server/database.py:481`).
+#### `forecast_predictions`: `server/database.py:274`
+Cached per-patient LSTM output (an LSTM is a recurrent neural network for sequences). Columns: `id`, `patient_id`* REF patients, `predicted_los_days`* (length of stay), `discharge_probability`*, `acuity_trajectory`* (CHECK `improving`/`stable`/`worsening`), `confidence`*, `feature_snapshot`, `created_at`. Index `idx_forecast_patient` (`server/database.py:485`).
 
-#### `hospital_forecasts`: `server/database.py:282`
-Hospital-level daily forecasts. Columns: `id`, `forecast_date`* , `hour` (default 0), `predicted_admissions`, `predicted_discharges`, `predicted_occupancy`, `ward_breakdown`, `created_at`. Index on `forecast_date` (`server/database.py:482`). No FKs.
+#### `hospital_forecasts`: `server/database.py:286`
+Hospital-level daily forecasts. Columns: `id`, `forecast_date`* , `hour` (default 0), `predicted_admissions`, `predicted_discharges`, `predicted_occupancy`, `ward_breakdown`, `created_at`. Index on `forecast_date` (`server/database.py:486`). No FKs.
 
-#### `admission_history`: `server/database.py:294`
-Last-30-days admission facts for Poisson model fitting (comment `server/database.py:247`). Columns: `id`, `admission_date`*, `patient_name`*, `age`, `sex`, `ward`, `diagnosis`, `severity` (CHECK `critical`/`elevated`/`stable`), `length_of_stay_days`, `discharged` (INTEGER 0/1), `discharge_date`, `created_at`. Index on `admission_date` (`server/database.py:483`). No FKs, deliberately denormalized training data.
+#### `admission_history`: `server/database.py:298`
+Last-30-days admission facts for Poisson model fitting (comment `server/database.py:251`). Columns: `id`, `admission_date`*, `patient_name`*, `age`, `sex`, `ward`, `diagnosis`, `severity` (CHECK `critical`/`elevated`/`stable`), `length_of_stay_days`, `discharged` (INTEGER 0/1), `discharge_date`, `created_at`. Index on `admission_date` (`server/database.py:487`). No FKs, deliberately denormalized training data.
 
-#### `event_log`: `server/database.py:615`
-Persistent log of all state transitions for the "Hospital Nervous System" event bus (see the realtime/event-bus guide, e.g. guide 06-realtime). Columns: `event_id` (TEXT PK), `topic`*, `source_node`* (`vigil`/`relay`/`sage`/`scribe`), `event_type`*, `patient_id` (nullable, by convention), `payload`* (JSON), `timestamp`* (ISO-8601 UTC), `correlation_id`* (traces one clinical workflow across nodes). Indexes on `(topic, timestamp)`, `patient_id`, `correlation_id` (`server/database.py:626-628`).
+#### `event_log`: `server/database.py:619`
+Persistent log of all state transitions for the "Hospital Nervous System" event bus (see the realtime/event-bus guide, e.g. guide 06-realtime). Columns: `event_id` (TEXT PK), `topic`*, `source_node`* (`vigil`/`relay`/`sage`/`scribe`), `event_type`*, `patient_id` (nullable, by convention), `payload`* (JSON), `timestamp`* (ISO-8601 UTC), `correlation_id`* (traces one clinical workflow across nodes). Indexes on `(topic, timestamp)`, `patient_id`, `correlation_id` (`server/database.py:630-632`).
 
 ### Domain C: Relay messaging and Sage AI
 
@@ -221,38 +221,38 @@ erDiagram
     patients ||--o{ sage_insights : "patient_id (convention)"
 ```
 
-#### `channels`: `server/database.py:130`
+#### `channels`: `server/database.py:134`
 Relay chat channels. Columns: `id` (TEXT PK, e.g. `dept-cardiology` or `chan_<12 hex>`), `name`*, `type`* (CHECK `case_room`/`department`/`direct`), `patient_id` REF patients (set for case rooms), `created_at`.
 
-#### `messages`: `server/database.py:139`
-Chat messages. Columns: `id` (AUTOINCREMENT), `channel_id`* REF channels, `sender_id`* REF users, `sender_name`*, `sender_role`* (denormalized so history renders without joins), `content`*, `message_type` (CHECK `text`/`alert`/`system`/`ambient_action`/`surgical_alert`), `timestamp` (default now), `read_by` (JSON array of user IDs, default `[]`). Migration-added: `source` (default `clinician`) and `is_bot` (default 0) distinguishing bot posts (`server/database.py:1865-1867`). Index `idx_messages_channel (channel_id, timestamp DESC)` (`server/database.py:473`). This table has the schema's most elaborate migration (the CHECK-widening rebuild, below).
+#### `messages`: `server/database.py:143`
+Chat messages. Columns: `id` (AUTOINCREMENT), `channel_id`* REF channels, `sender_id`* REF users, `sender_name`*, `sender_role`* (denormalized so history renders without joins), `content`*, `message_type` (CHECK `text`/`alert`/`system`/`ambient_action`/`surgical_alert`), `timestamp` (default now), `read_by` (JSON array of user IDs, default `[]`). Migration-added: `source` (default `clinician`) and `is_bot` (default 0) distinguishing bot posts (`server/database.py:1869-1871`). Index `idx_messages_channel (channel_id, timestamp DESC)` (`server/database.py:477`). This table has the schema's most elaborate migration (the CHECK-widening rebuild, below).
 
-#### `sage_conversations`: `server/database.py:152`
-Per-user Sage chat history. Columns: `id`, `user_id`* REF users, `role`* (CHECK `user`/`assistant`), `content`*, `sources` (JSON array of RAG source references), `timestamp`. Index `idx_sage_user (user_id, timestamp)` (`server/database.py:477`).
+#### `sage_conversations`: `server/database.py:156`
+Per-user Sage chat history. Columns: `id`, `user_id`* REF users, `role`* (CHECK `user`/`assistant`), `content`*, `sources` (JSON array of RAG source references), `timestamp`. Index `idx_sage_user (user_id, timestamp)` (`server/database.py:481`).
 
-#### `sage_room_memory`: `server/database.py:493`
+#### `sage_room_memory`: `server/database.py:497`
 One bounded row per case room: Sage Ambient's rolling understanding of the conversation. Columns: `room_id` (TEXT PK), `patient_id`*, `patient_summary`, `discussion_summary`, `current_concern`, `likely_next_steps`, `unresolved_questions`, `active_intents`, `risk_flags`, `participants` (JSON), `last_processed_msg_id`, `last_processed_at`, `message_count`, `llm_call_count`, `created_at`, `updated_at`. **No FKs**, room/patient links are by convention.
 
-#### `sage_observations`: `server/database.py:513`
-Append-only clinically-meaningful observations extracted by Sage Ambient. Columns: `id`, `room_id`*, `patient_id`*, `source_message_id`, `observation_type`*, `content`*, `confidence` (REAL), `created_at`. Index `idx_sage_obs_type` (`server/database.py:524`). No FKs.
+#### `sage_observations`: `server/database.py:517`
+Append-only clinically-meaningful observations extracted by Sage Ambient. Columns: `id`, `room_id`*, `patient_id`*, `source_message_id`, `observation_type`*, `content`*, `confidence` (REAL), `created_at`. Index `idx_sage_obs_type` (`server/database.py:528`). No FKs.
 
-#### `sage_actions`: `server/database.py:527`
-Durable suggested actions (Sage Ambient Stage 3). Columns: `id` (TEXT PK), `room_id`*, `patient_id`*, `action_type`*, `target`*, `rationale`, `confidence`, `state` (CHECK `suggested`/`acknowledged`/`dismissed`/`confirmed`/`failed`/`superseded`), `version` (default 1), `source_msg_id`, `created_at`, `updated_at`. Index `idx_sage_actions_room` (`server/database.py:542`). No FKs.
+#### `sage_actions`: `server/database.py:531`
+Durable suggested actions (Sage Ambient Stage 3). Columns: `id` (TEXT PK), `room_id`*, `patient_id`*, `action_type`*, `target`*, `rationale`, `confidence`, `state` (CHECK `suggested`/`acknowledged`/`dismissed`/`confirmed`/`failed`/`superseded`), `version` (default 1), `source_msg_id`, `created_at`, `updated_at`. Index `idx_sage_actions_room` (`server/database.py:546`). No FKs.
 
-#### `sage_action_events`: `server/database.py:564`
-Audit trail for action state transitions. Columns: `id`, `action_id`* REF sage_actions, `prior_state`, `new_state`*, `actor_id`* REF users, `actor_name`*, `actor_role`, `reason`, `source` (CHECK `ui`/`system`), `created_at`. Index `idx_sage_action_events_action` (`server/database.py:577`).
+#### `sage_action_events`: `server/database.py:568`
+Audit trail for action state transitions. Columns: `id`, `action_id`* REF sage_actions, `prior_state`, `new_state`*, `actor_id`* REF users, `actor_name`*, `actor_role`, `reason`, `source` (CHECK `ui`/`system`), `created_at`. Index `idx_sage_action_events_action` (`server/database.py:581`).
 
-#### `sage_insights`: `server/database.py:545`
-Proactive surveillance insights ("Sage noticed X") pushed to the attending. Columns: `id` (TEXT PK), `patient_id`*, `insight_type`*, `severity` (CHECK `critical`/`warning`/`info`), `title`*, `detail`, `suggested_action_type`, `suggested_action_target`, `target_user_id`, `dedup_key`, `state` (CHECK `active`/`dismissed`/`acted`), `created_at`, `updated_at`. Indexes `idx_sage_insights_active` and `idx_sage_insights_dedup` (`server/database.py:560-561`). No FKs.
+#### `sage_insights`: `server/database.py:549`
+Proactive surveillance insights ("Sage noticed X") pushed to the attending. Columns: `id` (TEXT PK), `patient_id`*, `insight_type`*, `severity` (CHECK `critical`/`warning`/`info`), `title`*, `detail`, `suggested_action_type`, `suggested_action_target`, `target_user_id`, `dedup_key`, `state` (CHECK `active`/`dismissed`/`acted`), `created_at`, `updated_at`. Indexes `idx_sage_insights_active` and `idx_sage_insights_dedup` (`server/database.py:564-565`). No FKs.
 
-#### `sage_handoffs`: `server/database.py:580`
-Stage-4 handoffs from a confirmed Sage action into a downstream module (e.g. create an order). Columns: `id` (TEXT PK), `source_action_id`* REF sage_actions, `room_id`*, `patient_id`*, `target_module`*, `handoff_type`*, `payload_json`*, `status` (CHECK `pending`/`accepted`/`failed`/`unsupported`), `downstream_ref_id`, `error_summary`, `created_by`* REF users, `last_attempted_at`, `created_at`, `updated_at`. Index at `server/database.py:598`.
+#### `sage_handoffs`: `server/database.py:584`
+Stage-4 handoffs from a confirmed Sage action into a downstream module (e.g. create an order). Columns: `id` (TEXT PK), `source_action_id`* REF sage_actions, `room_id`*, `patient_id`*, `target_module`*, `handoff_type`*, `payload_json`*, `status` (CHECK `pending`/`accepted`/`failed`/`unsupported`), `downstream_ref_id`, `error_summary`, `created_by`* REF users, `last_attempted_at`, `created_at`, `updated_at`. Index at `server/database.py:602`.
 
-#### `sage_handoff_events`: `server/database.py:601`
-Audit trail for handoff status changes. Columns: `id`, `handoff_id`* REF sage_handoffs, `prior_status`, `new_status`*, `actor_id`, `source` (CHECK `system`/`user`/`module_callback`), `reason`, `created_at`. Index at `server/database.py:612`.
+#### `sage_handoff_events`: `server/database.py:605`
+Audit trail for handoff status changes. Columns: `id`, `handoff_id`* REF sage_handoffs, `prior_status`, `new_status`*, `actor_id`, `source` (CHECK `system`/`user`/`module_callback`), `reason`, `created_at`. Index at `server/database.py:616`.
 
-#### `sage_decision_cache`: `server/database.py:702`
-Pre-assembled per-patient context so Sage answers fast for high-risk patients. Columns: `patient_id` (TEXT PK), `mews_score`* (MEWS, Modified Early Warning Score), `compiled_context`* (pre-assembled JSON of Channel A/B/C data), `preloaded_at`*, `expires_at`*. Notably this is the **only table in the schema with `ON DELETE CASCADE`** (`FOREIGN KEY(patient_id) REFERENCES patients(id) ON DELETE CASCADE`, `server/database.py:583`).
+#### `sage_decision_cache`: `server/database.py:706`
+Pre-assembled per-patient context so Sage answers fast for high-risk patients. Columns: `patient_id` (TEXT PK), `mews_score`* (MEWS, Modified Early Warning Score), `compiled_context`* (pre-assembled JSON of Channel A/B/C data), `preloaded_at`*, `expires_at`*. Notably this is the **only table in the schema with `ON DELETE CASCADE`** (`FOREIGN KEY(patient_id) REFERENCES patients(id) ON DELETE CASCADE`, `server/database.py:587`).
 
 ### Domain D: Clinical documentation and discharge
 
@@ -267,20 +267,20 @@ erDiagram
     users ||--o{ discharge_access_tokens : "created_by_user_id"
 ```
 
-#### `clinical_documents`: `server/database.py:165`
-General documents (labs, progress notes) that also feed the RAG index. Columns: `id`, `patient_id`* REF patients, `doc_type`* (e.g. `lab_result`, `note` per the backfiller `reset_db_and_seed.py:138,144`), `title`*, `content`*, `author_id` REF users, `created_at`. Index `idx_docs_patient` (`server/database.py:475`).
+#### `clinical_documents`: `server/database.py:169`
+General documents (labs, progress notes) that also feed the RAG index. Columns: `id`, `patient_id`* REF patients, `doc_type`* (e.g. `lab_result`, `note` per the backfiller `reset_db_and_seed.py:138,144`), `title`*, `content`*, `author_id` REF users, `created_at`. Index `idx_docs_patient` (`server/database.py:479`).
 
-#### `scribe_notes`: `server/database.py:176`
-AI-transcribed clinical notes. Base columns: `id`, `patient_id` REF patients (nullable), `author_id`* REF users, `raw_transcript`*, `structured_note` (JSON), `note_format` (CHECK `soap`/`discharge`/`handoff`/`raw`, SOAP is the Subjective/Objective/Assessment/Plan note format), `audio_path`, `verification_json`, `pipeline_meta_json`, `created_at`. Migration-added lifecycle columns (`server/database.py:1060-1073`): `status` (default `draft`), `version` (default 1), `supersedes_note_id`, `signed_by`, `signed_at`, `finalized_at`, `rejected_by`, `rejected_at`, `rejection_reason`, `last_edited_by`, `last_edited_at`, `ai_generated` (default 1). Legacy pre-lifecycle rows are force-migrated to `status='signed'` so old notes cannot be edited as drafts (`server/database.py:1711-1714`). Index `idx_scribe_patient` (`server/database.py:476`).
+#### `scribe_notes`: `server/database.py:180`
+AI-transcribed clinical notes. Base columns: `id`, `patient_id` REF patients (nullable), `author_id`* REF users, `raw_transcript`*, `structured_note` (JSON), `note_format` (CHECK `soap`/`discharge`/`handoff`/`raw`, SOAP is the Subjective/Objective/Assessment/Plan note format), `audio_path`, `verification_json`, `pipeline_meta_json`, `created_at`. Migration-added lifecycle columns (`server/database.py:1064-1077`): `status` (default `draft`), `version` (default 1), `supersedes_note_id`, `signed_by`, `signed_at`, `finalized_at`, `rejected_by`, `rejected_at`, `rejection_reason`, `last_edited_by`, `last_edited_at`, `ai_generated` (default 1). Legacy pre-lifecycle rows are force-migrated to `status='signed'` so old notes cannot be edited as drafts (`server/database.py:1715-1718`). Index `idx_scribe_patient` (`server/database.py:480`).
 
-#### `discharge_summaries`: `server/database.py:190`
-Columns: `id`, `patient_id`* REF patients, `author_id`* REF users, `summary`*, `timeline_json` (chronological events), `qr_code_path`, `discharged_at`. Index `idx_discharge_patient` (`server/database.py:478`).
+#### `discharge_summaries`: `server/database.py:194`
+Columns: `id`, `patient_id`* REF patients, `author_id`* REF users, `summary`*, `timeline_json` (chronological events), `qr_code_path`, `discharged_at`. Index `idx_discharge_patient` (`server/database.py:482`).
 
-#### `discharge_access_tokens`: `server/database.py:201`
+#### `discharge_access_tokens`: `server/database.py:205`
 Patient-facing time-limited access tokens (for the QR-code discharge portal). Columns: `token_id` (TEXT PK), `token_hash`* (only the hash is stored), `patient_id`* REF patients, `expires_at`*, `failed_attempts` (default 0), `locked_until`, `verified_at`, `last_accessed_at`, `revoked_at`, `created_by_user_id` REF users, `created_at`. TTL/lockout knobs live in `server/config.py:409-411`.
 
-#### `lens_analyses`: `server/database.py:216`
-Medical-image interpretations from the Lens module. Columns: `id`, `patient_id` REF patients (nullable), `author_id`* REF users, `image_path`*, `image_type` (`xray`/`ecg`/`ct`/`mri`/`photo`/`other`, comment only, no CHECK), `clinical_context`, `analysis`*, `findings_json`, `created_at`. Index `idx_lens_patient` (`server/database.py:479`).
+#### `lens_analyses`: `server/database.py:220`
+Medical-image interpretations from the Lens module. Columns: `id`, `patient_id` REF patients (nullable), `author_id`* REF users, `image_path`*, `image_type` (`xray`/`ecg`/`ct`/`mri`/`photo`/`other`, comment only, no CHECK), `clinical_context`, `analysis`*, `findings_json`, `created_at`. Index `idx_lens_patient` (`server/database.py:483`).
 
 ### Domain E: Surgery
 
@@ -294,13 +294,13 @@ erDiagram
     surgeries ||--o{ surgery_prep_requests : "surgery_id"
 ```
 
-#### `surgeries`: `server/database.py:310`
-Scheduled and emergency procedures. Columns: `id` (TEXT PK), `patient_id`* REF patients, `surgeon_id`* REF users, `procedure_name`*, `diagnosis`*, `scheduled_date`*, `scheduled_time`*, `estimated_duration_min`, `operating_room`, `status` (CHECK includes `scheduled`,`in_progress`,`completed`,`cancelled` plus five `emergency_*` states, `server/database.py:274`), `co_morbidities`, `surgical_checklist`, `instruments_required`, `staff_required`, `risk_assessment`, `possible_complications` (JSON-ish TEXT), `success_probability` (REAL), `notes`, `created_at`, and from migrations `started_at`, `completed_at` and `who_checklist` (migration 76: the WHO checklist state, kept out of `surgical_checklist`, which holds only the prep steps). Indexes on `(surgeon_id, scheduled_date)`, `patient_id`, `scheduled_date` (`server/database.py:484-486`).
+#### `surgeries`: `server/database.py:314`
+Scheduled and emergency procedures. Columns: `id` (TEXT PK), `patient_id`* REF patients, `surgeon_id`* REF users, `procedure_name`*, `diagnosis`*, `scheduled_date`*, `scheduled_time`*, `estimated_duration_min`, `operating_room`, `status` (CHECK includes `scheduled`,`in_progress`,`completed`,`cancelled` plus five `emergency_*` states, `server/database.py:278`), `co_morbidities`, `surgical_checklist`, `instruments_required`, `staff_required`, `risk_assessment`, `possible_complications` (JSON-ish TEXT), `success_probability` (REAL), `notes`, `created_at`, and from migrations `started_at`, `completed_at` and `who_checklist` (migration 76: the WHO checklist state, kept out of `surgical_checklist`, which holds only the prep steps). Indexes on `(surgeon_id, scheduled_date)`, `patient_id`, `scheduled_date` (`server/database.py:488-490`).
 
-#### `surgery_team_assignments`: `server/database.py:333`
+#### `surgery_team_assignments`: `server/database.py:337`
 Per-surgery staffing. Columns: `id`, `surgery_id`* REF surgeries, `user_id`* REF users, `role_name`*, `status` (CHECK `pending`/`alerted`/`confirmed`/`declined`), `updated_at`.
 
-#### `surgery_prep_requests`: `server/database.py:357`
+#### `surgery_prep_requests`: `server/database.py:361`
 Escalations from Relay into the surgical suite. Columns: `id`, `patient_id`* REF patients, `channel_id` REF channels, `requested_by`*, `requested_by_name`*, `procedure_name`, `indication`, `urgency` (default `emergency`), `clinical_context`, `state` (CHECK `drafted`/`resolved`), `idempotency_key` (UNIQUE, lets a retried request be deduplicated), `surgery_id` REF surgeries, `resolved_by`, `resolved_at`, `created_at`.
 
 ### Domain F: Orders, safety reference data, and governance
@@ -317,26 +317,26 @@ erDiagram
     model_registry ||..|| schema_version : "standalone"
 ```
 
-#### `orders`: `server/database.py:805`
-CPOE-lite (*Computerized Provider Order Entry*, the digital form for ordering labs, imaging, drugs). Columns: `id` (TEXT PK), `patient_id`* REF patients, `order_type` (CHECK `lab`/`imaging`/`medication`/`procedure`/`nursing`/`other`), `code` + `code_system` (validated against `terminology` on write, comment `server/database.py:678-679`), `description`*, `priority` (CHECK `stat`/`urgent`/`routine`), `status` (CHECK `draft`/`active`/`in_progress`/`completed`/`resulted`/`cancelled`), `ordered_by` REF users, `source` (default `clinician`), `detail_json`, `result_text`, `result_at`, `created_at`, `updated_at`. Index `idx_orders_patient` (`server/database.py:822`).
+#### `orders`: `server/database.py:809`
+CPOE-lite (*Computerized Provider Order Entry*, the digital form for ordering labs, imaging, drugs). Columns: `id` (TEXT PK), `patient_id`* REF patients, `order_type` (CHECK `lab`/`imaging`/`medication`/`procedure`/`nursing`/`other`), `code` + `code_system` (validated against `terminology` on write, comment `server/database.py:682-683`), `description`*, `priority` (CHECK `stat`/`urgent`/`routine`), `status` (CHECK `draft`/`active`/`in_progress`/`completed`/`resulted`/`cancelled`), `ordered_by` REF users, `source` (default `clinician`), `detail_json`, `result_text`, `result_at`, `created_at`, `updated_at`. Index `idx_orders_patient` (`server/database.py:826`).
 
-#### `order_events`: `server/database.py:824`
+#### `order_events`: `server/database.py:828`
 Order status audit trail: `id`, `order_id`* REF orders, `prior_status`, `new_status`*, `actor_id`, `reason`, `created_at`.
 
-#### `terminology`: `server/database.py:839`
-Local subset of LOINC/ICD10/SNOMED used to validate codes on write (unknown codes are flagged, not silently accepted, comment `server/database.py:710-713`). Columns: `id`, `code_system`*, `code`*, `display`*, `is_active` (default 1); `UNIQUE(code_system, code)`; index `idx_terminology_lookup` (`server/database.py:847`). Seeded at boot by `services/terminology_service.seed_terminology` (`server/main.py:150-154`).
+#### `terminology`: `server/database.py:843`
+Local subset of LOINC/ICD10/SNOMED used to validate codes on write (unknown codes are flagged, not silently accepted, comment `server/database.py:714-717`). Columns: `id`, `code_system`*, `code`*, `display`*, `is_active` (default 1); `UNIQUE(code_system, code)`; index `idx_terminology_lookup` (`server/database.py:851`). Seeded at boot by `services/terminology_service.seed_terminology` (`server/main.py:150-154`).
 
-#### `drug_interactions`: `server/database.py:853`
-Data-backed drug-drug interaction pairs replacing a hardcoded list (comment `server/database.py:724-727`). Columns: `id`, `term_a`*, `term_b`* (lowercased class or ingredient), `match_type` (CHECK `class`/`ingredient`), `severity` (CHECK `mild`/`moderate`/`severe`), `mechanism`, `source` (default `builtin`); `UNIQUE(term_a, term_b, match_type)`; indexes on `term_a` and `term_b` (`server/database.py:863-864`). Symmetric lookups are the caller's job. Seeded at boot by `services/interaction_db.ensure_seeded` (`server/main.py:156-161`).
+#### `drug_interactions`: `server/database.py:857`
+Data-backed drug-drug interaction pairs replacing a hardcoded list (comment `server/database.py:728-731`). Columns: `id`, `term_a`*, `term_b`* (lowercased class or ingredient), `match_type` (CHECK `class`/`ingredient`), `severity` (CHECK `mild`/`moderate`/`severe`), `mechanism`, `source` (default `builtin`); `UNIQUE(term_a, term_b, match_type)`; indexes on `term_a` and `term_b` (`server/database.py:867-868`). Symmetric lookups are the caller's job. Seeded at boot by `services/interaction_db.ensure_seeded` (`server/main.py:156-161`).
 
-#### `audit_logs`: `server/database.py:422`
-Healthcare-grade append-only audit trail. Columns: `id`, `timestamp`* (TEXT), `correlation_id`, `event_category`*, `actor_user_id`, `actor_role`, `target_type`, `target_id`, `patient_id`, `encounter_id`, `source_type`, `source_event_id`, `request_path`, `http_method`, `ip_address`, `user_agent`, `session_id`, `outcome` (CHECK `success`/`failure`/`partial_success`/`denied`), `action_type`*, `summary_message`, `metadata_json`, `prev_hash`, `row_hash`. The last two implement a **per-row SHA-256 hash chain**: `row_hash = SHA256(prev_hash || canonical(row))`, so any altered or deleted row breaks the chain (`server/database.py:444-447`). Two `BEFORE UPDATE`/`BEFORE DELETE` triggers `RAISE(ABORT, ...)` making the table genuinely append-only at the DB layer, explicitly citing HIPAA §164.312(b)/(c) (`server/database.py:456-469`; HIPAA is the US health-privacy law, and a *trigger* is SQL that runs automatically on a table event). Five indexes (`server/database.py:450-454`). No FKs, audit rows must persist even if the referenced entity is deleted.
+#### `audit_logs`: `server/database.py:426`
+Healthcare-grade append-only audit trail. Columns: `id`, `timestamp`* (TEXT), `correlation_id`, `event_category`*, `actor_user_id`, `actor_role`, `target_type`, `target_id`, `patient_id`, `encounter_id`, `source_type`, `source_event_id`, `request_path`, `http_method`, `ip_address`, `user_agent`, `session_id`, `outcome` (CHECK `success`/`failure`/`partial_success`/`denied`), `action_type`*, `summary_message`, `metadata_json`, `prev_hash`, `row_hash`. The last two implement a **per-row SHA-256 hash chain**: `row_hash = SHA256(prev_hash || canonical(row))`, so any altered or deleted row breaks the chain (`server/database.py:448-451`). Two `BEFORE UPDATE`/`BEFORE DELETE` triggers `RAISE(ABORT, ...)` making the table genuinely append-only at the DB layer, explicitly citing HIPAA §164.312(b)/(c) (`server/database.py:460-473`; HIPAA is the US health-privacy law, and a *trigger* is SQL that runs automatically on a table event). Five indexes (`server/database.py:454-458`). No FKs, audit rows must persist even if the referenced entity is deleted.
 
-#### `schema_version`: `server/database.py:695`
+#### `schema_version`: `server/database.py:699`
 The migration ledger: `version` (INTEGER PK), `applied_at` (default now), `note`. Read by `migrate.py`, written once per `SCHEMA_VERSION` value by `init_db()`.
 
-#### `model_registry`: `server/database.py:785`
-Governance/"honesty layer" for every ML surface: `id`, `model_key`* (`vigil_cfc`/`forecast_lstm`/`sage_llm`…), `version`*, `task`, `training_data` (lineage), `validated` (0/1, externally validated?), `validation_metrics` (JSON), `calibration_stats` (JSON), `is_active`, `checkpoint_present` (is a trained checkpoint actually on disk?), `notes`, `registered_at`; `UNIQUE(model_key, version)` (`server/database.py:798`).
+#### `model_registry`: `server/database.py:789`
+Governance/"honesty layer" for every ML surface: `id`, `model_key`* (`vigil_cfc`/`forecast_lstm`/`sage_llm`…), `version`*, `task`, `training_data` (lineage), `validated` (0/1, externally validated?), `validation_metrics` (JSON), `calibration_stats` (JSON), `is_active`, `checkpoint_present` (is a trained checkpoint actually on disk?), `notes`, `registered_at`; `UNIQUE(model_key, version)` (`server/database.py:802`).
 
 > **Tables NOT owned by this file:** the six `helix_*` pharmacy tables are created in `server/services/helix_db.py:9-68` (Helix guide) and the `clinical_knowledge_vec` vector virtual table in `server/services/clinical_knowledge.py:636` (Sage/RAG guide), all inside the same `orb.db` file.
 
@@ -347,19 +347,19 @@ Governance/"honesty layer" for every ML surface: `id`, `model_key`* (`vigil_cfc`
 ### server/database.py
 
 ### SCHEMA (module constant): `server/database.py:20`
-**Signature:** `SCHEMA: str` (one giant SQL script, `server/database.py:20-851`)
+**Signature:** `SCHEMA: str` (one giant SQL script, `server/database.py:20-855`)
 **Does:** Declares 48 tables, their indexes, and the 2 audit append-only triggers, everything guarded with `IF NOT EXISTS`.
-**How it works:** Executed as a single `executescript` in `init_db()` (`server/database.py:1433`); because every statement is `IF NOT EXISTS`, re-running is a no-op on existing objects.
+**How it works:** Executed as a single `executescript` in `init_db()` (`server/database.py:1437`); because every statement is `IF NOT EXISTS`, re-running is a no-op on existing objects.
 **Why it exists:** One canonical, reviewable definition of the fresh-database shape; the additive blocks below it exist only to bring *old* files up to this shape.
 **Data in/out:** SQL DDL only.
-**Talks to:** consumed by `init_db()` (`server/database.py:1427`); every table is read/written by services (see Cross-subsystem contracts).
+**Talks to:** consumed by `init_db()` (`server/database.py:1431`); every table is read/written by services (see Cross-subsystem contracts).
 **Change guide:** **New schema work does not go here.** Add a numbered migration to `server/migrations.py` instead (see the section below), that is the file's own stated rule (`server/migrations.py:9-14`). The `SCHEMA` constant plus the `init_db` blocks are frozen as the proven baseline.
 **Gotchas:** SQLite CHECK constraints cannot be altered in place, widening one requires the full rebuild dance (see `init_db`). `AUTOINCREMENT` ids are INTEGER; entity ids (`patients.id`, `surgeries.id`) are TEXT, don't mix them up in joins.
 
 ### SCHEMA_VERSION: `server/database.py:17`
 **Signature:** `SCHEMA_VERSION: int = 5`
 **Does:** Names the current generation of the *legacy* additive-block sequence; recorded in the `schema_version` ledger.
-**How it works:** Per the comment (`server/database.py:13-16`), bump it whenever the additive-migration sequence in `init_db()` changes meaningfully; `init_db()` writes it with `INSERT OR IGNORE` (`server/database.py:1897-1900`), so each version number appears at most once with its first-applied timestamp. v5 is the eMAR `medication_administrations` table plus the removal of universal `'1234'` PIN seeding.
+**How it works:** Per the comment (`server/database.py:13-16`), bump it whenever the additive-migration sequence in `init_db()` changes meaningfully; `init_db()` writes it with `INSERT OR IGNORE` (`server/database.py:1901-1904`), so each version number appears at most once with its first-applied timestamp. v5 is the eMAR `medication_administrations` table plus the removal of universal `'1234'` PIN seeding.
 **Why it exists:** An auditable record of which baseline schema a given `orb.db` is at.
 **Data in/out:** integer → `schema_version.version`.
 **Talks to:** read by `migrate.py:41`.
@@ -378,7 +378,7 @@ Governance/"honesty layer" for every ML surface: `id`, `model_key`* (`vigil_cfc`
 **Does:** the ordered list of every schema change made after the `database.py` baseline froze.
 **How it works:** each entry pairs an integer version with a `_mN_*` function. `_apply_pending` (`:5118`) sorts by version, skips anything already in the `schema_migrations` ledger, applies the rest, and records each on success. `run_pending_migrations` (`:5138`) owns the transaction so the batch is all-or-nothing, its docstring is explicit that the previous "runs inside the caller's transaction" arrangement was true of `init_db` "by luck, not by construction".
 **Why it exists:** Alembic-style versioning without the SQLAlchemy weight the app does not use (`:3-4`), and with a ledger that also works against a Postgres backend.
-**Talks to:** invoked once from `init_db` (`server/database.py:1927-1928`), after `executescript(SCHEMA)` and the legacy blocks.
+**Talks to:** invoked once from `init_db` (`server/database.py:1931-1932`), after `executescript(SCHEMA)` and the legacy blocks.
 **Change guide:** add a `_m38_*(conn)` function, append `Migration(38, "name", _m38_name)` to the list, and make it idempotent with `IF NOT EXISTS`, the ledger prevents re-application, but idempotency keeps it safe even if the ledger is reset (`:16-17`). Do **not** bump `SCHEMA_VERSION`; that counter belongs to the other system.
 
 **The 37 migrations and the tables they add:**
@@ -427,62 +427,62 @@ Plus the ledger itself, `schema_migrations` (`version`, `name`, `applied_at`), c
 
 Each of these tables is documented in the guide that owns the feature, escalations in 32-escalation-chain, `enrolled_devices` in 33-pin-on-device-identity, the DPDP Act set in 25-admin-panel, `shadow_events` in 30-harness-and-ci, `order_set_applications` in 34-order-sets.
 
-### _open_raw_connection: `server/database.py:854`
+### _open_raw_connection: `server/database.py:858`
 **Signature:** `() → sqlite3.Connection` (or a SQLCipher driver connection)
 **Does:** Opens the underlying connection, encrypted if configured.
-**How it works:** (1) Reads `DB_ENCRYPTION_KEY` from config (`ORB_DB_ENCRYPTION_KEY`, `server/config.py:58`). (2) If set, tries to import `pysqlcipher3` then `sqlcipher3` (SQLCipher is a SQLite build that encrypts the file at rest). (3) On success, connects and applies `PRAGMA key = "x'<64 hex>'"` **before any other statement** (`server/database.py:767-770`). (4) If the key is set but no driver is importable, logs a one-time warning and falls back to plaintext stdlib `sqlite3.connect(DB_PATH, timeout=30)` (`server/database.py:771-772`).
-**Why it exists:** Encryption at rest is *opt-in* because SQLCipher is a heavy native dependency that can conflict with the `sqlite-vec` extension used by RAG (`server/database.py:1316-1317`).
+**How it works:** (1) Reads `DB_ENCRYPTION_KEY` from config (`ORB_DB_ENCRYPTION_KEY`, `server/config.py:58`). (2) If set, tries to import `pysqlcipher3` then `sqlcipher3` (SQLCipher is a SQLite build that encrypts the file at rest). (3) On success, connects and applies `PRAGMA key = "x'<64 hex>'"` **before any other statement** (`server/database.py:771-774`). (4) If the key is set but no driver is importable, logs a one-time warning and falls back to plaintext stdlib `sqlite3.connect(DB_PATH, timeout=30)` (`server/database.py:775-776`).
+**Why it exists:** Encryption at rest is *opt-in* because SQLCipher is a heavy native dependency that can conflict with the `sqlite-vec` extension used by RAG (`server/database.py:1320-1321`).
 **Data in/out:** none → live DB connection.
 **Talks to:** called only by `get_db()`; calls `_sqlcipher_key_hex` and `_warn_db_encryption_unavailable`.
-**Change guide:** To force encryption-or-die (no plaintext fallback), replace the `_warn_db_encryption_unavailable()` call at `server/database.py:891` with a `raise`; knock-on: dev machines without SQLCipher stop booting, and both backup tools break (they cannot read encrypted DBs, see Discrepancies).
+**Change guide:** To force encryption-or-die (no plaintext fallback), replace the `_warn_db_encryption_unavailable()` call at `server/database.py:895` with a `raise`; knock-on: dev machines without SQLCipher stop booting, and both backup tools break (they cannot read encrypted DBs, see Discrepancies).
 **Gotchas:** The key pragma uses an f-string, but the value is a SHA-256 hex digest of the key, not the raw key, so quoting injection is not possible; still, never copy this pattern for user input.
 
-### _sqlcipher_key_hex: `server/database.py:896`
+### _sqlcipher_key_hex: `server/database.py:900`
 **Signature:** `(key: str) → str` (64 hex chars)
 **Does:** Derives a 32-byte raw key from arbitrary operator key material via SHA-256.
-**How it works:** `hashlib.sha256(key.encode()).hexdigest()`. Using an explicit raw key (`x'…'`) skips SQLCipher's per-open KDF and accepts any-length input (`server/database.py:778-780`).
+**How it works:** `hashlib.sha256(key.encode()).hexdigest()`. Using an explicit raw key (`x'…'`) skips SQLCipher's per-open KDF and accepts any-length input (`server/database.py:782-784`).
 **Why it exists:** Lets operators use any passphrase while giving SQLCipher the fixed-size raw key it wants; mirrors the uploads-encryption key handling.
 **Data in/out:** passphrase string → hex string.
 **Talks to:** `_open_raw_connection` only.
 **Change guide:** If you change the derivation, existing encrypted DBs become unreadable, you would need a re-key migration.
 **Gotchas:** none noteworthy.
 
-### _warn_db_encryption_unavailable: `server/database.py:909`
+### _warn_db_encryption_unavailable: `server/database.py:913`
 **Signature:** `() → None`
-**Does:** Logs the "falling back to PLAINTEXT" warning exactly once per process, guarded by module global `_db_enc_warned` (`server/database.py:906`, set at `:913`).
+**Does:** Logs the "falling back to PLAINTEXT" warning exactly once per process, guarded by module global `_db_enc_warned` (`server/database.py:910`, set at `:913`).
 **Why it exists:** `get_db()` is called on every request; without the guard the log would flood.
 **Talks to:** `_open_raw_connection`.
 **Change guide / Gotchas:** none noteworthy.
 
-### get_db: `server/database.py:1008`
+### get_db: `server/database.py:1012`
 **Signature:** `() → sqlite3.Connection`
 **Does:** Returns a new, fully configured connection, the single entry point for all DB access.
-**How it works:** (1) `_open_raw_connection()`. (2) `row_factory = sqlite3.Row` so `row["name"]` works. (3) Applies eight PRAGMAs (a *PRAGMA* is a SQLite configuration statement): `journal_mode=WAL` (concurrent readers/writer), `foreign_keys=ON` (enforce `REFERENCES`), `busy_timeout=30000` (wait 30 s on locks instead of erroring), `page_size=16384`, `synchronous=NORMAL` (fsync less aggressively, safe with WAL), `mmap_size=30000000000` (memory-map up to 30 GB of the file), `cache_size=-256000` (256 MB page cache), `temp_store=MEMORY` (`server/database.py:804-811`).
+**How it works:** (1) `_open_raw_connection()`. (2) `row_factory = sqlite3.Row` so `row["name"]` works. (3) Applies eight PRAGMAs (a *PRAGMA* is a SQLite configuration statement): `journal_mode=WAL` (concurrent readers/writer), `foreign_keys=ON` (enforce `REFERENCES`), `busy_timeout=30000` (wait 30 s on locks instead of erroring), `page_size=16384`, `synchronous=NORMAL` (fsync less aggressively, safe with WAL), `mmap_size=30000000000` (memory-map up to 30 GB of the file), `cache_size=-256000` (256 MB page cache), `temp_store=MEMORY` (`server/database.py:808-815`).
 **Why it exists:** Centralizes safety (FK enforcement) and performance tuning; every connection behaves identically regardless of which of the 85+ importing modules opened it.
 **Data in/out:** none → connection.
 **Talks to:** called by `db_session`, by ~15 modules directly (`auth_routes`, `vigil_routes`, `sage_service`, `relay_service`, `bot_service`, `bridge_service`, `vigil_service`, `metrics_service`, tests' `conftest.py`, `migrate.py`…).
-**Change guide:** *Worked example, reduce memory footprint on small machines:* lower `mmap_size`/`cache_size` at `server/database.py:1002-1003`; knock-on is purely performance. To *disable* FK enforcement, don't, dozens of services rely on FK failures as integrity guards (e.g. `scribe_notes.author_id`).
-**Gotchas:** (1) **Per-call connections, no pooling**, never cache a connection across threads/requests; SQLite connections are not thread-shareable by default. (2) `PRAGMA page_size` is effectively a no-op: page size cannot change on an existing file, and cannot change at all while in WAL mode (which was just enabled one line earlier). (3) `foreign_keys=ON` is per-connection, scripts using raw `sqlite3.connect` silently skip FK enforcement. (4) WAL creates `orb.db-wal`/`orb.db-shm` sidecar files that also contain PHI (*Protected Health Information*), the permission hardening covers them (`server/database.py:840-844`).
+**Change guide:** *Worked example, reduce memory footprint on small machines:* lower `mmap_size`/`cache_size` at `server/database.py:1006-1007`; knock-on is purely performance. To *disable* FK enforcement, don't, dozens of services rely on FK failures as integrity guards (e.g. `scribe_notes.author_id`).
+**Gotchas:** (1) **Per-call connections, no pooling**, never cache a connection across threads/requests; SQLite connections are not thread-shareable by default. (2) `PRAGMA page_size` is effectively a no-op: page size cannot change on an existing file, and cannot change at all while in WAL mode (which was just enabled one line earlier). (3) `foreign_keys=ON` is per-connection, scripts using raw `sqlite3.connect` silently skip FK enforcement. (4) WAL creates `orb.db-wal`/`orb.db-shm` sidecar files that also contain PHI (*Protected Health Information*), the permission hardening covers them (`server/database.py:844-848`).
 
-### db_session: `server/database.py:1034`
+### db_session: `server/database.py:1038`
 **Signature:** `@contextmanager () → Iterator[sqlite3.Connection]`
 **Does:** The standard "unit of work" wrapper: yields a connection, commits on success, rolls back on exception, always closes.
-**How it works:** A *context manager* (Python's `with` protocol) around `get_db()`: `try: yield conn / except: conn.rollback(); raise / else: conn.commit() / finally: conn.close()` (`server/database.py:1034`). A "DB session" here is simply one connection scoped to one logical operation, one transaction unless the caller commits mid-way.
+**How it works:** A *context manager* (Python's `with` protocol) around `get_db()`: `try: yield conn / except: conn.rollback(); raise / else: conn.commit() / finally: conn.close()` (`server/database.py:1038`). A "DB session" here is simply one connection scoped to one logical operation, one transaction unless the caller commits mid-way.
 **Why it exists:** Removes the classic leak/half-commit bugs; a service can write several tables and get all-or-nothing semantics for free.
 **Data in/out:** none → connection (borrowed).
 **Talks to:** the most-imported symbol in the backend (~70 files: every route module, `audit_service`, `event_bus`, `ingestion_service`, `helix_service`, all tests…).
 **Change guide:** To add statement logging for debugging, wrap the yielded conn with `conn.set_trace_callback(print)` inside `db_session`; knock-on: massive log volume from the vitals simulator.
 **Gotchas:** (1) It commits even for read-only usage (harmless, but means a `with` block always ends the implicit transaction). (2) Exceptions inside the block are re-raised after rollback, callers must not assume partial writes survived. (3) Because Python's sqlite3 starts implicit transactions on the first write, a `PRAGMA foreign_keys` executed *mid-block after a write* is silently ignored by SQLite (this bit the old migration code, see `init_db`, and still lurks in `seed()`, see Discrepancies).
 
-### _harden_db_file_permissions: `server/database.py:1280`
+### _harden_db_file_permissions: `server/database.py:1284`
 **Signature:** `() → None`
 **Does:** Best-effort `chmod 0o600` on `orb.db` and its `-wal`/`-shm`/`-journal` sidecars.
-**How it works:** Iterates the four suffixes; on failure logs a warning rather than crashing boot (`server/database.py:842-850`).
-**Why it exists:** OS-level PHI mitigation only, explicitly *not* encryption at rest (the big DEFERRED comment at `server/database.py:853-869` explains why SQLCipher wasn't just swapped in: native build burden, incompatibility with `sqlite-vec` and the WAL/mmap tuning).
-**Talks to:** called at the start and end of `init_db()` (`server/database.py:1430`, `:1925`, the end call exists because `executescript` may have just created fresh WAL sidecars).
-**Change guide / Gotchas:** Windows ignores POSIX modes; the comment notes prior code only chmod'd the main file (`server/database.py:840-841`).
+**How it works:** Iterates the four suffixes; on failure logs a warning rather than crashing boot (`server/database.py:846-854`).
+**Why it exists:** OS-level PHI mitigation only, explicitly *not* encryption at rest (the big DEFERRED comment at `server/database.py:857-873` explains why SQLCipher wasn't just swapped in: native build burden, incompatibility with `sqlite-vec` and the WAL/mmap tuning).
+**Talks to:** called at the start and end of `init_db()` (`server/database.py:1434`, `:1929`, the end call exists because `executescript` may have just created fresh WAL sidecars).
+**Change guide / Gotchas:** Windows ignores POSIX modes; the comment notes prior code only chmod'd the main file (`server/database.py:844-845`).
 
-### init_db: `server/database.py:1427`
+### init_db: `server/database.py:1431`
 **Signature:** `() → None`
 **Does:** Creates the schema and applies every migration; the single source of truth `migrate.py` wraps.
 **How it works (the 17 blocks, in order):**
@@ -506,10 +506,10 @@ Each of these tables is documented in the guide that owns the feature, escalatio
 **Why it exists:** One idempotent function means "create" and "upgrade" can never drift apart, and the app can self-migrate on every boot with zero operator action.
 **Data in/out:** none → mutated `orb.db`.
 **Talks to:** called by `main.py:134` (boot), `migrate.py:133`, `seed_clinical_data.py:10`, `tests/conftest.py:74`, `dev_tools/time_pipeline.py:6`, `services/terminology_service.py:179`, and `python server/database.py` directly (`:1284-1285`).
-**Change guide:** *Worked example, allow a new `voice_note` message_type:* add the token to the CHECK in the SCHEMA `messages` block (`server/database.py:130`) **and** to the rebuilt `messages_new` definition (`:957`) **and** to `_messages_type_check_missing("ambient_action", "surgical_alert", "voice_note")` (`:925`) so legacy DBs rebuild once; bump `SCHEMA_VERSION`. Miss the third edit and old DBs will reject the new type forever; miss the second and the rebuild reintroduces the old CHECK.
+**Change guide:** *Worked example, allow a new `voice_note` message_type:* add the token to the CHECK in the SCHEMA `messages` block (`server/database.py:134`) **and** to the rebuilt `messages_new` definition (`:957`) **and** to `_messages_type_check_missing("ambient_action", "surgical_alert", "voice_note")` (`:925`) so legacy DBs rebuild once; bump `SCHEMA_VERSION`. Miss the third edit and old DBs will reject the new type forever; miss the second and the rebuild reintroduces the old CHECK.
 **Gotchas:** Everything runs inside one `db_session()`, i.e. one connection, but `executescript` issues an implicit COMMIT before running, so the rebuild blocks are not fully covered by the session's transaction; the "build new before dropping old" ordering is what makes them crash-safe, not transactional rollback. The whole function must stay safe to run concurrently-ish (two processes booting), `IF NOT EXISTS` and column-existence guards give that, but the table rebuilds are not concurrency-safe; don't run two migrating processes against one fresh legacy DB simultaneously.
 
-### verify_audit_chain: `server/database.py:1928`
+### verify_audit_chain: `server/database.py:1932`
 **Signature:** `(conn: Optional[sqlite3.Connection] = None) → dict`
 **Does:** Recomputes the audit hash chain and reports tampering.
 **How it works:** (1) Opens its own connection unless given one. (2) Selects all `audit_logs` rows in id order with the exact field list the writer hashes. (3) Rows with NULL `row_hash` are counted as `skipped` and **restart** the chain (legacy gap). (4) For each hashed row, recomputes `compute_audit_row_hash(row, prev_hash)` (imported locally from `services/audit_service` to avoid an import cycle, `:1242`) and checks both hash equality and that `prev_hash` links to the previous row's `row_hash`. (5) Returns `{ok, rows_total, rows_checked, rows_skipped_legacy, broken_row_ids}`, never raises on a broken chain (`:1248-1278`).
@@ -757,15 +757,15 @@ certifying a schema-v4 backup. See `stale-backups/README.md`.
 
 ## Discrepancies and open questions
 
-1. **`database.verify_audit_chain` has no callers, but the chain _is_ verified elsewhere.** The function at `server/database.py:1928` is never invoked by any route, service, test, or script (repo-wide grep, 2026-07-07); the only references are docstrings (`server/services/audit_service.py:9,91`) and prose docs. It is effectively dead code, because a **parallel implementation** does the real work: `flight_recorder_service.verify_chain()` walks the same chain via `_broken_audit_ids()`, which its own comment describes as mirroring `database.verify_audit_chain` (`server/services/flight_recorder_service.py:73-135`), is exposed as a route (`server/routes/flight_recorder_routes.py:40`), is consumed by `compliance_service` (`server/services/compliance_service.py:76-78`), and is covered by tests (`server/tests/test_flight_recorder_service.py`, `test_audit_fixes.py`). So the tamper-evidence chain _is_ checked in production, just not through this function. (Note the mirror is also stricter: it treats a NULL `row_hash` appearing *after* sealing has begun as a break rather than a chain restart, `server/services/flight_recorder_service.py:96-101`.)
+1. **`database.verify_audit_chain` has no callers, but the chain _is_ verified elsewhere.** The function at `server/database.py:1932` is never invoked by any route, service, test, or script (repo-wide grep, 2026-07-07); the only references are docstrings (`server/services/audit_service.py:9,91`) and prose docs. It is effectively dead code, because a **parallel implementation** does the real work: `flight_recorder_service.verify_chain()` walks the same chain via `_broken_audit_ids()`, which its own comment describes as mirroring `database.verify_audit_chain` (`server/services/flight_recorder_service.py:73-135`), is exposed as a route (`server/routes/flight_recorder_routes.py:40`), is consumed by `compliance_service` (`server/services/compliance_service.py:76-78`), and is covered by tests (`server/tests/test_flight_recorder_service.py`, `test_audit_fixes.py`). So the tamper-evidence chain _is_ checked in production, just not through this function. (Note the mirror is also stricter: it treats a NULL `row_hash` appearing *after* sealing has begun as a break rather than a chain restart, `server/services/flight_recorder_service.py:96-101`.)
 2. **Backup tooling cannot handle an encrypted database.** Both `backup_db.py` (stdlib `sqlite3.connect`, `server/scripts/backup_db.py:139`) and `backup.sh` (plain `sqlite3` CLI, `scripts/backup.sh:54`) open the source without a SQLCipher key. If `ORB_DB_ENCRYPTION_KEY` is actually in force with a SQLCipher driver, both fail ("file is not a database"). `backup.sh` uses the key only to encrypt the *output* (`scripts/backup.sh:63-64`).
 3. **`cleanup_data.py` ignores `ORB_DB_PATH`.** It hardcodes `server/orb.db` (`server/cleanup_data.py:6`), unlike every other tool which resolves through `config.py` or the env var. Its docstring also says "max 2-5 per day" while the code keeps exactly 3 per day plus a global cap of 20 (`server/cleanup_data.py:1,30,37`).
 4. **`reset_db_and_seed.py` can strand dangling rows.** The wipe runs with FKs off and clears 25 tables (`server/scripts/reset_db_and_seed.py:13-39`), but not `observations`, `ingestion_events`, `sage_insights`, `sage_decision_cache`, `patient_allergies`, `problem_list`, `care_bundles`, `patient_snapshots`, `orders`, `order_events`, or `event_log`, all of which carry `patient_id`s. After a reset, surviving rows in those tables reference deleted patients.
 5. **Demo date freeze is internally inconsistent.** `randomize_dates` pins admissions to May 21–23 2026 (`server/scripts/reset_db_and_seed.py:198-201`) but the vitals history written by `seed()` is anchored to the wall clock (`seed_clinical_data.py:239-241`), so vitals timestamps do not align with the randomized admission dates, and the hardcoded window ages out of "recent" as real time passes.
 6. **Re-seeding degrades user security state.** `INSERT OR REPLACE INTO users` (`server/scripts/seed_clinical_data.py:275`) deletes-and-reinserts the 13 demo rows, silently discarding any bcrypt-upgraded password hash, enrolled MFA secret, or bumped `token_version` for those ids.
-7. **Default PIN backfill on every boot.** `init_db()` sets `pin_hash = sha256("1234")` for any clinician whose PIN is NULL, every time it runs (`server/database.py:897-900`), a clinician can never durably have "no PIN", and the default is public knowledge. Acceptable for the demo, a hazard for real deployments.
-8. **`PRAGMA page_size = 16384` is a no-op** (`server/database.py:1000`): page size cannot change on an existing file, nor while in WAL mode, and `journal_mode=WAL` is set three lines earlier (`:997`) on every connection.
+7. **Default PIN backfill on every boot.** `init_db()` sets `pin_hash = sha256("1234")` for any clinician whose PIN is NULL, every time it runs (`server/database.py:901-904`), a clinician can never durably have "no PIN", and the default is public knowledge. Acceptable for the demo, a hazard for real deployments.
+8. **`PRAGMA page_size = 16384` is a no-op** (`server/database.py:1004`): page size cannot change on an existing file, nor while in WAL mode, and `journal_mode=WAL` is set three lines earlier (`:997`) on every connection.
 9. **`INSERT OR REPLACE INTO risk_scores`** (`server/scripts/seed_clinical_data.py:439`) has no unique key to conflict on, so "REPLACE" never happens and repeated seeding accumulates duplicate score rows per patient.
-10. **Stale comments:** `seed_clinical_data.py:292` claims system messages use `'system_admin'` (actual: `'system'`, `:316`); `server/models/message.py:10` documents the path as `POST /relay/...` but the router prefix is `/api/relay` (`server/routes/relay_routes.py:18`); the "FK-ON" pragma at `seed_clinical_data.py:409` does not take effect inside the open transaction (same class of bug `init_db`'s comments describe fixing at `server/database.py:908-913`).
+10. **Stale comments:** `seed_clinical_data.py:292` claims system messages use `'system_admin'` (actual: `'system'`, `:316`); `server/models/message.py:10` documents the path as `POST /relay/...` but the router prefix is `/api/relay` (`server/routes/relay_routes.py:18`); the "FK-ON" pragma at `seed_clinical_data.py:409` does not take effect inside the open transaction (same class of bug `init_db`'s comments describe fixing at `server/database.py:912-917`).
 11. **SCHEMA is not fully canonical for fresh databases.** Several columns exist *only* via migration blocks and are absent from the `CREATE TABLE` text: `vitals.source/source_event_id/on_oxygen`, `patients.on_scale_2`, `medications.source/verified_by/verified_at`, `messages.source/is_bot`, and all twelve `scribe_notes` lifecycle columns. Fresh DBs get them because `init_db()` always runs the blocks, but anyone reading only the SCHEMA constant will miss real columns.
 12. **`models/` package provenance:** the entire package was reconstructed after the original source was lost in a machine migration, and the trained checkpoints were not recovered (`server/models/__init__.py:7-12`), the Pydantic schemas are verified against call sites, but treat the NN architectures with extra scrutiny (their guides).

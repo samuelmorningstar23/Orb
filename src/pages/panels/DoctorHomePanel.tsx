@@ -8,6 +8,7 @@ import { getAlerts, getScribeNotes, getUnseenCounts, getUser } from '../../api/c
 import { getShiftStatus, type ShiftStatus, type ShiftWindow } from '../../api/shadowOutcome'
 import News2Badge from '../../components/News2Badge'
 import OfflineBanner from '../../components/OfflineBanner'
+import CriticalLabCard from '../../components/lab/CriticalLabCard'
 import { news2Description } from '../../lib/news2'
 import { askSage, gotoTab, openPatient } from '../../lib/orbBus'
 import { hasPermission, OUTCOME_RECORD } from '../../lib/roles'
@@ -36,6 +37,13 @@ import './DoctorHomePanel.css'
    to change a patient record that did not already exist behind an audited,
    permission-gated panel. DoctorHomePanel.test.tsx holds that as an invariant —
    every request this panel issues is a GET.
+
+   ONE COMPOSED EXCEPTION, OFF BY DEFAULT: the critical lab results card
+   (components/lab/CriticalLabCard, lis-16). It renders, and asks the server
+   anything, only while the laboratory module or the interfaced critical switch
+   is on, and its one write is the ward's read-back acknowledgement through
+   its own audited, lab.critical_ack-gated, ward-scoped endpoint. With both
+   switches off this screen issues exactly the GETs it always did.
 
    Two rules govern how it LOOKS, and both are load-bearing rather than
    decorative (docs/DUAL_EXPERIENCE_VISUAL_SPEC.md §3.3, §6):
@@ -925,6 +933,12 @@ export default function DoctorHomePanel() {
 
       <div className="today-grid">
         <div className="today-main">
+          {/* Critical laboratory results for this ward (lis-16), first: the
+              laboratory's own value, flag and agreed limit, never a score.
+              Nothing renders, and nothing is asked, unless the laboratory
+              module or the interfaced critical switch is on. */}
+          <CriticalLabCard />
+
           {/* Scoring switched off on this computer (the Orb Ward Record): no
               NEWS2 section at all. Its empty state ("No patient is scoring
               above threshold") would claim something nobody worked out. */}

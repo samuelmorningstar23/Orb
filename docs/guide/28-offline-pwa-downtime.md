@@ -191,7 +191,7 @@ The following units are the offline-relevant slice of the API client. `apiFetch`
 - `addClinicalNote` routes through `offlineMutate`: free-text notes carry no safety gate, so they are safe to queue and sync on reconnect, and the server dedupes the replay by Idempotency-Key. Offline it returns an optimistic object (`id: 'offline-' + Date.now()`, `created_at: now`) so the UI proceeds.
 - `addMedication` is **ONLINE-REQUIRED** and throws when `!navigator.onLine` (`:1339`). The order-time drug-safety gate (allergy + interaction screen) runs server-side and a severe interaction returns a **428** the clinician must acknowledge. That acknowledgement cannot happen offline, so queuing an order optimistically would report "active" for a med the server may reject on replay, a real prescribing hazard. It fails loudly instead. On re-submission after a 428 it carries `safety_ack` so the server can record the audited override.
 **Why it exists:** notes are the writes a clinician most needs not to lose during a blip; medication *orders* are the writes a clinician most needs not to have silently accepted.
-**Gotchas:** `navigator.onLine` only reflects whether the browser has *a* network interface, it can report `true` while the backend is unreachable, in which case `addClinicalNote` skips the queue and the `apiFetch` fails normally. Three writes total are covered (note, Relay message, eMAR administration); every other write fails hard when offline. Note the deliberate exclusion documented in `src/api/nurse.ts:178`: an observation set is *not* routed through `offlineMutate`, because it is the input to a scoring decision.
+**Gotchas:** `navigator.onLine` only reflects whether the browser has *a* network interface, it can report `true` while the backend is unreachable, in which case `addClinicalNote` skips the queue and the `apiFetch` fails normally. Three writes total are covered (note, Relay message, eMAR administration); every other write fails hard when offline. Note the deliberate exclusion documented in `src/api/nurse.ts:197`: an observation set is *not* routed through `offlineMutate`, because it is the input to a scoring decision.
 
 ---
 
@@ -264,7 +264,7 @@ This module's design contract (`server/services/downtime_service.py:11`) is the 
 11. Log and return the full envelope with the new row id (`server/services/downtime_service.py:235`).
 **Why it exists:** to freeze a safe, printable, offline copy of must-know data. The parameterized SQL (`?` placeholders) throughout prevents SQL injection.
 **Data in/out:** in: `patient_id`, optional `created_by`. Out: envelope `{id, patient_id, summary, created_by, created_at, snapshot}`.
-**Talks to:** `db_session` (see guide 04-database-schema), `compute_news2` (see guide 07-vigil, `server/services/vigil_service.py:225`). Called by `capture` route (`server/routes/downtime_routes.py:31`), `capture_all_admitted`, and the tests.
+**Talks to:** `db_session` (see guide 04-database-schema), `compute_news2` (see guide 07-vigil, `server/services/vigil_service.py:227`). Called by `capture` route (`server/routes/downtime_routes.py:31`), `capture_all_admitted`, and the tests.
 **Change guide:** To add a new section (say, recent labs), (a) SELECT it inside the DB block, (b) add it to the `snapshot` dict (`server/services/downtime_service.py:206`), (c) bump `SNAPSHOT_SCHEMA_VERSION` (`server/services/downtime_service.py:38`), (d) add the matching TS interface field in `src/api/downtime.ts`, and (e) render it in `DowntimeMode.tsx`. Knock-on: old snapshots lack the field, so the page must null-guard. Watch out: whatever you add must be a pure DB read, never call the LLM or an external service here or you break the offline guarantee.
 **Gotchas:** The two `db_session()` blocks (read then write) are separate transactions (`server/services/downtime_service.py:91`, `server/services/downtime_service.py:227`); a concurrent write between them is possible but harmless for a point-in-time snapshot. NEWS2 is only computed when a vitals row exists; otherwise `news2` is `None`.
 
@@ -332,7 +332,7 @@ Jargon: **FHIR** (Fast Healthcare Interoperability Resources) is the standard JS
 
 ### Downtime routes: `server/routes/downtime_routes.py`
 
-Router prefix is `/api/downtime` (`server/routes/downtime_routes.py:23`), registered in `main.py` via `app.include_router(downtime_router)` (`server/main.py:701`). Jargon: **RBAC** (Role-Based Access Control), permissions are attached to roles; `require_permission("x")` is a FastAPI **dependency** (a function FastAPI runs before the handler) that 403s if the caller's role lacks permission `x` (`server/permissions.py:376`). The two *read* routes here use the stricter `require_patient_access("vitals.read")`, which additionally scopes the caller to that patient.
+Router prefix is `/api/downtime` (`server/routes/downtime_routes.py:23`), registered in `main.py` via `app.include_router(downtime_router)` (`server/main.py:701`). Jargon: **RBAC** (Role-Based Access Control), permissions are attached to roles; `require_permission("x")` is a FastAPI **dependency** (a function FastAPI runs before the handler) that 403s if the caller's role lacks permission `x` (`server/permissions.py:377`). The two *read* routes here use the stricter `require_patient_access("vitals.read")`, which additionally scopes the caller to that patient.
 
 #### capture: `server/routes/downtime_routes.py:26`
 **Route:** `POST /api/downtime/capture/{patient_id}` · auth `vitals.read`
@@ -432,11 +432,11 @@ Mounts the `/api/downtime` routes onto the app. Without this line the endpoints 
 | GET | `/api/downtime/{patient_id}/latest` | `vitals.read` | `DowntimeSnapshotEnvelope` (404 if none) |
 | GET | `/api/downtime/{patient_id}/history?limit=50` | `vitals.read` | `{ snapshots: DowntimeSnapshotEnvelope[] }` |
 
-**DB table owned:** `patient_snapshots` (`server/database.py:647`), `id, patient_id (FK patients), snapshot_json, summary, created_by, created_at`, index `idx_snapshots_patient(patient_id, created_at DESC)` (`server/database.py:655`).
+**DB table owned:** `patient_snapshots` (`server/database.py:651`), `id, patient_id (FK patients), snapshot_json, summary, created_by, created_at`, index `idx_snapshots_patient(patient_id, created_at DESC)` (`server/database.py:659`).
 
 **Exported functions other code relies on:** `capture_all_admitted` and `run_nightly_fhir_self_export` (called by `main.py`'s sweep, `server/main.py:83`); `capture_snapshot`, `get_latest_snapshot`, `list_snapshots` (called by routes + tests).
 
-**Consumes from other subsystems (contracts, not owned here):** `compute_news2` (Vigil, `server/services/vigil_service.py:225`), `patient_bundle` (FHIR export, `server/services/fhir_export_service.py:457`), `log_audit_event` (audit), `require_permission` (RBAC, `server/permissions.py:164`), `db_session` (DB). Reads from tables `patients`, `patient_allergies`, `problem_list`, `medications`, `vitals`, `scribe_notes`, `risk_scores`, `users`.
+**Consumes from other subsystems (contracts, not owned here):** `compute_news2` (Vigil, `server/services/vigil_service.py:227`), `patient_bundle` (FHIR export, `server/services/fhir_export_service.py:457`), `log_audit_event` (audit), `require_permission` (RBAC, `server/permissions.py:165`), `db_session` (DB). Reads from tables `patients`, `patient_allergies`, `problem_list`, `medications`, `vitals`, `scribe_notes`, `risk_scores`, `users`.
 
 **Frontend contract:** router mounts `DowntimeMode` at `/downtime/:patientId` for non-patient roles (`src/AppRoot.tsx:185`). PWA precache config lives at `vite.config.ts:26`. The offline write queue key is `localStorage['orb_offline_queue']`, replayed on `window 'online'` (`src/api/client.ts:567`).
 
@@ -452,7 +452,7 @@ Mounts the `/api/downtime` routes onto the app. Without this line the endpoints 
 - Frontend: `apiFetch` client (guide 02), React Router, and the app's route table (guide 01-app-shell).
 
 **Build order:**
-1. Add the `patient_snapshots` table + index (`server/database.py:647`).
+1. Add the `patient_snapshots` table + index (`server/database.py:651`).
 2. Write `downtime_service.py`: `capture_snapshot` (pure DB reads + `compute_news2`), then `_envelope`/`get_latest_snapshot`/`list_snapshots`, then `capture_all_admitted`, then `fhir_self_export_dir`/`run_nightly_fhir_self_export`.
 3. Add `downtime_routes.py` with the four routes + audit + RBAC, and `include_router` it in `main.py`.
 4. Add the `downtime_snapshot_sweep` background task and schedule it in lifespan.

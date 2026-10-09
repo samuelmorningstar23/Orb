@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import math
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -81,6 +82,163 @@ WARD_CAPACITY: dict[str, int] = {
 }
 TOTAL_CAPACITY = sum(WARD_CAPACITY.values())
 
+# ── Capacity from the bed register (adt-14, ruling ADT-P5) ────────────────────
+# With Beds and admissions on (ORB_ADT), a ward whose bed register the bed
+# manager has marked complete in Bed setup takes its bed count from the
+# register: the beds set up on it, not retired, not temporary extra beds, of a
+# class counted in the census (the beds the Beds census calls licensed). Every
+# other ward keeps ORB_WARD_BEDS. Command Center, the admin Vigil occupancy
+# tile, the capacity forecast and housekeeping readiness all read WARD_CAPACITY,
+# so they agree, and each figure says where its count came from. Bed setup
+# re-runs refresh_ward_capacity after every write that can change a count, so a
+# new bed counts without a restart. With the module off nothing here runs and
+# WARD_CAPACITY is built exactly as before.
+
+#: Ward key in WARD_CAPACITY -> 'bed_register' or 'site_setting'. Kept in step
+#: with WARD_CAPACITY by refresh_ward_capacity; a ward missing here (one
+#: _normalize_ward added on the fly) is a site setting.
+WARD_CAPACITY_SOURCE: dict[str, str] = {}
+
+#: The words every screen prints beside a bed count.
+CAPACITY_SOURCE_WORDS: dict[str, str] = {
+    "bed_register": "from bed register",
+    "site_setting": "site setting",
+}
+
+_CAPACITY_REFRESH_LOCK = threading.Lock()
+
+
+def _bed_register_on() -> bool:
+    """Capacity comes from the bed register only while Beds and admissions is
+    on. Read at call time."""
+    try:
+        import config
+        return config.module_state("adt") == "on"
+    except Exception:  # noqa: BLE001 - a config without modules is off
+        return False
+
+
+def _ward_text_key(value) -> str:
+    return " ".join(str(value or "").split()).casefold()
+
+
+def _register_bed_counts() -> dict[str, tuple[str, int]]:
+    """ward key -> (ward code, census beds) for every ward of Bed setup whose
+    register is marked complete. Census beds: set up on the ward and not
+    retired, not a temporary extra bed, and of a class counted in the census
+    (bed_classes.counts_in_census), the beds the Beds census calls licensed."""
+    with db_session() as db:
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wards'"
+                      ).fetchone() is None:
+            return {}
+        ward_cols = {r[1] for r in db.execute("PRAGMA table_info(wards)").fetchall()}
+        unit_cols = {r[1] for r in db.execute("PRAGMA table_info(housekeeping_units)").fetchall()}
+        if "register_complete" not in ward_cols or "ward_id" not in unit_cols:
+            return {}
+        has_classes = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'bed_classes'"
+        ).fetchone() is not None
+        uncounted = (
+            "AND NOT EXISTS (SELECT 1 FROM bed_classes c "
+            "WHERE LOWER(TRIM(c.code)) = LOWER(TRIM(u.bed_class)) "
+            "AND COALESCE(c.counts_in_census, 1) = 0)" if has_classes else "")
+        rows = db.execute(
+            "SELECT w.code AS code, "
+            "(SELECT COUNT(*) FROM housekeeping_units u WHERE u.ward_id = w.id "
+            " AND u.retired_at IS NULL AND COALESCE(u.is_temporary, 0) = 0 "
+            f" {uncounted}) AS beds "
+            "FROM wards w WHERE COALESCE(w.register_complete, 0) = 1 ORDER BY LOWER(w.code)"
+        ).fetchall()
+    return {_ward_text_key(r["code"]): (r["code"], int(r["beds"] or 0))
+            for r in rows if _ward_text_key(r["code"])}
+
+
+def capacity_source_for(ward: str) -> dict | None:
+    """{source, words} for one ward's bed count, or None while Beds and
+    admissions is off (the screens then say nothing new)."""
+    if not _bed_register_on():
+        return None
+    source = WARD_CAPACITY_SOURCE.get(ward, "site_setting")
+    return {"source": source, "words": CAPACITY_SOURCE_WORDS[source]}
+
+
+def capacity_source_summary() -> dict | None:
+    """Where the hospital's bed counts came from, for a figure that adds wards
+    up, or None while Beds and admissions is off. 'bed_register' when every
+    ward's count is from the register, 'site_setting' when none is, else
+    'mixed', with words that say how many."""
+    if not _bed_register_on():
+        return None
+    by_ward = {w: WARD_CAPACITY_SOURCE.get(w, "site_setting") for w in list(WARD_CAPACITY)}
+    register = sum(1 for s in by_ward.values() if s == "bed_register")
+    total = len(by_ward)
+    if total and register == total:
+        source, words = "bed_register", CAPACITY_SOURCE_WORDS["bed_register"]
+    elif register == 0:
+        source, words = "site_setting", CAPACITY_SOURCE_WORDS["site_setting"]
+    else:
+        source = "mixed"
+        words = (f"from bed register for {register} of {total} wards, "
+                 "site setting for the rest")
+    return {
+        "source": source,
+        "words": words,
+        "bed_register_wards": register,
+        "wards": total,
+        "by_ward": {w: {"source": s, "words": CAPACITY_SOURCE_WORDS[s]}
+                    for w, s in by_ward.items()},
+    }
+
+
+def _apply_register_capacity(wards: list[str]) -> dict[str, int]:
+    """WARD_CAPACITY with the bed register applied (module on). Changed IN
+    PLACE and as little as possible: a value is replaced, a new ward is added
+    at the end, a ward no longer discovered is removed. The refresh now runs
+    while the server is answering requests, and a dict cleared and refilled
+    under a reader iterating it would raise mid-response."""
+    global TOTAL_CAPACITY
+    register = _register_bed_counts()
+    new: dict[str, int] = {}
+    sources: dict[str, str] = {}
+    matched: set[str] = set()
+    for w in wards:
+        key = _ward_text_key(w)
+        code_beds = register.get(key)
+        if code_beds is not None and code_beds[1] > 0:
+            new[w] = code_beds[1]
+            sources[w] = "bed_register"
+            matched.add(key)
+        else:
+            new[w] = DEFAULT_WARD_BEDS
+            sources[w] = "site_setting"
+    # A complete ward the discovery did not name is still part of the building.
+    for key, (code, beds) in register.items():
+        if key not in matched and beds > 0 and code not in new:
+            new[code] = beds
+            sources[code] = "bed_register"
+    if not new:
+        return WARD_CAPACITY
+    changed = (dict(WARD_CAPACITY) != new
+               or {w: WARD_CAPACITY_SOURCE.get(w) for w in new} != sources)
+    for gone in [w for w in WARD_CAPACITY if w not in new]:
+        del WARD_CAPACITY[gone]
+    for w, beds in new.items():
+        if WARD_CAPACITY.get(w) != beds:
+            WARD_CAPACITY[w] = beds
+    for gone in [w for w in WARD_CAPACITY_SOURCE if w not in sources]:
+        del WARD_CAPACITY_SOURCE[gone]
+    WARD_CAPACITY_SOURCE.update(sources)
+    TOTAL_CAPACITY = sum(WARD_CAPACITY.values())
+    if changed:
+        # A forecast cached under the old capacity printed the old occupancy.
+        _hospital_flow_cache.clear()
+    logger.info(
+        "Ward capacity: %d ward(s), %d from the bed register, %d beds (%s)",
+        len(WARD_CAPACITY), sum(1 for s in sources.values() if s == "bed_register"),
+        TOTAL_CAPACITY, ", ".join(sorted(WARD_CAPACITY)),
+    )
+    return WARD_CAPACITY
+
 
 def refresh_ward_capacity() -> dict[str, int]:
     """Rebuild WARD_CAPACITY from the site's real wards.
@@ -94,43 +252,57 @@ def refresh_ward_capacity() -> dict[str, int]:
     the fallback above. Never raises; a discovery failure leaves the previous
     map in place, because a Command Center with stale ward names is a smaller
     problem than one that will not load.
+
+    With Beds and admissions on (adt-14) a ward whose bed register is complete
+    takes its count from the register and every other ward keeps
+    ORB_WARD_BEDS; WARD_CAPACITY_SOURCE says which. Bed setup calls this after
+    its writes, so it also runs while the server is answering requests.
     """
     global TOTAL_CAPACITY
-    wards: list[str] = []
-    try:
-        from services.site_config_service import current_site_config
-        wards = [w for w in (current_site_config().wards or []) if w]
-    except Exception:
-        wards = []
-
-    if not wards:
+    with _CAPACITY_REFRESH_LOCK:
+        wards: list[str] = []
         try:
-            from database import db_session
-            with db_session() as db:
-                wards = [
-                    r["ward"] for r in db.execute(
-                        "SELECT DISTINCT ward FROM patients "
-                        "WHERE status = 'admitted' AND ward IS NOT NULL AND ward <> '' "
-                        "ORDER BY ward"
-                    ).fetchall()
-                ]
-        except Exception as e:  # noqa: BLE001
-            logger.debug("ward discovery failed, keeping previous capacity map: %s", e)
+            from services.site_config_service import current_site_config
+            wards = [w for w in (current_site_config().wards or []) if w]
+        except Exception:
+            wards = []
+
+        if not wards:
+            try:
+                from database import db_session
+                with db_session() as db:
+                    wards = [
+                        r["ward"] for r in db.execute(
+                            "SELECT DISTINCT ward FROM patients "
+                            "WHERE status = 'admitted' AND ward IS NOT NULL AND ward <> '' "
+                            "ORDER BY ward"
+                        ).fetchall()
+                    ]
+            except Exception as e:  # noqa: BLE001
+                logger.debug("ward discovery failed, keeping previous capacity map: %s", e)
+                return WARD_CAPACITY
+
+        if _bed_register_on():
+            try:
+                return _apply_register_capacity(wards)
+            except Exception:  # noqa: BLE001 - never raises; the site setting stands
+                logger.exception("bed register unreadable; ward capacity uses ORB_WARD_BEDS")
+
+        if not wards:
             return WARD_CAPACITY
 
-    if not wards:
+        WARD_CAPACITY.clear()
+        for w in wards:
+            WARD_CAPACITY[w] = DEFAULT_WARD_BEDS
+        WARD_CAPACITY_SOURCE.clear()
+        WARD_CAPACITY_SOURCE.update({w: "site_setting" for w in WARD_CAPACITY})
+        TOTAL_CAPACITY = sum(WARD_CAPACITY.values())
+        logger.info(
+            "Ward capacity: %d ward(s) x %d beds = %d (%s)",
+            len(WARD_CAPACITY), DEFAULT_WARD_BEDS, TOTAL_CAPACITY,
+            ", ".join(sorted(WARD_CAPACITY)),
+        )
         return WARD_CAPACITY
-
-    WARD_CAPACITY.clear()
-    for w in wards:
-        WARD_CAPACITY[w] = DEFAULT_WARD_BEDS
-    TOTAL_CAPACITY = sum(WARD_CAPACITY.values())
-    logger.info(
-        "Ward capacity: %d ward(s) x %d beds = %d (%s)",
-        len(WARD_CAPACITY), DEFAULT_WARD_BEDS, TOTAL_CAPACITY,
-        ", ".join(sorted(WARD_CAPACITY)),
-    )
-    return WARD_CAPACITY
 
 # Day-of-week admission multipliers (Indian hospital patterns)
 DOW_MULTIPLIERS = {0: 1.35, 1: 1.25, 2: 1.10, 3: 1.00, 4: 0.95, 5: 0.70, 6: 0.65}
@@ -618,6 +790,11 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
             "beds_available_in_48h": max(0, TOTAL_CAPACITY - daily_forecasts[1]["predicted_occupancy"]) if len(daily_forecasts) > 1 else 0,
         },
     }
+    # Where the bed count came from (adt-14), only while Beds and admissions
+    # is on; with it off the answer is exactly what it was.
+    source = capacity_source_summary()
+    if source is not None:
+        result["capacity_source"] = {k: source[k] for k in ("source", "words")}
 
     # Cache the result. Entries computed for a different hospital-local day are
     # dropped rather than left to expire: a day-0 row is a census with a date on
@@ -671,7 +848,7 @@ def get_bed_capacity_forecast() -> dict:
             "projected_utilization_pct": round(projected / cap * 100, 1),
         }
 
-    return {
+    out = {
         "current": current,
         "projected_48h": projected_48h,
         "total": {
@@ -680,6 +857,16 @@ def get_bed_capacity_forecast() -> dict:
             "available": sum(c["available"] for c in current.values()),
         },
     }
+    # Where each bed count came from (adt-14), only while Beds and admissions
+    # is on: 'from bed register' or 'site setting' beside every ward and the
+    # total. With it off the answer is exactly what it was.
+    source = capacity_source_summary()
+    if source is not None:
+        for w, row in current.items():
+            row["capacity_source"] = source["by_ward"].get(
+                w, {"source": "site_setting", "words": CAPACITY_SOURCE_WORDS["site_setting"]})
+        out["capacity_source"] = {k: source[k] for k in ("source", "words")}
+    return out
 
 
 def get_discharge_board() -> list:

@@ -12,6 +12,9 @@ import { formatClinicalDateTime } from '../../lib/datetime'
 import { hasPermission, MEDICATION_PRESCRIBE } from '../../lib/roles'
 import { currentModuleFlags, subscribeModuleFlags } from '../../shellConfig'
 import {
+  fetchPatientSchedules, isClockTime, saveOrderSchedule, type PatientScheduleEntry,
+} from '../../api/medorderSchedule'
+import {
   createCpoeMedicationOrder, errorCode, signMedOrder, type LinkedMedOrder,
   type MedOrderPriority,
 } from '../../api/medorders'
@@ -72,6 +75,13 @@ function OrdersViewSwitch({
  * only before it is signed. The order form then asks for the medicine as
  * fields (drug, dose, route, how often, as needed). With the lifecycle off
  * every medication line still says it is not sent to the ward or pharmacy.
+ *
+ * SET DUE TIMES (medorders-19, ruling MO-R8). With the lifecycle on, a linked
+ * medicine given a fixed number of times a day says when it is due: the times
+ * its prescriber set, the hospital's signed times for its frequency, or that
+ * the drug round works them out from the frequency. A prescriber gets "Set
+ * due times", starting from those times (Orb ships none of its own); the
+ * drug round then uses them. With the lifecycle off nothing here changes.
  */
 
 interface Order extends LabOrderFields {
@@ -115,6 +125,33 @@ function signFailure(err: unknown): string {
     return `${(err as Error).message || 'This order changed.'} The list has been refreshed.`
   }
   return (err as Error)?.message || 'the order could not be signed.'
+}
+
+/* medorders-19 (ruling MO-R8): the times a linked medicine is due. Only an
+   order given a fixed number of times a day has set times; a draft or a live
+   order can still have them changed. */
+const TIMES_EDITABLE = new Set(['draft', 'prescribed', 'verified', 'held'])
+
+/** When a linked medicine is due, in the ward's words; null when its
+ *  frequency has no set times (as needed, stat, every other day, or more
+ *  often than every 2 hours). */
+function dueTimesLine(entry: PatientScheduleEntry | undefined): string | null {
+  if (!entry || !entry.doses_per_day) return null
+  if (entry.schedule) {
+    const who = entry.schedule.basis === 'site_times'
+      ? "the hospital's set times" : 'set by the prescriber'
+    return `Due at ${entry.schedule.times.join(', ')} (${who}).`
+  }
+  if (entry.site_times) return `Due at the hospital's set times: ${entry.site_times.join(', ')}.`
+  return 'No set times: the drug round works the due times out from how often it is given.'
+}
+
+/** Is a typed set of times ready to send: one per dose a day, each HH:MM,
+ *  none twice? The server checks the rest (at least 2 hours apart). */
+function timesReady(draft: string[], perDay: number | null | undefined): boolean {
+  const cleaned = draft.map(t => t.trim())
+  return !!perDay && cleaned.length === perDay && cleaned.every(isClockTime) &&
+    new Set(cleaned).size === cleaned.length
 }
 
 interface Props {
@@ -330,6 +367,13 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
   const [signModal, setSignModal] = useState<{ order: Order; safety: MedicationSafety } | null>(null)
   // A same-medicine notice from the signature (a notice only until ruling MO-R6).
   const [signNotice, setSignNotice] = useState<string | null>(null)
+  // medorders-19: the set due times of the patient's linked medicines, keyed
+  // by medication order id, and the one being edited.
+  const [schedules, setSchedules] = useState<Record<string, PatientScheduleEntry>>({})
+  const [timesTarget, setTimesTarget] = useState<string | null>(null)
+  const [timesDraft, setTimesDraft] = useState<string[]>([])
+  const [timesBusy, setTimesBusy] = useState(false)
+  const [timesError, setTimesError] = useState<string | null>(null)
 
   /* Follow the patient the shell hands us, and drop anything still referring to
      the patient we just left. Both adjustments happen DURING RENDER (React's
@@ -356,6 +400,8 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
     setActionError(null)
     setSignModal(null)
     setSignNotice(null)
+    setTimesTarget(null)
+    setSchedules({})
   }
 
   const loadOrders = useCallback(async () => {
@@ -363,15 +409,26 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
     setLoading(true)
     try {
       const res = await apiFetch<{ orders: Order[] }>(`/orders/patient/${patientId}`)
-      setOrders(res.orders || [])
+      const list = res.orders || []
+      setOrders(list)
       setLoadError(null)
+      // medorders-19: the set due times, only with the lifecycle on (the
+      // drug round uses them only then) and only when a medicine here is
+      // linked to a medication order. A failed read costs only the times line.
+      if (lifecycleOn && list.some(o => linkedOf(o))) {
+        fetchPatientSchedules(patientId)
+          .then(s => setSchedules(Object.fromEntries(s.orders.map(e => [e.med_order_id, e]))))
+          .catch(() => setSchedules(prev => (Object.keys(prev).length ? {} : prev)))
+      } else {
+        setSchedules(prev => (Object.keys(prev).length ? {} : prev))
+      }
     } catch (err) {
       console.error('Failed to load orders', err)
       setLoadError(err instanceof Error ? err.message : 'Orders could not be loaded.')
     } finally {
       setLoading(false)
     }
-  }, [patientId])
+  }, [patientId, lifecycleOn])
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
   useEffect(() => { loadOrders() }, [loadOrders])
@@ -487,6 +544,41 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
       loadOrders()
     } finally {
       setSignBusy(null)
+    }
+  }
+
+  /* medorders-19: the prescriber sets the times a medicine is due, starting
+     from the times already set, else the hospital's signed times for its
+     frequency, else blank boxes (Orb ships no times of its own). */
+  const openTimes = (order: Order) => {
+    const linked = linkedOf(order)
+    const entry = linked ? schedules[linked.id] : undefined
+    if (!entry || !entry.doses_per_day) return
+    setTimesError(null)
+    setTimesDraft(entry.schedule?.times ?? entry.site_times ??
+      Array.from({ length: entry.doses_per_day }, () => ''))
+    setTimesTarget(order.id)
+  }
+
+  const saveTimes = async (order: Order, times: string[]) => {
+    const linked = linkedOf(order)
+    const entry = linked ? schedules[linked.id] : undefined
+    if (!linked || !entry) return
+    setTimesBusy(true)
+    setTimesError(null)
+    try {
+      await saveOrderSchedule(linked.id, times.map(t => t.trim()), entry.version)
+      setTimesTarget(null)
+      loadOrders()
+    } catch (err) {
+      if (errorCode(err) === 'stale_version') {
+        setTimesError('This medicine changed since you opened it. The list has been refreshed: check it and save again.')
+        loadOrders()
+      } else {
+        setTimesError((err as Error)?.message || 'The times could not be saved.')
+      }
+    } finally {
+      setTimesBusy(false)
     }
   }
 
@@ -712,6 +804,11 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
             const canCancel = !isTerminal && (!linked || linked.status === 'draft')
             const reasonRequired = labManaged || !!linked
             const showSign = !!linked && canBeSigned(linked) && lifecycleOn && canPrescribe
+            // medorders-19: the times this medicine is due, with the lifecycle on.
+            const timesEntry = linked && lifecycleOn ? schedules[linked.id] : undefined
+            const timesLine = dueTimesLine(timesEntry)
+            const showTimes = !!linked && !!timesEntry?.doses_per_day && canPrescribe &&
+              TIMES_EDITABLE.has(linked.status) && timesTarget !== order.id
             return (
               <div key={order.id} className={styles.card}>
                 <div className={styles.cardMain}>
@@ -744,6 +841,75 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
                   )}
                   {linked && linked.on_formulary === false && (
                     <div className={styles.medNotSent}>{MED_NOT_ON_FORMULARY}</div>
+                  )}
+                  {timesLine && (
+                    <div className={styles.result} role="note">{timesLine}</div>
+                  )}
+                  {timesTarget === order.id && timesEntry && (
+                    <div
+                      role="group"
+                      aria-label={`Due times for ${order.description}`}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, flexWrap: 'wrap' }}
+                    >
+                      {timesDraft.map((value, i) => (
+                        <input
+                          key={i}
+                          className={styles.input}
+                          value={value}
+                          onChange={e => {
+                            const next = [...timesDraft]
+                            next[i] = e.target.value
+                            setTimesDraft(next)
+                          }}
+                          onKeyDown={e => { if (e.key === 'Escape') setTimesTarget(null) }}
+                          placeholder="HH:MM"
+                          inputMode="numeric"
+                          maxLength={5}
+                          aria-label={`Dose ${i + 1} time`}
+                          autoFocus={i === 0}
+                          style={{ width: 76, padding: '6px 10px', fontSize: '0.8rem' }}
+                        />
+                      ))}
+                      <button
+                        type="button"
+                        className={styles.actionBtn}
+                        disabled={timesBusy || !timesReady(timesDraft, timesEntry.doses_per_day)}
+                        onClick={() => void saveTimes(order, timesDraft)}
+                      >
+                        {timesBusy ? 'Saving…' : 'Save times'}
+                      </button>
+                      {timesEntry.site_times && (
+                        <button
+                          type="button"
+                          className={styles.actionBtn}
+                          disabled={timesBusy}
+                          onClick={() => setTimesDraft([...(timesEntry.site_times ?? [])])}
+                        >
+                          Use the hospital's times
+                        </button>
+                      )}
+                      {timesEntry.schedule && (
+                        <button
+                          type="button"
+                          className={styles.actionBtn}
+                          disabled={timesBusy}
+                          onClick={() => void saveTimes(order, [])}
+                        >
+                          Clear set times
+                        </button>
+                      )}
+                      <button type="button" className={styles.actionBtn} onClick={() => setTimesTarget(null)}>
+                        Cancel
+                      </button>
+                      <div className={styles.medNotSent} style={{ flexBasis: '100%' }}>
+                        One time for each dose a day, on the 24-hour clock, at least 2 hours apart.
+                      </div>
+                      {timesError && (
+                        <div className={styles.errorText} role="alert" style={{ flexBasis: '100%' }}>
+                          {timesError}
+                        </div>
+                      )}
+                    </div>
                   )}
                   {order.result_text && (
                     <div className={styles.result}>Result: {order.result_text}</div>
@@ -799,6 +965,16 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
                       aria-label={`Sign ${order.description}`}
                     >
                       {signBusy === order.id ? 'Signing…' : 'Sign'}
+                    </button>
+                  )}
+                  {showTimes && (
+                    <button
+                      type="button"
+                      className={styles.actionBtn}
+                      onClick={() => openTimes(order)}
+                      aria-label={`Set due times for ${order.description}`}
+                    >
+                      Set due times
                     </button>
                   )}
                   {canResult && resultTarget !== order.id && (

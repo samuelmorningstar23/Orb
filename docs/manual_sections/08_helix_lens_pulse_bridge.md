@@ -246,6 +246,46 @@ What it does: advances an order through the state machine. Passes all fields dir
 
 ---
 
+### The pharmacy store (opt-in): buying, holding and moving drug stock
+
+> **Added 10 October 2026 (grn-18, with grn-21's ward stock).** Hand-edited here and in `docs/MODULE_MANUAL.md` §15; do not re-run `_assemble.py` over the assembled manual (the assembly drift trap). Every name below was read in the code on that date.
+
+**What it is.** The hospital-system build gave Helix a store. Behind `ORB_PHARMACY_STORE` (off by default; one of the three opt-in modules, with ADT and the laboratory), the pharmacy gets its own desk: a drug master with each drug's schedule and NDPS class, purchase orders and goods receipts, transfers between its own stores, an NDPS register, returns to vendor, and ward stock. With the switch off none of the `/api/pharmacy-store` routes answer (404 `module_disabled`) and Helix behaves exactly as described above.
+
+**One ledger, one writer.** Every drug unit still lives in Helix's tables (`helix_inventory_lots`, `helix_stock_movements`). `server/services/pharmacy_stock_service.py` is the only code that writes them (`post_movement`, `open_or_merge_lot`, `set_lot_status`), each write inside its caller's immediate transaction, so a lot's quantity is always the sum of its ledger and `reconcile()` can prove it; `tests/test_pharmacy_stock_single_writer.py` refuses any other writer. Purchase orders, goods receipts and indents reuse procurement's document tables in a separate `pharmacy` domain: the stores desk cannot see or touch a pharmacy document, and a pharmacy receipt never writes procurement's `stock_movements`.
+
+**What Helix may dispense.** Only lots that are available, in date on the hospital's date and either in the active dispensing pharmacy or, for a narcotic or psychotropic drug, in the NDPS vault (`pharmacy_stock_service.shelf_lot_sql`). Stock in a sub-store, on its way between stores, held (quarantined, recalled, not of standard quality) or on a ward is dispensable nowhere, and switching the module off afterwards cannot make it dispensable.
+
+| Area | Service | Routes under `/api/pharmacy-store` | Screen (Pharmacy store tab) |
+|---|---|---|---|
+| Drug master, stores, par levels, vendors | `pharmacy_master_service.py` | `masters.py` | Masters |
+| Purchase orders, goods receipts, returns to vendor | `pharmacy_purchasing_service.py` | `purchasing.py`, `vendor_returns.py` | Purchasing, Receipts, Vendor returns |
+| Stock, ledger, near expiry, reorder | `pharmacy_stock_reports.py` | `stock.py` | Stock |
+| Transfers between pharmacy stores | `pharmacy_transfer_service.py` | `transfers.py` | Transfers |
+| NDPS register (own switch) | `ndps_service.py` | `ndps.py` | NDPS |
+| Ward stock (own switch) | `pharmacy_transfer_service.py` | `ward.py` | Ward stock; the nurse's Deliveries tab |
+
+#### Ward stock: imprest stores, issue indents and ward receipt (grn-21)
+
+Behind a second switch, `ORB_PHARMACY_WARD_STOCK`, which stays off until Samuel confirms ruling GRN-RS5 (which drugs a ward may hold). With it off a ward store cannot be created and every `/api/pharmacy-store/ward/...` route answers 404 `feature_disabled`.
+
+- **A ward store is filled only from an issue indent**, never by a free transfer. The ward (`ward_indent.raise`, its own department's store only) or a pharmacist on the ward's behalf (`pharmacy_store.write`) asks the dispensing pharmacy for drugs; someone else in the pharmacy decides it (`same_person` is 403); the pharmacist plans the issue FEFO from the dispensing pharmacy and sends it with the ordinary transfer dispatch; a nurse of that department (`ward_stock.receive`) receives it on the Deliveries tab, never the person who sent it, and a short count needs a reason. When everything has arrived the indent closes.
+- **The stock list is the store's par levels.** A drug with no active par row cannot be asked for, approved, issued or sent. Whatever the list says, a drug is refused when it is unclassified, a narcotic or psychotropic (NDPS stock never sits on a ward), inactive or not confirmed, or on the **barred list**: every drug matched by a rule in `drug_safety_service` whose source cites the ISMP high-alert list (insulin, heparin and the low molecular weight heparins, warfarin, digoxin, the strong opioids, potassium chloride, midazolam, propofol, methotrexate, the vinca alkaloids) and concentrated electrolytes (potassium salts, magnesium sulphate, sodium chloride above 0.9 per cent). The ruling's "unless named" exception is not built. A drug that becomes barred or unlisted while on its way lands quarantined in the ward store, counted and visible, never usable.
+- **A drug made a controlled drug on its way never strands the delivery.** Nothing narcotic or psychotropic is ever sent to a ward, but the drug master can classify a drug while its units are on their way (an upgrade applies at once). That transfer is then controlled, and the nurse never holds `pharmacy_store.ndps`, so the ward receives it only with a witness who does: a pharmacist with a signing PIN, never the nurse and never the person who sent it (403 `witness_sent_it`), whatever the transfer witness setting says. The Deliveries tab asks for the witness and their PIN. The controlled line lands quarantined, the indent closes, the witness is on the receipt's audit row and, with the NDPS register on, on the ward store's register entry. A ward receipt never sticks on the ward's own lot of the same batch either: where the ward store already holds that drug, batch and expiry under another status, both end under the stronger hold (the ward's lot is held with a lot event naming the transfer, or the arriving units land held as it is), never the weaker; the pharmacy's own transfers keep their 409 `lot_status_conflict`. There is no lane yet to take held units off a ward (ward returns, grn-15, and the write-off routes are later increments), so they stay counted and held there.
+- **Scope.** A ward account sees only stores whose department is its own; another ward's indent or transfer is 404, and a ward account with no department sees none. The pharmacy desk (`pharmacy_store.read`) sees every ward store. `helix.receive`, the ward's receipt of one patient's dispensed order, reaches none of these routes.
+- **The medicine round is unchanged.** Giving a dose from ward stock still needs an active order on the drug chart; nothing in ward stock touches the eMAR. A dose given from ward stock is not deducted from it yet (that is grn-17, a later increment); the ward tops up against its par levels (GRN-R15).
+- **Audit.** `pharmacy_ward_indent_raised`, `_decided` and `_cancelled` (target `pharmacy_indent`) and the transfer's own `pharmacy_transfer_created`, `_dispatched` and `_received` rows are written in the same transaction as the change ('security', fail-closed: no audit row, no change, 503).
+
+#### The development seed (grn-18)
+
+`server/scripts/seed_pharmacy_store.py` runs in `reset_db_and_seed.reset_and_seed` right after `seed_helix` and before `seed_pharmacy_queue`, and only on a development box with `ORB_PHARMACY_STORE` on; otherwise it is not called and prints nothing. It creates the dispensing pharmacy (which adopts the seed lots; on a reseed the kept store adopts the fresh ones), one licensed vendor, the drug-master entries a purchase needs for two drugs (only where none is on file), and one purchase order received on one posted goods receipt, one of whose batches is short-dated so the near-expiry list has an example (accepted by the administrator with a reason, as the minimum shelf life rule requires). With ward stock on it also creates one ward store and its stock list, and sends it nothing. It seeds no NDPS stock (GRN-R14). Seeded rows carry the `SEED-` prefix and the "Sample data" marker.
+
+#### Retention
+
+Purchase orders and goods receipts (both desks) and the pharmacy's returns to vendor are registered in `consent_service._RETENTION_SOURCES` under the `gst_tax_record` category: CGST Act 2017 s.36 keeps them for 72 months from the due date of the annual return. The category's `retention_policies` row is added by the W168 retention migration; until then the retention review does not show it. Live NDPS register rows are never erased (`ERASURE_RETAINED_TABLES`).
+
+---
+
 ### Lens: Medical Imaging Analysis
 
 Lens lets clinicians upload a medical image (X-ray, CT scan, ECG, etc.) and receive an AI-generated first-pass interpretation. The output is explicitly labelled investigational and must not be used as a standalone diagnostic decision.

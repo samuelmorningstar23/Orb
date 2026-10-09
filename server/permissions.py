@@ -24,6 +24,7 @@ from fastapi import Depends, HTTPException, Request
 import config
 from auth import get_current_user
 from database import db_session, run_db
+from services import facility_service
 from services.audit_service import log_audit_event
 
 
@@ -586,19 +587,96 @@ PATIENT_DEPARTMENT_SQL = (
 )
 
 
-def scope_patient_ids_sql(dept: str | None) -> tuple[str, tuple]:
+# ════════════════════════════════════════════════════════════════
+#  Facility scope (multisite-5a, W8-K), layered on the department scope
+# ════════════════════════════════════════════════════════════════
+# Samuel ruled on 3 October 2026 that isolation between the facilities of one
+# hospital group is keyed on DATA (multi-site M2): once the facilities table
+# holds more than one row, facility scope applies whatever ORB_MULTI_SITE says.
+# With one facility (every install today) facility_scope() answers None before
+# reading anything, and every helper below runs exactly as it did: the same
+# statements, no extra row, no extra metadata key.
+#
+# facility_scope(user) is services.facility_service.facility_scope_for: a
+# frozenset of facility ids, or None for no facility limit (a group-wide admin
+# by enterprise grant, a service account, a patient login). A ward-scoped
+# account gets its department's facility; a department-less account (admin,
+# pharmacist, cashier, the laboratory and the central desk) gets its home row's
+# facility or facility 1; a department the master does not list gets the empty
+# set and sees no patient.
+#
+# FACILITY_PATIENT_SQL is the facility of the patient's LATEST encounter: the
+# latest admission, picked with exactly PATIENT_DEPARTMENT_SQL's ordering so the
+# department and the facility always come from the same row, otherwise the
+# facility the patient was registered at. Ruling MS-R5 (a): a department-less
+# account sees the patients whose latest encounter is at its facility, the same
+# rule as ward staff, and never "any encounter, ever" (that would give a
+# permanent chart key to a patient now admitted elsewhere).
+#
+# enforce_patient_scope and require_patient_access apply the facility scope
+# themselves, FIRST, so none of their call sites changes. A patient outside the
+# caller's facilities is a 404 and writes an authorization patient_scope_denied
+# row with metadata scope_cause 'facility' from BOTH helpers, whatever the
+# department says (a probe across a facility boundary is always recorded). A
+# denial the department alone causes keeps today's behaviour in each helper.
+# Facility denials cannot happen with one facility on record.
+#
+# The Sage lane keeps its pinned duplicate of the department derivation;
+# multisite-10 gives it the facility argument in lockstep.
+
+FACILITY_PATIENT_SQL = (
+    "COALESCE((SELECT a.facility_id FROM admissions a WHERE a.patient_id = p.id "
+    " ORDER BY (a.status = 'active') DESC, a.created_at DESC, a.rowid DESC "
+    " LIMIT 1), p.registered_facility_id)"
+)
+
+
+def facility_scope(user) -> frozenset[int] | None:
+    """The facilities whose patients `user` may see, or None for no facility
+    limit. BLOCKING on a cache miss (plain-def code and run_db only); with one
+    facility on record and a warm cache it reads nothing."""
+    return facility_service.facility_scope_for(user)
+
+
+async def facility_scope_async(user) -> frozenset[int] | None:
+    """facility_scope for async code: no executor hop while one facility is on
+    record and the cache is warm."""
+    return await facility_service.facility_scope_for_async(user)
+
+
+def _facility_params(facilities) -> tuple[str, tuple]:
+    ids = tuple(sorted(int(f) for f in facilities))
+    return ", ".join("?" for _ in ids), ids
+
+
+def scope_patient_ids_sql(dept: str | None, *,
+                          facilities: frozenset[int] | None = None) -> tuple[str, tuple]:
     """A subquery yielding every patient id inside `dept`.
 
     Returns (sql, params) so it can be embedded as ``... IN (<sql>)``. A `dept`
     of None returns the unfiltered id set — the department_scope() convention
     for a genuinely unscoped governance account, NOT "scope unknown".
+
+    `facilities` is the caller's facility_scope(). None leaves the subquery
+    exactly as it was. An empty set yields no patient. A set keeps only the
+    patients whose latest encounter is at one of those facilities
+    (FACILITY_PATIENT_SQL), on the caller's ward as well when `dept` is set.
     """
+    if facilities is None:
+        if dept is None:
+            return "SELECT p.id FROM patients p", ()
+        return f"SELECT p.id FROM patients p WHERE {PATIENT_DEPARTMENT_SQL} = ?", (dept,)
+    if not facilities:
+        return "SELECT p.id FROM patients p WHERE 0", ()
+    marks, ids = _facility_params(facilities)
     if dept is None:
-        return "SELECT p.id FROM patients p", ()
-    return f"SELECT p.id FROM patients p WHERE {PATIENT_DEPARTMENT_SQL} = ?", (dept,)
+        return f"SELECT p.id FROM patients p WHERE {FACILITY_PATIENT_SQL} IN ({marks})", ids
+    return (f"SELECT p.id FROM patients p WHERE {PATIENT_DEPARTMENT_SQL} = ? "
+            f"AND {FACILITY_PATIENT_SQL} IN ({marks})", (dept, *ids))
 
 
-def patient_in_scope(db, patient_id: str, dept: str | None) -> bool:
+def patient_in_scope(db, patient_id: str, dept: str | None, *,
+                     facilities: frozenset[int] | None = None) -> bool:
     """Is this ONE patient inside the caller's department?
 
     Vets a patient_id that arrived from the REQUEST, which is exactly the kind
@@ -611,23 +689,120 @@ def patient_in_scope(db, patient_id: str, dept: str | None) -> bool:
     with a department in the same transaction as the patients row, and
     AdmissionRequest.department is a required field — so the only rows this can
     hide are ones no ward owns.
+
+    `facilities` is the caller's facility_scope(), as in scope_patient_ids_sql:
+    None asks exactly the question above; otherwise the patient's latest
+    encounter must also be at one of those facilities, and a patient id that
+    matches no patient is not in scope.
     """
-    if dept is None:
-        return True
-    if not patient_id:
+    if facilities is None:
+        if dept is None:
+            return True
+        if not patient_id:
+            return False
+        return db.execute(
+            f"SELECT 1 FROM patients p WHERE p.id = ? AND {PATIENT_DEPARTMENT_SQL} = ?",
+            (patient_id, dept),
+        ).fetchone() is not None
+    if not facilities or not patient_id:
         return False
+    marks, ids = _facility_params(facilities)
+    if dept is None:
+        return db.execute(
+            f"SELECT 1 FROM patients p WHERE p.id = ? AND {FACILITY_PATIENT_SQL} IN ({marks})",
+            (patient_id, *ids),
+        ).fetchone() is not None
     return db.execute(
-        f"SELECT 1 FROM patients p WHERE p.id = ? AND {PATIENT_DEPARTMENT_SQL} = ?",
-        (patient_id, dept),
+        f"SELECT 1 FROM patients p WHERE p.id = ? AND {PATIENT_DEPARTMENT_SQL} = ? "
+        f"AND {FACILITY_PATIENT_SQL} IN ({marks})",
+        (patient_id, dept, *ids),
     ).fetchone() is not None
 
 
-def patient_in_scope_blocking(patient_id: str, dept: str | None) -> bool:
+def patient_in_scope_blocking(patient_id: str, dept: str | None, *,
+                              facilities: frozenset[int] | None = None) -> bool:
     """patient_in_scope on its own connection — for run_db() from async routes."""
-    if dept is None:
+    if dept is None and facilities is None:
         return True
     with db_session() as db:
-        return patient_in_scope(db, patient_id, dept)
+        return patient_in_scope(db, patient_id, dept, facilities=facilities)
+
+
+def facility_denial(db, patient_id: str | None,
+                    facilities: frozenset[int] | None) -> tuple[bool, int | None]:
+    """(denied, the patient's facility) for the facility half of the scope.
+
+    Not denied when `facilities` is None (no facility limit) or when the id
+    matches no patient: the department check and the handler then answer
+    exactly as they always did, so a missing patient is never recorded as a
+    facility refusal. Always denied for the empty set (an account whose
+    department no facility owns). One statement, and only with more than one
+    facility on record.
+    """
+    if facilities is None:
+        return False, None
+    if not facilities:
+        return True, None
+    if not patient_id:
+        return False, None
+    row = db.execute(
+        f"SELECT {FACILITY_PATIENT_SQL} AS fid FROM patients p WHERE p.id = ?",
+        (patient_id,),
+    ).fetchone()
+    if row is None:
+        return False, None
+    fid = None if row[0] is None else int(row[0])
+    return fid not in facilities, fid
+
+
+def _facility_denial_blocking(patient_id: str | None,
+                              facilities: frozenset[int] | None) -> tuple[bool, int | None]:
+    """facility_denial on its own connection, for run_db()."""
+    with db_session() as db:
+        return facility_denial(db, patient_id, facilities)
+
+
+def _audit_facility_denial(*, user: dict, patient_id: str | None, dept: str | None,
+                           facilities: frozenset[int], patient_facility_id: int | None,
+                           helper: str, opd_arm: bool = False,
+                           request_path: str | None = None, http_method: str | None = None,
+                           ip_address: str | None = None,
+                           user_agent: str | None = None) -> None:
+    """The patient_scope_denied row for a facility-caused denial. BLOCKING.
+
+    Same category and action as the department denial in
+    require_patient_access (authorization, patient_scope_denied); the
+    metadata says the facility caused it and which helper refused."""
+    if facilities:
+        summary = f"Patient {patient_id} is outside the caller's facility scope"
+    else:
+        summary = (f"Patient {patient_id} is out of scope: the caller's department "
+                   f"({dept}) belongs to no facility on record")
+    metadata = {
+        "department": dept,
+        "scope_source": "authenticated_user",
+        "scope_cause": "facility",
+        "facility_scope": sorted(facilities),
+        "patient_facility_id": patient_facility_id,
+        "scope_helper": helper,
+    }
+    if opd_arm:
+        metadata["opd_arm"] = True
+    log_audit_event(
+        correlation_id=str(uuid.uuid4()),
+        event_category="authorization",
+        action_type="patient_scope_denied",
+        outcome="denied",
+        summary_message=summary,
+        actor_user_id=(user or {}).get("id"),
+        actor_role=(user or {}).get("role"),
+        patient_id=patient_id,
+        request_path=request_path,
+        http_method=http_method,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        metadata=metadata,
+    )
 
 
 # ════════════════════════════════════════════════════════════════
@@ -794,15 +969,38 @@ def enforce_patient_scope(user: dict, patient_id: str | None, *, opd_arm: bool =
     `opd_arm=True` asks patient_in_opd_scope instead (opd-7). Only a route on
     the whitelist in tests/test_opd_scope_drift.py may pass it, and never a
     chart route: the arm opens the OPD record view, not the inpatient chart.
+
+    FACILITY SCOPE (multisite-5a). With more than one facility on record the
+    caller's facility_scope() is checked first: a patient whose latest
+    encounter is outside it is a 404 that writes an authorization
+    patient_scope_denied row (metadata scope_cause 'facility'), whatever the
+    department says. A denial the department alone causes still writes no
+    row here. With one facility nothing changes: no statement, no row.
     """
     dept = department_scope(user)
-    if dept is None or not patient_id:
+    if not patient_id:
         return
+    facilities = facility_scope(user)
+    if dept is None and facilities is None:
+        return
+    denied, patient_facility = False, None
+    allowed = True
     with db_session() as db:
-        allowed = (patient_in_opd_scope(db, patient_id, dept) if opd_arm
-                   else patient_in_scope(db, patient_id, dept))
-        if not allowed:
-            raise HTTPException(status_code=404, detail="Patient not found")
+        if facilities is not None:
+            denied, patient_facility = facility_denial(db, patient_id, facilities)
+        if not denied and dept is not None:
+            allowed = (patient_in_opd_scope(db, patient_id, dept) if opd_arm
+                       else patient_in_scope(db, patient_id, dept))
+    if denied:
+        # Written after the read session closed, before the 404.
+        _audit_facility_denial(
+            user=user, patient_id=patient_id, dept=dept, facilities=facilities,
+            patient_facility_id=patient_facility, helper="enforce_patient_scope",
+            opd_arm=opd_arm,
+        )
+        raise HTTPException(status_code=404, detail="Patient not found")
+    if not allowed:
+        raise HTTPException(status_code=404, detail="Patient not found")
 
 
 def log_phi_read(
@@ -829,6 +1027,12 @@ def log_phi_read(
     the PHI is not returned. That is the existing precedent at
     routes/nurse_routes.py:74 and routes/fhir_export_routes.py:53, and reads are
     held to it rather than given a quieter fail-open rule of their own.
+
+    With more than one facility on record the row also carries
+    metadata.facility_scope: the reader's facility ids, or None for a
+    group-wide account (multisite-5a). Set after the caller's metadata, so the
+    recorded scope is always the server's. With one facility the key is
+    absent and the row is exactly as before.
     """
     dept = department_scope(user)
     meta = {
@@ -840,6 +1044,9 @@ def log_phi_read(
     }
     if metadata:
         meta.update(metadata)
+    if facility_service.multi_facility_data():
+        facilities = facility_scope(user)
+        meta["facility_scope"] = None if facilities is None else sorted(facilities)
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
         event_category="phi_access",          # fail-closed
@@ -1050,6 +1257,13 @@ def require_patient_access(*permissions: str, audit_action: str | None = None,
     `any_of=True` asks for ANY ONE of `permissions` instead of all of them
     (require_any_permission). The patient scope, the 404 and the scope-denied
     audit row below are the same either way.
+
+    FACILITY SCOPE (multisite-5a). With more than one facility on record the
+    caller's facility_scope() is checked first, in its own worker call: a
+    patient whose latest encounter is outside it is a 404 with a
+    patient_scope_denied row whose metadata says scope_cause 'facility'. The
+    department checks below then run exactly as before. With one facility and
+    a warm cache this adds no executor hop and no statement.
     """
     permission_checker = (require_any_permission(*permissions) if any_of
                           else require_permission(*permissions))
@@ -1061,6 +1275,27 @@ def require_patient_access(*permissions: str, audit_action: str | None = None,
         patient_id = request.path_params.get("patient_id")
         dept = department_scope(user)
         read_metadata: dict | None = None
+
+        facilities = await facility_scope_async(user)
+        if facilities is not None and patient_id:
+            denied, patient_facility = await run_db(
+                _facility_denial_blocking, patient_id, facilities)
+            if denied:
+                await run_db(
+                    _audit_facility_denial,
+                    user=user,
+                    patient_id=patient_id,
+                    dept=dept,
+                    facilities=facilities,
+                    patient_facility_id=patient_facility,
+                    helper="require_patient_access",
+                    opd_arm=opd_arm,
+                    request_path=request.url.path,
+                    http_method=request.method,
+                    ip_address=request.client.host if request.client else None,
+                    user_agent=request.headers.get("user-agent"),
+                )
+                raise HTTPException(status_code=404, detail="Patient not found")
 
         if opd_arm:
             if dept is None:

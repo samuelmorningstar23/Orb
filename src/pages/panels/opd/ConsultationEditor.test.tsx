@@ -198,7 +198,9 @@ describe('signing and the lock', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sign the note' }))
     expect(await screen.findByText(/Signed by Dr Iyer on/)).toBeInTheDocument()
     const order = h.apiFetch.mock.calls.map(([p, o]) => `${(o as RequestInit | undefined)?.method ?? 'GET'} ${p}`)
-      .filter(s => !s.includes('/orders') && !s.includes('/terminology'))
+      // The investigations and prescription panels load their own lists (opd-12).
+      .filter(s => !s.includes('/orders') && !s.includes('/terminology')
+        && !s.includes('/prescriptions'))
     expect(order).toEqual(['PUT /opd/visits/V-1/consultation', 'POST /opd/visits/V-1/consultation/sign'])
     expect(bodyOf(calls('/opd/visits/V-1/consultation/sign', 'POST')[0])).toEqual({ row_version: 3 })
     // Locked: no edit form, no save or sign; addenda only.

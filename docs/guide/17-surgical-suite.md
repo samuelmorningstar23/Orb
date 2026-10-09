@@ -92,7 +92,7 @@ sequenceDiagram
     Panel->>Esc: acknowledgeEmergency → status=emergency_acknowledged
 ```
 
-Key subtlety: **`surgery_escalation_service.generate_surgical_prep_package_async` never emits a socket event.** The only code that emits `surgery:emergency_intake` is `sage_handoff_service` (`server/services/sage_handoff_service.py:700`, `:730`). So a case created purely through the escalation service's confirm path becomes ready silently, and the panel only discovers it via its 10-second fallback poll or the Tier-3 hydration poll, not push. The two "emergency package generators" (`generate_surgical_prep_package_async` here, and `generate_transfer_surgery_package_async` in Sage) now write the same honest template (`PREP_PACKAGE`, `server/services/surgery_escalation_service.py:187`) but still differ in notification behavior. Path 1 itself has had no production caller since `POST /api/relay/actions/{message_id}/execute` was removed on 2026-10-03 (`server/routes/relay_routes.py:949-954`); only tests call `confirm_surgery_prep` now. See Discrepancies.
+Key subtlety: **`surgery_escalation_service.generate_surgical_prep_package_async` never emits a socket event.** The only code that emits `surgery:emergency_intake` is `sage_handoff_service` (`server/services/sage_handoff_service.py:737`, `:767`). So a case created purely through the escalation service's confirm path becomes ready silently, and the panel only discovers it via its 10-second fallback poll or the Tier-3 hydration poll, not push. The two "emergency package generators" (`generate_surgical_prep_package_async` here, and `generate_transfer_surgery_package_async` in Sage) now write the same honest template (`PREP_PACKAGE`, `server/services/surgery_escalation_service.py:187`) but still differ in notification behavior. Path 1 itself has had no production caller since `POST /api/relay/actions/{message_id}/execute` was removed on 2026-10-03 (`server/routes/relay_routes.py:949-954`); only tests call `confirm_surgery_prep` now. See Discrepancies.
 
 ### Flow C: Active Cases: alert → confirm → start → complete
 
@@ -508,13 +508,13 @@ row is inserted by hand. See Discrepancies.
 | GET | `/api/surgery/{surgery_id}/risk` | surgery.read | SSE MedGemma risk stream |
 
 ### Socket events (guide 06-realtime)
-- **Consumes** `surgery:emergency_intake` `{surgery_id}` (global), the panel's only push trigger; emitted by `server/services/sage_handoff_service.py:700` and `:730`, **not** by this subsystem's services.
+- **Consumes** `surgery:emergency_intake` `{surgery_id}` (global), the panel's only push trigger; emitted by `server/services/sage_handoff_service.py:737` and `:767`, **not** by this subsystem's services.
 - **Produces** `message:new` to the case-room channel and `user:{target_user_id}` rooms from `alert-team` (`server/routes/surgery_routes.py:398`, `:400`) and from `team-response` (surgical_alert messages).
 
 ### DB tables (guide 04-database-schema)
-- **`surgeries`** (owner), `server/database.py:297`. Status enum includes `scheduled, in_progress, completed, cancelled, emergency_pending, emergency_context_generating, emergency_ready, emergency_acknowledged, emergency_staged`. JSON-in-TEXT columns: `co_morbidities, surgical_checklist, instruments_required, staff_required, possible_complications, notes`, and `who_checklist` (migration 76: the WHO Surgical Safety Checklist state, `{template, state}`, NULL until the first tick). `surgical_checklist` holds only the prep package's list of steps.
-- **`surgery_team_assignments`** (owner), `server/database.py:320`. Status `pending|alerted|confirmed|declined`.
-- **`surgery_prep_requests`** (owner), `server/database.py:344`. State `drafted|resolved`, `idempotency_key UNIQUE`.
+- **`surgeries`** (owner), `server/database.py:301`. Status enum includes `scheduled, in_progress, completed, cancelled, emergency_pending, emergency_context_generating, emergency_ready, emergency_acknowledged, emergency_staged`. JSON-in-TEXT columns: `co_morbidities, surgical_checklist, instruments_required, staff_required, possible_complications, notes`, and `who_checklist` (migration 76: the WHO Surgical Safety Checklist state, `{template, state}`, NULL until the first tick). `surgical_checklist` holds only the prep package's list of steps.
+- **`surgery_team_assignments`** (owner), `server/database.py:324`. Status `pending|alerted|confirmed|declined`.
+- **`surgery_prep_requests`** (owner), `server/database.py:348`. State `drafted|resolved`, `idempotency_key UNIQUE`.
 - Reads: `patients`, `patient_profiles`, `risk_scores`, `users`, `channels`, `messages`.
 
 ### Exported service functions other code calls
@@ -553,7 +553,7 @@ row is inserted by hand. See Discrepancies.
 
 2. **Resolved 2026-10-02: the prep package no longer passes as AI output.** `_do_generation` (`server/services/surgery_escalation_service.py:285`) used to sleep and write a hardcoded Hartmann's package finalised as `ai_package_status="generated"`, which the UI badged "AI Generated". It now writes the shared `PREP_PACKAGE` template as `"template"` (`:291`), and the panel badges both values "Standard template".
 
-3. **Two emergency package generators, only one notifies the UI.** This service's generator emits no socket event; the near-duplicate `generate_transfer_surgery_package_async` in `server/services/sage_handoff_service.py:690` does emit `surgery:emergency_intake` (at `:700` and `:730`). Cases created via the escalation-confirm path therefore reach `emergency_ready` silently and only surface through the panel's polls.
+3. **Two emergency package generators, only one notifies the UI.** This service's generator emits no socket event; the near-duplicate `generate_transfer_surgery_package_async` in `server/services/sage_handoff_service.py:727` does emit `surgery:emergency_intake` (at `:700` and `:730`). Cases created via the escalation-confirm path therefore reach `emergency_ready` silently and only surface through the panel's polls.
 
 4. **Two disagreeing emergency-queue definitions.** The route (`server/routes/surgery_routes.py:268`) filters `status IN ('emergency_pending','emergency_ready','emergency_context_generating')` (`:278`); the service `get_emergency_queue` (`server/services/surgery_escalation_service.py:302`) uses `LIKE 'emergency_%'` (`:309`), which also matches `emergency_acknowledged`/`emergency_staged`. The service function appears unused; the disagreement matters if it ever is.
 
@@ -561,11 +561,11 @@ row is inserted by hand. See Discrepancies.
 
 6. **`get_weekly_schedule` is dead** (`server/services/surgery_service.py:10`) relative to the live board (the `get_surgery_schedule` route reimplements it), and the two use different date bounds (`< end_date` vs inclusive `BETWEEN`).
 
-7. **`surgery.prep` permission is granted but never enforced.** `server/permissions.py:98` defines `SURGERY_PREP`, and it is granted to two roles (`:233`, `:256`), but the `/prep` route gates on `surgery.write` (`server/routes/surgery_routes.py:960-962`). Nothing anywhere checks `surgery.prep`. Either wire it or drop it, as it stands, an administrator who removes `surgery.prep` from a role changes nothing, which is exactly the kind of silent no-op that erodes trust in the permission model.
+7. **`surgery.prep` permission is granted but never enforced.** `server/permissions.py:99` defines `SURGERY_PREP`, and it is granted to two roles (`:233`, `:256`), but the `/prep` route gates on `surgery.write` (`server/routes/surgery_routes.py:960-962`). Nothing anywhere checks `surgery.prep`. Either wire it or drop it, as it stands, an administrator who removes `surgery.prep` from a role changes nothing, which is exactly the kind of silent no-op that erodes trust in the permission model.
 
 8. **`start_surgery` enforces no per-role requirement.** A case with one confirmed and one declined member (and none still outstanding) can start even if the declined role was the anaesthetist. The gate only checks "≥1 confirmed and 0 outstanding" (`server/routes/surgery_routes.py:517`).
 
 **Two discrepancies listed in earlier editions of this chapter are now fixed; they are recorded here so a reader who remembers them does not go looking.**
 
-- *`alert-team` inline `CREATE TABLE` drift*, the runtime `CREATE TABLE IF NOT EXISTS surgery_team_assignments` has been removed from `server/routes/surgery_routes.py` entirely. The canonical schema at `server/database.py:320` is now the only definition.
+- *`alert-team` inline `CREATE TABLE` drift*, the runtime `CREATE TABLE IF NOT EXISTS surgery_team_assignments` has been removed from `server/routes/surgery_routes.py` entirely. The canonical schema at `server/database.py:324` is now the only definition.
 - *Stale-closure in the fallback poll*, `SurgicalSuitePanel.tsx` now mirrors `activeView` into `activeViewRef` (`:105-106`) and the 10 s poll reads the ref (`:177`), so Active Cases refreshes after a tab switch.

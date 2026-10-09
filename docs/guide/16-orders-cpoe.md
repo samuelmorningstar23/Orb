@@ -80,9 +80,9 @@ graph LR
 
 Numbered walkthrough (create → advance → result):
 
-1. **Create.** The clinician fills the form in `OrdersPanel`. For coded order types (lab/imaging/medication/procedure) the form first calls `GET /api/orders/terminology/validate` and refuses to enable "Create Order" until the code returns `valid: true`, `validateCode` sets the `valid` flag (`src/components/orders/OrdersPanel.tsx:566-579`) and `canSubmit` gates the button on it (`:581-585`, button at `:730-732`). On submit it `POST`s to `/api/orders`.
+1. **Create.** The clinician fills the form in `OrdersPanel`. For coded order types (lab/imaging/medication/procedure) the form first calls `GET /api/orders/terminology/validate` and refuses to enable "Create Order" until the code returns `valid: true`, `validateCode` sets the `valid` flag (`src/components/orders/OrdersPanel.tsx:658-671`) and `canSubmit` gates the button on it (`:581-585`, button at `:730-732`). On submit it `POST`s to `/api/orders`.
 2. **Server validates.** `create_order` checks the `order_type`, `priority`, and initial `status` are in their allowed sets, requires a non-empty description, and re-validates the code against `terminology` server-side (never trusting the client) (`server/services/orders_service.py:97-127`). The order is inserted at `draft` (default) and a `"order created"` event row is written.
-3. **Advance.** The panel shows a `→ next` button whose target comes from `nextStatus()` (`src/components/orders/OrdersPanel.tsx:91-98`): draft→active→in_progress→completed. Clicking it `POST`s `/api/orders/{id}/transition` with `{to_status}`. The server checks legality against `LEGAL_TRANSITIONS` and writes an event.
+3. **Advance.** The panel shows a `→ next` button whose target comes from `nextStatus()` (`src/components/orders/OrdersPanel.tsx:101-108`): draft→active→in_progress→completed. Clicking it `POST`s `/api/orders/{id}/transition` with `{to_status}`. The server checks legality against `LEGAL_TRANSITIONS` and writes an event.
 4. **Result (labs/imaging only).** When a lab/imaging order is `active` or `in_progress`, a `+ Result` button appears. It opens a result box on the order's card and `POST`s `/api/orders/{id}/result`; the server attaches the text, stamps `result_at`, and moves the order to `resulted`. A result is written once: a different second result is refused with 409.
 5. **Cancel.** Any non-terminal order shows a `Cancel` button → transition to `cancelled`.
 
@@ -117,9 +117,9 @@ sequenceDiagram
 
 1. Sage (the ambient AI, guide 09/10) proposes a medication as a `sage_actions` row with a free-text `target` like `"amoxcilin"`.
 2. `GET /api/relay/channels/{chan}/sage_actions/{id}/pre_flight` (`server/routes/relay_routes.py:1096`) runs `reconcile_medication` (`server/services/rxnorm_reconciler.py:30`) to map the misspelled/ASR text to a `helix_medication_master` row using **Double Metaphone** (a phonetic hashing algorithm, words that *sound* alike get the same key) blended with **Levenshtein** edit distance, then checks stock and flags high-risk drugs.
-3. `POST …/confirm_agentic` (`server/routes/relay_routes.py:1312`, body in `_confirm_agentic_action` at `:1324`) verifies the clinician's **PIN** through `pin_security.verify_pin` (`server/services/pin_security.py:62`, salted bcrypt, with constant-time verification of legacy unsalted SHA-256 hashes that are upgraded on first success). On stockout it orders nothing and answers 409 with any exact equivalent as a suggestion, unless the clinician confirms again with an override reason (`:1483-1521`). It then calls `helix_service.create_order` (`server/services/helix_service.py:219`) which `INSERT`s into `helix_patient_med_orders` with `status='pending'`, **that pending row IS the pharmacy queue**, and writes a cryptographic `delegation_hash` (`:1599-1607`) into `audit_logs`.
+3. `POST …/confirm_agentic` (`server/routes/relay_routes.py:1312`, body in `_confirm_agentic_action` at `:1324`) verifies the clinician's **PIN** through `pin_security.verify_pin` (`server/services/pin_security.py:62`, salted bcrypt, with constant-time verification of legacy unsalted SHA-256 hashes that are upgraded on first success). On stockout it orders nothing and answers 409 with any exact equivalent as a suggestion, unless the clinician confirms again with an override reason (`:1483-1521`). It then calls `helix_service.create_order` (`server/services/helix_service.py:236`) which `INSERT`s into `helix_patient_med_orders` with `status='pending'`, **that pending row IS the pharmacy queue**, and writes a cryptographic `delegation_hash` (`:1599-1607`) into `audit_logs`.
 
-The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE `orders` table (Flow A) has a `medication` order type and even an `'agentic'` value in its `source` column (`server/database.py:815`), but **no code path copies a CPOE order into `helix_patient_med_orders`**. See Discrepancies.
+The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE `orders` table (Flow A) has a `medication` order type and even an `'agentic'` value in its `source` column (`server/database.py:819`), but **no code path copies a CPOE order into `helix_patient_med_orders`**. See Discrepancies.
 
 ---
 
@@ -138,8 +138,8 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 **Why it exists:** Keeping the machine as a lookup table (not scattered `if`s) means every rule is auditable in one place and the same table drives both `transition_order` and the error messages it raises.
 **Data in/out:** pure constants.
 **Talks to:** read by `_is_legal_transition`, `transition_order`, `add_result`, `create_order`.
-**Change guide:** To add a status like `on_hold`, add it as a key with its allowed exits *and* add it to the `LEGAL_TRANSITIONS` value list of every status that may reach it; knock-on: the DB `CHECK` constraint on `orders.status` (`server/database.py:813`) and the frontend `CHIP_CLASS` map (`src/components/orders/OrdersPanel.tsx:68-75`) and `nextStatus()` (`:89-96`) must be updated in lockstep or inserts will fail / chips will render blank.
-**On screen:** these four constants are what the clinician sees as the buttons on each order card in the Orders tab, the `→ active` / `→ in progress` / `→ completed` forward button, the `+ Result` button (only for `lab`/`imaging`), and the `Cancel` button (hidden once the order is terminal). The card is rendered at `src/components/orders/OrdersPanel.tsx:306-377`.
+**Change guide:** To add a status like `on_hold`, add it as a key with its allowed exits *and* add it to the `LEGAL_TRANSITIONS` value list of every status that may reach it; knock-on: the DB `CHECK` constraint on `orders.status` (`server/database.py:817`) and the frontend `CHIP_CLASS` map (`src/components/orders/OrdersPanel.tsx:71-85`) and `nextStatus()` (`:89-96`) must be updated in lockstep or inserts will fail / chips will render blank.
+**On screen:** these four constants are what the clinician sees as the buttons on each order card in the Orders tab, the `→ active` / `→ in progress` / `→ completed` forward button, the `+ Result` button (only for `lab`/`imaging`), and the `Cancel` button (hidden once the order is terminal). The card is rendered at `src/components/orders/OrdersPanel.tsx:343-434`.
 **Gotchas:** The DB `CHECK (status IN (...))` is a *second* source of truth for the allowed status *values* (not transitions). The two can drift; keep them aligned.
 
 #### `_now`: `server/services/orders_service.py:184`
@@ -149,7 +149,7 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 **Why it exists:** One timezone-correct timestamp helper so every write is UTC and comparable.
 **Data in/out:** → e.g. `"2026-07-07T12:00:00+00:00"`.
 **Talks to:** used by `_record_event`, `create_order`, `transition_order`, `add_result`.
-**Gotchas:** These Python-side ISO strings are written into `created_at`/`updated_at`/`result_at`, but the DB columns also have `DEFAULT CURRENT_TIMESTAMP` (`server/database.py:819-820`) which SQLite renders as `"YYYY-MM-DD HH:MM:SS"` (space, no `+00:00`). So `order_events.created_at` (always set by `_now`) and any DB-defaulted column can differ in *format*. Not a bug today, but do not assume a single timestamp format across all order columns.
+**Gotchas:** These Python-side ISO strings are written into `created_at`/`updated_at`/`result_at`, but the DB columns also have `DEFAULT CURRENT_TIMESTAMP` (`server/database.py:823-824`) which SQLite renders as `"YYYY-MM-DD HH:MM:SS"` (space, no `+00:00`). So `order_events.created_at` (always set by `_now`) and any DB-defaulted column can differ in *format*. Not a bug today, but do not assume a single timestamp format across all order columns.
 
 #### `_is_legal_transition`: `server/services/orders_service.py:221`
 **Signature:** `(from_status, to_status) -> bool`
@@ -181,7 +181,7 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 **Why it exists:** It is the single guarded entry point for putting an order into existence; all the "can this even be an order" rules live here so no route can bypass them.
 **Data in/out:** in = the kwargs above; out = a dict of the `orders` row (all columns, incl. `id`, `status`, `created_at`).
 **Talks to:** `terminology_service.validate_code` (guide 14), `db_session` (guide 04-database), `_record_event`. Called by `orders_routes.create_order` and by tests.
-**Change guide:** *Worked example, add a `medication` free-text option:* today `medication` is not in `CODELESS_ORDER_TYPES`, so a med order always needs a code. To allow free-text meds, add `"medication"` to `CODELESS_ORDER_TYPES` (`:46`); knock-on: the panel's `CODELESS` set (`src/components/orders/OrdersPanel.tsx:65`) must match or the form will still demand a code; watch out that you have now removed the safety guarantee that every med is coded. *Worked example, default new orders to `active`:* pass `status="active"` from the route, or change the default at `:88`; knock-on: the `order_events` "order created" row will record `new_status="active"` and the panel's first forward button will target `in_progress`.
+**Change guide:** *Worked example, add a `medication` free-text option:* today `medication` is not in `CODELESS_ORDER_TYPES`, so a med order always needs a code. To allow free-text meds, add `"medication"` to `CODELESS_ORDER_TYPES` (`:46`); knock-on: the panel's `CODELESS` set (`src/components/orders/OrdersPanel.tsx:68`) must match or the form will still demand a code; watch out that you have now removed the safety guarantee that every med is coded. *Worked example, default new orders to `active`:* pass `status="active"` from the route, or change the default at `:88`; knock-on: the `order_events` "order created" row will record `new_status="active"` and the panel's first forward button will target `in_progress`.
 **Gotchas:** `code_system` is stored uppercased (`:146`) but `code` is stored verbatim, LOINC codes like `2524-7` are case-neutral, but if you ever add a case-sensitive local code system, lookups will be case-sensitive on `code`. The `ValueError`s are caught by the route and turned into HTTP 400; nothing here logs, so a rejected create is silent server-side.
 
 #### `transition_order`: `server/services/orders_service.py:377`
@@ -196,10 +196,10 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 6. **Resultable guard:** reject `to_status == "resulted"` for non-lab/imaging types (`:271-275`).
 7. `UPDATE` status + `updated_at`, `_record_event`, re-select (`:277-282`). After the commit, a move to `active` hands a lab order to the laboratory through `_after_lab_activation` (`:284-285`), which does nothing unless `ORB_LAB` is on.
 **Why it exists:** The one legal way to move an order forward or cancel it. Idempotency means a double-clicked button or a retried request is harmless.
-**On screen:** this is the `→ active` / `→ in progress` / `→ completed` button and the `Cancel` button on an order card in the Orders tab. Pressing one calls the panel's `transition()` (`src/components/orders/OrdersPanel.tsx:144`), which re-fetches the list, so the status chip on the card changes colour a beat later.
+**On screen:** this is the `→ active` / `→ in progress` / `→ completed` button and the `Cancel` button on an order card in the Orders tab. Pressing one calls the panel's `transition()` (`src/components/orders/OrdersPanel.tsx:181`), which re-fetches the list, so the status chip on the card changes colour a beat later.
 **Data in/out:** in = ids + target status; out = updated order dict. Raises `ValueError` on unknown order / illegal transition / bad target.
-**Talks to:** `db_session`, `_is_legal_transition`, `_record_event`. Called by `orders_routes.transition_order` and the panel's `transition()` (`src/components/orders/OrdersPanel.tsx:144`).
-**Change guide:** To make cancellation require a reason, thread `detail` through as mandatory here and in `TransitionRequest` (`server/routes/orders_routes.py:38`); knock-on: the panel already collects an optional reason in the inline cancel-confirm row (`src/components/orders/OrdersPanel.tsx:339-365`) and passes it as `detail` via `confirmCancel` (`:162-167`), but it sends `undefined` when the field is left blank, so a mandatory `detail` would start rejecting blank-reason cancels.
+**Talks to:** `db_session`, `_is_legal_transition`, `_record_event`. Called by `orders_routes.transition_order` and the panel's `transition()` (`src/components/orders/OrdersPanel.tsx:181`).
+**Change guide:** To make cancellation require a reason, thread `detail` through as mandatory here and in `TransitionRequest` (`server/routes/orders_routes.py:38`); knock-on: the panel already collects an optional reason in the inline cancel-confirm row (`src/components/orders/OrdersPanel.tsx:383-411`) and passes it as `detail` via `confirmCancel` (`:162-167`), but it sends `undefined` when the field is left blank, so a mandatory `detail` would start rejecting blank-reason cancels.
 **Gotchas:** The whole read-check-write sequence runs inside one `IMMEDIATE` transaction (`:248`), so the laboratory-guard read and the write cannot interleave with the laboratory taking the order in. That makes `transition_order` an outermost session: never call it from inside another write transaction. The laboratory moves its own orders with `transition_in_conn` (`:370`), which takes the caller's transaction and is called only from `lab_order_service` (pinned by `server/tests/test_lab_order_guard.py`).
 
 #### `add_result`: `server/services/orders_service.py:458`
@@ -214,7 +214,7 @@ The only way an order reaches the pharmacy in this codebase is Flow B. The CPOE 
 6. Otherwise, if the current status can't legally reach `resulted`, reject ("must be 'active' or 'in_progress' first") (`:338-342`).
 7. `UPDATE result_text, result_at=now, status='resulted', updated_at` (`:344-348`) and write the `order_events` row (`:349`).
 **Why it exists:** Results are a specialised transition that also carries a payload; bundling the payload write and the status move keeps them atomic. It used to accept an already-resulted order and overwrite the value with no event, so a stale tab could replace a lab value a clinician had already acted on (docstring at `:294-307`).
-**On screen:** the `+ Result` button on a lab/imaging order card. It opens an inline result box on the card (`openResult` / `saveResult`, `src/components/orders/OrdersPanel.tsx:226`, `:232`); on success the card gains a `Result: …` line (`:419-420`) and its chip turns to `resulted`. On failure the typed text stays in the box and the reason shows above the list.
+**On screen:** the `+ Result` button on a lab/imaging order card. It opens an inline result box on the card (`openResult` / `saveResult`, `src/components/orders/OrdersPanel.tsx:263`, `:269`); on success the card gains a `Result: …` line (`:419-420`) and its chip turns to `resulted`. On failure the typed text stays in the box and the reason shows above the list.
 **Data in/out:** in = order id + text; out = updated order dict with `result_text`/`result_at` set.
 **Talks to:** `db_session`, `_is_legal_transition`, `_record_event`. Called by `orders_routes.add_result`, which maps `OrderAlreadyResulted` and `OrderManagedByLab` to **409**.
 **Gotchas:** `OrderAlreadyResulted` subclasses `ValueError`, so a caller that only catches `ValueError` still refuses (with 400 instead of 409). Orb has no amended-result workflow yet.
@@ -261,7 +261,7 @@ This file is bigger than this chapter's scope. Routes `:95-205` are the **order 
 **How it works:** Calls `terminology_service.validate_code` (`:219`), and `get_display` only if valid; uppercases `code_system` in the response (`:220-225`).
 **Why it exists:** Lets the form give instant ✓/✗ feedback *and* auto-fill the description with the official display name, without the user submitting first.
 **On screen:** the **Validate** button and the ✓/✗ hint next to the Code field in the New Order form. A ✓ also silently fills the Description box with the official display name when it was empty.
-**Talks to:** `terminology_service` (guide 14). Called by `CreateOrderForm.validateCode` (`src/components/orders/OrdersPanel.tsx:566`).
+**Talks to:** `terminology_service` (guide 14). Called by `CreateOrderForm.validateCode` (`src/components/orders/OrdersPanel.tsx:658`).
 **Change guide:** This route is deliberately declared **before** `/{order_id}` (`:403`), see the comment at `:208-210`. FastAPI matches routes in declaration order; if `/{order_id}` came first, a request to `/terminology/validate` would be captured as `order_id="terminology"`. The `/sets*` routes at `:95-205` are ahead of it for exactly the same reason (comment at `:70-73`). If you reorder handlers, keep literal paths above the `{order_id}` catch-all.
 **Gotchas:** Requires only `ORDER_READ`, so any read-capable role (incl. `admin`) can probe the terminology set. That is fine, it exposes no PHI.
 
@@ -288,7 +288,7 @@ This file is bigger than this chapter's scope. Routes `:95-205` are the **order 
 **Signature:** `GET /api/orders/patient/{patient_id}?status=` → `{orders:[…]}`
 **Guard:** `require_patient_access(ORDER_READ, audit_action="patient_orders_viewed")` (`:395-397`), **not** a bare `require_permission`. The dependency derives the caller's ward scope server-side, refuses a patient outside it, and writes a PHI-read audit row named `patient_orders_viewed`.
 **Does:** Lists a patient's orders, optional `status` filter.
-**On screen:** the order list in the Orders tab. The panel calls it from `loadOrders()` (`src/components/orders/OrdersPanel.tsx:158`) on mount and after every action.
+**On screen:** the order list in the Orders tab. The panel calls it from `loadOrders()` (`src/components/orders/OrdersPanel.tsx:195`) on mount and after every action.
 **Talks to:** `orders_service.list_orders`.
 
 #### `get_order` (route): `server/routes/orders_routes.py:560` (decorator) / `:561` (`def`)
@@ -306,14 +306,14 @@ This file is bigger than this chapter's scope. Routes `:95-205` are the **order 
 **Signature:** `POST /api/orders/{order_id}/transition` (perm `ORDER_WRITE`) → `{status:"success", order}`
 **Does:** Wrapper: ward-scopes the order (`_scope_by_order`, `:451`, `:481`), injects `actor_id=user["id"]`, calls the service, translates `ValueError`→400.
 **On screen:** the `→ next` and `Cancel`/`Confirm cancel` buttons on an order card.
-**Talks to:** `orders_service.transition_order`. Called by the panel's `transition()` (`src/components/orders/OrdersPanel.tsx:200`).
+**Talks to:** `orders_service.transition_order`. Called by the panel's `transition()` (`src/components/orders/OrdersPanel.tsx:237`).
 **Gotchas:** `_scope_by_order` is deliberately silent for an unknown order id, so that case keeps the service's existing 400; an out-of-ward order is a 404 "Order not found".
 
 #### `add_result` (route): `server/routes/orders_routes.py:723` (decorator) / `:724` (`def`)
 **Signature:** `POST /api/orders/{order_id}/result` (perm `ORDER_WRITE`) → `{status:"success", order}`
 **Does:** Wrapper over `orders_service.add_result` with the same ward scope (`:497`), actor injection and error translation: `OrderAlreadyResulted` → **409** (`:505-508`; the request is well-formed, the order's state refuses it), any other `ValueError` → 400.
 **On screen:** the `+ Result` button on a lab/imaging order card.
-**Talks to:** `orders_service.add_result`. Called by the panel's `saveResult()` (`src/components/orders/OrdersPanel.tsx:232`).
+**Talks to:** `orders_service.add_result`. Called by the panel's `saveResult()` (`src/components/orders/OrdersPanel.tsx:269`).
 
 ---
 
@@ -321,27 +321,27 @@ This file is bigger than this chapter's scope. Routes `:95-205` are the **order 
 
 Terms: a **React hook** is a function starting with `use…` that lets a component hold state (`useState`), run side effects (`useEffect`), or memoise values (`useMemo`/`useCallback`) across renders. A **prop** is an input passed to a component. **CSS module** (`styles.foo`) means class names are locally scoped so they can't clash with other components.
 
-#### `OrdersViewSwitch`: `src/components/orders/OrdersPanel.tsx:31`
+#### `OrdersViewSwitch`: `src/components/orders/OrdersPanel.tsx:34`
 **Signature:** `({ view, onChange }) -> JSX`
 **Does:** The two-button tablist at the very top of the Orders tab: **Individual orders** / **Order sets**.
 **How it works:** A real `role="tablist"` with `role="tab"` buttons and `aria-selected` (`:21-36`), so a keyboard or screen-reader user can move between the two surfaces.
 **On screen:** the pair of pill buttons above the "Orders" heading. Picking "Order sets" swaps the whole body for `OrderSetsPanel` (`:253-271`), which is lazily loaded (`:15`) and is **not** documented in this chapter. Coming back to "Individual orders" reloads the list (`switchView`, `:195`), so orders a protocol just placed appear.
 **Breaks if:** you replace it with plain `<button>`s, the tab semantics are what make the two surfaces reachable without a mouse.
 
-#### Module constants + `Order` interface: `src/components/orders/OrdersPanel.tsx:45-88`
+#### Module constants + `Order` interface: `src/components/orders/OrdersPanel.tsx:48-98`
 **Does:** The `Order` TS interface (`:45`) mirrors the backend row; option arrays `ORDER_TYPES`/`CODE_SYSTEMS`/`PRIORITIES` (`:64-66`); `CODELESS`/`RESULTABLE` sets (`:67-68`) mirror the server's; `CHIP_CLASS` (`:70-77`) maps each status to a CSS-module chip class; `CANCEL_BTN_STYLE`/`CONFIRM_CANCEL_BTN_STYLE` (`:82-88`) give the cancel control its danger tint.
 **Why it exists:** These frontend copies of server rules drive which form fields and buttons appear. They are a *duplicated source of truth*, see the change-guide warning on `create_order`.
 **On screen:** `CHIP_CLASS` is the coloured status pill on the right of every order card, slate `draft`, blue `active`, amber `in progress`, green `completed`, purple `resulted`, red `cancelled`.
 **Gotchas:** If the backend adds a status but `CHIP_CLASS` lacks it, the chip renders with no colour class (`|| ''` fallback at `:452`), i.e. an unstyled pill, a silent visual bug, not a crash.
 
-#### `nextStatus`: `src/components/orders/OrdersPanel.tsx:151`
+#### `nextStatus`: `src/components/orders/OrdersPanel.tsx:188`
 **Signature:** `(order) -> string | null`
 **Does:** Returns the single "forward" status for the `→` button (draft→active→in_progress→completed), else `null`.
 **How it works:** A `switch` on `order.status`; `resulted`/`cancelled`/`completed` fall through to `null` (no forward button).
 **Why it exists:** Encodes the *happy-path* chain only; branching to `resulted`/`cancelled` is handled by separate buttons.
 **Gotchas:** This is a **third** encoding of the transition graph (after `LEGAL_TRANSITIONS` and the DB `CHECK`). It intentionally omits `active→resulted` because that path is the `+ Result` button's job, not the forward button's.
 
-#### `OrdersPanel` (default export): `src/components/orders/OrdersPanel.tsx:292`
+#### `OrdersPanel` (default export): `src/components/orders/OrdersPanel.tsx:329`
 **Signature:** `({ patientId?: string }) -> JSX`
 **Does:** The whole panel, surface switch, patient selection, order list, action buttons, inline result entry, printing, and toggling the create form.
 **How it works:**
@@ -359,7 +359,7 @@ Terms: a **React hook** is a function starting with `use…` that lets a compone
 **Breaks if:** you collapse the load-failure branch back into the empty state. The copy is explicit that a display failure is not an empty chart, merging them invites a clinician to re-enter orders that already exist.
 **Gotchas:** There is **no optimistic update**, every action round-trips then refetches, so the UI is a beat behind on slow networks. Result entry used to be a browser `prompt()` that named no patient and lost the text on any slip, and errors used `alert()`; both are gone (the comments at `:120-128`).
 
-#### `CreateOrderForm`: `src/components/orders/OrdersPanel.tsx:898`
+#### `CreateOrderForm`: `src/components/orders/OrdersPanel.tsx:1074`
 **Signature:** `({ patientId, patient, onCreated, onCancel }) -> JSX`
 **Does:** The inline create form with live terminology validation and the medication drug-safety modal.
 **How it works:**
@@ -487,13 +487,13 @@ Setup (`:62-178`, the `setup_agentic_order_data` autouse fixture): boots the Fas
 
 Handler line numbers are the `@router.…` decorator line in `server/routes/orders_routes.py`, which is where the method and path are declared.
 
-**DB tables owned:** `orders` (`server/database.py:791`) and `order_events` (`server/database.py:810`). Reads `terminology` (owned by guide 14-helix). **Does not** own or write `helix_patient_med_orders`.
+**DB tables owned:** `orders` (`server/database.py:795`) and `order_events` (`server/database.py:814`). Reads `terminology` (owned by guide 14-helix). **Does not** own or write `helix_patient_med_orders`.
 
 **Exported service functions other code relies on:** `orders_service.create_order / transition_order / add_result / list_orders / get_order / get_order_events`. `get_order_events` and the `order_events` table are consumed by `flight_recorder_service` (guide 30) as a non-hash-chained event source (`server/services/flight_recorder_service.py:240-270`, where `chain_ok` is set to `None` at `:270` precisely because `order_events` is not hash-chained).
 
 **Socket events:** none. This subsystem emits and listens to **no** socket.io events; the panel refreshes by re-fetching after each action.
 
-**RBAC contract:** `doctor` and `nurse` have both `ORDER_READ` and `ORDER_WRITE` (`server/permissions.py:112`, `:127`); `admin` has `ORDER_READ` only (`:149`); `clinician` is aliased to `doctor` at `server/permissions.py:165`; `pharmacist` and `patient` have neither. The permission strings themselves are defined at `server/permissions.py:79-80`. Pinned by `test_orders_routes_reject_patient_role` (`server/tests/test_audit_fixes.py:64`): patient role → 403, doctor → 200.
+**RBAC contract:** `doctor` and `nurse` have both `ORDER_READ` and `ORDER_WRITE` (`server/permissions.py:113`, `:128`); `admin` has `ORDER_READ` only (`:149`); `clinician` is aliased to `doctor` at `server/permissions.py:166`; `pharmacist` and `patient` have neither. The permission strings themselves are defined at `server/permissions.py:80-81`. Pinned by `test_orders_routes_reject_patient_role` (`server/tests/test_audit_fixes.py:64`): patient role → 403, doctor → 200.
 
 **Agentic-path contract (NOT owned here, cross-referenced):** `GET/POST /api/relay/channels/{chan}/sage_actions/{id}/pre_flight|confirm_agentic` (guide 08-relay), `helix_service.create_order` → `helix_patient_med_orders(status='pending')` = the pharmacy queue (guide 14-helix), `rxnorm_reconciler.reconcile_medication` (guide 14-helix).
 
@@ -520,7 +520,7 @@ Handler line numbers are the `@router.…` decorator line in `server/routes/orde
 
 ## Discrepancies and open questions
 
-1. **CPOE orders never reach the pharmacy.** The `orders` table supports `order_type='medication'` and even a `source='agentic'` value (`server/database.py:815`), but **no code path copies a CPOE order into `helix_patient_med_orders`** (the pharmacy queue). The pharmacy queue is populated *only* by the agentic/relay flow via `helix_service.create_order`. So a medication ordered through `OrdersPanel` is recorded and audited but is invisible to the pharmacist workflow. Either this is intentional separation (CPOE = general order tracking, Helix = dispensing) or an integration gap; the code does not bridge them.
+1. **CPOE orders never reach the pharmacy.** The `orders` table supports `order_type='medication'` and even a `source='agentic'` value (`server/database.py:819`), but **no code path copies a CPOE order into `helix_patient_med_orders`** (the pharmacy queue). The pharmacy queue is populated *only* by the agentic/relay flow via `helix_service.create_order`. So a medication ordered through `OrdersPanel` is recorded and audited but is invisible to the pharmacist workflow. Either this is intentional separation (CPOE = general order tracking, Helix = dispensing) or an integration gap; the code does not bridge them.
 
 2. **The agentic test module's docstring still claims "double-doctor sign-off"; the code requires something else.** `server/tests/test_optimized_agentic_orders.py:1-9` lists "High-risk double-doctor sign-off". What the code actually enforces for a high-alert drug is a *single* doctor's PIN **plus** an explicit `safety_ack` with a reason, 428 otherwise (`server/routes/relay_routes.py:1571-1582`), asserted by `test_confirm_high_risk_medication_requires_and_accepts_safety_ack` (`server/tests/test_optimized_agentic_orders.py:389`). A co-signer is genuinely optional, but when one is supplied it is now really verified against its own PIN (`server/routes/relay_routes.py:1404-1450`), so the `co_signer_id` sealed into the audit chain is an attestation that happened. The remaining defect is the stale test-module docstring, not the behaviour. *(An earlier edition of this chapter said the co-sign fields were "recorded but not required and never checked", that was true before the drug-safety gate landed and is no longer true.)*
 
@@ -528,8 +528,8 @@ Handler line numbers are the `@router.…` decorator line in `server/routes/orde
 
 4. **Per-patient authorization is now in place on every CPOE route.** `GET /api/orders/patient/{patient_id}` uses `require_patient_access(ORDER_READ, audit_action="patient_orders_viewed")` (`server/routes/orders_routes.py:395-397`), as does `GET /api/orders/sets/applications/{patient_id}` (`:200-202`). `POST /api/orders` scopes the body-named patient (`enforce_patient_scope`, `:275`). The **order-id** routes resolve the order's patient first: `GET /api/orders/{order_id}` (`:403`) and `GET /api/orders/{order_id}/events` (`:420`) go through `_order_in_scope_or_404` (`:434`) and audit the read, and `POST …/transition` (`:478`) and `POST …/result` (`:494`) go through `_scope_by_order` (`:451`); out of ward is a 404 "Order not found" in every case. The RBAC test (`server/tests/test_audit_fixes.py:91`) covers role-level denial. *(Earlier editions of this chapter said the order-id routes were unscoped; that was true before these guards landed.)*
 
-5. **Rule of three, the transition graph is encoded three times.** `LEGAL_TRANSITIONS` (`server/services/orders_service.py:32`), the DB `CHECK (status IN …)` (`server/database.py:813`), and the frontend `nextStatus`/`CHIP_CLASS` (`src/components/orders/OrdersPanel.tsx:89`, `:68`) must be edited together. There is no shared source; drift here produces silent failures (unstyled chips) or 500s (constraint violations).
+5. **Rule of three, the transition graph is encoded three times.** `LEGAL_TRANSITIONS` (`server/services/orders_service.py:32`), the DB `CHECK (status IN …)` (`server/database.py:817`), and the frontend `nextStatus`/`CHIP_CLASS` (`src/components/orders/OrdersPanel.tsx:99`, `:71`) must be edited together. There is no shared source; drift here produces silent failures (unstyled chips) or 500s (constraint violations).
 
-6. **`_now()` ISO strings vs SQLite `CURRENT_TIMESTAMP`.** Columns written by Python get `+00:00` ISO strings; columns filled by the DB default get space-separated timestamps (`server/services/orders_service.py:57` vs `server/database.py:819-820`). No current bug, but timestamp formats are not uniform across order columns, a trap for any future code that parses them assuming one format.
+6. **`_now()` ISO strings vs SQLite `CURRENT_TIMESTAMP`.** Columns written by Python get `+00:00` ISO strings; columns filled by the DB default get space-separated timestamps (`server/services/orders_service.py:57` vs `server/database.py:823-824`). No current bug, but timestamp formats are not uniform across order columns, a trap for any future code that parses them assuming one format.
 
 7. **Order sets are undocumented here.** Five live routes (`/api/orders/sets*`, `server/routes/orders_routes.py:95-205`), a 1,182-line service (`server/services/order_sets_service.py`), a catalogue file (`server/site_config/order_sets.json`), a migration-created table (`order_set_applications`) and a whole second UI surface (`src/components/orders/OrderSetsPanel.tsx`, reachable from the "Order sets" tab at the top of the Orders panel) sit inside this subsystem's router and are not covered by this chapter.

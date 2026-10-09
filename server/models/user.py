@@ -65,13 +65,27 @@ class MfaDisableBody(BaseModel):
     totp_code: str
 
 
+class FacilityOut(BaseModel):
+    """The facility an account works at (multisite-5a). `name` is the display
+    name: facility 1 without a stored name reads the site settings file."""
+    id: int
+    code: Optional[str] = None
+    name: Optional[str] = None
+
+
 class UserOut(BaseModel):
-    """Public-safe user representation returned to the client."""
+    """Public-safe user representation returned to the client.
+
+    `facility` (multisite-5a) is the facility the account works at
+    (services/facility_service.user_facility): facility 1 while only one is on
+    record; None for a department no facility owns. It is a label: what the
+    account may see is decided by permissions.facility_scope on the server."""
     id: str
     name: str
     role: str
     department: Optional[str] = None
     registration_number: Optional[str] = None
+    facility: Optional[FacilityOut] = None
 
 
 class TokenResponse(BaseModel):

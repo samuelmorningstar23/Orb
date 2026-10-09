@@ -1,0 +1,242 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Critical lab results: the ward card (lis-16)
+
+   Flat "Quiet Clinical". The chassis, the section label, the count chip, the
+   tag and the error block are the shared home primitives in
+   pages/ClinicianShell.css (.orb-section-header__label, .orb-count-chip--danger,
+   .orb-tag--ack, .orb-state--error, .orb-home__refresh). This file only lays
+   the card out. Colour comes from the existing status tokens alone: the danger
+   left rule marks an item, small status text uses --status-danger-text, and no
+   state is ever shown with opacity.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.critical-lab-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.critical-lab-card__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.critical-lab-card__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.critical-lab-card__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-left: 4px solid var(--status-danger);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+}
+
+.critical-lab-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.critical-lab-card__test {
+  font-size: var(--text-base);
+  font-weight: 650;
+  line-height: 1.3;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.critical-lab-card__state {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--status-warn-text);
+}
+
+.critical-lab-card__patient {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.critical-lab-card__facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.critical-lab-card__facts dt {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.critical-lab-card__facts dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.critical-lab-card__change {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--status-danger-text);
+}
+
+.critical-lab-card__notice {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.critical-lab-card__error {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--status-danger-text);
+}
+
+.critical-lab-card__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.critical-lab-card__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.critical-lab-card__input {
+  min-height: 34px;
+  max-width: 320px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+}
+
+.critical-lab-card__choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.critical-lab-card__choices legend {
+  padding: 0;
+  margin-bottom: var(--space-1);
+  color: var(--text-secondary);
+}
+
+.critical-lab-card__check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 24px;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.critical-lab-card__check input { width: 16px; height: 16px; margin: 0; }
+
+.critical-lab-card__check--readback { font-weight: 600; }
+
+.critical-lab-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.critical-lab-card__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 6px 14px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.critical-lab-card__btn:hover:not(:disabled) {
+  background: var(--bg-glass);
+  border-color: var(--border-focus);
+  color: var(--text-primary);
+}
+
+.critical-lab-card__btn--primary {
+  border-color: var(--accent-deep);
+  font-weight: 650;
+}
+
+.critical-lab-card__btn:disabled {
+  cursor: not-allowed;
+  color: var(--text-secondary);
+}
+
+.critical-lab-card__link {
+  min-height: 24px;
+  padding: 0 var(--space-1);
+  border: 0;
+  background: transparent;
+  color: var(--accent-text);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.critical-lab-card__btn:focus-visible,
+.critical-lab-card__input:focus-visible,
+.critical-lab-card__link:focus-visible,
+.critical-lab-card__check input:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .critical-lab-card__btn,
+  .critical-lab-card__input { min-height: 44px; }
+  .critical-lab-card__check,
+  .critical-lab-card__link { min-height: 44px; }
+  .critical-lab-card__check input { width: 22px; height: 22px; }
+}
+
+@media (max-width: 480px) {
+  .critical-lab-card__facts { grid-template-columns: 1fr; }
+  .critical-lab-card__facts dd { margin-bottom: var(--space-1); }
+}

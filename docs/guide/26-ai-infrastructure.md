@@ -142,7 +142,7 @@ sequenceDiagram
 5. If a `label` was given, logs elapsed ms at debug level (`:78-79`).
 **Why it exists:** without step 2/4 the MPS allocator fragments and the MLX buffer pool bloats (~50-100 MB/inference per the module docstring), eventually starving the machine. It is deliberately a *sync* context manager (not async) because it wraps the tight CPU/GPU-bound call itself, not the await.
 **Data in/out:** in, a label string; out, nothing (it is a side-effecting cleanup).
-**Talks to:** called by `vigil_service.py:198` (CfC), `forecast_service.py:294` (LSTM), `voice_agent_service.py:378/439` (Sage voice MLX), `scribe_providers.py:223/301` (Scribe MLX). Calls PyTorch and MLX only if installed.
+**Talks to:** called by `vigil_service.py:200` (CfC), `forecast_service.py:466` (LSTM), `voice_agent_service.py:378/439` (Sage voice MLX), `scribe_providers.py:223/301` (Scribe MLX). Calls PyTorch and MLX only if installed.
 **Change guide:** To add a third framework's cache flush (say a future JAX-Metal), add another guarded `try/except` block after `:76`; knock-on effects: none, because each block is independent and failure-tolerant. Watch out: never raise from cleanup, a raised cleanup would mask the body's real exception.
 **Gotchas:** the framework imports are *inside* the `finally` so a missing framework is a silent no-op; that is intentional (test `test_no_crash_without_torch_or_mlx` sets the modules to `None`). It does **not** acquire any lock, so calling `vram_guard` alone (as Vigil/Forecast do) provides hygiene but *not* GPU exclusivity.
 
@@ -261,7 +261,7 @@ Lazy-init the `asyncio.Lock`, `asyncio.PriorityQueue` and `asyncio.BoundedSemaph
 **Signature:** `async acquire(priority: int = PRIORITY_SCRIBE, timeout: float = 120.0)`
 **How it works:** `_bind_loop()`, then a two-way split (`:262`): `priority <= PRIORITY_SAGE` → `_acquire_interactive`, everything else → `_acquire_background`.
 **Data in/out:** in, priority int, timeout; out, `True` on success (the caller then streams from Ollama), or raises `asyncio.TimeoutError`. On **any** failure path neither a lane slot nor a gate reference is leaked.
-**Talks to:** called by `sage_service.py:1341` (P1), `scribe_service.py:413/445` (P2) and `:571` (P3), `lens_service.py:84` (P2), `bridge_service.py:211` (P2), `discharge_service.py:284` (P2), `surgery_service.py:191` (P2), `vigil_service.py:729` (P2) and `:820` (P3), `timeline_service.py:233` (P3), `sage_narrator_service.py:220` (P3), `nervous_system_triggers.py:263/522` (P3), `batch_coordinator.py:100/146` (caller-supplied), `main.py:378/411` (P5 warmup).
+**Talks to:** called by `sage_service.py:1349` (P1), `scribe_service.py:413/445` (P2) and `:571` (P3), `lens_service.py:84` (P2), `bridge_service.py:211` (P2), `discharge_service.py:284` (P2), `surgery_service.py:191` (P2), `vigil_service.py:731` (P2) and `:820` (P3), `timeline_service.py:233` (P3), `sage_narrator_service.py:220` (P3), `nervous_system_triggers.py:263/522` (P3), `batch_coordinator.py:100/146` (caller-supplied), `main.py:378/411` (P5 warmup).
 
 ##### PriorityLLMQueue._acquire_interactive: `:266`
 Bumps `_interactive_waiting` **synchronously before the first await** (`:269`) so `preempt_requested` is live the instant a clinician's turn exists, not after it is granted. Then: `wait_for(sem.acquire())` → `_gate_ref_acquire(deadline)` → `_install_ticket(LANE_INTERACTIVE)` → `_interactive_active += 1` → `granted = True`, with **no await** between the ticket install and `granted` so no observer can see the acquisition counted twice. The `finally` decrements `_interactive_waiting` on every path and, when not granted, unwinds gate then slot **fully synchronously**, a second cancellation cannot interrupt it, so nothing leaks.
@@ -466,9 +466,9 @@ This subsystem exposes **no REST routes and no DB tables**. Its contract surface
 | Bridge (patient portal) | `llm_queue.acquire` | 2 | `bridge_service.py:211` |
 | Discharge | `llm_queue.acquire` | 2 | `discharge_service.py:281` |
 | Surgery | `llm_queue.acquire` | 2 | `surgery_service.py:169` |
-| Vigil narrative | `llm_queue.acquire` | 2 and 3 | `vigil_service.py:613,663` |
-| Vigil CfC scoring (torch/MPS) | `vram_guard` **only** | n/a | `vigil_service.py:198` |
-| Forecast LSTM (torch/MPS) | `vram_guard` **only** | n/a | `forecast_service.py:294` |
+| Vigil narrative | `llm_queue.acquire` | 2 and 3 | `vigil_service.py:615,663` |
+| Vigil CfC scoring (torch/MPS) | `vram_guard` **only** | n/a | `vigil_service.py:200` |
+| Forecast LSTM (torch/MPS) | `vram_guard` **only** | n/a | `forecast_service.py:466` |
 | Nervous-system triggers | `llm_queue.acquire` | 3 | `nervous_system_triggers.py:111` |
 | Startup warmup | `llm_queue.acquire` | 5 (raw, below all) | `main.py:183` |
 | **Helix (14), Orders/CPOE (16)** |, none, | n/a | deterministic DB/rules; do not touch this subsystem |
@@ -498,7 +498,7 @@ This subsystem exposes **no REST routes and no DB tables**. Its contract surface
 
 ## Discrepancies and open questions
 
-1. **Vigil CfC and Forecast LSTM bypass the cross-lane gate.** The module docstring and the gate comment (`gpu_coordinator.py:98-104`) claim the gate closes the gap where "a P3 background CfC run under umsq could execute concurrently with a P1 Sage Ollama stream." But at the actual call sites, `vigil_service.py:198` and `forecast_service.py:294` wrap their torch/MPS inference in **`vram_guard` only**, they never call `umsq.acquire` or `acquire_gpu_gate`. So those in-process ML inferences do **not** hold the gate and *can* overlap a concurrent Ollama LLM stream on the physical GPU. The gate only actually protects the MLX paths (voice_agent, scribe_providers) versus Ollama. This is the single most important correctness gap in the subsystem's stated guarantee.
+1. **Vigil CfC and Forecast LSTM bypass the cross-lane gate.** The module docstring and the gate comment (`gpu_coordinator.py:98-104`) claim the gate closes the gap where "a P3 background CfC run under umsq could execute concurrently with a P1 Sage Ollama stream." But at the actual call sites, `vigil_service.py:200` and `forecast_service.py:466` wrap their torch/MPS inference in **`vram_guard` only**, they never call `umsq.acquire` or `acquire_gpu_gate`. So those in-process ML inferences do **not** hold the gate and *can* overlap a concurrent Ollama LLM stream on the physical GPU. The gate only actually protects the MLX paths (voice_agent, scribe_providers) versus Ollama. This is the single most important correctness gap in the subsystem's stated guarantee.
 
 2. **Callers pass raw priority integers, not the shared constants.** Despite `PRIORITY_SAGE/SCRIBE/BACKGROUND` existing precisely to be a single source of truth, every `llm_queue.acquire` caller passes literal `priority=1/2/3` (and the warmup passes `priority=5`, which is not a named constant at all). It works because the queue sorts numerically, but it defeats the "import the constant" intent and makes a future renumbering error-prone.
 

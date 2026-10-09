@@ -32,14 +32,14 @@ They are deliberately separate. If unlocking the tablet used the same secret, an
 
 ```mermaid
 graph TD
-  ADMIN[Admin: Devices screen<br/>NOT BUILT] --> ENROLL[POST /api/auth/devices<br/>auth_routes.py:972]
+  ADMIN[Admin: Devices screen<br/>NOT BUILT] --> ENROLL[POST /api/auth/devices<br/>auth_routes.py:999]
   ENROLL --> SECRET[device_secret returned ONCE]
   SECRET --> SETUP[Login.tsx 'Set up this tablet'<br/>src/pages/Login.tsx:459]
-  SETUP --> BIND[POST /api/auth/device/bind<br/>auth_routes.py:1143]
+  SETUP --> BIND[POST /api/auth/device/bind<br/>auth_routes.py:1164]
   BIND --> COOKIE[HttpOnly orb_device cookie]
-  COOKIE --> STATUS[GET /api/auth/device<br/>auth_routes.py:1199]
+  COOKIE --> STATUS[GET /api/auth/device<br/>auth_routes.py:1220]
   STATUS --> PINPAD[PIN pad shown<br/>Login.tsx:297]
-  PINPAD --> PINLOGIN[POST /api/auth/pin-login<br/>auth_routes.py:1228]
+  PINPAD --> PINLOGIN[POST /api/auth/pin-login<br/>auth_routes.py:1249]
   PINLOGIN --> SESSION[15-min session, JWT claim did=dev_...]
   SESSION --> RECHECK[get_current_user re-checks the device<br/>auth.py:416, check at :465]
   SESSION --> IDLE[2-min idle sign-out<br/>src/AppRoot.tsx:114]
@@ -129,7 +129,7 @@ sequenceDiagram
 #### `DEVICE_COOKIE` / `DEVICE_HEADER` / `DEVICE_COOKIE_MAX_AGE` / `DEVICE_PIN_SESSION_MINUTES`: `auth.py:39` / `:40` / `:44` / `:65`
 **Signature:** module constants, `"orb_device"`, `"x-orb-device-token"`, `365*24*3600`, `_int_env("ORB_DEVICE_PIN_SESSION_MINUTES", 15)`
 **Does:** Names the cookie, the fallback header, the device credential's lifetime, and the PIN session's lifetime.
-**On screen:** `DEVICE_PIN_SESSION_MINUTES` is returned to the login screen as `session_minutes` (`auth_routes.py:1224`) and lands in `DeviceStatus.session_minutes` (`src/api/deviceAuth.ts:27`). Nothing renders it today.
+**On screen:** `DEVICE_PIN_SESSION_MINUTES` is returned to the login screen as `session_minutes` (`auth_routes.py:1245`) and lands in `DeviceStatus.session_minutes` (`src/api/deviceAuth.ts:27`). Nothing renders it today.
 **Breaks if you change it:** raising `DEVICE_PIN_SESSION_MINUTES` widens the window in which a stolen token works, and that window is the *only* thing bounding a leaked PIN token, because the request path deliberately does not re-present the device credential (see `get_current_user`). Renaming `DEVICE_COOKIE` invalidates every already-bound tablet at once; every one needs re-enrolling by hand.
 
 #### `verify_device_pin_ct`: `auth.py:255`
@@ -199,7 +199,7 @@ sequenceDiagram
 
 ### File: `server/routes/auth_routes.py`: the nine endpoints
 
-The section header at `server/routes/auth_routes.py:988-1014` states the safety argument in five bullets: a PIN is worthless off the tablet; verification is constant-work; there are two independent throttles; the session expires in minutes and `/refresh` cannot launder it; revoking the tablet severs live sessions; and an administrator can clear either lock instantly, because a clinician locked out mid-shift is itself a patient-safety event.
+The section header at `server/routes/auth_routes.py:1015-1035` states the safety argument in five bullets: a PIN is worthless off the tablet; verification is constant-work; there are two independent throttles; the session expires in minutes and `/refresh` cannot launder it; revoking the tablet severs live sessions; and an administrator can clear either lock instantly, because a clinician locked out mid-shift is itself a patient-safety event.
 
 #### Throttle constants: `server/routes/auth_routes.py:185-188`
 **Signature:** `DEVICE_PIN_MAX_FAILURES = 5`, `DEVICE_PIN_LOCK_SECONDS = 900`, `DEVICE_SWEEP_MAX_FAILURES = 15`, `DEVICE_SWEEP_LOCK_SECONDS = 900`
@@ -233,14 +233,14 @@ The section header at `server/routes/auth_routes.py:988-1014` states the safety 
 **Why it exists:** so an ordinary fat-finger never creeps toward a lock across a twelve-hour shift.
 **Breaks if you change it:** remove it and failures accumulate across a whole shift until a nurse who typed four wrong PINs over ten hours is locked out on her fifth typo.
 
-#### `_device_public`: `auth_routes.py:1038`
+#### `_device_public`: `auth_routes.py:1059`
 **Signature:** `(row) -> dict` → `{device_id, label, department, enrolled_by, enrolled_at, last_seen_at, revoked_at, active, pin_locked}`
 **Does:** The admin-visible view of an enrolled device.
 **On screen:** would be one row of a device inventory table. **No such screen exists**, see *Discrepancies*.
 **Why it exists:** it **never** includes `secret_hash`. The digest is not a usable credential, but publishing it turns an admin read into an offline target for no benefit at all.
 **Breaks if you change it:** adding `secret_hash` hands an offline cracking target to anyone who can read the admin API.
 
-#### `POST /api/auth/devices`: `server/routes/auth_routes.py:1033` (`enroll_device`)
+#### `POST /api/auth/devices`: `server/routes/auth_routes.py:1054` (`enroll_device`)
 **Signature:** body `DeviceEnrollBody` (`server/models/user.py:32`); guard `require_permission("admin.overview")`; **201** → `{device_id, label, department, device_secret}`
 **Does:** Enrols a ward tablet and returns its secret **once**.
 **On screen:** nothing today. The `device_secret` in this response is the string an administrator must copy immediately.
@@ -249,13 +249,13 @@ The section header at `server/routes/auth_routes.py:988-1014` states the safety 
 **Breaks if you change it:** storing the raw secret so it can be re-displayed turns the `enrolled_devices` table into a list of live tablet credentials.
 **Gotchas:** `department` on the device is inventory metadata only. It **never** widens what a person signed in on it can see, `permissions.department_scope` is derived from the USER, always (`server/models/user.py:34-36`).
 
-#### `GET /api/auth/devices`: `server/routes/auth_routes.py:1086` (`list_devices`)
+#### `GET /api/auth/devices`: `server/routes/auth_routes.py:1107` (`list_devices`)
 **Signature:** guard `require_permission("admin.overview")` → `{devices: [...]}`
 **Does:** The tablet inventory: which devices can take PIN sign-ins, which are revoked, which are currently throttled. No secrets in any form.
 **On screen:** **nothing.** No component calls it.
 **How it works:** `ORDER BY (revoked_at IS NOT NULL), enrolled_at DESC`, active first, newest first. The index `idx_enrolled_devices_active` (`migrations.py:789-792`) exists for exactly this ordering.
 
-#### `POST /api/auth/devices/{device_id}/revoke`: `server/routes/auth_routes.py:1103` (`revoke_device`)
+#### `POST /api/auth/devices/{device_id}/revoke`: `server/routes/auth_routes.py:1124` (`revoke_device`)
 **Signature:** guard `require_permission("admin.overview")` → `{status:"revoked", device_id}`; 404 on unknown
 **Does:** Retires a tablet, lost, stolen, re-imaged, or leaving the ward.
 **On screen:** nothing today. Its **effect** is visible: the next request from that tablet 401s, so whoever is holding it lands back on the login screen.
@@ -263,13 +263,13 @@ The section header at `server/routes/auth_routes.py:988-1014` states the safety 
 **Why it exists:** this is the control that makes a long-lived device credential acceptable. It stops new PIN sign-ins **and** severs sessions already minted on that tablet, because every such session carries the device id and `get_current_user` re-checks on each request.
 **Breaks if you change it:** deleting the row instead of marking it makes the audit rows written from that tablet unreadable, they name a device id that no longer resolves to a label.
 
-#### `POST /api/auth/devices/{device_id}/unlock`: `server/routes/auth_routes.py:1153` (`unlock_device`)
+#### `POST /api/auth/devices/{device_id}/unlock`: `server/routes/auth_routes.py:1174` (`unlock_device`)
 **Signature:** guard `require_permission("admin.overview")` → `{status:"unlocked", device_id, was_locked}`
 **Does:** Clears a tablet's PIN throttle immediately.
 **On screen:** nothing today. Effect: the tablet stops answering PIN attempts with 429.
 **Why it exists:** the device lock stops a roster-wide sweep, but it takes the **ward's** tablet offline for everyone on it. So it self-heals in 15 minutes *and* an administrator can end it in one click. A hard lock is only defensible when there is an immediate way out.
 
-#### `POST /api/auth/device/bind`: `server/routes/auth_routes.py:1204` (`bind_device`)
+#### `POST /api/auth/device/bind`: `server/routes/auth_routes.py:1225` (`bind_device`)
 **Signature:** body `DeviceBindBody` (secret, 16–256 chars); **guard: none**; → `{device_id, label, department}`; 401 unknown/revoked; 429 rate-limited
 **Does:** The one-time exchange of the raw device secret for the HttpOnly cookie.
 **On screen:** the "Tablet setup code" textarea and its submit button (`src/pages/Login.tsx:277-296`, `handleBindDevice` at `:132`). Success flips the card straight to the PIN pad.
@@ -277,7 +277,7 @@ The section header at `server/routes/auth_routes.py:988-1014` states the safety 
 **Why it exists:** unauthenticated on purpose, the secret **is** the credential, and this runs on a freshly-imaged tablet before any person has signed in.
 **Breaks if you change it:** requiring authentication makes the bootstrap impossible (nobody can sign in until the tablet is bound, and the tablet cannot be bound until someone signs in). Removing the rate limit turns an unauthenticated endpoint into an unbounded oracle, even against a 256-bit secret.
 
-#### `GET /api/auth/device`: `server/routes/auth_routes.py:1260` (`device_status`)
+#### `GET /api/auth/device`: `server/routes/auth_routes.py:1281` (`device_status`)
 **Signature:** **guard: none** → `{enrolled: false}` or `{enrolled: true, device_id, label, department, session_minutes}`
 **Does:** "Does this browser hold a valid device credential?"
 **On screen:** **this is the single call that decides what the login card looks like.** `src/pages/Login.tsx:45` consumes it; `enrolled: true` sets `usePin`, which makes `pinMode` (`:71`) true, which renders the staff-ID + PIN fields (`:297`) instead of the password field, prints the tablet's label under the title (`:270`), and shows the "Use my password instead" toggle (`:439`) rather than the "Set up this tablet" button (`:459`).
@@ -285,7 +285,7 @@ The section header at `server/routes/auth_routes.py:988-1014` states the safety 
 **Why it exists:** it discloses only the tablet's own label, and only to a caller that already holds its credential, **deliberately not the staff roster**. A name-picker would be friendlier, but it would also mean a stolen tablet hands over the ward's staff list. Staff type their own ID.
 **Breaks if you change it:** returning a list of staff on this ward is the friendly change that turns a stolen tablet into a roster disclosure.
 
-#### `POST /api/auth/pin-login`: `server/routes/auth_routes.py:1289` (`pin_login`)
+#### `POST /api/auth/pin-login`: `server/routes/auth_routes.py:1310` (`pin_login`)
 **Signature:** body `PinLogin` (`employee_id`, `pin`; `server/models/user.py:20`); **guard: none**; → `TokenResponse`
 **Does:** Signs in as a person, with a short PIN, on an enrolled tablet.
 **On screen:** the PIN form's submit. Success runs `applyLoginResponse(data, 'pin')` (`src/pages/Login.tsx:113` → `:81`), which sets `authMethod: 'pin'` on the app user and navigates to `/dashboard`. Failure clears the PIN field (`:115`) and puts the server's message in the error strip.
@@ -301,14 +301,14 @@ The section header at `server/routes/auth_routes.py:988-1014` states the safety 
 **Why the MFA gate:** a PIN must not become the back door around a TOTP mandate. Device + PIN is genuinely two factors, but it is not the factor the hospital mandated for that role, and silently accepting a weaker one is how a policy stops being a policy. Patients never use ward tablets, so they are excluded outright.
 **Breaks if you change it:** move step 4 after step 5 and you have restored the timing oracle. Make step 2's error message identical to step 6's and a tablet that lost its cookie looks exactly like a mistyped PIN, so nobody ever re-enrols it. Set `actor_user_id` to the device and the audit trail becomes the shared-login trail this feature exists to replace.
 
-#### `_write_device_pin`: `auth_routes.py:1522`
+#### `_write_device_pin`: `auth_routes.py:1537`
 **Signature:** `(user_id: str, pin: str) -> None`
 **Does:** Writes `device_pin_hash` (bcrypt via `pin_security.hash_pin`), stamps `device_pin_set_at`, and **clears the lockout**.
 **On screen:** nothing.
 **Why it exists:** setting a PIN doubles as the fastest way to get a stranded clinician back onto the ward tablet.
 **Breaks if you change it:** forget the lockout clear and provisioning a new PIN for a locked-out nurse leaves her locked out for the remainder of the 15 minutes.
 
-#### `POST /api/auth/device-pin`: `server/routes/auth_routes.py:1514` (`set_own_device_pin`)
+#### `POST /api/auth/device-pin`: `server/routes/auth_routes.py:1552` (`set_own_device_pin`)
 **Signature:** body `DevicePinBody` (`password`, `pin`); guard `get_current_user` → `{status:"pin_set", id}`
 **Does:** Set or change your own tablet PIN.
 **On screen:** **nothing.** `setOwnDevicePin` exists in `src/api/deviceAuth.ts:80` and **no component imports it**, there is no "set my tablet PIN" screen.
@@ -316,7 +316,7 @@ The section header at `server/routes/auth_routes.py:988-1014` states the safety 
 **Why the password re-check:** a tablet left unlocked for ninety seconds is the threat this whole feature is built around. Without it, the first thing an opportunist could do with a borrowed session is mint themselves a permanent PIN credential for that nurse.
 **Breaks if you change it:** it returns **400, not 401**, on a wrong password, the caller is already authenticated, so a 401 would trip the SPA's global "session expired" interceptor instead of showing an inline error (same convention as `/mfa/disable`). Change it to 401 and a typo logs the user out.
 
-#### `POST /api/auth/device-pin/{user_id}`: `server/routes/auth_routes.py:1555` (`admin_set_device_pin`)
+#### `POST /api/auth/device-pin/{user_id}`: `server/routes/auth_routes.py:1570` (`admin_set_device_pin`)
 **Signature:** body `AdminDevicePinBody` (`pin`); guard `require_permission("admin.overview")` → `{status:"pin_set", id}`; 404 unknown user
 **Does:** An administrator provisions a tablet PIN for a member of staff.
 **On screen:** **nothing.** No admin screen calls it.
@@ -330,7 +330,7 @@ This file predates the tablet feature and is used by it only for hashing. Everyt
 
 #### `hash_pin`: `pin_security.py:45`
 **Signature:** `(pin: str) -> str`
-**Does:** Salted bcrypt via `auth.hash_password`. Used by both `_write_device_pin` (`auth_routes.py:1446`) and `admin_users_routes.set_user_pin` (`:373`).
+**Does:** Salted bcrypt via `auth.hash_password`. Used by both `_write_device_pin` (`auth_routes.py:1467`) and `admin_users_routes.set_user_pin` (`:373`).
 **Breaks if you change it:** returning a bare SHA-256 makes every new PIN offline-crackable in seconds.
 
 #### `_pin_hash_of`: `pin_security.py:50`
@@ -503,11 +503,11 @@ This file predates the tablet feature and is used by it only for hashing. Everyt
 |---|---|---|---|
 | `orb_device` HttpOnly cookie | `set_device_cookie` (`server/auth.py:288`) | `extract_device_token` (`:270`) on every device route | rename the cookie and every enrolled tablet must be re-enrolled by hand |
 | JWT `did` / `amr` claims | `create_token` (`server/auth.py:360-366`) | `get_current_user` (`:464`), audit metadata | drop `did` and revocation stops severing sessions |
-| `DeviceStatus.enrolled` | `GET /api/auth/device` (`auth_routes.py:1199`) | `src/pages/Login.tsx:45` → `pinMode` (`:71`) | any change to this shape silently reverts the tablet to the password form |
+| `DeviceStatus.enrolled` | `GET /api/auth/device` (`auth_routes.py:1220`) | `src/pages/Login.tsx:45` → `pinMode` (`:71`) | any change to this shape silently reverts the tablet to the password form |
 | `authMethod: 'pin'` | `applyLoginResponse` (`src/pages/Login.tsx:81`) | `src/AppRoot.tsx:113` idle branch | forget to pass it and a shared tablet gets the 15-minute timeout |
 | `users.device_pin_hash` ≠ `users.pin_hash` | migration 12 (`migrations.py:761`) vs `database.py` | `verify_device_pin_ct` vs `pin_security.verify_pin` | merging them lets a shoulder-surfed tablet PIN countersign a medication order |
-| Constant-work ordering | `verify_device_pin_ct` docstring (`server/auth.py:235-236`) | `pin_login` step 4 (`auth_routes.py:1306-1309`) | any early return before it re-opens the account-enumeration oracle |
-| Audit actor = person | `pin_login` (`auth_routes.py:1401-1425`) | guide 05's audit chain, the Admin Audit tab | naming the device as actor rebuilds the shared-login trail |
+| Constant-work ordering | `verify_device_pin_ct` docstring (`server/auth.py:235-236`) | `pin_login` step 4 (`auth_routes.py:1327-1330`) | any early return before it re-opens the account-enumeration oracle |
+| Audit actor = person | `pin_login` (`auth_routes.py:1422-1446`) | guide 05's audit chain, the Admin Audit tab | naming the device as actor rebuilds the shared-login trail |
 
 ---
 
@@ -534,7 +534,7 @@ This file predates the tablet feature and is used by it only for hashing. Everyt
 
 3. **The audit's mapping of `/api/admin/users/{id}/pin` to this feature is wrong.** That endpoint (`server/routes/admin_users_routes.py:334`) sets `users.pin_hash`, the *signing* PIN for agentic medication orders. It is a different credential with a different threat model. Documented here only so nobody wires it to the tablet.
 
-4. **`enrolled_devices.last_seen_at` is only stamped on a *successful* PIN login.** It is written inside `_clear_pin_failures` (`auth_routes.py:265`), which runs on the success path of `pin_login` and nowhere else. So the column tracks "last successful PIN sign-in", not "last contact", a tablet used all day by someone who signs in once shows a timestamp from that morning, and a tablet whose users only ever fail shows nothing at all. `_device_public` reports it at `auth_routes.py:965`.
+4. **`enrolled_devices.last_seen_at` is only stamped on a *successful* PIN login.** It is written inside `_clear_pin_failures` (`auth_routes.py:265`), which runs on the success path of `pin_login` and nowhere else. So the column tracks "last successful PIN sign-in", not "last contact", a tablet used all day by someone who signs in once shows a timestamp from that morning, and a tablet whose users only ever fail shows nothing at all. `_device_public` reports it at `auth_routes.py:992`.
 
 5. **`pin_security`'s limiter is per-process and lost on restart** (its own docstring says so at `pin_security.py:20-23`). It guards the *signing* PIN only. A restart clears every signing-PIN lockout in the building. The tablet-PIN throttles are database columns and do not have this problem.
 

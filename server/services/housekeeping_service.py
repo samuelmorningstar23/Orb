@@ -2162,6 +2162,18 @@ def _ward_capacity_map() -> dict[str, int]:
         return {}
 
 
+def _ward_capacity_sources() -> dict | None:
+    """Where the capacity screen's bed counts came from (adt-14), or None while
+    Beds and admissions is off or the forecast module cannot load. READ ONLY,
+    imported inside the function for the same reason as _ward_capacity_map."""
+    try:
+        from services.forecast_service import capacity_source_summary
+        return capacity_source_summary()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("capacity source unavailable for the readiness view: %s", exc)
+        return None
+
+
 def ward_readiness(*, ward: str | None = None) -> dict:
     """Per-ward cleaning readiness, reported so that it CANNOT be mistaken for
     the capacity screen's `available`.
@@ -2249,12 +2261,29 @@ def ward_readiness(*, ward: str | None = None) -> dict:
             "capacity_view_admitted": admitted,
         })
 
+    # Where each ward's bed count came from (adt-14): 'from bed register' or
+    # 'site setting', the words the capacity screens print, only while Beds
+    # and admissions is on. Nothing is added with it off.
+    sources = _ward_capacity_sources()
+    if sources is not None:
+        for row in wards:
+            if row["ward_capacity"] is not None:
+                row["capacity_source"] = sources["by_ward"].get(
+                    row["ward"], {"source": "site_setting", "words": "site setting"})
+
     return {
         "wards": wards,
+        **({"capacity_source": {k: sources[k] for k in ("source", "words")}}
+           if sources is not None else {}),
         "capacity_basis": (
             "The capacity and forecast screens compute available beds as the ward's "
             "bed count (a site setting) minus admitted patients. They do NOT subtract "
             "beds awaiting cleaning, and this module does not change them."
+            if sources is None else
+            "The capacity and forecast screens compute available beds as the ward's "
+            "bed count minus admitted patients. The bed count comes from the bed register "
+            "for wards whose register is complete, else from the site setting. They do "
+            "NOT subtract beds awaiting cleaning, and this module does not change them."
         ),
         "reconciliation_note": (
             "A bed waiting to be cleaned, being cleaned or out of service is NOT "

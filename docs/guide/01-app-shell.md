@@ -299,7 +299,7 @@ Centers a max-width 440px card on a flat full-height canvas, the file's own head
 ### src/pages/ClinicianShell.tsx
 
 #### Tab type and TABS: `src/shellConfig.tsx:354`
-**Signature:** `type Tab` = union of 29 tab ids (`src/shellConfig.tsx:28`); `TABS: {id, label, pillar, icon}[]` (`src/shellConfig.tsx:354-646`)
+**Signature:** `type Tab` = union of 29 tab ids (`src/shellConfig.tsx:28`); `TABS: {id, label, pillar, icon}[]` (`src/shellConfig.tsx:354-648`)
 **Does:** the master list of sidebar destinations ("pillars" in Orb branding), each with an inline SVG icon.
 **How it works:** `TABS` order defines sidebar order; `pillar` feeds the header title ("Orb Vigil", `src/pages/ClinicianShell.tsx:614`); the visible label comes from i18n key `nav.<id>` (`src/pages/ClinicianShell.tsx:565`), not from `label`.
 **Gotchas:** `label` is effectively dead for display, change the locale files, not `label`, to rename a tab.
@@ -341,7 +341,7 @@ Seventeen `lazy(() => import(...))` declarations (`src/pages/ClinicianShell.tsx:
 11. `SageFloatingAssistant` receives `activeTab` so the text-only Sage orb can lift clear of the composers on the Sage, Scribe, Relay and Ward Round tabs (`src/pages/ClinicianShell.tsx:633`). Clicking the orb offers to open Sage to type; it never listens (browser speech was removed on 4 October 2026, Orb is strictly offline).
 **Data in/out:** in: `User` from context, localStorage keys `orb-theme`, `orb_offline_queue`; out: `data-theme` attribute, rendered panels.
 **Talks to:** `useAuth`, `ActivePatientProvider`, `OrbLogo`, `ClockWidget`, `AiStatusChip`, `PulseWidget`, `AlertPermissionButton`, `CommandPalette`, `KeyboardShortcuts`, `AdmitPatientModal`, `MfaEnrollmentModal`, `SageFloatingAssistant`, all 17 lazy panels, i18n.
-**Change guide (worked example, adding a pillar):** to add a "Radiology" tab: (1) extend the `Tab` union (`src/shellConfig.tsx:28`); (2) append a `TABS` entry with icon (`src/shellConfig.tsx:354`); (3) add the id to the right role arrays in `ROLE_CONFIG` (`src/shellConfig.tsx:826`); (4) add a `lazy(() => import(...))` (`src/pages/ClinicianShell.tsx:115`); (5) add the tabpanel block following the pattern at `src/pages/ClinicianShell.tsx:495-499`; (6) add `nav.radiology` and `subtitle.radiology` keys to `src/i18n/locales/en.json` and `hi.json`, missing keys render as the raw key string.
+**Change guide (worked example, adding a pillar):** to add a "Radiology" tab: (1) extend the `Tab` union (`src/shellConfig.tsx:28`); (2) append a `TABS` entry with icon (`src/shellConfig.tsx:354`); (3) add the id to the right role arrays in `ROLE_CONFIG` (`src/shellConfig.tsx:828`); (4) add a `lazy(() => import(...))` (`src/pages/ClinicianShell.tsx:115`); (5) add the tabpanel block following the pattern at `src/pages/ClinicianShell.tsx:495-499`; (6) add `nav.radiology` and `subtitle.radiology` keys to `src/i18n/locales/en.json` and `hi.json`, missing keys render as the raw key string.
 **Gotchas:** because a visited panel hides with `display:none` rather than unmounting, a panel that polls or holds sockets keeps doing so in the background, budget accordingly. The canonical theme key here is `orb-theme` (hyphen) and the effect **deletes** `orb_theme`, which is the key `App.tsx` boots from, see Discrepancies.
 
 ### src/pages/ClinicianShell.css
@@ -420,7 +420,7 @@ A 36px-tall rounded chip on an opaque themed surface, `background: var(--bg-surf
 **Signature:** `({size?: number = 48}) → JSX`
 **Does:** the brand mark, a spinning gold ring around a pulsing radial-gradient core.
 **How it works:** a square div sized inline from the `size` prop containing two empty divs; all visuals are CSS (`OrbLogo.css`: `orb-spin` rotation on the ring border, `pulse-soft` on the core; both animations and the `--accent-gold`/`--accent-deep`/glow tokens are defined in `src/index.css`).
-**Talks to:** used by `ClinicianShell` (`src/pages/ClinicianShell.tsx:543`), `Login` (`src/pages/Login.tsx:260`), `PatientShell` (`src/pages/PatientShell.tsx:303,568`), and several feature components (`SagePanel`, `ScribePanel`, `SageMessage`, `SageEmptyState`).
+**Talks to:** used by `ClinicianShell` (`src/pages/ClinicianShell.tsx:543`), `Login` (`src/pages/Login.tsx:260`), `PatientShell` (`src/pages/PatientShell.tsx:447,568`), and several feature components (`SagePanel`, `ScribePanel`, `SageMessage`, `SageEmptyState`).
 **Change guide:** it accepts no `className`/`aria` props, decorate the wrapper at the call site.
 **Gotchas:** purely decorative and rendered without `aria-hidden`; screen readers see an unnamed div (harmless but not ideal).
 

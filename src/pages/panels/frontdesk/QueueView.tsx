@@ -16,8 +16,15 @@
  *     but normal (ruling OPD-N9);
  *   * Left without being seen: a cancel with the LWBS code, which never raises
  *     a charge;
- *   * the queue re-reads every ORB_OPD_QUEUE_POLL_SECONDS (the server says how
- *     often), until live desk nudges land in opd-9b.
+ *   * live updates (opd-9b): the queue re-reads when the server's content-free
+ *     'opd:queue_changed' nudge arrives on the socket (it carries the clinic
+ *     and nothing else, so it is never read), and once on reconnecting. The
+ *     timed re-read every ORB_OPD_QUEUE_POLL_SECONDS is kept only while the
+ *     socket is down, or when the server says this account's socket does not
+ *     hear the nudge (`live_updates` false or absent). Because a quiet queue
+ *     is not re-read, the waits keep running on screen: every running wait
+ *     and the longest wait add the whole minutes since the read
+ *     (hooks/useLiveWaits), so a patient waiting 50 minutes never reads 5.
  *
  * Calling a patient in and finishing a consultation belong to the consulting
  * doctor's Outpatients tab in OPD mode (opd.consult; the administrator and
@@ -25,10 +32,12 @@
  * Call in; finishing stays on the doctor's tab, where the signed-note rule
  * (ruling OPD-N8) applies.
  */
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { socket } from '../../../api/client'
 import { formatWait, waitBand, type OpdQueueResponse } from '../../../api/frontdesk'
 import {
+  QUEUE_CHANGED_EVENT,
   callOpdVisit,
   cancelOpdVisitWithCode,
   tokenWasReissued,
@@ -37,6 +46,7 @@ import {
   type OpdQueueVisit,
 } from '../../../api/opd'
 import { useFocusTrap } from '../../../hooks/useFocusTrap'
+import { liveLongestWait, liveWaitMinutes, useMinutesSinceRead } from '../../../hooks/useLiveWaits'
 import { useVisiblePolling } from '../../../hooks/useVisiblePolling'
 import './QueueView.css'
 
@@ -44,10 +54,16 @@ import './QueueView.css'
 export type OpdModeQueue = Omit<OpdQueueResponse, 'queues'> & {
   opd_mode: true
   poll_seconds: number
+  /** opd-9b: this account's socket hears the queue nudge. Absent reads as
+   *  false, so a server without it keeps the timed re-read. */
+  live_updates?: boolean
   priorities: CodeLabel[]
   cancel_reasons: CodeLabel[]
   queues: (Omit<OpdQueueResponse['queues'][number], 'visits'> & { visits: OpdQueueVisit[] })[]
 }
+
+/** Several changes in a burst (a call-in nudges, then the take) re-read once. */
+const NUDGE_DEBOUNCE_MS = 400
 
 export interface QueueViewProps {
   queue: OpdModeQueue
@@ -155,8 +171,38 @@ export default function QueueView({ queue, onRefresh, canCallIn }: QueueViewProp
   const [error, setError] = useState('')
   const [editing, setEditing] = useState<OpdQueueVisit | null>(null)
 
-  // Until live desk nudges land (opd-9b), re-read on the server's interval.
-  useVisiblePolling(onRefresh, Math.max(5, queue.poll_seconds || 30) * 1000)
+  /* opd-9b: re-read on the server's nudge. The payload is the clinic and
+     nothing else, so it is never read. The socket's state decides whether the
+     timed re-read runs: only while it is down, or while the server says this
+     account does not hear the nudge. */
+  const refresh = useRef(onRefresh)
+  useEffect(() => { refresh.current = onRefresh }, [onRefresh])
+  const [connected, setConnected] = useState<boolean>(() => socket?.connected === true)
+  useEffect(() => {
+    if (!socket) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const onNudge = () => {
+      if (timer) return
+      timer = setTimeout(() => { timer = undefined; refresh.current() }, NUDGE_DEBOUNCE_MS)
+    }
+    // A nudge sent while the socket was down is lost: read once on return.
+    const onConnect = () => { setConnected(true); refresh.current() }
+    const onDisconnect = () => setConnected(false)
+    socket.on(QUEUE_CHANGED_EVENT, onNudge)
+    socket.on('connect', onConnect)
+    socket.on('disconnect', onDisconnect)
+    return () => {
+      socket.off(QUEUE_CHANGED_EVENT, onNudge)
+      socket.off('connect', onConnect)
+      socket.off('disconnect', onDisconnect)
+      if (timer) clearTimeout(timer)
+    }
+  }, [])
+  const live = queue.live_updates === true && connected
+  useVisiblePolling(onRefresh, Math.max(5, queue.poll_seconds || 30) * 1000, !live)
+  /* The waits are the server's as of this read. A quiet queue is not re-read
+     while live, so the running ones count on from it here. */
+  const sinceRead = useMinutesSinceRead(queue)
 
   const run = async (visit: OpdQueueVisit, fn: () => Promise<unknown>) => {
     setBusyId(visit.id)
@@ -196,7 +242,9 @@ export default function QueueView({ queue, onRefresh, canCallIn }: QueueViewProp
                 <span className="fd-stat__label">waiting</span>
               </span>
               <span className="fd-stat">
-                <span className="fd-stat__value">{formatWait(q.longest_wait_minutes)}</span>
+                <span className="fd-stat__value">
+                  {formatWait(liveLongestWait(q.visits, q.longest_wait_minutes, sinceRead))}
+                </span>
                 <span className="fd-stat__label">longest wait</span>
               </span>
             </div>
@@ -217,6 +265,7 @@ export default function QueueView({ queue, onRefresh, canCallIn }: QueueViewProp
               <tbody>
                 {q.visits.map(v => {
                   const open = v.status === 'waiting' || v.status === 'in_consultation'
+                  const wait = liveWaitMinutes(v, sinceRead)
                   return (
                     <tr key={v.id}>
                       <td className="fd-token">
@@ -241,8 +290,8 @@ export default function QueueView({ queue, onRefresh, canCallIn }: QueueViewProp
                       </td>
                       <td className="fd-nowrap">{v.room || 'Not set'}</td>
                       <td>
-                        <span className={`fd-wait fd-wait--${waitBand(v.waiting_minutes)}`}>
-                          {formatWait(v.waiting_minutes)}
+                        <span className={`fd-wait fd-wait--${waitBand(wait)}`}>
+                          {formatWait(wait)}
                         </span>
                       </td>
                       <td>

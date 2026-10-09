@@ -100,8 +100,11 @@ LEGAL_TRANSITIONS: dict[str, frozenset] = {
 
 #: Where an order came from. Validated here, not by a CHECK, so a later lane
 #: (for example the outpatient prescription) adds its value without a rebuild.
+#: 'opd_prescription' is the outpatient lane (opd-12, W8-C,
+#: services/medorders/outpatient.py): encounter_type 'op', no ward row.
 SOURCES = ("chart", "cpoe", "order_set", "sage_handoff", "relay_agentic", "helix_approve",
-           "scribe_extracted", "history_import", "legacy_adopted", "verbal")
+           "scribe_extracted", "history_import", "legacy_adopted", "verbal",
+           "opd_prescription")
 
 #: Chart provenance values that need a pharmacist before the first dose. The
 #: same tuple as pharmacy_verification_service._UNVERIFIED_SOURCES and

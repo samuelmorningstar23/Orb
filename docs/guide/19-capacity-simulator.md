@@ -119,11 +119,11 @@ The pieces (all per hour):
 
 | Simulator field | Read from forecast | Forecast source line |
 |---|---|---|
-| `census` | `current_occupancy` (= count of `status='admitted'` patients) | `forecast_service.py:514` |
-| `capacity` | `total_capacity` (= `TOTAL_CAPACITY` = sum of ward beds = 32) | `forecast_service.py:515`, `:61` |
-| `admission_rate` (per day) | `summary.total_predicted_admissions_7d / 7` | `forecast_service.py:523` |
+| `census` | `current_occupancy` (= count of `status='admitted'` patients) | `forecast_service.py:686` |
+| `capacity` | `total_capacity` (= `TOTAL_CAPACITY` = sum of ward beds = 32) | `forecast_service.py:687`, `:62` |
+| `admission_rate` (per day) | `summary.total_predicted_admissions_7d / 7` | `forecast_service.py:695` |
 
-The `/7` trick is legitimate because the forecast's day-of-week multipliers `DOW_MULTIPLIERS = {Mon 1.35 … Sun 0.65}` sum to exactly 7.00 (`forecast_service.py:64`), so the 7-day total is independent of which weekday you start on, and dividing by 7 recovers the underlying flat daily rate. If the forecast call throws or the DB is empty, the baseline degrades to census 0, capacity 32, rate `FALLBACK_ADMISSION_RATE_DAILY = 4.5` and never raises (`capacity_sim_service.py:114-115`).
+The `/7` trick is legitimate because the forecast's day-of-week multipliers `DOW_MULTIPLIERS = {Mon 1.35 … Sun 0.65}` sum to exactly 7.00 (`forecast_service.py:65`), so the 7-day total is independent of which weekday you start on, and dividing by 7 recovers the underlying flat daily rate. If the forecast call throws or the DB is empty, the baseline degrades to census 0, capacity 32, rate `FALLBACK_ADMISSION_RATE_DAILY = 4.5` and never raises (`capacity_sim_service.py:114-115`).
 
 Callers may also **override** the baseline for hermetic testing or manual planning by passing `baseline_census`, `baseline_capacity`, `admission_rate_daily` (`capacity_sim_service.py:163-168`). Overrides win over the live pull.
 
@@ -225,7 +225,7 @@ Callers may also **override** the baseline for hermetic testing or manual planni
 **Does:** the one endpoint, permission-gate the request, run the simulation, return the contract.
 **How it works:**
 1. Registered on **both** `@router.post("")` and `@router.post("/")` (`:38-39`), i.e. `POST /api/capacity-sim` and `POST /api/capacity-sim/`, so a trailing slash does not trigger a 307 redirect.
-2. `Depends(require_permission(FORECAST_READ))` runs first: it verifies the JWT (via `get_current_user`), checks the user's role includes `forecast.read`, and on failure logs a `permission_denied` audit event and returns HTTP 403 (`permissions.py:376-438`).
+2. `Depends(require_permission(FORECAST_READ))` runs first: it verifies the JWT (via `get_current_user`), checks the user's role includes `forecast.read`, and on failure logs a `permission_denied` audit event and returns HTTP 403 (`permissions.py:377-439`).
 3. Serializes the request to a scenario dict with `req.model_dump(exclude={"horizon_hours"}, exclude_none=True)`, dropping the horizon (passed separately) and any unset optional fields (`:44`).
 4. Calls `capacity_sim_service.simulate(scenario, horizon_hours=req.horizon_hours)` and returns its dict (`:45`).
 5. Any exception becomes `HTTPException(500, "Simulation error: …")` (`:46-47`).
@@ -391,12 +391,12 @@ Prefix verified: router declares `prefix="/api/capacity-sim"` (`capacity_sim_rou
 |---|---|---|
 | `forecast_service.predict_hospital_flow()` | live `current_occupancy`, `total_capacity`, `summary.total_predicted_admissions_7d` | `capacity_sim_service.py:108-113` |
 | `forecast_service.TOTAL_CAPACITY` | fallback capacity (32) + assumptions meta | `:104`, `:85` |
-| `forecast_service.DOW_MULTIPLIERS` | *conceptual* dependency, the `/7` rate derivation relies on these summing to 7.0 | (`forecast_service.py:64`) |
+| `forecast_service.DOW_MULTIPLIERS` | *conceptual* dependency, the `/7` rate derivation relies on these summing to 7.0 | (`forecast_service.py:65`) |
 | `permissions.require_permission`, `FORECAST_READ` | RBAC gate + JWT auth | `capacity_sim_routes.py:14,40` |
 | `src/api/client.ts apiFetch` | Bearer auth, 401/403 handling | `src/components/capacity/CapacitySimulator.tsx:98` |
 | `ClinicianShell.tsx` | mounts the panel as the `capacity` tab | `ClinicianShell.tsx:281,752` |
 
-No socket events. No DB tables of its own, it only reads (transitively, via the forecast) `patients` and `admission_history` (`forecast_service.py:404-406,424-429`).
+No socket events. No DB tables of its own, it only reads (transitively, via the forecast) `patients` and `admission_history` (`forecast_service.py:576-578,424-429`).
 
 ---
 
@@ -423,7 +423,7 @@ No socket events. No DB tables of its own, it only reads (transitively, via the 
 
 1. **`suggested_discharges` ignores the t0 baseline step; `beds_short_at_peak` does not.** `peak_occupancy` is initialized from the t0 census (`capacity_sim_service.py:209`) and can be set at t0, but `max_overflow` is only updated inside the `h = 1…horizon` loop (`:246-248`), never for the t0 step. Since capacity is constant across a run, the two metrics are equal for any scenario whose peak occurs at h ≥ 1 (the normal surge case). But in a **declining-from-overloaded** scenario, baseline already above capacity and strictly falling every hour, `beds_short_at_peak` (from the t0 peak) can exceed `suggested_discharges` (from the largest *post-t0* overflow) by up to ~1 bed after `math.ceil`. The `test_closing_beds…` test (`:77`) sits exactly in this regime but happens to round both to 6, so it passes and never exposes the gap. It is a minor understatement of discharges-needed, not a crash.
 
-2. **The "fully deterministic / no wall-clock" claim holds only for injected baselines.** The module docstring (`capacity_sim_service.py:23-30`) states the projection has "no `random` and no wall-clock reads." That is true of the *stepping math*, but `_load_baseline` calls `predict_hospital_flow`, which reads `datetime.now(timezone.utc)` (`forecast_service.py:400`), queries the DB, applies Pulse environmental multipliers, and caches for one hour. The live-baseline determinism tests (`:146-150`) pass only because both calls land within the same 1-hour forecast cache. Across cache expiry or changing environmental multipliers, a live-baseline (no `baseline_*` overrides) run can legitimately change. The docstring's own caveat at `:29` ("Callers/tests may also inject the baseline directly … to be fully hermetic") acknowledges this, but the blanket "no wall-clock reads" wording upfront slightly oversells it.
+2. **The "fully deterministic / no wall-clock" claim holds only for injected baselines.** The module docstring (`capacity_sim_service.py:23-30`) states the projection has "no `random` and no wall-clock reads." That is true of the *stepping math*, but `_load_baseline` calls `predict_hospital_flow`, which reads `datetime.now(timezone.utc)` (`forecast_service.py:572`), queries the DB, applies Pulse environmental multipliers, and caches for one hour. The live-baseline determinism tests (`:146-150`) pass only because both calls land within the same 1-hour forecast cache. Across cache expiry or changing environmental multipliers, a live-baseline (no `baseline_*` overrides) run can legitimately change. The docstring's own caveat at `:29` ("Callers/tests may also inject the baseline directly … to be fully hermetic") acknowledges this, but the blanket "no wall-clock reads" wording upfront slightly oversells it.
 
 3. **Route-level errors collapse to a generic 500.** `run_scenario` wraps `simulate` in a broad `except Exception` (`capacity_sim_routes.py:46-47`), so any internal fault surfaces as `500 "Simulation error: …"` with no typing. Not a bug, but it makes client-side error handling coarse (the frontend just shows the message string).
 

@@ -21,6 +21,7 @@
  * re-reads the order over REST.
  */
 import { apiFetch, socket, type MedicationSafety } from './client'
+import { formatClinicalDateTime } from '../lib/datetime'
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -345,6 +346,109 @@ export function adoptMedOrders(patientIds?: string[]): Promise<AdoptionResult> {
     method: 'POST',
     body: JSON.stringify(patientIds ? { patient_ids: patientIds } : {}),
   })
+}
+
+// ── The pharmacy's view of a linked order (medorders-5c) ─────────────────────
+
+/** The medication order behind a Helix supply row, as GET /helix/orders and
+ *  GET /helix/orders/{id}/timeline add it. Only a supply row linked to an
+ *  order carries one (the order store must have been used). */
+export interface HelixLinkedOrder {
+  id: string
+  status: MedOrderStatus
+  version: number
+  verified_by: string | null
+  verified_at: string | null
+  verified_by_name?: string | null
+  /** The order still needs a pharmacist's own check (an AI-charted drug). */
+  needs_verification?: boolean
+}
+
+/** One event from the order's ledger as the pharmacy timeline shows it. The
+ *  bedside doses (given, not given) are never sent to the pharmacy desk. */
+export interface HelixOrderEvent {
+  id: number
+  kind: string
+  from_status: MedOrderStatus | null
+  to_status: MedOrderStatus | null
+  actor_id: string | null
+  actor_role: string | null
+  actor_name: string | null
+  reason: string | null
+  ref_type: string | null
+  ref_id: string | null
+  created_at: string
+}
+
+/** An order's state in words. Status is never shown by colour alone. */
+export const MED_ORDER_STATUS_WORDS: Record<MedOrderStatus, string> = {
+  draft: 'Not signed yet',
+  prescribed: 'Prescribed',
+  verified: 'Checked by a pharmacist',
+  held: 'On hold',
+  stopped: 'Stopped',
+  completed: 'Course complete',
+  cancelled: 'Cancelled',
+  rejected: 'Rejected by pharmacy',
+}
+
+/** Each ledger event in the timeline's words. */
+export const MED_ORDER_EVENT_WORDS: Record<string, string> = {
+  created: 'Order written',
+  signed: 'Signed by the prescriber',
+  verified: 'Order checked by a pharmacist',
+  rejected: 'Order rejected by pharmacy',
+  held: 'Put on hold',
+  resumed: 'Resumed',
+  stopped: 'Stopped',
+  completed: 'Course complete',
+  cancelled: 'Cancelled',
+  amended: 'Order corrected',
+  adopted: 'Added to the order record',
+  supply_requested: 'Pharmacy asked to supply it',
+  supply_reviewing: 'Pharmacy reviewing a supply',
+  supply_verified: 'Supply verified',
+  supply_rejected: 'Supply rejected',
+  dispensed: 'Dispensed',
+  received: 'Received on the ward',
+}
+
+export function medOrderEventWords(kind: string): string {
+  return MED_ORDER_EVENT_WORDS[kind] ?? 'Order updated'
+}
+
+/** "Order verified by Ravi Kumar at 3 Oct 2026, 10:15 AM", or null when no
+ *  pharmacist has checked the order. */
+export function orderVerifiedLine(order: HelixLinkedOrder): string | null {
+  if (!order.verified_by) return null
+  const who = (order.verified_by_name ?? '').trim() || 'a pharmacist'
+  const when = formatClinicalDateTime(order.verified_at)
+  return when ? `Order verified by ${who} at ${when}` : `Order verified by ${who}`
+}
+
+/** What the pharmacist should know about the order behind this supply, in
+ *  plain words. `lifecycleOn` is the server's 'med_order_lifecycle' feature:
+ *  with it on, verifying or rejecting a supply of an order still waiting for
+ *  its check IS that check; with it off the two are separate. */
+export function linkedOrderNotice(order: HelixLinkedOrder, lifecycleOn: boolean): string {
+  const verified = orderVerifiedLine(order)
+  switch (order.status) {
+    case 'verified':
+      return `${verified ?? 'Order verified'}. Verifying here checks this supply only.`
+    case 'prescribed':
+      if (!order.needs_verification) return 'Prescribed. No pharmacist check of the order is outstanding.'
+      return lifecycleOn
+        ? "Waiting for a pharmacist's check of the order. Verifying or rejecting this supply is that check."
+        : "Waiting for a pharmacist's check of the order in the Verify Queue. Verifying here checks this supply only."
+    case 'held':
+      return verified
+        ? `On hold. ${verified}.`
+        : 'On hold. The prescriber has paused this medicine.'
+    case 'draft':
+      return 'Not signed yet. Pharmacy cannot supply it until a prescriber signs it.'
+    default:
+      return `${MED_ORDER_STATUS_WORDS[order.status] ?? 'Ended'}. Pharmacy does not supply an order that has ended.`
+  }
 }
 
 // ── Live updates ─────────────────────────────────────────────────────────────

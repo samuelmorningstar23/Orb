@@ -6,10 +6,12 @@
  * ╚════════════════════════════════════════════════════════════════════════╝
  *
  * Orb has two stock systems on purpose, and this screen says which one it is
- * before it says anything else. Helix holds drugs — batch, expiry, schedule-H
- * and dispensing against a prescription. This module holds everything else the
- * hospital buys: consumables, implants, reagents, linen, PPE, instruments,
- * housekeeping, stationery.
+ * before it says anything else. Helix holds drugs: batch, expiry and
+ * dispensing against a prescription. Where the Pharmacy store module is
+ * switched on, drugs are bought, received and classified (schedule and NDPS
+ * class) there, and every unit still lands in Helix's ledger. This module
+ * holds everything else the hospital buys: consumables, implants, reagents,
+ * linen, PPE, instruments, housekeeping, stationery.
  *
  * The reason the sentence is on the screen and not only in a design document:
  * a storekeeper who cannot see where the boundary is will eventually create a

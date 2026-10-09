@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import styles from './Helix.module.css'
 import {
   getHelixOrderSafety,
@@ -9,7 +9,23 @@ import {
   type SafetyAck,
   type SafetyAlert,
 } from '../../api/client'
+import {
+  dispenseHelixOrder,
+  getHelixDispenseOptions,
+  getHelixOrderTimeline,
+  type DispenseLot,
+  type HelixDispenseOptions,
+  type HelixOrderTimeline,
+} from '../../api/pharmacy'
+import {
+  linkedOrderNotice,
+  medOrderEventWords,
+  MED_ORDER_STATUS_WORDS,
+  type HelixLinkedOrder,
+} from '../../api/medorders'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
+import { formatClinicalDateKey, formatClinicalDateTime } from '../../lib/datetime'
+import { currentFeatureFlags, currentModuleFlags, subscribeModuleFlags } from '../../shellConfig'
 import { getStatusBadge } from './statusBadge'
 
 interface HelixOrder {
@@ -30,6 +46,10 @@ interface HelixOrder {
   /** Set only by the ward, through POST /helix/orders/{id}/receive. */
   received_by?: string | null
   received_at?: string | null
+  /** The medication order this supply row was requested for (medorders-5b),
+   *  and its state as the list read it. Absent on an unlinked row. */
+  med_order_id?: string | null
+  linked_order?: HelixLinkedOrder | null
 }
 
 interface CatalogItem {
@@ -148,6 +168,147 @@ function SafetyScreenView({ screen }: { screen: MedicationSafety & { screen_fail
   )
 }
 
+// ─── The medication order behind a linked supply row (medorders-5c) ───
+
+/** A supply step in words, for the history. */
+function supplyStepWords(fromStatus: string, toStatus: string): string {
+  switch (toStatus) {
+    case 'reviewing':
+      return fromStatus === 'pending' ? 'Pharmacy began the review' : 'Returned to review'
+    case 'verified': return 'Supply verified'
+    case 'rejected': return 'Supply rejected'
+    case 'substitute_suggested': return 'Substitute suggested'
+    case 'scheduled': return 'Dispense scheduled'
+    case 'dispensed': return 'Dispensed'
+    case 'delivered': return 'Received on the ward'
+    default: return `Moved to ${getStatusBadge(toStatus).label.toLowerCase()}`
+  }
+}
+
+/** The order's ledger events that this supply's own steps already say. */
+const SUPPLY_EVENT_KINDS = new Set([
+  'supply_reviewing', 'supply_verified', 'supply_rejected', 'dispensed', 'received',
+])
+
+interface HistoryEntry { key: string; at: string; text: string; who: string | null }
+
+/** One list, oldest first: this supply's steps and the order's own life (an
+ *  earlier supply of the same order included). An order event that records
+ *  one of this supply's steps is left out, because the step is listed. */
+function historyEntries(timeline: HelixOrderTimeline): HistoryEntry[] {
+  const entries: HistoryEntry[] = timeline.transitions.map(t => ({
+    key: `t-${t.id}`,
+    at: t.created_at,
+    text: supplyStepWords(t.from_status, t.to_status),
+    who: t.actor_name,
+  }))
+  for (const e of timeline.order_events) {
+    if (SUPPLY_EVENT_KINDS.has(e.kind) && e.ref_type === 'helix_order' && e.ref_id === timeline.order_id) {
+      continue
+    }
+    const words = medOrderEventWords(e.kind)
+    entries.push({
+      key: `e-${e.id}`,
+      at: e.created_at,
+      text: e.reason ? `${words}: ${e.reason}` : words,
+      who: e.actor_name,
+    })
+  }
+  const time = (v: string) => {
+    const t = Date.parse(v)
+    return Number.isNaN(t) ? 0 : t
+  }
+  return entries.sort((a, b) => time(a.at) - time(b.at))
+}
+
+function OrderHistory({ timeline, error }: { timeline: HelixOrderTimeline | null; error: string }) {
+  if (error) {
+    return <div role="alert" style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--status-danger-text)' }}>{error}</div>
+  }
+  if (!timeline) {
+    return <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>Loading the history…</div>
+  }
+  const entries = historyEntries(timeline)
+  if (entries.length === 0) {
+    return <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>Nothing recorded yet.</div>
+  }
+  return (
+    <ol className={styles.timeline} aria-label="Order history" style={{ listStyle: 'none', margin: 0, paddingLeft: 0 }}>
+      {entries.map(entry => (
+        <li key={entry.key} className={styles.timelineStep}>
+          <span className={styles.timelineDot} aria-hidden="true" />
+          <span className={styles.timelineContent}>
+            <span className={styles.timelineLabel}>
+              {entry.text}{entry.who ? `, by ${entry.who}` : ''}
+            </span>
+            <span className={styles.timelineTime}>{formatClinicalDateTime(entry.at)}</span>
+          </span>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+function LinkedOrderSection({ order, lifecycleOn }: { order: HelixLinkedOrder; lifecycleOn: boolean }) {
+  return (
+    <div className={styles.modalSection}>
+      <div className={styles.modalSectionTitle}>Medication order</div>
+      <div className={styles.modalRow}>
+        <span className={styles.modalLabel}>Order status</span>
+        <span className={styles.modalValue}>{MED_ORDER_STATUS_WORDS[order.status] ?? order.status}</span>
+      </div>
+      <div role="status" style={{ fontSize: '0.8125rem', lineHeight: 1.4, color: 'var(--text-secondary)' }}>
+        {linkedOrderNotice(order, lifecycleOn)}
+      </div>
+    </div>
+  )
+}
+
+// ─── Dispense quantity and batch (grn-14) ───
+
+/** The refusals the dispense step can give for a quantity or a batch. After
+ *  any of them the batch list is read again: the shelf may have changed. */
+const DISPENSE_REFUSALS = new Set([
+  'bad_quantity', 'quantity_out_of_range', 'lot_not_found', 'lot_wrong_drug',
+  'lot_not_dispensable', 'insufficient_lot_stock',
+])
+
+function unitsWords(n: number): string {
+  return n === 1 ? '1 unit' : `${n} units`
+}
+
+function lotLabel(lot: DispenseLot): string {
+  const parts = [`Batch ${lot.lot_number || 'not numbered'}`]
+  const expiry = formatClinicalDateKey(lot.expiration_date)
+  if (expiry) parts.push(`expires ${expiry}`)
+  parts.push(unitsWords(lot.quantity))
+  if (lot.store_name) parts.push(lot.store_name)
+  return parts.join(', ')
+}
+
+/** Why the chosen quantity and batch cannot be sent, or '' when they can. */
+function dispenseProblem(options: HelixDispenseOptions, quantity: string, lotId: string): string {
+  const units = Number(quantity)
+  if (!/^\d+$/.test(quantity.trim()) || units < 1 || units > options.max_units) {
+    return options.max_units === 1
+      ? 'This hospital dispenses 1 unit at a time.'
+      : `Enter a whole number of units from 1 to ${options.max_units}.`
+  }
+  if (options.lots.length === 0) {
+    return `No batch of ${options.drug_name} can be dispensed today.`
+  }
+  const lot = options.lots.find(l => l.id === lotId)
+  if (lotId && !lot) return 'That batch is no longer on the list. Choose again.'
+  if (lot && lot.quantity < units) {
+    const name = lot.lot_number ? `Batch ${lot.lot_number}` : 'This batch'
+    return `${name} holds ${unitsWords(lot.quantity)}. A dispense is never split between batches: choose another batch or fewer units.`
+  }
+  if (!lot && !options.lots.some(l => l.quantity >= units)) {
+    return `No single batch holds ${unitsWords(units)}. Dispense fewer units.`
+  }
+  return ''
+}
+
 interface Props {
   order: HelixOrder
   catalog: CatalogItem[]
@@ -207,10 +368,79 @@ export default function HelixOrderReviewModal({ order: openedOrder, catalog, onC
     return () => { cancelled = true }
   }, [order.id, previewId, screenAhead])
 
+  // ── The medication order behind a linked supply row (medorders-5c) ──
+  // Only a row linked to an order reads its history: an unlinked row (every
+  // row on a site that never used the order store) asks the server nothing new.
+  const linked = Boolean(order.med_order_id || order.linked_order)
+  const lifecycleOn = useSyncExternalStore(subscribeModuleFlags, currentFeatureFlags).med_order_lifecycle === true
+  const [timeline, setTimeline] = useState<HelixOrderTimeline | null>(null)
+  const [timelineError, setTimelineError] = useState('')
+  const [timelineRead, setTimelineRead] = useState(0)
+  useEffect(() => {
+    if (!linked) return
+    let cancelled = false
+    getHelixOrderTimeline(order.id)
+      .then(t => {
+        if (cancelled) return
+        setTimeline(t)
+        setTimelineError('')
+      })
+      .catch(() => {
+        if (cancelled) return
+        setTimeline(null)
+        setTimelineError('The order history did not load.')
+      })
+    return () => { cancelled = true }
+  }, [order.id, linked, timelineRead])
+  const linkedOrder = timeline?.linked_order ?? order.linked_order ?? null
+
+  // ── Dispense quantity and batch (grn-14), with the pharmacy store on ──
+  const storeOn = useSyncExternalStore(subscribeModuleFlags, currentModuleFlags)['pharmacy-store'] === true
+  const choosingDispense = storeOn && order.status === 'scheduled'
+  const [dispenseOptions, setDispenseOptions] = useState<HelixDispenseOptions | null>(null)
+  const [dispenseOptionsError, setDispenseOptionsError] = useState('')
+  const [optionsRead, setOptionsRead] = useState(0)
+  const [quantity, setQuantity] = useState('1')
+  const [lotId, setLotId] = useState('')
+  const quantityId = useId()
+  const lotSelectId = useId()
+  const dispenseHintId = useId()
+  useEffect(() => {
+    if (!choosingDispense) return
+    let cancelled = false
+    getHelixDispenseOptions(order.id)
+      .then(o => {
+        if (cancelled) return
+        setDispenseOptions(o)
+        setDispenseOptionsError('')
+        // A batch that left the list is not kept as the choice.
+        setLotId(prev => (prev && !o.lots.some(l => l.id === prev) ? '' : prev))
+      })
+      .catch(() => {
+        if (cancelled) return
+        setDispenseOptions(null)
+        setDispenseOptionsError('The batches did not load. Dispensing takes the earliest expiry, one unit.')
+      })
+    return () => { cancelled = true }
+  }, [order.id, choosingDispense, optionsRead])
+  const shapingDispense = choosingDispense && dispenseOptions?.enabled === true
+  const dispenseBlocked = shapingDispense ? dispenseProblem(dispenseOptions!, quantity, lotId) : ''
+
   const handleTransition = async (targetStatus: string, label: string, safetyAck?: SafetyAck) => {
     setLoading(true)
     setError('')
     try {
+      if (targetStatus === 'dispensed' && shapingDispense) {
+        await dispenseHelixOrder(order.id, {
+          dispense_quantity_units: Number(quantity),
+          lot_id: lotId || null,
+          ...(notes ? { pharmacist_notes: notes } : {}),
+          ...(safetyAck ? { safety_ack: safetyAck } : {}),
+        })
+        setAckFor(null)
+        onTransition()
+        return
+      }
       const payload: Parameters<typeof transitionHelixOrder>[1] = { target_status: targetStatus }
       if (notes) payload.pharmacist_notes = notes
       if (targetStatus === 'substitute_suggested' && substituteId) {
@@ -224,10 +454,27 @@ export default function HelixOrderReviewModal({ order: openedOrder, catalog, onC
       setAckFor(null)
       onTransition()
     } catch (e: unknown) {
-      const err = e as Error & { status?: number; detail?: { message?: string; order?: Partial<HelixOrder> } }
+      const err = e as Error & {
+        status?: number
+        detail?: { error?: string; message?: string; order?: Partial<HelixOrder> }
+      }
+      const code = err?.detail?.error
       if (isSafetyAckRequired(e)) {
         setAckFor({ target: targetStatus, label, safety: e.safety || null })
         setAckReason('')
+      } else if (code && DISPENSE_REFUSALS.has(code)) {
+        // The shelf refused the quantity or the batch. Say why in the
+        // server's words and read the batches again.
+        setError(err.message || 'The dispense was refused.')
+        setOptionsRead(n => n + 1)
+      } else if (linked && err?.status === 409 && code !== 'order_state_changed') {
+        // The medication order behind this supply changed (a new version, or
+        // an allergy or medicine charted since the screen loaded). The body's
+        // `order` is the medication order, not this supply row, so it is not
+        // merged in: the order is read again and the list reloads on close.
+        setError(err.message || 'The medication order changed. Check it again.')
+        setTimelineRead(n => n + 1)
+        listStale.current = true
       } else if (err?.status === 409 && err.detail?.order) {
         // Someone else moved the order on. Show where it is now, with the steps
         // that are open from there, rather than a refusal the pharmacist can
@@ -318,6 +565,19 @@ export default function HelixOrderReviewModal({ order: openedOrder, catalog, onC
             )}
           </div>
 
+          {/* The medication order this supply was requested for, and its
+              history: shown only for a supply row linked to one. */}
+          {linked && (
+            <>
+              <div className={styles.modalDivider} />
+              {linkedOrder && <LinkedOrderSection order={linkedOrder} lifecycleOn={lifecycleOn} />}
+              <div className={styles.modalSection}>
+                <div className={styles.modalSectionTitle}>Order history</div>
+                <OrderHistory timeline={timeline} error={timelineError} />
+              </div>
+            </>
+          )}
+
           {/* Drug safety: the allergy and interaction screen for the drug
               that would actually be dispensed, substitute included. */}
           {screenAhead && (
@@ -357,6 +617,60 @@ export default function HelixOrderReviewModal({ order: openedOrder, catalog, onC
                     <option key={c.id} value={c.id}>{c.name} ({c.strength})</option>
                   ))}
                 </select>
+              </div>
+            </>
+          )}
+
+          {/* Dispense quantity and batch (grn-14): only with the pharmacy
+              store on, and only when the server says this site may choose. */}
+          {choosingDispense && (dispenseOptionsError || shapingDispense) && (
+            <>
+              <div className={styles.modalDivider} />
+              <div className={styles.modalSection}>
+                <div className={styles.modalSectionTitle}>Dispense</div>
+                {dispenseOptionsError ? (
+                  <div role="alert" style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--status-warn-text)' }}>
+                    {dispenseOptionsError}
+                  </div>
+                ) : dispenseOptions && (
+                  <>
+                    <label htmlFor={quantityId} style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                      Units to dispense (at most {dispenseOptions.max_units})
+                    </label>
+                    <input
+                      id={quantityId}
+                      className={styles.selectInput}
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={dispenseOptions.max_units}
+                      step={1}
+                      value={quantity}
+                      onChange={e => setQuantity(e.target.value)}
+                      aria-describedby={dispenseBlocked ? dispenseHintId : undefined}
+                    />
+                    <label htmlFor={lotSelectId} style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                      Batch of {dispenseOptions.drug_name}
+                    </label>
+                    <select
+                      id={lotSelectId}
+                      className={styles.selectInput}
+                      value={lotId}
+                      onChange={e => setLotId(e.target.value)}
+                      aria-describedby={dispenseBlocked ? dispenseHintId : undefined}
+                    >
+                      <option value="">Earliest expiry first</option>
+                      {dispenseOptions.lots.map(lot => (
+                        <option key={lot.id} value={lot.id}>{lotLabel(lot)}</option>
+                      ))}
+                    </select>
+                    {dispenseBlocked && (
+                      <div id={dispenseHintId} style={{ fontSize: '0.75rem', lineHeight: 1.4, color: 'var(--status-warn-text)' }}>
+                        {dispenseBlocked}
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </>
           )}
@@ -463,13 +777,17 @@ export default function HelixOrderReviewModal({ order: openedOrder, catalog, onC
               // The server refuses a rejection with no reason (the prescriber
               // is told why), so the button says so before it is pressed.
               const needsReason = action.target === 'rejected' && !notes.trim()
-              const hintId = needsSubstitute ? substituteHintId : needsReason ? reasonHintId : undefined
+              // A quantity or batch the shelf cannot meet (grn-14): the reason
+              // is already said under the batch picker.
+              const needsDispenseFix = action.target === 'dispensed' && !!dispenseBlocked
+              const hintId = needsSubstitute ? substituteHintId : needsReason ? reasonHintId
+                : needsDispenseFix ? dispenseHintId : undefined
               return (
                 <Fragment key={action.target}>
                   <button
                     className={styles[action.btnClass] || styles.btnSecondary}
                     onClick={() => handleTransition(action.target, action.label)}
-                    disabled={loading || needsSubstitute || needsReason}
+                    disabled={loading || needsSubstitute || needsReason || needsDispenseFix}
                     aria-describedby={hintId}
                   >
                     {loading ? 'Processing...' : action.label}

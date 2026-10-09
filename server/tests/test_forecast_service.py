@@ -424,3 +424,16 @@ def test_admissions_are_base_rate_times_day_of_week_only(ist_after_midnight):
         dow = _date.fromisoformat(row["date"]).weekday()
         expected = int(round(round(rate * forecast_service.DOW_MULTIPLIERS[dow], 1)))
         assert row["predicted_admissions"] == expected, row
+
+
+def test_beds_and_admissions_off_adds_no_capacity_source(ist_after_midnight, monkeypatch):
+    """adt-14 pin: with Beds and admissions off the forecast answers carry no
+    capacity source and every bed count is the site setting, as before."""
+    import config
+
+    monkeypatch.setattr(config, "ADT_ENABLED", False)
+    assert forecast_service.capacity_source_summary() is None
+    assert "capacity_source" not in predict_hospital_flow(days_ahead=2)
+    capacity = forecast_service.get_bed_capacity_forecast()
+    assert "capacity_source" not in capacity
+    assert all("capacity_source" not in row for row in capacity["current"].values())

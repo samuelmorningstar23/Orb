@@ -289,12 +289,24 @@ function CriticalCard({ n, now, canLog, roles, methods, onDone, onFailed }: Card
         {n.acknowledged && (
           <>
             <dt>Closed</dt>
-            <dd>
-              {n.acknowledged.method_text ?? 'Call'} to {n.acknowledged.recipient_name}
-              {n.acknowledged.recipient_role_text ? ` (${n.acknowledged.recipient_role_text})` : ''}, read back
-              {n.acknowledged.at ? `, ${formatClinicalDateTime(n.acknowledged.at)}` : ''}
-              {n.acknowledged.by_name ? `, logged by ${n.acknowledged.by_name}` : ''}
-            </dd>
+            {/* lis-16: the ward's own read-back on its critical card closes
+                one too, and says so (the server's closure 'ward_read_back'). */}
+            {(n.acknowledged as { closure?: string | null }).closure === 'ward_read_back' ? (
+              <dd>
+                Acknowledged on the ward by {n.acknowledged.recipient_name}
+                {n.acknowledged.recipient_role_text ? ` (${n.acknowledged.recipient_role_text})` : ''}, read back
+                {n.acknowledged.method_text ? ` (${n.acknowledged.method_text.toLowerCase()})` : ''}
+                {n.acknowledged.at ? `, ${formatClinicalDateTime(n.acknowledged.at)}` : ''}
+                {n.acknowledged.by_name ? `, recorded by ${n.acknowledged.by_name}` : ''}
+              </dd>
+            ) : (
+              <dd>
+                {n.acknowledged.method_text ?? 'Call'} to {n.acknowledged.recipient_name}
+                {n.acknowledged.recipient_role_text ? ` (${n.acknowledged.recipient_role_text})` : ''}, read back
+                {n.acknowledged.at ? `, ${formatClinicalDateTime(n.acknowledged.at)}` : ''}
+                {n.acknowledged.by_name ? `, logged by ${n.acknowledged.by_name}` : ''}
+              </dd>
+            )}
           </>
         )}
       </dl>

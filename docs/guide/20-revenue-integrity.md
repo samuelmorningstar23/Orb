@@ -50,7 +50,7 @@ Neighbors: **guide 03 auth/RBAC** (the JWT + permission gate), **guide 04 databa
 2. **User picks a patient and hits *Analyze*.** The panel commits the trimmed id into `patientId` state, which triggers its fetch effect (`src/components/coding/RevenueIntegrityPanel.tsx:93`).
 3. **The panel calls `apiFetch`**, Orb's thin `fetch` wrapper that prefixes `/api`, attaches the `Authorization: Bearer <JWT>` header, and throws on non-2xx (`src/api/client.ts:195`). The request is `GET /api/coding/patient/<id>` (`RevenueIntegrityPanel.tsx:83`).
    - **JWT** = JSON Web Token, the signed login credential Orb stores in `localStorage` and sends on every request.
-4. **The route authorises** via `Depends(require_patient_access(SCRIBE_READ_ALL))` (`server/routes/coding_routes.py:29`), a FastAPI *dependency* (a function FastAPI runs before the handler, whose return value is injected as `user`). It checks the caller's role holds `scribe.read_all` **and** that this patient is inside the caller's server-derived ward scope, returning 403 otherwise (RBAC in guide 03). The permission is defined at `server/permissions.py:44` and granted to doctors (`:107`), nurses (`:122`) and admins (`:143`); pharmacists do not hold it.
+4. **The route authorises** via `Depends(require_patient_access(SCRIBE_READ_ALL))` (`server/routes/coding_routes.py:29`), a FastAPI *dependency* (a function FastAPI runs before the handler, whose return value is injected as `user`). It checks the caller's role holds `scribe.read_all` **and** that this patient is inside the caller's server-derived ward scope, returning 403 otherwise (RBAC in guide 03). The permission is defined at `server/permissions.py:45` and granted to doctors (`:107`), nurses (`:122`) and admins (`:143`); pharmacists do not hold it.
    - **RBAC** = Role-Based Access Control: permissions are attached to roles, roles to users.
 5. **`suggest_codes` runs the deterministic pipeline** (`server/services/coding_service.py:309`) in four passes:
    - **Pass 1, lexical suggestions:** load all the patient's text (diagnosis, comorbidities, notes) and coded problem list; for every concept in `_CONCEPTS`, whole-word-match its synonyms against each source and emit the ICD-10/SNOMED code (validated against the `terminology` table) with an evidence string and a confidence tier.
@@ -117,7 +117,7 @@ These four tables *are* the "AI". They are curated by hand, not learned. Everyth
 **Signature:** `(patient_id: str) → dict`
 **Does:** gathers, in one place, every free-text and coded source the engine scans for a patient.
 **How it works:**
-1. Opens a read connection via `db_session()` (a context manager that commits/rolls back and always closes, `server/database.py:1034`).
+1. Opens a read connection via `db_session()` (a context manager that commits/rolls back and always closes, `server/database.py:1038`).
 2. `SELECT id, diagnosis FROM patients`, if the row is missing, returns the empty context with `exists=False` (this is why unknown patients don't crash).
 3. Reads `comorbidities` + `past_medical_history` from `patient_profiles`, joined with `" ; "`.
 4. Reads the **coded problem list** (`problem_list` where `status='active'`) into `coded_problems` as `{code, system}` for both `icd10_code` and `snomed_code`, this is "what is *already* captured".
