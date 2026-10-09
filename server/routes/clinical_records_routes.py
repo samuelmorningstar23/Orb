@@ -10,6 +10,7 @@ from services.clinical_records_service import (
     add_problem, list_problems, resolve_problem,
 )
 from services.drug_safety_service import check_medication_safety
+from services.drug_chart import require_drug_chart
 from services.audit_service import log_audit_event
 
 router = APIRouter(prefix="/api/patients", tags=["clinical-records"])
@@ -112,7 +113,11 @@ def patch_resolve_problem(patient_id: str, problem_id: int,
 
 
 # ── Order-time medication safety pre-check ──────────────────────────────────
-@router.get("/{patient_id}/medication-safety")
+# The pre-prescribe screen reads the patient's active drugs and names them in
+# its alerts. On an Orb Ward Record computer the drug chart stays on paper, so
+# it answers 404 "The drug chart is not part of Orb Ward Record" before the
+# patient is read (services/drug_chart).
+@router.get("/{patient_id}/medication-safety", dependencies=[Depends(require_drug_chart)])
 def medication_safety(patient_id: str, drug: str = Query(..., min_length=1),
                       # Scope-checked, not read-audited: same reasoning as the
                       # allergy list — this is the pre-prescribe safety screen.

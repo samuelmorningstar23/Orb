@@ -6,7 +6,10 @@ the background lanes once, and calls every GET route under /api as admin,
 doctor, nurse, ward clerk and pharmacist. This test fails on any 500, on any
 call a scoring entry point refused (vigil_service.ScoringSwitchedOff, counted
 even when a caller swallowed it), and on any response that carries the band a
-stored risk_scores row held from before the profile was switched on.
+stored risk_scores row held from before the profile was switched on. Since
+9 October 2026 it also fails on any 2xx body, for any of those roles or the
+patient on Bridge, that carries a drug list (the probe's DRUG_SIGNS) outside
+the two legal exports.
 """
 import json
 import os
@@ -145,3 +148,32 @@ def test_the_model_status_chip_is_told_the_models_are_off(ward_record_boot, mode
     # Review, 9 October 2026: this checked only that the route answered.
     for boot in (ward_record_boot, models_off_boot):
         assert boot["spot"]["/api/health/models"] == [200, False]
+
+
+def test_no_route_sends_a_drug_list_under_the_profile(ward_record_boot, models_off_boot):
+    # Samuel's ruling, 9 October 2026: hide the drug lists, keep the exports.
+    # The first patient has Amoxicillin 500 mg charted and given once and a
+    # Ceftriaxone 1 g IV medication order. Under the profile no 2xx GET body,
+    # for any role or for the patient on Bridge, carries a drug name, a dose,
+    # a drug field or the word medicine or medication (the probe's
+    # DRUG_SIGN_NOISE and DRUG_WORDS_ONLY say what is not a drug list); only
+    # the FHIR export and the data principal export do. With the models
+    # switched off alone the drug chart is there, which shows the scan sees one.
+    assert not ward_record_boot["drug_signs"], _report(ward_record_boot["drug_signs"])
+    seen = "\n".join(models_off_boot["drug_signs"])
+    for call in ("GET /api/vigil/patients/WRP-P1:", "GET /api/vigil/patients/WRP-P1/story:",
+                 "GET /api/chart/patients/WRP-P1/timeline:", "GET /api/downtime/WRP-P1/ward-pack:",
+                 "GET /api/flight-recorder/timeline:", "patient GET /api/bridge/reports:"):
+        assert call in seen, (call, seen)
+    assert "Amoxicillin" in seen and "Ceftriaxone" in seen
+
+
+def test_the_drug_chart_routes_answer_switched_off_under_the_profile(ward_record_boot,
+                                                                      models_off_boot):
+    off = "The drug chart is not part of Orb Ward Record"
+    for path in ("/api/bridge/medications",
+                 "/api/patients/{patient_id}/medication-safety?drug=Ibuprofen"):
+        assert ward_record_boot["spot"][path] == [404, off], path
+        assert models_off_boot["spot"][path][0] == 200, path
+    assert ward_record_boot["spot"]["/api/bridge/reports"] == [200, False]
+    assert models_off_boot["spot"]["/api/bridge/reports"] == [200, True]

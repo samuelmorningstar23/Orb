@@ -8,6 +8,7 @@ from database import SERVICE_ACCOUNT_IDS, db_session
 from services.clinical_time import to_utc_iso
 from services.vitals_source import manual_entry_source_or_standin
 from services.patient_name_rule import validate_patient_name
+from services.drug_chart import drug_chart_enabled as _drug_chart_enabled
 from ws.realtime import sio
 
 logger = logging.getLogger("orb.admission")
@@ -623,7 +624,9 @@ def admit_patient(data: dict, user: dict, *, idempotency_key: str | None = None,
                 data.get("past_medical_history"),
                 data.get("past_surgical_history"),
                 json.dumps(data.get("allergies", [])),
-                json.dumps(data.get("current_medications", [])),
+                # None on an Orb Ward Record computer, whose drug chart stays
+                # on paper: the form has no such field there (services/drug_chart).
+                json.dumps(data.get("current_medications", []) if _drug_chart_enabled() else []),
                 data.get("family_history"),
                 data.get("social_history"),
                 now

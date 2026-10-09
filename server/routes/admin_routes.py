@@ -939,11 +939,23 @@ def _history_audit(request: Request, user: dict, action_type: str, summary: str,
     )
 
 
+def _refuse_historical_drugs(record_type: str | None) -> None:
+    """Historical drugs land in the drug chart, which an Orb Ward Record
+    computer keeps on paper: 404 "The drug chart is not part of Orb Ward
+    Record" before the upload is read (services/drug_chart)."""
+    from services.drug_chart import DRUG_CHART_OFF, drug_chart_enabled
+    if (record_type or "").strip() == "medications" and not drug_chart_enabled():
+        raise HTTPException(status_code=404, detail=DRUG_CHART_OFF)
+
+
 @router.get("/history-import/record-types")
 def history_import_record_types(user: dict = Depends(require_permission(ADMIN_OVERVIEW))):
-    """What can be imported, and the limits that apply."""
+    """What can be imported, and the limits that apply. No medications on an
+    Orb Ward Record computer (_refuse_historical_drugs)."""
+    from services.drug_chart import drug_chart_enabled
     return {
-        "record_types": history_import.record_type_catalogue(),
+        "record_types": [rt for rt in history_import.record_type_catalogue()
+                         if drug_chart_enabled() or rt.get("name") != "medications"],
         "date_orders": ["auto", "dmy", "mdy"],
         "max_bytes": history_import.MAX_BYTES,
         "max_rows": history_import.MAX_ROWS,
@@ -954,6 +966,7 @@ def history_import_record_types(user: dict = Depends(require_permission(ADMIN_OV
 def history_import_fields(record_type: str,
                           user: dict = Depends(require_permission(ADMIN_OVERVIEW))):
     """Target fields one record type can populate, for the mapping UI."""
+    _refuse_historical_drugs(record_type)
     try:
         return {"record_type": record_type,
                 "fields": history_import.field_catalogue(record_type)}
@@ -976,6 +989,7 @@ async def history_import_preview(
     ``header_candidates`` is how the admin is asked which line holds the column
     names, because reading a report title as the header shifts every column.
     """
+    _refuse_historical_drugs(record_type)
     path, size = await _spool_upload(file)
     try:
         result = await run_db(history_import.sniff, path, record_type,
@@ -1009,6 +1023,7 @@ async def history_import_dry_run(
     ``failures`` are capped for transport and say so — the commit step persists
     the complete reject list regardless, so nothing is ever only visible here.
     """
+    _refuse_historical_drugs(record_type)
     parsed_mapping = _parse_mapping(mapping)
     path, size = await _spool_upload(file)
     try:
@@ -1052,6 +1067,7 @@ async def history_import_commit(
     show for the same file and mapping. Every rejected row is written to the
     durable reject ledger, which is the work list the hospital gets back.
     """
+    _refuse_historical_drugs(record_type)
     parsed_mapping = _parse_mapping(mapping)
     path, size = await _spool_upload(file)
     try:

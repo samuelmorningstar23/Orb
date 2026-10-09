@@ -33,6 +33,7 @@ from database import db_session
 # Reuse the EXACT sealing algorithm — do not reinvent it, or verification would
 # silently diverge from how rows were written.
 from services.audit_service import compute_audit_row_hash
+from services.drug_chart import drug_chart_enabled as _drug_chart_enabled
 
 
 # The columns (and their order) that audit_service persists and hashes. Selected
@@ -316,6 +317,12 @@ def get_timeline(
                  "o.description AS description "
                  "FROM order_events oe LEFT JOIN orders o ON o.id = oe.order_id WHERE 1=1")
             params = []
+            if not _drug_chart_enabled():
+                # A medication order is the drug chart, which an Orb Ward
+                # Record computer keeps on paper (services/drug_chart): its
+                # status changes are left out, as the chart timeline leaves
+                # them out. Every other order stays.
+                q += " AND COALESCE(o.order_type, '') != 'medication'"
             if patient_id:
                 q += " AND o.patient_id = ?"
                 params.append(patient_id)
@@ -417,6 +424,9 @@ def get_event_detail(event_id: Any, source: str) -> Optional[dict[str, Any]]:
                 (event_id,),
             ).fetchone()
             if row is None:
+                return None
+            if row["order_type"] == "medication" and not _drug_chart_enabled():
+                # Not on the timeline under the Orb Ward Record, so not here.
                 return None
             return {"source": "order", "event": dict(row)}
 

@@ -355,3 +355,169 @@ def test_revenue_integrity_names_no_drug_under_the_profile(ward_record, patient)
     assert coding_service._load_patient_context(patient["pid"])["medications"] == []
     ward_record(False)
     assert coding_service._load_patient_context(patient["pid"])["medications"] == [DRUG]
+
+
+# ── Review, 9 October 2026: the lanes the first pass left open ───────────────
+
+NOBODY = "WDC-NOBODY"
+
+
+def _refused(r) -> bool:
+    return r.status_code == 404 and r.json().get("detail") == DRUG_CHART_OFF
+
+
+def test_the_pre_prescribe_screen_is_refused_before_the_patient_is_read(ward_record, patient):
+    # It names the patient's active drugs in its interaction alerts. A
+    # patient who does not exist gets the same answer, so nothing was read.
+    ward_record(True)
+    _, hdr = _mk_user("doctor")
+    for pid in (patient["pid"], NOBODY):
+        r = client.get(f"/api/patients/{pid}/medication-safety", headers=hdr,
+                       params={"drug": "Ibuprofen"})
+        assert _refused(r), (pid, r.status_code, r.text)
+    # The allergy list stays.
+    assert "Penicillin" in client.get(f"/api/patients/{patient['pid']}/allergies",
+                                      headers=hdr).text
+
+
+def test_the_pre_prescribe_screen_answers_with_the_profile_off(ward_record, patient):
+    ward_record(False)
+    _, hdr = _mk_user("doctor")
+    r = client.get(f"/api/patients/{patient['pid']}/medication-safety", headers=hdr,
+                   params={"drug": "Cefuroxime"})
+    assert r.status_code == 200, r.text
+    assert r.json()["drug"] == "Cefuroxime"
+
+
+def _history_form(record_type):
+    return ({"file": ("drugs.csv", b"rx id,mrn,drug\nRX1,M1,Amoxicillin\n", "text/csv")},
+            {"record_type": record_type, "source_system": "Old HIS",
+             "mapping": json.dumps({"external_id": "rx id", "mrn": "mrn", "drug_name": "drug"})})
+
+
+def test_historical_drugs_cannot_be_imported_under_the_profile(ward_record, monkeypatch):
+    from routes import admin_routes
+    ward_record(True)
+    _, hdr = _mk_user("admin")
+
+    def _no_upload(*a, **k):
+        raise AssertionError("the upload was read under the profile")
+    monkeypatch.setattr(admin_routes, "_spool_upload", _no_upload)
+    types = client.get("/api/admin/history-import/record-types", headers=hdr).json()
+    names = [t["name"] for t in types["record_types"]]
+    assert "medications" not in names and "diagnoses" in names
+    assert "drug_name" not in json.dumps(types)
+    r = client.get("/api/admin/history-import/fields", headers=hdr,
+                   params={"record_type": "medications"})
+    assert _refused(r), r.text
+    for step in ("preview", "dry-run", "commit"):
+        files, data = _history_form("medications")
+        r = client.post(f"/api/admin/history-import/{step}", headers=hdr, files=files, data=data)
+        assert _refused(r), (step, r.status_code, r.text)
+    with db_session() as db:
+        assert db.execute("SELECT COUNT(*) FROM medications WHERE drug_name = 'Amoxicillin' "
+                          "AND source = 'import'").fetchone()[0] == 0
+
+
+def test_historical_drugs_can_be_imported_with_the_profile_off(ward_record):
+    ward_record(False)
+    _, hdr = _mk_user("admin")
+    names = [t["name"] for t in client.get("/api/admin/history-import/record-types",
+                                           headers=hdr).json()["record_types"]]
+    assert "medications" in names
+    r = client.get("/api/admin/history-import/fields", headers=hdr,
+                   params={"record_type": "medications"})
+    assert r.status_code == 200 and "drug_name" in r.text
+
+
+def _flight_order_rows(hdr, pid):
+    r = client.get("/api/flight-recorder/timeline", headers=hdr, params={"patient_id": pid})
+    assert r.status_code == 200, r.text
+    return r, [e for e in r.json()["events"] if e["source"] == "order"]
+
+
+def test_the_flight_recorder_shows_no_medication_order_under_the_profile(ward_record, patient):
+    ward_record(True)
+    _, hdr = _mk_user("admin")
+    r, orders = _flight_order_rows(hdr, patient["pid"])
+    assert [e["target"] for e in orders] == [patient["lab_order"]]
+    assert DRUG not in r.text
+    with db_session() as db:
+        event_id = db.execute("SELECT id FROM order_events WHERE order_id = ?",
+                              (patient["med_order"],)).fetchone()["id"]
+    assert client.get(f"/api/flight-recorder/event/order/{event_id}", headers=hdr).status_code == 404
+
+
+def test_the_flight_recorder_shows_medication_orders_with_the_profile_off(ward_record, patient):
+    ward_record(False)
+    _, hdr = _mk_user("admin")
+    r, orders = _flight_order_rows(hdr, patient["pid"])
+    assert {e["target"] for e in orders} == {patient["lab_order"], patient["med_order"]}
+    with db_session() as db:
+        event_id = db.execute("SELECT id FROM order_events WHERE order_id = ?",
+                              (patient["med_order"],)).fetchone()["id"]
+    r = client.get(f"/api/flight-recorder/event/order/{event_id}", headers=hdr)
+    assert r.status_code == 200 and DRUG in r.text
+
+
+def test_every_medication_and_order_write_is_refused_before_the_patient_is_read(ward_record):
+    # A patient who does not exist: a route that read her first would say so
+    # (404 Patient not found, or 403) instead of the drug chart answer.
+    from fastapi.routing import APIRoute
+    ward_record(True)
+    _, doctor = _mk_user("doctor")
+    _, pharmacist = _mk_user("pharmacist")
+    calls = [
+        ("post", f"/api/vigil/patients/{NOBODY}/medications", doctor,
+         {"drug_name": "Paracetamol", "dosage": "1 g", "frequency": "Q6H"}),
+        ("get", f"/api/vigil/patients/{NOBODY}/medication-reconciliation", doctor, None),
+        ("get", f"/api/patients/{NOBODY}/medication-safety?drug=Ibuprofen", doctor, None),
+        ("post", "/api/orders", doctor, {"patient_id": NOBODY, "order_type": "medication",
+                                         "description": "Paracetamol 1 g"}),
+        ("post", "/api/orders/sets/any/preview", doctor, {"patient_id": NOBODY}),
+        ("post", "/api/orders/sets/any/apply", doctor, {"patient_id": NOBODY}),
+        ("get", f"/api/orders/sets/applications/{NOBODY}", doctor, None),
+    ]
+    # Every write under the pharmacy's routers, whatever its path.
+    for route in app.routes:
+        if (isinstance(route, APIRoute)
+                and route.path.startswith(("/api/helix/", "/api/pharmacy/", "/api/medorders/"))):
+            path = route.path.replace("{", "").replace("}", "")
+            for method in route.methods - {"GET", "HEAD"}:
+                calls.append((method.lower(), path, pharmacist, {}))
+    assert len(calls) > 15
+    for method, path, hdr, body in calls:
+        kwargs = {"json": body} if body is not None else {}
+        r = client.request(method.upper(), path, headers=hdr, **kwargs)
+        assert _refused(r), (method, path, r.status_code, r.text[:200])
+    with db_session() as db:
+        assert db.execute("SELECT COUNT(*) FROM medications WHERE patient_id = ?",
+                          (NOBODY,)).fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("on", [True, False])
+def test_the_admission_form_keeps_no_current_medicines_under_the_profile(ward_record, on):
+    # The admission form's Current Medications chips are a drug list; under
+    # the profile the form has no such field and the server keeps none from
+    # an older screen. The allergy chips are charted either way.
+    from services.admission_service import admit_patient
+    ward_record(on)
+    uid, _ = _mk_user("doctor")
+    res = admit_patient({
+        "name": "Admitted Drug Chart", "ward": "DC", "bed": f"A-{uuid.uuid4().hex[:4]}",
+        "department": DEPT, "attending_doctor_id": uid, "chief_complaint": "Fever",
+        "allergies": ["Penicillin"], "current_medications": [DRUG],
+    }, {"id": uid, "name": "Drug chart doctor", "role": "doctor", "department": DEPT})
+    pid = res["patient_id"]
+    try:
+        with db_session() as db:
+            meds = db.execute("SELECT current_medications FROM patient_profiles "
+                              "WHERE patient_id = ?", (pid,)).fetchone()[0]
+            allergies = db.execute("SELECT COUNT(*) FROM patient_allergies WHERE patient_id = ?",
+                                   (pid,)).fetchone()[0]
+        assert json.loads(meds) == ([] if on else [DRUG])
+        assert allergies == 1
+    finally:
+        with db_session() as db:
+            db.execute("UPDATE patients SET status = 'discharged' WHERE id = ?", (pid,))
+            db.execute("UPDATE admissions SET status = 'discharged' WHERE patient_id = ?", (pid,))

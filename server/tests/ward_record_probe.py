@@ -87,6 +87,58 @@ EXPORTS_OF_STORED_DATA = {
 MED_ROUND_SIGNS = re.compile(
     r'"meds_(?:overdue|due_soon|allergy_blocked)":\s*\d|"schedule_kind"|Allergy block on')
 
+#: What a drug list sends: the seeded drug names, their doses, a medication
+#: field, or the word medicine or medication. Samuel's ruling, 9 October 2026:
+#: hide the drug lists on an Orb Ward Record computer (services/drug_chart).
+#: The first patient has Amoxicillin 500 mg charted and given once, and a
+#: Ceftriaxone 1 g medication order with its status change.
+DRUG_SIGNS = re.compile(
+    r"Amoxicillin|Ceftriaxone|500 mg|1 g IV|\"drug_name\"|\"dosage\"|\"dose_given\""
+    r"|\"medication_id\"|medicine|medication", re.IGNORECASE)
+
+#: The two legal exports keep every stored medicine (ruling, 9 October 2026:
+#: "keep the exports as they are"): the patient's FHIR export and the data
+#: principal's export.
+DRUG_CHART_EXPORTS = {
+    "/api/fhir/patient/{patient_id}/$everything",
+    "/api/fhir/patient/{patient_id}/MedicationRequest",
+    "/api/admin/compliance/data-principal/{patient_id}/export",
+}
+
+#: Words that name no drug list, each with where it comes from. Removed from a
+#: body before DRUG_SIGNS reads it; anything left is a leak.
+DRUG_SIGN_NOISE = (
+    # The seeded department, on every user, patient and admission row.
+    "General Medicine",
+    # An empty list sends no drug: the chart, the downtime snapshot, Bridge My
+    # Records and the nurse board keep the key so an old screen still draws.
+    '"medications":[]',
+    # The nurse board says the medication round is off.
+    '"medication_round":false',
+)
+
+#: Routes whose own wording says medication or medicine without naming a
+#: drug, a dose or a drug field: there the two words alone are taken out, and
+#: a drug name, a dose or a drug field is still a leak.
+DRUG_WORDS_ONLY = {
+    # Row counts per table for the backup check.
+    "/api/admin/backups",
+    # Permission names (medication.write) in the role matrix.
+    "/api/admin/compliance/",
+    # Table names and the prescription record class in the retention policy.
+    "/api/admin/compliance/retention",
+    # The impact estimate's labels and counts.
+    "/api/admin/impact/", "/api/admin/impact/assumptions",
+    # The note that drug stock is held by the pharmacy, not by procurement.
+    "/api/procurement/overview", "/api/procurement/meta",
+    # NABH quality indicator names (medication error rate).
+    "/api/nabh/meta", "/api/nabh/indicators",
+    # The audit chain: request paths and permission names of calls this probe
+    # made itself (a refused /medication-safety, the FHIR MedicationRequest).
+    "/api/audit/logs", "/api/flight-recorder/timeline",
+}
+_DRUG_WORDS = re.compile(r"medicine|medication", re.IGNORECASE)
+
 
 def _model_call(where: str):
     MODEL_CALLS.append(where + "\n" + "".join(traceback.format_stack(limit=10)[:-1]))
@@ -287,6 +339,31 @@ def _seed() -> dict:
             "prescribed_by, source, started_at) VALUES (?, 'Amoxicillin', '500 mg', 'Oral', "
             "'Q6H', 'active', ?, 'clinician', ?)",
             (pids[0], users["doctor"], format_utc(now - timedelta(hours=24))))
+        # Charted before the profile was switched on: one dose given, and a
+        # medication order with its status change (DRUG_SIGNS).
+        med_id = db.execute("SELECT id FROM medications WHERE patient_id = ?",
+                            (pids[0],)).fetchone()["id"]
+        db.execute(
+            "INSERT INTO medication_administrations (medication_id, patient_id, administered_by, "
+            "status, dose_given, route_given, administered_at) VALUES (?, ?, ?, 'given', "
+            "'500 mg', 'Oral', ?)",
+            (med_id, pids[0], users["nurse"], format_utc(now - timedelta(hours=20))))
+        db.execute(
+            "INSERT INTO orders (id, patient_id, order_type, description, status, ordered_by, "
+            "detail_json, created_at, updated_at) VALUES ('WRP-ORD-MED', ?, 'medication', "
+            "'Ceftriaxone 1 g IV', 'active', ?, ?, ?, ?)",
+            (pids[0], users["doctor"], json.dumps({"drug": "Ceftriaxone", "dose": "1 g IV"}),
+             format_utc(now - timedelta(hours=22)), format_utc(now - timedelta(hours=22))))
+        db.execute(
+            "INSERT INTO order_events (order_id, prior_status, new_status, actor_id, created_at) "
+            "VALUES ('WRP-ORD-MED', 'draft', 'active', ?, ?)",
+            (users["doctor"], format_utc(now - timedelta(hours=22))))
+        # The patient's own Bridge login, so My Records is scanned too.
+        db.execute(
+            "INSERT INTO users (id, name, role, password_hash) VALUES ('WRP-PATIENT', "
+            "'Probe Patient 1', 'patient', ?)", (pw,))
+        db.execute("UPDATE patients SET user_id = 'WRP-PATIENT' WHERE id = ?", (pids[0],))
+        users["patient"] = "WRP-PATIENT"
         db.execute(
             "INSERT INTO ward_observation_settings (ward, interval_minutes, grace_minutes, set_by, set_at) "
             "VALUES (?, 240, 30, ?, ?)",
@@ -329,6 +406,19 @@ def _streams(route) -> bool:
     return "text/event-stream" in src or "EventSourceResponse" in src
 
 
+def _scan_drug_signs(out: dict, call: str, text: str, words_only: bool = False) -> None:
+    """Record a call whose body still carries a drug list (DRUG_SIGNS), with
+    the words found, once DRUG_SIGN_NOISE (and on a DRUG_WORDS_ONLY route the
+    two words) is taken out."""
+    for noise in DRUG_SIGN_NOISE:
+        text = text.replace(noise, "")
+    if words_only:
+        text = _DRUG_WORDS.sub("", text)
+    found = sorted({m.group(0) for m in DRUG_SIGNS.finditer(text)})
+    if found:
+        out["drug_signs"].append(f"{call}: {', '.join(found)}")
+
+
 def main() -> None:
     _install_model_tripwires()
     import config  # noqa: F401  (the profile is forced here)
@@ -346,7 +436,7 @@ def main() -> None:
                        "models": config.MODELS_ENABLED},
            "server_errors": [], "scoring_calls": [], "marker_leaks": [],
            "model_calls": [], "lane_errors": [], "skipped_streams": [], "calls": 0,
-           "spot": {}, "med_round_signs": []}
+           "spot": {}, "med_round_signs": [], "drug_signs": []}
 
     with TestClient(app, raise_server_exceptions=False) as client:
         # The background lanes, run once by hand rather than waited for. Each
@@ -415,10 +505,35 @@ def main() -> None:
                     out["marker_leaks"].append(f"{role} GET {url}")
                 if resp.status_code < 400 and MED_ROUND_SIGNS.search(resp.text):
                     out["med_round_signs"].append(f"{role} GET {url}")
+                if resp.status_code < 400 and route.path not in DRUG_CHART_EXPORTS:
+                    _scan_drug_signs(out, f"{role} GET {url}", resp.text,
+                                     words_only=route.path in DRUG_WORDS_ONLY)
                 for call in vigil_service.SWITCHED_OFF_CALLS[before:]:
                     out["scoring_calls"].append(f"{role} GET {url}: {call}")
                 if time.monotonic() - t0 > 20:
                     out["lane_errors"].append(f"slow: {role} GET {url}")
+        # The patient's own Bridge routes, as the patient sees them: My Records
+        # and the medications route (DRUG_SIGNS).
+        patient = {"Authorization": f"Bearer {create_token(seed['users']['patient'], 'patient')}",
+                   "Host": "localhost"}
+        for route in routes:
+            if not route.path.startswith("/api/bridge") or _streams(route):
+                continue
+            url = _fill(route.path, _path_values(seed, "patient"), set())
+            resp = client.get(url, headers=patient)
+            out["bridge_calls"] = out.get("bridge_calls", 0) + 1
+            if resp.status_code >= 500:
+                out["server_errors"].append(
+                    f"patient GET {url}: {resp.status_code} {resp.text[:300]}")
+            if resp.status_code < 400:
+                _scan_drug_signs(out, f"patient GET {url}", resp.text)
+        r = client.get("/api/bridge/reports", headers=patient)
+        out["spot"]["/api/bridge/reports"] = [r.status_code, (r.json().get("drug_chart")
+                                                              if r.status_code == 200 else None)]
+        r = client.get("/api/bridge/medications", headers=patient)
+        out["spot"]["/api/bridge/medications"] = [r.status_code, (r.json().get("detail")
+                                                                  if r.status_code >= 400 else None)]
+
         # The model features and the handover, as the doctor sees them.
         doctor = {"Authorization": f"Bearer {create_token(seed['users']['doctor'], 'doctor')}",
                   "Host": "localhost"}
@@ -426,7 +541,8 @@ def main() -> None:
         for path in ("/api/sage/ward-brief", "/api/sage/insights", "/api/scribe/asr/status",
                      f"/api/vigil/patients/{pid}/timeline-projection",
                      "/api/relay/channels/none/sage_actions", f"/api/ipass/{pid}/draft",
-                     "/api/health/models", f"/api/emar/patients/{pid}/administrations"):
+                     "/api/health/models", f"/api/emar/patients/{pid}/administrations",
+                     f"/api/patients/{pid}/medication-safety?drug=Ibuprofen"):
             r = client.get(path, headers=doctor)
             try:
                 detail = r.json().get("detail") if r.status_code >= 400 else None
