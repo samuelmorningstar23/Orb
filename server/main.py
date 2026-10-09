@@ -1629,6 +1629,61 @@ async def _socketio_wrong_entrypoint(_path: str):
 # can't shadow /api, /uploads, or /socket.io. Absent (dev), it's simply skipped.
 from config import BASE_DIR as _BASE_DIR
 _DIST_DIR = _BASE_DIR.parent / "dist"
+
+
+# ── The computer's switches, written into the page (Orb Ward Record, 9 Oct 2026) ──
+# The client used to assume every clinical switch was on until /api/health
+# answered, so a Ward Record computer showed the full rail and the score widgets
+# for a moment after sign-in or a reload. index.html now carries the switches in
+# an inline script that runs before the app's first module script, so the very
+# first render already knows them (src/shellConfig.tsx reads
+# window.__ORB_SWITCHES__). The health probe still runs and still wins.
+def spa_switches() -> dict:
+    """The same clinical, modules and features maps /api/health publishes."""
+    from config import enabled_modules, feature_flags
+    return {
+        "clinical": clinical_switches(),
+        "modules": enabled_modules(),
+        "features": feature_flags(),
+    }
+
+
+def spa_switches_script(switches: dict) -> str:
+    """The inline script for the page. Every '<', '>' and '&' in the JSON is
+    written as a \\u escape, so no value can close the script tag or open a
+    comment; ensure_ascii covers the two JavaScript line separators."""
+    payload = _json.dumps(switches, separators=(",", ":"), ensure_ascii=True)
+    payload = (payload.replace("<", "\\u003c").replace(">", "\\u003e")
+               .replace("&", "\\u0026"))
+    return f"<script>window.__ORB_SWITCHES__={payload};</script>"
+
+
+def spa_index_with_switches(html: str, switches: dict) -> str:
+    """index.html with the switches script placed before its first script
+    (the app's module script), or before </head> when there is none."""
+    script = spa_switches_script(switches)
+    for marker in ("<script", "</head>"):
+        at = html.find(marker)
+        if at != -1:
+            return html[:at] + script + html[at:]
+    return script + html
+
+
+_SPA_INDEX_TEXT: str | None = None
+
+
+def _spa_index_response():
+    """index.html for this request: the file is read once per process, the
+    switches are written in per request. Never a 304, so a browser cannot keep
+    a page that carries switches from before a restart."""
+    global _SPA_INDEX_TEXT
+    from starlette.responses import HTMLResponse
+    if _SPA_INDEX_TEXT is None:
+        _SPA_INDEX_TEXT = (_DIST_DIR / "index.html").read_text(encoding="utf-8")
+    return HTMLResponse(spa_index_with_switches(_SPA_INDEX_TEXT, spa_switches()),
+                        headers={"Cache-Control": "no-cache"})
+
+
 if _DIST_DIR.is_dir():
     from starlette.staticfiles import StaticFiles as _StaticFiles
     from starlette.responses import FileResponse as _FileResponse
@@ -1647,18 +1702,25 @@ if _DIST_DIR.is_dir():
         (e.g. /dashboard, /bridge) so a hard refresh / deep link works, while
         still 404-ing missing asset files and unmatched API paths. Starlette's
         StaticFiles RAISES 404 for a missing path rather than returning it, so
-        the fallback is caught here."""
+        the fallback is caught here.
+
+        Every path that serves index.html serves it with the computer's
+        switches written in: the SPA fallback below, and file_response, which
+        is how StaticFiles serves "/" (html=True) and "/index.html"."""
+        def file_response(self, full_path, stat_result, scope, status_code=200):
+            if os.path.realpath(full_path) == os.path.realpath(_DIST_DIR / "index.html"):
+                return _spa_index_response()
+            return super().file_response(full_path, stat_result, scope, status_code)
+
         async def get_response(self, path, scope):
             try:
                 response = await super().get_response(path, scope)
             except _StarletteHTTPException as exc:
                 if exc.status_code == 404 and _should_spa_fallback(path):
-                    return _FileResponse(_DIST_DIR / "index.html",
-                                         headers={"Cache-Control": "no-cache"})
+                    return _spa_index_response()
                 raise
             if response.status_code == 404 and _should_spa_fallback(path):
-                return _FileResponse(_DIST_DIR / "index.html",
-                                     headers={"Cache-Control": "no-cache"})
+                return _spa_index_response()
             # Cache policy: hashed build assets are content-addressed → immutable.
             # Everything else (index.html, sw.js, registerSW.js, workbox-*.js,
             # manifest.webmanifest, icons) must revalidate every time, otherwise a
