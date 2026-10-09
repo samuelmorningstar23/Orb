@@ -39,6 +39,13 @@ registration_service.py holds the rules):
   GET  /duplicates                      desk read; the worklist, audited
   POST /duplicates/{candidate_id}/resolve  registration.write; never the overrider
   POST /duplicates/sweep                administrator; bounded, audited
+  GET  /payers                          desk read; the payer master's active rows (opd-13)
+  GET  /charge-rules                    desk read; outpatient charge rules (opd-13)
+  POST /charge-rules                    billing.tariff; add a rule, audited as configuration
+  POST /charge-rules/{rule_id}/retire   billing.tariff; retire a rule with a reason
+POST /patients also takes an optional payer {payer_code, policy_number,
+member_id} (opd-13), recorded unverified with no admission; with a live
+registration-fee rule the answer carries the fee line raised once.
 Every handler is a plain def (FastAPI runs it in the threadpool), so the
 database work never touches the event loop.
 """
@@ -51,6 +58,7 @@ from pydantic import BaseModel, ConfigDict, Field
 import config
 from permissions import (
     ADMIN_OVERVIEW,
+    BILLING_TARIFF,
     REGISTRATION_READ,
     REGISTRATION_WRITE,
     department_scope,
@@ -101,6 +109,32 @@ class DuplicateReview(BaseModel):
     reason: Optional[str] = Field(None, max_length=1000)
 
 
+class PayerIn(BaseModel):
+    """Who the patient says pays (opd-13): a code from GET /payers and the
+    policy or member number if they have one. Recorded unverified."""
+    model_config = ConfigDict(extra="forbid")
+    payer_code: str = Field(..., max_length=60)
+    policy_number: Optional[str] = Field(None, max_length=60)
+    member_id: Optional[str] = Field(None, max_length=60)
+
+
+class ChargeRuleIn(BaseModel):
+    """One outpatient charge rule (opd-13). See services/opd_charges_service."""
+    model_config = ConfigDict(extra="forbid")
+    rule_kind: str = Field(..., max_length=20)
+    service_code: Optional[str] = Field(None, max_length=60)
+    department: Optional[str] = Field(None, max_length=200)
+    doctor_id: Optional[str] = Field(None, max_length=64)
+    visit_type: Optional[str] = Field(None, max_length=20)
+    follow_up_window_days: Optional[int] = None
+    notes: Optional[str] = Field(None, max_length=500)
+
+
+class RetireRuleIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: Optional[str] = Field(None, max_length=500)
+
+
 class RegistrationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(..., max_length=200)
@@ -130,6 +164,8 @@ class RegistrationRequest(BaseModel):
     abha_source: Optional[str] = Field(None, max_length=40)
     duplicate_review: Optional[DuplicateReview] = None
     idempotency_key: Optional[str] = Field(None, max_length=200)
+    # opd-13: the payer category the patient names, optional.
+    payer: Optional[PayerIn] = None
 
 
 class MatchRequest(BaseModel):
@@ -484,6 +520,64 @@ def duplicate_sweep(
         raise _http(err)
     except AuditWriteError:
         raise _audit_unavailable()
+
+
+@router.get("/payers")
+def registration_payers(user: dict = Depends(require_registration_desk("read"))):
+    """The payers the desk may record at registration (opd-13): active rows of
+    the payer master, code, name and type only. Configuration, no patient
+    data."""
+    from services.billing_masters import list_payers
+    return {"payers": [{"code": p["code"], "name": p["name"], "payer_type": p["payer_type"]}
+                       for p in list_payers(active_only=True)]}
+
+
+def _charge_rule_error(err) -> HTTPException:
+    return HTTPException(status_code=err.status, detail=err.detail())
+
+
+@router.get("/charge-rules")
+def outpatient_charge_rules(
+    include_retired: bool = Query(False),
+    user: dict = Depends(require_registration_desk("read")),
+):
+    """Which code each outpatient consultation, follow-up and the registration
+    fee is charged against (opd-13), and when the consultation is charged.
+    Configuration, no patient data."""
+    from services import opd_charges_service as charges
+    return charges.list_rules(include_retired=include_retired)
+
+
+@router.post("/charge-rules", status_code=201)
+def create_outpatient_charge_rule(
+    body: ChargeRuleIn,
+    request: Request,
+    user: dict = Depends(require_permission(BILLING_TARIFF)),
+):
+    """Add a charge rule (billing.tariff: the price list's own permission).
+    Audited as configuration in the same transaction."""
+    from services import opd_charges_service as charges
+    try:
+        return charges.create_rule(body.model_dump(), actor=user,
+                                   request_meta=_request_meta(request))
+    except charges.OpdChargeError as err:
+        raise _charge_rule_error(err)
+
+
+@router.post("/charge-rules/{rule_id}/retire")
+def retire_outpatient_charge_rule(
+    rule_id: str,
+    body: RetireRuleIn,
+    request: Request,
+    user: dict = Depends(require_permission(BILLING_TARIFF)),
+):
+    """Retire a charge rule with a reason. Nothing is deleted."""
+    from services import opd_charges_service as charges
+    try:
+        return charges.retire_rule(rule_id, reason=body.reason, actor=user,
+                                   request_meta=_request_meta(request))
+    except charges.OpdChargeError as err:
+        raise _charge_rule_error(err)
 
 
 @router.post("/duplicates/{candidate_id}/resolve")

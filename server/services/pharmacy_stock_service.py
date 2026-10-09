@@ -44,11 +44,25 @@ module off after use can never make quarantined, sub-store or ward stock
 dispensable. For a site that never turns the module on every lot is a legacy,
 available lot and the rule is exactly the one F064 shipped: in date, FEFO.
 
-THE MOVEMENT HOOK. post_movement calls every registered hook after its row is
-written, in the same transaction. Nothing registers one yet. grn-13 registers
-the NDPS register writer there, and builds its two failure modes (ruling
-GRN-RS7) in this module; until then an exception from a hook rolls the whole
-movement back.
+THE MOVEMENT HOOKS. post_movement calls, after its row is written and in the
+same transaction:
+  1. the NDPS register leg (grn-13, _ndps_register_leg), which is not in the
+     registry and cannot be unregistered. Only while the register is on
+     (ORB_PHARMACY_NDPS_REGISTER plus a failure mode in
+     ORB_PHARMACY_NDPS_ON_FAILURE, ruling GRN-RS7) and only for a drug
+     classified narcotic or psychotropic. With the register off it never calls
+     into services/ndps_service at all. Its two failure modes:
+       'block'  any failure to write the entry refuses the movement (a
+                StockError, code ndps_register_failed or the register's own
+                code); nothing changes;
+       'record' for a DISPENSE only: the entry is written in a SAVEPOINT; on
+                failure the savepoint rolls back, the dispense goes ahead, and
+                an ndps_variances row plus a 'security' audit row are written
+                in the same transaction (if either cannot be written, the
+                dispense is refused). Every other movement blocks in both
+                modes;
+  2. every registered hook (register_movement_hook); an exception from one
+     rolls the whole movement back.
 """
 from __future__ import annotations
 
@@ -443,9 +457,46 @@ def post_movement(
     )
     movement = dict(conn.execute("SELECT * FROM helix_stock_movements WHERE id = ?",
                                  (movement_id,)).fetchone())
+    _ndps_register_leg(conn, movement)
     for hook in list(_MOVEMENT_HOOKS.values()):
         hook(conn, movement)
     return movement
+
+
+#: The savepoint the NDPS register leg runs in under the 'record' mode.
+NDPS_SAVEPOINT = "ndps_register_leg"
+
+
+def _ndps_register_leg(conn, movement: dict) -> None:
+    """The NDPS register entry for this movement (grn-13), with the failure
+    mode ruling GRN-RS7 names (see the module docstring). A no-op unless the
+    register is on and the drug is classified narcotic or psychotropic."""
+    from services import ndps_service
+
+    if not ndps_service.register_on():
+        return
+    if not ndps_service.is_controlled(conn, movement["medication_id"]):
+        return
+    if (ndps_service.failure_mode() == "record"
+            and movement["movement_type"] in ndps_service.RECORD_MODE_MOVEMENTS):
+        conn.execute(f"SAVEPOINT {NDPS_SAVEPOINT}")
+        try:
+            ndps_service.write_movement_entry(conn, movement)
+        except Exception as exc:  # the register leg only; the movement stands
+            conn.execute(f"ROLLBACK TO SAVEPOINT {NDPS_SAVEPOINT}")
+            conn.execute(f"RELEASE SAVEPOINT {NDPS_SAVEPOINT}")
+            ndps_service.record_failure(conn, movement, exc)
+            return
+        conn.execute(f"RELEASE SAVEPOINT {NDPS_SAVEPOINT}")
+        return
+    try:
+        ndps_service.write_movement_entry(conn, movement)
+    except ndps_service.NdpsError as exc:
+        raise StockError(f"the NDPS register could not record this, so nothing was changed: "
+                         f"{exc}", code=exc.code) from exc
+    except Exception as exc:
+        raise StockError("the NDPS register could not record this, so nothing was changed.",
+                         code="ndps_register_failed") from exc
 
 
 def _pharmacy_store(conn, store_id: int):

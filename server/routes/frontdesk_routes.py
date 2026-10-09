@@ -11,6 +11,10 @@
     POST   /api/frontdesk/opd/visits/{id}/recall    OPD mode: a skipped patient is back
     POST   /api/frontdesk/opd/visits/{id}/assign    OPD mode: the doctor takes an unassigned patient
     PATCH  /api/frontdesk/opd/visits/{id}           OPD mode: queue priority and room
+    GET    /api/frontdesk/opd/boards                OPD mode: the clinic token boards (admin)
+    POST   /api/frontdesk/opd/boards                OPD mode: a new board; its key shown once
+    POST   /api/frontdesk/opd/boards/{id}/revoke    OPD mode: switch a board's key off
+    GET    /api/frontdesk/opd/board                 OPD mode: a board's screen, by device key
     GET    /api/frontdesk/transfers/destinations    departments with clinical cover
     POST   /api/frontdesk/transfers                 move a patient between wards
     GET    /api/frontdesk/patients/{patient_id}/movements   movement history
@@ -122,7 +126,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 import config
@@ -132,6 +136,7 @@ from permissions import (
     OPD_CONSULT,
     PATIENT_READ_ALL,
     PATIENT_WRITE,
+    SCHEDULE_MANAGE,
     department_scope,
     enforce_patient_scope,
     has_permission,
@@ -141,7 +146,7 @@ from permissions import (
     require_permission,
     require_registration_desk,
 )
-from routes.opt_in_gates import require_opd_feature
+from routes.opt_in_gates import feature_gate, require_opd_feature
 from services import registration_service
 from services.adt import core as adt_core
 from services.adt import transfer as adt_transfer
@@ -165,10 +170,17 @@ from services.frontdesk_service import (
 from services.opd_queue_service import (
     ASSIGN_AUDIT_ACTION,
     ASSIGN_AUDIT_PREFIX,
+    BOARD_KEY_HEADER,
+    BoardError,
     QueueConflict,
     assign_visit,
+    board_for_key,
+    board_snapshot,
+    create_display_board,
+    list_display_boards,
     nudge_queue_changed,
     recall_visit,
+    revoke_display_board,
     skip_visit,
     update_queue_fields,
 )
@@ -1275,6 +1287,133 @@ def update_opd_visit_queue(
                                 "room": v.get("room")},
         ),
     ))
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  The waiting-room token board (opd-9, the 'opd' feature on)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# The administrator (schedule.manage) makes a board for one clinic and gets
+# its device key ONCE, in the creation's answer; only the key's hash is
+# stored. The kiosk (/display/opd#key=...) sends the key in the
+# X-Orb-Board-Key header and nothing else: a staff session is neither needed
+# nor accepted, and the key opens nothing but GET /opd/board. What the board
+# shows is token, doctor and room only (ruling OPD-N7), so its read writes no
+# phi_access row; making and switching off a board are recorded on the
+# fail-closed security chain (opd_queue_service).
+
+class BoardIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    department: str = Field(..., max_length=200)
+    label: str | None = Field(None, max_length=80)
+
+
+class BoardRevokeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str | None = Field(None, max_length=500)
+
+
+def _board_error(err: BoardError) -> HTTPException:
+    return HTTPException(status_code=err.status, detail={"error": err.code, "message": str(err)})
+
+
+def _board_audit_unavailable() -> HTTPException:
+    return HTTPException(status_code=503, detail={
+        "error": "audit_unavailable",
+        "message": ("The record of this board change could not be written, so nothing was "
+                    "changed. Try again in a moment."),
+    })
+
+
+def _board_audit_meta(request: Request) -> dict:
+    return {
+        "request_path": request.url.path,
+        "http_method": request.method,
+        "ip_address": request.client.host if request.client else None,
+        "user_agent": request.headers.get("user-agent"),
+    }
+
+
+#: The board's own gate: the 'opd' feature, with no staff session, because a
+#: board is a device. Listed in tests/test_unauthenticated_surface.py.
+require_opd_board_feature = feature_gate("opd", require_session=False)
+
+_BOARD_KEY_REFUSED = {
+    "error": "board_key_refused",
+    "message": ("This screen's board key is not valid. It may have been switched off. "
+                "Ask an administrator for the board's link."),
+}
+
+
+@router.get("/opd/boards")
+def opd_display_boards(
+    _opd: None = Depends(require_opd_feature),
+    user: dict = Depends(require_permission(SCHEDULE_MANAGE)),
+):
+    """The clinic token boards the caller may manage (their own clinic's only
+    when the account has a department), revoked ones too, and the clinics a
+    new board may be made for. Never a key. No patient data."""
+    return list_display_boards(scope_department=department_scope(user))
+
+
+@router.post("/opd/boards", status_code=201)
+def create_opd_display_board(
+    data: BoardIn,
+    request: Request,
+    response: Response,
+    _opd: None = Depends(require_opd_feature),
+    user: dict = Depends(require_permission(SCHEDULE_MANAGE)),
+):
+    """Make a board for one clinic. The answer carries the board's device key
+    and is the only place it ever appears: it is not stored, so it cannot be
+    shown again (switch the board off and make a new one instead)."""
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return create_display_board(
+            department=data.department, label=data.label, actor=user,
+            scope_department=department_scope(user), request_meta=_board_audit_meta(request))
+    except BoardError as err:
+        raise _board_error(err)
+    except AuditWriteError:
+        raise _board_audit_unavailable()
+
+
+@router.post("/opd/boards/{board_id}/revoke")
+def revoke_opd_display_board(
+    board_id: str,
+    data: BoardRevokeIn,
+    request: Request,
+    _opd: None = Depends(require_opd_feature),
+    user: dict = Depends(require_permission(SCHEDULE_MANAGE)),
+):
+    """Switch a board's key off for good; the screen stops at its next read."""
+    try:
+        return revoke_display_board(
+            board_id, actor=user, scope_department=department_scope(user),
+            reason=data.reason, request_meta=_board_audit_meta(request))
+    except BoardError as err:
+        raise _board_error(err)
+    except AuditWriteError:
+        raise _board_audit_unavailable()
+
+
+@router.get("/opd/board")
+def opd_token_board(
+    request: Request,
+    response: Response,
+    _opd: None = Depends(require_opd_board_feature),
+):
+    """A waiting-room board's screen: its clinic's doctors, rooms, the token
+    being called and the next ones. Authenticated by the board's device key
+    in the X-Orb-Board-Key header ONLY (never a query parameter, never a
+    staff session): a missing, wrong, revoked or staff token is 401. The
+    answer names no patient, so no PHI read is recorded."""
+    board = board_for_key(request.headers.get(BOARD_KEY_HEADER))
+    if board is None:
+        raise HTTPException(status_code=401, detail=_BOARD_KEY_REFUSED,
+                            headers={"Cache-Control": "no-store"})
+    response.headers["Cache-Control"] = "no-store"
+    return board_snapshot(board["department"], label=board["label"])
 
 
 # ═════════════════════════════════════════════════════════════════════════════

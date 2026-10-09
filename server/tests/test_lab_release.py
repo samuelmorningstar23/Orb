@@ -111,6 +111,12 @@ def _catalogue(master):
         if created:
             marks = ", ".join("?" for _ in created)
             ids = tuple(created)
+            # lis-15 raises a critical at technical validation: a critical
+            # left open would keep a switched-off laboratory draining for
+            # every later file.
+            db.execute(f"DELETE FROM lab_critical_events WHERE patient_id IN ({marks})", ids)
+            db.execute(f"DELETE FROM lab_critical_notifications WHERE patient_id IN ({marks})",
+                       ids)
             db.execute(f"DELETE FROM lab_exceptions WHERE order_id IN "
                        f"(SELECT id FROM orders WHERE patient_id IN ({marks}))", ids)
             db.execute(f"DELETE FROM observations WHERE patient_id IN ({marks})", ids)

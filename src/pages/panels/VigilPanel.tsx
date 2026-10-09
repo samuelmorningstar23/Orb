@@ -35,6 +35,7 @@ import { observedAt, observedBefore, vitalTemperature, vitalWhole } from '../../
 import VoidObservationButton from '../../components/vitals/VoidObservationButton'
 import { currentModuleFlags, subscribeModuleFlags, useClinicalSwitches } from '../../shellConfig'
 import EndStayDrawer from '../../components/adt/EndStayDrawer'
+import NotOnWardChip from '../../components/adt/NotOnWardChip'
 import ReopenStayDialog from '../../components/adt/ReopenStayDialog'
 // The discharge screen's 'How the stay ended' fields use its classes too.
 import '../../components/adt/EndStay.css'
@@ -735,6 +736,9 @@ const PatientRow = memo(({ patient: p, onSelect, newSinceReview = 0 }: {
         )}
       </span>
       <span className="patient-row__bed">{p.bed}</span>
+      {/* adt-10, display only: the row carries presence only while Beds and
+          admissions is on. The score and the order are unchanged. */}
+      <NotOnWardChip row={p} />
     </div>
     <div className={`patient-row__meta${readings.length ? ' patient-row__meta--readings' : ''}`}>
       <span className="patient-row__diagnosis">{p.diagnosis}</span>

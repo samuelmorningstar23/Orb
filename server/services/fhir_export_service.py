@@ -30,6 +30,7 @@ from typing import Optional
 
 from database import get_db
 from services.clinical_time import to_utc_iso
+from services.medorders import held as held_labels
 
 
 # ════════════════════════════════════════════
@@ -335,11 +336,15 @@ def medications_to_fhir(patient_id: str, db=None) -> list[dict]:
     ``draft``, intent ``proposal``) with the ai-draft provenance tag — it is
     never emitted as an active order. Clinician-entered (or clinician-verified)
     meds map their Orb status to the FHIR status normally.
+
+    A held order (medorders-6b; its ward row stays active with held_at set) is
+    exported 'on-hold' with the hold reason as statusReason. An unverified
+    AI-derived row stays a draft whether held or not.
     """
     with _reader(db) as conn:
         rows = conn.execute(
             "SELECT id, drug_name, dosage, route, frequency, status, source, "
-            "verified_by, notes, started_at FROM medications "
+            "verified_by, notes, started_at, held_at, hold_reason FROM medications "
             "WHERE patient_id = ? ORDER BY started_at DESC",
             (patient_id,),
         ).fetchall()
@@ -360,6 +365,10 @@ def medications_to_fhir(patient_id: str, db=None) -> list[dict]:
         else:
             fhir_status = _MED_STATUS_MAP.get((row["status"] or "active").lower(), "active")
             intent = "order"
+        on_hold = (not is_draft and fhir_status == "active"
+                   and held_labels.is_held(row))
+        if on_hold:
+            fhir_status = "on-hold"
 
         resource: dict = {
             "resourceType": "MedicationRequest",
@@ -371,6 +380,8 @@ def medications_to_fhir(patient_id: str, db=None) -> list[dict]:
             "subject": subject,
             "dosageInstruction": [_dosage_instruction(row)],
         }
+        if on_hold and (row["hold_reason"] or "").strip():
+            resource["statusReason"] = {"text": str(row["hold_reason"]).strip()}
         if row["started_at"]:
             resource["authoredOn"] = _to_fhir_datetime(row["started_at"])
         if row["notes"]:

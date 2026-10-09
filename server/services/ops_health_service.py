@@ -16,6 +16,9 @@ to DO about it:
     3. Is there a backup, and DID IT       7. Is this site's own configuration
        ACTUALLY VERIFY?                       loaded and consistent?
     4. Is the medical AI loaded?           8. Can anyone still sign in as admin?
+                                           9. Which hospital sites does this
+                                              appliance hold, and are their
+                                              records kept apart? (multi-site)
 
 WHY QUESTION 3 IS PHRASED THAT WAY
 ──────────────────────────────────
@@ -995,6 +998,132 @@ def _check_access() -> dict:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  9. Which hospital sites does this appliance hold? (multi-site, multisite-1)
+# ═════════════════════════════════════════════════════════════════════════════
+def _spellings(items: list[dict], limit: int = 4) -> str:
+    shown = [f"'{v['spelling']}' on {v['rows']} {v['where']} (listed as "
+             f"'{v['master_spelling']}')" for v in items[:limit]]
+    more = len(items) - limit
+    return "; ".join(shown) + (f"; and {more} more" if more > 0 else "")
+
+
+def _check_facilities() -> dict:
+    """Facility 1 present and active; no record naming a facility that does
+    not exist; no patient with admissions at two facilities (the count must be
+    0); department spellings that match the departments list; and, once more
+    than one facility is on record, what the facility fence is holding shut.
+    Counts, facility codes and department names only, never a patient."""
+    import config
+    import facility_fence
+    from database import db_session
+    from services import facility_service
+
+    with db_session() as db:
+        report = facility_service.facility_report(db)
+        main_name = facility_service.display_name(db=db)
+    multi = report["facilities"] > 1
+    variants = report["department_variants"]
+    unmastered = report["departments_not_in_master"]
+    unknown = report["unknown_facility_ids"]
+    several = report["patients_at_several_facilities"]
+    switch_on = bool(config.feature_enabled("multi_site"))
+    detail = {
+        "facilities": report["facilities"],
+        "active_facilities": report["active_facilities"],
+        "more_than_one_facility_on_record": multi,
+        "multi_site_switch": switch_on,
+        "departments_listed": report["department_master"],
+        "records_naming_an_unknown_facility": unknown,
+        "department_spelling_variants": variants,
+        "departments_not_in_the_list": unmastered,
+        "patients_with_admissions_at_several_facilities": several,
+        "facility_fence": {**facility_fence.describe(), "holding": multi},
+    }
+
+    problems: list[tuple[str, str, str]] = []
+    if report["facility_one_problem"]:
+        problems.append((
+            URGENT,
+            "This hospital's own facility record (facility 1) is missing or marked "
+            "inactive. Orb is running now, but it will refuse to start after the "
+            "next restart.",
+            "The database was changed by hand. Restore the most recent verified "
+            "backup before restarting Orb:\n    ./scripts/orb.sh restore --list",
+        ))
+    if several:
+        problems.append((
+            URGENT,
+            f"{several} patient record(s) have admissions at more than one facility. "
+            f"Orb works out which facility a chart belongs to from its admissions, "
+            f"so these charts cannot be kept to one facility.",
+            "Do not admit these patients at another facility again. Ask the person "
+            "who installed Orb to review them before any further facility is set up.",
+        ))
+    if unknown:
+        listed = ", ".join(f"{n} {label}" for label, n in sorted(unknown.items()))
+        problems.append((
+            ATTENTION,
+            f"Some records name a facility that is not on record: {listed}.",
+            "These records were changed by hand or came back from a damaged "
+            "restore. Restore the most recent verified backup, or ask the person "
+            "who installed Orb to correct them.",
+        ))
+    if multi:
+        problems.append((
+            ATTENTION,
+            f"{report['facilities']} facilities are on record, so Orb keeps each "
+            f"facility's patients apart. Screens not yet ready for that answer "
+            f"\"not available yet\" instead of showing every facility's patients.",
+            "This is expected until every screen has been prepared for more than one "
+            "facility. If the extra facility was added by mistake, restore the backup "
+            "taken before it was added, from this machine's keyboard (a facility is "
+            "never deleted from a screen):\n    ./scripts/orb.sh restore --list",
+        ))
+    if variants:
+        problems.append((
+            ATTENTION,
+            f"Some records spell a department differently from the departments "
+            f"list: {_spellings(variants)}. Staff see patients by the exact "
+            f"spelling, so these patients may be missing from their ward's screens.",
+            "Correct the spelling on those records to match the departments list "
+            "exactly, including capital letters.",
+        ))
+    if unmastered and multi:
+        names = ", ".join(sorted({u["name"] for u in unmastered})[:6])
+        problems.append((
+            ATTENTION,
+            f"{len(unmastered)} department name(s) in use are not in the departments "
+            f"list ({names}), so Orb cannot tell which facility they belong to.",
+            "Add each one to the departments list of the right facility, or correct "
+            "the spelling to a listed department.",
+        ))
+
+    notes: list[str] = []
+    if unmastered and not multi:
+        notes.append(
+            f"{len(unmastered)} department name(s) in use are not in the departments "
+            f"list yet. That matters only once a second facility is set up, because "
+            f"the list says which facility each department belongs to.")
+    if switch_on and not multi:
+        notes.append("ORB_MULTI_SITE is on. Only one facility is on record, so nothing "
+                     "changes until a second one is set up.")
+
+    if problems:
+        rank = max(_RANK[p[0]] for p in problems)
+        first = next(p for p in problems if _RANK[p[0]] == rank)
+        notes = [p[1] for p in problems if p is not first] + notes
+        return _check("facilities", "Facilities", first[0], first[1],
+                      what_to_do=first[2], detail=detail, notes=notes)
+    return _check(
+        "facilities", "Facilities", OK,
+        f"One facility is on record ({main_name}, code "
+        f"{facility_service.MAIN_FACILITY_CODE}), with "
+        f"{report['department_master']} department(s) in the departments list.",
+        detail=detail, notes=notes,
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  Assembly
 # ═════════════════════════════════════════════════════════════════════════════
 _COLLECTORS = (
@@ -1006,6 +1135,7 @@ _COLLECTORS = (
     ("disk", "Storage space", lambda deep: _check_disk()),
     ("site_config", "Site settings", _check_site_config),
     ("access", "Sign-in and administrators", lambda deep: _check_access()),
+    ("facilities", "Facilities", lambda deep: _check_facilities()),
 )
 
 

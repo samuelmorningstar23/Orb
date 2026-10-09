@@ -31,6 +31,8 @@ vi.mock('../../../api/client', () => ({
   apiFetch: (path: string, options?: RequestInit) => h.apiFetch(path, options),
   buildHeaders: () => ({}),
   API_BASE: '/api',
+  // The signed-in doctor: Finish visit asks the role whether it may admit.
+  getUser: () => ({ id: 'DOC-1', name: 'Dr Iyer', role: 'doctor' }),
   socket: { connected: true, on: () => {}, off: () => {}, emit: vi.fn() },
 }))
 
@@ -463,15 +465,17 @@ describe('on the Outpatients tab', () => {
     expect(screen.getByLabelText('Plan')).toHaveValue('Unsaved plan')
   })
 
-  it('finishing says what the note says about follow-up and referral, and offers no admission', async () => {
+  it('finishing says what the note says about follow-up and referral, and offers admission', async () => {
     await openPanel(view({ consultation: note({ follow_up_date: '2026-10-14',
       referral_department: 'Cardiology' }) }))
     fireEvent.click(screen.getByRole('button', { name: 'Finish visit' }))
     const dialog = await screen.findByRole('dialog')
     const outcome = within(dialog).getByLabelText('Outcome')
-    const admit = within(outcome).getByRole('option', { name: 'Advise admission (not available here yet)' })
-    expect(admit).toBeDisabled()
-    expect(within(dialog).getByText(/send them to the admission desk/)).toBeInTheDocument()
+    /* opd-17a: Advise admission opens the admission form for this patient's
+       own record (OpdPanel.advise.test.tsx). */
+    const admit = within(outcome).getByRole('option', { name: 'Advise admission' })
+    expect(admit).not.toBeDisabled()
+    expect(within(dialog).getByText('To admit the patient, choose Advise admission.')).toBeInTheDocument()
     fireEvent.change(outcome, { target: { value: 'follow_up' } })
     expect(within(dialog).getByText(/Follow-up on 14 Oct 2026, from the note/)).toBeInTheDocument()
     fireEvent.change(outcome, { target: { value: 'referred_internal' } })

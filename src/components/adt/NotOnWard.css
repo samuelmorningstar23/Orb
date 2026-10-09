@@ -1,0 +1,49 @@
+/* NotOnWard.css: Orb "Quiet Clinical" (flat).
+ *
+ * The 'Not on ward since' chip on the Vigil board and the nurse board, and
+ * the extra lines a bed board tile shows for a patient off the ward or a bed
+ * held by a reservation (adt-10, adt-12).
+ *
+ *  - No `opacity` for state. Status colour is a border on an ordinary
+ *    surface; the small words use the --status-x-text tokens.
+ *  - Sentence case, plain words. The chip never carries a score or a band.
+ */
+
+.adt-not-on-ward {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 1px 8px;
+  border: 1px solid var(--status-info);
+  border-radius: var(--radius-full);
+  background: var(--bg-surface);
+  color: var(--status-info-text);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  vertical-align: middle;
+  /* Never stretched across a column layout (the Vigil row stacks its lines). */
+  align-self: flex-start;
+}
+
+.adt-not-on-ward--absconded {
+  border-color: var(--status-warn);
+  color: var(--status-warn-text);
+}
+
+/* Lines under a bed board tile's status. */
+
+.adt-tile-note {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.adt-tile-note--who {
+  font-weight: 600;
+  color: var(--text-primary);
+}

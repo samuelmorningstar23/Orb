@@ -42,6 +42,7 @@ from services.allergy_interlock import AllergyInterlockBlocked
 from services.audit_service import log_audit_event
 from services.drug_safety_service import DoseGuardBlocked
 from services.medorders import emar_check
+from services.medorders import supply as medorder_supply
 
 logger = logging.getLogger("orb.emar")
 
@@ -703,10 +704,18 @@ def record_administration(
         # Then the order's bedside event, in this same transaction. Both are
         # no-ops for an unlinked ward row.
         linked_order = emar_check.check_dose_in_txn(db, med_id, status)
+        # A given dose names the supply row it came from only when exactly one
+        # received, unused unit of the order is on the ward; otherwise its
+        # event says 'supply not linked' (medorders-5b). Read here, under the
+        # write lock, so two doses cannot both take the last unit. None for an
+        # unlinked ward row.
+        custody = (medorder_supply.custody_for_dose_in_txn(db, linked_order)
+                   if status == "given" else None)
         order_event_id = emar_check.record_bedside_event_in_txn(
             db, linked_order, medication_id=med_id, administration_id=inserted_id,
             administration_status=status, actor_id=actor_id,
             not_given_reason=not_given_reason, confirmation_method=confirmation_method,
+            custody=custody,
         )
 
         # A NEW override (as opposed to one carried forward from an earlier dose
@@ -784,6 +793,10 @@ def record_administration(
                 # unlinked row, so its audit row is exactly as before.
                 **({"med_order_id": linked_order["med_order_id"],
                     "med_order_event_id": order_event_id} if linked_order else {}),
+                # The supply row this dose came from, or None with the event
+                # saying 'supply not linked' (medorders-5b). Linked rows only.
+                **({"supply_helix_order_id": custody.get("helix_order_id")}
+                   if linked_order and custody is not None else {}),
             },
         )
 

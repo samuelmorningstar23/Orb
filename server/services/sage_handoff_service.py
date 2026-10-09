@@ -562,6 +562,135 @@ def _procedure_from_target(raw_target: str, known_depts: set) -> str:
     return t
 
 
+# ── The Relay transfer lane through the ADT writer (adt-6c, W7-C) ────────────
+#
+# With Beds and admissions (ORB_ADT) off, _dispatch_to_transfer writes
+# admissions.department itself, exactly as it always has. With it on, that
+# bare UPDATE would be a second writer of where a patient is treated: no
+# movement row, no clinical_access audit, and a destination checked only
+# against "any department any login carries", which includes a pharmacist's
+# department and the ward labels written as a patient login's department. So
+# the confirmed card transfers through services/adt/transfer.transfer_on:
+#
+#   * rule C: the destination is resolved against the departments an active
+#     doctor, clinician or nurse covers (the front desk's anti-orphaning list),
+#     read on this same connection. A card whose target names a department
+#     with no clinical cover is refused with rule C's words; a target that
+#     names no department at all (a procedure) goes to General Surgery, as the
+#     lane always read it, which must itself be covered;
+#   * the patient keeps the bed they lie in (keep_location), usually as a
+#     boarder on the old ward; the confirming clinician's confirmation of the
+#     card stands as the boarder acknowledgement, with the reason
+#     'Confirmed in Relay' on the movement;
+#   * the movement, its patient_movement audit, the clinical_access
+#     'patient_transferred' row (and 'boarder_placed' with its case-room line,
+#     for a boarder) and the department change are written in the confirm's
+#     own transaction, so they commit with the card or not at all.
+#
+# THE SESSION. transfer() opens db_session(immediate=True), which must be the
+# outermost session; this adapter runs INSIDE the confirm's transaction
+# (relay_routes._confirm_and_hand_off since the R024 work; the design's note
+# that it ran after the handoff session closed no longer holds). So the lane
+# calls transfer_on with the caller's connection, under the adapter's
+# savepoint. Every caller has already written on this transaction (the
+# confirm's version-guarded claim, or the handoff record) before the adapter
+# runs, so it holds SQLite's write lock: no other writer can interleave
+# between the checks below and the write, which is what the immediate session
+# gives the other lanes. Rule C's list is read on this connection for the
+# same reason (frontdesk_service.list_covering_departments opens a session of
+# its own).
+#
+# RELEASE GATE: config.py says ORB_ADT must not be switched on at a site where
+# Sage runs until this lane landed; this is that lane.
+
+#: The reason on the movement a confirmed Relay transfer card writes.
+RELAY_TRANSFER_REASON = "Confirmed in Relay"
+
+#: Where a transfer card whose target names no department goes, as the lane
+#: has always read it (every verb routed here is a surgical one).
+_DEFAULT_SURGICAL_DEPARTMENT = "General Surgery"
+
+
+def _adt_transfer_lane_on() -> bool:
+    """True only while ORB_ADT is on (read at call time)."""
+    from services.adt.core import adt_on
+
+    return adt_on()
+
+
+def _covering_departments_on(db) -> list:
+    """The departments an active doctor, clinician or nurse covers, read on
+    the caller's connection: the same query and roles as
+    frontdesk_service.list_covering_departments (rule C), which opens a
+    session of its own and so cannot run inside the confirm's transaction."""
+    from services.frontdesk_service import _COVERING_ROLES
+
+    marks = ",".join("?" for _ in _COVERING_ROLES)
+    rows = db.execute(
+        f"""SELECT DISTINCT TRIM(department) AS department
+              FROM users
+             WHERE role IN ({marks})
+               AND department IS NOT NULL
+               AND TRIM(department) != ''
+               AND COALESCE(is_active, 1) = 1
+             ORDER BY 1""",
+        _COVERING_ROLES,
+    ).fetchall()
+    return [r["department"] for r in rows]
+
+
+def _relay_destination(raw_target: str, *, covering: list, named: set) -> str:
+    """The covered department a confirmed transfer card goes to (rule C), or
+    AdtError with rule C's words. A target that names a department Orb knows
+    (any login's, or a ward's) is held to it: never quietly sent elsewhere,
+    and refused when nobody clinical covers it. A target that names none (a
+    procedure such as 'Exploratory Laparotomy', or 'theatre') goes to General
+    Surgery, which must itself be covered."""
+    from services.adt.transfer import resolve_cover
+
+    target = (raw_target or "").strip()
+    folded = target.casefold()
+    known = {str(d).strip().casefold() for d in (*named, *covering) if d and str(d).strip()}
+    if target and folded in known:
+        return resolve_cover(target, covering=covering)
+    return resolve_cover(_DEFAULT_SURGICAL_DEPARTMENT, covering=covering)
+
+
+def _transfer_through_adt_on(db, *, action: dict, actor_id: str, admission_id: str,
+                             raw_target: str, named: set) -> tuple:
+    """The confirmed card's transfer through the ADT writer, on the confirm's
+    connection (see the section comment). Returns (the department the
+    patient is now treated by, the covering list it was resolved against).
+    Writes nothing when the patient is already treated there."""
+    from services.adt import transfer as adt_transfer
+
+    if not getattr(db, "in_transaction", False):
+        # Every caller has written on this transaction before the adapter
+        # runs; without that the checks and the write could interleave with
+        # another writer.
+        raise RuntimeError("The Relay transfer lane must run inside the confirm's transaction.")
+    names = set(named)
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wards'").fetchone():
+        names |= {r[0] for r in db.execute(
+            "SELECT DISTINCT department FROM wards WHERE department IS NOT NULL").fetchall()}
+    covering = _covering_departments_on(db)
+    canonical = _relay_destination(raw_target, covering=covering, named=names)
+    current = db.execute("SELECT department FROM admissions WHERE id = ?",
+                         (admission_id,)).fetchone()
+    if current is not None and str(current["department"] or "").strip().casefold() \
+            == canonical.casefold():
+        return canonical, covering
+    user = db.execute("SELECT id, name, role, department FROM users WHERE id = ?",
+                      (actor_id,)).fetchone()
+    actor = dict(user) if user is not None else {"id": actor_id}
+    adt_transfer.transfer_on(
+        db, actor=actor, to_department=canonical, reason=RELAY_TRANSFER_REASON,
+        admission_id=admission_id, keep_location=True, boarder_acknowledged=True,
+        notes=f"Transfer card confirmed in Relay (Sage action {action.get('id')})",
+        idempotency_key=f"relay-action-{action.get('id')}")
+    return canonical, covering
+
+
 def _dispatch_to_transfer(action: dict, actor_id: str, db) -> tuple:
     """Dispatches a transfer action, updating the active admission and setting up a surgical case,
     on ``db`` (never commits). Returns ``(surgery_id, needs_package)``: True when a NEW
@@ -587,10 +716,21 @@ def _dispatch_to_transfer(action: dict, actor_id: str, db) -> tuple:
             "SELECT DISTINCT department FROM users WHERE department IS NOT NULL"
         ).fetchall()
     }
-    if target_dept not in known_depts:
-        target_dept = "General Surgery"
+    if _adt_transfer_lane_on():
+        # adt-6c (W7-C): with Beds and admissions on, the move goes through the
+        # ADT writer under rule C, never a bare UPDATE (see
+        # _transfer_through_adt_on). A destination with no clinical cover
+        # raises here with rule C's words, the savepoint rolls this adapter
+        # back, and the handoff is stored 'failed' with nothing changed.
+        target_dept, covering = _transfer_through_adt_on(
+            db, action=action, actor_id=actor_id, admission_id=active_adm["id"],
+            raw_target=raw_target, named=known_depts)
+        known_depts = known_depts | set(covering)
+    else:
+        if target_dept not in known_depts:
+            target_dept = "General Surgery"
 
-    db.execute("UPDATE admissions SET department = ? WHERE id = ?", (target_dept, active_adm["id"]))
+        db.execute("UPDATE admissions SET department = ? WHERE id = ?", (target_dept, active_adm["id"]))
 
     # 2. Add System Message to Relay
     if room_id:

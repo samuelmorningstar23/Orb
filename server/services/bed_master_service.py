@@ -1334,13 +1334,12 @@ def _typed_occupants(db, ward_code: str, label: str) -> list[str]:
 
 
 def _bed_reserved(db, bed_id: str) -> bool:
-    """An active reservation holds the bed. bed_reservations arrives with
-    adt-12; until then nothing can be reserved."""
-    if not _table_columns(db, "bed_reservations"):
-        return False
-    return db.execute(
-        "SELECT 1 FROM bed_reservations WHERE bed_id = ? AND status = 'active' LIMIT 1", (bed_id,)
-    ).fetchone() is not None
+    """A reservation holds the bed now (adt-12: active and not past its
+    expiry, read through services/adt/reservations.py). Before migration 69
+    nothing can be reserved."""
+    from services.adt import reservations as adt_res
+
+    return adt_res.live_on_bed(db, bed_id) is not None
 
 
 def retire_bed(bed_id: str, data: dict | None = None, *, actor: dict,
@@ -1686,8 +1685,10 @@ def mark_register_complete(ward_id: str, data: dict | None = None, *, actor: dic
 #      hide a patient). This sits ABOVE retired on purpose: retire_bed refuses
 #      an occupied bed, so the pair cannot arise through the writers, and if it
 #      ever did the patient is what the board must show.
-#   2. reserved (an active bed_reservations row, once adt-12 creates the table),
-#      with the same out-of-service marker.
+#   2. reserved (a bed_reservations row that is active and not past its
+#      expiry, adt-12), with the same out-of-service marker. The tile says
+#      what the bed is held for ('Reserved for transfer'), never who, outside
+#      the caller's scope.
 #   3. retired beds leave the board (retire_bed says so); a switched-off bed is
 #      shown as switched off.
 #   4. out_of_service.
@@ -1857,16 +1858,48 @@ def _occupants_on(db, wards: list[dict], beds: list[dict]) -> dict[str, list[dic
 
 
 def _reserved_beds(db, bed_ids: Iterable[str]) -> set[str]:
-    """Beds an active reservation holds. bed_reservations arrives with adt-12;
-    until then nothing is reserved."""
-    ids = tuple(bed_ids)
-    if not ids or not _table_columns(db, "bed_reservations"):
-        return set()
-    marks, params = _in(ids)
-    return {r[0] for r in db.execute(
-        f"SELECT DISTINCT bed_id FROM bed_reservations WHERE status = 'active' AND bed_id IN ({marks})",
-        params,
-    ).fetchall()}
+    """Beds a reservation holds now (adt-12: active and not past its expiry,
+    read through services/adt/reservations.py). Before migration 69 nothing
+    is reserved."""
+    from services.adt import reservations as adt_res
+
+    return set(adt_res.live_on_beds(db, bed_ids))
+
+
+def _presence_prompt(holder: dict, *, absconded_at: Optional[datetime],
+                     now: datetime) -> Optional[str]:
+    """The board's advisory line for a patient off the ward too long (adt-10),
+    or None. Advisory only: nothing closes or discharges on a timer.
+
+      absconded  over ORB_ADT_ABSCONDED_CLOSE_HOURS since it was recorded
+                 (ruling ADT-S3: the stay may then be closed through End of
+                 stay)
+      on leave   over ORB_ADT_LEAVE_PROMPT_HOURS (ruling ADT-P6: the doctor
+                 is prompted to discharge)"""
+    import config
+
+    presence = holder.get("presence_status")
+    if presence == "absconded":
+        hours = int(getattr(config, "ADT_ABSCONDED_CLOSE_HOURS", 24))
+        since = absconded_at or _parse_utc(holder.get("presence_since"))
+        if since is not None and (now - since).total_seconds() >= hours * 3600:
+            return (f"Absconded for over {hours} hours. The stay can be closed with "
+                    "Record end of stay.")
+    elif presence == "on_leave":
+        hours = int(getattr(config, "ADT_LEAVE_PROMPT_HOURS", 48))
+        since = _parse_utc(holder.get("presence_since"))
+        if since is not None and (now - since).total_seconds() >= hours * 3600:
+            return f"On leave for over {hours} hours. The doctor may discharge."
+    return None
+
+
+def _parse_utc(value: Any) -> Optional[datetime]:
+    if value in (None, ""):
+        return None
+    try:
+        return parse_to_utc(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _last_ready_jd(db, beds: list[dict]) -> dict[str, float]:
@@ -1977,10 +2010,24 @@ def _scope_filter(db, patient_ids: Iterable[str], dept: Optional[str]) -> set[st
     ).fetchall()}
 
 
-def _board_on(db, *, wards: list[dict], dept: Optional[str], identity: bool) -> dict:
+def _board_on(db, *, wards: list[dict], dept: Optional[str], identity: bool,
+              reservations: bool = True) -> dict:
     """Tiles for `wards` on the caller's connection. With identity False no
-    patient field is ever read or returned (the available-beds read)."""
-    now_jd = _jd(datetime.now(timezone.utc))
+    patient field is ever read or returned (the available-beds read).
+
+    With reservations False a bed a reservation holds reads the status under
+    the hold (services/adt/core.bed_readiness_on uses it so the patient a bed
+    is held for still meets the cleaning rule). A held tile (adt-12) says what
+    it is held for ('Reserved for transfer') and carries `reservation` {id,
+    purpose, purpose_words, reserved_at, expires_at, patient, patient_hidden};
+    the patient it is held for is named only inside the caller's scope.
+    An occupant inside scope carries presence_since (adt-10) and, off the
+    ward too long, an advisory marker (_presence_prompt)."""
+    from services.adt import reservations as adt_res
+    from services.adt.presence import absconded_at_on
+
+    now = datetime.now(timezone.utc)
+    now_jd = _jd(now)
     ward_ids = [w["id"] for w in wards]
     beds: list[dict] = []
     if ward_ids:
@@ -1995,11 +2042,19 @@ def _board_on(db, *, wards: list[dict], dept: Optional[str], identity: bool) -> 
             ids,
         ).fetchall()]
     occupants = _occupants_on(db, wards, beds)
-    reserved = _reserved_beds(db, (b["id"] for b in beds))
+    held = adt_res.live_on_beds(db, (b["id"] for b in beds), now=now) if reservations else {}
+    reserved = set(held)
     ready = _last_ready_jd(db, beds)
     vacated = _last_vacated_jd(db, wards, beds)
-    in_scope = _scope_filter(db, (a["patient_id"] for who in occupants.values() for a in who), dept) \
-        if identity else set()
+    in_scope: set[str] = set()
+    absconded_at: dict[str, datetime] = {}
+    if identity:
+        in_scope = _scope_filter(
+            db, [a["patient_id"] for who in occupants.values() for a in who]
+            + [r["patient_id"] for r in held.values() if r.get("patient_id")], dept)
+        absconded_at = absconded_at_on(
+            db, [a["id"] for who in occupants.values() for a in who
+                 if a.get("presence_status") == "absconded"])
     names: dict[str, dict] = {}
     if in_scope:
         marks, ids = _in(in_scope)
@@ -2036,11 +2091,18 @@ def _board_on(db, *, wards: list[dict], dept: Optional[str], identity: bool) -> 
                     "boarder": boarder,
                     "boarder_from": holder.get("department") if boarder else None,
                     "presence_status": holder.get("presence_status"),
+                    # adt-10: when the patient was last on the ward (UTC), for
+                    # 'Not on ward since'; None while they are on it.
+                    "presence_since": holder.get("presence_since"),
                     "linked": holder["linked"],
                 }
                 if holder["patient_id"] not in shown:
                     shown.append(holder["patient_id"])
                 since_jd = _jd(holder.get("admitted_at") or holder.get("created_at"))
+                prompt = _presence_prompt(holder, absconded_at=absconded_at.get(holder["id"]),
+                                          now=now)
+                if prompt:
+                    markers.append(prompt)
             else:
                 hidden = True
                 # Nothing about a patient outside the caller's scope: not the
@@ -2053,6 +2115,34 @@ def _board_on(db, *, wards: list[dict], dept: Optional[str], identity: bool) -> 
             if bed.get("retired_at"):
                 markers.append("Retired bed")
         words = _board_words(status)
+        reservation = None
+        if status == "reserved" and bed["id"] in held:
+            res = held[bed["id"]]
+            # What the bed is held for, never who, outside the caller's scope.
+            words = adt_res.PURPOSE_WORDS.get(res.get("purpose") or "", words)
+            since_jd = _jd(res.get("reserved_at"))
+            # The hold hides the cleaning status, so say it as a marker: a
+            # held bed may still be waiting for its clean.
+            under, _, _ = _derive_status(
+                bed, ward, occupied=False, presence=None, reserved=False,
+                ready_jd=ready.get(bed["id"]), vacated_jd=vacated.get(bed["id"]),
+                state_jd=_jd(bed.get("state_since")))
+            if under in ("needs_cleaning", "cleaning"):
+                markers.append(_board_words(under))
+            patient = None
+            if identity and res.get("patient_id") in in_scope:
+                person = names.get(res["patient_id"], {})
+                patient = {"patient_id": res["patient_id"], "admission_id": res.get("admission_id"),
+                           "name": person.get("name"), "mrn": person.get("mrn")}
+                if res["patient_id"] not in shown:
+                    shown.append(res["patient_id"])
+            reservation = {
+                "id": res["id"], "purpose": res.get("purpose"),
+                "purpose_words": adt_res.PURPOSE_WORDS.get(res.get("purpose") or "", "Reserved"),
+                "reserved_at": res.get("reserved_at"), "expires_at": res.get("expires_at"),
+                "patient": patient,
+                "patient_hidden": bool(res.get("patient_id")) and patient is None,
+            }
         if markers and markers[0] == _OUT_OF_SERVICE_MARKER and status != "out_of_service":
             words = f"{words}, bed reported out of service"
         isolation = bool(bed.get("is_isolation_room")) or bool(bed.get("room_is_isolation"))
@@ -2077,6 +2167,7 @@ def _board_on(db, *, wards: list[dict], dept: Optional[str], identity: bool) -> 
             "minutes_in_state": _minutes_since(since_jd, now_jd),
             "occupant": occupant,
             "occupant_hidden": hidden,
+            "reservation": reservation,
         })
 
     out_wards = []

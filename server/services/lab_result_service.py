@@ -49,9 +49,17 @@ above 6.5" means above: a value equal to a critical limit is not critical. A
 bound wholly beyond a limit ('>600' against "critical above 450") is
 critical, because the true value is certainly past it; a bound that could be
 either side is not. A critical flag outranks H or L. is_critical and
-critical_limit_id say which limit was crossed. This module raises no
-notification: the critical callback is lis-15 (wave 7), so until it lands the
-Validate screen tells the laboratory to phone the ward.
+critical_limit_id say which limit was crossed. The critical result is RAISED
+at technical validation (lis-15, ruling LIS-R4 (a): marked preliminary, not
+yet authorised), at release for one validated before that, and at an
+amendment whose new value crosses a limit, through
+services/lab_critical_service.py, inside the step's own transaction; it is
+posted to the patient's case room after that transaction commits, and a
+failed post never undoes the step. A result sent back to the bench after its
+critical was told, changed and validated again tells the ward the change the
+same way: a changed critical value, or a correction when it is no longer
+critical (a critical already confirmed is reopened then, so the laboratory
+phones the correction).
 
 DELTA CHECKS (lis-12; ruling LIS-R9 (a), strictest option): a numeric test
 with a delta kind and threshold in the catalogue (none ships one) compares a
@@ -86,6 +94,35 @@ already moved outside the laboratory still receives the value, and
 reconcile_order_status records an 'order_state_conflict' exception. A
 signatory who disagrees sends the result back to the bench with a reason.
 
+AMENDED AND WITHDRAWN RESULTS (lis-13; ruling LIS-R10 (a), the recommended
+option, held for Samuel). Once released, a result is never changed in place.
+A signatory (lab.authorise) AMENDS it with a reason: the released row becomes
+'superseded', a new row (version n+1, status 'released', amend_reason) takes
+its place, the chart's observation is marked superseded with superseded_by
+pointing at a new observation with status 'corrected', the order keeps its
+status and its fixed result text, and an order_events row says the result
+was amended. While two different people are required (LIS-R5, the shipped
+default) an amendment is two steps: one signatory proposes it (recorded as a
+result event; the chart keeps the reported value) and a DIFFERENT signatory
+confirms it, which applies it; either may cancel a proposal. With the setting
+off one signatory amends in one step and the amendment records that one
+person did. A signatory WITHDRAWS a result entered in error (the wrong
+patient, for example) with a reason, in one step: the row becomes
+'withdrawn', its observation 'entered-in-error' (so no chart, ward pack,
+timeline or Tier 1 reader shows it), its test is cancelled, and if it was the
+order's only reported test the order is not reopened: the laboratory gets an
+exception saying so. After either commits, a plain notice goes to the
+patient's case room ("Laboratory"); a failed notice never undoes the change.
+An amendment whose new value crosses a critical limit raises a critical
+result. A critical raised for an earlier version is never closed by the
+change; it records it, the same way as a result sent back to the bench
+(lab_critical_service.raise_for_result_in_txn follows the version chain): an
+open one takes the new value (or, for a withdrawal, 'withdrawn') and posts
+it at once, and a closed one whose confirmed value no longer holds is
+reopened at tier 1, so the laboratory phones the ward and logs the call with
+a read-back on Critical results. The ward notice promises that call only
+when a critical is open to track it.
+
 EVERY WRITE is one BEGIN IMMEDIATE transaction with its clinical_access audit
 row inside it (fail-closed) and a lab_result_events row: 'entered' with the
 value after, 'edited' with the value before and after. An edit is allowed
@@ -111,6 +148,7 @@ import config
 from database import db_session
 from db_backend import DBIntegrityError
 from permissions import LAB_AUTHORISE, LAB_RESULT, has_permission
+from services import lab_critical_service as lcs
 from services import lab_master_service as lm
 from services import lab_module
 from services import lab_observations as lobs
@@ -146,6 +184,21 @@ VALIDATION_BATCH_MAX = 100
 VALIDATION_QUEUE_CAP = 500
 #: The status a released result carries in observations.
 RELEASED_OBSERVATION_STATUS = "final"
+#: The status an amended result's new observation carries (lis-13).
+AMENDED_OBSERVATION_STATUS = "corrected"
+#: The status the observation of a replaced version carries, with superseded_by.
+SUPERSEDED_OBSERVATION_STATUS = "superseded"
+#: The status the observation of a withdrawn result carries. Both are in
+#: lab_observations.VOID_OBSERVATION_STATUSES, so no reader shows the row.
+WITHDRAWN_OBSERVATION_STATUS = "entered-in-error"
+#: Result events that record an amendment waiting for a second signatory.
+_PROPOSED_EVENT = "amendment_proposed"
+_CANCELLED_EVENT = "amendment_cancelled"
+#: The incident a wrong-patient withdrawal prompts while ORB_NABH is on
+#: (ruling LIS-R10's recommendation).
+WRONG_PATIENT_INCIDENT_TEXT = (
+    "A result was reported against the wrong patient. Report a patient identification "
+    "incident in the NABH register.")
 #: The longest reason kept for a delta flag or a result sent back.
 REASON_MAX = 500
 #: Result events whose actor took part in a result: the signatory must not be
@@ -1384,10 +1437,19 @@ def technically_validate(results: Any, *, actor: dict, dept: Optional[str] = Non
     changed since is refused 409 'result_changed' and nothing is validated.
     The delta check is decided again here: a flag with no reason on file for
     the same earlier result and value is refused 409 'delta_reason_required'
-    (ruling LIS-R9 (a)). No autoverification (LIS-R8)."""
+    (ruling LIS-R9 (a)). No autoverification (LIS-R8).
+
+    A result flagged critical against an approved limit raises its critical
+    in the same transaction (preliminary, ruling LIS-R4 (a)), and after the
+    commit it is posted to the patient's case room; the answer's 'criticals'
+    says, for each, whether the ward was told there, why not, and what it
+    told them ('raised', or 'changed' / 'corrected' for a result sent back
+    to the bench after its critical was told and validated again with a
+    different value)."""
     _require_result_permission(actor)
     entries = _batch(results)
     actor_id = actor["id"]
+    raised: list[str] = []
     with db_session(immediate=True) as conn:
         if not _tables_present(conn):
             raise LabResultError("not_found", "Result not found", status=404)
@@ -1434,8 +1496,23 @@ def technically_validate(results: Any, *, actor: dict, dept: Optional[str] = Non
                              "delta_reason": current.get("delta_ack_reason") if flag else None},
                    request_meta=request_meta)
             validated.append(rid)
-        return {"validated": len(validated),
-                "results": [_result_row(conn, rid) for rid in validated]}
+            # lis-15, ruling LIS-R4 (a): a critical value is communicated at
+            # technical validation, marked preliminary, inside this
+            # transaction (so an audit failure raises nothing either). Asked
+            # for every result, critical or not: a result sent back to the
+            # bench after its critical was told, and changed, must tell the
+            # ward the value it was given has changed.
+            nid = lcs.raise_for_result_in_txn(
+                conn, current, actor=actor, preliminary=True, now=now,
+                trigger="tech_validated", request_meta=request_meta)
+            if nid:
+                raised.append(nid)
+        out = {"validated": len(validated),
+               "results": [_result_row(conn, rid) for rid in validated]}
+    # After the commit: post each critical to its case room. Never raises; a
+    # failed post leaves the critical open and due at once.
+    out["criticals"] = lcs.deliver_all(raised)
+    return out
 
 
 def _people_on(conn, current: dict) -> set[str]:
@@ -1459,13 +1536,15 @@ def _observation_number(current: dict) -> Optional[float]:
     return float(Decimal(int(current["value_milli"])) / Decimal(1000))
 
 
-def _release_in_txn(conn, current: dict, item: dict, specimen: dict, *, actor: dict,
-                    now: str, one_person: bool, request_meta: Optional[dict]) -> int:
-    """Release one technically validated result on the caller's transaction:
-    the observations row, the result and its test to released, the result
-    event and the audit row. Returns the observation id."""
+def _write_observation(conn, current: dict, item: dict, specimen: dict, *, status: str,
+                       now: str) -> int:
+    """The chart's copy of one laboratory result: one observations row on the
+    caller's transaction, observed at the sample's collection instant in
+    canonical UTC, recorded now, linked to the order, the accession and the
+    lab_results row. `status` is 'final' for a release and 'corrected' for
+    an amendment. The one observations writer for the laboratory's own
+    results. Returns the observation id."""
     rid = int(current["id"])
-    actor_id = actor["id"]
     test = conn.execute("SELECT code, code_system, name FROM lab_tests WHERE id = ?",
                         (current["test_id"],)).fetchone()
     code_system, _, code = str(current["test_id"]).partition(":")
@@ -1489,9 +1568,20 @@ def _release_in_txn(conn, current: dict, item: dict, specimen: dict, *, actor: d
          test["code_system"], test["name"], current.get("value_text"),
          _observation_number(current), current.get("unit"),
          current.get("reference_range_text"), current.get("abnormal_flag") or None,
-         RELEASED_OBSERVATION_STATUS, observed_at, now, panel_name, specimen["id"], now,
+         status, observed_at, now, panel_name, specimen["id"], now,
          current["order_id"], specimen["id"], rid))
-    observation_id = int(cur.lastrowid)
+    return int(cur.lastrowid)
+
+
+def _release_in_txn(conn, current: dict, item: dict, specimen: dict, *, actor: dict,
+                    now: str, one_person: bool, request_meta: Optional[dict]) -> int:
+    """Release one technically validated result on the caller's transaction:
+    the observations row, the result and its test to released, the result
+    event and the audit row. Returns the observation id."""
+    rid = int(current["id"])
+    actor_id = actor["id"]
+    observation_id = _write_observation(conn, current, item, specimen,
+                                        status=RELEASED_OBSERVATION_STATUS, now=now)
     moved = conn.execute(
         """UPDATE lab_results SET status = 'released', released_by = ?, released_at = ?,
                                   observation_id = ?
@@ -1583,6 +1673,7 @@ def authorise_and_release(specimen_id: Any, results: Any, *, actor: dict,
         released: list[int] = []
         observations: list[int] = []
         orders: list[str] = []
+        raised: list[str] = []
         one_person_count = 0
         for rid, expected in entries:
             current = _live_result(conn, rid, dept)
@@ -1608,6 +1699,15 @@ def authorise_and_release(specimen_id: Any, results: Any, *, actor: dict,
             released.append(rid)
             if item["order_id"] not in orders:
                 orders.append(item["order_id"])
+            # lis-15: a critical normally went out at technical validation. One
+            # that did not (validated before the laboratory raised criticals)
+            # goes out now, authorised, and so does a change no validation
+            # told. Never a second one for the value already told.
+            nid = lcs.raise_for_result_in_txn(
+                conn, current, actor=actor, preliminary=False, now=now,
+                trigger="released", request_meta=request_meta)
+            if nid:
+                raised.append(nid)
         progress = los.sync_specimen_progress(conn, accession, actor_id=actor_id,
                                               actor_role=actor.get("role"), now=now,
                                               detail="Results reported.")
@@ -1625,6 +1725,7 @@ def authorise_and_release(specimen_id: Any, results: Any, *, actor: dict,
                "observation_ids": observations,
                "orders": order_outcomes,
                "one_person": one_person_count}
+    out["criticals"] = lcs.deliver_all(raised)
     # Released results close open work; a draining module may now be finished.
     lab_module.refresh_drain_state()
     return out
@@ -1848,4 +1949,696 @@ def validation_queues(conn, *, actor: dict, dept: Optional[str],
         "authorisation": _grouped(waiting, sign_entries),
         "can_authorise": holds_authorise,
         "require_distinct_authoriser": distinct,
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Amended and withdrawn results (lis-13)
+# ════════════════════════════════════════════════════════════════════════════
+
+def _reported(conn, rid: int, dept: Optional[str]) -> tuple[dict, dict, dict]:
+    """The released result, its test and its sample, for an amendment or a
+    withdrawal. Refused: out of scope (404), a result already amended or
+    withdrawn, one not yet reported (change it on the bench instead), a test
+    no longer reported, a sample with no readable collection time."""
+    current = _live_result(conn, rid, dept)
+    status = current["status"]
+    if status == "superseded":
+        raise LabResultError("already_amended",
+                             "This result has already been amended. Reload to see the current "
+                             "version.", result_id=rid,
+                             current_result_id=current.get("superseded_by_result_id"))
+    if status == "withdrawn":
+        raise LabResultError("withdrawn", "This result has been withdrawn.", result_id=rid)
+    if status != "released":
+        raise LabResultError("not_released",
+                             "This result has not been reported yet. Change it on the bench, "
+                             "or send it back, instead.", result_id=rid, result_status=status)
+    item = _item_for_entry(conn, current["order_item_id"])
+    if item["item_status"] != "released":
+        raise LabResultError("not_live", "This result is no longer current.", result_id=rid,
+                             item_status=item["item_status"])
+    specimen = conn.execute(
+        "SELECT id, patient_id, status, collected_at FROM lab_specimens WHERE id = ?",
+        (current["specimen_id"],)).fetchone()
+    if specimen is None or not specimen["collected_at"]:
+        raise LabResultError("no_collection_time",
+                             "This sample has no collection time, so the result cannot be "
+                             "placed on the chart.")
+    try:
+        to_utc_iso(specimen["collected_at"])
+    except ValueError:
+        raise LabResultError("no_collection_time",
+                             "This sample's collection time cannot be read, so the result "
+                             "cannot be placed on the chart.")
+    return current, item, dict(specimen)
+
+
+def _clean_optional_reason(value: Any) -> Optional[str]:
+    text = re.sub(r"\s+", " ", str(value if value is not None else "")).strip()
+    if len(text) > REASON_MAX:
+        raise LabResultError("too_long", f"A reason is at most {REASON_MAX} characters.",
+                             status=422)
+    return text or None
+
+
+def _json_dict(raw: Any) -> dict:
+    try:
+        value = json.loads(raw) if isinstance(raw, str) else (raw or {})
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _pending_proposal(conn, rid: int) -> Optional[dict]:
+    """The amendment waiting for a second signatory on this result, or None.
+    Only the latest proposal can be waiting, and a later cancellation (or the
+    result no longer being the reported one) means none is."""
+    row = conn.execute(
+        """SELECT e.id, e.actor, e.occurred_at, e.after_json, u.name AS actor_name
+           FROM lab_result_events e LEFT JOIN users u ON u.id = e.actor
+           WHERE e.result_id = ? AND e.event_type = ?
+           ORDER BY e.id DESC LIMIT 1""", (rid, _PROPOSED_EVENT)).fetchone()
+    if row is None:
+        return None
+    if conn.execute("SELECT 1 FROM lab_result_events WHERE result_id = ? AND event_type = ? "
+                    "AND id > ?", (rid, _CANCELLED_EVENT, row["id"])).fetchone() is not None:
+        return None
+    status = conn.execute("SELECT status FROM lab_results WHERE id = ?", (rid,)).fetchone()
+    if status is None or status[0] != "released":
+        return None
+    after = _json_dict(row["after_json"])
+    return {"proposal_id": int(row["id"]), "proposed_by": row["actor"],
+            "proposed_by_name": row["actor_name"], "proposed_at": row["occurred_at"],
+            "value": after.get("value"), "value_text": after.get("value_text"),
+            "unit": after.get("unit"), "flag_text": after.get("flag_text"),
+            "comment": after.get("comment"), "reason": after.get("reason"),
+            "delta_reason": after.get("delta_reason")}
+
+
+def _proposal_view(pending: Optional[dict], *, actor: dict) -> Optional[dict]:
+    if pending is None:
+        return None
+    actor_id = (actor or {}).get("id")
+    holds = has_permission((actor or {}).get("role", ""), LAB_AUTHORISE)
+    mine = bool(actor_id) and actor_id == pending["proposed_by"]
+    view = {k: pending[k] for k in ("proposal_id", "proposed_by_name", "proposed_at",
+                                    "value_text", "unit", "flag_text", "comment", "reason",
+                                    "delta_reason")}
+    view["you_proposed"] = mine
+    view["may_confirm"] = holds and not (mine and distinct_authoriser_required())
+    return view
+
+
+def _flag_words(fields: dict, result_type: Optional[str]) -> str:
+    return flag_text({**fields, "result_type": result_type or "numeric"})
+
+
+def _apply_amendment(conn, current: dict, item: dict, specimen: dict, *, value: Any,
+                     comment: Optional[str], reason: str, delta_reason: Optional[str],
+                     entered_by: str, actor: dict, now: str, one_person: bool,
+                     proposal_id: Optional[int], request_meta: Optional[dict]) -> dict:
+    """Replace a reported result with its amended version, on the caller's
+    write transaction (see the module notes). Returns {result_id,
+    observation_id, superseded_observation_id, raised, notice}."""
+    rid = int(current["id"])
+    fields = _value_fields(conn, item, value)
+    delta_flag, delta = _delta_for(conn, item, fields)
+    if delta_flag and not delta_reason:
+        raise LabResultError(
+            "delta_reason_required",
+            f"{_test_name(item)}: {delta['note'] if delta else 'the amended value is delta-flagged.'} "
+            "Give a reason for the delta flag with the amendment. Nothing was changed.",
+            delta=delta)
+    version = int(current.get("version") or 1) + 1
+    actor_id = actor["id"]
+    moved = conn.execute(
+        "UPDATE lab_results SET status = 'superseded' WHERE id = ? AND status = 'released'",
+        (rid,))
+    if moved.rowcount != 1:
+        raise LabResultError("not_live", "This result is no longer current.", result_id=rid)
+    cur = conn.execute(
+        """INSERT INTO lab_results
+           (order_item_id, order_id, specimen_id, patient_id, test_id, version,
+            value_milli, comparator, value_text, unit, decimal_places, comment,
+            reference_range_id, reference_range_text, abnormal_flag,
+            critical_limit_id, is_critical, delta_flag, delta_json,
+            delta_ack_by, delta_ack_at, delta_ack_reason,
+            entry_method, entered_by, entered_at, tech_validated_by, tech_validated_at,
+            released_by, released_at, status, amend_reason, source)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                   'manual', ?, ?, ?, ?, ?, ?, 'released', ?, 'lis_manual')""",
+        (current["order_item_id"], current["order_id"], current["specimen_id"],
+         current["patient_id"], current["test_id"], version,
+         fields["value_milli"], fields["comparator"], fields["value_text"], fields["unit"],
+         fields["decimal_places"], comment, fields["reference_range_id"],
+         fields["reference_range_text"], fields["abnormal_flag"], fields["critical_limit_id"],
+         fields["is_critical"], delta_flag, json.dumps(delta, default=str) if delta else None,
+         entered_by if delta_flag else None, now if delta_flag else None,
+         delta_reason if delta_flag else None,
+         entered_by, now, entered_by, now, actor_id, now, reason))
+    new_id = int(cur.lastrowid)
+    conn.execute("UPDATE lab_results SET superseded_by_result_id = ? WHERE id = ?",
+                 (new_id, rid))
+    new_row = dict(conn.execute("SELECT * FROM lab_results WHERE id = ?", (new_id,)).fetchone())
+    observation_id = _write_observation(conn, new_row, item, specimen,
+                                        status=AMENDED_OBSERVATION_STATUS, now=now)
+    conn.execute("UPDATE lab_results SET observation_id = ? WHERE id = ?",
+                 (observation_id, new_id))
+    old_observation = current.get("observation_id")
+    if old_observation:
+        replaced = conn.execute(
+            "UPDATE observations SET status = ?, superseded_by = ? "
+            "WHERE id = ? AND superseded_by IS NULL",
+            (SUPERSEDED_OBSERVATION_STATUS, observation_id, int(old_observation)))
+        if replaced.rowcount != 1:
+            raise LabResultError("not_live",
+                                 "The reported value on the chart has already been replaced. "
+                                 "Nothing was amended.", result_id=rid)
+    result_type = item.get("result_type")
+    before = {**_snapshot(current), "version": current.get("version"),
+              "flag_text": _flag_words(current, result_type)}
+    after = {**_snapshot({**fields, "comment": comment}), "version": version,
+             "flag_text": _flag_words(fields, result_type)}
+    _event(conn, rid, current["patient_id"], "superseded", actor_id, now,
+           before={"status": "released"},
+           after={"status": "superseded", "superseded_by_result_id": new_id, "reason": reason,
+                  "observation_id": old_observation})
+    _event(conn, new_id, current["patient_id"], "amended", actor_id, now, before=before,
+           after={**after, "reason": reason, "delta_reason": delta_reason,
+                  "previous_result_id": rid, "entered_by": entered_by,
+                  "one_person": one_person, "proposal_id": proposal_id,
+                  "observation_id": observation_id})
+    los.record_order_note_in_conn(
+        conn, current["order_id"], actor_id=actor_id,
+        detail=f"Laboratory result amended: {_test_name(item)} (version {version}). "
+               f"Reason: {reason}")
+    _audit(conn, action="lab_result_amended",
+           summary=f"Reported laboratory result amended: {_test_name(item)}",
+           actor=actor, result_id=new_id, patient_id=current["patient_id"],
+           metadata={"previous_result_id": rid, "version": version, "before": before,
+                     "after": after, "reason": reason, "delta_reason": delta_reason,
+                     "order_id": current["order_id"], "specimen_id": current["specimen_id"],
+                     "observation_id": observation_id,
+                     "superseded_observation_id": old_observation,
+                     "entered_by": entered_by, "one_person": one_person,
+                     "distinct_authoriser_required": distinct_authoriser_required(),
+                     "proposal_id": proposal_id},
+           request_meta=request_meta)
+    raised: list[str] = []
+    # The new version's value goes through the critical raised for any
+    # version it replaces (the chain), like a value changed on the bench:
+    # an open one takes the change and posts it, a closed one whose value
+    # no longer holds is reopened, and a new critical value with none open
+    # raises one naming the value reported earlier.
+    nid = lcs.raise_for_result_in_txn(conn, new_row, actor=actor, preliminary=False, now=now,
+                                      trigger="amended", request_meta=request_meta)
+    if nid:
+        raised.append(nid)
+    followup = lcs.open_count_for_result(conn, new_id) > 0
+    patient = conn.execute("SELECT name, mrn FROM patients WHERE id = ?",
+                           (current["patient_id"],)).fetchone()
+    by = conn.execute("SELECT name FROM users WHERE id = ?", (actor_id,)).fetchone()
+    notice = {"kind": "amended", "result_id": new_id, "patient_id": current["patient_id"],
+              "actor_id": actor_id,
+              "patient_name": patient["name"] if patient else None,
+              "mrn": patient["mrn"] if patient else None, "test": _test_name(item),
+              "before": _with_unit(_seen_text(current.get("value_text")), current.get("unit")),
+              "after": _with_unit(_seen_text(fields.get("value_text")), fields.get("unit")),
+              "flag_before": before["flag_text"], "flag_after": after["flag_text"],
+              "was_critical": bool(int(current.get("is_critical") or 0)),
+              "now_critical": bool(int(fields.get("is_critical") or 0)),
+              "critical_followup": followup,
+              "reason": reason, "by_name": by[0] if by else None, "at": now}
+    return {"result_id": new_id, "observation_id": observation_id,
+            "superseded_observation_id": old_observation, "raised": raised, "notice": notice}
+
+
+def _amendment_answer(applied: dict, *, rid: int) -> dict:
+    """What an applied amendment answers, after its commit: the new and the
+    replaced result, the ward notice and any critical's delivery."""
+    with db_session() as conn:
+        result = _result_row(conn, applied["result_id"])
+        previous = _result_row(conn, rid)
+    return {"amended": True, "proposed": False, "result": result, "previous": previous,
+            "observation_id": applied["observation_id"],
+            "superseded_observation_id": applied["superseded_observation_id"],
+            "ward_notice": post_result_notice(applied["notice"]),
+            "criticals": lcs.deliver_all(applied["raised"])}
+
+
+def amend_result(result_id: Any, *, value: Any, reason: Any, expected: Any,
+                 comment: Any = None, delta_reason: Any = None, actor: dict,
+                 dept: Optional[str] = None, request_meta: Optional[dict] = None) -> dict:
+    """Amend a reported result (lab.authorise), with a reason, in ONE
+    immediate transaction.
+
+    While two different people are required (LIS-R5, the default) this
+    PROPOSES the amendment: an 'amendment_proposed' result event and a
+    clinical_access audit row ('lab_result_amendment_proposed'); the chart
+    keeps the reported value until a different signatory confirms it
+    (confirm_amendment). With the setting off it is applied at once
+    (_apply_amendment), recorded as one person doing every step.
+
+    `expected` is what the screen showed of the reported result; a result
+    changed since is refused 409 'result_changed'. The new value is checked
+    at the test's precision and flagged against the range and the critical
+    limit approved now. A value that is delta-flagged needs `delta_reason`
+    (409 'delta_reason_required', with the check). The same value and
+    comment as reported is refused 422 'nothing_to_amend'. One proposal at a
+    time (409 'amendment_pending')."""
+    _require_authorise_permission(actor)
+    text = _clean_reason(reason, words="Say why the reported result is being amended.")
+    comment = _clean_comment(comment)
+    delta_text = _clean_optional_reason(delta_reason)
+    rid = _result_id(result_id)
+    actor_id = actor["id"]
+    distinct = distinct_authoriser_required()
+    with db_session(immediate=True) as conn:
+        if not _tables_present(conn):
+            raise LabResultError("not_found", "Result not found", status=404)
+        current, item, specimen = _reported(conn, rid, dept)
+        _refuse_if_changed(conn, current, expected, with_current=False)
+        if _pending_proposal(conn, rid) is not None:
+            raise LabResultError("amendment_pending",
+                                 "An amendment to this result is already waiting for a second "
+                                 "signatory. Confirm or cancel it first.", result_id=rid)
+        fields = _value_fields(conn, item, value)
+        if (_seen_text(fields["value_text"]) == _seen_text(current.get("value_text"))
+                and _seen_text(comment) == _seen_text(current.get("comment"))):
+            raise LabResultError("nothing_to_amend",
+                                 "The amended result is the same as the reported one. Nothing "
+                                 "was changed.", status=422)
+        now = utc_iso_now()
+        if not distinct:
+            applied = _apply_amendment(
+                conn, current, item, specimen, value=value, comment=comment, reason=text,
+                delta_reason=delta_text, entered_by=actor_id, actor=actor, now=now,
+                one_person=True, proposal_id=None, request_meta=request_meta)
+        else:
+            delta_flag, delta = _delta_for(conn, item, fields)
+            if delta_flag and not delta_text:
+                raise LabResultError(
+                    "delta_reason_required",
+                    f"{_test_name(item)}: {delta['note'] if delta else ''} Give a reason for "
+                    "the delta flag with the amendment. Nothing was changed.", delta=delta)
+            proposal = {"value": str(value), "value_text": fields["value_text"],
+                        "unit": fields.get("unit"),
+                        "flag_text": _flag_words(fields, item.get("result_type")),
+                        "abnormal_flag": fields["abnormal_flag"],
+                        "is_critical": fields["is_critical"], "comment": comment,
+                        "reason": text, "delta_reason": delta_text if delta_flag else None}
+            _event(conn, rid, current["patient_id"], _PROPOSED_EVENT, actor_id, now,
+                   before=_snapshot(current), after=proposal)
+            _audit(conn, action="lab_result_amendment_proposed",
+                   summary=(f"Amendment to a reported laboratory result proposed, waiting for a "
+                            f"second signatory: {_test_name(item)}"),
+                   actor=actor, result_id=rid, patient_id=current["patient_id"],
+                   metadata={"before": _snapshot(current), "proposal": proposal},
+                   request_meta=request_meta)
+            return {"amended": False, "proposed": True, "result": _result_row(conn, rid),
+                    "proposal": _proposal_view(_pending_proposal(conn, rid), actor=actor)}
+    return _amendment_answer(applied, rid=rid)
+
+
+def confirm_amendment(result_id: Any, *, proposal_id: Any, expected: Any, proposed: Any,
+                      actor: dict, dept: Optional[str] = None,
+                      request_meta: Optional[dict] = None) -> dict:
+    """A second signatory confirms a proposed amendment, which applies it in
+    ONE immediate transaction (_apply_amendment): entered by the proposer,
+    released by the confirmer. While two different people are required the
+    proposer cannot confirm (403 'second_person_required'). `expected` is
+    what the screen showed of the reported result and `proposed` the
+    proposal's value_text and comment; either changed since is refused 409.
+    The value is decided again now (precision, range, critical limit, delta);
+    a newly delta-flagged value with no reason on the proposal is refused,
+    and the proposal must be cancelled and made again."""
+    _require_authorise_permission(actor)
+    rid = _result_id(result_id)
+    try:
+        pid = int(proposal_id)
+    except (TypeError, ValueError):
+        raise LabResultError("no_pending_amendment", "This amendment is no longer waiting.",
+                             status=409)
+    seen = proposed if isinstance(proposed, dict) else {}
+    actor_id = actor["id"]
+    with db_session(immediate=True) as conn:
+        if not _tables_present(conn):
+            raise LabResultError("not_found", "Result not found", status=404)
+        current, item, specimen = _reported(conn, rid, dept)
+        _refuse_if_changed(conn, current, expected, with_current=False)
+        pending = _pending_proposal(conn, rid)
+        if pending is None or pending["proposal_id"] != pid:
+            raise LabResultError("no_pending_amendment",
+                                 "This amendment is no longer waiting. Reload the reported "
+                                 "results.", result_id=rid)
+        if (_seen_text(seen.get("value_text")) != _seen_text(pending.get("value_text"))
+                or _seen_text(seen.get("comment")) != _seen_text(pending.get("comment"))):
+            raise LabResultError("amendment_changed",
+                                 "This amendment has changed since your screen loaded. "
+                                 "Nothing was confirmed.", result_id=rid)
+        mine = actor_id == pending["proposed_by"]
+        if mine and distinct_authoriser_required():
+            raise LabResultError("second_person_required",
+                                 "You proposed this amendment. This site requires a second "
+                                 "signatory to confirm it. Nothing was changed.",
+                                 status=403, result_id=rid)
+        now = utc_iso_now()
+        applied = _apply_amendment(
+            conn, current, item, specimen, value=pending["value"], comment=pending["comment"],
+            reason=pending["reason"] or "", delta_reason=pending["delta_reason"],
+            entered_by=pending["proposed_by"], actor=actor, now=now, one_person=mine,
+            proposal_id=pid, request_meta=request_meta)
+    return _amendment_answer(applied, rid=rid)
+
+
+def cancel_amendment(result_id: Any, *, proposal_id: Any, reason: Any, actor: dict,
+                     dept: Optional[str] = None, request_meta: Optional[dict] = None) -> dict:
+    """Cancel a proposed amendment (lab.authorise, either signatory), with a
+    reason, in ONE immediate transaction: an 'amendment_cancelled' result
+    event and a clinical_access audit row. The reported result is unchanged."""
+    _require_authorise_permission(actor)
+    text = _clean_reason(reason, words="Say why the amendment is cancelled.")
+    rid = _result_id(result_id)
+    try:
+        pid = int(proposal_id)
+    except (TypeError, ValueError):
+        raise LabResultError("no_pending_amendment", "This amendment is no longer waiting.")
+    actor_id = actor["id"]
+    with db_session(immediate=True) as conn:
+        if not _tables_present(conn):
+            raise LabResultError("not_found", "Result not found", status=404)
+        current = _live_result(conn, rid, dept)
+        pending = _pending_proposal(conn, rid)
+        if pending is None or pending["proposal_id"] != pid:
+            raise LabResultError("no_pending_amendment",
+                                 "This amendment is no longer waiting. Reload the reported "
+                                 "results.", result_id=rid)
+        now = utc_iso_now()
+        _event(conn, rid, current["patient_id"], _CANCELLED_EVENT, actor_id, now,
+               after={"proposal_id": pid, "reason": text})
+        _audit(conn, action="lab_result_amendment_cancelled",
+               summary="Proposed amendment to a reported laboratory result cancelled",
+               actor=actor, result_id=rid, patient_id=current["patient_id"],
+               metadata={"proposal_id": pid, "reason": text,
+                         "proposed_by": pending["proposed_by"]},
+               request_meta=request_meta)
+        return {"result": _result_row(conn, rid), "cancelled": True}
+
+
+def withdraw_result(result_id: Any, *, reason: Any, expected: Any, wrong_patient: bool = False,
+                    actor: dict, dept: Optional[str] = None,
+                    request_meta: Optional[dict] = None) -> dict:
+    """Withdraw a reported result entered in error (lab.authorise), with a
+    reason, in ONE immediate transaction: the result to 'withdrawn', its
+    observation to 'entered-in-error' (gone from every chart reader), its
+    test cancelled with the reason, a 'withdrawn' result event, an
+    order_events note and a clinical_access audit row
+    ('lab_result_withdrawn'). The order is settled by
+    lab_order_service.settle_after_withdrawal: a resulted order whose only
+    reported test this was stays resulted, with an exception for the
+    laboratory. A proposed amendment waiting on it is cancelled with it. A
+    critical raised for it, or for a version it replaced, is never closed by
+    it and records it (lab_critical_service.record_withdrawal_in_txn, in the
+    same transaction): an open one records the withdrawal and stays open, or
+    with none open the latest closed one, whose value the ward confirmed and
+    may have acted on, is reopened at tier 1. Each is posted to the case room
+    after commit (`criticals` in the answer), and the laboratory phones the
+    ward and logs the call with a read-back. `open_criticals` counts the
+    criticals now open for any version of the result.
+
+    One signatory withdraws in one step whatever the two-person setting:
+    removing a value entered in error must not wait for a second signatory.
+    It is recorded as one person. With `wrong_patient` and ORB_NABH on, the
+    answer carries a prompt to report a patient identification incident."""
+    _require_authorise_permission(actor)
+    text = _clean_reason(reason, words="Say why the reported result is withdrawn.")
+    rid = _result_id(result_id)
+    actor_id = actor["id"]
+    with db_session(immediate=True) as conn:
+        if not _tables_present(conn):
+            raise LabResultError("not_found", "Result not found", status=404)
+        current, item, specimen = _reported(conn, rid, dept)
+        _refuse_if_changed(conn, current, expected, with_current=False)
+        now = utc_iso_now()
+        pending = _pending_proposal(conn, rid)
+        if pending is not None:
+            _event(conn, rid, current["patient_id"], _CANCELLED_EVENT, actor_id, now,
+                   after={"proposal_id": pending["proposal_id"],
+                          "reason": "The reported result was withdrawn"})
+        moved = conn.execute(
+            "UPDATE lab_results SET status = 'withdrawn', amend_reason = ? "
+            "WHERE id = ? AND status = 'released'", (text, rid))
+        if moved.rowcount != 1:
+            raise LabResultError("not_live", "This result is no longer current.", result_id=rid)
+        observation = current.get("observation_id")
+        if observation:
+            gone = conn.execute(
+                "UPDATE observations SET status = ? WHERE id = ? AND superseded_by IS NULL",
+                (WITHDRAWN_OBSERVATION_STATUS, int(observation)))
+            if gone.rowcount != 1:
+                raise LabResultError("not_live",
+                                     "The reported value on the chart has already been "
+                                     "replaced. Nothing was withdrawn.", result_id=rid)
+        cancelled = conn.execute(
+            "UPDATE lab_order_items SET status = 'cancelled', cancelled_reason = ?, "
+            "cancelled_by = ?, updated_at = ? WHERE id = ? AND status = 'released'",
+            (f"Result withdrawn: {text}"[:500], actor_id, now, current["order_item_id"]))
+        if cancelled.rowcount != 1:
+            raise LabResultError("not_live", "This result is no longer current.", result_id=rid)
+        _event(conn, rid, current["patient_id"], "withdrawn", actor_id, now,
+               before={**_snapshot(current), "status": "released"},
+               after={"status": "withdrawn", "reason": text, "wrong_patient": bool(wrong_patient),
+                      "observation_id": observation, "one_person": True})
+        order = los.settle_after_withdrawal(conn, current["order_id"], actor_id=actor_id,
+                                            test_name=_test_name(item))
+        los.record_order_note_in_conn(
+            conn, current["order_id"], actor_id=actor_id,
+            detail=f"Laboratory result withdrawn: {_test_name(item)}. Reason: {text}")
+        withdrawn_row = dict(conn.execute("SELECT * FROM lab_results WHERE id = ?",
+                                          (rid,)).fetchone())
+        recorded = lcs.record_withdrawal_in_txn(conn, withdrawn_row, actor=actor, now=now,
+                                                request_meta=request_meta)
+        open_criticals = lcs.open_count_for_result(conn, rid)
+        _audit(conn, action="lab_result_withdrawn",
+               summary=f"Reported laboratory result withdrawn: {_test_name(item)}",
+               actor=actor, result_id=rid, patient_id=current["patient_id"],
+               metadata={"reason": text, "wrong_patient": bool(wrong_patient),
+                         "before": _snapshot(current), "order_id": current["order_id"],
+                         "order_status": order.get("status"),
+                         "order_conflict": bool(order.get("conflict")),
+                         "observation_id": observation, "one_person": True,
+                         "open_criticals": open_criticals,
+                         "critical_notifications": recorded},
+               request_meta=request_meta)
+        incident = None
+        if wrong_patient and bool(getattr(config, "NABH_ENABLED", False)):
+            incident = {"incident_type": "patient_identification",
+                        "message": WRONG_PATIENT_INCIDENT_TEXT}
+        patient = conn.execute("SELECT name, mrn FROM patients WHERE id = ?",
+                               (current["patient_id"],)).fetchone()
+        by = conn.execute("SELECT name FROM users WHERE id = ?", (actor_id,)).fetchone()
+        notice = {"kind": "withdrawn", "result_id": rid, "patient_id": current["patient_id"],
+                  "actor_id": actor_id,
+                  "patient_name": patient["name"] if patient else None,
+                  "mrn": patient["mrn"] if patient else None, "test": _test_name(item),
+                  "before": _with_unit(_seen_text(current.get("value_text")), current.get("unit")),
+                  "collected_at": specimen.get("collected_at"),
+                  "wrong_patient": bool(wrong_patient),
+                  "was_critical": bool(int(current.get("is_critical") or 0)) or bool(recorded),
+                  "critical_followup": open_criticals > 0,
+                  "reason": text, "by_name": by[0] if by else None, "at": now}
+        out = {"result": _result_row(conn, rid),
+               "order": {"id": current["order_id"], "status": order.get("status"),
+                         "conflict": bool(order.get("conflict"))},
+               "open_criticals": open_criticals, "incident_prompt": incident}
+    out["ward_notice"] = post_result_notice(notice)
+    out["criticals"] = lcs.deliver_all(recorded)
+    lab_module.refresh_drain_state()
+    return out
+
+
+# ── The ward's notice ───────────────────────────────────────────────────────
+
+def result_notice_text(notice: dict) -> str:
+    """The plain words posted to the patient's case room for an amended or
+    withdrawn result. The laboratory's phone call about a critical value is
+    promised only while a critical is open to track it on Critical results
+    (`critical_followup`, true unless the step said otherwise). Pure."""
+    from services.hospital_time import hospital_stamp
+
+    who = notice.get("patient_name") or "this patient"
+    if notice.get("mrn"):
+        who += f", UHID {notice['mrn']}"
+    when = hospital_stamp(notice.get("at")) if notice.get("at") else ""
+    by = notice.get("by_name")
+    signed = (f" {'Amended' if notice.get('kind') == 'amended' else 'Withdrawn'} by {by}"
+              + (f" at {when}" if when else "") + ".") if by else ""
+    if notice.get("kind") == "amended":
+        text = (f"The laboratory amended a reported result for {who}: {notice.get('test')} was "
+                f"{notice.get('before') or 'blank'}, now {notice.get('after') or 'blank'}.")
+        if notice.get("flag_before") != notice.get("flag_after"):
+            text += f" Flag: {notice.get('flag_before')} before, {notice.get('flag_after')} now."
+        text += f" Reason: {notice.get('reason')}.{signed} The chart shows the new value."
+        if notice.get("was_critical") and not notice.get("now_critical"):
+            text += (" The earlier value was reported as critical; the laboratory will phone "
+                     "to confirm the change." if notice.get("critical_followup", True)
+                     else " The earlier value was reported as critical.")
+        return text
+    collected = hospital_stamp(notice.get("collected_at")) if notice.get("collected_at") else ""
+    text = (f"The laboratory withdrew a reported result for {who}: {notice.get('test')} "
+            f"{notice.get('before') or ''}".rstrip()
+            + (f", collected {collected}" if collected else "") + ".")
+    text += (" It belonged to another patient." if notice.get("wrong_patient")
+             else " It was entered in error.")
+    text += f" It is no longer on the chart. Reason: {notice.get('reason')}.{signed}"
+    if notice.get("was_critical"):
+        text += (" It had been reported as critical; the laboratory will phone to confirm "
+                 "the withdrawal." if notice.get("critical_followup", True)
+                 else " It had been reported as critical.")
+    return text
+
+
+def _record_result_notice_failure(result_id: int, patient_id: str, reason: str) -> None:
+    try:
+        with db_session() as conn:
+            _event(conn, result_id, patient_id, "ward_notice_failed", None, utc_iso_now(),
+                   after={"reason": reason})
+    except Exception:
+        logger.exception("Could not record the failed result notice for result %s", result_id)
+
+
+def post_result_notice(notice: dict) -> dict:
+    """Tell the ward, after an amendment or a withdrawal has committed, with a
+    plain message in the patient's case room ('Laboratory', type 'text',
+    is_bot 0, source 'lab'), pushed live as 'message:new'. NEVER raises: the
+    change already stands, so a failure is logged, recorded as a
+    'ward_notice_failed' result event and answered {posted: False, reason}.
+    No case room is reason 'no_case_room'; a discharged patient is
+    'case_room_closed' and nothing is posted, because no clinician would see
+    it."""
+    from services import case_room_alerts
+
+    result_id = int(notice["result_id"])
+    patient_id = notice.get("patient_id")
+    # The signatory's own account, shown as 'Laboratory' (messages.sender_id
+    # must name a users row).
+    sender = notice.get("actor_id")
+    try:
+        with db_session() as conn:
+            row = conn.execute("SELECT status FROM patients WHERE id = ?",
+                               (patient_id,)).fetchone()
+            if row is not None and row["status"] == "discharged":
+                _event(conn, result_id, patient_id, "ward_notice_failed", None, utc_iso_now(),
+                       after={"reason": "case_room_closed"})
+                return {"posted": False, "reason": "case_room_closed"}
+            logged, message_id, channel_id, msg_data = case_room_alerts.persist_case_room_alert(
+                patient_id, result_notice_text(notice), sender_id=sender,
+                sender_name=lcs.SENDER_NAME, sender_role=lcs.SENDER_ROLE, is_bot=False,
+                source=lcs.MESSAGE_SOURCE, db=conn, message_type="text")
+            if not logged:
+                _event(conn, result_id, patient_id, "ward_notice_failed", None, utc_iso_now(),
+                       after={"reason": "no_case_room"})
+                return {"posted": False, "reason": "no_case_room"}
+            _event(conn, result_id, patient_id, "ward_notified", sender, utc_iso_now(),
+                   after={"message_id": message_id, "channel_id": channel_id})
+    except Exception:
+        logger.exception("Laboratory notice for result %s could not be posted; the change "
+                         "stands", result_id)
+        _record_result_notice_failure(result_id, patient_id, "failed")
+        return {"posted": False, "reason": "failed"}
+    case_room_alerts.push_message_new(msg_data, channel_id,
+                                      what=f"laboratory result notice {result_id}")
+    return {"posted": True, "reason": None, "message_id": message_id, "channel_id": channel_id}
+
+
+# ── The reported results of one sample ──────────────────────────────────────
+
+_REPORTED_STATUSES = ("released", "superseded", "withdrawn")
+
+
+def _reported_entry(row: dict) -> dict:
+    entry = {
+        "result_id": row["id"], "version": int(row.get("version") or 1),
+        "status": row["status"], "value_text": row["value_text"],
+        "comparator": row["comparator"], "unit": row["unit"],
+        "abnormal_flag": row["abnormal_flag"] or "", "reference_range_text":
+        row["reference_range_text"], "comment": row["comment"],
+        "is_critical": int(row.get("is_critical") or 0),
+        "critical_limit_text": row.get("critical_limit_text"),
+        "entered_by_name": row.get("entered_by_name"), "entered_at": row.get("entered_at"),
+        "released_by_name": row.get("released_by_name"), "released_at": row.get("released_at"),
+        "amend_reason": row.get("amend_reason"),
+    }
+    entry["flag_text"] = flag_text({**entry, "result_type": row.get("result_type"),
+                                    "reference_range_id": row.get("reference_range_id")})
+    return entry
+
+
+def reported_results(conn, specimen_id: Any, *, actor: dict, dept: Optional[str]) -> dict:
+    """One sample's reported results, for amending or withdrawing them: per
+    test, the reported version, the versions it replaced or the withdrawal,
+    and any amendment waiting for a second signatory. 404 for an unknown or
+    out-of-scope sample; 422 'bad_accession' for a bad check digit. A read:
+    the route audits the patient."""
+    from permissions import patient_in_scope
+
+    try:
+        accession = los.checked_accession(specimen_id)
+    except los.LabOrderError as err:
+        raise LabResultError(err.code, err.message, status=err.status)
+    if not _tables_present(conn):
+        raise LabResultError("not_found", "Specimen not found", status=404)
+    sample = conn.execute(
+        """SELECT s.id, s.patient_id, s.status, s.collected_at, s.received_at,
+                  p.name, p.mrn, p.ward, p.bed, p.status AS patient_status
+           FROM lab_specimens s JOIN patients p ON p.id = s.patient_id
+           WHERE s.id = ?""", (accession,)).fetchone()
+    if sample is None or not patient_in_scope(conn, sample["patient_id"], dept):
+        raise LabResultError("not_found", "Specimen not found", status=404)
+    rows = [dict(r) for r in conn.execute(
+        f"""SELECT r.*, t.name AS test_name, t.short_name AS test_short_name, t.result_type,
+                   cl.display_text AS critical_limit_text, eu.name AS entered_by_name,
+                   ru.name AS released_by_name
+            FROM lab_results r
+            LEFT JOIN lab_tests t ON t.id = r.test_id
+            LEFT JOIN lab_critical_limits cl ON cl.id = r.critical_limit_id
+            LEFT JOIN users eu ON eu.id = r.entered_by
+            LEFT JOIN users ru ON ru.id = r.released_by
+            WHERE r.specimen_id = ? AND r.status IN ({_placeholders(_REPORTED_STATUSES)})
+            ORDER BY r.order_item_id, r.version, r.id""",
+        (accession, *_REPORTED_STATUSES)).fetchall()]
+    tests: list[dict] = []
+    by_item: dict[int, dict] = {}
+    for row in rows:
+        group = by_item.get(row["order_item_id"])
+        if group is None:
+            group = {"item_id": row["order_item_id"], "order_id": row["order_id"],
+                     "test": {"id": row["test_id"], "name": row.get("test_name") or row["test_id"],
+                              "short_name": row.get("test_short_name") or row.get("test_name")
+                              or row["test_id"], "result_type": row.get("result_type") or "numeric"},
+                     "current": None, "history": [], "withdrawn": None, "pending_amendment": None}
+            by_item[row["order_item_id"]] = group
+            tests.append(group)
+        entry = _reported_entry(row)
+        if row["status"] == "released":
+            group["current"] = entry
+            group["pending_amendment"] = _proposal_view(_pending_proposal(conn, int(row["id"])),
+                                                        actor=actor)
+        elif row["status"] == "withdrawn":
+            group["withdrawn"] = entry
+        else:
+            group["history"].append(entry)
+    discharged = sample["patient_status"] == "discharged"
+    return {
+        "specimen": {"id": accession, "status": sample["status"],
+                     "collected_at": sample["collected_at"], "received_at": sample["received_at"],
+                     "patient": {"id": sample["patient_id"], "name": sample["name"],
+                                 "mrn": sample["mrn"],
+                                 "ward": None if discharged else sample["ward"],
+                                 "bed": None if discharged else sample["bed"],
+                                 "discharged": discharged}},
+        "tests": tests,
+        "can_amend": has_permission((actor or {}).get("role", ""), LAB_AUTHORISE),
+        "require_distinct_authoriser": distinct_authoriser_required(),
     }

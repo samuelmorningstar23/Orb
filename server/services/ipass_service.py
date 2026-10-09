@@ -59,6 +59,7 @@ from datetime import datetime, timezone, timedelta, date
 from database import db_session, run_db
 from services.vigil_service import get_vitals_trend, risk_for_row, scoring_enabled
 from services.hospital_time import hospital_stamp
+from services.medorders import held as held_labels
 from services.vital_charting import charted_text
 from services.news2_text import news2_qualifiers
 
@@ -312,8 +313,11 @@ def _get_vitals_window(db, patient_id: str, cutoff_iso: str) -> list[dict]:
 
 
 def _get_active_meds(db, patient_id: str) -> list[dict]:
+    # held_at and hold_reason: a held order keeps its row active, so the
+    # handover says it is on hold (services/medorders/held.py).
     rows = db.execute(
-        """SELECT drug_name, dosage, route, frequency, notes, status, source, verified_by
+        """SELECT drug_name, dosage, route, frequency, notes, status, source, verified_by,
+                  held_at, hold_reason
            FROM medications WHERE patient_id = ? AND status IN ('active','prn')
            ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'prn' THEN 1 ELSE 2 END, started_at DESC""",
         (patient_id,),
@@ -985,6 +989,17 @@ UNVERIFIED_MED_LABEL = "AI-extracted, awaiting pharmacist verification"
 _UNVERIFIED_SOURCES = ("llm_extracted", "agentic")
 
 
+def _held_fields(m: dict) -> dict:
+    """A held order's keys on the handover (medorders-6b): on_hold, hold_label
+    ('on hold since <ward time>: <reason>', for the printed sheet) and the raw
+    held_at and hold_reason (the screen formats the time itself). Nothing for
+    a drug that is not held, so its entry is exactly as before."""
+    if not held_labels.is_held(m):
+        return {}
+    return {"on_hold": True, "hold_label": held_labels.hold_phrase(m),
+            "held_at": m.get("held_at"), "hold_reason": m.get("hold_reason")}
+
+
 def _build_action_list(meds: list[dict], bundles: list[dict], risk: dict | None) -> dict:
     active_meds = [
         {
@@ -994,6 +1009,8 @@ def _build_action_list(meds: list[dict], bundles: list[dict], risk: dict | None)
             "frequency": m.get("frequency"),
             # Handed over like a prescription it is not, unless it says so.
             "unverified": m.get("source") in _UNVERIFIED_SOURCES and not m.get("verified_by"),
+            # Handed over as being given, unless it says it is on hold.
+            **_held_fields(m),
         }
         for m in meds
     ]
@@ -1265,6 +1282,7 @@ def _render_plain_text(sections: dict, patient: dict, generated_at: str) -> str:
                 (f"     - {m.get('drug_name')} {m.get('dosage') or ''} "
                  f"{m.get('route') or ''} {m.get('frequency') or ''}").rstrip()
                 + (f" ({UNVERIFIED_MED_LABEL})" if m.get("unverified") else "")
+                + (f" ({m['hold_label']})" if m.get("hold_label") else "")
             )
     else:
         lines.append("   Active medications: none charted.")

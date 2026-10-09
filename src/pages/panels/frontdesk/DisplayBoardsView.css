@@ -1,0 +1,56 @@
+/* Front Desk, Display boards (opd-9). Flat, tokens only, no opacity. */
+
+.db-view {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.db-form {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  align-items: end;
+}
+
+.db-form .fd-card__title,
+.db-form .fd-hint,
+.db-form .fd-error,
+.db-form__actions {
+  grid-column: 1 / -1;
+}
+
+.db-form__actions,
+.db-key__actions,
+.db-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.db-key {
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--border-focus);
+}
+
+.db-key__link {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.db-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

@@ -1365,6 +1365,12 @@ def receive_transfer(transfer_id: Any, *, lines: Any, actor: Mapping, witness_id
             "UPDATE pharmacy_transfers SET status = ?, received_by = ?, "
             "received_at = CURRENT_TIMESTAMP WHERE id = ?", (new_status, actor_id, tid))
         shortfall = sum(r["shortfall_units"] for r in received)
+        if shortfall and now_controlled:
+            # A short controlled receipt is an NDPS variance (grn-13), raised
+            # in this transaction. Nothing while the register is off.
+            from services import ndps_service
+            ndps_service.record_transit_shortfalls(conn, transfer_id=tid, lines=received,
+                                                   actor_id=actor_id)
         held_units = sum(r["received_units"] for r in received
                          if r["landed_status"] not in (None, "available"))
         _audit(conn, actor, "pharmacy_transfer_received",

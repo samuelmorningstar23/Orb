@@ -71,6 +71,7 @@ from fastapi import HTTPException
 
 from database import db_session
 from services import drug_safety_service, orders_service
+from services.medorders import cpoe
 from services.audit_service import log_audit_event
 from services.medication_safety_gate import (MedicationSafetyBlocked,
                                              enforce_medication_safety)
@@ -928,6 +929,23 @@ def preview_set(
     }
 
 
+def _linked_draft_writer(item: dict, application_id: int, actor_id: str,
+                         actor_role: Optional[str]):
+    """The in-transaction hook that writes a medication item's draft
+    medication order beside its orders row (medorders-7, lifecycle on): the
+    drug, dose, route and frequency the gates just screened, linked to the
+    order and to this application. A draft reaches no ward until a
+    prescriber signs it, and the signature screens it again."""
+    def _write(conn, order: dict) -> None:
+        cpoe.create_linked_draft_in_txn(
+            conn, order, source="order_set", drug_name=item["drug_name"],
+            dose=item["dose"], route=item["route"], frequency=item["frequency"],
+            notes=item.get("note"), actor_id=actor_id, actor_role=actor_role,
+            entry_point=cpoe.ENTRY_ORDER_SET_APPLY, lane=cpoe.LANE_ORDER_SET,
+            order_set_application_id=application_id)
+    return _write
+
+
 def apply_set(
     patient_id: str,
     set_id: str,
@@ -958,10 +976,20 @@ def apply_set(
     The bedside eMAR closes that window because a dose is the last line of
     defence; an order is not administered for minutes to hours, and its own
     administration re-screens. Recorded here rather than papered over.
+
+    WITH ORB_MED_ORDER_LIFECYCLE ON (medorders-7), each medication item's
+    draft is also a draft medication order, written in the same transaction
+    as its orders row (_linked_draft_writer). It reaches the ward only when a
+    prescriber signs it, and the signature screens it again with the
+    signer's role and re-checks the allergy and drug list under its write
+    lock, which closes the window above for those drafts. Lifecycle off:
+    exactly as before.
     """
     s = get_set(set_id)
     patient = require_orderable_patient(patient_id)
     items = resolve_items(set_id, selections)
+    # Read once, so one application never half-links its drafts.
+    lifecycle = cpoe.lifecycle_on()
 
     # Terminology is checked for the WHOLE set before a single order is written.
     # orders_service rejects an unknown code per order, which mid-loop would
@@ -1040,6 +1068,8 @@ def apply_set(
                 source="order_set",
                 detail=detail,
                 status="draft",
+                in_transaction=(_linked_draft_writer(item, application_id, actor_id, actor_role)
+                                if lifecycle and item["order_type"] == "medication" else None),
             )
             created.append(order)
             by_index[item["index"]]["order_id"] = order["id"]
@@ -1069,6 +1099,10 @@ def apply_set(
         for oid in order_ids:
             db.execute("UPDATE orders SET order_set_application_id = ? WHERE id = ?",
                        (application_id, oid))
+        if lifecycle:
+            # Which drafts the order store now manages, so the route records
+            # no create-time shadow action for them (the signature does).
+            cpoe.annotate_orders(db, created)
 
     # ── (5) ONE audited event naming the set, plus its individual orders ─────
     _audit_set(outcome="success", action_type="order_set_applied",

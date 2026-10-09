@@ -40,7 +40,11 @@ REFUSALS, each with words and before anything is written:
     chart (ruling ADT-S6 is not applied, so scope does not change). An
     acknowledged placement writes a clinical_access 'boarder_placed' audit and
     a system line in the patient's case room, in the same transaction;
-  * an expected bed that is no longer the admission's bed ('state_changed').
+  * an expected bed that is no longer the admission's bed ('state_changed');
+  * a bed a reservation holds for another patient, or for nobody named
+    (adt-12, 'bed_reserved'). A bed held for this admission or this patient
+    is taken, and the reservation fulfilled, in the same transaction
+    (services/adt/reservations.py).
 
 Every function that writes takes the caller's connection and opens no session:
 the caller holds db_session(immediate=True) as the outermost session, resolves
@@ -582,6 +586,19 @@ def locate_admission_on(
                 "add an extra bed with its own label.",
                 code="bed_occupied", bed_id=bed["id"])
 
+    # adt-12: a bed held by a reservation takes only the admission or patient
+    # it is held for, whatever lane writes the place (a link and a correction
+    # included), and that reservation is fulfilled below in this transaction.
+    # A bed the admission already lies in is not re-checked.
+    held = None
+    if bed is not None and bed["id"] != adm.get("bed_id"):
+        from services.adt import reservations as adt_res
+
+        held = adt_res.live_on_bed(db, bed["id"])
+        if held is not None and not adt_res.is_for(held, admission_id=admission_id,
+                                                   patient_id=adm["patient_id"]):
+            raise adt_res.refusal(ward=ward, bed=bed, reservation=held)
+
     # The treating department after this write: unchanged, except for a
     # transfer that names the department it moves to (adt-6a).
     treating = to_department if to_department is not None else adm.get("department")
@@ -675,6 +692,14 @@ def locate_admission_on(
             f"Placed as a boarder on {ward['code']} ({ward.get('department')}), "
             f"bed {after['bed'] or 'not yet chosen'}. {boarder_words(ward, treating)}")
 
+    fulfilled = None
+    if held is not None:
+        from services.adt import reservations as adt_res
+
+        fulfilled = adt_res.fulfil_on(db, held, admission_id=admission_id,
+                                      movement_id=movement["id"], actor=actor,
+                                      request_meta=request_meta)
+
     return {
         "replayed": False,
         "admission_id": admission_id,
@@ -686,6 +711,7 @@ def locate_admission_on(
         "linked": after["bed_id"] is not None,
         "boarder": boarder,
         "movement": movement,
+        **({"reservation_fulfilled": fulfilled["id"]} if fulfilled else {}),
     }
 
 
@@ -835,13 +861,15 @@ def _terminal_clean_beds_on(db, bed_ids: Any) -> set:
                AND unit_id IN ({marks})""", ids).fetchall()}
 
 
-def _board_tiles_on(db, wards: list) -> dict:
+def _board_tiles_on(db, wards: list, *, reservations: bool = True) -> dict:
     """The bed board's tiles for `wards` with no patient field read or returned
     (identity off, so no read audit is owed). bed_master_service derives every
-    status; this module never derives one of its own."""
+    status; this module never derives one of its own. With reservations False
+    a held bed reads its cleaning status (adt-12: the patient a bed is held
+    for still meets the cleaning rule when placed in it)."""
     from services import bed_master_service as bm
 
-    return bm._board_on(db, wards=wards, dept=None, identity=False)
+    return bm._board_on(db, wards=wards, dept=None, identity=False, reservations=reservations)
 
 
 def carried_isolation(value: Any) -> bool:
@@ -953,12 +981,13 @@ def _terminal_pending_on(db, *, wards: list, tiles: list) -> set:
     return pending
 
 
-def bed_readiness_on(db, *, ward: dict, bed: dict) -> dict:
+def bed_readiness_on(db, *, ward: dict, bed: dict, reservations: bool = True) -> dict:
     """What the bed board says about one bed now: {status, status_words,
     cleaning_tracked, terminal_clean}. terminal_clean is True only for a bed
     on a tracked ward, not recorded clean or out of service, whose next clean
-    is terminal (_terminal_pending_on)."""
-    board = _board_tiles_on(db, [ward])
+    is terminal (_terminal_pending_on). With reservations False a bed held by
+    a reservation reads the status under the hold (adt-12)."""
+    board = _board_tiles_on(db, [ward], reservations=reservations)
     tile = next((t for w in board["wards"] for t in w["tiles"] if t["bed_id"] == bed["id"]), None)
     tracked = bool(board["wards"][0]["cleaning_tracked"]) if board["wards"] else False
     status = tile["status"] if tile else "switched_off"
@@ -1257,18 +1286,35 @@ def confirm_terminal_authoriser(
 def _placement_rules_on(db, *, ward: dict, bed: dict, actor: Optional[dict],
                         treating_department: Optional[str], not_clean_reason: Any,
                         terminal_clean_authorised_by: Any, terminal_clean_reason: Any,
-                        terminal_clean_confirmed: Optional[dict] = None) -> dict:
+                        terminal_clean_confirmed: Optional[dict] = None,
+                        admission_id: Optional[str] = None,
+                        patient_id: Optional[str] = None) -> dict:
     """ADT-S2 (c) and reservations for a bed a patient is being placed INTO.
     Returns what is recorded on the movement; raises with words otherwise.
+
+    A bed held by a reservation (adt-12) is refused unless it is held for this
+    admission or this patient (services/adt/reservations.is_for); the words
+    never say who it is held for. The patient it is held for still meets the
+    cleaning rule below, read from the bed's status under the hold; the
+    reservation itself is fulfilled by locate_admission_on in the same
+    transaction as the move.
 
     A bed whose next clean is terminal (out of service or not) needs a reason
     and an authoriser who ACTS: the sender, when their role and department
     allow, or the person named, when their signing PIN confirmed it
     (`terminal_clean_confirmed`, from confirm_terminal_authoriser). A name on
     its own is refused (terminal_clean_pin_required)."""
-    ready = bed_readiness_on(db, ward=ward, bed=bed)
+    from services.adt import reservations as adt_res
+
+    held = adt_res.live_on_bed(db, bed["id"])
+    if held is not None and not adt_res.is_for(held, admission_id=admission_id,
+                                               patient_id=patient_id):
+        raise adt_res.refusal(ward=ward, bed=bed, reservation=held)
+    ready = bed_readiness_on(db, ward=ward, bed=bed, reservations=False)
     status = ready["status"]
     if status == "reserved":
+        # Not reachable with reservations=False; kept so a status the board
+        # adds later can never let a held bed through.
         raise AdtConflict(f"{_bed_words(ward, bed)} is reserved for another patient. "
                           "Choose another bed.", code="bed_reserved", bed_id=bed["id"])
     if ready["terminal_clean"]:
@@ -1397,6 +1443,7 @@ def prepare_place_on(
     not_clean_reason: Any = None, terminal_clean_authorised_by: Any = None,
     terminal_clean_reason: Any = None, request_meta: Optional[dict] = None,
     treating_department: Optional[str] = None, terminal_clean_confirmed: Optional[dict] = None,
+    patient_id: Optional[str] = None,
 ) -> dict:
     """Apply the placement rules for a patient about to be put somewhere, on
     the caller's immediate session, BEFORE anything about the patient is
@@ -1417,12 +1464,22 @@ def prepare_place_on(
 
     Returns {target, detail, out_of_service_reason} for place_admission_on.
     `admission_id` is None while the admission is not yet written (the
-    admission door), so no admission is excluded from the occupancy check."""
+    admission door), so no admission is excluded from the occupancy check.
+
+    `patient_id` (adt-12) is the patient being placed, read from the
+    admission when it is written already. A door that admits a patient
+    already on file (an admission written after this check) passes it, so a
+    bed reserved for that patient is not refused here; with neither an
+    admission nor a patient a reserved bed is always refused."""
     detail: dict[str, Any] = {}
-    if treating_department is None and admission_id:
-        own = db.execute("SELECT department FROM admissions WHERE id = ?",
+    if admission_id and (treating_department is None or patient_id is None):
+        own = db.execute("SELECT department, patient_id FROM admissions WHERE id = ?",
                          (admission_id,)).fetchone()
-        treating_department = own["department"] if own is not None else None
+        if own is not None:
+            if treating_department is None:
+                treating_department = own["department"]
+            if patient_id is None:
+                patient_id = own["patient_id"]
     if extra_bed:
         beside = _text(bed_id)
         if not beside:
@@ -1453,7 +1510,8 @@ def prepare_place_on(
                 not_clean_reason=not_clean_reason,
                 terminal_clean_authorised_by=terminal_clean_authorised_by,
                 terminal_clean_reason=terminal_clean_reason,
-                terminal_clean_confirmed=terminal_clean_confirmed))
+                terminal_clean_confirmed=terminal_clean_confirmed,
+                admission_id=admission_id, patient_id=patient_id))
     elif target["bed_text"]:
         # A place not in bed setup, kept unlinked (ruling F104). Another
         # admitted patient recorded at the same typed ward and bed is refused

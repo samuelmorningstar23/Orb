@@ -272,6 +272,15 @@ LAB_INTERFACE = "lab.interface"              # Analyser registry and credentials
 # identifiers from every ward.
 INGEST_RECONCILE = "ingest.reconcile"
 
+# Facilities (multi-site epic, ruling M1). Configuration, no patient data:
+# facility identity (legal name, address, GSTIN, HFR and NABH numbers), its
+# departments and document series. Creating a second facility needs
+# ORB_MULTI_SITE and a group-wide grant besides facility.manage (multisite-2's
+# create gate), so holding it alone never splits a hospital. Group-wide reach
+# is a named, audited grant (ruling MS-R6), never a permission here.
+FACILITY_READ = "facility.read"              # Facility identity and the facilities list
+FACILITY_MANAGE = "facility.manage"          # Edit facility identity, departments and series
+
 # Governance
 AUDIT_READ = "audit.read"                      # Read audit log entries
 AUDIT_TRACE = "audit.trace"                    # Trace correlation IDs
@@ -425,6 +434,9 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         # Laboratory views and the analyser registry. NOT ingest.reconcile:
         # attaching a result to a patient is a wrong-patient decision (LIS-R17).
         LAB_READ, LAB_INTERFACE,
+        # Facility identity (multi-site). Facility 1's identity works with
+        # ORB_MULTI_SITE off; a second facility needs the switch and a grant.
+        FACILITY_READ, FACILITY_MANAGE,
     },
     "patient": {
         # Self-only access through Bridge

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { buildHeaders } from '../../api/client'
 import { sexShort } from '../../lib/demographics'
 import { formatClinicalClock, formatClinicalDate, localDateKey, parseUTC } from '../../lib/datetime'
@@ -41,6 +41,10 @@ interface Appointment {
   reason: string | null
   origin?: 'staff' | 'patient'
   department?: string | null
+  /** The clinic doctor a slot booking is with (opd-16); null for a booking
+   *  with no doctor, and absent from an older server. */
+  doctor_id?: string | null
+  doctor_name?: string | null
   /** The NEWS2 band of the patient's latest vitals (the Vigil board's rule),
    *  or null when nothing is recorded. */
   acuity: 'critical' | 'elevated' | 'stable' | null
@@ -96,7 +100,10 @@ function BookingForm({ onBooked, onClose }: { onBooked: () => void; onClose: () 
   const [reason, setReason] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [idemKey] = useState(() => newId())
+  // One request key per booking asked for (the patient, day and time, the
+  // fields the server binds a replay to): a retry of the same booking replays
+  // it, and a changed booking is a new request, never a replay of the old one.
+  const idem = useRef<{ request: string; key: string } | null>(null)
 
   useEffect(() => {
     let live = true
@@ -119,6 +126,9 @@ function BookingForm({ onBooked, onClose }: { onBooked: () => void; onClose: () 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!patientId) { setError('Choose a patient.'); return }
+    const request = `${patientId}|${date}|${time}`
+    if (idem.current?.request !== request) idem.current = { request, key: newId() }
+    const idemKey = idem.current.key
     setSaving(true)
     setError('')
     try {
@@ -439,6 +449,12 @@ export default function AppointmentsPanel() {
                       <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={appt.type_label ?? appt.type}>
                         <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{appt.type_label ?? appt.type}</strong>
                       </div>
+                      {/* The clinic doctor a slot booking is with (opd-16). */}
+                      {appt.doctor_name && (
+                        <div className="appt-doctor" style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`With ${appt.doctor_name}`}>
+                          With {appt.doctor_name}
+                        </div>
+                      )}
                       {appt.reason && (
                         <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={appt.reason}>
                           {appt.reason}

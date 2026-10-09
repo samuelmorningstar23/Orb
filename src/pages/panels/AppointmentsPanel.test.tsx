@@ -23,7 +23,7 @@ import { formatClinicalDate, localDateKey } from '../../lib/datetime'
 const session = vi.hoisted(() => ({ role: 'doctor' }))
 
 vi.mock('../../api/client', () => ({
-  buildHeaders: () => ({}),
+  buildHeaders: (_method?: string, extra?: Record<string, string>) => ({ ...(extra ?? {}) }),
   getUser: () => ({ id: 'U1', name: 'Test User', role: session.role }),
 }))
 
@@ -161,6 +161,20 @@ describe('AppointmentsPanel layout (§13.7, §13.8, F142)', () => {
   })
 })
 
+/* 2026-10-09 (opd-16): a booking with a clinic doctor says who it is with; a
+   booking with no doctor draws no doctor line at all. */
+describe('AppointmentsPanel shows the doctor', () => {
+  it('prints the doctor of a slot booking and nothing for one without', async () => {
+    serve([
+      appt(localDateKey(), { doctor_id: 'DOC-1', doctor_name: 'Dr Iyer' }),
+      appt(localDateKey(), { patient_id: 'PAT-B', time: '11:00', doctor_id: null, doctor_name: null }),
+    ])
+    const line = await screen.findByText('With Dr Iyer')
+    expect(line).toHaveAttribute('title', 'With Dr Iyer')
+    expect(screen.getAllByText(/^With /)).toHaveLength(1)
+  })
+})
+
 /* 2026-10-06: the badge is the NEWS2 band of the latest vitals WITH the
    number; a tile counts the post-discharge checks due this week; and staff can
    book from the panel (the POST had no caller in the app). */
@@ -224,6 +238,44 @@ describe('AppointmentsPanel score, tile and booking form', () => {
       patient_id: 'PAT-D', appointment_type: 'post_discharge_check',
       scheduled_date: localDateKey(), scheduled_time: '23:59', reason: 'Wound check',
     })
+  })
+
+  it('retries the same booking with its request key and a changed one with a new key', async () => {
+    const { fireEvent, waitFor } = await import('@testing-library/react')
+    const keys: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        keys.push((init.headers as Record<string, string>)['Idempotency-Key'])
+        // The first two answers are lost on the way back.
+        if (keys.length <= 2) return { ok: false, status: 503, json: async () => ({}) }
+        return { ok: true, json: async () => ({ id: 'NEW' }) }
+      }
+      if (url.startsWith('/api/vigil/patients')) {
+        return { ok: true, json: async () => [
+          { id: 'PAT-W', name: 'Ward Patient', bed: 'GM-4' },
+          { id: 'PAT-X', name: 'Other Patient', bed: 'GM-5' },
+        ] }
+      }
+      return { ok: true, json: async () => [] }
+    }))
+    render(<AppointmentsPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Book appointment' }))
+    const form = await screen.findByRole('form', { name: 'Book an appointment' })
+    await screen.findByRole('option', { name: 'Ward Patient, bed GM-4' })
+    fireEvent.change(screen.getByLabelText('Patient'), { target: { value: 'PAT-W' } })
+    fireEvent.change(screen.getByLabelText('Time'), { target: { value: '23:59' } })
+    fireEvent.submit(form)
+    expect(await screen.findByText('Could not book (error 503).')).toBeInTheDocument()
+    fireEvent.submit(form)
+    await waitFor(() => expect(keys).toHaveLength(2))
+    expect(keys[0]).toBeTruthy()
+    expect(keys[1]).toBe(keys[0])
+    // Another patient is a new request, not a replay of the first booking.
+    fireEvent.change(screen.getByLabelText('Patient'), { target: { value: 'PAT-X' } })
+    fireEvent.submit(await screen.findByRole('form', { name: 'Book an appointment' }))
+    await waitFor(() => expect(keys).toHaveLength(3))
+    expect(keys[2]).toBeTruthy()
+    expect(keys[2]).not.toBe(keys[0])
   })
 })
 

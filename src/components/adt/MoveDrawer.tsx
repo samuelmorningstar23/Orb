@@ -39,14 +39,28 @@
  * rather than overwritten. One Idempotency-Key per screen: a reply lost on
  * the ward network and a second press record the move once. A signing PIN
  * typed for a terminal-clean authorisation is cleared after every send.
+ *
+ * RECORDED IN ERROR (adt-6b). When the location read says the stay's latest
+ * move can be undone (a bed assignment, a bed change or a transfer, only
+ * the latest, only once), a third choice undoes it: POST /api/adt/movements/
+ * {id}/correct writes a new correction record and puts the patient back
+ * where that move took them from; both records stay. Undoing a transfer
+ * gives the chart back, so it is offered only to a role that may transfer,
+ * and the screen says so before the button. What the server asks for (a
+ * reason for a bed not recorded clean, an authoriser for a terminal clean,
+ * a bed out of service, a boarder) opens here from its answer.
  */
 import { useCallback, useEffect, useId, useState } from 'react'
 
 import {
   BED_REFUSAL_CODES,
   EMPTY_BED_CHOICE,
+  MOVE_TYPE_WORDS,
+  authorisersFor,
   bedChoiceMissing,
   changeBed,
+  correctMovement,
+  correctionFailureWords,
   getAdmissionLocation,
   getMoveOptions,
   movePlacement,
@@ -55,19 +69,49 @@ import {
   transferAdmission,
   type AdmissionLocation,
   type BedChoice,
+  type CorrectionRequest,
   type MoveOptions,
+  type MovePlace,
   type MoveRequest,
   type MoveResult,
   type TransferRequest,
 } from '../../api/adt/moves'
 import { fromLocalInput, toLocalInput } from '../../api/adt/endStay'
 import { toAdtError } from '../../api/adt'
+import { formatClinicalDateTime } from '../../lib/datetime'
 import { assertOnlineForWrite, isOfflineWriteRefused } from '../../lib/offline/writeGuard'
 import BedPicker from './BedPicker'
 import '../AdmitPatientModal.css'
 import './EndStay.css'
 
-export type MoveMode = 'bed' | 'transfer'
+export type MoveMode = 'bed' | 'transfer' | 'undo'
+
+/** What the server asked for on an undo, opened from its answer. */
+interface UndoAsks {
+  notClean?: boolean
+  outOfService?: boolean
+  boarderWords?: string
+  terminal?: boolean
+}
+
+const UNDO_TERMINAL_CODES = new Set([
+  'terminal_clean_authorisation_required', 'terminal_clean_pin_required',
+  'terminal_clean_pin_wrong', 'terminal_clean_authoriser_locked',
+  'terminal_clean_authoriser_no_pin', 'terminal_clean_authoriser_invalid',
+  'terminal_clean_authoriser_out_of_department',
+])
+
+const MODE_WORDS: Record<MoveMode, string> = {
+  bed: 'Change bed, same department',
+  transfer: 'Transfer to another department',
+  undo: 'Undo the last move, recorded in error',
+}
+
+function placeWords(p: MovePlace | null | undefined): string {
+  if (!p) return 'No ward or bed recorded'
+  const parts = [p.ward, p.bed ? `bed ${p.bed}` : null].filter(Boolean)
+  return parts.length ? parts.join(', ') : 'No bed yet'
+}
 
 export interface MovePatient {
   name: string | null
@@ -148,6 +192,15 @@ export default function MoveDrawer({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<{ code: string; message: string } | null>(null)
   const [result, setResult] = useState<MoveResult | null>(null)
+  // Undoing a move recorded in error (adt-6b): what the server asked for and
+  // what was typed for it.
+  const [undoAsks, setUndoAsks] = useState<UndoAsks>({})
+  const [undoNotClean, setUndoNotClean] = useState('')
+  const [undoOos, setUndoOos] = useState('')
+  const [undoBoarderAck, setUndoBoarderAck] = useState(false)
+  const [undoAuthoriser, setUndoAuthoriser] = useState('')
+  const [undoTerminalReason, setUndoTerminalReason] = useState('')
+  const [undoPin, setUndoPin] = useState('')
 
   // Both reads in the promise chain, so a failure of any kind is SAID. State
   // changes only in the replies' callbacks.
@@ -213,6 +266,22 @@ export default function MoveDrawer({
   const { master, departments } = options.value
   const here = location.value
   const currentDept = here.department ?? ''
+  // adt-6b: the stay's latest move, when it can be undone by this role.
+  const lastMove = here.last_move ?? null
+  const canUndo = !!lastMove?.correctable && canChangeBed
+    && (!lastMove.changes_department || canTransfer)
+  const modes: MoveMode[] = [
+    ...(canChangeBed ? (['bed'] as MoveMode[]) : []),
+    ...(canTransfer ? (['transfer'] as MoveMode[]) : []),
+    ...(canUndo ? (['undo'] as MoveMode[]) : []),
+  ]
+  const undoing = mode === 'undo' && canUndo && !!lastMove
+  const undoTreating = undoing && lastMove?.changes_department
+    ? (lastMove.from.department ?? '') : currentDept
+  const undoWard = undoing
+    ? master.wards.find((w) => same(w.code, lastMove?.from.ward)) ?? null : null
+  const undoAuthorisers = undoing ? authorisersFor(master, undoWard, undoTreating) : []
+  const undoSelf = !!undoAuthoriser && undoAuthoriser === (master.self_authoriser?.id ?? null)
   const treating = mode === 'transfer' ? toDepartment : currentDept
   const handsOver = mode === 'transfer' && !!toDepartment && !same(toDepartment, currentDept)
   const keeping = mode === 'transfer' && destination === 'keep' && !!toDepartment
@@ -233,7 +302,21 @@ export default function MoveDrawer({
   const whenProblem = timeProblem(whenDate, backtimeHours)
 
   let missing: string | null = null
-  if (mode === 'transfer' && !toDepartment) missing = 'Choose the receiving department.'
+  if (mode === 'undo') {
+    if (!undoing) missing = 'The last move of this stay cannot be undone here.'
+    else if (!reason.trim()) missing = 'Give the reason the move was recorded in error. It is part of the record.'
+    else if (undoAsks.boarderWords && !undoBoarderAck) {
+      missing = 'Confirm you have read who will be able to open this chart.'
+    } else if (undoAsks.outOfService && !undoOos.trim()) {
+      missing = 'Type the reason the patient goes back to a bed out of service.'
+    } else if (undoAsks.notClean && !undoNotClean.trim()) {
+      missing = 'Type the reason the patient goes back to a bed not yet recorded clean.'
+    } else if (undoAsks.terminal && (!undoAuthoriser || !undoTerminalReason.trim())) {
+      missing = 'Choose who authorises the bed before its terminal clean, and why.'
+    } else if (undoAsks.terminal && !undoSelf && !undoPin) {
+      missing = 'The person authorising types their own signing PIN.'
+    }
+  } else if (mode === 'transfer' && !toDepartment) missing = 'Choose the receiving department.'
   else if (mode === 'transfer' && destination === 'keep') {
     if (keepBoarder && !keepAcknowledged) {
       missing = 'Confirm you have read who will be able to open this chart.'
@@ -249,7 +332,8 @@ export default function MoveDrawer({
     }
   }
   if (!missing && !reason.trim()) missing = 'Give the reason for the move. It is part of the record.'
-  if (!missing && whenProblem) missing = whenProblem
+  // An undo is recorded when it is sent; it has no time of its own.
+  if (!missing && whenProblem && mode !== 'undo') missing = whenProblem
   const ready = !missing && !submitting
 
   const switchMode = (next: MoveMode) => {
@@ -257,10 +341,61 @@ export default function MoveDrawer({
     setChoice(EMPTY_BED_CHOICE)
     setDestination('bed')
     setKeepAcknowledged(false)
+    setUndoAsks({})
+    setUndoBoarderAck(false)
     setError(null)
   }
 
+  const submitUndo = async () => {
+    if (!ready || !lastMove) return
+    setSubmitting(true)
+    setError(null)
+    const request: CorrectionRequest = {
+      expected_bed_id: here.bed_id ?? null,
+      reason: reason.trim(),
+    }
+    if (notes.trim()) request.notes = notes.trim()
+    if (undoAsks.boarderWords && undoBoarderAck) request.boarder_acknowledged = true
+    if (undoAsks.outOfService && undoOos.trim()) request.out_of_service_reason = undoOos.trim()
+    if (undoAsks.notClean && undoNotClean.trim()) request.not_clean_reason = undoNotClean.trim()
+    if (undoAsks.terminal && undoAuthoriser) {
+      request.terminal_clean_authorised_by = undoAuthoriser
+      request.terminal_clean_reason = undoTerminalReason.trim()
+      if (!undoSelf && undoPin) request.terminal_clean_authoriser_pin = undoPin
+    }
+    try {
+      assertOnlineForWrite('undo this move')
+      setResult(await correctMovement(lastMove.id, request, key))
+    } catch (err) {
+      if (isOfflineWriteRefused(err)) {
+        setError({ code: 'offline', message: err.message })
+      } else {
+        const failure = toAdtError(err)
+        setError({ code: failure.code, message: correctionFailureWords(err) })
+        // Open the question the server asked, so its words are never a dead end.
+        if (failure.code === 'boarder_acknowledgement_required') {
+          setUndoAsks((s) => ({ ...s, boarderWords: failure.message }))
+          setUndoBoarderAck(false)
+        } else if (failure.code === 'out_of_service_reason_required') {
+          setUndoAsks((s) => ({ ...s, outOfService: true }))
+        } else if (failure.code === 'bed_not_clean_reason_required') {
+          setUndoAsks((s) => ({ ...s, notClean: true }))
+        } else if (UNDO_TERMINAL_CODES.has(failure.code)) {
+          setUndoAsks((s) => ({ ...s, terminal: true }))
+        }
+      }
+    } finally {
+      // The PIN is sent once and never kept.
+      setUndoPin('')
+      setSubmitting(false)
+    }
+  }
+
   const submit = async () => {
+    if (mode === 'undo') {
+      await submitUndo()
+      return
+    }
     if (!ready || !whenDate) return
     setSubmitting(true)
     setError(null)
@@ -329,7 +464,9 @@ export default function MoveDrawer({
     return (
       <section className="es" aria-labelledby={headingId} data-testid="move-result">
         <h2 id={headingId} className="es__title">
-          {result.replayed ? 'This move was already recorded' : 'Move recorded'}
+          {result.replayed
+            ? (mode === 'undo' ? 'This correction was already recorded' : 'This move was already recorded')
+            : (mode === 'undo' ? 'Move undone' : 'Move recorded')}
         </h2>
         <div className="es__box es__box--ok" role="status">
           {result.replayed ? (
@@ -339,10 +476,17 @@ export default function MoveDrawer({
           ) : (
             <>
               <p className="es__box-text">
-                {result.department_changed
-                  ? `${patient.name || 'The patient'} is now treated by ${result.current_department}.`
-                  : `${patient.name || 'The patient'} has moved.`}
+                {mode === 'undo'
+                  ? `The move was recorded in error and is undone. Both records stay in the history.`
+                  : result.department_changed
+                    ? `${patient.name || 'The patient'} is now treated by ${result.current_department}.`
+                    : `${patient.name || 'The patient'} has moved.`}
               </p>
+              {mode === 'undo' && result.department_changed && (
+                <p className="es__box-text">
+                  {patient.name || 'The patient'} is treated by {result.current_department} again.
+                </p>
+              )}
               <p className="es__box-text">Now at {where}.</p>
               {result.boarder && (
                 <p className="es__box-text">
@@ -397,32 +541,149 @@ export default function MoveDrawer({
         </div>
       </dl>
 
-      {canTransfer && canChangeBed && (
+      {modes.length > 1 && (
         <fieldset className="es__fieldset">
           <legend className="es__legend">What changes</legend>
           <div className="es__choices">
-            <label className={`es__choice${mode === 'bed' ? ' es__choice--on' : ''}`}>
+            {modes.map((m) => (
+              <label key={m} className={`es__choice${mode === m ? ' es__choice--on' : ''}`}>
+                <input
+                  type="radio"
+                  className="es__choice-input"
+                  name={`${fieldId}-mode`}
+                  checked={mode === m}
+                  onChange={() => switchMode(m)}
+                  disabled={submitting}
+                />
+                <span>{MODE_WORDS[m]}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+
+      {undoing && lastMove && (
+        <div className="es__box es__box--warn" role="note" data-testid="move-undo">
+          <p className="es__box-title">
+            {MOVE_TYPE_WORDS[lastMove.movement_type] ?? 'Move'}
+            {lastMove.moved_at ? ` at ${formatClinicalDateTime(lastMove.moved_at)}` : ''}
+            {lastMove.moved_by_name ? `, recorded by ${lastMove.moved_by_name}` : ''}
+          </p>
+          <p className="es__box-text">
+            From {placeWords(lastMove.from)} to {placeWords(lastMove.to)}.
+          </p>
+          <p className="es__box-text">
+            Undoing it puts the patient back at {placeWords(lastMove.from)}. A correction is
+            recorded and both records stay in the history.
+          </p>
+          {lastMove.changes_department && (
+            <p className="es__box-text">
+              This gives the chart back: staff in {lastMove.from.department || 'the sending department'} can
+              open it again, and staff in {currentDept || 'the current department'} can no longer see
+              this patient.
+            </p>
+          )}
+        </div>
+      )}
+
+      {undoing && undoAsks.boarderWords && (
+        <div className="bed-picker__note bed-picker__note--warn" role="note">
+          <p className="bed-picker__words">{undoAsks.boarderWords}</p>
+          <label className="bed-picker__check">
+            <input
+              type="checkbox"
+              checked={undoBoarderAck}
+              onChange={(e) => setUndoBoarderAck(e.target.checked)}
+              disabled={submitting}
+            />
+            <span>I have read this. Put the patient back there as a boarder.</span>
+          </label>
+        </div>
+      )}
+
+      {undoing && undoAsks.outOfService && (
+        <div className="es__field">
+          <label className="es__label" htmlFor={`${fieldId}-undo-oos`}>
+            The bed is recorded out of service by housekeeping. Reason the patient goes back there
+          </label>
+          <input
+            id={`${fieldId}-undo-oos`}
+            className="es__input"
+            value={undoOos}
+            maxLength={2000}
+            onChange={(e) => setUndoOos(e.target.value)}
+            disabled={submitting}
+            aria-required="true"
+          />
+        </div>
+      )}
+
+      {undoing && undoAsks.notClean && (
+        <div className="es__field">
+          <label className="es__label" htmlFor={`${fieldId}-undo-clean`}>
+            The bed has not been recorded clean since. Reason the patient goes back there first
+          </label>
+          <input
+            id={`${fieldId}-undo-clean`}
+            className="es__input"
+            value={undoNotClean}
+            maxLength={2000}
+            onChange={(e) => setUndoNotClean(e.target.value)}
+            disabled={submitting}
+            aria-required="true"
+          />
+        </div>
+      )}
+
+      {undoing && undoAsks.terminal && (
+        <fieldset className="es__fieldset">
+          <legend className="es__legend">The bed is waiting for a terminal clean</legend>
+          <div className="es__field">
+            <label className="es__label" htmlFor={`${fieldId}-undo-auth`}>Who authorises it</label>
+            <select
+              id={`${fieldId}-undo-auth`}
+              className="admit-input"
+              value={undoAuthoriser}
+              onChange={(e) => { setUndoAuthoriser(e.target.value); setUndoPin('') }}
+              disabled={submitting}
+            >
+              <option value="">Select...</option>
+              {undoAuthorisers.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.id === master.self_authoriser?.id ? `${a.name} (you)` : a.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          {undoAuthoriser && !undoSelf && (
+            <div className="es__field">
+              <label className="es__label" htmlFor={`${fieldId}-undo-pin`}>
+                Their signing PIN, typed by them
+              </label>
               <input
-                type="radio"
-                className="es__choice-input"
-                name={`${fieldId}-mode`}
-                checked={mode === 'bed'}
-                onChange={() => switchMode('bed')}
+                id={`${fieldId}-undo-pin`}
+                className="es__input"
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                value={undoPin}
+                onChange={(e) => setUndoPin(e.target.value)}
                 disabled={submitting}
               />
-              <span>Change bed, same department</span>
+            </div>
+          )}
+          <div className="es__field">
+            <label className="es__label" htmlFor={`${fieldId}-undo-term`}>
+              Why the bed is used before its terminal clean
             </label>
-            <label className={`es__choice${mode === 'transfer' ? ' es__choice--on' : ''}`}>
-              <input
-                type="radio"
-                className="es__choice-input"
-                name={`${fieldId}-mode`}
-                checked={mode === 'transfer'}
-                onChange={() => switchMode('transfer')}
-                disabled={submitting}
-              />
-              <span>Transfer to another department</span>
-            </label>
+            <input
+              id={`${fieldId}-undo-term`}
+              className="es__input"
+              value={undoTerminalReason}
+              maxLength={2000}
+              onChange={(e) => setUndoTerminalReason(e.target.value)}
+              disabled={submitting}
+            />
           </div>
         </fieldset>
       )}
@@ -526,7 +787,9 @@ export default function MoveDrawer({
       )}
 
       <div className="es__field">
-        <label className="es__label" htmlFor={`${fieldId}-reason`}>Reason for the move</label>
+        <label className="es__label" htmlFor={`${fieldId}-reason`}>
+          {mode === 'undo' ? 'Why the move was recorded in error' : 'Reason for the move'}
+        </label>
         <textarea
           id={`${fieldId}-reason`}
           className="es__textarea"
@@ -538,24 +801,26 @@ export default function MoveDrawer({
         />
       </div>
 
-      <div className="es__field">
-        <label className="es__label" htmlFor={`${fieldId}-when`}>When the patient moved</label>
-        <input
-          id={`${fieldId}-when`}
-          className="es__input"
-          type="datetime-local"
-          value={when}
-          min={toLocalInput(new Date(opened.getTime() - backtimeHours * 3600 * 1000))}
-          max={toLocalInput(new Date())}
-          onChange={(e) => setWhen(e.target.value)}
-          disabled={submitting}
-          aria-invalid={!!whenProblem}
-          aria-describedby={`${fieldId}-when-state`}
-        />
-        <span id={`${fieldId}-when-state`} className={whenProblem ? 'es__field-error' : 'es__hint'}>
-          {whenProblem ?? `Up to ${backtimeHours} hours back, and not before the admission.`}
-        </span>
-      </div>
+      {mode !== 'undo' && (
+        <div className="es__field">
+          <label className="es__label" htmlFor={`${fieldId}-when`}>When the patient moved</label>
+          <input
+            id={`${fieldId}-when`}
+            className="es__input"
+            type="datetime-local"
+            value={when}
+            min={toLocalInput(new Date(opened.getTime() - backtimeHours * 3600 * 1000))}
+            max={toLocalInput(new Date())}
+            onChange={(e) => setWhen(e.target.value)}
+            disabled={submitting}
+            aria-invalid={!!whenProblem}
+            aria-describedby={`${fieldId}-when-state`}
+          />
+          <span id={`${fieldId}-when-state`} className={whenProblem ? 'es__field-error' : 'es__hint'}>
+            {whenProblem ?? `Up to ${backtimeHours} hours back, and not before the admission.`}
+          </span>
+        </div>
+      )}
 
       <div className="es__field">
         <label className="es__label" htmlFor={`${fieldId}-notes`}>Notes (optional)</label>
@@ -593,7 +858,9 @@ export default function MoveDrawer({
       <div className="es__actions">
         <button type="button" className="es__btn" onClick={onClose} disabled={submitting}>Cancel</button>
         <button type="button" className="es__btn es__btn--primary" onClick={submit} disabled={!ready}>
-          {submitting ? 'Recording' : mode === 'transfer' ? 'Record transfer' : 'Record bed change'}
+          {submitting ? 'Recording'
+            : mode === 'transfer' ? 'Record transfer'
+              : mode === 'undo' ? 'Undo the move' : 'Record bed change'}
         </button>
       </div>
     </section>

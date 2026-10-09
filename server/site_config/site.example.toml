@@ -139,3 +139,41 @@ backup_max_age_hours = 36
 # How little free disk space may remain before the status page warns, in
 # percent. Default: 10.
 disk_min_free_percent = 10
+
+
+# ── Laboratory: who is called about a critical result ─────────────────────
+# Only for hospitals that run Orb's laboratory module (ORB_LAB). A critical
+# result is a value past a limit your pathologist approved in Orb (Orb ships
+# no limits). When one is validated, Orb posts it to the patient's case room
+# as "Laboratory" and puts it on the laboratory's Critical results screen
+# until the laboratory logs a callback with the name and role of the person
+# told and their read-back. A post in the case room, or a reply to it, never
+# closes it.
+#
+# Orb ships NO ladder: who is called and how fast is your hospital's own
+# critical-value policy (NABH), so the section below is commented out. With
+# no ladder every critical result is due at once and the laboratory phones
+# the ward. To set one, remove the # marks and change the people and the
+# timings to match your policy.
+#
+#   role             who the laboratory calls at this step, in words.
+#   label            what staff see on screen (default: the role).
+#   timeout_minutes  how long this step has to confirm the result with a
+#                    read-back before the next one is called. REQUIRED on
+#                    every tier except the last.
+#
+# A tier whose case-room post could not be delivered (no case room, a
+# discharged patient, a failed write) is due at once.
+#
+# [lab.critical]
+#
+# [[lab.critical.tiers]]
+# role = "Ward nurse in charge and the ordering doctor"
+# timeout_minutes = 15
+#
+# [[lab.critical.tiers]]
+# role = "Attending or duty doctor"
+# timeout_minutes = 15
+#
+# [[lab.critical.tiers]]
+# role = "Duty medical officer"

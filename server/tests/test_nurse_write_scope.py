@@ -548,8 +548,9 @@ _PATIENT_SURROGATE_PARAMS = {
 # A RATCHET like the one above: an entry may leave (someone added the guard),
 # but a NEW bare surrogate-id write fails the test.
 _KNOWN_BARE_SURROGATE_MUTATIONS = {
-    ("DELETE", "/api/appointments/{appointment_id}"),
-    ("POST", "/api/appointments/{appointment_id}/complete"),
+    # The appointment cancel and complete left this list on 9 October 2026
+    # (opd-16): both now derive department_scope and 404 another ward's
+    # appointment (tests/test_appointments_slots.py probes it live).
     ("POST", "/api/bundles/{bundle_id}/cancel"),
     ("POST", "/api/bundles/{bundle_id}/complete/{element}"),
     ("POST", "/api/frontdesk/opd/visits/{visit_id}/cancel"),

@@ -85,7 +85,11 @@ _tasks: list[asyncio.Task] = []
 #: adds its own dotted path here (for example "services.lab_critical_service").
 #: A module that fails to import is logged and skipped; boot continues.
 #: lis-6: the order intake sweep (services/lab_order_service.py), 'on' only.
-_LOOP_MODULES: tuple[str, ...] = ("services.lab_order_service",)
+#: lis-15: the critical-result sweep (services/lab_critical_service.py),
+#: registered for every state and running while a critical surface is open
+#: (on, draining, or interfaced criticals switched on).
+_LOOP_MODULES: tuple[str, ...] = ("services.lab_order_service",
+                                  "services.lab_critical_service")
 
 
 # ════════════════════════════════════════════════════════════════════════════

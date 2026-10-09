@@ -322,6 +322,15 @@ export function IpassHandoffView({ patientId, patientName, setPageTitle = false 
                 {m.drug_name} {m.dosage} {m.route} {m.frequency}
                 {/* Not a prescription until a pharmacist has checked it. */}
                 {m.unverified && <em> (AI-extracted, awaiting pharmacist verification)</em>}
+                {/* Charted, but not being given until the prescriber resumes it. */}
+                {m.on_hold && (
+                  <em>
+                    {' (on hold'}
+                    {m.held_at ? ` since ${formatClinicalDateTime(m.held_at)}` : ''}
+                    {m.hold_reason ? `: ${m.hold_reason}` : ''}
+                    {')'}
+                  </em>
+                )}
               </li>
             ))}
           </ul>

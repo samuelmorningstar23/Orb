@@ -1,9 +1,11 @@
 """Orb Hospital OS — Helix API Routes"""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
-from permissions import enforce_patient_scope, require_permission
+from permissions import MEDICATION_VERIFY, ROLE_PERMISSIONS, enforce_patient_scope, require_permission
 from services import helix_service
+from services.medorders import core as medorder_store
+from services.medorders import supply as medorder_supply
 from services.drug_safety_service import check_medication_safety
 from services.medication_safety_gate import enforce_medication_safety
 from services.drug_chart import require_drug_chart
@@ -244,8 +246,36 @@ def get_order_safety(order_id: str, substitute_medication_id: Optional[str] = No
     }
 
 
+def _medorder_refusal(err, user, request: Request) -> HTTPException:
+    """A medication-order store refusal as HTTP, exactly as /api/medorders
+    answers it (a 403 is audited there too)."""
+    from routes.medorders.core import _refusal
+    return _refusal(err, user, request)
+
+
+def _medorder_meta(request: Request) -> dict:
+    from routes.medorders.core import _request_meta
+    return _request_meta(request)
+
+
+def _after_linked_step(med_order_id: str) -> Optional[dict]:
+    """After commit, for a supply row linked to a medication order: tell the
+    order's screens it changed (ids and status only) and answer the order's
+    state for the pharmacy screen. None when the order cannot be read."""
+    from database import db_session
+    from routes.medorders.core import _emit
+    with db_session() as conn:
+        order = medorder_store.get_order_in_txn(conn, med_order_id)
+    if order is None:
+        return None
+    _emit(order)
+    return {"id": order["id"], "status": order["status"], "version": order["version"],
+            "verified_by": order["verified_by"], "verified_at": order["verified_at"]}
+
+
 @router.post("/orders/{order_id}/transition")
-def transition_order(order_id: str, req: TransitionRequest, user=Depends(require_permission("helix.write"))):
+def transition_order(order_id: str, req: TransitionRequest, request: Request,
+                     user=Depends(require_permission("helix.write"))):
     """
     Guarded, idempotent state transition for a Helix medication order.
 
@@ -269,12 +299,36 @@ def transition_order(order_id: str, req: TransitionRequest, user=Depends(require
     it has its own route (`POST /orders/{id}/receive`) and its own permission
     (`helix.receive`), which this route's `helix.write` holders do not have. The
     service refuses the target too, so naming it in the body reaches nothing.
+
+    A supply row LINKED to a medication order (medorders-5b; only
+    POST /api/medorders/orders/{id}/request-supply makes one) is also checked
+    against its order (services/medorders/supply.py): a drug is not committed
+    to an order that has ended, a placeholder dose is not verified, the screen
+    adds the dose guard and leaves the order's own chart row out of the
+    interaction check, and with ORB_MED_ORDER_LIFECYCLE on a verification or
+    rejection of an order still waiting for its pharmacist moves the order too
+    (medication.verify only). Those refusals use the store's body
+    (core.http_detail). An unlinked row is exactly as before.
     """
     # Scoped like /receive: a no-op for the department-less central pharmacy
     # account, a real boundary for an account tied to one ward.
     patient_id = helix_service.order_patient_id(order_id)
     if patient_id:
         enforce_patient_scope(user, patient_id)
+
+    # The medication order behind a linked supply row, read before the screen.
+    # None for an unlinked row and for a replayed key.
+    linked = medorder_supply.linked_supply(order_id, idempotency_key=req.idempotency_key)
+    may_verify_order = MEDICATION_VERIFY in ROLE_PERMISSIONS.get(user.get("role", ""), set())
+    if (linked and req.target_status != "delivered"
+            and helix_service._is_legal_transition(linked["supply"]["status"], req.target_status)):
+        try:
+            medorder_supply.plan_helix_step(
+                linked["supply"], linked["order"], req.target_status,
+                lifecycle=medorder_store.lifecycle_on(), may_verify_order=may_verify_order)
+        except medorder_store.MedOrderError as e:
+            raise _medorder_refusal(e, user, request)
+    linked_order = linked["order"] if linked else None
 
     safety = None
     try:
@@ -287,6 +341,18 @@ def transition_order(order_id: str, req: TransitionRequest, user=Depends(require
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if target:
+        # A linked supply row is screened with its dose and route (the dose
+        # guard: a pharmacist cannot clear a dose block, it goes back to the
+        # prescriber) and without the order's own chart row, which would
+        # otherwise screen the drug against itself (defect F-B). A substitute
+        # keeps today's screen against the chart row: substitution is
+        # unchanged while held ruling R002 is open.
+        linked_screen = {}
+        if linked_order is not None:
+            linked_screen = {"dose": linked["supply"].get("dosage"),
+                             "route": linked["supply"].get("route")}
+            if not target.get("is_substitute"):
+                linked_screen["exclude_med_id"] = linked_order.get("legacy_medication_id")
         safety = enforce_medication_safety(
             target["patient_id"],
             target["screen_name"],
@@ -300,8 +366,18 @@ def transition_order(order_id: str, req: TransitionRequest, user=Depends(require
             actor_role=user.get("role"),
             order_prescriber_id=(None if target.get("is_substitute")
                                  else target.get("prescribed_by")),
+            **linked_screen,
         )
 
+    # The store's hook runs inside Helix's transaction, keyed on the supply
+    # row's link: a no-op for an unlinked row.
+    hook = medorder_supply.helix_step_hook(
+        actor_id=user["id"], actor_role=user.get("role"), may_verify_order=may_verify_order,
+        expected_version=linked_order["version"] if linked_order is not None else None,
+        fingerprint=linked["fingerprint"] if linked else None,
+        safety=safety, notes=req.pharmacist_notes,
+        request_meta=_medorder_meta(request) if linked else None,
+    )
     try:
         result = helix_service.transition_order_status(
             order_id=order_id,
@@ -311,10 +387,16 @@ def transition_order(order_id: str, req: TransitionRequest, user=Depends(require
             pharmacist_notes=req.pharmacist_notes,
             substitute_medication_id=req.substitute_medication_id,
             scheduled_at=req.scheduled_at,
+            on_applied=hook,
         )
         if safety is not None:
             result["safety"] = safety
+        med_order_id = (result.get("order") or {}).get("med_order_id")
+        if med_order_id and not result.get("already_applied"):
+            result["linked_order"] = _after_linked_step(med_order_id)
         return result
+    except medorder_store.MedOrderError as e:
+        raise _medorder_refusal(e, user, request)
     except helix_service.StaleOrderState as e:
         raise HTTPException(
             status_code=409,
@@ -357,7 +439,7 @@ def orders_awaiting_receipt(user=Depends(require_permission("helix.receive"))):
 
 
 @router.post("/orders/{order_id}/receive")
-def receive_order(order_id: str, req: ReceiveRequest,
+def receive_order(order_id: str, req: ReceiveRequest, request: Request,
                   user=Depends(require_permission("helix.receive"))):
     """Record that a dispensed drug physically arrived on the ward.
 
@@ -381,12 +463,24 @@ def receive_order(order_id: str, req: ReceiveRequest,
         raise HTTPException(status_code=404, detail="Order not found")
     enforce_patient_scope(user, patient_id)
 
+    # A supply row linked to a medication order records 'received' on the
+    # order's ledger in the receipt's own transaction (medorders-5b); a no-op
+    # for an unlinked row.
+    hook = medorder_supply.helix_step_hook(actor_id=user["id"], actor_role=user.get("role"),
+                                           request_meta=_medorder_meta(request))
     try:
-        return helix_service.receive_order(
+        result = helix_service.receive_order(
             order_id=order_id,
             actor_id=user["id"],
             idempotency_key=req.idempotency_key,
+            on_applied=hook,
         )
+        med_order_id = (result.get("order") or {}).get("med_order_id")
+        if med_order_id and not result.get("already_applied"):
+            _after_linked_step(med_order_id)
+        return result
+    except medorder_store.MedOrderError as e:
+        raise _medorder_refusal(e, user, request)
     except helix_service.SelfReceiptRefused as e:
         # 403, not 400: this is a policy refusal naming a control, and it should
         # read as one wherever access decisions are reviewed.

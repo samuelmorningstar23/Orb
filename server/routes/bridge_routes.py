@@ -40,11 +40,26 @@ from services.discharge_service import (
 from services.vital_charting import as_charted
 from services.lens_service import REVIEWED_IMAGING_SQL
 from services.drug_chart import drug_chart_enabled, require_drug_chart
+from services.medorders import held as held_labels
 from services.stay_times import latest_admission, summary_less_ends
 from datetime import datetime
 import json
 
 router = APIRouter(prefix="/api/bridge", tags=["bridge"])
+
+
+def _portal_medication(row) -> dict:
+    """One medicine as the patient sees it. A held one (medorders-6b) reads
+    'On hold' and nothing more: no colour of its own, no time, no reason and
+    no verdict, in line with the portal rules. Every other medicine is exactly
+    the row as before."""
+    med = dict(row)
+    held = held_labels.is_held(med)
+    for column in held_labels.HELD_COLUMNS:
+        med.pop(column, None)
+    if held:
+        med["status"] = held_labels.PORTAL_STATUS
+    return med
 
 # The vitals a patient sees, and the chart precision each is printed at.
 #
@@ -246,7 +261,8 @@ def patient_reports(user: dict = Depends(require_patient_self())):
         # Active medications. None on an Orb Ward Record computer, whose drug
         # chart stays on paper (services/drug_chart).
         meds = db.execute(
-            """SELECT drug_name, dosage, route, frequency, status, started_at
+            """SELECT drug_name, dosage, route, frequency, status, started_at,
+                      held_at, hold_reason
                FROM medications WHERE patient_id = ?
                ORDER BY started_at DESC""",
             (patient_id,),
@@ -296,7 +312,7 @@ def patient_reports(user: dict = Depends(require_patient_self())):
 
     return {
         "patient_id": patient_id,
-        "medications": [dict(m) for m in meds],
+        "medications": [_portal_medication(m) for m in meds],
         # False tells My Records to draw no Medications button.
         "drug_chart": drug_chart,
         "clinical_documents": [_patient_document(d) for d in docs],
@@ -359,14 +375,15 @@ def patient_medications(user: dict = Depends(require_patient_self())):
 
     with db_session() as db:
         meds = db.execute(
-            """SELECT drug_name, dosage, route, frequency, status, started_at
+            """SELECT drug_name, dosage, route, frequency, status, started_at,
+                      held_at, hold_reason
                FROM medications WHERE patient_id = ?
                ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'prn' THEN 1 ELSE 2 END,
                         started_at DESC""",
             (patient_id,),
         ).fetchall()
 
-    return {"medications": [dict(m) for m in meds]}
+    return {"medications": [_portal_medication(m) for m in meds]}
 
 
 @router.get("/discharge")

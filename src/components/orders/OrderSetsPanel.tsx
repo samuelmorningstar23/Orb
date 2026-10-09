@@ -28,7 +28,9 @@ import {
 } from '../../api/orderSets'
 import PatientPicker from '../common/PatientPicker'
 import { formatUTCDateTime } from '../../lib/datetime'
-import { MED_NOT_SENT, isMedicationOrder } from './medicationRouting'
+import {
+  isMedicationOrder, medicationRoutingNotice, orderSetMedicationNotice, useMedicationLifecycle,
+} from './medicationRouting'
 import './OrderSets.css'
 
 interface Props {
@@ -213,6 +215,9 @@ function findingsFor(v: OrderSetVerdict): { chip: string; why: string }[] | null
 export default function OrderSetsPanel({
   patientId: patientIdProp, selectedPatientId, onSelectPatient, onApplied,
 }: Props) {
+  // medorders-7: with the medication-order lifecycle on, a set's medicines
+  // are drafts a prescriber signs under Orders; the copy says so.
+  const lifecycleOn = useMedicationLifecycle()
   const [sets, setSets] = useState<OrderSetSummary[]>([])
   const [configNote, setConfigNote] = useState<string | null>(null)
   const [listError, setListError] = useState<string | null>(null)
@@ -504,7 +509,9 @@ export default function OrderSetsPanel({
                             </span>
                             {v.note && <span className="order-sets__item-note">{v.note}</span>}
                             {isMedicationOrder(v.order_type) && (
-                              <span className="order-sets__item-route">{MED_NOT_SENT}</span>
+                              <span className="order-sets__item-route">
+                                {medicationRoutingNotice(lifecycleOn)}
+                              </span>
                             )}
                           </div>
                           {v.blocked ? (
@@ -585,11 +592,7 @@ export default function OrderSetsPanel({
               )}
               {applyResult && applyResult.medications > 0 && (
                 <div className="order-sets__warn" role="alert">
-                  The {applyResult.medications} medication{' '}
-                  {plural(applyResult.medications, 'order is', 'orders are')} not sent to the ward
-                  or pharmacy. Prescribe {plural(applyResult.medications, 'it', 'them')} from the
-                  patient chart (Medications) so nurses can give{' '}
-                  {plural(applyResult.medications, 'it', 'them')}.
+                  {orderSetMedicationNotice(applyResult.medications, lifecycleOn)}
                 </div>
               )}
 

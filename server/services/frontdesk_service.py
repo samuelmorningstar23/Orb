@@ -92,9 +92,8 @@ from migrations_his.m0051_adt_movement_ledger import (
     ADDED_COLUMNS as _LEDGER_ADDED_COLUMNS,
 )
 from migrations_his.m0051_adt_movement_ledger import ensure_ledger_on
-from services.billing_masters import resolve_patient_payer, resolve_rate
+from services.billing_masters import resolve_patient_payer
 from services.hospital_time import hospital_timezone, hospital_today
-from services.money import compute_line
 
 logger = logging.getLogger("orb.frontdesk")
 
@@ -639,80 +638,41 @@ def _raise_consultation_charge(
     in the hospital. `charged_at` is the INSTANT the counter posted it, in UTC.
     Passing the instant for both (which this function used to do) puts a 2 a.m.
     IST consultation on yesterday's bill at yesterday's price.
-    """
-    resolution = resolve_rate(
-        service_code,
-        tariff_plan_id=tariff_plan_id,
-        ward_class=None,
-        on_date=service_day,
-    )
-    description = resolution.description or f"{department} consultation"
-    configured = bool(resolution.configured and resolution.rate_paise is not None)
-    unit_rate = int(resolution.rate_paise) if configured else 0
 
-    line = compute_line(
-        unit_rate_paise=unit_rate,
-        gst_rate_bp=resolution.gst_rate_bp if configured else 0,
-        gst_treatment=resolution.gst_treatment,
-        interstate=interstate,
-    )
+    The INSERT itself lives in services/opd_charges_service.raise_op_line_on
+    (opd-13), the one writer of an outpatient line, so a registration-time
+    charge and this completion-time one are the same row shape and share the
+    visit's idempotency key: whichever runs first raises the line and the
+    other finds it. A line found already raised is answered as STORED (its
+    code, description and amount), never re-priced.
+    """
+    from services.opd_charges_service import raise_op_line_on
 
     # Idempotent: one consultation charge per visit, whatever replays.
-    idem = f"opd_visit:{visit_id}:consultation"
-    existing = db.execute(
-        "SELECT id FROM encounter_charges WHERE idempotency_key = ?", (idem,)
-    ).fetchone()
-    if existing:
-        charge_id = int(existing["id"])
-    else:
-        cursor = db.execute(
-            """INSERT INTO encounter_charges (
-                    patient_id, admission_id, encounter_type, service_item_id,
-                    service_code, description, quantity_milli, unit_rate_paise,
-                    rate_is_configured, tariff_plan_id, ward_class, gross_paise,
-                    discount_paise, gst_treatment, gst_rate_bp, taxable_value_paise,
-                    cgst_paise, sgst_paise, igst_paise, total_paise, status,
-                    source, source_ref, service_date, charged_by, charged_at,
-                    idempotency_key, notes
-               ) VALUES (?, NULL, 'op', ?, ?, ?, 1000, ?, ?, ?, NULL, ?, ?, ?, ?, ?,
-                         ?, ?, ?, ?, 'pending', 'manual', ?, ?, ?, ?, ?, ?)""",
-            (
-                patient_id,
-                resolution.service_item_id,
-                service_code,
-                description,
-                unit_rate,
-                1 if configured else 0,
-                resolution.tariff_plan_id,
-                line.gross_paise,
-                line.discount_paise,
-                line.gst_treatment,
-                line.gst_rate_bp,
-                line.taxable_value_paise,
-                line.cgst_paise,
-                line.sgst_paise,
-                line.igst_paise,
-                line.total_paise,
-                visit_id,
-                service_day,      # service_date — the ward's calendar day
-                charged_by,
-                charged_at,       # charged_at   — the UTC instant
-                idem,
-                None if configured else "Rate not configured at time of consultation",
-            ),
-        )
-        charge_id = int(cursor.lastrowid)
-
-    return ConsultationCharge(
-        charge_id=charge_id,
+    line = raise_op_line_on(
+        db,
+        patient_id=patient_id,
         service_code=service_code,
-        description=description,
-        rate_paise=int(resolution.rate_paise) if configured else None,
-        configured=configured,
+        tariff_plan_id=tariff_plan_id,
+        service_day=service_day,      # service_date: the ward's calendar day
+        charged_at=charged_at,        # charged_at: the UTC instant
+        charged_by=charged_by,
+        idempotency_key=f"opd_visit:{visit_id}:consultation",
+        source_ref=visit_id,
+        description_fallback=f"{department} consultation",
+        unpriced_note="Rate not configured at time of consultation",
+        interstate=interstate,
+    )
+    return ConsultationCharge(
+        charge_id=line.charge_id,
+        service_code=line.service_code,
+        description=line.description,
+        rate_paise=line.rate_paise,
+        configured=line.configured,
         total_paise=line.total_paise,
         gst_treatment=line.gst_treatment,
-        source=resolution.source,
-        newly_raised=not existing,
+        source=line.rate_source,
+        newly_raised=line.newly_raised,
     )
 
 
@@ -870,11 +830,40 @@ def register_opd_visit(
                 "UPDATE opd_visits SET identity_check_json = ? WHERE id = ?",
                 (json.dumps(identity_check, sort_keys=True), visit_id),
             )
+        prepaid = None
+        if opd_mode():
+            prepaid = _opd_charges_at_registration(db, visit_id, registered_by)
         row = db.execute("SELECT * FROM opd_visits WHERE id = ?", (visit_id,)).fetchone()
         visit = _serialize_visit(db, row)
+        if prepaid is not None:
+            visit["prepaid_charge"] = prepaid
         if on_registered is not None:
             on_registered(db, visit)
         return visit
+
+
+def _opd_charges_at_registration(db, visit_id: str,
+                                 registered_by: Optional[str]) -> Optional[dict]:
+    """OPD mode (opd-13), inside the visit's transaction: keep the payer and
+    tariff the visit is registered under (migration 50's payer_id and
+    tariff_plan_id), and with ORB_OPD_CHARGE_AT=registration raise the
+    consultation line now. Returns the raised line (with the code's basis),
+    or None when the consultation is charged at completion."""
+    from services import opd_charges_service as charges
+
+    row = db.execute("SELECT * FROM opd_visits WHERE id = ?", (visit_id,)).fetchone()
+    payer = charges.payer_snapshot_on(db, row["patient_id"])
+    db.execute(
+        "UPDATE opd_visits SET payer_id = ?, tariff_plan_id = ? WHERE id = ?",
+        (payer.payer_id, payer.tariff_plan_id, visit_id),
+    )
+    if charges.charge_at() != "registration":
+        return None
+    visit = {k: row[k] for k in row.keys()}
+    visit["tariff_plan_id"] = payer.tariff_plan_id
+    line, choice = charges.raise_consultation_at_registration_on(
+        db, visit=visit, charged_by=registered_by)
+    return {**line.as_dict(), **choice.as_facts(), "charged_at": "registration"}
 
 
 def _serialize_visit(db, row, *, now: Optional[datetime] = None) -> dict:
@@ -1136,7 +1125,13 @@ def complete_opd_visit(
         raises to refuse (the OPD-N8 rule: a signed note, or a reason).
 
     The charge is raised HERE and not at registration because a patient who
-    registers and leaves before being seen has not been consulted. Idempotent on
+    registers and leaves before being seen has not been consulted (a site may
+    choose otherwise in OPD mode: ORB_OPD_CHARGE_AT=registration, opd-13, when
+    this call finds the line already raised under the visit's key). In OPD
+    mode the code comes from the site's charge rules (opd_charges_service)
+    unless the caller names one, the line is priced on the tariff the visit
+    was registered under, `on_done`'s facts carry the code and its basis, and
+    a checked-in appointment naming this visit is marked completed. Idempotent on
     both halves: a replay returns the completed visit and does not double-charge
     (the `encounter_charges` idempotency key is derived from the visit id).
 
@@ -1181,7 +1176,41 @@ def complete_opd_visit(
                 )
 
         charge: Optional[ConsultationCharge] = None
-        if raise_charge:
+        charge_facts: dict = {}
+        queue_mode = opd_mode()
+        if raise_charge and queue_mode:
+            # opd-13: the site's charge rules choose the code (the caller's own
+            # service_code still wins), and the visit is priced on the tariff
+            # it was registered under. With ORB_OPD_CHARGE_AT=registration the
+            # line already exists under this visit's key and is returned as
+            # stored, so nothing is charged twice.
+            from services import opd_charges_service as charges
+            choice = charges.resolve_consultation_code_on(
+                db, {k: row[k] for k in row.keys()}, requested_code=service_code)
+            plan_id = row["tariff_plan_id"]
+            if plan_id is None:
+                plan_id = charges.payer_snapshot_on(db, row["patient_id"]).tariff_plan_id
+            charge = _raise_consultation_charge(
+                db,
+                visit_id=visit_id,
+                patient_id=row["patient_id"],
+                department=row["department"],
+                service_code=choice.service_code,
+                tariff_plan_id=plan_id,
+                charged_by=completed_by,
+                service_day=_hospital_day(now),
+                charged_at=now,
+            )
+            charge_facts = choice.as_facts()
+            if charge.service_code != choice.service_code:
+                # Raised at registration under the code chosen then.
+                charge_facts["charge_code"] = charge.service_code
+                charge_facts["charge_code_basis"] = "raised_at_registration"
+            db.execute(
+                "UPDATE opd_visits SET consultation_charge_id = ? WHERE id = ?",
+                (charge.charge_id, visit_id),
+            )
+        elif raise_charge:
             payer = resolve_patient_payer(row["patient_id"])
             charge = _raise_consultation_charge(
                 db,
@@ -1199,6 +1228,15 @@ def complete_opd_visit(
                 "UPDATE opd_visits SET consultation_charge_id = ? WHERE id = ?",
                 (charge.charge_id, visit_id),
             )
+        if queue_mode and not already_complete and row["appointment_id"]:
+            # opd-16: the appointment this visit was checked in from is now
+            # attended. Only a checked-in appointment that names THIS visit.
+            db.execute(
+                "UPDATE appointments SET status = 'completed', completed_at = ?, "
+                "completed_by = ? WHERE id = ? AND status = 'checked_in' "
+                "AND opd_visit_id = ?",
+                (now, completed_by, row["appointment_id"], visit_id),
+            )
 
         updated = db.execute(
             "SELECT * FROM opd_visits WHERE id = ?", (visit_id,)
@@ -1209,6 +1247,7 @@ def complete_opd_visit(
             on_done(db, result, {
                 "replay": already_complete,
                 "charge_raised_now": bool(charge and charge.newly_raised),
+                **charge_facts,
             })
 
     result["consultation_charge"] = charge.as_dict() if charge else None
@@ -1233,8 +1272,12 @@ def cancel_opd_visit(
     `reason_code` (OPD mode, opd-8) is one of
     opd_queue_service.CANCEL_REASON_CODES and is stored in
     opd_visits.cancel_reason_code; 'left_without_being_seen' is the LWBS code.
-    A cancel never raises a charge, coded or not: the consultation is charged
-    at completion only.
+    A cancel never raises a charge, coded or not. In OPD mode with
+    ORB_OPD_CHARGE_AT=registration (opd-13) the line raised at registration
+    is voided while still pending and left for a refund once invoiced; the
+    facts handed to `on_done` say which (prepaid_charge voided, invoiced,
+    already_cancelled or missing), and an appointment checked in to the visit
+    is cancelled with it (opd-16).
     """
     ensure_frontdesk_schema()
     clean_reason = _clean(reason, _MAX_REASON_LEN)
@@ -1270,13 +1313,38 @@ def cancel_opd_visit(
                 "UPDATE opd_visits SET cancel_reason_code = ? WHERE id = ?",
                 (code, visit_id),
             )
+        facts: dict = {"replay": False}
+        if opd_mode():
+            # opd-13: a line raised at registration (ORB_OPD_CHARGE_AT=
+            # registration) is voided while still pending, a 'left without
+            # being seen' included; one already on an invoice is left for a
+            # refund at the payments desk, and the facts say which.
+            from services.opd_charges_service import void_prepaid_consultation_on
+            facts.update(void_prepaid_consultation_on(
+                db, visit_row=row, actor=cancelled_by, reason=clean_reason))
+            if row["appointment_id"]:
+                # opd-16: the appointment checked in to this visit is closed
+                # with it, saying why.
+                db.execute(
+                    "UPDATE appointments SET status = 'cancelled', cancel_reason = ?, "
+                    "cancelled_at = ?, cancelled_by = ? WHERE id = ? "
+                    "AND status = 'checked_in' AND opd_visit_id = ?",
+                    (f"The outpatient visit was cancelled: {clean_reason}"[:_MAX_REASON_LEN],
+                     _now(), cancelled_by, row["appointment_id"], visit_id),
+                )
         updated = db.execute(
             "SELECT * FROM opd_visits WHERE id = ?", (visit_id,)
         ).fetchone()
         logger.info("OPD visit %s cancelled by %s: %s", visit_id, cancelled_by, clean_reason)
         visit = _serialize_visit(db, updated)
+        if "prepaid_charge" in facts:
+            visit["prepaid_charge"] = {
+                "charge_id": facts.get("prepaid_charge_id"),
+                "outcome": facts["prepaid_charge"],
+                "invoice_id": facts.get("prepaid_invoice_id"),
+            }
         if on_done is not None:
-            on_done(db, visit, {"replay": False})
+            on_done(db, visit, facts)
         return visit
 
 

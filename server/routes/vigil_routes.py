@@ -405,6 +405,18 @@ def list_patients(
         admission_ids = _active_admission_ids([r["id"] for r in rows])
         for r in rows:
             r["admission_id"] = admission_ids.get(r["id"])
+        # adt-10: whether each patient is on the ward, for the board's 'Not on
+        # ward since' chip. Only while ORB_ADT is on (presence_by_patient is
+        # None otherwise), so the payload with the module off is unchanged.
+        # Display only: the order, the NEWS2 and every alert are untouched.
+        from services.adt.presence import presence_by_patient
+
+        presence = presence_by_patient([r["id"] for r in rows])
+        if presence is not None:
+            for r in rows:
+                here = presence.get(r["id"]) or {}
+                r["presence_status"] = here.get("presence_status")
+                r["presence_since"] = here.get("presence_since")
 
     # Audited only when PHI actually left, matching /api/search/patients. This
     # board is polled every 30s by every open client (src/pages/panels/

@@ -1,0 +1,695 @@
+"""Laboratory reports (lis-14): the report of one sample, and the lists that
+find one.
+
+Behind ORB_LAB (default off): every route that reaches this module answers 404
+while the laboratory is off, and is served while it drains (ruling LIS-R21),
+because a report of released work is finished work.
+
+ONE REPORT IS ONE SAMPLE (one accession). It carries what the laboratory
+released and nothing it has not:
+
+  * The patient: name, UHID, sex as recorded and the age AT COLLECTION from
+    patients.date_of_birth (ruling LIS-R7: the static patients.age is never
+    read; with no date of birth the report says the age is not recorded). No
+    date of birth, phone, address or allergy list is printed.
+  * The sample: specimen type, container, priority, who collected and received
+    it and when (instants in canonical UTC; the screen prints them in hospital
+    time through src/lib/datetime.ts).
+  * Each test on the sample, in one of five states:
+      reported   the released result: the value as the bench typed it (a bound
+                 such as '<0.01' keeps its comparator), the unit, the flag in
+                 words, the reference range AS IT WAS SNAPSHOT at entry (never
+                 today's range: lab_results.reference_range_text), the comment,
+                 who checked it and who authorised it;
+      pending    not released yet. No value is shown, whatever the bench has
+                 entered or validated (ruling LIS-R4: released values only);
+      rejected   the sample was rejected and the test waits for a recollection
+                 or a cancel decision; shown as not reported;
+      cancelled  with the reason;
+      withdrawn  a released result withdrawn as entered in error. Its value is
+                 never printed again, only that it was withdrawn, when, by whom
+                 and why.
+  * Versions: a result amended after release (lis-13) prints its current
+    version with every earlier released version beneath it (value, who
+    reported it and when, who replaced it and when, and the reason), so a
+    printed amended report always says it is amended. When a test's result
+    was amended and later withdrawn, the whole chain may be another patient's
+    sample: no version prints a value, unit, flag, range or amendment reason,
+    only its version, who reported and replaced it and when, and the
+    withdrawal with its reason.
+  * The signatories (every person who authorised a result on the report) with
+    their registration numbers, and 'Registration number not on file' when the
+    users row has none, as the outpatient prints do.
+  * A result whose source is 'simulated' carries the Simulated honesty label.
+
+STATUS OF THE REPORT: 'interim' while any test is pending or rejected,
+'amended' when every test is settled and one was amended or withdrawn, else
+'final'. A sample with nothing ever released has no report: 409 not_reported.
+
+SCOPE. The laboratory (lab.read, hospital-wide by ruling LIS-R12) reads any
+report; a ward account (order.read) reads only its own department's patients,
+by permissions.patient_in_scope, and an out-of-scope sample is the same 404 as
+an unknown one. This module never reads observations (the one reader is
+services/lab_observations.py, pinned by tests/test_lab_observation_readers.py):
+a report is built from the laboratory's own tables, and reading or printing it
+writes nothing to the chart.
+
+Every function here takes the caller's open connection and never commits or
+writes; the routes audit each read and each print (phi_access, fail-closed).
+"""
+from __future__ import annotations
+
+import json
+from datetime import date, datetime
+from typing import Any, Iterable, Optional
+
+from permissions import PATIENT_DEPARTMENT_SQL, patient_in_scope, scope_patient_ids_sql
+from services import lab_master_service as lm
+from services import lab_order_service as los
+from services.clinical_time import parse_to_utc
+from services.hospital_time import local_day_bounds_utc, to_hospital
+from services.lab_result_service import flag_text
+
+#: The most reports one list returns.
+REPORT_LIST_CAP = 200
+
+#: Values a SQL IN (...) list carries at once.
+_CHUNK = 400
+
+_TABLES = ("lab_specimens", "lab_order_items", "lab_results", "lab_result_events",
+           "lab_tests")
+
+#: The flags a report prints in words; anything else prints no flag (ruling
+#: LIS-R2: no H or L without an approved range).
+_FLAGS_IN_WORDS = ("H", "L", "HH", "LL", "A")
+
+REGISTRATION_MISSING_TEXT = "Registration number not on file"
+
+STATE_WORDS = {
+    "reported": "Reported",
+    "pending": "Pending",
+    "rejected": "Not reported: sample rejected",
+    "cancelled": "Cancelled",
+    "withdrawn": "Withdrawn",
+}
+
+STATUS_WORDS = {
+    "final": "Final report",
+    "amended": "Amended report",
+    "interim": "Interim report",
+}
+
+PRIORITY_WORDS = {"stat": "STAT", "urgent": "Urgent", "routine": "Routine"}
+
+SIMULATED_TEXT = "Simulated result: generated by the simulator, not from this patient."
+
+#: Printed under every report. Plain statements of what the paper is.
+REPORT_NOTES = (
+    "Each reference range is the one in force when the result was entered.",
+    "A flag is printed only against a range or a critical limit the laboratory "
+    "approved. Where no range is configured the report says so and prints no flag.",
+    "Times are hospital time.",
+)
+
+
+class LabReportError(Exception):
+    """A refusal with a machine code, a sentence for the screen and the HTTP
+    status the route answers with."""
+
+    def __init__(self, code: str, message: str, *, status: int = 409, **extra: Any):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status = status
+        self.extra = extra
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Small pure helpers
+# ════════════════════════════════════════════════════════════════════════════
+
+def tables_present(conn) -> bool:
+    return lm.tables_present(conn, _TABLES)
+
+
+def _chunks(values: Iterable[Any]) -> Iterable[list]:
+    items = list(dict.fromkeys(v for v in values if v is not None))
+    for start in range(0, len(items), _CHUNK):
+        yield items[start:start + _CHUNK]
+
+
+def _marks(values) -> str:
+    return ", ".join("?" for _ in values)
+
+
+def _rows(conn, sql: str, values: Iterable[Any], extra: tuple = ()) -> list[dict]:
+    """Run `sql` (which holds one '{marks}') over `values` in chunks."""
+    out: list[dict] = []
+    for chunk in _chunks(values):
+        out.extend(dict(r) for r in conn.execute(sql.format(marks=_marks(chunk)),
+                                                 tuple(chunk) + extra).fetchall())
+    return out
+
+
+def _instant(value: Any) -> Optional[datetime]:
+    """A stored instant as an aware UTC datetime, or None when unreadable."""
+    if not value:
+        return None
+    try:
+        return parse_to_utc(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _earliest(values: Iterable[Any]) -> Optional[str]:
+    best, best_at = None, None
+    for value in values:
+        at = _instant(value)
+        if at is not None and (best_at is None or at < best_at):
+            best, best_at = value, at
+    return best
+
+
+def _latest(values: Iterable[Any]) -> Optional[str]:
+    best, best_at = None, None
+    for value in values:
+        at = _instant(value)
+        if at is not None and (best_at is None or at > best_at):
+            best, best_at = value, at
+    return best
+
+
+def _dob(value: Any) -> Optional[date]:
+    text = str(value or "").strip()
+    if len(text) < 10:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def age_text(date_of_birth: Any, at: Any) -> Optional[str]:
+    """The age on the hospital-local day of `at` (the collection), in words:
+    years from 2 years, months under that, days under a month. None when the
+    date of birth is missing, unreadable or after `at` (ruling LIS-R7: an age
+    Orb cannot state is not recorded, and patients.age is never read). Pure."""
+    dob = _dob(date_of_birth)
+    local = to_hospital(at) if at else None
+    if dob is None or local is None:
+        return None
+    today = local.date()
+    if today < dob:
+        return None
+    years = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    if years >= 2:
+        return f"{years} years"
+    months = (today.year - dob.year) * 12 + today.month - dob.month - (today.day < dob.day)
+    if months >= 1:
+        return f"{months} month{'s' if months != 1 else ''}"
+    days = (today - dob).days
+    return f"{days} day{'s' if days != 1 else ''}"
+
+
+def sex_text(value: Any) -> Optional[str]:
+    """The sex as recorded, in sentence case; None when blank. Pure."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    normal = lm.normalise_sex(text)
+    if normal:
+        return normal.capitalize()
+    return text[:1].upper() + text[1:].lower()
+
+
+def _person(users: dict, user_id: Optional[str], *, registration: bool = False) -> Optional[dict]:
+    if not user_id:
+        return None
+    row = users.get(user_id) or {}
+    out = {"name": row.get("name") or "Name not on file"}
+    if registration:
+        number = (row.get("registration_number") or "").strip() or None
+        out["registration_number"] = number
+        out["registration_text"] = number or REGISTRATION_MISSING_TEXT
+    return out
+
+
+def _flag_words(result: dict, result_type: str) -> str:
+    flag = result.get("abnormal_flag") or ""
+    if flag not in _FLAGS_IN_WORDS:
+        return ""
+    return flag_text({**result, "result_type": result_type})
+
+
+def _reason_from(raw: Any) -> Optional[str]:
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return None
+    if isinstance(data, dict) and data.get("reason"):
+        return str(data["reason"]).strip() or None
+    return None
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Loading
+# ════════════════════════════════════════════════════════════════════════════
+
+def _load(conn, specimen_ids: list[str]) -> dict:
+    """Everything the reports of these samples need, read in a few batched
+    queries."""
+    specimens = {r["id"]: r for r in _rows(conn, (
+        "SELECT s.id, s.patient_id, s.specimen_type_code, s.container, s.priority, s.status, "
+        "s.collected_at, s.collected_by, s.collection_location, s.received_at, s.received_by, "
+        "s.rejected_at, s.recollect_of, st.display AS specimen_display "
+        "FROM lab_specimens s LEFT JOIN lab_specimen_types st ON st.code = s.specimen_type_code "
+        "WHERE s.id IN ({marks})"), specimen_ids)}
+    patients = {r["id"]: r for r in _rows(conn, (
+        "SELECT p.id, p.name, p.mrn, p.ward, p.bed, p.date_of_birth, p.sex, p.status, "
+        f"{PATIENT_DEPARTMENT_SQL} AS department FROM patients p WHERE p.id IN ({{marks}})"),
+        [s["patient_id"] for s in specimens.values()])}
+    items = _rows(conn, (
+        "SELECT i.id, i.order_id, i.specimen_id, i.test_id, i.panel_test_id, i.section_id, "
+        "i.priority, i.status, i.cancelled_reason, i.cancelled_by, i.updated_at, "
+        "t.name AS test_name, t.short_name, t.result_type, t.unit AS test_unit, "
+        "pt.name AS panel_name, sec.name AS section_name, sec.sort_order AS section_order, "
+        "pc.sort_order AS component_order "
+        "FROM lab_order_items i "
+        "LEFT JOIN lab_tests t ON t.id = i.test_id "
+        "LEFT JOIN lab_tests pt ON pt.id = i.panel_test_id "
+        "LEFT JOIN lab_sections sec ON sec.id = i.section_id "
+        "LEFT JOIN lab_panel_components pc ON pc.panel_test_id = i.panel_test_id "
+        "     AND pc.component_test_id = i.test_id "
+        "WHERE i.specimen_id IN ({marks})"), specimen_ids)
+    results = _rows(conn, (
+        "SELECT r.id, r.order_item_id, r.order_id, r.specimen_id, r.patient_id, r.test_id, "
+        "r.version, r.value_milli, r.comparator, r.value_text, r.unit, r.decimal_places, "
+        "r.comment, r.reference_range_id, r.reference_range_text, r.abnormal_flag, "
+        "r.is_critical, r.critical_limit_id, r.entered_by, r.entered_at, r.tech_validated_by, "
+        "r.tech_validated_at, r.released_by, r.released_at, r.status, r.amend_reason, "
+        "r.superseded_by_result_id, r.source "
+        "FROM lab_results r WHERE r.order_item_id IN ({marks}) "
+        "ORDER BY r.order_item_id, r.version, r.id"), [i["id"] for i in items])
+    events = _rows(conn, (
+        "SELECT id, result_id, event_type, actor, occurred_at, after_json "
+        "FROM lab_result_events WHERE result_id IN ({marks}) "
+        "AND event_type IN ('withdrawn', 'amended', 'superseded') ORDER BY id"),
+        [r["id"] for r in results])
+    orders = {r["id"]: r for r in _rows(
+        conn, "SELECT id, ordered_by FROM orders WHERE id IN ({marks})",
+        [i["order_id"] for i in items])}
+    user_ids: set = set()
+    for s in specimens.values():
+        user_ids.update((s.get("collected_by"), s.get("received_by")))
+    for r in results:
+        user_ids.update((r.get("released_by"), r.get("tech_validated_by")))
+    for e in events:
+        user_ids.add(e.get("actor"))
+    for i in items:
+        user_ids.add(i.get("cancelled_by"))
+    for o in orders.values():
+        user_ids.add(o.get("ordered_by"))
+    users = {r["id"]: r for r in _rows(
+        conn, "SELECT id, name, registration_number FROM users WHERE id IN ({marks})",
+        [u for u in user_ids if u])}
+    return {"specimens": specimens, "patients": patients, "items": items,
+            "results": results, "events": events, "orders": orders, "users": users}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Building one report
+# ════════════════════════════════════════════════════════════════════════════
+
+def _last_event(events: list[dict], result_id: Any, event_type: str) -> Optional[dict]:
+    """The latest event of one type on one result, or None."""
+    return next((e for e in reversed(events)
+                 if e["result_id"] == result_id and e["event_type"] == event_type), None)
+
+
+def _version_entry(row: dict, *, successor: Optional[dict], events: list[dict],
+                   users: dict, result_type: str, withhold: bool = False) -> dict:
+    """One earlier released version of a result: replaced by an amendment, or
+    withdrawn. A withdrawn value is never repeated.
+
+    With `withhold` (some version of this test was later withdrawn, so the
+    whole chain may be another patient's sample) a replaced version prints
+    only its version, who reported it and when, and who replaced it and when:
+    no value, unit, flag, range or reason, because a typed reason can restate
+    the value.
+
+    The reason a version was replaced is read from that version's own
+    'superseded' event, then from its successor's 'amended' event, and only
+    then from the successor's amend_reason, and never from a withdrawn
+    successor's: withdrawing a result overwrites its amend_reason with the
+    reason for the withdrawal (lab_result_service.withdraw_result)."""
+    withdrawn = row["status"] == "withdrawn"
+    hidden = withdrawn or withhold
+    entry = {
+        "version": int(row.get("version") or 1),
+        "state": "withdrawn" if withdrawn else "replaced",
+        "value_withheld": hidden,
+        "value_text": None if hidden else row.get("value_text"),
+        "unit": None if hidden else (row.get("unit") or None),
+        "flag_text": "" if hidden else _flag_words(row, result_type),
+        "reference_range_text": None if hidden else row.get("reference_range_text"),
+        "reported_at": row.get("released_at"),
+        "reported_by": _person(users, row.get("released_by")),
+        "ended_at": None,
+        "ended_by": None,
+        "reason": None,
+    }
+    if withdrawn:
+        event = _last_event(events, row["id"], "withdrawn")
+        entry["ended_at"] = event["occurred_at"] if event else None
+        entry["ended_by"] = _person(users, event["actor"]) if event else None
+        entry["reason"] = ((_reason_from(event["after_json"]) if event else None)
+                           or (row.get("amend_reason") or "").strip() or None)
+        return entry
+    own = _last_event(events, row["id"], "superseded")
+    created = (_last_event(events, successor["id"], "amended")
+               if successor is not None else None)
+    if successor is not None:
+        entry["ended_at"] = successor.get("released_at")
+        entry["ended_by"] = _person(users, successor.get("released_by"))
+    for event in (own, created):
+        if event is not None:
+            entry["ended_at"] = entry["ended_at"] or event["occurred_at"]
+            entry["ended_by"] = entry["ended_by"] or _person(users, event["actor"])
+    if withhold:
+        return entry
+    successor_reason = None
+    if successor is not None and successor.get("status") != "withdrawn":
+        successor_reason = (successor.get("amend_reason") or "").strip() or None
+    entry["reason"] = ((_reason_from(own["after_json"]) if own else None)
+                       or (_reason_from(created["after_json"]) if created else None)
+                       or successor_reason)
+    return entry
+
+
+def _item_entry(item: dict, rows: list[dict], events: list[dict], users: dict) -> dict:
+    result_type = item.get("result_type") or "numeric"
+    reported = [r for r in rows if r.get("released_at")]
+    live = next((r for r in rows if r["status"] == "released"), None)
+    if live is not None:
+        state = "reported"
+    elif reported and reported[-1]["status"] == "withdrawn":
+        # Checked before 'cancelled': a withdrawal also cancels the test
+        # (lis-13), and the report must say the result was withdrawn.
+        state = "withdrawn"
+    elif item["status"] == "cancelled":
+        state = "cancelled"
+    elif item["status"] == "rejected":
+        state = "rejected"
+    else:
+        state = "pending"
+    by_id = {r["id"]: r for r in rows}
+    history = []
+    earlier = [r for r in reported if live is None or r["id"] != live["id"]]
+    # A withdrawn result may be another patient's (lis-13, ruling LIS-R10):
+    # once any version of this test is withdrawn, no earlier version prints
+    # its value either.
+    withhold = any(r["status"] == "withdrawn" for r in reported)
+    for index, row in enumerate(earlier):
+        successor = by_id.get(row.get("superseded_by_result_id"))
+        if successor is None and row["status"] != "withdrawn":
+            later = earlier[index + 1:] + ([live] if live is not None else [])
+            successor = later[0] if later else None
+        history.append(_version_entry(row, successor=successor, events=events, users=users,
+                                      result_type=result_type, withhold=withhold))
+    entry = {
+        "item_id": item["id"],
+        "order_id": item["order_id"],
+        "test": {"id": item["test_id"], "name": item.get("test_name") or item["test_id"],
+                 "short_name": item.get("short_name") or item.get("test_name") or item["test_id"],
+                 "result_type": result_type},
+        "panel_name": item.get("panel_name"),
+        "section_id": item.get("section_id"),
+        "section_name": item.get("section_name") or item.get("section_id"),
+        "state": state,
+        "state_text": STATE_WORDS[state],
+        "result": None,
+        "history": history,
+        "amended": bool(history),
+        "cancelled": None,
+    }
+    if state == "cancelled":
+        entry["cancelled"] = {"reason": item.get("cancelled_reason"),
+                              "by": _person(users, item.get("cancelled_by")),
+                              "at": item.get("updated_at")}
+    if live is not None:
+        entry["result"] = {
+            "id": live["id"],
+            "version": int(live.get("version") or 1),
+            "value_text": live.get("value_text"),
+            "comparator": live.get("comparator"),
+            "unit": live.get("unit") or None,
+            "abnormal_flag": live.get("abnormal_flag") or "",
+            "flag_text": _flag_words(live, result_type),
+            "is_critical": int(live.get("is_critical") or 0),
+            "reference_range_text": live.get("reference_range_text"),
+            "range_applies": result_type == "numeric",
+            "comment": live.get("comment"),
+            "amend_reason": (live.get("amend_reason") or "").strip() or None,
+            "reported_at": live.get("released_at"),
+            "authorised_by": _person(users, live.get("released_by"), registration=True),
+            "checked_by": _person(users, live.get("tech_validated_by")),
+            "checked_at": live.get("tech_validated_at"),
+            "simulated": live.get("source") == "simulated",
+        }
+    return entry
+
+
+def _sort_key(item: dict) -> tuple:
+    order = item.get("component_order")
+    return (int(item.get("section_order") or 0), item.get("section_name") or "",
+            item.get("panel_name") or "", 9999 if order is None else int(order),
+            item.get("test_name") or "", int(item["id"]))
+
+
+def _build(specimen: dict, patient: dict, items: list[dict], data: dict) -> Optional[dict]:
+    """The report of one sample, or None when nothing on it was ever released."""
+    users = data["users"]
+    results_by_item: dict[int, list[dict]] = {}
+    for r in data["results"]:
+        results_by_item.setdefault(int(r["order_item_id"]), []).append(r)
+    entries = []
+    released_at: list[Any] = []
+    first_release: list[Any] = []
+    for item in sorted(items, key=_sort_key):
+        rows = results_by_item.get(int(item["id"]), [])
+        times = [r["released_at"] for r in rows if r.get("released_at")]
+        released_at.extend(times)
+        if times:
+            first_release.append(_earliest(times))
+        entries.append(_item_entry(item, rows, data["events"], users))
+    if not released_at:
+        return None
+    pending = sum(1 for e in entries if e["state"] in ("pending", "rejected"))
+    amended = any(e["amended"] for e in entries)
+    status = "interim" if pending else ("amended" if amended else "final")
+    status_text = STATUS_WORDS[status]
+    if pending:
+        status_text += (f": {pending} test{'s' if pending != 1 else ''} "
+                        f"not yet reported")
+    signatories: list[dict] = []
+    technologists: list[dict] = []
+    for entry in entries:
+        result = entry.get("result")
+        if not result:
+            continue
+        for bucket, person in ((signatories, result.get("authorised_by")),
+                               (technologists, result.get("checked_by"))):
+            if person and person not in bucket:
+                bucket.append(person)
+    requested_by = []
+    for order_id in dict.fromkeys(i["order_id"] for i in items):
+        person = _person(users, (data["orders"].get(order_id) or {}).get("ordered_by"))
+        if person and person not in requested_by:
+            requested_by.append(person)
+    collected = specimen.get("collected_at")
+    return {
+        "accession": specimen["id"],
+        "status": status,
+        "status_text": status_text,
+        "amended": amended,
+        "simulated": any((e.get("result") or {}).get("simulated") for e in entries),
+        "pending_count": pending,
+        "patient": {
+            "id": patient["id"],
+            "name": patient.get("name"),
+            "mrn": patient.get("mrn"),
+            "sex_text": sex_text(patient.get("sex")) or "Not recorded",
+            "age_text": age_text(patient.get("date_of_birth"), collected) or "Not recorded",
+            "ward": patient.get("ward"),
+            "bed": patient.get("bed"),
+            "department": patient.get("department"),
+            "discharged": patient.get("status") == "discharged",
+        },
+        "specimen": {
+            "type": specimen.get("specimen_display") or specimen.get("specimen_type_code"),
+            "container": specimen.get("container"),
+            "priority": specimen.get("priority") or "routine",
+            "priority_text": PRIORITY_WORDS.get(specimen.get("priority") or "routine", "Routine"),
+            "status": specimen.get("status"),
+            "collected_at": collected,
+            "collected_by": _person(users, specimen.get("collected_by")),
+            "collection_location": specimen.get("collection_location"),
+            "received_at": specimen.get("received_at"),
+            "received_by": _person(users, specimen.get("received_by")),
+        },
+        "requested_by": requested_by,
+        "reported_at": _earliest(first_release),
+        "last_reported_at": _latest(released_at),
+        "items": entries,
+        "signatories": signatories,
+        "technologists": technologists,
+        "notes": list(REPORT_NOTES),
+        "simulated_text": SIMULATED_TEXT,
+    }
+
+
+def _summary(report: dict) -> dict:
+    """A report as one line of a list."""
+    items = report["items"]
+    return {
+        "accession": report["accession"],
+        "status": report["status"],
+        "status_text": report["status_text"],
+        "amended": report["amended"],
+        "simulated": report["simulated"],
+        "pending_count": report["pending_count"],
+        "patient": {k: report["patient"][k] for k in ("id", "name", "mrn", "ward", "bed")},
+        "specimen_type": report["specimen"]["type"],
+        "priority": report["specimen"]["priority"],
+        "collected_at": report["specimen"]["collected_at"],
+        "reported_at": report["reported_at"],
+        "last_reported_at": report["last_reported_at"],
+        "tests": [i["test"]["short_name"] for i in items],
+        "flagged_count": sum(1 for i in items if (i.get("result") or {}).get("flag_text")),
+    }
+
+
+def _reports(conn, specimen_ids: list[str]) -> list[dict]:
+    """The reports of these samples (those with anything released), newest
+    collection first."""
+    if not specimen_ids:
+        return []
+    data = _load(conn, specimen_ids)
+    items_by_specimen: dict[str, list[dict]] = {}
+    for item in data["items"]:
+        items_by_specimen.setdefault(item["specimen_id"], []).append(item)
+    out = []
+    for sid in specimen_ids:
+        specimen = data["specimens"].get(sid)
+        if specimen is None:
+            continue
+        patient = data["patients"].get(specimen["patient_id"])
+        if patient is None:
+            continue
+        report = _build(specimen, patient, items_by_specimen.get(sid, []), data)
+        if report is not None:
+            out.append(report)
+    def newest_first(report: dict) -> tuple:
+        at = (_instant(report["specimen"]["collected_at"])
+              or _instant(report["reported_at"]))
+        return (at is not None, at.timestamp() if at is not None else 0.0,
+                report["accession"])
+
+    out.sort(key=newest_first, reverse=True)
+    return out
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Public reads
+# ════════════════════════════════════════════════════════════════════════════
+
+def report_for(conn, accession: Any, *, dept: Optional[str]) -> dict:
+    """The report of one sample. Raises LabReportError: 'bad_accession' (422)
+    for a number whose check digit is wrong (a misread digit is never looked
+    up), 'not_found' (404) for an unknown sample or one outside the caller's
+    department (the same answer, so a scoped caller learns nothing), and
+    'not_reported' (409) when nothing on it has been released."""
+    try:
+        accession = los.checked_accession(accession)
+    except los.LabOrderError as err:
+        raise LabReportError(err.code, err.message, status=err.status)
+    if not tables_present(conn):
+        raise LabReportError("not_found", "Sample not found", status=404)
+    row = conn.execute("SELECT patient_id FROM lab_specimens WHERE id = ?",
+                       (accession,)).fetchone()
+    if row is None:
+        raise LabReportError("not_found", "Sample not found", status=404)
+    if not patient_in_scope(conn, row["patient_id"], dept):
+        raise LabReportError("not_found", "Sample not found", status=404,
+                             out_of_scope_patient_id=row["patient_id"])
+    reports = _reports(conn, [accession])
+    if not reports:
+        raise LabReportError("not_reported",
+                             "No result on this sample has been reported yet, so it has no "
+                             "report.", status=409)
+    return reports[0]
+
+
+def _released_specimen_ids(conn, where: str, params: tuple, limit: int) -> list[str]:
+    """The samples with a released result matching `where`, newest collection
+    first, at most `limit`, so a busy day never builds more reports than the
+    list shows."""
+    rows = conn.execute(
+        "SELECT i.specimen_id FROM lab_results r "
+        "JOIN lab_order_items i ON i.id = r.order_item_id "
+        "LEFT JOIN lab_specimens s ON s.id = i.specimen_id "
+        f"WHERE r.released_at IS NOT NULL AND i.specimen_id IS NOT NULL AND {where} "
+        "GROUP BY i.specimen_id "
+        "ORDER BY MAX(julianday(COALESCE(s.collected_at, r.released_at))) DESC, i.specimen_id DESC "
+        "LIMIT ?", params + (limit,)).fetchall()
+    return [r[0] for r in rows]
+
+
+def _cap(limit: int) -> int:
+    return max(1, min(int(limit or REPORT_LIST_CAP), REPORT_LIST_CAP))
+
+
+def reports_for_patient(conn, patient_id: str, *, limit: int = REPORT_LIST_CAP) -> list[dict]:
+    """Every report of one patient, newest collection first, as list lines
+    (at most REPORT_LIST_CAP). The caller has already checked the patient is
+    in scope (require_patient_access)."""
+    if not tables_present(conn) or not patient_id:
+        return []
+    ids = _released_specimen_ids(conn, "r.patient_id = ?", (patient_id,), _cap(limit))
+    return [_summary(r) for r in _reports(conn, ids)]
+
+
+def reports_for_day(conn, day: date, *, dept: Optional[str],
+                    limit: int = REPORT_LIST_CAP) -> list[dict]:
+    """The reports with any result released (or amended) on one hospital-local
+    day, newest collection first (at most REPORT_LIST_CAP), inside the caller's
+    department (None is the laboratory's hospital-wide list)."""
+    if not tables_present(conn):
+        return []
+    start, end = local_day_bounds_utc(day)
+    where = "julianday(r.released_at) >= julianday(?) AND julianday(r.released_at) < julianday(?)"
+    params: tuple = (start.isoformat(), end.isoformat())
+    if dept is not None:
+        scope_sql, scope_params = scope_patient_ids_sql(dept)
+        where += f" AND r.patient_id IN ({scope_sql})"
+        params += tuple(scope_params)
+    ids = _released_specimen_ids(conn, where, params, _cap(limit))
+    return [_summary(r) for r in _reports(conn, ids)]
+
+
+def patient_by_uhid(conn, uhid: str, *, dept: Optional[str]) -> Optional[dict]:
+    """The one patient whose UHID is exactly `uhid` (spaces and case ignored),
+    inside the caller's department, or None."""
+    text = str(uhid or "").strip()
+    if not text:
+        return None
+    rows = conn.execute("SELECT id FROM patients WHERE UPPER(TRIM(mrn)) = UPPER(?) LIMIT 2",
+                        (text,)).fetchall()
+    if len(rows) != 1:
+        return None
+    pid = rows[0][0]
+    if not patient_in_scope(conn, pid, dept):
+        return None
+    return {"id": pid}

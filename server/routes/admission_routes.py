@@ -1,13 +1,18 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, BackgroundTasks, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List, Dict, Any
 from auth import get_current_user
-from permissions import require_permission
+from permissions import department_scope, log_phi_read, require_permission
+from routes.opt_in_gates import require_opd_feature
+from services import registration_service
 from services.admission_service import (
+    CONVERSION_PREVIEW_AUDIT_ACTION,
     AdmissionInputError,
     AdmissionRefused,
     admission_choices,
+    admit_existing_patient,
     admit_patient,
+    conversion_preview,
     require_listed_attending,
     resolve_admission_department,
 )
@@ -190,3 +195,186 @@ def process_admission(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Admission failed: {str(e)}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Admitting a registered outpatient from their visit (opd-17a, ORB_OPD)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+#   GET  /api/admissions/admit-existing/visits/{visit_id}   what the form shows
+#   POST /api/admissions/admit-existing                     the conversion
+#
+# Both sit behind the 'opd' feature (404 while it is off) and patient.write
+# (the admitting doctor), and both are VISIT-ADDRESSED: the visit must be in
+# the caller's own clinic, permissions.department_scope(user), never a
+# department the request names (404 otherwise). The body names no patient:
+# the patient is the visit's. See services/admission_service.py, 'A
+# registered outpatient becomes an inpatient', for what is written and the
+# rulings built strictest (OPD-S1, OPD-S3, OPD-S4, OPD-N8).
+
+class StatedIdentityIn(BaseModel):
+    """What the patient STATES (ruling OPD-S1): their name, their date of
+    birth or age, and the last 4 digits of their phone or their UHID.
+    Compared on the server; never echoed back."""
+    model_config = ConfigDict(extra="forbid")
+    name: Optional[str] = Field(None, max_length=200)
+    date_of_birth: Optional[str] = Field(None, max_length=40)
+    age_years: Optional[int] = None
+    phone_last4: Optional[str] = Field(None, max_length=10)
+    uhid: Optional[str] = Field(None, max_length=40)
+
+
+class AdmitExistingRequest(BaseModel):
+    """The admission form's fields for a patient already on file. No identity
+    field (the record's own is kept) and no observations (ruling OPD-S3 (a):
+    the ward charts a fresh set), so either is a 422."""
+    model_config = ConfigDict(extra="forbid")
+    opd_visit_id: str = Field(..., min_length=1, max_length=80)
+    identity_check: Optional[StatedIdentityIn] = None
+    #: Ruling OPD-N8: why the visit has no signed note, when it has none.
+    no_signed_note_reason: Optional[str] = Field(None, max_length=500)
+
+    admission_source: str = Field("clinic", max_length=40)
+    admission_type: str = Field("inpatient", max_length=40)
+    department: str
+    ward: str
+    bed: str
+    attending_doctor_id: str
+    referring_clinician: Optional[str] = None
+
+    chief_complaint: str
+    initial_diagnosis: Optional[str] = None
+    triage_severity: Optional[int] = Field(None, ge=1, le=5)
+
+    comorbidities: Optional[List[str]] = []
+    past_medical_history: Optional[str] = None
+    past_surgical_history: Optional[str] = None
+    #: Allergies to ADD; every allergy already charted stays as it is.
+    allergies: Optional[List[str]] = []
+    current_medications: Optional[List[str]] = []
+    family_history: Optional[str] = None
+    social_history: Optional[str] = None
+
+    admitting_notes: Optional[str] = None
+    nursing_notes: Optional[str] = None
+    isolation_precautions: Optional[List[str]] = []
+    code_status: Optional[str] = "full_code"
+
+    # Beds and admissions (adt-5), read only while ORB_ADT is on, as on /admit.
+    ward_id: Optional[str] = None
+    bed_id: Optional[str] = None
+    awaiting_bed: Optional[bool] = None
+    admitted_at: Optional[str] = None
+    out_of_service_reason: Optional[str] = None
+    boarder_acknowledged: Optional[bool] = None
+    extra_bed: Optional[bool] = None
+    not_clean_reason: Optional[str] = None
+    terminal_clean_authorised_by: Optional[str] = None
+    terminal_clean_reason: Optional[str] = None
+    terminal_clean_authoriser_pin: Optional[str] = None
+
+
+def _request_meta(request: Request) -> dict:
+    return {
+        "request_path": request.url.path,
+        "http_method": request.method,
+        "ip_address": request.client.host if request.client else None,
+        "user_agent": request.headers.get("user-agent"),
+    }
+
+
+def _audit_unavailable(what: str) -> HTTPException:
+    return HTTPException(status_code=503, detail={
+        "error": "audit_unavailable",
+        "message": f"The record of this {what} could not be written, so nothing was done. "
+                   "Try again in a moment.",
+    })
+
+
+@router.get("/admit-existing/visits/{visit_id}")
+def admit_existing_preview(
+    visit_id: str,
+    request: Request,
+    _opd: None = Depends(require_opd_feature),
+    user: dict = Depends(require_permission("patient.write")),
+):
+    """What the admission form shows before admitting this visit's patient:
+    who they are (never the date of birth), this visit's OPD observations and
+    the patient's outpatient medicines with their times, for reference only,
+    the charted allergies, the complaint and diagnosis to start from, and
+    whether the patient can be admitted from this visit now. A visit the
+    patient cannot be admitted from answers with the visit and the refusal
+    only, nothing about the patient (the clinic may be outside the patient's
+    OPD scope by then). Audited as a PHI read (fail-closed) either way."""
+    dept = department_scope(user)
+    try:
+        preview, patient_id = conversion_preview(visit_id, scope_department=dept)
+    except AdmissionRefused as e:
+        raise HTTPException(status_code=e.status, detail=e.detail())
+    refusal = preview.get("refusal") or {}
+    try:
+        log_phi_read(
+            request=request, user=user, action_type=CONVERSION_PREVIEW_AUDIT_ACTION,
+            summary_message=f"Admission from outpatient visit {visit_id} prepared",
+            patient_id=patient_id, target_type="opd_visit", target_id=visit_id,
+            metadata={"opd_visit_id": visit_id, "admittable": preview["admittable"],
+                      "refusal": refusal.get("error"),
+                      "patient_details_shown": bool(preview["admittable"]),
+                      "opd_medicines_listed": len(preview.get("opd_medicines") or [])},
+        )
+    except AuditWriteError:
+        raise _audit_unavailable("read")
+    return preview
+
+
+@router.post("/admit-existing")
+def admit_existing(
+    payload: AdmitExistingRequest,
+    request: Request,
+    response: Response,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    _opd: None = Depends(require_opd_feature),
+    user: dict = Depends(require_permission("patient.write")),
+):
+    """Admit the registered outpatient of this open visit onto their own
+    record: 201 for a new admission, 200 for a replay of the same
+    Idempotency-Key (required). The visit is finished as 'admitted' in the
+    same transaction. Refusals answer {error, message, ...} with nothing
+    written."""
+    dept = department_scope(user)
+    try:
+        data = payload.model_dump(exclude={"opd_visit_id", "identity_check"})
+        data["department"] = resolve_admission_department(payload.department)
+        data["attending_doctor_id"] = require_listed_attending(payload.attending_doctor_id)
+        data["ward"] = payload.ward.strip()
+        data["bed"] = payload.bed.strip()
+        result = admit_existing_patient(
+            payload.opd_visit_id, data, user, scope_department=dept,
+            identity=(payload.identity_check.model_dump()
+                      if payload.identity_check is not None else None),
+            idempotency_key=idempotency_key, request_meta=_request_meta(request))
+    except AdmissionInputError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except AdmissionRefused as e:
+        raise HTTPException(status_code=e.status, detail=e.detail())
+    except registration_service.RegistrationNotFound:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    except registration_service.RegistrationError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail())
+    except AdtError as e:
+        raise HTTPException(status_code=e.http_status, detail=http_detail(e))
+    except AuditWriteError:
+        raise _audit_unavailable("admission")
+    response.status_code = 200 if result.get("replayed") else 201
+    if not result.get("replayed"):
+        from services.opd_queue_service import nudge_queue_changed
+
+        # The patient left the clinic's queue: open queues refetch.
+        nudge_queue_changed((result.get("visit") or {}).get("department"))
+        if result.get("movement_id"):
+            from services.adt import transfer as adt_transfer
+
+            # ORB_ADT on: the admission movement reaches housekeeping now
+            # (best-effort, never fails the admission), as a move's does.
+            adt_transfer.sync_housekeeping_after_commit()
+    return result

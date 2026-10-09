@@ -45,6 +45,10 @@ PUBLIC_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/socket.io/{_path:path}"): "wrong-entrypoint diagnostic: realtime is "
                                         "served by main:socket_app, not FastAPI",
     ("POST", "/socket.io/{_path:path}"): "wrong-entrypoint diagnostic, as above",
+    ("GET", "/api/frontdesk/opd/board"): "waiting-room token board (opd-9): a device, "
+                                         "authenticated by its own board key in the "
+                                         "X-Orb-Board-Key header, 401 without it; token, "
+                                         "doctor and room only, no patient data",
 }
 
 #: The API surface was 516 method/path pairs on 2026-10-03.

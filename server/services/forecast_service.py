@@ -949,11 +949,15 @@ def get_appointments(days_ahead: int = 7, department: str | None = None) -> list
     # Exclusive end: "the next 7 days" is today plus six, not eight dates.
     end = (today + timedelta(days=max(1, days_ahead))).isoformat()
 
+    # The doctor (opd-16, migration 68's appointments.doctor_id): the clinic
+    # doctor a slot booking is with, NULL for a booking with no doctor.
     sql = """SELECT ap.id, ap.patient_id, ap.scheduled_date, ap.scheduled_time,
                     ap.appointment_type, ap.reason, ap.origin, ap.department,
+                    ap.doctor_id, du.name AS doctor_name,
                     p.name, p.age, p.sex, p.ward, p.bed, p.diagnosis
                FROM appointments ap
                JOIN patients p ON p.id = ap.patient_id
+               LEFT JOIN users du ON du.id = ap.doctor_id
               WHERE ap.status = 'booked'
                 AND ap.scheduled_date >= ? AND ap.scheduled_date < ?"""
     params: list = [first, end]
@@ -1028,6 +1032,8 @@ def get_appointments(days_ahead: int = 7, department: str | None = None) -> list
             "reason": b["reason"],
             "origin": b["origin"] or "staff",
             "department": b["department"],
+            "doctor_id": b["doctor_id"],
+            "doctor_name": b["doctor_name"],
             # The band of the latest vitals, or None. Never defaulted to
             # "stable": a patient nobody has scored is not a stable patient.
             "acuity": news2["level"] if news2 else None,

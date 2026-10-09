@@ -116,6 +116,9 @@ from routes.registration_routes import router as registration_router
 from routes.schedule_routes import router as schedule_router
 # The medication-order store's package (wave 4), behind ORB_MED_ORDER_STORE.
 from routes.medorders import router as medorders_router
+# Facility identity (multi-site, wave 7). Registered once; later increments add
+# routes inside it. Facility 1 works with ORB_MULTI_SITE off.
+from routes.facility_routes import router as facility_router
 
 
 # Import WebSocket and Bots
@@ -356,6 +359,17 @@ async def lifespan(app: FastAPI):
         logger.warning("Discharge link address check failed: %s", e)
 
     init_db()
+
+    # The facility spine's one boot refusal (multisite-1): facility 1 must exist
+    # and be active. Only tampering produces either; nothing else about
+    # facilities stops a boot (not ORB_MULTI_SITE, not a second facility). Then
+    # read the facilities table once, so /api/health and the facility fence
+    # start from the real answer.
+    from services import facility_service as _facility_service
+    _facility_service.assert_facility_one()
+    if _facility_service.prime_cache():
+        logger.warning("More than one facility is on record: screens not yet ready to "
+                       "keep each facility's patients apart answer 503 (facility fence).")
 
     # Reconcile the AI model registry with what Orb actually ships, once per boot.
     #
@@ -945,6 +959,17 @@ async def _limit_body_size(request: _Request, call_next):
     return await call_next(request)
 
 
+# ── Facility fence (multi-site, ruling M2) ──
+# Once more than one facilities row exists, a route not yet taught to keep each
+# facility's patients apart answers 503 instead of answering for every facility
+# (server/facility_fence.py). With one facility (every install today) it does
+# nothing but read a cached answer. Added BEFORE CORS and the security headers,
+# so both wrap the 503. A second copy in the Socket.IO app covers /socket.io/
+# (see socket_app below), which no FastAPI middleware sees.
+from facility_fence import FacilityFence, HTTP_ROOTS as _FENCE_HTTP_ROOTS
+app.add_middleware(FacilityFence, roots=_FENCE_HTTP_ROOTS)
+
+
 # ── CORS ──
 from config import CORS_ORIGINS, DEPLOYMENT_PROFILE
 from routes.auth_routes import MFA_ENROLL_TICKET_HEADER
@@ -1117,6 +1142,9 @@ app.include_router(schedule_router)
 # routes/medorders, which another build owns.
 from services.drug_chart import require_drug_chart as _require_drug_chart
 app.include_router(medorders_router, dependencies=[Depends(_require_drug_chart)])
+# Facility identity: configuration, no patient data, open through the facility
+# fence (facility_fence.OPEN_SURFACES).
+app.include_router(facility_router)
 
 # ── Serve uploaded media (PHI) behind authentication ──
 # SECURITY: uploads contain medical images (Lens) and consultation audio
@@ -1284,11 +1312,14 @@ async def health():
     `modules` also carries the opt-in modules (adt, pharmacy-store, lab; default
     OFF), true while 'on' or 'draining'. `module_states` gives each opt-in
     module's state word, and `features` every feature flag of the
-    hospital-system build (default OFF, prerequisites applied). Built from
-    config and cached drain checks only: this endpoint never opens a database
-    connection.
+    hospital-system build (default OFF, prerequisites applied). `platform`
+    (multi-site) is {multi_site, multi_facility_data}: the ORB_MULTI_SITE
+    switch and whether more than one facility is on record, the second read
+    from facility_service's cache. Built from config and cached values only:
+    this endpoint never opens a database connection.
     """
     from config import enabled_modules, feature_flags, module_states
+    from services.facility_service import platform_flags
     return {
         "status": "ok",
         "service": "orb-hospital-os",
@@ -1297,6 +1328,7 @@ async def health():
         "module_states": module_states(),
         "features": feature_flags(),
         "clinical": clinical_switches(),
+        "platform": platform_flags(),
     }
 
 
@@ -1753,7 +1785,11 @@ else:
 # socket. It refuses a Host name Orb was not told about (DNS rebinding); see
 # services/host_gate.py and config.allowed_host_names().
 from services.host_gate import HostGate
-socket_app = HostGate(socketio.ASGIApp(sio, app))
+# The Socket.IO app carries the facility fence for /socket.io/ (a subclass of
+# socketio.ASGIApp, facility_fence.fenced_socketio_app); /api/ and /uploads/
+# are fenced inside the FastAPI app.
+from facility_fence import fenced_socketio_app as _fenced_socketio_app
+socket_app = HostGate(_fenced_socketio_app(sio, app))
 
 
 # ── Refuse to boot on the wrong ASGI target ──

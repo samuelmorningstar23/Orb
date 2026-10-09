@@ -738,14 +738,12 @@ def _summary_for_stay_on(db, admission: dict) -> Optional[int]:
 
 
 def _bed_reserved_on(db, bed_id: str) -> bool:
-    """An active reservation holds the bed (bed_reservations arrives with
-    adt-12; until then nothing is reserved)."""
-    if db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'bed_reservations'"
-                  ).fetchone() is None:
-        return False
-    return db.execute(
-        "SELECT 1 FROM bed_reservations WHERE bed_id = ? AND status = 'active' LIMIT 1", (bed_id,)
-    ).fetchone() is not None
+    """A reservation holds the bed now (adt-12: active and not past its
+    expiry, read through services/adt/reservations.py, so an expired hold
+    frees the bed here as everywhere)."""
+    from services.adt import reservations as adt_res
+
+    return adt_res.live_on_bed(db, bed_id) is not None
 
 
 def _typed_holder_on(db, admission_id: str, ward_text: Any, bed_text: Any) -> bool:

@@ -71,7 +71,23 @@ OPD_ARM_WHITELIST: dict[tuple[str, str], str] = {
         "The UHID card print data (opd-4): UHID, name, age and sex only, "
         "registration.read, audited as uhid_card_printed with the arm."
     ),
+    ("POST", "/api/appointments"): (
+        "The staff branch of a booking in OPD mode (opd-16): patient.write or "
+        "registration.write books an appointment for the patient named in the typed "
+        "body (BookAppointmentRequest.patient_id), scoped through "
+        "enforce_patient_scope(..., opd_arm=True); a departmented desk books only into "
+        "its own clinic. Writes one appointments row, never the chart. With the 'opd' "
+        "feature off the branch is the old patient.write one with the ordinary scope."
+    ),
 }
+
+#: Whitelisted arm routes that name their patient in a TYPED BODY rather than
+#: the path, and call enforce_patient_scope(..., opd_arm=True) on it in the
+#: endpoint itself. The caller-named-patient sweep
+#: (tests/test_caller_named_patient_scope.py) sees the body; each entry here is
+#: checked to have a patient_id field on its body model and the call in its
+#: own source.
+BODY_NAMED_ARM_ROUTES = frozenset({("POST", "/api/appointments")})
 
 #: Route modules that may carry the arm on a non-GET route (the design's
 #: registration PATCH, OPD visit-scoped writes and the appointment staff branch).
@@ -204,9 +220,31 @@ def test_every_whitelisted_route_exists_and_still_carries_the_arm():
 
 def test_every_whitelisted_route_names_its_patient_in_the_path():
     for method, path in OPD_ARM_WHITELIST:
+        if (method, path) in BODY_NAMED_ARM_ROUTES:
+            continue
         assert "{patient_id}" in path, (
             f"{method} {path}: the arm scopes the patient named in the path; a route "
             "without one must use enforce_patient_scope(..., opd_arm=True) and say why")
+
+
+def test_a_body_named_arm_route_scopes_the_body_patient_in_its_own_source():
+    """The one exception to the path rule (the appointment staff branch,
+    opd-16): its body model carries patient_id, and the endpoint itself calls
+    enforce_patient_scope(..., opd_arm=True), so neither sweep loses it."""
+    import main
+
+    assert BODY_NAMED_ARM_ROUTES <= set(OPD_ARM_WHITELIST)
+    for route in main.app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        for method in route.methods:
+            if (method, route.path) not in BODY_NAMED_ARM_ROUTES:
+                continue
+            src = inspect.getsource(route.endpoint).replace(" ", "")
+            assert "enforce_patient_scope(user,patient_id,opd_arm=True)" in src, route.path
+            assert route.body_field is not None, route.path
+            model = route.body_field.type_
+            assert "patient_id" in getattr(model, "model_fields", {}), route.path
 
 
 def test_no_write_route_outside_the_outpatient_homes_carries_the_arm():

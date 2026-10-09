@@ -78,7 +78,7 @@ from permissions import (
 )
 from routes.medorders import require_med_order_lifecycle
 from services.audit_service import log_audit_event
-from services.medorders import adoption, chart_lane, queries
+from services.medorders import adoption, chart_lane, cpoe, queries
 from services.medorders import core as store
 
 logger = logging.getLogger("orb.medorders.routes")
@@ -414,6 +414,9 @@ def sign_order(order_id: str, body: SignRequest, request: Request,
     except store.MedOrderError as e:
         raise _refusal(e, user, request)
     _emit(result["order"])
+    # A CPOE or order-set medicine is counted as the clinician's action when
+    # it is signed, not when its draft was written (medorders-7, W7-F).
+    cpoe.after_signed(result["order"], actor_id=user["id"], actor_role=user.get("role"))
     return _step_reply(result)
 
 

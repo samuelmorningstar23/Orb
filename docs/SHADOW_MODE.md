@@ -297,6 +297,18 @@ rather than summarising. A rising agreement percentage during Phase C may simply
 mean clinicians have started deferring to the system, which is a risk, not a
 result.
 
+**When a medicine counts as the clinician's action.** The clinician's side of
+an agreement is the clinical.action row an order writes. With the
+medication-order lifecycle switched off (the default), a medicine ordered under
+Orders or by an order set writes that row when the order is created. With the
+lifecycle on (ORB_MED_ORDER_LIFECYCLE), the order is a draft until a prescriber
+signs it, and the row is written at the signature instead, once, with the
+signer as the actor. A draft signed hours later is therefore matched against
+the alert hours later, or falls outside the correlation window and is not
+counted at all. Tests, nursing orders and the rest are unchanged. Any pilot
+that runs the lifecycle must say so beside its agreement figure and must not
+compare those figures with a period that ran with it off.
+
 ### 5.4 Time saved
 
 **The number.** A proxy, and it is labelled as one everywhere it appears.

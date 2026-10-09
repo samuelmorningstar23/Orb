@@ -466,11 +466,13 @@ export type FeatureFlagId =
   | 'lab_portal_reports'
   | 'med_order_store'
   | 'med_order_lifecycle'
+  | 'multi_site'
 
 export const FEATURE_FLAG_IDS: readonly FeatureFlagId[] = [
   'registration', 'opd', 'adt_strict_locations', 'pharmacy_ward_stock', 'ndps_register',
   'lab_analyser_listener', 'result_quarantine', 'result_corrections', 'oru_order_link',
   'lab_critical_interfaced', 'lab_portal_reports', 'med_order_store', 'med_order_lifecycle',
+  'multi_site',
 ]
 
 export const DEFAULT_FEATURE_FLAGS: Readonly<Record<FeatureFlagId, boolean>> =
@@ -604,6 +606,59 @@ export function useClinicalSwitches(): Readonly<ClinicalSwitches> {
   return useSyncExternalStore(subscribeModuleFlags, currentClinicalSwitches)
 }
 
+/* ── Platform flags (multi-site) ──────────────────────────────────────────────
+ *
+ * Published as 'platform' on /api/health (server/services/facility_service.py
+ * platform_flags): multi_site is the ORB_MULTI_SITE switch, and
+ * multi_facility_data is true once more than one facility is on record. The
+ * server keeps facilities apart from the data alone (ruling M2); these only
+ * decide whether screens show facility labels and selectors, so both default
+ * FALSE (no label, as on every single-site install) and only the probe sets
+ * them. No client override. Read with usePlatformFlags; never fetch
+ * /api/health again for them.
+ */
+export interface PlatformFlags {
+  /** ORB_MULTI_SITE: this site may grow beyond one facility. */
+  multiSite: boolean
+  /** More than one facility is on record: show which facility things belong to. */
+  multiFacilityData: boolean
+}
+
+export const DEFAULT_PLATFORM_FLAGS: Readonly<PlatformFlags> = {
+  multiSite: false,
+  multiFacilityData: false,
+}
+
+let platformFlags: PlatformFlags = { ...DEFAULT_PLATFORM_FLAGS }
+
+/** The platform flags the client should act on right now. */
+export function currentPlatformFlags(): Readonly<PlatformFlags> {
+  return platformFlags
+}
+
+/** Apply the server's 'platform' answer (snake_case keys) and notify. A key
+ *  that is not a strict boolean leaves its flag as it was. */
+export function setPlatformFlags(next: { multi_site?: unknown, multi_facility_data?: unknown }): void {
+  const merged = { ...platformFlags }
+  if (typeof next.multi_site === 'boolean') merged.multiSite = next.multi_site
+  if (typeof next.multi_facility_data === 'boolean') merged.multiFacilityData = next.multi_facility_data
+  if (merged.multiSite === platformFlags.multiSite
+      && merged.multiFacilityData === platformFlags.multiFacilityData) return
+  platformFlags = merged
+  for (const listener of moduleFlagListeners) listener()
+}
+
+/** Back to both off. For tests and sign-out. */
+export function resetPlatformFlags(): void {
+  platformFlags = { ...DEFAULT_PLATFORM_FLAGS }
+  for (const listener of moduleFlagListeners) listener()
+}
+
+/** The platform flags as React state, re-rendering when the probe answers. */
+export function usePlatformFlags(): Readonly<PlatformFlags> {
+  return useSyncExternalStore(subscribeModuleFlags, currentPlatformFlags)
+}
+
 /* ── Switches known (Samuel's ruling, 9 October 2026: fix the startup flash) ───
  *
  * The defaults above assume every clinical switch is on, so a screen drawn
@@ -640,6 +695,8 @@ interface ServerSwitches {
     scoring_enabled?: unknown, lens_enabled?: unknown, sepsis_autostart?: unknown,
     models_enabled?: unknown, ward_record?: unknown,
   }
+  /** /api/health only (the page does not carry it): see PlatformFlags. */
+  platform?: { multi_site?: unknown, multi_facility_data?: unknown }
 }
 
 declare global {
@@ -687,7 +744,8 @@ function applyServerSwitches(body: unknown): ServerSwitches | null {
   setModuleFlags({ ...b.modules, ...readModuleOverrides() })
   if (b.features && typeof b.features === 'object') setFeatureFlags(b.features)
   if (b.clinical && typeof b.clinical === 'object') setClinicalSwitches(b.clinical)
-  return { modules: b.modules, features: b.features, clinical: b.clinical }
+  if (b.platform && typeof b.platform === 'object') setPlatformFlags(b.platform)
+  return { modules: b.modules, features: b.features, clinical: b.clinical, platform: b.platform }
 }
 
 function setSwitchesSource(next: SwitchesSource): void {

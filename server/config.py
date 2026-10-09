@@ -1001,9 +1001,13 @@ OPT_IN_MODULES = {
 
 # Beds and admissions: bed master, bed board, census, master-aware admit,
 # transfer and end of stay.
-# RELEASE GATE, stated where the switch lives: do not turn ORB_ADT on at a site
-# where Sage runs until adt-6c (the Relay transfer lane) has landed, and do not
-# rely on census or NABH figures before adt-8a, adt-8c and adt-6c.
+# RELEASE GATE, stated where the switch lives: ORB_ADT was not to be turned on
+# at a site where Sage runs until adt-6c (the Relay transfer lane) landed, and
+# census or NABH figures were not to be relied on before adt-8a, adt-8c and
+# adt-6c. All three have landed (adt-6c in HIS wave 7: a confirmed Relay
+# transfer card moves the patient through the ADT writer under rule C, see
+# sage_handoff_service._transfer_through_adt_on), checked by tests only, not
+# yet in a browser. NABH indicators from the movement ledger wait on adt-13b.
 ADT_ENABLED = _opt_in("ORB_ADT")
 # Pharmacy store: drug purchasing, goods receipt, batches and expiry, transfers,
 # stock take, NDPS register. Helix stays the only owner of drug stock.
@@ -1156,6 +1160,14 @@ FEATURE_FLAGS = {
     # the lifecycle on and the store off. Switching it off after use fails
     # closed: held drugs stay ungivable (ruling MO-R9).
     "med_order_lifecycle": "ORB_MED_ORDER_LIFECYCLE",
+    # More than one hospital site on this appliance (multi-site, ruling M1: one
+    # appliance per legal entity). It gates GROWTH only: creating and closing a
+    # facility, placing staff at a facility other than facility 1, group-wide
+    # grants, and the facility labels on screen. It never switches isolation:
+    # once a second facilities row exists, facility scope applies whatever this
+    # says (ruling M2, services/facility_service.multi_facility_data), so
+    # switching it off on a two-facility appliance keeps every facility apart.
+    "multi_site": "ORB_MULTI_SITE",
 }
 
 # The failure mode for an NDPS register write that fails during a dispense
@@ -1196,6 +1208,7 @@ _FEATURE_CONSTANTS = {
     "lab_portal_reports": "LAB_PORTAL_REPORTS_ENABLED",
     "med_order_store": "MED_ORDER_STORE_ENABLED",
     "med_order_lifecycle": "MED_ORDER_LIFECYCLE_ENABLED",
+    "multi_site": "MULTI_SITE_ENABLED",
 }
 
 _PREREQUISITE_WORDS = {
@@ -1274,6 +1287,8 @@ LAB_CRITICAL_INTERFACED_ENABLED = _FEATURE_REQUESTED["lab_critical_interfaced"]
 LAB_PORTAL_REPORTS_ENABLED = _FEATURE_REQUESTED["lab_portal_reports"]
 MED_ORDER_STORE_ENABLED = _FEATURE_REQUESTED["med_order_store"]
 MED_ORDER_LIFECYCLE_ENABLED = _FEATURE_REQUESTED["med_order_lifecycle"] and MED_ORDER_STORE_ENABLED
+# No prerequisite. Read through feature_enabled("multi_site") at request time.
+MULTI_SITE_ENABLED = _FEATURE_REQUESTED["multi_site"]
 
 # The lifecycle decides who may give a drug (a held order is never given) on
 # top of the order store's records. Without the store there is nothing for it

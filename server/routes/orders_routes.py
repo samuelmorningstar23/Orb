@@ -4,6 +4,8 @@ Guarded provider order entry with terminology validation. Auth follows the
 existing Bearer/JWT pattern via Depends(get_current_user); the authenticated
 user's id is used as the actor on creates and transitions.
 """
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from typing import Optional
@@ -12,9 +14,13 @@ from auth import get_current_user
 from database import db_session
 from permissions import (department_scope, enforce_patient_scope, log_phi_read,
                          patient_in_scope, require_patient_access,
-                         require_permission, ORDER_READ, ORDER_WRITE)
+                         require_permission, MEDICATION_PRESCRIBE, ORDER_READ,
+                         ORDER_WRITE, ROLE_PERMISSIONS)
 from services import order_sets_service, orders_service, terminology_service
+from services.audit_service import log_audit_event
 from services.medication_safety_gate import enforce_medication_safety
+from services.medorders import core as medorder_store
+from services.medorders import cpoe
 from services.order_sets_service import OrderSetBlocked, OrderSetError
 from services.drug_chart import DRUG_CHART_OFF, drug_chart_enabled, require_drug_chart
 
@@ -257,7 +263,8 @@ def _structured_dose(detail: Optional[dict]) -> tuple[Optional[str], Optional[st
 
 @router.post("")
 @router.post("/")
-def create_order(req: CreateOrderRequest, user=Depends(require_permission(ORDER_WRITE))):
+def create_order(req: CreateOrderRequest, request: Request,
+                 user=Depends(require_permission(ORDER_WRITE))):
     """Create a new order (validates codes against terminology).
 
     Medication orders additionally pass the drug-safety gate (allergy +
@@ -265,6 +272,9 @@ def create_order(req: CreateOrderRequest, user=Depends(require_permission(ORDER_
     severe alerts 428 until re-submitted with an acknowledged safety_ack, and
     the screen/override result is returned as "safety". Non-medication orders
     are unaffected.
+
+    With ORB_MED_ORDER_LIFECYCLE on, a medication order is also a draft
+    medication order (medorders-7): see _create_managed_medication_order.
     """
     # SCOPING LAW — the patient is named in the BODY (2026-08-14).
     # This route held ORDER_WRITE and nothing else, so the permission answered
@@ -285,6 +295,8 @@ def create_order(req: CreateOrderRequest, user=Depends(require_permission(ORDER_
     # patient is read: the drug chart stays on paper (services/drug_chart).
     _refuse_medication_order({"order_type": req.order_type})
     enforce_patient_scope(user, req.patient_id)
+    if req.order_type == "medication" and cpoe.lifecycle_on():
+        return _create_managed_medication_order(req, request, user)
 
     safety: Optional[dict] = None
     # The dose guard needs a dose. A CPOE description is free text, so the
@@ -330,6 +342,148 @@ def create_order(req: CreateOrderRequest, user=Depends(require_permission(ORDER_
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  MEDICATION ORDERS THE ORDER STORE MANAGES (medorders-7, lifecycle on)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _request_meta(request: Request) -> dict:
+    return {
+        "request_path": request.url.path,
+        "http_method": request.method,
+        "ip_address": request.client.host if request.client else None,
+        "user_agent": request.headers.get("user-agent"),
+    }
+
+
+def _needs(code: str, message: str) -> HTTPException:
+    return HTTPException(status_code=422, detail={"error": code, "message": message})
+
+
+def _store_refusal(err: "medorder_store.MedOrderError", user: dict, request: Request,
+                   patient_id: Optional[str]) -> HTTPException:
+    """A store refusal as HTTP (its own status and body). A 403 (not a
+    prescriber) is audited as an authorization denial first, as the store's
+    own routes do."""
+    if isinstance(err, medorder_store.NotPermitted):
+        order = err.order or {}
+        log_audit_event(
+            correlation_id=str(uuid.uuid4()),
+            event_category="authorization",
+            action_type="med_order_step_refused",
+            outcome="denied",
+            summary_message=f"Medication order step refused: {err.code}",
+            actor_user_id=user.get("id"),
+            actor_role=user.get("role"),
+            patient_id=order.get("patient_id") or patient_id,
+            target_type="med_order",
+            target_id=str(order["id"]) if order.get("id") else None,
+            request_path=request.url.path,
+            http_method=request.method,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            metadata={"code": err.code, "user_role": user.get("role"),
+                      "entry_point": "orders.transition"},
+        )
+    return HTTPException(status_code=err.http_status, detail=medorder_store.http_detail(err))
+
+
+def _push_med_order(med_order: Optional[dict]) -> None:
+    """After commit: the same 'medorders:update' the store's own routes push
+    (ids, status and version only, never a drug name). Fire and forget."""
+    if not med_order:
+        return
+    try:
+        from ws.realtime import schedule_patient_vitals
+        schedule_patient_vitals("medorders:update", {
+            "patient_id": med_order.get("patient_id"), "med_order_id": med_order.get("id"),
+            "status": med_order.get("status"), "version": med_order.get("version")})
+    except Exception:  # noqa: BLE001  (the write has committed; never fail it)
+        pass
+
+
+def _create_managed_medication_order(req: CreateOrderRequest, request: Request,
+                                     user: dict) -> dict:
+    """A CPOE medicine with the lifecycle on: the orders row AND a linked
+    draft medication order, in one transaction. Nothing reaches the ward
+    until a prescriber signs it (POST /api/medorders/orders/{id}/sign), which
+    screens it again with the signer's role.
+
+    The medicine is its fields, in detail.medication: drug_name, dose, route
+    and frequency are required (422 drug_name_required,
+    dose_route_and_frequency_required), so every draft can be signed and the
+    dose guard runs now; is_prn and prn_indication are optional. The
+    description must name the drug (422 description_does_not_name_the_drug):
+    the list shows one and the ward receives the other. A code is optional
+    (ruling MO-R11 (a): free text is allowed) and validated when given.
+
+    The gate runs here as it always has for a CPOE medicine (allergy,
+    interaction and dose guard, 428 to acknowledge), on the drug the ward will
+    receive. No shadow clinical.action: the signature records it."""
+    med = cpoe.structured_medication(req.detail)
+    if not med["drug_name"]:
+        raise _needs("drug_name_required", "Enter the medicine's name.")
+    if not (med["dose"] and med["route"] and med["frequency"]):
+        raise _needs("dose_route_and_frequency_required",
+                     "Enter the dose, the route and how often it is given.")
+    if not cpoe.description_names_drug(req.description, med["drug_name"]):
+        raise _needs("description_does_not_name_the_drug",
+                     "The order's description must name the medicine being ordered.")
+
+    safety: Optional[dict] = None
+
+    def _medication_safety_gate():
+        nonlocal safety
+        safety = enforce_medication_safety(
+            req.patient_id,
+            med["drug_name"],
+            actor_id=user["id"],
+            entry_point=cpoe.ENTRY_CPOE_CREATE,
+            safety_ack=req.safety_ack,
+            dose=med["dose"],
+            route=med["route"],
+            actor_role=user.get("role"),
+        )
+
+    linked: dict = {}
+
+    def _write_linked_draft(conn, order: dict) -> None:
+        linked["med_order"] = cpoe.create_linked_draft_in_txn(
+            conn, order, source="cpoe", drug_name=med["drug_name"], dose=med["dose"],
+            route=med["route"], frequency=med["frequency"], is_prn=med["is_prn"],
+            prn_indication=med["prn_indication"], actor_id=user["id"],
+            actor_role=user.get("role"), entry_point=cpoe.ENTRY_CPOE_CREATE,
+            lane=cpoe.LANE_CPOE, request_meta=_request_meta(request)).order
+
+    detail = {**(req.detail or {}), "medication": med}
+    try:
+        order = orders_service.create_order(
+            patient_id=req.patient_id,
+            order_type="medication",
+            description=req.description,
+            code=req.code,
+            code_system=req.code_system,
+            priority=req.priority,
+            ordered_by=user["id"],
+            source=req.source,
+            detail=detail,
+            status="draft",
+            pre_persist_gate=_medication_safety_gate,
+            in_transaction=_write_linked_draft,
+            allow_uncoded_medication=True,
+        )
+    except medorder_store.MedOrderError as e:
+        raise _store_refusal(e, user, request, req.patient_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    with db_session() as db:
+        cpoe.annotate_orders(db, [order])
+    _push_med_order(linked.get("med_order"))
+    response = {"status": "success", "order": order}
+    if safety is not None:
+        response["safety"] = safety
+    return response
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  SHADOW INSTRUMENT — `clinical.action`
 # ══════════════════════════════════════════════════════════════════════════════
 # The clinician did the real thing, through CPOE, on their own. This is the third
@@ -355,49 +509,19 @@ def _shadow_clinical_action(patient_id: str, order_type: str, order: dict, user:
     a clinician doing the real thing through CPOE, and excluding it here would
     quietly re-select the measured population for people who type orders one at
     a time.
+
+    A medication order the order store manages (medorders-7, lifecycle on) is
+    NOT recorded here: it reaches nobody until a prescriber signs it, so the
+    store's sign step records it then (services/medorders/cpoe.after_signed),
+    once, with the signer as the actor. The emitter itself is
+    orders_service.record_clinical_action, shared by both, so the two record
+    identically.
     """
-    try:
-        from database import db_session
-        from services import shadow_service
-        with db_session() as db:
-            episode_id = shadow_service.current_episode(patient_id, db=db)
-            if not episode_id:
-                return
-            last_alert = db.execute(
-                "SELECT occurred_at FROM shadow_events_current WHERE episode_id = ? "
-                "AND kind = 'alert.fired' ORDER BY id DESC LIMIT 1",
-                (episode_id,),
-            ).fetchone()
-            now = shadow_service.utc_now()
-            minutes_after = None
-            if last_alert is not None:
-                from datetime import datetime
-                try:
-                    minutes_after = round(
-                        (datetime.fromisoformat(now)
-                         - datetime.fromisoformat(last_alert["occurred_at"])).total_seconds() / 60.0,
-                        1)
-                except (TypeError, ValueError):
-                    minutes_after = None
-            shadow_service.emit_many([shadow_service.build(
-                "clinical.action", episode_id, "manual",
-                occurred_at=now, patient_id=patient_id,
-                actor_user_id=user.get("id"), actor_role=user.get("role"),
-                subject_type="orders", subject_id=(order or {}).get("id"),
-                payload={
-                    # Medication orders are classed as `add_medication` so they
-                    # compare directly against the class Sage proposes for a drug
-                    # (`action.proposed.action_class`); anything else keeps its
-                    # own order type rather than being flattened into one bucket.
-                    "action_class": ("add_medication" if order_type == "medication"
-                                     else f"order_{order_type}"),
-                    "source_table": "orders",
-                    "minutes_after_alert": minutes_after,
-                },
-            )], db=db)
-    except Exception:
-        # Rule 1: an order must never fail because the observational log did.
-        pass
+    if (order or {}).get("managed_by_medication_order"):
+        return
+    orders_service.record_clinical_action(
+        patient_id, order_type, (order or {}).get("id"),
+        actor_id=user.get("id"), actor_role=user.get("role"))
 
 
 @router.get("/patient/{patient_id}")
@@ -414,7 +538,12 @@ def list_patient_orders(
     lis-7) and, when it does, where each of its tests is (lab). A laboratory
     order the laboratory could not take in carries lab_intake instead, so the
     person who ordered it sees why. Read from the laboratory's tables whatever
-    ORB_LAB says now: an order the laboratory took in stays its for life."""
+    ORB_LAB says now: an order the laboratory took in stays its for life.
+
+    Each medication order also says whether the order store manages it
+    (managed_by_medication_order, medorders-7) and, when it does, the
+    medication order's state (medication_order), read from the link whatever
+    the switches say now."""
     from services import lab_order_service
 
     orders = orders_service.list_orders(patient_id, status)
@@ -424,6 +553,7 @@ def list_patient_orders(
         orders = [o for o in orders if o.get("order_type") != "medication"]
     with db_session() as db:
         lab_order_service.annotate_orders(db, orders)
+        cpoe.annotate_orders(db, orders)
     return {"orders": orders}
 
 
@@ -441,6 +571,8 @@ def get_order(order_id: str, request: Request, user=Depends(require_permission(O
         summary_message=f"Order {order_id} viewed for {order.get('patient_id')}",
         patient_id=order.get("patient_id"), target_type="order", target_id=order_id,
     )
+    with db_session() as db:
+        cpoe.annotate_orders(db, [order])
     return {"order": order}
 
 
@@ -514,10 +646,60 @@ def _lab_managed_conflict(err: Exception) -> HTTPException:
     })
 
 
+def _managed_by_medication_order_conflict(med_order: dict) -> HTTPException:
+    """The 409 for a manual move of an order the medication-order store
+    manages (medorders-7), naming the medication order so a screen can sign
+    or refresh it."""
+    return HTTPException(status_code=409, detail={
+        "error": cpoe.MANAGED_CODE,
+        "message": orders_service.MEDICATION_MANAGED_MESSAGE,
+        "med_order_id": med_order.get("id"),
+        "med_order_status": med_order.get("status"),
+    })
+
+
+def _cancel_through_medication_order(order_id: str, req: TransitionRequest, request: Request,
+                                     user: dict) -> dict:
+    """Cancel on a linked order, handed to the store's own cancel
+    (medorders-7): an unsigned draft, with a reason (422 reason_required), by
+    anyone in scope who may write orders (this route already needs
+    order.write); a signed one is a prescriber's step (ruling MO-R2 (a)), 403
+    prescriber_required to anyone else (audited) and 409 cancel_not_offered to
+    a prescriber until that step is built. The store moves this order's
+    status in the same transaction."""
+    held = ROLE_PERMISSIONS.get(user.get("role", ""), set())
+    try:
+        result = cpoe.cancel_linked(
+            order_id, actor_id=user["id"], actor_role=user.get("role"), reason=req.detail,
+            may_cancel_any_draft=ORDER_WRITE in held,
+            may_prescribe=MEDICATION_PRESCRIBE in held,
+            request_meta=_request_meta(request))
+    except medorder_store.MedOrderError as e:
+        raise _store_refusal(e, user, request, None)
+    if not result["replayed"]:
+        _push_med_order(result["med_order"])
+    order = result["order"]
+    with db_session() as db:
+        cpoe.annotate_orders(db, [order])
+    return {"status": "success", "order": order}
+
+
 @router.post("/{order_id}/transition")
-def transition_order(order_id: str, req: TransitionRequest, user=Depends(require_permission(ORDER_WRITE))):
-    """Guarded, idempotent state transition for an order."""
+def transition_order(order_id: str, req: TransitionRequest, request: Request,
+                     user=Depends(require_permission(ORDER_WRITE))):
+    """Guarded, idempotent state transition for an order.
+
+    An order the medication-order store manages (medorders-7, keyed on the
+    link whatever the switches say now) is moved by the store only: Cancel is
+    handed to the store's own cancel, and every other target, a replay
+    included, is 409 managed_by_medication_order."""
     _scope_by_order(order_id, user)
+    if req.to_status in orders_service.LEGAL_TRANSITIONS:
+        linked = cpoe.linked_order(order_id)
+        if linked is not None:
+            if req.to_status == "cancelled":
+                return _cancel_through_medication_order(order_id, req, request, user)
+            raise _managed_by_medication_order_conflict(linked)
     try:
         order = orders_service.transition_order(
             order_id=order_id,
@@ -530,6 +712,10 @@ def transition_order(order_id: str, req: TransitionRequest, user=Depends(require
         # lis-7: the laboratory owns this order's lifecycle whatever ORB_LAB
         # says now. 409: the request is well-formed, the order refuses it.
         raise _lab_managed_conflict(e)
+    except orders_service.OrderManagedByMedicationOrder as e:
+        # Linked in the instant since the check above (the service checks
+        # the link inside its own transaction).
+        raise _managed_by_medication_order_conflict({"id": e.med_order_id})
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

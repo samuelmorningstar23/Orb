@@ -1,0 +1,168 @@
+/* CensusView.css: Orb "Quiet Clinical" (flat).
+ *
+ * The Beds panel's Census view (adt-13a). The panel's own sheet
+ * (../BedBoardPanel.css) supplies the shared primitives (.bb-ward, .bb-note,
+ * .bb-field, .bb-btn); this sheet adds the totals list, the day table and the
+ * method notes.
+ *
+ *  - No `opacity` for state anywhere. Quiet text is a quieter token.
+ *  - No status fill behind text: an insufficient day is said in words.
+ *  - Tap targets come from .bb-btn and .bb-input (24px, 44px under
+ *    `pointer: coarse`); the method summary is given the same here.
+ *  - A wide table scrolls inside .cv-scroll, never the page.
+ */
+
+.cv {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.cv-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+/* Totals */
+
+.cv-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.cv-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cv-fact__term {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.cv-fact__value {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* The day table */
+
+.cv-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.cv-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  background: var(--bg-surface);
+}
+
+.cv-table th,
+.cv-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: right;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.cv-table thead th {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: normal;
+  min-width: 72px;
+}
+
+.cv-table th[scope='row'],
+.cv-table thead th:first-child {
+  text-align: left;
+  font-weight: 600;
+}
+
+.cv-table tbody tr:last-child th,
+.cv-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.cv-table__insufficient {
+  text-align: left;
+  white-space: normal;
+  color: var(--text-secondary);
+}
+
+.cv-table__flag {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* How the figures are counted */
+
+.cv-methods {
+  padding: 12px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.cv-methods__summary {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.cv-methods__summary:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+.cv-methods__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0 0;
+}
+
+.cv-methods__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cv-methods__term {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.cv-methods__text {
+  margin: 0;
+  max-width: 80ch;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+@media (pointer: coarse) {
+  .cv-methods__summary { min-height: 44px; }
+}

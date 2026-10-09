@@ -13,6 +13,12 @@ WHAT REGISTERING A PATIENT WRITES, in ONE immediate transaction
   * the ABHA the patient presented, through abdm_service.record_abha_on, which
     is ALWAYS unverified;
   * the worklist rows a reviewed duplicate warning opens (ruling OPD-S2);
+  * the payer the patient names, when the desk records one (opd-13): one
+    unverified patient_payer_policies row with no admission, checked against
+    the payer master (billing_masters.record_patient_payer_on);
+  * the registration fee, once, only while the site has a registration-fee
+    charge rule (opd_charges_service.raise_registration_fee_on), priced on
+    that payer's tariff and unpriced rather than free when nobody set a rate;
   * the patient_identity audit rows (fail-closed): if one cannot be written the
     whole registration rolls back and the desk gets 503.
 Either all of it exists or none of it does.
@@ -607,6 +613,27 @@ def _abha_values(data: dict) -> tuple[Optional[str], Optional[str], str]:
     return number, address, source
 
 
+def _payer_values(payer: Any) -> Optional[dict]:
+    """Who the patient says pays for their outpatient care (opd-13): a payer
+    code from the site's payer master, and the policy or member number if
+    they have one. None when the desk recorded no payer (the patient is then
+    priced as self-pay, the resolver's honest default). Checked against the
+    payer master inside the registration's transaction."""
+    if payer is None:
+        return None
+    if not isinstance(payer, dict):
+        raise RegistrationError("bad_payer", "The payer is not readable.")
+    from services.billing_masters import MAX_POLICY_TEXT
+    code = _clean(payer.get("payer_code"), limit=MAX_POLICY_TEXT)
+    if not code:
+        raise RegistrationError("bad_payer", "Choose who pays from the list.")
+    return {
+        "payer_code": code,
+        "policy_number": _clean(payer.get("policy_number"), limit=MAX_POLICY_TEXT),
+        "member_id": _clean(payer.get("member_id"), limit=MAX_POLICY_TEXT),
+    }
+
+
 def _validate_registration(data: dict) -> dict:
     data = dict(data or {})
     try:
@@ -641,6 +668,7 @@ def _validate_registration(data: dict) -> dict:
         raise RegistrationError("bad_id_document_type",
                                 "Say which identity document the last 4 characters belong to.")
     clean["abha_number"], clean["abha_address"], clean["abha_source"] = _abha_values(data)
+    clean["payer"] = _payer_values(data.get("payer"))
     review = data.get("duplicate_review")
     if review is not None:
         if not isinstance(review, dict):
@@ -1087,6 +1115,22 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
                        ON CONFLICT(patient_id, candidate_patient_id) DO NOTHING""",
                     (a, b, int(c["score"]), json.dumps(c["reasons"]), now, user["id"],
                      user["id"], review["reason"]))
+            # opd-13: the payer the patient names (no admission, unverified)
+            # and, when the site charges one, the registration fee, once.
+            payer_recorded = None
+            if clean["payer"] is not None:
+                from services.billing_masters import MasterDataError, record_patient_payer_on
+                try:
+                    payer_recorded = record_patient_payer_on(
+                        db, patient_id=pid, payer_code=clean["payer"]["payer_code"],
+                        policy_number=clean["payer"]["policy_number"],
+                        member_id=clean["payer"]["member_id"], created_by=user["id"])
+                except MasterDataError as exc:
+                    raise RegistrationError("bad_payer", str(exc)) from exc
+            from services.opd_charges_service import raise_registration_fee_on
+            registration_fee = raise_registration_fee_on(
+                db, patient_id=pid, charged_by=user["id"],
+                service_day=_today(today).isoformat())
             correlation = f"registration-{pid}"
             _audit(db, action="patient_registered", user=user, patient_id=pid,
                    summary=f"Patient {pid} registered at the desk",
@@ -1095,7 +1139,13 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
                              "stated_age": dob is None, "idempotency_key": bool(key),
                              "duplicate_review": review_used,
                              "candidate_scan_truncated": scan["truncated"],
-                             "check_incomplete": scan["check_incomplete"]},
+                             "check_incomplete": scan["check_incomplete"],
+                             **({"payer_code": payer_recorded["payer_code"],
+                                 "payer_type": payer_recorded["payer_type"],
+                                 "payer_policy_id": payer_recorded["policy_id"]}
+                                if payer_recorded else {}),
+                             **({"registration_fee_charge_id": registration_fee.charge_id}
+                                if registration_fee else {})},
                    request_meta=request_meta, correlation_id=correlation)
             if review_used:
                 summary = (f"Registered {pid} past {len(reviewed)} possible duplicate(s)"
@@ -1119,7 +1169,7 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
                    summary=f"Registration refused: {refusal.error.code}",
                    metadata=refusal.metadata, request_meta=request_meta)
         raise refusal.error
-    return {
+    result = {
         "patient": record,
         "replayed": False,
         "duplicate_review": ({"reason": review["reason"],
@@ -1127,6 +1177,15 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
                               "check_incomplete": scan["check_incomplete"]}
                              if review_used else None),
     }
+    # opd-13: present only when the desk recorded a payer, or the site
+    # charges a registration fee, so every other registration answers as
+    # before.
+    if payer_recorded:
+        result["payer"] = {k: payer_recorded[k] for k in
+                           ("policy_id", "payer_code", "payer_name", "payer_type", "verified")}
+    if registration_fee:
+        result["registration_fee"] = registration_fee.as_dict()
+    return result
 
 
 # ── The record, its history and the card ─────────────────────────────────────

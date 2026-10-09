@@ -32,6 +32,8 @@ vi.mock('../../api/client', () => ({
   apiFetch: (path: string, options?: RequestInit) => h.apiFetch(path, options),
   buildHeaders: () => ({}),
   API_BASE: '/api',
+  // The signed-in doctor: Finish visit asks the role whether it may admit.
+  getUser: () => ({ id: 'DOC-1', name: 'Dr Iyer', role: 'doctor' }),
   socket: {
     connected: true,
     on: (event: string, fn: (...args: unknown[]) => void) => { h.handlers.set(event, fn) },

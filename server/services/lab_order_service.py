@@ -1024,6 +1024,59 @@ def _order_state_conflict(conn, order_id: str, out: dict, current: str, target: 
     return out
 
 
+def record_order_note_in_conn(conn, order_id: str, *, actor_id: Optional[str],
+                              detail: str) -> bool:
+    """An order_events row that moves no status (the prior and new status are
+    the order's current one): the laboratory's note that something happened
+    to an order's reported result, such as 'Laboratory result amended'
+    (lis-13). On the caller's write transaction. The order's status and its
+    fixed result text are left exactly as they are. False when the order is
+    gone."""
+    order = conn.execute("SELECT status FROM orders WHERE id = ?", (order_id,)).fetchone()
+    if order is None:
+        return False
+    conn.execute(
+        "INSERT INTO order_events (order_id, prior_status, new_status, actor_id, reason, "
+        "created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (order_id, order["status"], order["status"], actor_id, str(detail)[:500],
+         utc_iso_now()))
+    return True
+
+
+def settle_after_withdrawal(conn, order_id: str, *, actor_id: Optional[str],
+                            test_name: str) -> dict:
+    """Bring the order in line after a reported result was withdrawn (lis-13),
+    on the caller's transaction. The withdrawn test is already cancelled.
+
+    An order still 'resulted' that has no reported test left is NOT reopened
+    or moved (a resulted order is final on the Orders screen, and Orb never
+    rewrites it): an 'order_state_conflict' exception tells the laboratory,
+    in words, that the only reported result was withdrawn and the order still
+    shows resulted. Any other order is reconciled by the completion rule.
+    Returns reconcile_order_status's answer, with 'conflict' True when the
+    exception was written."""
+    order = conn.execute("SELECT id, status FROM orders WHERE id = ?", (order_id,)).fetchone()
+    if order is None:
+        return {"previous": None, "status": None, "target": None, "changed": False,
+                "conflict": False}
+    statuses = [r[0] for r in conn.execute(
+        "SELECT status FROM lab_order_items WHERE order_id = ?", (order_id,)).fetchall()]
+    target = order_target_status(statuses)
+    if order["status"] == "resulted" and target != "resulted":
+        _add_exception(
+            conn, "order_state_conflict", order_id,
+            f"The reported result for {test_name} was withdrawn, and no other test on this "
+            "order is reported. The order still shows resulted on the Orders screen; Orb does "
+            "not reopen it. Tell the ordering doctor, and ask for a new order if the test is "
+            "still needed.")
+        logger.warning("Laboratory order %s: its only reported result was withdrawn; the order "
+                       "stays resulted and an exception was recorded", order_id)
+        return {"previous": "resulted", "status": "resulted", "target": target,
+                "changed": False, "conflict": True}
+    return reconcile_order_status(conn, order_id, actor_id=actor_id,
+                                  reason=f"Laboratory result withdrawn: {test_name}")
+
+
 #: Item statuses that mean a result exists for the test (entered or later).
 _RESULTED_OR_LATER = ("resulted", "tech_validated", "released")
 #: Specimen statuses whose progress the bench moves on (lis-11).
@@ -2301,14 +2354,14 @@ def rejection_notice_text(notice: dict) -> str:
 
 def _insert_ward_notice(conn, channel_id: str, actor: dict, content: str) -> int:
     """One plain case-room message under the technologist's own account,
-    shown as 'Laboratory' (messages.sender_id must name a users row)."""
-    cur = conn.execute(
-        """INSERT INTO messages
-           (channel_id, sender_id, sender_name, sender_role, content, message_type, is_bot,
-            source)
-           VALUES (?, ?, 'Laboratory', 'laboratory', ?, 'text', 0, 'lab')""",
-        (channel_id, (actor or {}).get("id"), content))
-    return int(cur.lastrowid)
+    shown as 'Laboratory' (messages.sender_id must name a users row), through
+    the shared case-room writer (services/case_room_alerts.py)."""
+    from services.case_room_alerts import insert_message
+
+    message_id, _body = insert_message(
+        conn, channel_id, content, sender_id=(actor or {}).get("id"), sender_name="Laboratory",
+        sender_role="laboratory", is_bot=False, source="lab", message_type="text")
+    return message_id
 
 
 def _record_notice_failure(specimen_id: str, patient_id: str, actor: dict, reason: str) -> None:

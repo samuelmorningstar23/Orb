@@ -5,7 +5,7 @@ Strict state machine, idempotent transitions, and atomic inventory operations.
 import uuid
 import json
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 from database import db_session
 from services import pharmacy_stock_service as stock
 from services.clinical_time import to_utc_iso
@@ -181,6 +181,31 @@ def get_inventory():
         """, (_expiry_cutoff(),)).fetchall()
         return [dict(row) for row in rows]
 
+def _with_linked_orders(conn, rows: list[dict]) -> list[dict]:
+    """Add `linked_order` to each supply row LINKED to a medication order
+    (medorders-5b): the order's id, status, version and who verified it and
+    when, so the pharmacy screen can say "Order verified by X at T" and treat
+    its own verification as a supply step. A row with no link is returned
+    exactly as before (no new key), and so is every row on a database that
+    never used the order store: nothing is read unless a link exists."""
+    ids = sorted({r["med_order_id"] for r in rows if r.get("med_order_id")})
+    if not ids:
+        return rows
+    marks = ", ".join("?" for _ in ids)
+    found = {
+        o["id"]: dict(o) for o in conn.execute(
+            f"SELECT mo.id, mo.status, mo.version, mo.verified_by, mo.verified_at, "
+            f"u.name AS verified_by_name FROM med_orders mo "
+            f"LEFT JOIN users u ON u.id = mo.verified_by WHERE mo.id IN ({marks})",
+            tuple(ids),
+        ).fetchall()
+    }
+    for r in rows:
+        if r.get("med_order_id"):
+            r["linked_order"] = found.get(r["med_order_id"])
+    return rows
+
+
 def get_pending_orders():
     """Retrieve pending patient medication orders."""
     with db_session() as conn:
@@ -194,7 +219,7 @@ def get_pending_orders():
             WHERE o.status = 'pending'
             ORDER BY o.created_at DESC
         """).fetchall()
-        return [dict(row) for row in rows]
+        return _with_linked_orders(conn, [dict(row) for row in rows])
 
 def get_all_orders():
     """Retrieve all orders across all statuses."""
@@ -210,7 +235,7 @@ def get_all_orders():
             LEFT JOIN helix_medication_master sm ON o.substitute_medication_id = sm.id
             ORDER BY o.created_at DESC
         """).fetchall()
-        return [dict(row) for row in rows]
+        return _with_linked_orders(conn, [dict(row) for row in rows])
 
 def get_order(order_id: str) -> Optional[dict]:
     """One order in the same shape as get_all_orders, so a screen holding a
@@ -227,7 +252,7 @@ def get_order(order_id: str) -> Optional[dict]:
             LEFT JOIN helix_medication_master sm ON o.substitute_medication_id = sm.id
             WHERE o.id = ?
         """, (order_id,)).fetchone()
-        return dict(row) if row else None
+        return _with_linked_orders(conn, [dict(row)])[0] if row else None
 
 def get_stock_movements():
     """Retrieve all stock movements for audit."""
@@ -315,6 +340,7 @@ def transition_order_status(
     pharmacist_notes: str = "",
     substitute_medication_id: str | None = None,
     scheduled_at: str | None = None,
+    on_applied: Optional[Callable] = None,
 ) -> dict:
     """
     Guarded, idempotent state transition engine.
@@ -333,6 +359,13 @@ def transition_order_status(
     EVERY DISPENSE IS AUDITED in that transaction (clinical_access,
     helix_dispense_recorded, fail-closed). If the audit row cannot be written
     the dispense rolls back: no movement, status unchanged.
+
+    `on_applied(conn, order, from_status, to_status, transition_id)` is the
+    medication-order store's hook (medorders-5b): called inside this same
+    transaction after every write above and before the commit, with the order
+    as it now stands. Whatever it raises rolls the whole step back, the stock
+    movement and the case-room message included. Not called for a replay
+    (nothing was applied). None, the default, changes nothing.
     """
     # Generate idempotency key if not provided
     if not idempotency_key:
@@ -507,6 +540,11 @@ def transition_order_status(
         # Read back inside the block, before the session commits on exit.
         updated_order = conn.execute("SELECT * FROM helix_patient_med_orders WHERE id = ?", (order_id,)).fetchone()
         transition_record = conn.execute("SELECT * FROM helix_transitions WHERE id = ?", (transition_id,)).fetchone()
+
+        # The medication-order store's hook, last, inside this transaction:
+        # a refusal from it rolls back everything written above.
+        if on_applied is not None:
+            on_applied(conn, dict(updated_order), current_status, target_status, transition_id)
 
         return {
             "ok": True,
@@ -688,7 +726,8 @@ def _with_utc_offsets(row: dict, columns: tuple[str, ...]) -> dict:
     return row
 
 
-def receive_order(order_id: str, actor_id: str, idempotency_key: str | None = None) -> dict:
+def receive_order(order_id: str, actor_id: str, idempotency_key: str | None = None,
+                  on_applied: Optional[Callable] = None) -> dict:
     """The ward signs for a dispensed drug. `dispensed` -> `delivered`.
 
     THE ONLY WAY TO REACH `delivered`. `transition_order_status` refuses that
@@ -704,6 +743,10 @@ def receive_order(order_id: str, actor_id: str, idempotency_key: str | None = No
 
     Returns the same envelope as `transition_order_status`, including
     `already_applied`, so the two share one client contract.
+
+    `on_applied` is the same medication-order store hook as on
+    `transition_order_status`: called in this transaction before its commit,
+    with the order as it now stands; whatever it raises rolls the receipt back.
     """
     if not idempotency_key:
         idempotency_key = f"{order_id}:delivered:{uuid.uuid4().hex[:8]}"
@@ -770,6 +813,14 @@ def receive_order(order_id: str, actor_id: str, idempotency_key: str | None = No
              json.dumps({"received_at": now,
                          "dispensed_by": dispatch["actor_id"] if dispatch else None})),
         )
+
+        # The medication-order store's hook, before the commit: a refusal
+        # from it rolls the receipt back.
+        if on_applied is not None:
+            applied = conn.execute(
+                "SELECT * FROM helix_patient_med_orders WHERE id = ?", (order_id,)
+            ).fetchone()
+            on_applied(conn, dict(applied), current_status, "delivered", transition_id)
 
         conn.commit()
 

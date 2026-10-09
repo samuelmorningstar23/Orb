@@ -1265,6 +1265,60 @@ INDICATOR_SPEC: dict[str, dict] = {
 
 INDICATOR_IDS: tuple[str, ...] = tuple(INDICATOR_SPEC)
 
+#: OPTIONAL laboratory indicators (lis-18). Shown ONLY while the laboratory
+#: module is on or draining (ORB_LAB, config.module_state('lab') != 'off'), so
+#: a site without Orb's laboratory sees exactly the nine indicators above and
+#: no empty laboratory rows. Kept out of INDICATOR_SPEC and INDICATOR_IDS for
+#: the same reason. The figures come from services/lab_tat_service, the same
+#: code the laboratory's turnaround screen reads.
+LAB_INDICATOR_SPEC: dict[str, dict] = {
+    "lab_tat_within_target": {
+        "code": "QI-LAB-01",
+        "label": "Laboratory tests reported within the turnaround target",
+        "unit": "%",
+        "definition": (
+            "Tests released by the laboratory in the period whose time from "
+            "receipt in the laboratory to the first release was within the "
+            "test's turnaround target for its priority, divided by tests "
+            "released in the period that have a target. Tests with no target "
+            "and simulated results are excluded and counted separately."),
+        "denominator_label": "tests reported with a target",
+        "numerator_label": "reported within target",
+        "direction": "higher_is_better",
+        "n_required": 20,
+        "is_proxy": False,
+        "sources": ["lab_results", "lab_specimens", "lab_tests"],
+        "caveat": (
+            "A TARGET THE LABORATORY SETS ITSELF. Each test's target is the "
+            "pathologist's, per priority; none ships with Orb. A test with no "
+            "target is never counted as within or outside it. The clock starts "
+            "at receipt, so time in transit from the ward is not in this number."),
+    },
+    "lab_critical_ack_in_window": {
+        "code": "QI-LAB-02",
+        "label": "Critical laboratory results acknowledged within the callback window",
+        "unit": "%",
+        "definition": (
+            "Critical laboratory results raised in the period whose first "
+            "acknowledgement (the ward's read-back in Orb, or the laboratory's "
+            "logged phone call with a read-back) came within the callback window, divided by "
+            "critical results whose outcome is decidable. Results still inside "
+            "the window and not yet acknowledged are excluded and counted "
+            "separately."),
+        "denominator_label": "decidable critical results",
+        "numerator_label": "acknowledged in time",
+        "direction": "higher_is_better",
+        "n_required": 10,
+        "is_proxy": False,
+        "sources": ["lab_critical_events"],
+        "caveat": (
+            "Acknowledgement is a recorded read-back, not a bedside review. A Relay "
+            "post, or a logged call that reached nobody, never counts as an "
+            "acknowledgement. The window is one printed number; check it against "
+            "the hospital's own critical-result policy."),
+    },
+}
+
 #: NABH indicators a hospital WILL be asked for and Orb cannot compute today.
 #: This is the gap list, shipped as data rather than left in a slide deck: the
 #: honest half of an evidence pack is the half that says what is missing.
@@ -1317,6 +1371,10 @@ SOURCE_LABELS: dict[str, str] = {
     "scribe_notes": "I-PASS handoff notes",
     "clinical_escalations": "Deterioration escalations",
     "nabh_discharge_dispositions": "Discharge dispositions",
+    "lab_results": "Laboratory results",
+    "lab_specimens": "Laboratory specimens",
+    "lab_tests": "Laboratory test catalogue",
+    "lab_critical_events": "Critical-result log",
 }
 
 
@@ -1331,7 +1389,7 @@ def _source_labels(sources) -> list[str]:
 
 
 def _new_indicator(indicator_id: str) -> dict:
-    spec = INDICATOR_SPEC[indicator_id]
+    spec = INDICATOR_SPEC.get(indicator_id) or LAB_INDICATOR_SPEC[indicator_id]
     return {
         "id": indicator_id,
         "code": spec["code"],
@@ -2308,6 +2366,132 @@ def _incident_closure(db, start: datetime, end: datetime, ward: Optional[str],
 # THE DASHBOARD
 # ═════════════════════════════════════════════════════════════════════════════
 
+# ═════════════════════════════════════════════════════════════════════════════
+# Optional laboratory indicators (lis-18)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def lab_indicators_on() -> bool:
+    """The laboratory indicators appear only while Orb's laboratory module is
+    on or draining. Read at call time."""
+    import config
+    try:
+        return config.module_state("lab") != "off"
+    except Exception:  # pragma: no cover - a config without modules is off
+        return False
+
+
+def _lab_critical_ack_minutes() -> int:
+    """The callback window the critical-result indicator counts against. ONE
+    printed number, like the escalation window: 15 minutes, the first tier the
+    laboratory design recommends (ruling LIS-R3), until the site sets
+    ORB_NABH_LAB_CRITICAL_ACK_MINUTES to its own policy."""
+    return _env_int("ORB_NABH_LAB_CRITICAL_ACK_MINUTES", 15, 1)
+
+
+def _lab_tat_within_target(db, start: datetime, end: datetime,
+                           ward: Optional[str]) -> dict:
+    from services import lab_tat_service
+
+    indicator = _new_indicator("lab_tat_within_target")
+    rows = lab_tat_service.reported_tests(db, start, end, ward_key=_ward_key(ward) or None)
+    real = [r for r in rows if not r["simulated"]]
+    figures = lab_tat_service.aggregate(real, start.date(), start.date())["overall"]
+    target = figures["target"]
+    indicator["numerator"] = target["within"]
+    indicator["denominator"] = target["with_target"]
+    indicator["n_observed"] = target["with_target"]
+    indicator["excluded"] = {
+        "no_target": target["no_target"],
+        "simulated": len(rows) - len(real),
+        "times_unreadable_or_out_of_order": target["unreadable"],
+        "why": ("A test with no turnaround target cannot be within or outside it, and a "
+                "simulated result says nothing about the laboratory's speed."),
+    }
+    indicator["detail"] = {
+        "tests_reported": len(real),
+        "median_receipt_to_report_minutes":
+            figures["intervals"]["receipt_to_report"]["median"],
+        "p90_receipt_to_report_minutes": figures["intervals"]["receipt_to_report"]["p90"],
+    }
+    if not real:
+        indicator["state"] = "not_collected"
+        indicator["blockers"] = [
+            "No test was reported by Orb's laboratory in this period, so there is no "
+            "turnaround time to measure."
+        ]
+        return _finalise(indicator)
+    if not target["with_target"]:
+        indicator["state"] = "not_computable"
+        indicator["blockers"] = [
+            "None of the tests reported in this period has a turnaround target for its "
+            "priority. A pathologist sets targets in the laboratory's Setup screen; with "
+            "none set there is nothing to be within, and 0% or 100% would both be untrue."
+        ]
+        return _finalise(indicator)
+    indicator["value"] = _pct(target["within"], target["with_target"])
+    indicator["display"] = f"{indicator['value']:.1f}%"
+    indicator["state"] = "reported"
+    return _finalise(indicator)
+
+
+def _lab_critical_ack_in_window(db, start: datetime, end: datetime,
+                                ward: Optional[str]) -> dict:
+    from services import lab_tat_service
+
+    indicator = _new_indicator("lab_critical_ack_in_window")
+    minutes = _lab_critical_ack_minutes()
+    indicator["definition"] += f" The callback window is {minutes} minutes."
+    rows = lab_tat_service.critical_times(db, start, end, ward_key=_ward_key(ward) or None)
+    now = _now()
+    decidable = in_time = censored = 0
+    late: list[float] = []
+    for row in rows:
+        raised = _dt(row["raised_at"])
+        if raised is None:
+            continue
+        if row["minutes"] is not None:
+            decidable += 1
+            if row["minutes"] <= minutes:
+                in_time += 1
+            else:
+                late.append(round(row["minutes"], 1))
+        elif now >= raised + timedelta(minutes=minutes):
+            decidable += 1
+        else:
+            censored += 1
+    indicator["numerator"] = in_time
+    indicator["denominator"] = decidable
+    indicator["n_observed"] = decidable
+    indicator["excluded"] = {
+        "still_inside_callback_window": censored,
+        "why": ("A critical result raised moments before this pack was generated cannot yet "
+                "have missed its window."),
+    }
+    indicator["detail"] = {"callback_window_minutes": minutes,
+                           "critical_results_raised": len(rows),
+                           "late_acknowledgement_minutes": sorted(late)}
+    if not rows:
+        indicator["state"] = "not_collected"
+        indicator["blockers"] = [
+            "No critical laboratory result was raised in Orb in this period. With none "
+            "there is nothing to acknowledge; 100% here would be a claim about calls "
+            "that never had to be made."
+        ]
+        return _finalise(indicator)
+    if decidable == 0:
+        indicator["state"] = "insufficient_data"
+        return _finalise(indicator)
+    indicator["value"] = _pct(in_time, decidable)
+    indicator["display"] = f"{indicator['value']:.1f}%"
+    indicator["state"] = "reported"
+    return _finalise(indicator)
+
+
+def _lab_indicators(db, start: datetime, end: datetime, ward: Optional[str]) -> list[dict]:
+    return [_lab_tat_within_target(db, start, end, ward),
+            _lab_critical_ack_in_window(db, start, end, ward)]
+
+
 def indicators(
     *, period_start: Optional[str] = None, period_end: Optional[str] = None,
     ward: Optional[str] = None, db: Any = None,
@@ -2343,6 +2527,8 @@ def indicators(
             _readmission(conn, start, end, ward),
             _incident_closure(conn, start, end, ward, usage),
         ]
+        if lab_indicators_on():
+            computed.extend(_lab_indicators(conn, start, end, ward))
 
         states = Counter(i["state"] for i in computed)
         return {
@@ -2709,7 +2895,8 @@ def meta() -> dict:
             {"id": k, "code": v["code"], "label": v["label"], "unit": v["unit"],
              "definition": v["definition"], "direction": v["direction"],
              "is_proxy": v["is_proxy"], "sources": _source_labels(v["sources"])}
-            for k, v in INDICATOR_SPEC.items()
+            for k, v in (list(INDICATOR_SPEC.items())
+                         + (list(LAB_INDICATOR_SPEC.items()) if lab_indicators_on() else []))
         ],
         "not_collected_catalogue": [dict(g) for g in NOT_COLLECTED_CATALOGUE],
         "anonymity_statement": ANONYMITY_STATEMENT,

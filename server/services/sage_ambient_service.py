@@ -32,6 +32,7 @@ from config import (
     SAGE_AMBIENT_TIMEOUT_SECONDS,
     SAGE_AMBIENT_SAMPLE_RATE,
 )
+from services.medorders.held import hold_phrase
 import logging
 
 logger = logging.getLogger("orb.sage_ambient")
@@ -1312,10 +1313,17 @@ def _fetch_patient_context(patient_id: str) -> dict:
 
             # Active medications (max 10)
             meds = db.execute(
-                "SELECT drug_name, dosage, frequency FROM medications WHERE patient_id = ? AND status = 'active' LIMIT 10",
+                "SELECT drug_name, dosage, frequency, held_at, hold_reason FROM medications "
+                "WHERE patient_id = ? AND status = 'active' LIMIT 10",
                 (patient_id,)
             ).fetchall()
-            ctx["meds"] = [f"{m['drug_name']} {m['dosage']} {m['frequency']}" for m in meds]
+            # A held drug keeps its row active, so it says it is on hold
+            # (medorders-6b, services/medorders/held.py).
+            ctx["meds"] = []
+            for m in meds:
+                held = hold_phrase(m)
+                ctx["meds"].append(f"{m['drug_name']} {m['dosage']} {m['frequency']}"
+                                   + (f" ({held})" if held else ""))
 
             # Latest risk score
             risk = db.execute(

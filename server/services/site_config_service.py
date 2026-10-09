@@ -139,6 +139,12 @@ class SiteConfig:
     departments: list[dict] = field(default_factory=list)
     escalation: dict = field(default_factory=dict)
     operations: dict = field(default_factory=dict)
+    # The laboratory's critical-result callback ladder ([lab.critical], lis-15):
+    # {"tiers": [...]} when the file sets one, else {}, which means NO ladder.
+    # Orb ships none (ruling LIS-R3 is the site's own NABH policy). Read by
+    # services/lab_critical_service.py directly: it is the only reader, so
+    # there is no older variable to translate it into.
+    lab_critical: dict = field(default_factory=dict)
     env_overrides: dict[str, str] = field(default_factory=dict)
     env_conflicts: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -197,10 +203,23 @@ _SCHEMA: dict[str, dict[str, dict]] = {
         "backup_max_age_hours": {"type": "number", "min": 1, "max": 720},
         "disk_min_free_percent": {"type": "number", "min": 1, "max": 90},
     },
+    # The laboratory (lis-15). [lab] holds only [lab.critical], and
+    # [lab.critical] holds only its ladder, [[lab.critical.tiers]]: who the
+    # laboratory calls about a critical result, in order, and how long each
+    # has to confirm it with a read-back before the next is called.
+    "lab": {},
+    "lab.critical": {},
+    "lab.critical.tiers": {
+        "role": {"type": "str", "required": True},
+        "label": {"type": "str"},
+        "timeout_minutes": {"type": "number", "min": 1, "max": 720},
+    },
 }
 
 # Tables that are arrays of tables ([[x]]) rather than single tables ([x]).
-_ARRAY_TABLES = {"departments", "escalation.tiers"}
+_ARRAY_TABLES = {"departments", "escalation.tiers", "lab.critical.tiers"}
+# Single tables nested inside another table ([x.y]).
+_SUB_TABLES = {"lab.critical"}
 
 _TYPE_NAMES = {
     "str": "some text in quotes",
@@ -382,9 +401,9 @@ def _check_table(
 ) -> dict:
     """Every key in one table, against the schema for that table."""
     spec_table = _SCHEMA[table]
-    # A nested array-of-tables shows up as a plain key on its parent; it is
-    # validated separately, so allow the name through here.
-    nested = {t.split(".", 1)[1] for t in _ARRAY_TABLES
+    # A nested table or array-of-tables shows up as a plain key on its
+    # parent; it is validated separately, so allow the name through here.
+    nested = {t[len(table) + 1:] for t in (_ARRAY_TABLES | _SUB_TABLES)
               if t.startswith(table + ".") and t.count(".") == table.count(".") + 1}
     out: dict = {}
     for key, value in data.items():
@@ -546,8 +565,84 @@ def _validate(path: Path, raw_text: str, doc: dict) -> SiteConfig:
     # ── [operations] ──
     cfg.operations = _check_table(path, idx, "operations", doc.get("operations", {}) or {})
 
+    # ── [lab.critical] ──
+    if "lab" in doc:
+        cfg.lab_critical = _validate_lab_critical(path, idx, doc["lab"], cfg)
+
     cfg.env_overrides = _to_env(cfg)
     return cfg
+
+
+def _validate_lab_critical(path: Path, idx: _LineIndex, lab_raw: Any, cfg: SiteConfig) -> dict:
+    """[lab] and its [lab.critical] ladder (lis-15), validated like
+    [escalation]: every rule above, plus one of its own. ORB SHIPS NO LADDER
+    (ruling LIS-R3: who the laboratory calls, and how fast, is the
+    hospital's own NABH policy), so a section that is written but lists no
+    tiers is the present-but-empty mistake, and is refused. To run with no
+    ladder, delete the section: every critical result is then due at once
+    and the laboratory phones the ward."""
+    header = idx.table("lab") or idx.table("lab.critical")
+    if not isinstance(lab_raw, dict):
+        raise SiteConfigError(path, "'lab' must be a section, written [lab.critical].",
+                              line=header, source_line=idx.text(header))
+    _check_table(path, idx, "lab", lab_raw)
+    crit_raw = lab_raw.get("critical")
+    if crit_raw is None:
+        raise SiteConfigError(
+            path, "[lab] is written but has nothing in it.", line=header,
+            source_line=idx.text(header),
+            hint="Delete it, or add the critical-result ladder:\n"
+                 "  [lab.critical]\n  [[lab.critical.tiers]]\n"
+                 '  role = "Ward nurse in charge and the ordering doctor"\n'
+                 "  timeout_minutes = 15")
+    if not isinstance(crit_raw, dict):
+        raise _fail(path, idx, "lab", "critical",
+                    "'critical' must be a section, written [lab.critical].")
+    _check_table(path, idx, "lab.critical", crit_raw)
+    tiers_raw = crit_raw.get("tiers")
+    if not tiers_raw:
+        raise _fail(
+            path, idx, "lab.critical", None,
+            "[lab.critical] is written but lists no tiers. Orb ships no critical-result "
+            "ladder, and will not guess one.",
+            hint=("Add one [[lab.critical.tiers]] block per person the laboratory calls, in "
+                  "order, or delete [lab.critical] to run with no ladder: every critical "
+                  "result is then due at once, and the laboratory phones the ward."))
+    if not isinstance(tiers_raw, list):
+        raise _fail(path, idx, "lab.critical", "tiers",
+                    "'tiers' must be written as [[lab.critical.tiers]] blocks.")
+    tiers: list[dict] = []
+    for i, entry in enumerate(tiers_raw):
+        if not isinstance(entry, dict):
+            raise _fail(path, idx, "lab.critical", "tiers",
+                        "'tiers' must be written as [[lab.critical.tiers]] blocks.")
+        tier = _check_table(path, idx, "lab.critical.tiers", entry, occurrence=i)
+        is_last = i == len(tiers_raw) - 1
+        if not is_last and tier.get("timeout_minutes") is None:
+            raise _fail(
+                path, idx, "lab.critical.tiers", "role", occurrence=i,
+                problem=(f"critical-result tier {i + 1} ('{tier['role']}') has no "
+                         "timeout_minutes, but it is not the last tier."),
+                hint=("Without a timeout this tier never hands on, so a critical result "
+                      "nobody confirms stops here and the tiers below it are never called.\n"
+                      "Add `timeout_minutes = 15`, or move this tier to the end of the list "
+                      "if it really is the last resort."),
+            )
+        if is_last and tier.get("timeout_minutes") is not None:
+            # escalation's rule: not an error, but said, because an operator who
+            # set it expects it to do something.
+            cfg.errors.append(
+                f"the last critical-result tier ('{tier['role']}') has a timeout, which Orb "
+                "ignores: there is nobody after it to call. The result stays open and on "
+                "the laboratory's Critical results screen until a callback is logged.")
+            tier["timeout_minutes"] = None
+        tiers.append({
+            "tier": i + 1,
+            "role": tier["role"],
+            "label": tier.get("label") or tier["role"],
+            "timeout_minutes": tier.get("timeout_minutes"),
+        })
+    return {"tiers": tiers}
 
 
 def _to_env(cfg: SiteConfig) -> dict[str, str]:
@@ -691,6 +786,12 @@ def site_config_snapshot() -> dict:
             {"tier": t["tier"], "role": t["role"], "label": t["label"],
              "timeout_minutes": t["timeout_minutes"]}
             for t in (cfg.escalation.get("tiers") or [])
+        ],
+        # The laboratory's critical-result ladder; [] means none is set.
+        "lab_critical_tiers": [
+            {"tier": t["tier"], "role": t["role"], "label": t["label"],
+             "timeout_minutes": t["timeout_minutes"]}
+            for t in (cfg.lab_critical.get("tiers") or [])
         ],
         "notes": list(cfg.errors),
         "env_conflicts": list(cfg.env_conflicts),

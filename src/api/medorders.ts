@@ -1,7 +1,10 @@
 /**
  * Medication orders API (the order store, medorders-4, W5-E): a thin typed
- * client for /api/medorders. No screen uses it yet; the chart's order list,
- * the to-sign view and the round's hold groups arrive in later waves.
+ * client for /api/medorders. The Orders screen signs CPOE and order-set
+ * medicines through signMedOrder (medorders-7, W7-F) and places a CPOE
+ * medicine with its fields through createCpoeMedicationOrder; the chart's
+ * order list, the to-sign view and the round's hold groups arrive in later
+ * waves.
  *
  * Every call exists only while the server's 'med_order_store' feature is on
  * (ORB_MED_ORDER_STORE). With it off the server answers 404
@@ -17,7 +20,7 @@
  * the order, its status and its version, never a drug: a screen that cares
  * re-reads the order over REST.
  */
-import { apiFetch, socket } from './client'
+import { apiFetch, socket, type MedicationSafety } from './client'
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -161,6 +164,56 @@ export interface NewMedOrder {
   safety_ack?: { acknowledged: boolean; reason: string } | null
 }
 
+/** What GET /api/orders/patient/{id} adds to a CPOE or order-set medicine
+ *  the order store manages (medorders-7): the linked order's state. */
+export interface LinkedMedOrder {
+  id: string
+  status: MedOrderStatus
+  version: number
+  source: string
+  drug_name: string
+  dose: string | null
+  route: string | null
+  frequency: string | null
+  is_prn: boolean
+  prn_indication: string | null
+  priority: MedOrderPriority | null
+  entered_by: string
+  entered_by_role: string | null
+  entered_by_name: string | null
+  prescriber_id: string | null
+  prescriber_name: string | null
+  prescribed_at: string | null
+  verified_by: string | null
+  verified_at: string | null
+  status_reason: string | null
+  status_changed_at: string | null
+  legacy_medication_id: number | null
+  needs_verification: boolean
+  created_at: string
+  /** A draft waiting longer than a day for a signature (ruling MO-R10 (a)). */
+  waiting_over_24h: boolean
+  /** Ruling MO-R11 (a): false says the pharmacy does not supply it; null when
+   *  the formulary could not be read. */
+  on_formulary: boolean | null
+}
+
+/** A CPOE medicine as its fields (the order form with the lifecycle on). */
+export interface CpoeMedicationOrder {
+  patient_id: string
+  /** Must name the drug: the server refuses a description that does not. */
+  description: string
+  priority: MedOrderPriority
+  drug_name: string
+  dose: string
+  route: string
+  frequency: string
+  is_prn: boolean
+  prn_indication?: string | null
+  code?: string | null
+  code_system?: string | null
+}
+
 export interface MedOrderUpdate {
   patient_id: string
   med_order_id: string
@@ -246,6 +299,37 @@ export async function cancelMedOrderDraft(
     body: JSON.stringify({ reason, ...(expectedVersion != null ? { expected_version: expectedVersion } : {}) }),
   })
   return body.order
+}
+
+/** Place a CPOE medicine with the lifecycle on: POST /api/orders with the
+ *  drug's fields in detail.medication. The server writes the orders draft and
+ *  its linked draft medication order together; nothing reaches the ward until
+ *  a prescriber signs it. A 428 throws the typed safety error (apiFetch), to
+ *  re-submit with the acknowledgement. */
+export function createCpoeMedicationOrder(
+  order: CpoeMedicationOrder,
+  safetyAck?: { acknowledged: boolean; reason: string },
+): Promise<{ status: string; order: Record<string, unknown>; safety?: MedicationSafety }> {
+  const body: Record<string, unknown> = {
+    patient_id: order.patient_id,
+    order_type: 'medication',
+    description: order.description,
+    priority: order.priority,
+    code: order.code ?? null,
+    code_system: order.code_system ?? null,
+    detail: {
+      medication: {
+        drug_name: order.drug_name,
+        dose: order.dose,
+        route: order.route,
+        frequency: order.frequency,
+        is_prn: order.is_prn,
+        prn_indication: order.is_prn ? order.prn_indication ?? null : null,
+      },
+    },
+  }
+  if (safetyAck) body.safety_ack = safetyAck
+  return apiFetch('/orders', { method: 'POST', body: JSON.stringify(body) })
 }
 
 export function fetchToSignQueue(): Promise<ToSignQueue> {

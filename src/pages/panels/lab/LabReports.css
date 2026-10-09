@@ -1,0 +1,188 @@
+/* LabReports.css: the laboratory's Reports and Turnaround times screens
+ * (lis-14, lis-18), Orb "Quiet Clinical". Shares the lab-bench-* classes in
+ * LabBench.css; only what those do not cover lives here.
+ *
+ *  - Flat. No `opacity` for any state; quiet text is a quieter token.
+ *  - A status is said in words; colour is a border, or a status TEXT token on
+ *    an ordinary surface, never a tinted fill behind small text.
+ *  - Wide tables scroll inside .lab-bench-table-wrap, never the page.
+ */
+
+/* The report preview: the print layout drawn inline, as a sheet. */
+
+.lab-report-print-layout--screen {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.lab-report-print-layout--screen .lab-report__header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.lab-report-print-layout--screen .lab-report__hospital,
+.lab-report-print-layout--screen .lab-report__status {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.lab-report-print-layout--screen .lab-report__title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.lab-report-print-layout--screen .lab-report__accession {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.lab-report-print-layout--screen .lab-report__accession strong {
+  color: var(--text-primary);
+  letter-spacing: 0.04em;
+}
+
+.lab-report-print-layout--screen .lab-report__simulated-note {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--status-warn);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--status-warn-text);
+  font-weight: 600;
+}
+
+.lab-report-print-layout--screen .lab-report__simulated {
+  color: var(--status-warn-text);
+  background: var(--bg-surface);
+  font-weight: 600;
+}
+
+.lab-report-print-layout--screen table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+}
+
+.lab-report-print-layout--screen th,
+.lab-report-print-layout--screen td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+  vertical-align: top;
+  color: var(--text-primary);
+}
+
+.lab-report-print-layout--screen .lab-report__facts th,
+.lab-report-print-layout--screen .lab-report__results thead th {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.lab-report-print-layout--screen .lab-report__section th {
+  padding-top: 12px;
+  font-weight: 600;
+}
+
+.lab-report-print-layout--screen .lab-report__panel td {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.lab-report-print-layout--screen .lab-report__flag {
+  color: var(--status-warn-text);
+  background: var(--bg-surface);
+  font-weight: 650;
+}
+
+.lab-report-print-layout--screen .lab-report__history td {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.lab-report-print-layout--screen .lab-report__row--pending td,
+.lab-report-print-layout--screen .lab-report__row--rejected td,
+.lab-report-print-layout--screen .lab-report__row--cancelled td,
+.lab-report-print-layout--screen .lab-report__row--withdrawn td {
+  color: var(--text-secondary);
+}
+
+.lab-report-print-layout--screen .lab-report__people p,
+.lab-report-print-layout--screen .lab-report__footer p {
+  margin: 2px 0;
+}
+
+.lab-report-print-layout--screen .lab-report__label {
+  color: var(--text-secondary);
+}
+
+.lab-report-print-layout--screen .lab-report__footer {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.lab-report-print-layout--screen .lab-report__notes-list {
+  margin: 0 0 4px;
+  padding-left: 18px;
+}
+
+/* Turnaround figures */
+
+.lab-tat-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.lab-tat-figure {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  min-width: 0;
+}
+
+.lab-tat-figure dt {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.lab-tat-figure dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.lab-tat-figure--warn { border-left: 3px solid var(--status-warn); }
+
+.lab-tat-date {
+  max-width: 170px;
+}

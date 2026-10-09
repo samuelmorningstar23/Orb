@@ -15,7 +15,9 @@ module is what happens to the token after that, while the 'opd' feature is on
     clinic's socket room after every change, so an open doctor queue refetches
     over its own scoped REST read (nudge_queue_changed). The payload is the
     department and nothing else: the socket never carries a name, a token or a
-    visit id.
+    visit id;
+  * the waiting-room token board (opd-9, W7-B): per-board device keys and the
+    name-free snapshot a board shows (see 'The waiting-room token board').
 
 PRIORITY (ruling OPD-N9, applied): a site list of categories, with a reason
 captured for anything other than 'normal', shown on the doctor's queue. The
@@ -82,6 +84,16 @@ logger = logging.getLogger("orb.opd_queue")
 __all__ = [
     "ASSIGN_AUDIT_ACTION",
     "ASSIGN_AUDIT_PREFIX",
+    "BOARD_DOCTOR_KEYS",
+    "BOARD_KEY_HEADER",
+    "BOARD_POLL_SECONDS",
+    "BOARD_RESPONSE_KEYS",
+    "BoardError",
+    "board_for_key",
+    "board_snapshot",
+    "create_display_board",
+    "list_display_boards",
+    "revoke_display_board",
     "CANCEL_REASON_CODES",
     "COMPLETION_DISPOSITIONS",
     "DEFAULT_PRIORITY_CATEGORIES",
@@ -681,3 +693,285 @@ def list_my_queue(
         "priorities": [{"code": c, "label": lab} for c, lab in priority_categories()],
         "poll_seconds": int(getattr(config, "OPD_QUEUE_POLL_SECONDS", 30) or 30),
     }
+
+
+# ── The waiting-room token board (opd-9) ─────────────────────────────────────
+#
+# A board is a DEVICE on a waiting-room wall, not a person. The administrator
+# (schedule.manage) creates one for one clinic; its key is shown once, at
+# creation, and only its hash is stored (opd_display_boards, migration 50).
+# The kiosk page (/display/opd) reads the key from the URL FRAGMENT, which a
+# browser never sends to a server or writes into a proxy log, and sends it in
+# the X-Orb-Board-Key header only. A staff session is never accepted in its
+# place, and the key opens nothing but the board.
+#
+# WHAT THE BOARD SHOWS (ruling OPD-N7, applied: token, doctor and room only,
+# DPDP): per doctor of that one clinic, the doctor's name, the room, the token
+# being called and the next BOARD_NEXT_COUNT tokens in seeing order. Never a
+# patient name, UHID, complaint, age, sex, priority word or visit id, so a
+# board read is not a PHI read and writes no phi_access row. board_snapshot
+# builds the answer from BOARD_RESPONSE_KEYS and BOARD_DOCTOR_KEYS only.
+#
+# Creating and revoking a board are recorded on the fail-closed 'security'
+# chain (a board key is a credential): neither the key nor its hash is ever
+# written into a record, a log or an answer other than the creation's.
+
+#: How often the kiosk re-reads (ruling: every 10 s).
+BOARD_POLL_SECONDS = 10
+#: How many waiting tokens follow the one being called.
+BOARD_NEXT_COUNT = 3
+#: The request header carrying the board's device key.
+BOARD_KEY_HEADER = "X-Orb-Board-Key"
+#: The only keys a board answer carries, and the only keys each doctor carries.
+BOARD_RESPONSE_KEYS = ("board_label", "department", "visit_date", "generated_at",
+                       "poll_seconds", "doctors")
+BOARD_DOCTOR_KEYS = ("doctor_name", "room", "calling", "next")
+#: The record actions.
+BOARD_CREATED_ACTION = "opd_display_board_created"
+BOARD_REVOKED_ACTION = "opd_display_board_revoked"
+BOARD_AUDIT_CATEGORY = "security"
+
+_BOARD_LABEL_MAX = 80
+_BOARD_KEY_MAX = 200
+_BOARD_HASH_PREFIX = "sha256:"
+
+
+class BoardError(FrontDeskError):
+    """A display-board change refused, with a code and the HTTP status."""
+
+    def __init__(self, code: str, message: str, *, status: int = 422):
+        super().__init__(message)
+        self.code = code
+        self.status = status
+
+
+def _board_key_hash(key: str) -> str:
+    import hashlib
+
+    return _BOARD_HASH_PREFIX + hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def _new_board_key() -> str:
+    """256 random bits, URL-safe so it sits in a link's fragment as it is."""
+    import secrets
+
+    return secrets.token_urlsafe(32)
+
+
+def _board_public(row, names: Optional[dict] = None) -> dict:
+    """A board as the Display boards screen lists it: never the key or its hash."""
+    names = names or {}
+    return {
+        "id": row["id"],
+        "department": row["department"],
+        "label": row["label"],
+        "created_by": row["created_by"],
+        "created_by_name": names.get(row["created_by"]),
+        "created_at": row["created_at"],
+        "revoked_by": row["revoked_by"],
+        "revoked_by_name": names.get(row["revoked_by"]),
+        "revoked_at": row["revoked_at"],
+        "active": row["revoked_at"] is None,
+    }
+
+
+def _staff_names(db, ids: Iterable[Any]) -> dict:
+    wanted = sorted({str(i) for i in ids if i})
+    if not wanted:
+        return {}
+    marks = ",".join("?" for _ in wanted)
+    return {r["id"]: r["name"] for r in db.execute(
+        f"SELECT id, name FROM users WHERE id IN ({marks})", wanted).fetchall()}
+
+
+def _board_audit(db, *, action: str, actor: dict, board: dict, summary: str,
+                 request_meta: Optional[dict], extra: Optional[dict] = None) -> None:
+    """The fail-closed record of a board change, in the change's transaction.
+    Carries the board's id, clinic and label: never the key or its hash."""
+    from services.audit_service import log_audit_event
+
+    meta = dict(request_meta or {})
+    log_audit_event(
+        correlation_id=f"{action}-{board['id']}", event_category=BOARD_AUDIT_CATEGORY,
+        action_type=action, outcome="success", db=db, summary_message=summary,
+        actor_user_id=(actor or {}).get("id"), actor_role=(actor or {}).get("role"),
+        target_type="opd_display_board", target_id=str(board["id"]),
+        request_path=meta.get("request_path"), http_method=meta.get("http_method"),
+        ip_address=meta.get("ip_address"), user_agent=meta.get("user_agent"),
+        metadata={"board_id": board["id"], "department": board["department"],
+                  "label": board["label"], **(extra or {})},
+    )
+
+
+def _board_departments(scope_department: Optional[str]) -> list[str]:
+    """The clinics a board may be made for: the departments with clinical
+    cover, narrowed to the caller's own when the caller has one."""
+    from services.frontdesk_service import list_covering_departments
+
+    departments = list_covering_departments()
+    if scope_department is not None:
+        return [d for d in departments if d == scope_department]
+    return departments
+
+
+def list_display_boards(*, scope_department: Optional[str]) -> dict:
+    """Every board (revoked ones too, newest first) the caller may manage,
+    and the clinics a new one may be made for. No patient data."""
+    ensure_frontdesk_schema()
+    clauses, params = "", []
+    if scope_department is not None:
+        clauses, params = "WHERE department = ?", [scope_department]
+    with db_session() as db:
+        rows = db.execute(
+            f"SELECT * FROM opd_display_boards {clauses} "
+            f"ORDER BY (revoked_at IS NULL) DESC, created_at DESC, id", params).fetchall()
+        names = _staff_names(db, [n for r in rows for n in (r["created_by"], r["revoked_by"])])
+    return {"boards": [_board_public(r, names) for r in rows],
+            "departments": _board_departments(scope_department),
+            "poll_seconds": BOARD_POLL_SECONDS}
+
+
+def create_display_board(*, department: Any, label: Any, actor: dict,
+                         scope_department: Optional[str],
+                         request_meta: Optional[dict] = None) -> dict:
+    """A new board for one clinic. Returns {board, key}: the key is in this
+    answer only, and only its hash is stored. The clinic must have clinical
+    cover and, for a caller with a department, be the caller's own."""
+    import uuid as _uuid
+
+    ensure_frontdesk_schema()
+    wanted = _clean(department, 200)
+    clinic = next((d for d in _board_departments(scope_department)
+                   if wanted and d.casefold() == wanted.casefold()), None)
+    if clinic is None:
+        raise BoardError("department_not_covered",
+                         "Choose a clinic from the list. A board shows one clinic's tokens.")
+    name = _clean(label, _BOARD_LABEL_MAX) or f"{clinic} waiting area"
+    key = _new_board_key()
+    board_id = f"BRD-{_uuid.uuid4().hex[:10].upper()}"
+    with db_session(immediate=True) as db:
+        db.execute(
+            "INSERT INTO opd_display_boards (id, department, label, key_hash, created_by, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (board_id, clinic, name, _board_key_hash(key), (actor or {}).get("id"), _now()))
+        row = db.execute("SELECT * FROM opd_display_boards WHERE id = ?", (board_id,)).fetchone()
+        board = _board_public(row, _staff_names(db, [row["created_by"]]))
+        _board_audit(db, action=BOARD_CREATED_ACTION, actor=actor, board=board,
+                     summary=f"Token board {board_id} created for {clinic}",
+                     request_meta=request_meta)
+    logger.info("OPD token board %s created for %s", board_id, clinic)
+    return {"board": board, "key": key}
+
+
+def revoke_display_board(board_id: Any, *, actor: dict, scope_department: Optional[str],
+                         reason: Any = None, request_meta: Optional[dict] = None) -> dict:
+    """Switch a board's key off for good: the screen stops showing tokens at
+    its next read. A board of another clinic, for a caller with a department,
+    is 404 like an unknown one."""
+    ensure_frontdesk_schema()
+    bid = _clean(board_id, 80) or ""
+    with db_session(immediate=True) as db:
+        row = db.execute("SELECT * FROM opd_display_boards WHERE id = ?", (bid,)).fetchone()
+        if row is None or (scope_department is not None and row["department"] != scope_department):
+            raise BoardError("board_not_found", "Display board not found.", status=404)
+        if row["revoked_at"] is not None:
+            raise BoardError("already_revoked", "This board's key was already switched off.",
+                             status=409)
+        db.execute("UPDATE opd_display_boards SET revoked_at = ?, revoked_by = ? WHERE id = ?",
+                   (_now(), (actor or {}).get("id"), bid))
+        row = db.execute("SELECT * FROM opd_display_boards WHERE id = ?", (bid,)).fetchone()
+        board = _board_public(row, _staff_names(db, [row["created_by"], row["revoked_by"]]))
+        _board_audit(db, action=BOARD_REVOKED_ACTION, actor=actor, board=board,
+                     summary=f"Token board {bid} switched off",
+                     request_meta=request_meta,
+                     extra={"reason": _clean(reason, 500)})
+    logger.info("OPD token board %s revoked", bid)
+    return board
+
+
+def board_for_key(presented: Any) -> Optional[dict]:
+    """The live board this device key opens, or None: no key, a key of the
+    wrong shape, an unknown key, a revoked one, and anything else (a staff
+    session token included) all answer None alike."""
+    import hmac
+
+    if not isinstance(presented, str):
+        return None
+    key = presented.strip()
+    if not key or len(key) > _BOARD_KEY_MAX:
+        return None
+    digest = _board_key_hash(key)
+    ensure_frontdesk_schema()
+    with db_session() as db:
+        row = db.execute(
+            "SELECT id, department, label, key_hash, revoked_at FROM opd_display_boards "
+            "WHERE key_hash = ?", (digest,)).fetchone()
+    if row is None or row["revoked_at"] is not None:
+        return None
+    if not hmac.compare_digest(str(row["key_hash"]), digest):
+        return None
+    return {"id": row["id"], "department": row["department"], "label": row["label"]}
+
+
+def board_snapshot(department: str, *, label: Optional[str] = None,
+                   visit_date: Optional[str] = None) -> dict:
+    """What one clinic's waiting-room board shows now (ruling OPD-N7): per
+    doctor with a patient waiting or called in today, the doctor's name, the
+    room, the token being called and the next tokens in seeing order (the
+    same order as the doctor's own queue; skipped patients are not listed).
+    Built from BOARD_RESPONSE_KEYS and BOARD_DOCTOR_KEYS only: no name, UHID,
+    complaint, priority word or visit id ever leaves here."""
+    from datetime import datetime, timezone
+
+    ensure_frontdesk_schema()
+    day = _hospital_day(visit_date)
+    clinic = (department or "").strip()
+    with db_session() as db:
+        rows = db.execute(
+            """SELECT v.id, v.doctor_id, v.token_number, v.status, v.room, v.priority,
+                      v.skipped_at, v.called_at, v.registered_at, u.name AS staff_name,
+                      v.doctor_name
+                 FROM opd_visits v LEFT JOIN users u ON u.id = v.doctor_id
+                WHERE v.visit_date = ? AND v.department = ? AND v.doctor_id IS NOT NULL
+                  AND v.status IN ('waiting', 'in_consultation', 'completed')""",
+            (day, clinic),
+        ).fetchall()
+    by_doctor: dict[str, list] = {}
+    for r in rows:
+        by_doctor.setdefault(str(r["doctor_id"]), []).append(r)
+    doctors: list[dict] = []
+    for doctor_id, visits in by_doctor.items():
+        live = [v for v in visits if v["status"] in ("waiting", "in_consultation")]
+        if not live:
+            continue
+        called = sorted((v for v in live if v["status"] == "in_consultation"),
+                        key=lambda v: (str(v["called_at"] or ""), int(v["token_number"] or 0)))
+        waiting = sorted((dict(v) for v in live
+                          if v["status"] == "waiting" and not v["skipped_at"]),
+                         key=queue_sort_key)
+        current = called[-1] if called else None
+        # The room the doctor is seeing patients in: the current visit's, else
+        # the room last set on any of the doctor's visits today.
+        roomed = [v for v in visits if (v["room"] or "").strip()]
+        roomed.sort(key=lambda v: (str(v["called_at"] or v["registered_at"] or ""),
+                                   int(v["token_number"] or 0)))
+        room = ((current["room"] or "").strip() if current is not None and
+                (current["room"] or "").strip() else
+                ((roomed[-1]["room"] or "").strip() if roomed else None))
+        name = (visits[0]["staff_name"] or visits[0]["doctor_name"] or "").strip() or "Doctor"
+        doctors.append({
+            "doctor_name": name,
+            "room": room or None,
+            "calling": int(current["token_number"]) if current is not None else None,
+            "next": [int(v["token_number"]) for v in waiting[:BOARD_NEXT_COUNT]],
+        })
+    doctors.sort(key=lambda d: (d["doctor_name"].casefold(), d["room"] or ""))
+    answer = {
+        "board_label": label,
+        "department": clinic,
+        "visit_date": day,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "poll_seconds": BOARD_POLL_SECONDS,
+        "doctors": [{k: d[k] for k in BOARD_DOCTOR_KEYS} for d in doctors],
+    }
+    return {k: answer[k] for k in BOARD_RESPONSE_KEYS}

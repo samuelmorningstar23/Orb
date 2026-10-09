@@ -14,6 +14,14 @@ export interface IpassMedication {
   frequency: string | null;
   /** AI-extracted or agentic, and no pharmacist has verified it. */
   unverified?: boolean;
+  /** The order is on hold: charted, not being given. Absent otherwise. */
+  on_hold?: boolean;
+  /** When it was held (UTC, format with formatClinicalDateTime). */
+  held_at?: string | null;
+  /** Why it was held, as the prescriber wrote it. */
+  hold_reason?: string | null;
+  /** The printed sheet's wording, in ward time. The screen formats held_at itself. */
+  hold_label?: string;
 }
 
 export interface IpassBundle {

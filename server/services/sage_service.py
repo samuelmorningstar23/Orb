@@ -3351,10 +3351,17 @@ def _assemble_patient_context(db, patient_id: str, dept: str | None) -> dict | N
             except Exception:
                 logger.debug("NEWS2 context computation skipped", exc_info=True)
     
-    meds = db.execute("SELECT drug_name, dosage, route, frequency FROM medications WHERE patient_id = ? AND status != 'discontinued'", (patient_id,)).fetchall()
+    meds = db.execute("SELECT drug_name, dosage, route, frequency, held_at, hold_reason FROM medications WHERE patient_id = ? AND status != 'discontinued'", (patient_id,)).fetchall()
     if meds:
+        # A held drug keeps its row active, so it says it is on hold (medorders-6b).
+        from services.medorders.held import hold_phrase
         context["completeness"]["has_meds"] = True
-        context["medications"] = [f"{m['drug_name']} {m['dosage']} {m['route']} {m['frequency']}" for m in meds]
+        context["medications"] = []
+        for m in meds:
+            held = hold_phrase(m)
+            context["medications"].append(
+                f"{m['drug_name']} {m['dosage']} {m['route']} {m['frequency']}"
+                + (f" ({held})" if held else ""))
     else:
         context["completeness"]["missing"].append("No active medications")
         

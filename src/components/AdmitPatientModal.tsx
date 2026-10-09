@@ -16,11 +16,38 @@ import {
 } from '../api/adt/moves';
 import BedPicker from './adt/BedPicker';
 import { ageFromDob, ageInRange } from './admissionAge';
+import {
+  EMPTY_STATED_IDENTITY,
+  admitExistingPatient,
+  fetchConversionPreview,
+  statedIdentityPayload,
+  type ConversionPreview,
+  type StatedIdentityInput,
+} from '../api/admitExisting';
+import {
+  ChartedAllergiesNote,
+  ConversionRefusalNote,
+  ExistingIdentityPanel,
+  OpdMedicinesReference,
+  OpdObservationsReference,
+  RefusedVisitPanel,
+} from './AdmitExistingParts';
 import './AdmitPatientModal.css';
+
+/** opd-17a: admit the registered outpatient of this open clinic visit onto
+ *  their own record, instead of creating a new patient. */
+export interface ExistingPatientAdmission {
+  visitId: string;
+  /** Ruling OPD-N8: why the visit has no signed note, when it has none. */
+  noSignedNoteReason?: string | null;
+}
 
 interface Props {
   onClose: () => void;
   onSuccess: () => void;
+  /** Existing-patient mode (opd-17a). Without it the form admits a new patient,
+   *  exactly as before. */
+  existing?: ExistingPatientAdmission;
 }
 
 type Tab = 'identity' | 'admission' | 'clinical' | 'history' | 'vitals' | 'notes' | 'review';
@@ -102,7 +129,7 @@ function ChipInput({ chips, placeholder, onAdd, onRemove }: ChipInputProps) {
   );
 }
 
-export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
+export default function AdmitPatientModal({ onClose, onSuccess, existing }: Props) {
   /* On an Orb Ward Record computer the drug chart stays on paper: the form
      asks for no current medicines (the server keeps none either). */
   const { wardRecord } = useClinicalSwitches();
@@ -129,6 +156,17 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
   const [admittedAt, setAdmittedAt] = useState('');
   const [admitKey] = useState(newIdempotencyKey);
   const [refusal, setRefusal] = useState<{ code: string; message: string } | null>(null);
+  // Existing-patient mode (opd-17a): the record's identity and the clinic's
+  // observations and medicines come from the server (read-only, for
+  // reference); the clinician types only what the patient STATES (OPD-S1).
+  const existingVisitId = existing?.visitId ?? null;
+  const [preview, setPreview] = useState<ConversionPreview | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [stated, setStated] = useState<StatedIdentityInput>(EMPTY_STATED_IDENTITY);
+  // Only a visit the patient can be admitted from carries their record; a
+  // refused one is the visit and the refusal alone, nothing about the patient.
+  const record = preview && preview.admittable ? preview : null;
+  const refusedVisit = preview && !preview.admittable ? preview : null;
 
   // Focus-trap for the modal. Escape closes the active surface: on the credential
   // hand-off screen that means finishing (onSuccess), otherwise cancelling. While
@@ -226,6 +264,32 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
   // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch trigger: the setState is the option lists arriving from the server, not state derived from props or state.
   useEffect(() => { void loadOptions(); }, [loadOptions]);
 
+  // Existing-patient mode: what the record holds for this visit. The form
+  // starts from the consultation's complaint and diagnosis, which stay
+  // editable; nothing about who the patient is can be typed.
+  useEffect(() => {
+    if (!existingVisitId) return;
+    let alive = true;
+    fetchConversionPreview(existingVisitId)
+      .then(p => {
+        if (!alive) return;
+        setPreview(p);
+        setPreviewError(null);
+        const carried = p.admittable ? p.carried : null;
+        setFormData(prev => ({
+          ...prev,
+          admission_source: 'clinic',
+          chief_complaint: prev.chief_complaint || carried?.chief_complaint || '',
+          initial_diagnosis: prev.initial_diagnosis || carried?.initial_diagnosis || '',
+        }));
+      })
+      .catch(err => {
+        if (!alive) return;
+        setPreviewError((err instanceof Error && err.message) || 'Could not load this patient\u2019s record.');
+      });
+    return () => { alive = false; };
+  }, [existingVisitId]);
+
   // A date of birth fills Age when Age is still empty; an Age already typed is
   // left alone and any disagreement is shown, never silently overwritten.
   const handleDobChange = (value: string) => {
@@ -269,7 +333,10 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
   const dobInvalid = formData.date_of_birth !== '' && dobAge === null;
   const ageMismatch = dobAge !== null && formData.age !== '' && Number(formData.age) !== dobAge;
   const ageInvalid = formData.age !== '' && !ageInRange(formData.age);
-  const isIdentityValid = formData.name.trim() !== '' && !nameTooShort && formData.age !== '' && !ageInvalid && formData.sex !== '' && !dobInvalid;
+  const statedIdentity = existing ? statedIdentityPayload(stated) : null;
+  const isIdentityValid = existing
+    ? !!record && statedIdentity !== null
+    : formData.name.trim() !== '' && !nameTooShort && formData.age !== '' && !ageInvalid && formData.sex !== '' && !dobInvalid;
   const departmentListed = !!options?.departments.includes(formData.department);
   const attending = options?.doctors.find(d => d.id === formData.attending_doctor_id);
   // With the bed picker the place is valid when the picker has everything the
@@ -323,7 +390,43 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
       };
 
       let result: AdmissionAnswer;
-      if (master) {
+      if (existing) {
+        // Existing-patient mode (opd-17a): no identity field and no
+        // observations are sent (the record's own are kept, and the ward
+        // charts a fresh set), only what the patient stated for the check,
+        // the admission's fields and this form's one Idempotency-Key.
+        setRefusal(null);
+        const body = {
+          opd_visit_id: existing.visitId,
+          identity_check: statedIdentity,
+          no_signed_note_reason: existing.noSignedNoteReason || undefined,
+          admission_source: formData.admission_source,
+          admission_type: formData.admission_type,
+          department: formData.department,
+          ward: formData.ward,
+          bed: formData.bed,
+          attending_doctor_id: formData.attending_doctor_id,
+          referring_clinician: formData.referring_clinician || undefined,
+          chief_complaint: formData.chief_complaint,
+          initial_diagnosis: formData.initial_diagnosis || undefined,
+          triage_severity: parseInt(formData.triage_severity) || undefined,
+          comorbidities: formData.comorbidities,
+          allergies: formData.allergies,
+          ...(wardRecord ? {} : { current_medications: formData.current_medications }),
+          past_medical_history: formData.past_medical_history || undefined,
+          past_surgical_history: formData.past_surgical_history || undefined,
+          admitting_notes: formData.admitting_notes || undefined,
+          nursing_notes: formData.nursing_notes || undefined,
+          isolation_precautions: formData.isolation_precautions,
+          code_status: formData.code_status,
+          ...(master ? bedChoicePayload(master, bedChoice) : {}),
+          ...(master && admittedAt ? { admitted_at: new Date(admittedAt).toISOString() } : {}),
+        };
+        if (master && bedChoice.terminalAuthoriserPin) {
+          setBedChoice(prev => ({ ...prev, terminalAuthoriserPin: '' }));
+        }
+        result = await admitExistingPatient(body, admitKey);
+      } else if (master) {
         // Beds and admissions on: the place from the picker, the admission
         // time when set back, and this form's one Idempotency-Key.
         setRefusal(null);
@@ -474,8 +577,8 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
         {/* Header */}
         <div className="admit-modal__header">
           <div className="admit-modal__title-group">
-            <h2 className="admit-modal__title" id="admit-modal-title">Admit Patient</h2>
-            <span className="admit-modal__subtitle">Create clinical admission record across Orb modules</span>
+            <h2 className="admit-modal__title" id="admit-modal-title">{existing ? 'Admit from outpatients' : 'Admit Patient'}</h2>
+            <span className="admit-modal__subtitle">{existing ? 'Onto the patient\u2019s own record, which keeps its hospital number' : 'Create clinical admission record across Orb modules'}</span>
           </div>
           <button className="admit-modal__close" onClick={onClose} aria-label="Close">&times;</button>
         </div>
@@ -491,7 +594,7 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
                 { id: 'admission', label: 'Admission', valid: isAdmissionValid },
                 { id: 'clinical', label: 'Clinical', valid: isClinicalValid },
                 { id: 'history', label: 'History', valid: true },
-                { id: 'vitals', label: 'Vitals', valid: true },
+                { id: 'vitals', label: existing ? 'Observations' : 'Vitals', valid: true },
                 { id: 'notes', label: 'Notes', valid: true },
                 { id: 'review', label: 'Review', valid: isFormValid }
               ].map(tab => (
@@ -513,7 +616,19 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
             <div className="admit-modal__scroll">
               <form id="admit-form" onSubmit={e => e.preventDefault()}>
                 
-                {activeTab === 'identity' && (
+                {activeTab === 'identity' && existing && (
+                  refusedVisit ? (
+                    <RefusedVisitPanel visit={refusedVisit.visit} refusal={refusedVisit.refusal} />
+                  ) : record ? (
+                    <ExistingIdentityPanel preview={record} stated={stated} onChange={setStated} />
+                  ) : (
+                    <p role={previewError ? 'alert' : 'status'} className={previewError ? 'admit-modal__error' : undefined}>
+                      {previewError ?? 'Loading the patient\u2019s record\u2026'}
+                    </p>
+                  )
+                )}
+
+                {activeTab === 'identity' && !existing && (
                   <div className="admit-modal__section">
                     <div className="admit-modal__grid">
                       <div className="admit-form-group" style={{ gridColumn: '1 / -1' }}>
@@ -689,8 +804,10 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
                 {activeTab === 'history' && (
                   <div className="admit-modal__section">
                     <div className="admit-modal__grid admit-modal__grid--full">
+                      {existing && record && <ChartedAllergiesNote preview={record} />}
+                      {existing && record && !wardRecord && <OpdMedicinesReference preview={record} />}
                       <div className="admit-form-group">
-                        <label>Allergies</label>
+                        <label>{existing ? 'Add allergies' : 'Allergies'}</label>
                         <ChipInput chips={formData.allergies} placeholder="Type allergy and press Enter..." onAdd={v => handleChipAdd('allergies', v)} onRemove={v => handleChipRemove('allergies', v)} />
                       </div>
                       <div className="admit-form-group">
@@ -715,7 +832,15 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
                   </div>
                 )}
 
-                {activeTab === 'vitals' && (
+                {activeTab === 'vitals' && existing && (
+                  refusedVisit
+                    ? <ConversionRefusalNote refusal={refusedVisit.refusal} />
+                    : record
+                      ? <OpdObservationsReference preview={record} />
+                      : <p role="status">{'Loading the patient\u2019s record\u2026'}</p>
+                )}
+
+                {activeTab === 'vitals' && !existing && (
                   <div className="admit-modal__section">
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginBottom: 16 }}>Entering initial vitals will immediately compute risk scores and display the patient in Vigil.</p>
                     <div className="admit-modal__grid">
@@ -793,6 +918,18 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
                 {activeTab === 'review' && (
                   <div className="admit-modal__section">
                     <div className="admit-review-grid">
+                      {existing ? (
+                        <div className="admit-review-section">
+                          <h3>Patient on file</h3>
+                          <div className="admit-review-list">
+                            <div className="admit-review-item"><span>Name</span><span>{record?.patient.name ?? '-'}</span></div>
+                            <div className="admit-review-item"><span>UHID</span><span>{record?.patient.uhid ?? '-'}</span></div>
+                            <div className="admit-review-item"><span>Age/Sex</span><span>{record?.patient.age != null ? `${record.patient.age}y` : '-'} {record?.patient.sex ?? ''}</span></div>
+                            <div className="admit-review-item"><span>Identity</span><span>{statedIdentity ? 'Checked against the record when you admit' : 'Not confirmed yet'}</span></div>
+                            <div className="admit-review-item"><span>From</span><span>{preview ? `${preview.visit.department} clinic, token ${preview.visit.token_number}` : '-'}</span></div>
+                          </div>
+                        </div>
+                      ) : (
                       <div className="admit-review-section">
                         <h3>Patient Identity</h3>
                         <div className="admit-review-list">
@@ -802,6 +939,7 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
                           <div className="admit-review-item"><span>Contact</span><span>{formData.phone || '-'}</span></div>
                         </div>
                       </div>
+                      )}
                       <div className="admit-review-section">
                         <h3>Admission Context</h3>
                         <div className="admit-review-list">
@@ -841,8 +979,17 @@ export default function AdmitPatientModal({ onClose, onSuccess }: Props) {
             <div className="admit-summary-group">
               <h4>Identity</h4>
               <div className="admit-summary-item">
-                <span className="admit-summary-value">{formData.name || <span className="admit-summary-value--empty">Pending Name...</span>}</span>
-                <span className="admit-summary-label">{formData.age ? `${formData.age}y` : ''} {formData.sex}</span>
+                {existing ? (
+                  <>
+                    <span className="admit-summary-value">{record?.patient.name ?? <span className="admit-summary-value--empty">{refusedVisit ? 'Cannot be admitted from this visit' : 'Loading the record...'}</span>}</span>
+                    <span className="admit-summary-label">{record?.patient.age != null ? `${record.patient.age}y` : ''} {record?.patient.sex ?? ''}</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="admit-summary-value">{formData.name || <span className="admit-summary-value--empty">Pending Name...</span>}</span>
+                    <span className="admit-summary-label">{formData.age ? `${formData.age}y` : ''} {formData.sex}</span>
+                  </>
+                )}
               </div>
             </div>
             

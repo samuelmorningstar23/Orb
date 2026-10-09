@@ -22,8 +22,15 @@
  *
  * CRITICAL RESULTS. A result flagged critically high or low (against a
  * critical limit a pathologist approved, ruling LIS-R1) is said in words on
- * its sample, with the instruction to phone the ward: Orb does not send a
- * critical result notice yet (lis-15).
+ * its sample, with the instruction to phone the ward. Technical validation
+ * raises it (lis-15, ruling LIS-R4 (a): preliminary, not yet authorised) and
+ * Orb posts it to the patient's case room; the step's notice says whether
+ * that post was delivered, and the call is logged on Critical results.
+ *
+ * REPORTED RESULTS (lis-13). Below the queues, a signatory finds a reported
+ * sample by its accession number to amend a result (two signatories while
+ * the site requires two different people) or withdraw one entered in error
+ * (./ReportedResults).
  *
  * The queue read is audited, so it loads when the view opens, after each
  * step and when asked; there is no polling. Validating and releasing finish
@@ -32,6 +39,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { toLabError } from '../../../api/lab'
+import { criticalsOf, deliveryWords } from '../../../api/lab/criticals'
 import { formatAccession, priorityText } from '../../../api/lab/specimens'
 import {
   acknowledgeDelta,
@@ -45,6 +53,7 @@ import {
   type ValidationQueues,
 } from '../../../api/lab/validation'
 import { formatClinicalDateTime, formatClinicalTime } from '../../../lib/datetime'
+import ReportedResults from './ReportedResults'
 import type { LabViewProps } from './viewRegistry'
 import './LabBench.css'
 
@@ -178,10 +187,10 @@ interface StepProps {
   onFailed: (message: string, stale: boolean) => void
 }
 
-/** A critical result on a sample, in words, with what to do: Orb sends no
- *  critical result notice yet (lis-15), so the laboratory phones the ward.
- *  Before authorisation the call says the value is preliminary (ruling
- *  LIS-R4 (a)). */
+/** A critical result on a sample, in words, with what to do. Validating it
+ *  posts it to the patient's case room as preliminary (lis-15, ruling LIS-R4
+ *  (a)); the laboratory still phones the ward and logs the call with a
+ *  read-back on Critical results, which is the only thing that closes it. */
 function CriticalNotice({ results, preliminary }: { results: QueueResult[]; preliminary: boolean }) {
   if (results.length === 0) return null
   const limits = results.map(r => r.critical_limit_text).filter(Boolean)
@@ -193,9 +202,8 @@ function CriticalNotice({ results, preliminary }: { results: QueueResult[]; prel
       <p>
         {limits.length > 0 ? `${limits.join('; ')}. ` : ''}
         {preliminary
-          ? 'Phone the ward now, say the value is preliminary and not yet authorised, and note who you told.'
-          : 'Phone the ward now and note who you told.'}
-        {' '}Orb does not send a critical result notice yet.
+          ? 'Validating it posts it to the patient\'s case room as preliminary. Phone the ward now, say the value is preliminary and not yet authorised, and log the call with the read-back on Critical results.'
+          : 'Phone the ward now and log the call with the read-back on Critical results.'}
       </p>
     </div>
   )
@@ -224,7 +232,9 @@ function TechnicalGroup({ group, onDone, onFailed }: StepProps) {
     setBusy(true)
     try {
       const out = await techValidate(picked.map(r => ({ result_id: r.result_id, expected: seenOfQueue(r) })))
-      onDone(`${count(out.validated, 'result')} technically validated on ${formatAccession(group.specimen_id)}.`)
+      const told = deliveryWords(criticalsOf(out))
+      onDone(`${count(out.validated, 'result')} technically validated on ${formatAccession(group.specimen_id)}.`
+        + (told ? ` ${told}` : ''))
     } catch (err) {
       const failure = toLabError(err)
       onFailed(failure.message || 'Nothing was validated.', STALE_CODES.has(failure.code))
@@ -393,9 +403,11 @@ function AuthorisationGroup({ group, canAuthorise, distinct, onDone, onFailed }:
         group.specimen_id,
         picked.map(r => ({ result_id: r.result_id, expected: seenOfQueue(r) })))
       const conflict = out.orders.some(o => o.conflict)
+      const told = deliveryWords(criticalsOf(out))
       onDone(`${count(out.released, 'result')} released to the chart for ${group.patient.name}.`
         + (out.one_person ? ` Recorded as one person doing every step for ${count(out.one_person, 'result')}.` : '')
-        + (conflict ? ' The order had already been changed outside the laboratory; it is on the exceptions list.' : ''))
+        + (conflict ? ' The order had already been changed outside the laboratory; it is on the exceptions list.' : '')
+        + (told ? ` ${told}` : ''))
     } catch (err) {
       const failure = toLabError(err)
       onFailed(failure.message || 'Nothing was released.', STALE_CODES.has(failure.code))
@@ -585,6 +597,8 @@ export default function ValidateView({ onModuleOff }: LabViewProps) {
                 onDone={onDone} onFailed={onFailed} />
             ))}
           </section>
+
+          <ReportedResults onModuleOff={onModuleOff} />
         </>
       )}
     </div>

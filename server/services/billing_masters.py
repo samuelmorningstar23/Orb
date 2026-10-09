@@ -73,11 +73,15 @@ __all__ = [
     "default_tariff_plan",
     "set_tariff_rate",
     "resolve_rate",
+    "resolve_rate_on",
     "resolve_package_rate",
     "list_payers",
     "get_payer",
     "upsert_payer",
     "resolve_patient_payer",
+    "resolve_patient_payer_on",
+    "record_patient_payer_on",
+    "register_unpriced_item_on",
     "financial_year_for",
     "next_document_number",
     "SeriesNotConfigured",
@@ -382,34 +386,52 @@ def resolve_rate(
     That distinction matters at a billing counter: "we don't sell that" and "we
     haven't priced that" are different conversations.
     """
-    day = on_date or date.today().isoformat()
     with db_session() as db:
-        item = db.execute(
-            "SELECT * FROM service_items WHERE code = ?", (service_code,)
-        ).fetchone()
-        plan_row = None
-        if tariff_plan_id is not None:
-            plan_row = db.execute(
-                "SELECT * FROM tariff_plans WHERE id = ?", (int(tariff_plan_id),)
-            ).fetchone()
-        if plan_row is None:
-            plan_row = db.execute(
-                "SELECT * FROM tariff_plans WHERE is_active = 1 "
-                "ORDER BY is_default DESC, id ASC LIMIT 1"
-            ).fetchone()
+        return resolve_rate_on(
+            db, service_code, tariff_plan_id=tariff_plan_id, ward_class=ward_class,
+            on_date=on_date,
+        )
 
-        rate_row = None
-        if plan_row is not None:
-            rate_row = db.execute(
-                """SELECT * FROM tariff_rates
-                    WHERE tariff_plan_id = ? AND service_code = ? AND is_active = 1
-                      AND effective_from <= ?
-                      AND (effective_to IS NULL OR effective_to >= ?)
-                      AND (ward_class = ? OR ward_class IS NULL)
-                    ORDER BY (ward_class IS NULL) ASC, effective_from DESC, id DESC
-                    LIMIT 1""",
-                (int(plan_row["id"]), service_code, day, day, ward_class),
-            ).fetchone()
+
+def resolve_rate_on(
+    db,
+    service_code: str,
+    *,
+    tariff_plan_id: Optional[int] = None,
+    ward_class: Optional[str] = None,
+    on_date: Optional[str] = None,
+) -> RateResolution:
+    """resolve_rate on the caller's connection (opd-13): the outpatient charge
+    writers price a line inside the transaction that raises it, so the rate
+    and the row are read and written under one lock. Same precedence, same
+    answer, no commit."""
+    day = on_date or date.today().isoformat()
+    item = db.execute(
+        "SELECT * FROM service_items WHERE code = ?", (service_code,)
+    ).fetchone()
+    plan_row = None
+    if tariff_plan_id is not None:
+        plan_row = db.execute(
+            "SELECT * FROM tariff_plans WHERE id = ?", (int(tariff_plan_id),)
+        ).fetchone()
+    if plan_row is None:
+        plan_row = db.execute(
+            "SELECT * FROM tariff_plans WHERE is_active = 1 "
+            "ORDER BY is_default DESC, id ASC LIMIT 1"
+        ).fetchone()
+
+    rate_row = None
+    if plan_row is not None:
+        rate_row = db.execute(
+            """SELECT * FROM tariff_rates
+                WHERE tariff_plan_id = ? AND service_code = ? AND is_active = 1
+                  AND effective_from <= ?
+                  AND (effective_to IS NULL OR effective_to >= ?)
+                  AND (ward_class = ? OR ward_class IS NULL)
+                ORDER BY (ward_class IS NULL) ASC, effective_from DESC, id DESC
+                LIMIT 1""",
+            (int(plan_row["id"]), service_code, day, day, ward_class),
+        ).fetchone()
 
     plan_id = int(plan_row["id"]) if plan_row is not None else None
     plan_code = plan_row["code"] if plan_row is not None else None
@@ -563,48 +585,60 @@ def resolve_patient_payer(
     at the counter, not free care.
     """
     with db_session() as db:
-        row = None
-        if admission_id:
-            row = db.execute(
-                """SELECT p.*, y.code AS payer_code, y.name AS payer_name,
-                          y.payer_type AS payer_type, y.tariff_plan_id AS payer_plan_id
-                     FROM patient_payer_policies p
-                     LEFT JOIN payers y ON y.id = p.payer_id
-                    WHERE p.patient_id = ? AND p.admission_id = ? AND p.status = 'active'
-                    ORDER BY p.is_primary DESC, p.id DESC LIMIT 1""",
-                (patient_id, admission_id),
-            ).fetchone()
-        if row is None:
-            row = db.execute(
-                """SELECT p.*, y.code AS payer_code, y.name AS payer_name,
-                          y.payer_type AS payer_type, y.tariff_plan_id AS payer_plan_id
-                     FROM patient_payer_policies p
-                     LEFT JOIN payers y ON y.id = p.payer_id
-                    WHERE p.patient_id = ? AND p.admission_id IS NULL AND p.status = 'active'
-                    ORDER BY p.is_primary DESC, p.id DESC LIMIT 1""",
-                (patient_id,),
-            ).fetchone()
+        return resolve_patient_payer_on(db, patient_id, admission_id=admission_id)
 
-        default_plan = db.execute(
-            "SELECT id, code FROM tariff_plans WHERE is_active = 1 "
-            "ORDER BY is_default DESC, id ASC LIMIT 1"
+
+def resolve_patient_payer_on(
+    db,
+    patient_id: str,
+    *,
+    admission_id: Optional[str] = None,
+) -> PayerResolution:
+    """resolve_patient_payer on the caller's connection (opd-13), so a payer
+    recorded earlier in the same transaction (the registration desk's payer
+    category) is the one an outpatient line is priced under. No commit."""
+    row = None
+    if admission_id:
+        row = db.execute(
+            """SELECT p.*, y.code AS payer_code, y.name AS payer_name,
+                      y.payer_type AS payer_type, y.tariff_plan_id AS payer_plan_id
+                 FROM patient_payer_policies p
+                 LEFT JOIN payers y ON y.id = p.payer_id
+                WHERE p.patient_id = ? AND p.admission_id = ? AND p.status = 'active'
+                ORDER BY p.is_primary DESC, p.id DESC LIMIT 1""",
+            (patient_id, admission_id),
         ).fetchone()
-        self_payer = db.execute(
-            "SELECT * FROM payers WHERE payer_type = 'self_pay' AND is_active = 1 "
-            "ORDER BY id ASC LIMIT 1"
+    if row is None:
+        row = db.execute(
+            """SELECT p.*, y.code AS payer_code, y.name AS payer_name,
+                      y.payer_type AS payer_type, y.tariff_plan_id AS payer_plan_id
+                 FROM patient_payer_policies p
+                 LEFT JOIN payers y ON y.id = p.payer_id
+                WHERE p.patient_id = ? AND p.admission_id IS NULL AND p.status = 'active'
+                ORDER BY p.is_primary DESC, p.id DESC LIMIT 1""",
+            (patient_id,),
         ).fetchone()
 
-        plan_id = None
-        plan_code = None
-        if row is not None and row["payer_plan_id"] is not None:
-            plan_id = int(row["payer_plan_id"])
-            plan = db.execute(
-                "SELECT code FROM tariff_plans WHERE id = ?", (plan_id,)
-            ).fetchone()
-            plan_code = plan["code"] if plan else None
-        elif default_plan is not None:
-            plan_id = int(default_plan["id"])
-            plan_code = default_plan["code"]
+    default_plan = db.execute(
+        "SELECT id, code FROM tariff_plans WHERE is_active = 1 "
+        "ORDER BY is_default DESC, id ASC LIMIT 1"
+    ).fetchone()
+    self_payer = db.execute(
+        "SELECT * FROM payers WHERE payer_type = 'self_pay' AND is_active = 1 "
+        "ORDER BY id ASC LIMIT 1"
+    ).fetchone()
+
+    plan_id = None
+    plan_code = None
+    if row is not None and row["payer_plan_id"] is not None:
+        plan_id = int(row["payer_plan_id"])
+        plan = db.execute(
+            "SELECT code FROM tariff_plans WHERE id = ?", (plan_id,)
+        ).fetchone()
+        plan_code = plan["code"] if plan else None
+    elif default_plan is not None:
+        plan_id = int(default_plan["id"])
+        plan_code = default_plan["code"]
 
     if row is not None:
         return PayerResolution(
@@ -643,6 +677,90 @@ def resolve_patient_payer(
         sum_insured_configured=False,
         source="default_self_pay" if self_payer else "none",
     )
+
+
+#: The longest policy or member number the registration desk may type.
+MAX_POLICY_TEXT = 60
+
+
+def record_patient_payer_on(
+    db,
+    *,
+    patient_id: str,
+    payer_code: str,
+    policy_number: Optional[str] = None,
+    member_id: Optional[str] = None,
+    created_by: Optional[str] = None,
+) -> dict:
+    """Record who pays for a patient's outpatient care (opd-13): one active
+    patient_payer_policies row with NO admission, so resolve_patient_payer
+    prices every outpatient line on that payer's tariff.
+
+    The payer must be an active row of the payer master; an unknown or retired
+    code is refused (MasterDataError), never created here. The row is recorded
+    unverified (verified_by NULL): the desk wrote down what the patient said,
+    and the insurance desk verifies cover. Any earlier admission-free policy of
+    the patient's stays as it is; the newest primary one wins, which is the
+    resolver's existing rule. On the caller's connection, no commit.
+    """
+    code = (payer_code or "").strip()
+    if not code:
+        raise MasterDataError("payer code must not be blank")
+    payer = db.execute(
+        "SELECT id, code, name, payer_type, tariff_plan_id, is_active FROM payers WHERE code = ?",
+        (code,),
+    ).fetchone()
+    if payer is None or not int(payer["is_active"] or 0):
+        raise MasterDataError(f"{code!r} is not an active payer on this site")
+
+    def _text(value: Optional[str], what: str) -> Optional[str]:
+        text = (value or "").strip() or None
+        if text is not None and len(text) > MAX_POLICY_TEXT:
+            raise MasterDataError(f"the {what} is longer than {MAX_POLICY_TEXT} characters")
+        return text
+
+    cursor = db.execute(
+        """INSERT INTO patient_payer_policies
+               (patient_id, admission_id, payer_id, policy_number, member_id,
+                is_primary, status, created_by)
+           VALUES (?, NULL, ?, ?, ?, 1, 'active', ?)""",
+        (patient_id, int(payer["id"]), _text(policy_number, "policy number"),
+         _text(member_id, "member id"), created_by),
+    )
+    return {
+        "policy_id": int(cursor.lastrowid),
+        "payer_id": int(payer["id"]),
+        "payer_code": payer["code"],
+        "payer_name": payer["name"],
+        "payer_type": payer["payer_type"],
+        "tariff_plan_id": payer["tariff_plan_id"],
+        "verified": False,
+    }
+
+
+def register_unpriced_item_on(
+    db,
+    *,
+    code: str,
+    name: str,
+    category: str = "consultation",
+    notes: Optional[str] = None,
+) -> bool:
+    """Put a service code on the price list UNPRICED (rate_is_configured 0),
+    so the billing counter sees it and prices it; never over a row a site has
+    touched (INSERT OR IGNORE on the unique code). True when this call added
+    it. The front desk registers OPD-CONSULT the same way
+    (frontdesk_service.ensure_frontdesk_schema). On the caller's connection."""
+    if category not in SERVICE_CATEGORIES:
+        raise MasterDataError(f"unknown service category {category!r}")
+    cursor = db.execute(
+        """INSERT OR IGNORE INTO service_items
+               (code, name, category, uom, gst_treatment, gst_rate_bp,
+                default_rate_paise, rate_is_configured, is_active, notes)
+           VALUES (?, ?, ?, 'each', 'exempt', 0, 0, 0, 1, ?)""",
+        (code, name, category, notes),
+    )
+    return bool(cursor.rowcount)
 
 
 # ── Document numbering ───────────────────────────────────────────────────────

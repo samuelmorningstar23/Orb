@@ -39,6 +39,18 @@ order is billed (billing_service._COMPLETED_ORDER_STATUSES) before any test
 was run. Orders with no laboratory items (a bedside test, an order activated
 while the laboratory was off, an unmapped code) keep the free-text path.
 
+Medication orders the order store manages (medorders-7, W7-F). With
+ORB_MED_ORDER_LIFECYCLE on, a CPOE medication order and an order-set
+medication item are each written beside a linked draft medication order
+(med_orders.cpoe_order_id, services/medorders/cpoe.py) in the same
+transaction. From then on the store owns the order's lifecycle FOR LIFE,
+keyed on that link and never on the switch: transition_order refuses every
+move, an idempotent replay included, with OrderManagedByMedicationOrder
+(409 managed_by_medication_order). The orders route hands a cancel to the
+store before it gets here, and the store writes this order's status itself
+through mirror_medication_status_in_conn, which only services/medorders/cpoe.py
+may call. Without the switch nothing is linked and nothing here changes.
+
 Outpatient investigations (opd-11). POST /api/opd/visits/{visit_id}/orders
 calls create_order with opd_visit_id: the order carries the visit, and the
 visit is re-read inside the order's own transaction (_check_opd_visit), so an
@@ -100,6 +112,25 @@ class OrderManagedByLab(ValueError):
 
     def __init__(self, message: str = LAB_MANAGED_MESSAGE):
         super().__init__(message)
+
+
+#: What a ward sees when it tries to move a medication order the order store
+#: manages (medorders-7).
+MEDICATION_MANAGED_MESSAGE = (
+    "This medicine is managed as a medication order. A prescriber signs it; "
+    "cancel an unsigned one from Orders with a reason."
+)
+
+
+class OrderManagedByMedicationOrder(ValueError):
+    """A manual status change on an order linked to a medication order
+    (med_orders.cpoe_order_id). A ValueError subclass so a caller that only
+    knows "bad request" still refuses; the route maps it to 409 and names the
+    medication order."""
+
+    def __init__(self, med_order_id: str, message: str = MEDICATION_MANAGED_MESSAGE):
+        super().__init__(message)
+        self.med_order_id = med_order_id
 
 
 class OpdVisitOrderRefused(ValueError):
@@ -169,6 +200,24 @@ def is_lab_managed(conn, order_id: str) -> bool:
         raise
 
 
+def medication_order_link(conn, order_id: str) -> str | None:
+    """The medication order that manages this order, or None (medorders-7).
+    Keyed on med_orders.cpoe_order_id existing, never on the switches, so
+    switching the lifecycle off never hands a linked order back to the manual
+    path (ruling MO-R9 (a)). A database without the store's table links
+    nothing."""
+    try:
+        row = conn.execute(
+            "SELECT id FROM med_orders WHERE cpoe_order_id = ? "
+            "ORDER BY created_at DESC, id DESC LIMIT 1", (order_id,)
+        ).fetchone()
+    except Exception as exc:  # sqlite3 or sqlcipher3 OperationalError
+        if "no such table" in str(exc).lower():
+            return None
+        raise
+    return row["id"] if row is not None else None
+
+
 def _is_legal_transition(from_status: str, to_status: str) -> bool:
     return to_status in LEGAL_TRANSITIONS.get(from_status, [])
 
@@ -216,12 +265,19 @@ def create_order(
     pre_persist_gate=None,
     opd_visit_id: str | None = None,
     in_transaction=None,
+    allow_uncoded_medication: bool = False,
 ) -> dict:
     """Create a new order (default status 'draft') and write an order_events row.
 
     Validates any supplied code against `terminology`. Unknown codes are
     rejected. `lab`/`imaging`/`medication`/`procedure` orders require a valid
     code; `nursing`/`other` orders may be free-text (no code).
+
+    `allow_uncoded_medication` (medorders-7, ruling MO-R11 (a)) lets a
+    MEDICATION order name its drug in free text with no code. Only the
+    lifecycle lane passes it, and only beside a linked medication order that
+    carries the drug's name, dose, route and frequency as fields; a code that
+    IS supplied is still validated. False, the default: exactly as before.
 
     `opd_visit_id` (opd-11) ties the order to an outpatient visit
     (orders.opd_visit_id, migration 50). The write then runs in an immediate
@@ -259,7 +315,8 @@ def create_order(
                 f"Unknown {code_system} code '{code}', not present in terminology. "
                 f"Codes must be validated before ordering."
             )
-    elif order_type not in CODELESS_ORDER_TYPES:
+    elif order_type not in CODELESS_ORDER_TYPES and not (
+            allow_uncoded_medication and order_type == "medication"):
         raise ValueError(
             f"order_type '{order_type}' requires a coded concept "
             f"(code + code_system). Only {sorted(CODELESS_ORDER_TYPES)} may be free-text."
@@ -349,6 +406,13 @@ def transition_order(order_id: str, to_status: str, actor_id: str | None = None,
         # ── The laboratory's own orders (lis-7) ──
         if to_status != "active" and is_lab_managed(conn, order_id):
             raise OrderManagedByLab()
+
+        # ── Orders the medication-order store manages (medorders-7) ──
+        # Every move, a replay included: the store writes this order's
+        # status, and the route hands a cancel to the store instead.
+        med_order_id = medication_order_link(conn, order_id)
+        if med_order_id is not None:
+            raise OrderManagedByMedicationOrder(med_order_id)
 
         if before_move is not None:
             before_move(conn, dict(order))
@@ -528,6 +592,103 @@ def set_lab_result_text_in_conn(conn, order_id: str, result_text: str, *,
         "WHERE id = ?", (result_text, now, now, order_id))
     _record_event(conn, order_id, current, "resulted", actor_id, detail)
     return dict(conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone())
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  THE MEDICATION-ORDER STORE'S MIRROR (medorders-7)
+# ══════════════════════════════════════════════════════════════════════════
+# Only services/medorders/cpoe.py calls this (tests/test_medorder_cpoe_lane.py
+# fails any other caller). It runs inside the store's own write transaction,
+# so a linked order's status here changes together with the medication order
+# or not at all.
+
+def mirror_medication_status_in_conn(conn, order_id: str, *, expected_status: str,
+                                     to_status: str, actor_id: str | None = None,
+                                     detail: str | None = None) -> dict:
+    """Move a linked medication order's CPOE view from `expected_status` to
+    `to_status`, as a guarded UPDATE (the status must still be the one the
+    store expects) plus an order_events row, on the caller's transaction.
+
+    Not transition_order: the store's view has edges the manual state machine
+    does not (active to completed), and the guard there refuses every linked
+    order. Returns {outcome, status}: 'mirrored' when it moved, 'already'
+    when the order already says `to_status`, 'mismatch' when it says
+    something else (nothing is written; the caller decides), 'missing' when
+    the order is gone."""
+    _require_transaction(conn)
+    if to_status not in LEGAL_TRANSITIONS or expected_status not in LEGAL_TRANSITIONS:
+        raise ValueError(f"Unknown order status: {expected_status} -> {to_status}")
+    cur = conn.execute(
+        "UPDATE orders SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+        (to_status, _now(), order_id, expected_status),
+    )
+    if cur.rowcount == 1:
+        _record_event(conn, order_id, expected_status, to_status, actor_id, detail)
+        return {"outcome": "mirrored", "status": to_status}
+    row = conn.execute("SELECT status FROM orders WHERE id = ?", (order_id,)).fetchone()
+    if row is None:
+        return {"outcome": "missing", "status": None}
+    if row["status"] == to_status:
+        return {"outcome": "already", "status": to_status}
+    return {"outcome": "mismatch", "status": row["status"]}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  SHADOW INSTRUMENT: clinical.action
+# ══════════════════════════════════════════════════════════════════════════
+
+def record_clinical_action(patient_id: str, order_type: str, order_id: str | None, *,
+                           actor_id: str | None, actor_role: str | None) -> None:
+    """One shadow `clinical.action` for an order a clinician placed through
+    CPOE, when a shadow episode is open for the patient. The orders route
+    calls it at create (routes/orders_routes._shadow_clinical_action, where
+    the reasoning lives) and, for a medication order the store manages, the
+    store's sign step calls it instead (services/medorders/cpoe.after_signed),
+    so a medication order is counted once, when a prescriber releases it.
+
+    SYNC and BLOCKING: callers are `def` handlers on FastAPI's threadpool.
+    Never raises: an order must never fail because the observational log did.
+    """
+    try:
+        from services import shadow_service
+        with db_session() as db:
+            episode_id = shadow_service.current_episode(patient_id, db=db)
+            if not episode_id:
+                return
+            last_alert = db.execute(
+                "SELECT occurred_at FROM shadow_events_current WHERE episode_id = ? "
+                "AND kind = 'alert.fired' ORDER BY id DESC LIMIT 1",
+                (episode_id,),
+            ).fetchone()
+            now = shadow_service.utc_now()
+            minutes_after = None
+            if last_alert is not None:
+                try:
+                    minutes_after = round(
+                        (datetime.fromisoformat(now)
+                         - datetime.fromisoformat(last_alert["occurred_at"])).total_seconds() / 60.0,
+                        1)
+                except (TypeError, ValueError):
+                    minutes_after = None
+            shadow_service.emit_many([shadow_service.build(
+                "clinical.action", episode_id, "manual",
+                occurred_at=now, patient_id=patient_id,
+                actor_user_id=actor_id, actor_role=actor_role,
+                subject_type="orders", subject_id=order_id,
+                payload={
+                    # Medication orders are classed as `add_medication` so they
+                    # compare directly against the class Sage proposes for a drug
+                    # (`action.proposed.action_class`); anything else keeps its
+                    # own order type rather than being flattened into one bucket.
+                    "action_class": ("add_medication" if order_type == "medication"
+                                     else f"order_{order_type}"),
+                    "source_table": "orders",
+                    "minutes_after_alert": minutes_after,
+                },
+            )], db=db)
+    except Exception:
+        # Rule 1: an order must never fail because the observational log did.
+        pass
 
 
 # ══════════════════════════════════════════════════════════════════════════

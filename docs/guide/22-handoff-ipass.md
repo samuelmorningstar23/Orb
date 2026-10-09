@@ -153,7 +153,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `_build_action_list`.
 **Gotchas:** the test explicitly seeds a `discontinued` med and asserts it is absent (`server/tests/test_ipass.py:133`), do not broaden the status filter without updating that test.
 
-#### `_get_active_problems` / `_get_active_allergies`: `server/services/ipass_service.py:322` / `:332`
+#### `_get_active_problems` / `_get_active_allergies`: `server/services/ipass_service.py:328` / `:338`
 **Signature:** `(db, patient_id) → list[dict]`
 **Does:** list active problem-list entries (`problem`, `icd10_code`) and active allergies (`substance`, `reaction`, `severity`), newest first.
 **Why they exist:** feed the Patient-Summary section's "active problems" and "allergies" lines.
@@ -161,7 +161,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `_build_patient_summary`.
 **Gotchas:** none noteworthy; both are parameterised single-table reads.
 
-#### `_get_recent_notes`: `server/services/ipass_service.py:342`
+#### `_get_recent_notes`: `server/services/ipass_service.py:348`
 **Signature:** `(db, patient_id, cutoff_iso) → list[dict]`
 **Does:** fetch up to 5 recent `scribe_notes` in the window.
 **How it works:** `WHERE datetime(created_at) >= datetime(?)`, both sides normalised through SQLite's `datetime()` so a stored `'YYYY-MM-DD HH:MM:SS'` and an ISO `'…T…+00:00'` cutoff compare correctly. The inline comment (`:345-346`) explains that a raw string compare would always fail because a space (0x20) sorts before `T` (0x54) at position 10.
@@ -170,7 +170,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `build_ipass`, but **only `len(recent_notes)` is ever used** (in `source_summary`, `:1361`). The note *contents* are fetched and then discarded. See Discrepancies.
 **Gotchas:** the `datetime()` normalisation here is the *correct* pattern that `_get_vitals_window` omits, a good worked contrast if you are auditing timestamp handling.
 
-#### `_build_illness_severity`: `server/services/ipass_service.py:908` (the "I")
+#### `_build_illness_severity`: `server/services/ipass_service.py:914` (the "I")
 **Signature:** `(risk: dict) → dict`
 **Does:** turn Vigil's risk dict into the I-PASS Illness-Severity section.
 **How it works:** lower-cases `risk['level']`, maps via `_SEVERITY_MAP` (default Watcher), pulls `raw_news2` (falling back to `raw_mews`), builds a one-line `text` like `"Unstable, NEWS2 9 (critical). Key drivers: …"`. Since 2026-10-03 the other `news2_text` qualifiers follow the band, separated by ` · ` (`news2_qualifiers(risk, scale=False)`): a single parameter scoring 3, and an incomplete set whose aggregate is only a minimum.
@@ -189,7 +189,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** rendered by both the plain-text renderer and the React P-section.
 **Gotchas:** `allergies` **can be an empty list** downstream (it used to be `allergy_labels or ["NKDA"]`); an empty list means none recorded, and the UI words that state itself. Do not reintroduce a default.
 
-#### `_build_action_list`: `server/services/ipass_service.py:988` (the "A")
+#### `_build_action_list`: `server/services/ipass_service.py:1003` (the "A")
 **Signature:** `(meds, bundles, risk) → dict`
 **Does:** assemble active meds + open care bundles + a derived "outstanding items" to-do list.
 **How it works:**
@@ -203,7 +203,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** to add a monitoring instruction for `stable` sick-ish patients, add an `elif level == "stable"` branch near `:1017`; knock-on: the empty-list fallback at `:1019` would then rarely fire. Watch out: bundle element `state` strings come from `_decorate` (`server/services/sepsis_bundle_service.py:137-142`), only `overdue`/`pending` are treated as outstanding; if you add a new element state there, update this filter too.
 **Gotchas:** depends on the exact string values `"overdue"`/`"pending"`; a typo silently drops items.
 
-#### `_contingencies`: `server/services/ipass_service.py:1102`
+#### `_contingencies`: `server/services/ipass_service.py:1119`
 **Signature:** `(risk: dict) → list[str]`
 **Does:** derive "if X then Y" escalation instructions, one line per vital that scored on the NEWS2 chart.
 **How it works:** reads `risk['breakdown']` and keeps every row with points above 0 (`:1100-1101`), so a vital that scored gets its line whatever the drivers list kept. Oxygenation comes first: a scoring SpO2 row or a scoring "Supplemental O2" row adds the SpO2 line. Then systolic BP, heart rate and temperature, then ACVPU (`_ACVPU_LINE`, `:1080`), then respiratory rate. `_vital_line` (`:1084`) picks the low or high line by which side of the zero-scoring band (`_ZERO_BAND`, `:1055`) the charted value sits on, and `_VITAL_LINES` (`:1064`) holds the text: each number is the first charted value the RCP chart scores 3 on that side, so the sheet and the Vigil bar call the same reading red. The four directions with no line of their own give the RCP red-score response (`_URGENT_REVIEW`, `:1050`); temperature has no 3-point band above normal, so the fever line names no number. If nothing scored (or there is no breakdown), it emits a generic line keyed to the risk level (`:1131`). **SpO2 Scale 2 (2026-10-02):** when `risk['spo2_scale'] == 2` (`:1110`) the SpO2 line uses the patient's 88-92% target ("If SpO2 falls below 88% ... titrate O2 to this patient's 88-92% target") instead of the Scale 1 line, and a scoring SpO2 above 92 on oxygen adds "If SpO2 stays above this patient's 88-92% target on oxygen ..., reduce O2 to target" first. The comment block above the tables (`:1029-1049`, ruled 2026-10-03) records why the old driver keyword match was replaced: it lost the direction ("(hr" matched bradycardia, "sbp" matched hypertension) and could drop a vital the drivers list had cut.
@@ -213,7 +213,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** to add a contingency for a new breakdown parameter, add its zero-scoring band to `_ZERO_BAND` and its low/high lines to `_VITAL_LINES`, then add it to the parameter loop in `_contingencies`. Watch out: `test_ipass_news2_contingency.py` sweeps `compute_news2` and fails if a number in a line stops being where the 3 points start, and `test_build_ipass_...` asserts every contingency `startswith("if ")` (`server/tests/test_ipass.py:144`), keep the "If " prefix.
 **Gotchas:** the lines depend on the exact breakdown `parameter` strings from the scorer ("Systolic BP", "Heart rate", "Consciousness (ACVPU)", "SpO2 (Scale 2)"); a renamed parameter silently drops its line. The generic fallback prevents an empty list.
 
-#### `_build_situation_awareness`: `server/services/ipass_service.py:1150` (the first "S")
+#### `_build_situation_awareness`: `server/services/ipass_service.py:1167` (the first "S")
 **Signature:** `(vitals, trend, risk) → dict`
 **Does:** report latest vitals, the shift trend, whether the patient is actively deteriorating, and the contingency list.
 **How it works:** takes `vitals[-1]` as latest; `active_deterioration` is true if level is critical/elevated *or* `trend=='deteriorating'` (`:1145`); builds `trend_detail` from `hr_delta`/`sbp_delta`/`spo2_delta` (`:1158-1163`); formats a vitals sentence via `_num`; calls `_contingencies`.
@@ -222,7 +222,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** consumes `get_vitals_trend` deltas (`server/services/vigil_service.py:932`).
 **Gotchas:** if `get_vitals_trend` returned only `{"trend":"insufficient_data", "reason": ...}` (its no-data paths, `server/services/vigil_service.py:974`, `:978`), the delta keys are absent and `trend_detail` prints the trend service's own reason ("no earlier vitals to compare against"), or "insufficient recent data" when it gave none (`:1164-1169`): the reason tells the oncoming nurse this is a newly arrived patient rather than a broken feed.
 
-#### `_build_synthesis`: `server/services/ipass_service.py:1211` (the second "S")
+#### `_build_synthesis`: `server/services/ipass_service.py:1232` (the second "S")
 **Signature:** `(patient, severity: str) → dict`
 **Does:** produce the receiver read-back placeholder.
 **How it works:** returns a fixed sentence asking the receiver to read back the severity, the action list and the contingency plans, then record outstanding questions, their name and the time, plus `read_back_required=True`, `confirmed=False` and `prompts` = `READ_BACK_PROMPTS` ("Outstanding questions", "Confirmed by", "Time", `:77`). The plain-text render prints one labelled line per prompt, left open for the receiver's pen.
@@ -231,7 +231,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `build_ipass` (passes in the already-computed severity).
 **Gotchas:** despite the module docstring's claim that "an optional best-effort LLM synthesis line can be layered on top" (`:14`), **no LLM is ever invoked**, this section is 100% static. See Discrepancies.
 
-#### `_render_plain_text`: `server/services/ipass_service.py:1230`
+#### `_render_plain_text`: `server/services/ipass_service.py:1251`
 **Signature:** `(sections, patient, generated_at) → str`
 **Does:** flatten the five section dicts into a monospace, printable/copy-pasteable text block.
 **How it works:** appends header lines (title, patient, MRN, "Auto-drafted … Window: last 12h"), then one block per I-PASS letter, iterating meds (an unverified med carries `(AI-extracted, awaiting pharmacist verification)`, `UNVERIFIED_MED_LABEL`, `:976`), bundles, outstanding items and contingencies, and ends with the read-back prompts as open labelled lines.
@@ -240,7 +240,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** the string is returned as `plain_text` and rendered verbatim in `IpassHandoffView` (`src/components/handoff/IpassHandoffView.tsx:295`).
 **Gotchas:** the section headers (`"ILLNESS SEVERITY"`, `"SYNTHESIS BY RECEIVER"`, …) are asserted by `test_plain_text_contains_all_section_headers` (`server/tests/test_ipass.py:150`), renaming a header breaks that test.
 
-#### `build_ipass`: `server/services/ipass_service.py:1309` (public entry point)
+#### `build_ipass`: `server/services/ipass_service.py:1331` (public entry point)
 **Signature:** `(patient_id: str, window_hours=12, *, include_assessment=True) → dict`
 **Does:** orchestrate the whole draft assembly.
 **How it works:**
@@ -258,7 +258,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** *Worked example, add a "recent notes" section to the handoff.* Right now `recent_notes` is fetched but only counted. To surface it: (a) write a `_build_recent_documentation(recent_notes)` builder returning `{text, notes[]}`; (b) add it to the `sections` dict at `:1347`; (c) add a block in `_render_plain_text`; (d) add the field to `IpassSections` in `src/api/ipass.ts:140` and a `<Section>` in `IpassHandoffView`. Knock-on: `test_build_ipass_has_all_five_sections_populated` iterates a fixed 5-key list (`server/tests/test_ipass.py:109`), extend it. Footgun: keep the deterministic-only contract; do not call an LLM inside `build_ipass` or you reintroduce hallucination risk and the "safe when Ollama is down" guarantee breaks.
 **Gotchas:** the two try/except blocks are the reason a partially-configured system (no CfC models, no bundles) still returns a usable draft rather than a 500.
 
-#### `save_ipass_handoff`: `server/services/ipass_service.py:1406`
+#### `save_ipass_handoff`: `server/services/ipass_service.py:1428`
 **Signature:** `(patient_id, author_id, content) → int`
 **Does:** persist a handoff draft as a `scribe_notes` row.
 **How it works:** accepts either the `build_ipass` dict *or* a plain string. From a dict it takes `source_summary`→`raw_transcript` and `plain_text`→`structured_note`, with JSON-of-sections and default-string fallbacks so the note is never empty (`:1400-1407`). Calls `save_scribe_note(note_format="handoff", status="draft", ai_generated=True)` and returns the new note id.
@@ -268,7 +268,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** to store the structured JSON instead of plain text, swap what goes into `structured_note`, but the round-trip readers (`get_recent_handoffs`, and `test_save_..._persists` which asserts `"I-PASS" in structured_note`, `server/tests/test_ipass.py:176`) expect the rendered text.
 **Gotchas:** raises `ValueError` for a non-dict/non-str `content`, which the route turns into HTTP 400 (`server/routes/ipass_routes.py:50`).
 
-#### `get_recent_handoffs`: `server/services/ipass_service.py:1443`
+#### `get_recent_handoffs`: `server/services/ipass_service.py:1465`
 **Signature:** `(patient_id, limit=10) → list[dict]`
 **Does:** list saved handoff notes for a patient (`note_format='handoff'`, newest first).
 **How it works:** one parameterised `SELECT … LEFT JOIN users … ORDER BY created_at DESC, id DESC LIMIT ?`, so each note carries `author_name` (the incoming nurse reads a name, not a user id) and `id` breaks a same-second tie.
@@ -316,7 +316,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Data in/out:** these are the canonical client-side shapes of `build_ipass`'s output.
 **Gotchas:** they are hand-maintained, they do **not** auto-derive from the Python. If you add a section field server-side, you must add it here or the view can't read it type-safely.
 
-#### `getIpassDraft` / `saveIpass` / `getRecentHandoffs`: `src/api/ipass.ts:216` / `:221` / `:232`
+#### `getIpassDraft` / `saveIpass` / `getRecentHandoffs`: `src/api/ipass.ts:226` / `:231` / `:242`
 **Signature:** `(patientId) → Promise<IpassDraft>`; `(patientId, content) → Promise<{id,status,note_format}>`; `(patientId) → Promise<IpassHandoffRecord[]>`
 **Does:** thin wrappers over `apiFetch` for the three endpoints.
 **How it works:** all route through `apiFetch` (`src/api/client.ts:339`), which prefixes `/api`, sends the HttpOnly session cookie (`credentials: 'include'`), tries one session refresh on a 401 before reporting the session expired, and unwraps structured 403s. `saveIpass` POSTs `{content}`; `getRecentHandoffs` unwraps `.handoffs`.
@@ -449,26 +449,26 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `_dispatch_to_transfer`.
 **Gotchas:** `department LIKE '%Surg%'` is a substring match; a department literally named "SurgX" would qualify. `ORDER BY id LIMIT 1` is deterministic-but-arbitrary "on-call" selection.
 
-#### `_dispatch_to_transfer`: `server/services/sage_handoff_service.py:565`
+#### `_dispatch_to_transfer`: `server/services/sage_handoff_service.py:694`
 **Signature:** `(action, actor_id, db) → (surgery_id, needs_package)`
 **Does:** move the active admission to the target department, post a Relay system message, and create/advance an emergency surgery, on `db` (never commits).
 **How it works:**
-1. Require an `active` admission (else `RuntimeError`). The card's `target` is accepted as the new department only if some user belongs to a department of that name; otherwise it is `"General Surgery"` (`:562`), because an LLM target often names the procedure ("Exploratory Laparotomy"), and writing that into `admissions.department` removed the patient from every department-filtered board. Then set the admission's `department` (`:571`).
-2. Post a `SYSTEM:` transfer message into the case room (`:577`).
-3. **Idempotent surgery:** if an `emergency_%` surgery already exists for the patient, flip it to `emergency_ready`, alert the team, return `(it, False)` (`:590`).
-4. Else create a new `emergency_pending` surgery dated on the hospital calendar (`hospital_now`, `:601`), with `procedure_name` taken from the card by `_procedure_from_target` (`:530`, `:621`): the target if it names an operation, or `"To be confirmed"` when it names a department or a generic destination ("surgery", "theatre"). It pulls real comorbidities, resolves the surgeon, alerts the team, and returns `(surgery_id, True)` (`:642`). It does NOT start the prep package (see `schedule_prep_package`).
+1. Require an `active` admission (else `RuntimeError`, `:705-707`). With Beds and admissions (`ORB_ADT`) off, the card's `target` is accepted as the new department only if some user belongs to a department of that name; otherwise it is `"General Surgery"` (`:730-731`), because an LLM target often names the procedure ("Exploratory Laparotomy"), and writing that into `admissions.department` removed the patient from every department-filtered board. Then set the admission's `department` (`:733`). With `ORB_ADT` on (`:719-728`, adt-6c), there is no bare UPDATE: `_transfer_through_adt_on` (`:659`) resolves the target against the departments an active doctor, clinician or nurse covers (rule C, read on this connection), refuses a named department nobody covers, sends a target naming no department to General Surgery (which must itself be covered), and calls `services/adt/transfer.transfer_on` on the confirm's own connection with `keep_location=True`, `boarder_acknowledged=True` and the reason `RELAY_TRANSFER_REASON` ('Confirmed in Relay'), so the movement and its audits commit with the card or not at all. The section comment at `:565-605` explains why it cannot call `transfer()` (an outermost immediate session).
+2. Post a `SYSTEM:` transfer message into the case room (`:736-742`).
+3. **Idempotent surgery:** if an `emergency_%` surgery already exists for the patient, flip it to `emergency_ready`, alert the team, return `(it, False)` (`:746-756`).
+4. Else create a new `emergency_pending` surgery dated on the hospital calendar (`hospital_now`, `:762-765`), with `procedure_name` taken from the card by `_procedure_from_target` (`:552`, `:783`): the target if it names an operation, or `"To be confirmed"` when it names a department or a generic destination ("surgery", "theatre"). It pulls real comorbidities, resolves the surgeon, alerts the team, and returns `(surgery_id, True)` (`:804`). It does NOT start the prep package (see `schedule_prep_package`).
 **Why it exists:** the surgical-escalation path of a confirmed transfer action.
 **Data in/out:** action → surgery id and whether it needs a package.
-**Talks to:** `admissions`, `messages`, `surgeries`, `patient_profiles`, `surgery_team_assignments`, `users` (department names).
-**Gotchas:** `SELECT … WHERE patient_id = ? AND status LIKE 'emergency_%'` is scoped to the patient (the comment on `:582-583` wrongly says "regardless of patient id"). The procedure used to default to "Exploratory Laparotomy: Source Control" and read "hartmann" out of the rationale, so every transfer was booked as an operation nobody ordered (comment at `:617-620`). The two special tests (`server/tests/test_handoff.py:232,281`) pin `"To be confirmed"` as the procedure and the PAT007 pre-seeded-surgery advance. A failed final handoff write now rolls back the admission move, the message and the booking (`test_a_failed_final_status_leaves_no_transfer`).
+**Talks to:** `admissions`, `messages`, `surgeries`, `patient_profiles`, `surgery_team_assignments`, `users` (department names); with `ORB_ADT` on, `services/adt/transfer.transfer_on` and `wards` (department names).
+**Gotchas:** `SELECT … WHERE patient_id = ? AND status LIKE 'emergency_%'` is scoped to the patient (the comment on `:744-745` wrongly says "regardless of patient id"). The procedure used to default to "Exploratory Laparotomy: Source Control" and read "hartmann" out of the rationale, so every transfer was booked as an operation nobody ordered (comment at `:779-782`). The two special tests (`server/tests/test_handoff.py:232,281`) pin `"To be confirmed"` as the procedure and the PAT007 pre-seeded-surgery advance. A failed final handoff write now rolls back the admission move, the message and the booking (`test_a_failed_final_status_leaves_no_transfer`).
 
-#### `schedule_prep_package`: `server/services/sage_handoff_service.py:667`
+#### `schedule_prep_package`: `server/services/sage_handoff_service.py:807`
 **Signature:** `(surgery_id) → None`
 **Does:** start `generate_transfer_surgery_package_async` for a newly booked emergency case.
-**How it works:** `asyncio.get_running_loop().create_task(...)` (`:658`); with no running loop it logs a WARNING and the case stays at `emergency_pending`.
+**How it works:** `asyncio.get_running_loop().create_task(...)` (`:820`); with no running loop it logs a WARNING and the case stays at `emergency_pending`.
 **Why it exists:** the adapter now runs inside the confirm's transaction, off the event loop, where `get_running_loop()` fails; and a task started before the commit could look for a case that is not there yet. The transition endpoint calls this after `run_db` returns, on the loop (`server/routes/relay_routes.py:466`); `create_and_dispatch_handoff` calls it after its own commit. Pinned by `test_transfer_confirm_still_schedules_the_prep_package`.
 
-#### `_alert_assigned_team`: `server/services/sage_handoff_service.py:661`
+#### `_alert_assigned_team`: `server/services/sage_handoff_service.py:823`
 **Signature:** `(db, surgery_id, patient_id) → None`
 **Does:** persist targeted `surgical_alert` messages for the surgeon + one nurse + one anaesthetist.
 **How it works:** finds the case-room channel; builds a roster (surgeon real id, first nurse, first anaes-department/name user); wipes and re-inserts `surgery_team_assignments` (idempotent) with status `alerted`; inserts one `surgical_alert` message per member carrying a JSON payload with `target_user_id`.
@@ -477,23 +477,23 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** the Relay `surgical_alert` renderer; live delivery is done separately by `emit_team_alerts_live`.
 **Gotchas:** persistence only, nothing is pushed live from here.
 
-#### `emit_team_alerts_live`: `server/services/sage_handoff_service.py:767`
+#### `emit_team_alerts_live`: `server/services/sage_handoff_service.py:907`
 **Signature:** `async (surgery_id, patient_id) → None`
 **Does:** push each `surgical_alert` for this surgery over sockets, both to the case-room room and to each target user's personal room `user:<id>`.
-**How it works:** reads the recent `surgical_alert` messages off the loop (`_load_alert_rows`, `:727`), filters to this surgery, serialises each row with `relay_service._message_row_to_dict` (`:766`), the same serializer the history endpoint uses, so the live copy carries `is_bot` and `source`, and `sio.emit("message:new", …, room=…)` to the channel and the `user:<id>` room (`:768-771`). A **socket room** is a named group the server can broadcast to; `user:<id>` is a per-user room so an alert reaches that clinician on any device.
+**How it works:** reads the recent `surgical_alert` messages off the loop (`_load_alert_rows`, `:889`), filters to this surgery, serialises each row with `relay_service._message_row_to_dict` (`:928`), the same serializer the history endpoint uses, so the live copy carries `is_bot` and `source`, and `sio.emit("message:new", …, room=…)` to the channel and the `user:<id>` room (`:930-933`). A **socket room** is a named group the server can broadcast to; `user:<id>` is a per-user room so an alert reaches that clinician on any device.
 **Why it exists:** live delivery without polling; separated from persistence so it can run inside the request's event loop.
 **Data in/out:** surgery+patient ids → socket emits.
 **Talks to:** `ws.realtime.sio` (guide 06-realtime); called by the Relay transition handler *after* dispatch (`server/routes/relay_routes.py:472`).
 **Gotchas:** emits `message:new` (the same event normal chat uses) so existing clients render it with no new handler. A failed emit is logged, never raised.
 
-#### `generate_transfer_surgery_package_async`: `server/services/sage_handoff_service.py:846`
+#### `generate_transfer_surgery_package_async`: `server/services/sage_handoff_service.py:986`
 **Signature:** `async (surgery_id) → None`
 **Does:** flip the surgery to `emergency_context_generating`, write the shared prep-package template (risk assessment, complications, checklist, instruments, staff) and set `emergency_ready`, emitting `surgery:emergency_intake` before and after.
-**How it works:** `_mark_generating` (`:780`) flips the status in one transaction, then `_persist_package` (`:796`) writes `PREP_PACKAGE` from `surgery_escalation_service` with `notes.ai_package_status = "template"` (`:843`, `:848`). There is no wait and no model call. If the write fails, the case is finalised with `FALLBACK_DATA` and status `failed` (`:860`) rather than left behind a spinner.
+**How it works:** `_mark_generating` (`:942`) flips the status in one transaction, then `_persist_package` (`:958`) writes `PREP_PACKAGE` from `surgery_escalation_service` with `notes.ai_package_status = "template"` (`:1004-1007`, `:1010-1015`). There is no wait and no model call. If the write fails, the case is finalised with `FALLBACK_DATA` and status `failed` (`:1021-1022`) rather than left behind a spinner.
 **Why it exists:** gives the transferred case a WHO-style checklist and prep list the moment it lands in the Surgical Suite.
 **Data in/out:** surgery id → DB updates + two socket emits.
 **Talks to:** `surgeries` table, `ws.realtime.sio`, `surgery_escalation_service.PREP_PACKAGE` / `FALLBACK_DATA` / `_finalize_surgery`.
-**Gotchas:** no model reads the patient on this path, so the template makes no patient claim: no ASA class, no sepsis claim, `success_probability` is `None`, and the staff rows read "Assigned on arrival". Until 2026-10-02 it wrote "ASA IV, septic shock", a 78.5% success figure and invented clinicians onto every real transfer (comment at `:838-841`).
+**Gotchas:** no model reads the patient on this path, so the template makes no patient claim: no ASA class, no sepsis claim, `success_probability` is `None`, and the staff rows read "Assigned on arrival". Until 2026-10-02 it wrote "ASA IV, septic shock", a 78.5% success figure and invented clinicians onto every real transfer (comment at `:1000-1003`).
 
 ### Tests (behavioural contract)
 
@@ -560,5 +560,5 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 6. ~~**`getRecentHandoffs` / `GET /recent` are unused by the UI.**~~ Closed. The nurse handover sheet now calls `getRecentHandoffs` (`src/pages/panels/nurse/HandoverSheet.tsx:142`) alongside `getIpassDraft` and `saveIpass`; the endpoint stays tested server-side (`test_get_recent_handoffs_returns_saved_note`).
 7. **Unused import.** `import uuid` in `ipass_routes.py:9` is never referenced (the correlation id is an f-string). Harmless dead import.
 8. **`generate_transfer_surgery_package_async` writes a template, not AI output.** Resolved as a safety issue on 2026-10-02: it used to write a hard-coded "ASA IV, septic shock" risk text, `success_probability = 78.5` and invented staff names over the team `_alert_assigned_team` assigned. It now writes the shared `PREP_PACKAGE` (`server/services/surgery_escalation_service.py:187`), which makes no patient claim and stamps `ai_package_status = "template"`. The function name still says "generate"; nothing is generated.
-9. **Misleading comment in `_dispatch_to_transfer`.** The comment at `sage_handoff_service.py:582-583` says the seeded-surgery reuse happens "regardless of patient id," but the query is scoped `WHERE patient_id = ?`. The code (patient-scoped) is the safe behaviour; the comment is wrong.
+9. **Misleading comment in `_dispatch_to_transfer`.** The comment at `sage_handoff_service.py:744-745` says the seeded-surgery reuse happens "regardless of patient id," but the query is scoped `WHERE patient_id = ?`. The code (patient-scoped) is the safe behaviour; the comment is wrong.
 10. **Save persists client-supplied content.** `save_draft` stores whatever `content` the browser posts rather than re-deriving it server-side, so a tampered client could persist arbitrary handoff text. It is gated by `scribe.create_draft` and audited, but the server does not re-validate the draft.

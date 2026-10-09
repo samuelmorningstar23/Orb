@@ -84,15 +84,23 @@ def record_bedside_event_in_txn(conn, linked: Optional[Mapping], *, medication_i
                                 administration_id: int, administration_status: str,
                                 actor_id: Optional[str],
                                 not_given_reason: Optional[str] = None,
-                                confirmation_method: Optional[str] = None) -> Optional[int]:
+                                confirmation_method: Optional[str] = None,
+                                custody: Optional[Mapping] = None) -> Optional[int]:
     """Append the 'administered' or 'not_given' event for a linked ward row,
     in the dose's transaction. Returns the event id, or None for an unlinked
-    row or a broken link (nothing to append to)."""
+    row or a broken link (nothing to append to).
+
+    `custody` is the dose's supply link (services/medorders/supply.py,
+    custody_for_dose_in_txn), carried on the event's payload as 'supply'
+    when given (medorders-5b)."""
     if not linked or not linked.get("order"):
         return None
     order = linked["order"]
     role = conn.execute("SELECT role FROM users WHERE id = ?", (actor_id,)).fetchone() \
         if actor_id else None
+    payload = {"medication_id": medication_id, "confirmation_method": confirmation_method}
+    if custody is not None:
+        payload["supply"] = dict(custody)
     return core.record_event_in_txn(
         conn,
         order=order,
@@ -105,5 +113,5 @@ def record_bedside_event_in_txn(conn, linked: Optional[Mapping], *, medication_i
         reason=not_given_reason,
         ref_type="medication_administration",
         ref_id=administration_id,
-        payload={"medication_id": medication_id, "confirmation_method": confirmation_method},
+        payload=payload,
     )

@@ -552,3 +552,171 @@ body > .specimen-label-print-layout {
     text-align: center;
   }
 }
+
+/* ==========================================================================
+   Laboratory report (lis-14)
+   ==========================================================================
+   LabReportPrintView portals .lab-report-print-layout to <body> and prints on
+   the A4 page above. It is hidden on screen like the other print portals; the
+   Reports screen draws the same layout inline as a preview with the
+   --screen modifier, whose screen styles live in
+   src/pages/panels/lab/LabReports.css. On paper only the portal prints: the
+   inline preview sits inside .shell, which print hides. */
+body > .lab-report-print-layout {
+  display: none;
+}
+
+@media print {
+  body > .lab-report-print-layout {
+    display: block;
+  }
+
+  .lab-report-print-layout--screen {
+    display: none !important;
+  }
+
+  .lab-report-print-layout,
+  .lab-report-print-layout * {
+    visibility: visible !important;
+  }
+
+  .lab-report-print-layout {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 10pt;
+    line-height: 1.4;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .lab-report-print-layout * {
+    color: #000000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .lab-report-print-layout .lab-report__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 24px;
+    border-bottom: 2px solid #000;
+    padding-bottom: 6px;
+    margin-bottom: 10px;
+  }
+
+  .lab-report-print-layout .lab-report__hospital {
+    margin: 0;
+    font-size: 11pt;
+    font-weight: 700;
+  }
+
+  .lab-report-print-layout .lab-report__title {
+    margin: 0;
+    font-size: 15pt;
+  }
+
+  .lab-report-print-layout .lab-report__status {
+    margin: 2px 0 0;
+    font-weight: 700;
+  }
+
+  .lab-report-print-layout .lab-report__accession {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 11pt;
+  }
+
+  .lab-report-print-layout .lab-report__simulated-note {
+    border: 1.5px solid #000 !important;
+    padding: 4px 8px;
+    margin: 0 0 10px;
+    font-weight: 700;
+  }
+
+  .lab-report-print-layout .lab-report__simulated {
+    font-weight: 700;
+  }
+
+  .lab-report-print-layout table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 12px;
+  }
+
+  .lab-report-print-layout .lab-report__facts th,
+  .lab-report-print-layout .lab-report__facts td,
+  .lab-report-print-layout .lab-report__results th,
+  .lab-report-print-layout .lab-report__results td {
+    border: 1px solid #000 !important;
+    padding: 4px 7px;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .lab-report-print-layout .lab-report__facts th {
+    width: 18%;
+    font-weight: 700;
+  }
+
+  .lab-report-print-layout .lab-report__results thead {
+    display: table-header-group;
+  }
+
+  .lab-report-print-layout .lab-report__results tr {
+    page-break-inside: avoid;
+  }
+
+  .lab-report-print-layout .lab-report__section th {
+    font-size: 10.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .lab-report-print-layout .lab-report__panel td {
+    font-weight: 700;
+  }
+
+  .lab-report-print-layout .lab-report__history td {
+    font-size: 9pt;
+  }
+
+  .lab-report-print-layout .lab-report__flag {
+    font-weight: 700;
+  }
+
+  .lab-report-print-layout .lab-report__people p,
+  .lab-report-print-layout .lab-report__footer p {
+    margin: 2px 0;
+  }
+
+  .lab-report-print-layout .lab-report__label {
+    font-weight: 700;
+  }
+
+  .lab-report-print-layout .lab-report__footer {
+    margin-top: 16px;
+    border-top: 1px solid #000;
+    padding-top: 6px;
+    font-size: 9pt;
+    page-break-inside: avoid;
+  }
+
+  .lab-report-print-layout .lab-report__notes-list {
+    margin: 0 0 4px;
+    padding-left: 16px;
+  }
+}

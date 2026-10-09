@@ -287,7 +287,7 @@ sequenceDiagram
 **Why it exists:** it runs the **same** gates apply runs, so the preview and the apply cannot disagree about whether an item is safe.
 **Breaks if you change it:** any divergence between this and `apply_set`'s screening produces the worst possible user experience, a green preview followed by a refused apply.
 
-#### `apply_set`: `order_sets_service.py:931`
+#### `apply_set`: `order_sets_service.py:949`
 **Signature:** `(patient_id, set_id, *, actor_id, actor_role=None, selections=None) -> dict`
 **Does:** Creates the real, individual, **draft** orders for a set. **All or nothing.**
 **On screen:** success → *"Applied for <patient>: N draft orders created and audited."* (`src/components/orders/OrderSetsPanel.tsx:579-585`), plus an amber note when the set held medications saying they are not sent to the ward or pharmacy and must be prescribed from the patient chart (`:586-594`); the applications history list refreshes, and the new drafts appear in the Orders tab with `draft` status chips. Failure → the "Nothing was ordered." block.
@@ -303,14 +303,14 @@ sequenceDiagram
 **Breaks if you change it:** creating orders `active` removes the human commit step and makes a half-finished apply dangerous. Writing the ledger after the orders leaves orphan orders. Screening item-by-item as you write produces the fix-one-restart loop step 3 exists to prevent.
 **Gotchas, stated honestly in the docstring (`:950-954`):** between the screen in step 3 and the write in step 4 there is a sub-millisecond window in which another connection could chart a new allergy. The bedside eMAR closes that window because a dose is the last line of defence; an order is not administered for minutes to hours, and its own administration re-screens.
 
-#### `_audit_set`: `order_sets_service.py:1089`
+#### `_audit_set`: `order_sets_service.py:1123`
 **Signature:** `(*, outcome, action_type, patient_id, set_def, actor_id, actor_role, verdicts, order_ids, application_id) -> None`
 **Does:** Writes the one event that says a **protocol** was applied, naming its orders.
 **On screen:** appears in the Admin panel's Audit Logs tab with action type `order_set_applied` or `order_set_blocked`, and a summary reading e.g. *"Order set 'Sepsis Six (1-hour bundle)' (sepsis_six) success for P001: 9 order(s), 2 safety alert(s). Guideline: Surviving Sepsis Campaign 2021"*.
 **Why it exists:** deliberately **in addition to**, never instead of, the per-order `order_events` row and the per-drug `clinical_safety` rows the medication gate already wrote. A reviewer asking "why are there eight orders at 02:14?" needs the answer "the sepsis bundle, by Dr X, citing SSC 2021"; a reviewer asking "was this drug screened?" needs the drug-level row. **Neither answers the other.**
 **Breaks if you change it:** the category is `clinical_record`, an established category, so an order set shows up in the same filter a reviewer already runs, and deliberately **not** one of the fail-closed categories, because a failed audit row must not un-write orders that are already on the chart. That is also why the whole call is wrapped in `try/except` (`:1099`). Making it fail-closed would roll back a protocol that is already partly on the chart.
 
-#### `list_applications`: `order_sets_service.py:1160`
+#### `list_applications`: `order_sets_service.py:1194`
 **Signature:** `(patient_id, limit=50) -> list[dict]`; limit clamped to 1–200
 **Does:** Protocols applied to this patient, newest first. **PHI, callers scope.**
 **On screen:** the "Already applied to this patient" section at the bottom of the panel (`src/components/orders/OrderSetsPanel.tsx:619-634`), one line per application: set name, applied-at timestamp, applied-by, order count.
@@ -328,18 +328,18 @@ sequenceDiagram
 
 ### File: `server/routes/orders_routes.py`: the five endpoints
 
-#### `OrderSetItemSelection` / `OrderSetApplyRequest`: `server/routes/orders_routes.py:57` / `:74`
+#### `OrderSetItemSelection` / `OrderSetApplyRequest`: `server/routes/orders_routes.py:63` / `:80`
 **Signature:** Pydantic bodies. `OrderSetApplyRequest` carries `patient_id` and an optional `items: list[OrderSetItemSelection]`.
 **Does:** The preview/apply request shape.
 **On screen:** the panel sends `{patient_id}` only (`src/api/orderSets.ts:126`, `:137`).
 **Gotchas:** **the patient is named in the body, not the path.** That is why both routes call `enforce_patient_scope(user, req.patient_id)` explicitly (`:135`, `:166`) instead of using the path-shaped `require_patient_access` dependency, the dependency cannot see a body field.
 **Breaks if you change it:** moving `patient_id` to the path without changing the guard, or removing the explicit `enforce_patient_scope`, opens a cross-ward hole: any `ORDER_WRITE` holder could apply a protocol to any patient in the hospital.
 
-#### `_selections`: `server/routes/orders_routes.py:89`
+#### `_selections`: `server/routes/orders_routes.py:95`
 **Signature:** `(req) -> list[dict] | None`
 **Does:** `[s.model_dump() for s in req.items] if req.items else None`.
 
-#### `_order_set_status`: `server/routes/orders_routes.py:93`
+#### `_order_set_status`: `server/routes/orders_routes.py:99`
 **Signature:** `(e: OrderSetError) -> int` → 404 or 400
 **Does:** Maps a service error to a status code by inspecting its message.
 **Gotchas:** it is **string matching on the exception message**, "not found" or "Unknown order set". Reword either message in the service and the endpoint silently starts returning 400 where it returned 404.

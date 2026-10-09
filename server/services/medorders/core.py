@@ -116,6 +116,8 @@ EVENT_KINDS = (
     "completed", "cancelled", "amended", "adopted",
     "supply_requested", "supply_reviewing", "supply_verified", "dispensed", "received",
     "administered", "not_given",
+    # Pharmacy refused one supply row without ending the order (W7-E).
+    "supply_rejected",
 )
 
 #: Steps that must say why. A hold, a resume, a stop, a cancel or a rejection
@@ -888,11 +890,28 @@ def transition_in_txn(
     )
     if project:
         project_in_txn(conn, after)
+    mirror = _mirror_cpoe_view_in_txn(conn, after, from_status=from_status, kind=kind,
+                                      actor_id=actor_id, reason=reason_text)
+    if mirror is not None:
+        audit_extra = {**dict(audit_extra or {}), "cpoe_mirror": mirror}
     audit_in_txn(conn, order=after, action=f"med_order_{kind}", actor_id=actor_id,
                  actor_role=actor_role, entry_point=entry_point, from_status=from_status,
                  to_status=to_status, reason=reason_text, lane=lane, event_id=event_id,
                  safety=safety, extra=audit_extra, request_meta=request_meta)
     return StoreWrite(after, event_id, False)
+
+
+def _mirror_cpoe_view_in_txn(conn, order: Mapping, *, from_status: str, kind: str,
+                             actor_id: Optional[str], reason: Optional[str]) -> Optional[dict]:
+    """The CPOE view of a linked order follows its status (design section 2,
+    "CPOE mirror"; medorders-7, W7-F), in the caller's transaction, keyed on
+    the link and never on the switches. services/medorders/cpoe.py holds the
+    rule; None for an order with no CPOE row (every order before W7-F)."""
+    if not order.get("cpoe_order_id"):
+        return None
+    from services.medorders import cpoe
+    return cpoe.mirror_cpoe_status_in_txn(conn, order, from_status=from_status, kind=kind,
+                                          actor_id=actor_id, reason=reason)
 
 
 def legacy_decision_on_held_in_txn(
@@ -965,6 +984,10 @@ def legacy_decision_on_held_in_txn(
     )
     if decision == "rejected":
         project_in_txn(conn, after)
+    mirror = _mirror_cpoe_view_in_txn(conn, after, from_status="held", kind=decision,
+                                      actor_id=actor_id, reason=reason_text)
+    if mirror is not None:
+        audit_extra = {**dict(audit_extra or {}), "cpoe_mirror": mirror}
     audit_in_txn(conn, order=after, action=f"med_order_{decision}", actor_id=actor_id,
                  actor_role=actor_role, entry_point=entry_point, from_status="held",
                  to_status=after["status"], reason=reason_text, lane=lane, event_id=event_id,

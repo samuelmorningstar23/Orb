@@ -28,8 +28,14 @@
  *     an optional code, plan, advice, follow-up, referral; save, sign, addenda
  *     and the consultation print. Investigations (laboratory tests and imaging
  *     only, no order sets) are ordered on the visit, with their slip. Finish
- *     visit shows what the note says about a follow-up or a referral;
- *     admission from this screen is not offered yet (opd-17a).
+ *     visit shows what the note says about a follow-up or a referral.
+ *   * ADVISE ADMISSION (opd-17a). Finish visit can end in an admission: the
+ *     admission form opens for this patient's own record (identity fixed,
+ *     the patient confirms who they are, ruling OPD-S1), lists this visit's
+ *     observations and the outpatient medicines for reference only (rulings
+ *     OPD-S3 and OPD-S4: neither is carried onto the inpatient chart), and
+ *     the server finishes the visit as admitted in the admission's own
+ *     transaction. A note that is not signed still needs a reason (OPD-N8).
  *
  * WHAT THIS SCREEN NEVER DOES, by design (docs/his_design/opd.json):
  *   * It never shows a NEWS2, a band, a colour on a vital or AI advice. OPD
@@ -45,7 +51,7 @@
  * screen refetches over its own scoped REST read. While the socket is down it
  * polls every ORB_OPD_QUEUE_POLL_SECONDS instead.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { socket } from '../../api/client'
 import { formatWait } from '../../api/frontdesk'
@@ -74,12 +80,19 @@ import {
 import { useFocusTrap } from '../../hooks/useFocusTrap'
 import { useVisiblePolling } from '../../hooks/useVisiblePolling'
 import { formatClinicalDateKey, formatClinicalDateTime } from '../../lib/datetime'
+import { PATIENT_WRITE, hasPermission } from '../../lib/roles'
 import { assessmentOf, reviewStateOf, type AllergyAssessment } from '../../api/opdAllergyReview'
 import RegisterPatientView from './frontdesk/RegisterPatientView'
 import AllergyReviewDialog from './opd/AllergyReviewDialog'
 import ConsultationEditor from './opd/ConsultationEditor'
 import { opdVitalsLine } from './opd/opdVitals'
 import './OpdPanel.css'
+
+/* The admission form, loaded only when a doctor advises admission (opd-17a). */
+const AdmitPatientModal = lazy(() => import('../../components/AdmitPatientModal'))
+
+/** The Finish visit choice that opens the admission form instead of finishing. */
+const ADVISE_ADMISSION = 'advise_admission'
 
 /** Used until /api/opd/meta answers; the server's list wins once it does. */
 const FALLBACK_DISPOSITIONS: CodeLabel[] = [
@@ -489,15 +502,22 @@ function FinishVisitDialog({
   signed,
   note,
   dispositions,
+  canAdmit,
   onClose,
   onDone,
+  onAdviseAdmission,
 }: {
   visit: OpdQueueVisit
   signed: boolean
   note: OpdConsultation | null
   dispositions: CodeLabel[]
+  /** The doctor may admit (patient.write): Advise admission is offered. */
+  canAdmit: boolean
   onClose: () => void
   onDone: () => void
+  /** Open the admission form for this visit (opd-17a), with the OPD-N8
+   *  reason when the note is not signed. */
+  onAdviseAdmission: (noSignedNoteReason: string | null) => void
 }) {
   const [disposition, setDisposition] = useState('')
   const [reason, setReason] = useState('')
@@ -506,9 +526,16 @@ function FinishVisitDialog({
   const close = useCallback(() => { if (!busy) onClose() }, [busy, onClose])
   const ref = useFocusTrap<HTMLDivElement>(close)
   const ready = !busy && disposition !== '' && (signed || reason.trim().length >= 3)
+  const advising = disposition === ADVISE_ADMISSION
 
   const submit = async () => {
     if (!ready) return
+    if (advising) {
+      /* Nothing is finished here: the admission finishes the visit as
+         admitted, in its own transaction, or not at all. */
+      onAdviseAdmission(signed ? null : reason.trim())
+      return
+    }
     setBusy(true)
     setError('')
     try {
@@ -541,14 +568,21 @@ function FinishVisitDialog({
             onChange={e => setDisposition(e.target.value)}>
             <option value="">Choose the outcome…</option>
             {dispositions.map(d => <option key={d.code} value={d.code}>{d.label}</option>)}
-            {/* Admitting from outpatients is its own step (opd-17a), not built yet. */}
-            <option value="advise_admission" disabled>Advise admission (not available here yet)</option>
+            {canAdmit && <option value={ADVISE_ADMISSION}>Advise admission</option>}
           </select>
         </div>
         <DispositionNote disposition={disposition} note={note} />
         {disposition === '' && (
           <p className="opd-hint">
-            To admit the patient, send them to the admission desk with your note.
+            {canAdmit
+              ? 'To admit the patient, choose Advise admission.'
+              : 'To admit the patient, send them to the admission desk with your note.'}
+          </p>
+        )}
+        {advising && (
+          <p className="opd-hint">
+            The admission form opens for this patient&rsquo;s own record. The visit is finished as
+            admitted when the admission is saved, and its consultation charge is raised then.
           </p>
         )}
         {!signed && (
@@ -559,14 +593,16 @@ function FinishVisitDialog({
               onChange={e => setReason(e.target.value)} />
           </div>
         )}
-        <p className="opd-hint">Finishing raises the consultation charge for the billing counter.</p>
+        {!advising && (
+          <p className="opd-hint">Finishing raises the consultation charge for the billing counter.</p>
+        )}
         {error && <p className="opd-error" role="alert">{error}</p>}
         <div className="opd-modal__actions">
           <button type="button" className="opd-btn opd-btn--quiet" onClick={close} disabled={busy}>
             Cancel
           </button>
           <button type="button" className="opd-btn opd-btn--primary" onClick={submit} disabled={!ready}>
-            {busy ? 'Finishing…' : 'Finish visit'}
+            {advising ? 'Continue to admission' : busy ? 'Finishing…' : 'Finish visit'}
           </button>
         </div>
       </div>
@@ -592,6 +628,9 @@ export default function OpdPanel() {
   const [finishing, setFinishing] = useState(false)
   const [reviewing, setReviewing] = useState(false)
   const [walkIn, setWalkIn] = useState(false)
+  /* Advise admission (opd-17a): the visit being admitted from, and the
+     finish-visit reason when its note is not signed. */
+  const [admitting, setAdmitting] = useState<{ visit: OpdQueueVisit; reason: string | null } | null>(null)
   const [dispositions, setDispositions] = useState<CodeLabel[]>(FALLBACK_DISPOSITIONS)
   const [connected, setConnected] = useState<boolean>(() => socket?.connected === true)
   const mounted = useRef(true)
@@ -914,6 +953,9 @@ export default function OpdPanel() {
           signed={openNote.consultation?.status === 'signed'}
           note={openNote.consultation}
           dispositions={dispositions}
+          /* Admitting needs patient.write (the doctors); the server checks
+             it again on the admission itself. */
+          canAdmit={hasPermission(PATIENT_WRITE)}
           onClose={() => setFinishing(false)}
           onDone={() => {
             setFinishing(false)
@@ -921,7 +963,28 @@ export default function OpdPanel() {
             closeRecord()
             void load()
           }}
+          onAdviseAdmission={reason => {
+            setFinishing(false)
+            setAdmitting({ visit: openVisit, reason })
+          }}
         />
+      )}
+
+      {admitting && createPortal(
+        <Suspense fallback={null}>
+          <AdmitPatientModal
+            existing={{ visitId: admitting.visit.id, noSignedNoteReason: admitting.reason }}
+            onClose={() => setAdmitting(null)}
+            onSuccess={() => {
+              const who = admitting.visit.patient_name ?? admitting.visit.patient_id
+              setAdmitting(null)
+              setNotice(`${who} admitted from this visit. The visit is finished as admitted.`)
+              closeRecord()
+              void load()
+            }}
+          />
+        </Suspense>,
+        document.body,
       )}
     </div>
   )

@@ -9,8 +9,16 @@ import SafetyAlertModal from '../vigil/SafetyAlertModal'
 import PatientPicker from '../common/PatientPicker'
 import { useDataChanged } from '../../hooks/useDataChanged'
 import { formatClinicalDateTime } from '../../lib/datetime'
+import { hasPermission, MEDICATION_PRESCRIBE } from '../../lib/roles'
 import { currentModuleFlags, subscribeModuleFlags } from '../../shellConfig'
-import { MED_NOT_SENT, isMedicationOrder } from './medicationRouting'
+import {
+  createCpoeMedicationOrder, errorCode, signMedOrder, type LinkedMedOrder,
+  type MedOrderPriority,
+} from '../../api/medorders'
+import {
+  MED_NOT_ON_FORMULARY, MED_NOT_SENT, canBeSigned, isMedicationOrder, linkedOrderLine,
+  medicationRoutingNotice, useMedicationLifecycle,
+} from './medicationRouting'
 
 // Lazily loaded so the print-only Orders bundle is not pulled into the main
 // panel chunk until a clinician actually prints the orders list.
@@ -53,6 +61,17 @@ function OrdersViewSwitch({
  * the laboratory's cancel with a required reason. While the laboratory module
  * is on, a new laboratory order is chosen from the laboratory catalogue
  * (never an ICD-10 code), which sets its code and shows the tube to collect.
+ *
+ * MEDICATION ORDERS THE ORDER STORE MANAGES (medorders-7). With the server's
+ * medication-order lifecycle on, a medicine placed here (or by an order set)
+ * is a draft a prescriber signs; the signature puts it on the ward chart and
+ * the drug round. Such an order (managed_by_medication_order on the list)
+ * shows where it is instead of the next-status button, which the server
+ * would refuse (409 managed_by_medication_order); a prescriber gets Sign and
+ * an "Awaiting my signature" filter, and Cancel needs a reason and is offered
+ * only before it is signed. The order form then asks for the medicine as
+ * fields (drug, dose, route, how often, as needed). With the lifecycle off
+ * every medication line still says it is not sent to the ward or pharmacy.
  */
 
 interface Order extends LabOrderFields {
@@ -68,6 +87,34 @@ interface Order extends LabOrderFields {
   result_text: string | null
   result_at: string | null
   created_at: string
+  /** medorders-7: the order store owns this medicine's lifecycle. */
+  managed_by_medication_order?: boolean
+  medication_order?: LinkedMedOrder
+}
+
+/** The linked medication order, when the order store manages this order. */
+function linkedOf(order: Order): LinkedMedOrder | null {
+  return order.managed_by_medication_order === true && order.medication_order
+    ? order.medication_order : null
+}
+
+/** Unsigned linked drafts, oldest first (ruling MO-R10 (a): the oldest wait
+ *  longest and come first). */
+function awaitingSignature(orders: Order[]): Order[] {
+  return orders
+    .filter(o => canBeSigned(linkedOf(o)))
+    .sort((a, b) => (linkedOf(a)?.created_at ?? a.created_at)
+      .localeCompare(linkedOf(b)?.created_at ?? b.created_at))
+}
+
+/** Words for a refused signature, in the server's own sentence when it sent
+ *  one. */
+function signFailure(err: unknown): string {
+  const code = errorCode(err)
+  if (code === 'stale_version' || code === 'screen_stale' || code === 'cpoe_order_changed') {
+    return `${(err as Error).message || 'This order changed.'} The list has been refreshed.`
+  }
+  return (err as Error)?.message || 'the order could not be signed.'
 }
 
 interface Props {
@@ -274,6 +321,15 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
   // The same scoped list the picker shows, so the order form can name the
   // patient it is writing for. A failed load only costs the name, never the form.
   const [patients, setPatients] = useState<Patient[]>([])
+  // medorders-7: the prescriber's Sign, and the "Awaiting my signature" view.
+  const lifecycleOn = useMedicationLifecycle()
+  // Read only with the lifecycle on: with it off nothing here can be signed.
+  const canPrescribe = lifecycleOn && hasPermission(MEDICATION_PRESCRIBE)
+  const [signView, setSignView] = useState(false)
+  const [signBusy, setSignBusy] = useState<string | null>(null)
+  const [signModal, setSignModal] = useState<{ order: Order; safety: MedicationSafety } | null>(null)
+  // A same-medicine notice from the signature (a notice only until ruling MO-R6).
+  const [signNotice, setSignNotice] = useState<string | null>(null)
 
   /* Follow the patient the shell hands us, and drop anything still referring to
      the patient we just left. Both adjustments happen DURING RENDER (React's
@@ -298,6 +354,8 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
     setCancelTarget(null)
     setResultTarget(null)
     setActionError(null)
+    setSignModal(null)
+    setSignNotice(null)
   }
 
   const loadOrders = useCallback(async () => {
@@ -363,6 +421,15 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
 
   const confirmCancel = (order: Order) => {
     const reason = cancelReason.trim()
+    if (linkedOf(order)) {
+      // The order store cancels an unsigned medicine, and needs a reason: it
+      // stays on the medicine's own record.
+      if (!reason) return
+      setCancelTarget(null)
+      setCancelReason('')
+      transition(order, 'cancelled', reason)
+      return
+    }
     if (order.lab_managed) {
       // The laboratory's cancel needs a reason: the bench reads it.
       if (!reason) return
@@ -389,6 +456,37 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
       setActionError(`${order.description}: ${failure.isModuleDisabled
         ? 'the laboratory module is switched off on this site, so the laboratory cannot cancel it. Call the laboratory.'
         : failure.message || 'the order could not be cancelled.'}`)
+    }
+  }
+
+  /* medorders-7: the prescriber's signature. The server screens the medicine
+     again with the signer's role (428 for an alert to acknowledge) and puts
+     it on the ward chart and the drug round. */
+  const sign = async (order: Order, safetyAck?: SafetyAck) => {
+    const linked = linkedOf(order)
+    if (!linked) return
+    setActionError(null)
+    setSignNotice(null)
+    setSignBusy(order.id)
+    try {
+      const res = await signMedOrder(linked.id, linked.version, safetyAck)
+      setSignModal(null)
+      const same = (res.duplicates ?? []).map(d => d.drug_name).filter(Boolean)
+      if (same.length) {
+        setSignNotice(`${order.description}: signed. Already on this patient's chart: ` +
+          `${same.join(', ')}. Check it is not given twice.`)
+      }
+      loadOrders()
+    } catch (err) {
+      if (isSafetyAckRequired(err)) {
+        setSignModal({ order, safety: err.safety })
+        return
+      }
+      setSignModal(null)
+      setActionError(`${order.description}: ${signFailure(err)}`)
+      loadOrders()
+    } finally {
+      setSignBusy(null)
     }
   }
 
@@ -526,6 +624,37 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
         </div>
       )}
 
+      {signNotice && (
+        <div className={styles.medNotSent} role="status" style={{ marginBottom: 8 }}>
+          {signNotice}{' '}
+          <button
+            type="button"
+            onClick={() => setSignNotice(null)}
+            style={{ background: 'none', border: 'none', padding: 0, color: 'inherit', textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {lifecycleOn && canPrescribe && patientId && !loading && orders.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <button
+            type="button"
+            className={styles.actionBtn}
+            aria-pressed={signView}
+            onClick={() => setSignView(v => !v)}
+          >
+            {signView ? 'Show all orders' : `Awaiting my signature (${awaitingSignature(orders).length})`}
+          </button>
+          {signView && (
+            <span style={{ fontSize: '0.8rem' }}>
+              Unsigned medicines for this patient, oldest first.
+            </span>
+          )}
+        </div>
+      )}
+
       {loading ? (
         <div className={styles.loading}>Loading orders…</div>
       ) : loadError && orders.length === 0 ? (
@@ -560,15 +689,29 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
               : 'Search above for a patient and their lab, imaging, medication and procedure orders will appear here, newest first.'}
           </div>
         </div>
+      ) : signView && awaitingSignature(orders).length === 0 ? (
+        <div className={styles.emptyState}>
+          <div className={styles.emptyTitle}>Nothing is waiting for a signature</div>
+          <div className={styles.emptyDetail}>
+            Every medicine ordered for this patient here has been signed or cancelled.
+          </div>
+        </div>
       ) : (
         <div className={styles.list}>
-          {orders.map(order => {
+          {(signView ? awaitingSignature(orders) : orders).map(order => {
             // lis-7: the laboratory moves and reports its own orders.
             const labManaged = order.lab_managed === true
-            const next = labManaged ? null : nextStatus(order)
+            // medorders-7: the order store moves its own medicines.
+            const linked = linkedOf(order)
+            const next = labManaged || linked ? null : nextStatus(order)
             const canResult = !labManaged && RESULTABLE.has(order.order_type) &&
               (order.status === 'active' || order.status === 'in_progress')
             const isTerminal = ['completed', 'resulted', 'cancelled'].includes(order.status)
+            // A signed medicine is stopped by a prescriber's own step, not
+            // cancelled here (the server refuses it).
+            const canCancel = !isTerminal && (!linked || linked.status === 'draft')
+            const reasonRequired = labManaged || !!linked
+            const showSign = !!linked && canBeSigned(linked) && lifecycleOn && canPrescribe
             return (
               <div key={order.id} className={styles.card}>
                 <div className={styles.cardMain}>
@@ -584,8 +727,23 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
                     }>{order.priority}</span>
                     {order.source !== 'clinician' && <span>{order.source}</span>}
                   </div>
-                  {isMedicationOrder(order.order_type) && (
+                  {isMedicationOrder(order.order_type) && !linked && (
                     <div className={styles.medNotSent}>{MED_NOT_SENT}</div>
+                  )}
+                  {linked && (
+                    <div
+                      className={linked.status === 'draft' ? styles.medNotSent : styles.result}
+                      role="note"
+                    >
+                      {[linked.dose, linked.route, linked.frequency].filter(Boolean).join(' ')}
+                      {linked.is_prn ? `, as needed${linked.prn_indication ? ` for ${linked.prn_indication}` : ''}` : ''}
+                      {'. '}
+                      {linkedOrderLine(linked)}
+                      {linked.status === 'draft' && !lifecycleOn && ' Signing is switched off on this computer.'}
+                    </div>
+                  )}
+                  {linked && linked.on_formulary === false && (
+                    <div className={styles.medNotSent}>{MED_NOT_ON_FORMULARY}</div>
                   )}
                   {order.result_text && (
                     <div className={styles.result}>Result: {order.result_text}</div>
@@ -632,12 +790,23 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
                       → {next.replace('_', ' ')}
                     </button>
                   )}
+                  {showSign && (
+                    <button
+                      type="button"
+                      className={styles.actionBtn}
+                      disabled={signBusy === order.id}
+                      onClick={() => void sign(order)}
+                      aria-label={`Sign ${order.description}`}
+                    >
+                      {signBusy === order.id ? 'Signing…' : 'Sign'}
+                    </button>
+                  )}
                   {canResult && resultTarget !== order.id && (
                     <button className={styles.actionBtn} onClick={() => openResult(order)}>
                       + Result
                     </button>
                   )}
-                  {!isTerminal && (
+                  {canCancel && (
                     cancelTarget === order.id ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span style={{ fontSize: '0.8rem' }}>Cancel order?</span>
@@ -649,15 +818,15 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
                             if (e.key === 'Escape') setCancelTarget(null)
                             if (e.key === 'Enter') confirmCancel(order)
                           }}
-                          placeholder={labManaged ? 'Reason (required)' : 'Reason (optional)'}
+                          placeholder={reasonRequired ? 'Reason (required)' : 'Reason (optional)'}
                           aria-label={`Cancellation reason for ${order.description}`}
                           autoFocus
                           style={{ width: 150, padding: '6px 10px', fontSize: '0.8rem' }}
                         />
                         <button
                           className={styles.actionBtn}
-                          style={labManaged && !cancelReason.trim() ? undefined : CONFIRM_CANCEL_BTN_STYLE}
-                          disabled={labManaged && !cancelReason.trim()}
+                          style={reasonRequired && !cancelReason.trim() ? undefined : CONFIRM_CANCEL_BTN_STYLE}
+                          disabled={reasonRequired && !cancelReason.trim()}
                           onClick={() => confirmCancel(order)}
                         >
                           Confirm cancel
@@ -681,6 +850,17 @@ export default function OrdersPanel({ patientId: patientIdProp }: Props) {
             )
           })}
         </div>
+      )}
+
+      {signModal && (
+        <SafetyAlertModal
+          safety={signModal.safety}
+          mode="blocking"
+          drugName={linkedOf(signModal.order)?.drug_name ?? signModal.order.description}
+          busy={signBusy === signModal.order.id}
+          onAcknowledge={(reason) => void sign(signModal.order, { acknowledged: true, reason })}
+          onClose={() => setSignModal(null)}
+        />
       )}
 
       {printing && createPortal(
@@ -739,8 +919,21 @@ function CreateOrderForm({ patientId, patient, onCreated, onCancel }: FormProps)
   const modules = useSyncExternalStore(subscribeModuleFlags, currentModuleFlags)
   const labCatalogue = orderType === 'lab' && modules.lab === true
   const [labTest, setLabTest] = useState<LabCatalogueEntry | null>(null)
+  // medorders-7: with the medication-order lifecycle on, a medicine is its
+  // fields (ruling MO-R11 (a): free text, no code), and the description is
+  // written from them so the list and the ward name the same drug.
+  const lifecycleOn = useMedicationLifecycle()
+  const medicineFields = lifecycleOn && isMedicationOrder(orderType)
+  const [drug, setDrug] = useState('')
+  const [dose, setDose] = useState('')
+  const [route, setRoute] = useState('')
+  const [frequency, setFrequency] = useState('')
+  const [asNeeded, setAsNeeded] = useState(false)
+  const [asNeededFor, setAsNeededFor] = useState('')
+  const medicineDescription = [drug, dose, route, frequency].map(v => v.trim()).filter(Boolean).join(' ')
+    + (asNeeded ? `, as needed${asNeededFor.trim() ? ` for ${asNeededFor.trim()}` : ''}` : '')
 
-  const needsCode = !CODELESS.has(orderType)
+  const needsCode = !CODELESS.has(orderType) && !medicineFields
   // Each label names its control, so a screen reader announces "Priority"
   // on the select rather than an unnamed combo box.
   const fid = useId()
@@ -780,25 +973,40 @@ function CreateOrderForm({ patientId, patient, onCreated, onCancel }: FormProps)
   }
 
   const canSubmit = useMemo(() => {
+    if (medicineFields) {
+      return [drug, dose, route, frequency].every(v => v.trim().length > 0)
+    }
     if (!description.trim()) return false
     if (labCatalogue) return labTest !== null
     if (needsCode) return valid === 'valid'
     return true
-  }, [description, needsCode, valid, labCatalogue, labTest])
+  }, [description, needsCode, valid, labCatalogue, labTest, medicineFields, drug, dose, route, frequency])
 
   const submit = async (safetyAck?: SafetyAck) => {
     setError(null)
     setSubmitting(true)
     try {
-      const res = await createOrder({
-        patient_id: patientId,
-        order_type: orderType,
-        description,
-        code: labCatalogue ? labTest?.code ?? null : needsCode && code.trim() ? code.trim() : null,
-        code_system: labCatalogue ? labTest?.code_system ?? null
-          : needsCode && code.trim() ? codeSystem : null,
-        priority,
-      }, safetyAck)
+      const res = medicineFields
+        ? await createCpoeMedicationOrder({
+          patient_id: patientId,
+          description: medicineDescription,
+          priority: priority as MedOrderPriority,
+          drug_name: drug.trim(),
+          dose: dose.trim(),
+          route: route.trim(),
+          frequency: frequency.trim(),
+          is_prn: asNeeded,
+          prn_indication: asNeeded ? asNeededFor.trim() || null : null,
+        }, safetyAck)
+        : await createOrder({
+          patient_id: patientId,
+          order_type: orderType,
+          description,
+          code: labCatalogue ? labTest?.code ?? null : needsCode && code.trim() ? code.trim() : null,
+          code_system: labCatalogue ? labTest?.code_system ?? null
+            : needsCode && code.trim() ? codeSystem : null,
+          priority,
+        }, safetyAck)
       // Sub-severe alerts (or an unscreened drug): the order was created, but
       // show the screen result once before closing the form. Skipped on an
       // acknowledged re-submit — the clinician just reviewed those alerts.
@@ -915,21 +1123,97 @@ function CreateOrderForm({ patientId, patient, onCreated, onCancel }: FormProps)
         </div>
       )}
 
-      <div className={styles.formRow}>
-        <div className={styles.field}>
-          <label className={styles.label} htmlFor={`${fid}-description`}>Description</label>
-          <input
-            id={`${fid}-description`}
-            className={styles.input}
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-            placeholder="Order description"
-          />
+      {medicineFields ? (
+        <>
+          <div className={styles.formRow}>
+            <div className={styles.field}>
+              <label className={styles.label} htmlFor={`${fid}-drug`}>Medicine</label>
+              <input
+                id={`${fid}-drug`}
+                className={styles.input}
+                value={drug}
+                onChange={e => setDrug(e.target.value)}
+                placeholder="e.g. Ceftriaxone"
+                autoComplete="off"
+              />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label} htmlFor={`${fid}-dose`}>Dose</label>
+              <input
+                id={`${fid}-dose`}
+                className={styles.input}
+                value={dose}
+                onChange={e => setDose(e.target.value)}
+                placeholder="e.g. 1 g"
+                autoComplete="off"
+              />
+            </div>
+          </div>
+          <div className={styles.formRow}>
+            <div className={styles.field}>
+              <label className={styles.label} htmlFor={`${fid}-route`}>Route</label>
+              <input
+                id={`${fid}-route`}
+                className={styles.input}
+                value={route}
+                onChange={e => setRoute(e.target.value)}
+                placeholder="e.g. IV"
+                autoComplete="off"
+              />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label} htmlFor={`${fid}-frequency`}>How often</label>
+              <input
+                id={`${fid}-frequency`}
+                className={styles.input}
+                value={frequency}
+                onChange={e => setFrequency(e.target.value)}
+                placeholder="e.g. once daily"
+                autoComplete="off"
+              />
+            </div>
+          </div>
+          <div className={styles.formRow}>
+            <label className={styles.label} style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 24 }}>
+              <input
+                type="checkbox"
+                checked={asNeeded}
+                onChange={e => setAsNeeded(e.target.checked)}
+              />
+              Give only when needed
+            </label>
+            {asNeeded && (
+              <div className={styles.field}>
+                <label className={styles.label} htmlFor={`${fid}-prn`}>Give when</label>
+                <input
+                  id={`${fid}-prn`}
+                  className={styles.input}
+                  value={asNeededFor}
+                  onChange={e => setAsNeededFor(e.target.value)}
+                  placeholder="e.g. nausea"
+                  autoComplete="off"
+                />
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        <div className={styles.formRow}>
+          <div className={styles.field}>
+            <label className={styles.label} htmlFor={`${fid}-description`}>Description</label>
+            <input
+              id={`${fid}-description`}
+              className={styles.input}
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              placeholder="Order description"
+            />
+          </div>
         </div>
-      </div>
+      )}
 
       {isMedicationOrder(orderType) && (
-        <div className={styles.medNotice} role="note">{MED_NOT_SENT}</div>
+        <div className={styles.medNotice} role="note">{medicationRoutingNotice(lifecycleOn)}</div>
       )}
 
       {error && <div className={styles.errorText}>{error}</div>}
@@ -945,11 +1229,13 @@ function CreateOrderForm({ patientId, patient, onCreated, onCancel }: FormProps)
         <SafetyAlertModal
           safety={safetyModal.safety}
           mode={safetyModal.mode}
-          drugName={description}
+          drugName={medicineFields ? drug.trim() : description}
           busy={submitting}
           onAcknowledge={(reason) => submit({ acknowledged: true, reason })}
           placedNotice={safetyModal.mode === 'info'
-            ? 'This order has been placed as a draft. Cancel it if you did not intend it.'
+            ? (medicineFields
+              ? 'This order has been placed as a draft. It reaches the ward only once a prescriber signs it. Cancel it if you did not intend it.'
+              : 'This order has been placed as a draft. Cancel it if you did not intend it.')
             : undefined}
           onCancelOrder={safetyModal.mode === 'info' && safetyModal.orderId
             ? () => { void cancelPlacedOrder(safetyModal.orderId as string) }

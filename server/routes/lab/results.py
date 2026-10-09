@@ -64,6 +64,35 @@ Each write is one immediate transaction with a clinical_access audit row per
 result, and each says what its screen showed (`expected`); a result changed
 since is refused 409 'result_changed' without its current value (the screen
 reloads the audited queue instead).
+
+lis-15 (W7-H): technical validation of a result flagged critical against an
+approved limit raises its critical result (preliminary, ruling LIS-R4 (a)),
+and the answer's `criticals` says whether the ward was told in the case room
+(services/lab_critical_service.py; the Critical results screen is
+routes/lab/criticals.py).
+
+Built in lis-13 (W7-H), served while the module drains (correcting the
+record is never new work), ruling LIS-R10 (a) applied as the build default:
+  GET   /results/reported/{specimen_id}
+                                    lab.result. One sample's reported results
+                                    with their earlier versions, withdrawals
+                                    and any amendment waiting for a second
+                                    signatory. Audited as phi_access
+                                    'lab_reported_results_viewed'.
+  POST  /results/{result_id}/amend  lab.authorise. Amend a reported result
+                                    with a reason. While two different people
+                                    are required (LIS-R5) this proposes it;
+                                    otherwise it is applied at once.
+  POST  /results/{result_id}/amend/confirm
+                                    lab.authorise. A second signatory applies
+                                    a proposed amendment.
+  POST  /results/{result_id}/amend/cancel
+                                    lab.authorise. Cancel a proposal.
+  POST  /results/{result_id}/withdraw
+                                    lab.authorise. Withdraw a result entered
+                                    in error, with a reason.
+An applied amendment or a withdrawal posts a plain notice to the patient's
+case room after it commits; a failed notice never undoes it.
 """
 from typing import Optional
 
@@ -288,3 +317,100 @@ def return_to_bench(result_id: int, body: ReasonBody, request: Request,
     return _write(lambda: lab_result_service.return_to_bench(
         result_id, reason=body.reason, expected=body.expected.model_dump(), actor=user,
         dept=department_scope(user), request_meta=request_meta(request)))
+
+
+# ── Amended and withdrawn results (lis-13) ──────────────────────────────────
+
+class AmendBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # The amended value as typed, checked at the test's reporting precision.
+    value: str = Field(..., max_length=lab_result_service.TEXT_RESULT_MAX)
+    comment: Optional[str] = Field(None, max_length=1000)
+    reason: str = Field(..., max_length=lab_result_service.REASON_MAX)
+    delta_reason: Optional[str] = Field(None, max_length=lab_result_service.REASON_MAX)
+    expected: ExpectedResult
+
+
+class ProposedSeen(BaseModel):
+    """What the confirming signatory's screen showed of the proposal."""
+    model_config = ConfigDict(extra="forbid")
+    value_text: str = Field(..., max_length=lab_result_service.TEXT_RESULT_MAX)
+    comment: Optional[str] = Field(..., max_length=1000)
+
+
+class ConfirmAmendBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    proposal_id: int
+    expected: ExpectedResult
+    proposed: ProposedSeen
+
+
+class CancelAmendBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    proposal_id: int
+    reason: str = Field(..., max_length=lab_result_service.REASON_MAX)
+
+
+class WithdrawBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(..., max_length=lab_result_service.REASON_MAX)
+    wrong_patient: bool = False
+    expected: ExpectedResult
+
+
+@router.get("/results/reported/{specimen_id}")
+def get_reported_results(specimen_id: str, request: Request,
+                         user: dict = Depends(require_permission(LAB_RESULT))):
+    """One sample's reported results. The audit row names the patient."""
+    dept = department_scope(user)
+    try:
+        with db_session() as db:
+            body = lab_result_service.reported_results(db, specimen_id, actor=user, dept=dept)
+    except lab_result_service.LabResultError as err:
+        raise _refusal(err)
+    log_phi_read(
+        request=request, user=user,
+        action_type="lab_reported_results_viewed",
+        summary_message=(f"Reported laboratory results viewed for sample "
+                         f"{body['specimen']['id']} ({len(body['tests'])} tests)"),
+        patient_id=body["specimen"]["patient"]["id"],
+        target_type="lab_specimen",
+        target_id=body["specimen"]["id"],
+        metadata={"tests": len(body["tests"])},
+    )
+    return body
+
+
+@router.post("/results/{result_id}/amend")
+def amend_result(result_id: int, body: AmendBody, request: Request,
+                 user: dict = Depends(require_permission(LAB_AUTHORISE))):
+    return _write(lambda: lab_result_service.amend_result(
+        result_id, value=body.value, comment=body.comment, reason=body.reason,
+        delta_reason=body.delta_reason, expected=body.expected.model_dump(), actor=user,
+        dept=department_scope(user), request_meta=request_meta(request)))
+
+
+@router.post("/results/{result_id}/amend/confirm")
+def confirm_amendment(result_id: int, body: ConfirmAmendBody, request: Request,
+                      user: dict = Depends(require_permission(LAB_AUTHORISE))):
+    return _write(lambda: lab_result_service.confirm_amendment(
+        result_id, proposal_id=body.proposal_id, expected=body.expected.model_dump(),
+        proposed=body.proposed.model_dump(), actor=user, dept=department_scope(user),
+        request_meta=request_meta(request)))
+
+
+@router.post("/results/{result_id}/amend/cancel")
+def cancel_amendment(result_id: int, body: CancelAmendBody, request: Request,
+                     user: dict = Depends(require_permission(LAB_AUTHORISE))):
+    return _write(lambda: lab_result_service.cancel_amendment(
+        result_id, proposal_id=body.proposal_id, reason=body.reason, actor=user,
+        dept=department_scope(user), request_meta=request_meta(request)))
+
+
+@router.post("/results/{result_id}/withdraw")
+def withdraw_result(result_id: int, body: WithdrawBody, request: Request,
+                    user: dict = Depends(require_permission(LAB_AUTHORISE))):
+    return _write(lambda: lab_result_service.withdraw_result(
+        result_id, reason=body.reason, wrong_patient=body.wrong_patient,
+        expected=body.expected.model_dump(), actor=user, dept=department_scope(user),
+        request_meta=request_meta(request)))

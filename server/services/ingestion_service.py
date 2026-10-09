@@ -371,44 +371,33 @@ def _persist_relay_alert(patient_id, alert_content, episode_id=None, level=None,
     # point, and any event-loop stall then starves every other writer
     # ("database is locked" storms). Emits happen after commit, in the caller,
     # mirroring nervous_system_triggers.on_scribe_note_signed.
-    relay_alert_logged = False
-    relay_msg_id = None
-    relay_channel_id = None
-    msg_data = None
+    #
+    # The room lookup, the message row and its live body are the shared
+    # case-room writer (services/case_room_alerts.py, lis-15), which the
+    # laboratory's critical-result post uses too. This wrapper keeps what is
+    # Vigil's own: the Orb Vigil sender, its users row, and the shadow emits.
+    # The live body is relay_service._message_row_to_dict(row), so the alert
+    # carries `is_bot` (Relay's AUTO chip) and `source`; a hand-built copy
+    # left both out, and every live Vigil alert read as typed by a person
+    # until a reload (2026-10-03).
+    from services.case_room_alerts import persist_case_room_alert
+
     patient_name = "Unknown"
     with db_session() as db:
         db.execute(
             "INSERT OR IGNORE INTO users (id, name, role, password_hash) VALUES (?, ?, ?, ?)",
             (VIGIL_BOT_ID, 'Orb Vigil', 'doctor', 'system'),
         )
-        channel = db.execute(
-            "SELECT id FROM channels WHERE type = 'case_room' AND patient_id = ?",
-            (patient_id,),
-        ).fetchone()
+        relay_alert_logged, relay_msg_id, relay_channel_id, msg_data = persist_case_room_alert(
+            patient_id, alert_content, sender_id=VIGIL_BOT_ID, sender_name='Orb Vigil',
+            sender_role='intelligence', is_bot=True, source='bot', db=db,
+            message_type='alert')
 
-        if channel:
-            relay_channel_id = channel["id"]
-            cursor = db.execute(
-                """INSERT INTO messages
-                   (channel_id, sender_id, sender_name, sender_role, content, message_type, is_bot, source)
-                   VALUES (?, ?, ?, ?, ?, 'alert', 1, 'bot')""",
-                (relay_channel_id, VIGIL_BOT_ID, 'Orb Vigil', 'intelligence', alert_content),
-            )
-            relay_msg_id = cursor.lastrowid
-            row = db.execute("SELECT * FROM messages WHERE id = ?", (relay_msg_id,)).fetchone()
-            if row:
-                # The serializer the history endpoint and send_message share, so
-                # the live alert carries `is_bot` (Relay's AUTO chip) and
-                # `source`. A hand-built copy left both out, and every live Vigil
-                # alert read as typed by a person until a reload (2026-10-03).
-                from services.relay_service import _message_row_to_dict
-                msg_data = _message_row_to_dict(row)
-
+        if relay_alert_logged:
             patient = db.execute(
                 "SELECT name, bed FROM patients WHERE id = ?", (patient_id,)
             ).fetchone()
             patient_name = patient["name"] if patient else "Unknown"
-            relay_alert_logged = True
 
         # SHADOW on THIS transaction (db=db). A fresh connection from inside this
         # open write transaction would block on the WAL lock this function holds

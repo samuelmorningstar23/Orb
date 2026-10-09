@@ -25,6 +25,7 @@ import {
   TILE_ACTIONS,
   type TileActionEntry,
 } from '../../../components/adt/actions'
+import BoardTileNotes from '../../../components/adt/BoardTileNotes'
 import { formatClinicalDateTime, formatClinicalTime } from '../../../lib/datetime'
 import type { AdtViewProps } from './viewRegistry'
 
@@ -278,6 +279,9 @@ function BedTileCard({ tile, actions, onAction }: BedTileCardProps) {
         </span>
       </div>
       <p className="bb-tile__status">{tile.status_words}</p>
+      {/* adt-10 and adt-12: 'Not on ward since', and a held bed's expiry and
+          (inside scope) who it is held for, in local time. */}
+      <BoardTileNotes tile={tile} />
       {occupant && (
         <div className="bb-tile__who">
           <span className="bb-tile__name">{occupant.name ?? 'Name not recorded'}</span>

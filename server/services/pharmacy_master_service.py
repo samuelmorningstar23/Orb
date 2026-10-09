@@ -435,6 +435,13 @@ def classify_drug(drug_id: str, changes: Mapping, *, actor: Mapping,
                    metadata={"changes": {f: {"from": row[f], "to": v, "kind": plan[f]}
                                          for f, v in applies.items()}},
                    audit_ctx=audit_ctx)
+            if applies.get("ndps_category") in stock.NDPS_CONTROLLED:
+                # The drug comes under the NDPS register (grn-13): its register
+                # opens in every store holding it, at what the stock ledger
+                # holds there, in this transaction. Nothing while it is off.
+                from services import ndps_service
+                ndps_service.open_after_classification(
+                    conn, drug_id, actor_id=actor_id, category=applies["ndps_category"])
 
         requested = []
         for field in downgrades:

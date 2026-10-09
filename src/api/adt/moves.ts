@@ -375,6 +375,32 @@ export interface KeptPlace {
   out_of_service: boolean
 }
 
+/** One side of a recorded move: where the patient was or went. */
+export interface MovePlace {
+  department: string | null
+  ward: string | null
+  bed: string | null
+}
+
+/** The stay's latest move, and whether it can be undone as recorded in
+ *  error (adt-6b). Only a bed assignment, a bed change or a transfer can be,
+ *  only the latest, only once, and only while the patient is still where it
+ *  put them; `not_correctable` says why not in the server's words. */
+export interface LastMove {
+  id: string
+  movement_type: string
+  moved_at: string | null
+  recorded_at?: string | null
+  moved_by_name?: string | null
+  reason?: string | null
+  from: MovePlace
+  to: MovePlace
+  /** Undoing it gives the patient back to another treating department. */
+  changes_department: boolean
+  correctable: boolean
+  not_correctable?: { code: string; message: string } | null
+}
+
 /** Where an admission lies now (GET /api/adt/admissions/{id}/location). */
 export interface AdmissionLocation {
   admission_id: string
@@ -388,6 +414,8 @@ export interface AdmissionLocation {
   awaiting_bed: boolean
   boarder: boolean
   kept_place?: KeptPlace | null
+  /** adt-6b: the latest move of this stay (absent from an older server). */
+  last_move?: LastMove | null
 }
 
 export function getAdmissionLocation(admissionId: string): Promise<AdmissionLocation> {
@@ -501,4 +529,113 @@ export function moveFailureWords(err: unknown): string {
   }
   if (failure.isNotFound) return 'This patient is not on your list, so they cannot be moved from here.'
   return failure.message || 'The move was not recorded. Nothing was changed.'
+}
+
+// ── Swap and a move recorded in error (adt-6b) ───────────────────────────────
+
+/** The body of POST /api/adt/bed-swaps. Both expected bed ids are always
+ *  sent: the beds the screen showed. A treating department never changes. */
+export interface SwapRequest {
+  first_admission_id: string
+  second_admission_id: string
+  expected_first_bed_id: string | null
+  expected_second_bed_id: string | null
+  reason: string
+  moved_at?: string
+  notes?: string
+  out_of_service_reason?: string
+  boarder_acknowledged?: boolean
+  /** Ruling ADT-S2 (c): neither bed is cleaned between the two patients. */
+  not_clean_reason?: string
+  terminal_clean_authorised_by?: string
+  terminal_clean_reason?: string
+  terminal_clean_authoriser_pin?: string
+}
+
+/** What a swap answers: each patient's move. A replay is the first answer. */
+export interface SwapResult {
+  replayed: boolean
+  swap_key?: string
+  first: MoveResult
+  second: MoveResult
+}
+
+/** Swap two admitted patients' beds. One Idempotency-Key covers the pair.
+ *  Throws AdtApiError; branch on its `code`. */
+export function swapBeds(request: SwapRequest, key: string): Promise<SwapResult> {
+  return adtPost<SwapResult>('/bed-swaps', request, key)
+}
+
+/** The body of POST /api/adt/movements/{id}/correct. */
+export interface CorrectionRequest {
+  /** The bed the screen showed (null for none). Always sent. */
+  expected_bed_id: string | null
+  reason: string
+  notes?: string
+  out_of_service_reason?: string
+  boarder_acknowledged?: boolean
+  not_clean_reason?: string
+  terminal_clean_authorised_by?: string
+  terminal_clean_reason?: string
+  terminal_clean_authoriser_pin?: string
+}
+
+export interface CorrectionResult extends MoveResult {
+  corrects_movement_id: string
+}
+
+/** Undo the stay's latest move as recorded in error. Throws AdtApiError. */
+export function correctMovement(movementId: string, request: CorrectionRequest,
+  key: string): Promise<CorrectionResult> {
+  return adtPost<CorrectionResult>(`/movements/${encodeURIComponent(movementId)}/correct`,
+    request, key)
+}
+
+/** The kinds of move, in words, for a line about the last one. */
+export const MOVE_TYPE_WORDS: Record<string, string> = {
+  admission: 'Admission',
+  bed_assigned: 'Bed assigned',
+  bed_change: 'Bed change',
+  transfer: 'Transfer',
+  bed_swap: 'Bed swap',
+  location_linked: 'Linked to bed setup',
+  correction: 'Correction',
+  discharge: 'End of stay',
+}
+
+/** The words for a failed swap: the server's own words when it gave them. */
+export function swapFailureWords(err: unknown): string {
+  const failure = toAdtError(err)
+  if (failure.isUnreachable) {
+    return 'Could not reach the server, so it is not known whether the swap was recorded. '
+      + 'Send it again: the same swap is never recorded twice.'
+  }
+  if (failure.isForbidden && (failure.code === 'permission_denied' || failure.code === 'http_403')) {
+    return 'Your role cannot swap beds.'
+  }
+  if (failure.code === 'state_changed') {
+    return 'Where one of these patients lies changed since this screen opened. Close it and open it again.'
+  }
+  if (failure.code === 'idempotency_key_reused') {
+    return 'This screen was already used for another swap. Close it and open it again.'
+  }
+  if (failure.isNotFound) return 'One of these patients is not on your list, so the beds cannot be swapped from here.'
+  return failure.message || 'The swap was not recorded. Nothing was changed.'
+}
+
+/** The words for a failed correction. */
+export function correctionFailureWords(err: unknown): string {
+  const failure = toAdtError(err)
+  if (failure.isUnreachable) {
+    return 'Could not reach the server, so it is not known whether the correction was recorded. '
+      + 'Send it again: the same correction is never recorded twice.'
+  }
+  if (failure.isForbidden && (failure.code === 'permission_denied' || failure.code === 'http_403')) {
+    return 'Your role cannot undo this move.'
+  }
+  if (failure.code === 'idempotency_key_reused') {
+    return 'This screen was already used for another change. Close it and open it again.'
+  }
+  if (failure.isNotFound) return 'This patient is not on your list, so the move cannot be undone from here.'
+  return failure.message || 'The correction was not recorded. Nothing was changed.'
 }

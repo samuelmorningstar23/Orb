@@ -204,15 +204,16 @@ describe('BedBoardPanel', () => {
     expect(await screen.findByText('Report the module switched off')).toBeInTheDocument()
   })
 
-  it('the real build finds the Board and Awaiting a bed views, in that order', async () => {
+  it('the real build finds the Board, Awaiting a bed and Census views, in that order', async () => {
     getMeta.mockResolvedValue({ module: 'adt', state: 'on' })
     getBoard.mockResolvedValue(BOARD)
     // A bed manager: adt.read, and not vitals.transcribe, which the ward
-    // clerk's Observations view (Ward Record, 6 October 2026) needs.
+    // clerk's Observations view (Ward Record, 6 October 2026) needs. The
+    // Census view (adt-13a, W7-C) is order 60 and needs adt.read.
     render(<BedBoardPanel holds={(p: string) => p === 'adt.read'} />)
     const nav = await screen.findByRole('navigation', { name: 'Beds screens' })
     expect(within(nav).getAllByRole('button').map((b) => b.textContent))
-      .toEqual(['Board', 'Awaiting a bed'])
+      .toEqual(['Board', 'Awaiting a bed', 'Census'])
     expect(await screen.findByText('Asha Rao')).toBeInTheDocument()
   })
 
@@ -221,9 +222,10 @@ describe('BedBoardPanel', () => {
     getBoard.mockResolvedValue(BOARD)
     render(<BedBoardPanel holds={holdsAll} />)
     const nav = await screen.findByRole('navigation', { name: 'Beds screens' })
-    // Bed setup (adt-4b, W5-B) is order 90 and needs bed.master.
+    // Bed setup (adt-4b, W5-B) is order 90 and needs bed.master; the Census
+    // (adt-13a, W7-C) is order 60.
     expect(within(nav).getAllByRole('button').map((b) => b.textContent))
-      .toEqual(['Board', 'Awaiting a bed', 'Observations', 'Bed setup'])
+      .toEqual(['Board', 'Awaiting a bed', 'Observations', 'Census', 'Bed setup'])
   })
 
   it('says so when no view is open to this role', async () => {

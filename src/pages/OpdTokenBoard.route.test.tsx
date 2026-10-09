@@ -4,9 +4,11 @@
  * A token board is a DEVICE on a waiting-room wall, not a signed-in person.
  * The route therefore renders with no session at all, with a staff session,
  * and with a patient session, and never redirects to a sign-in screen or into
- * the staff shell. The page behind it is a placeholder until the board itself
- * is built (opd-9); what it may fetch is pinned here: nothing but the
- * unauthenticated /api/health, which carries no patient data.
+ * the staff shell. What it may fetch is pinned here: while the 'opd' feature
+ * is off, nothing but the unauthenticated /api/health, which carries no
+ * patient data; with it on (opd-9), the board itself, with the key from the
+ * address's fragment in the X-Orb-Board-Key header and never in a URL or a
+ * body.
  */
 import { render, screen, waitFor, cleanup } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -40,9 +42,18 @@ import '../i18n'
 import App from '../AppRoot'
 import { resetFeatureFlags, resetModuleFlags } from '../shellConfig'
 
+const BOARD = {
+  board_label: 'Medicine waiting hall', department: 'General Medicine', visit_date: '2026-10-09',
+  generated_at: '2026-10-09T05:00:00Z', poll_seconds: 10,
+  doctors: [{ doctor_name: 'Dr Meera', room: '4', calling: 12, next: [13, 14, 15] }],
+}
+
 function stubHealth(answer: 'down' | { modules: Record<string, boolean>; features: Record<string, boolean> }) {
   const spy = vi.fn(async (url: string) => {
     if (answer === 'down') throw new Error('offline')
+    if (String(url).endsWith('/api/frontdesk/opd/board')) {
+      return { ok: true, status: 200, json: async () => BOARD }
+    }
     if (!String(url).endsWith('/api/health')) throw new Error(`unexpected fetch: ${url}`)
     return { ok: true, status: 200, json: async () => answer }
   })
@@ -91,11 +102,21 @@ describe('/display/opd is a kiosk, not a signed-in page', () => {
       .toHaveTextContent('OPD token board is switched off on this site.'))
   })
 
-  it('says it cannot open yet when the server has OPD on', async () => {
-    stubHealth({ modules: { billing: true }, features: { registration: true, opd: true } })
+  it('shows the board when the server has OPD on, the key in a header only', async () => {
+    const spy = stubHealth({ modules: { billing: true }, features: { registration: true, opd: true } })
     render(<App />)
-    await waitFor(() => expect(screen.getByRole('status'))
-      .toHaveTextContent('OPD token board cannot be opened on this site yet.'))
+    expect(await screen.findByText('Medicine waiting hall')).toBeInTheDocument()
+    expect(screen.getByText('Dr Meera')).toBeInTheDocument()
+    const calls = spy.mock.calls as unknown as Array<[string, RequestInit | undefined]>
+    const board = calls.filter(([url]) => String(url).endsWith('/api/frontdesk/opd/board'))
+    expect(board.length).toBeGreaterThan(0)
+    for (const [url, init] of calls) {
+      expect(String(url)).not.toContain('board-secret')
+      expect(String(init?.body ?? '')).not.toContain('board-secret')
+    }
+    const headers = (board[0][1]?.headers ?? {}) as Record<string, string>
+    expect(headers['X-Orb-Board-Key']).toBe('board-secret')
+    expect(board[0][1]?.credentials).toBe('omit')
   })
 
   it('never claims "off" when the server cannot be reached', async () => {

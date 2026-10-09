@@ -79,6 +79,11 @@ after the commit. What a receipt line needs, at draft and again at post:
     hospital cannot claim back) over paid plus free units (GRN-R12, lot cost);
   * a rate per pack above the MRP, and an invoice total that differs from
     the receipt by more than a rupee, are warnings, never silent.
+
+RETURNS TO VENDOR (grn-22) are the third half, at the bottom of this module: a
+DRAFT names lots of one store going back to one vendor; POST takes the units
+off the shelf by vendor_return movements; the vendor's credit note is then
+recorded against it. See the section's own notes.
 """
 from __future__ import annotations
 
@@ -1381,3 +1386,612 @@ def cancel_goods_receipt(grn_id: int, *, reason: Optional[str], actor: Mapping,
                        audit_ctx=audit_ctx)
         doc = _decorate_receipt(conn, _load_receipt(conn, grn_id))
     return {"goods_receipt": doc, "warnings": [], "replayed": False}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Returns to vendor (grn-22)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# A return document (PHVR) takes stock that should not stay in the hospital
+# back to the vendor who supplied it: lots that are held off the shelf
+# (quarantined, recalled, not of standard quality, a ward return waiting for
+# inspection) or that are expired or near expiry (pharmacy_store_service
+# decides which, return_eligibility). The life of one:
+#   draft      lots of ONE store going to ONE vendor, units per lot, a reason.
+#              Nothing moves; the units are still on the lot.
+#   posted     one vendor_return movement per line, through the single stock
+#              writer, in ONE immediate transaction with the 'security' audit
+#              row. A held lot that is emptied is closed as returned to the
+#              vendor. The PHVR number is drawn after the commit.
+#   credited   the vendor's credit note number recorded against it.
+#   cancelled  a draft given up, with a reason. A posted return is never
+#              cancelled: its units have left.
+# Strict defaults (each listed for Samuel):
+#   * posting needs the approve tier, from somebody other than the person who
+#     drafted it (separation of duties, as for a purchase order);
+#   * a lot received from another vendor is refused; a lot with no vendor on
+#     file (stock older than the pharmacy store) goes with a warning;
+#   * a narcotic or psychotropic line (GRN-R14) needs the NDPS permission to
+#     draft, the vendor's NDPS licence on file, and at posting a witness: a
+#     third person holding pharmacy_store.ndps, neither the drafter nor the
+#     poster, confirming with their own signing PIN. The register (grn-13)
+#     enters the return when it is on;
+#   * the units of each line are checked again at posting: never more than
+#     the lot holds then, and the lot must still be returnable.
+
+VR_NUMBER_SERIES = "PHVR"
+VR_NUMBER_KIND = "pharmacy_vendor_return"
+#: reference_type on the vendor_return movements (the ledger labels it).
+VR_REFERENCE = "pharmacy_vendor_return"
+VR_STATUSES: tuple[str, ...] = ("draft", "posted", "credited", "cancelled")
+VR_STATUS_LABELS = {
+    "draft": "Draft",
+    "posted": "Sent back",
+    "credited": "Credit note received",
+    "cancelled": "Cancelled",
+}
+VR_MAX_LINES = 200
+VR_MAX_UNITS = 1_000_000
+VR_TEXT_LIMIT = 1000
+
+
+def _vr_audit(conn, actor: Mapping, action: str, *, summary: str, return_id: int,
+              metadata: dict, audit_ctx: Optional[Mapping] = None) -> None:
+    """One 'security' row in the return's transaction (fail-closed). A return
+    to vendor is hospital business: no patient id, ids as strings."""
+    from services import audit_service
+
+    ctx = audit_ctx or {}
+    audit_service.log_audit_event(
+        correlation_id=str(uuid.uuid4()), event_category="security", action_type=action,
+        outcome="success", db=conn, summary_message=summary,
+        actor_user_id=str(actor.get("id")) if actor.get("id") is not None else None,
+        actor_role=actor.get("role"), target_type="pharmacy_vendor_return",
+        target_id=str(return_id), request_path=ctx.get("request_path"),
+        http_method=ctx.get("http_method"), ip_address=ctx.get("ip_address"),
+        metadata=metadata)
+
+
+def _vr_text(value: Any, name: str, *, required: bool) -> Optional[str]:
+    if value is None:
+        text = ""
+    elif isinstance(value, str):
+        text = value.strip()
+    else:
+        raise PurchasingError(f"{name} must be text", code="bad_value")
+    if len(text) > VR_TEXT_LIMIT:
+        raise PurchasingError(f"{name} is at most {VR_TEXT_LIMIT} characters", code="bad_value")
+    if required and not text:
+        raise PurchasingError(f"give {name}", code="missing_reason" if "reason" in name
+                              else "missing_field")
+    return text or None
+
+
+def _vr_clean_lines(raw: Any) -> list[dict]:
+    if not isinstance(raw, (list, tuple)) or not raw:
+        raise PurchasingError("name at least one lot to return", code="empty_document")
+    if len(raw) > VR_MAX_LINES:
+        raise PurchasingError(f"a return covers at most {VR_MAX_LINES} lots", code="bad_value")
+    out: list[dict] = []
+    seen: set[str] = set()
+    for n, item in enumerate(raw, start=1):
+        if not isinstance(item, Mapping):
+            raise PurchasingError("each line is an object", code="bad_line")
+        lot_id = item.get("lot_id")
+        if not isinstance(lot_id, str) or not lot_id.strip():
+            raise PurchasingError(f"line {n} names no lot", code="bad_line")
+        lot_id = lot_id.strip()
+        if lot_id in seen:
+            raise PurchasingError("a lot is named once per return", code="duplicate_line")
+        seen.add(lot_id)
+        out.append({"lot_id": lot_id,
+                    "quantity_units": _whole(item.get("quantity_units"),
+                                             f"units on line {n}", minimum=1,
+                                             maximum=VR_MAX_UNITS),
+                    "reason": _vr_text(item.get("reason"), f"the reason for line {n}",
+                                       required=False)})
+    return out
+
+
+def _vr_store(conn, store_code: Any):
+    from services import pharmacy_store_service as store_rules
+
+    code = (store_code or "").strip().upper() if isinstance(store_code, str) else ""
+    if not code:
+        raise PurchasingError("choose the store the stock goes back from", code="store_required")
+    store = conn.execute("SELECT * FROM stores WHERE code = ? AND pharmacy_kind IS NOT NULL",
+                         (code,)).fetchone()
+    if store is None:
+        raise PurchasingError(f"no pharmacy store {store_code!r}", code="store_not_found")
+    if not store["is_active"]:
+        raise PurchasingError(f"{store['name']} is closed", code="store_inactive")
+    if store["pharmacy_kind"] not in store_rules.RETURN_STORE_KINDS:
+        raise PurchasingError(f"{store['name']} does not hold stock that goes back to a vendor",
+                              code="store_not_returnable")
+    return store
+
+
+def _vr_vendor(conn, vendor_code: Any, *, needs_ndps: bool, today: str):
+    """The vendor, with warnings. Stock goes back to a blacklisted or inactive
+    vendor too (it is theirs to take back); a narcotic or psychotropic goes
+    only to a vendor with an NDPS licence on file."""
+    code = (vendor_code or "").strip().upper() if isinstance(vendor_code, str) else ""
+    vendor = conn.execute("SELECT * FROM vendors WHERE code = ?", (code,)).fetchone() if code \
+        else None
+    if vendor is None:
+        raise PurchasingError(f"no vendor with code {vendor_code!r}", code="vendor_not_found")
+    licence = vendor_licence(vendor, today=today)
+    warnings: list[dict] = []
+    if licence["status"] in ("none", "expired"):
+        warnings.append({"code": "vendor_licence_" + ("missing" if licence["status"] == "none"
+                                                       else "expired"),
+                         "message": f"{vendor['name']} has no valid drug licence on file. "
+                                    "Check they may take the stock back."})
+    elif licence["warning"]:
+        warnings.append(licence["warning"])
+    if needs_ndps and not licence["ndps_number"]:
+        raise PurchasingError(
+            f"{vendor['name']} has no NDPS licence on file, so narcotic and psychotropic "
+            "drugs cannot go back to them.", code="vendor_ndps_licence_missing")
+    return vendor, warnings
+
+
+def _vr_check_lines(conn, lines: list[dict], *, store: Mapping, vendor: Mapping,
+                    today: str) -> tuple[list[dict], bool, list[dict]]:
+    """Each line against its lot now: in this store, returnable, from this
+    vendor (or none recorded), never more units than the lot holds. Returns
+    (lines with their lots, any narcotic or psychotropic, warnings)."""
+    from services import pharmacy_store_service as store_rules
+
+    checked: list[dict] = []
+    any_ndps = False
+    warnings: list[dict] = []
+    for n, line in enumerate(lines, start=1):
+        lot = conn.execute(
+            "SELECT l.*, m.name AS drug_name, m.ndps_category FROM helix_inventory_lots l "
+            "LEFT JOIN helix_medication_master m ON m.id = l.medication_id WHERE l.id = ?",
+            (line["lot_id"],)).fetchone()
+        if lot is None or lot["store_id"] != store["id"]:
+            raise PurchasingError(f"line {n}: lot {line['lot_id']} is not in {store['name']}",
+                                  code="lot_not_in_store", detail={"line_no": n})
+        verdict = store_rules.return_eligibility(dict(lot), today=today)
+        name = lot["drug_name"] or lot["medication_id"]
+        if not verdict["returnable"]:
+            raise PurchasingError(
+                f"line {n}: {name}, batch {lot['lot_number']}, cannot go back to the vendor "
+                f"({verdict['why_label'].lower()}). Only stock held off the shelf, expired or "
+                "near expiry is returned.", code="lot_not_returnable",
+                detail={"line_no": n, "why": verdict["why"]})
+        held = int(lot["quantity"] or 0)
+        if line["quantity_units"] > held:
+            raise PurchasingError(
+                f"line {n}: {name}, batch {lot['lot_number']}, holds {held} units, so "
+                f"{line['quantity_units']} cannot go back. Nothing was changed.",
+                code="exceeds_lot", detail={"line_no": n, "lot_units": held})
+        if lot["vendor_id"] is not None and int(lot["vendor_id"]) != int(vendor["id"]):
+            raise PurchasingError(
+                f"line {n}: {name}, batch {lot['lot_number']}, came from another vendor. "
+                "Return it to the vendor who supplied it.", code="lot_from_another_vendor",
+                detail={"line_no": n})
+        if lot["vendor_id"] is None:
+            warnings.append({"code": "vendor_not_recorded",
+                             "message": f"Line {n}: no vendor is on file for batch "
+                                        f"{lot['lot_number']} of {name}. Check it came from "
+                                        f"{vendor['name']}."})
+        ndps = lot["ndps_category"] in stock.NDPS_CONTROLLED
+        any_ndps = any_ndps or ndps
+        checked.append(line | {"line_no": n, "lot": dict(lot), "ndps": ndps,
+                               "why": verdict["why"], "why_label": verdict["why_label"]})
+    return checked, any_ndps, warnings
+
+
+def _vr_series_configured(conn) -> bool:
+    row = conn.execute("SELECT is_configured FROM document_number_series WHERE series_code = ?",
+                       (VR_NUMBER_SERIES,)).fetchone()
+    return bool(row and row["is_configured"])
+
+
+def _vr_raw(conn, return_id: Any):
+    try:
+        rid = int(return_id)
+    except (TypeError, ValueError):
+        return None
+    return conn.execute("SELECT * FROM pharmacy_vendor_returns WHERE id = ?", (rid,)).fetchone()
+
+
+def _vr_load(conn, return_id: Any):
+    row = _vr_raw(conn, return_id)
+    if row is None:
+        raise PurchasingError(f"no return to vendor {return_id}", code="not_found")
+    return row
+
+
+def _vr_decorate(conn, row: Mapping, *, with_lines: bool = True) -> dict:
+    doc = dict(row)
+    store = conn.execute("SELECT code, name, pharmacy_kind FROM stores WHERE id = ?",
+                         (doc["store_id"],)).fetchone()
+    vendor = conn.execute("SELECT code, name FROM vendors WHERE id = ?",
+                          (doc["vendor_id"],)).fetchone()
+    names = _user_names(conn, {doc.get("created_by"), doc.get("posted_by"),
+                               doc.get("cancelled_by")})
+    lines = [dict(r) for r in conn.execute(
+        "SELECT rl.*, m.name AS drug_name, m.strength, m.form, m.ndps_category, "
+        "l.status AS lot_status, l.quantity AS lot_units FROM pharmacy_vendor_return_lines rl "
+        "LEFT JOIN helix_medication_master m ON m.id = rl.helix_medication_id "
+        "LEFT JOIN helix_inventory_lots l ON l.id = rl.lot_id "
+        "WHERE rl.pharmacy_vendor_return_id = ? ORDER BY rl.line_no", (doc["id"],)).fetchall()]
+    for line in lines:
+        line["ndps"] = line.pop("ndps_category", None) in stock.NDPS_CONTROLLED
+        line["drug_name"] = line["drug_name"] or line["helix_medication_id"]
+    doc.update({
+        "status_label": VR_STATUS_LABELS.get(doc["status"], doc["status"]),
+        "store_code": store["code"] if store else None,
+        "store_name": (store["name"] or store["code"]) if store else None,
+        "store_kind": store["pharmacy_kind"] if store else None,
+        "vendor_code": vendor["code"] if vendor else None,
+        "vendor_name": vendor["name"] if vendor else None,
+        "created_by_name": names.get(doc.get("created_by")),
+        "posted_by_name": names.get(doc.get("posted_by")),
+        "cancelled_by_name": names.get(doc.get("cancelled_by")),
+        "number_series_configured": _vr_series_configured(conn),
+        "line_count": len(lines),
+        "total_units": sum(int(line["quantity_units"]) for line in lines),
+        "controlled": any(line["ndps"] for line in lines),
+    })
+    doc["witness_required"] = doc["controlled"]
+    if with_lines:
+        doc["lines"] = lines
+    return doc
+
+
+def list_vendor_returns(*, status: Optional[str] = None, limit: int = 100) -> list[dict]:
+    if status is not None and status not in VR_STATUSES:
+        raise PurchasingError(f"unknown return status {status!r}", code="bad_value")
+    sql = "SELECT * FROM pharmacy_vendor_returns"
+    params: list[Any] = []
+    if status:
+        sql += " WHERE status = ?"
+        params.append(status)
+    sql += " ORDER BY id DESC LIMIT ?"
+    params.append(max(1, min(int(limit), 500)))
+    with db_session() as conn:
+        return [_vr_decorate(conn, r, with_lines=False)
+                for r in conn.execute(sql, params).fetchall()]
+
+
+def get_vendor_return(return_id: Any) -> Optional[dict]:
+    with db_session() as conn:
+        row = _vr_raw(conn, return_id)
+        return _vr_decorate(conn, row) if row is not None else None
+
+
+def vendor_return_options(actor: Mapping) -> dict:
+    """The stores stock goes back from, the vendors, who may witness a
+    controlled return (never the caller) and the site's near-expiry window."""
+    from services import ndps_service
+    from services import pharmacy_store_service as store_rules
+
+    me = str(actor.get("id") or "")
+    with db_session() as conn:
+        marks = ",".join("?" for _ in store_rules.RETURN_STORE_KINDS)
+        stores = [{"id": s["id"], "code": s["code"], "name": s["name"] or s["code"],
+                   "pharmacy_kind": s["pharmacy_kind"]} for s in conn.execute(
+            f"SELECT id, code, name, pharmacy_kind FROM stores WHERE is_active = 1 "
+            f"AND pharmacy_kind IN ({marks}) ORDER BY name, code",
+            store_rules.RETURN_STORE_KINDS).fetchall()]
+        today = stock.site_today()
+        vendors = []
+        for v in conn.execute("SELECT * FROM vendors ORDER BY name, code LIMIT 1000").fetchall():
+            licence = vendor_licence(v, today=today)
+            vendors.append({"code": v["code"], "name": v["name"],
+                            "is_active": bool(v["is_active"]),
+                            "licence_status": licence["status"],
+                            "has_ndps_licence": bool(licence["ndps_number"])})
+        people = ndps_service.witnesses(conn, exclude=me)
+        configured = _vr_series_configured(conn)
+    return {"stores": stores, "vendors": vendors, "witnesses": people,
+            "may_ndps": ndps_service.may_ndps(actor.get("role")),
+            "near_expiry_days": store_rules.near_expiry_days(),
+            "number_series_configured": configured, "max_lines": VR_MAX_LINES}
+
+
+def returnable_stock(store_code: Any) -> dict:
+    """The lots of one store that may go back to a vendor now."""
+    from services import pharmacy_store_service as store_rules
+
+    today = stock.site_today()
+    with db_session() as conn:
+        store = _vr_store(conn, store_code)
+        lots = store_rules.returnable_lots(conn, int(store["id"]), today=today)
+    return {"store": {"id": store["id"], "code": store["code"],
+                      "name": store["name"] or store["code"],
+                      "pharmacy_kind": store["pharmacy_kind"]},
+            "today": today, "near_expiry_days": store_rules.near_expiry_days(), "lots": lots}
+
+
+def _vr_require_ndps(actor: Mapping, controlled: bool) -> None:
+    from services import ndps_service
+
+    if controlled and not ndps_service.may_ndps(actor.get("role")):
+        raise PurchasingError(
+            "this return carries narcotic or psychotropic stock, which needs the NDPS "
+            "permission. Nothing was changed.", code="ndps_permission_needed")
+
+
+def create_vendor_return(*, vendor_code: Any, store_code: Any, lines: Any, actor: Mapping,
+                         reason: Any, remarks: Any = None, idempotency_key: Any = None,
+                         audit_ctx: Optional[Mapping] = None) -> dict:
+    """Draft a return (the write tier, plus the NDPS permission for a narcotic
+    or psychotropic line). Nothing moves until it is posted. A request key
+    already used for the same return answers with it, replayed True; the same
+    key for a different return is refused. Returns
+    {"vendor_return", "warnings", "replayed"}."""
+    actor_id = _actor_id(actor)
+    clean = _vr_clean_lines(lines)
+    why = _vr_text(reason, "the reason the stock goes back", required=True)
+    note = _vr_text(remarks, "remarks", required=False)
+    key = _vr_text(idempotency_key, "request key", required=False)
+    today = stock.site_today()
+    with db_session(immediate=True) as conn:
+        store = _vr_store(conn, store_code)
+        if key:
+            prior = conn.execute("SELECT * FROM pharmacy_vendor_returns WHERE idempotency_key = ?",
+                                 (key,)).fetchone()
+            if prior is not None:
+                asked = {r["lot_id"]: int(r["quantity_units"]) for r in conn.execute(
+                    "SELECT lot_id, quantity_units FROM pharmacy_vendor_return_lines "
+                    "WHERE pharmacy_vendor_return_id = ?", (prior["id"],)).fetchall()}
+                vendor_row = conn.execute("SELECT code FROM vendors WHERE id = ?",
+                                          (prior["vendor_id"],)).fetchone()
+                same = (prior["store_id"] == store["id"]
+                        and str(prior["created_by"]) == actor_id
+                        and vendor_row is not None
+                        and vendor_row["code"] == str(vendor_code or "").strip().upper()
+                        and asked == {r["lot_id"]: r["quantity_units"] for r in clean})
+                if not same:
+                    raise PurchasingError("this request key was already used for a different "
+                                          "return. Nothing was changed.",
+                                          code="idempotency_conflict")
+                return {"vendor_return": _vr_decorate(conn, prior), "warnings": [],
+                        "replayed": True}
+        any_ndps_guess = any(
+            (conn.execute("SELECT m.ndps_category FROM helix_inventory_lots l JOIN "
+                          "helix_medication_master m ON m.id = l.medication_id WHERE l.id = ?",
+                          (r["lot_id"],)).fetchone() or {"ndps_category": None})["ndps_category"]
+            in stock.NDPS_CONTROLLED for r in clean)
+        vendor, warnings = _vr_vendor(conn, vendor_code, needs_ndps=any_ndps_guess, today=today)
+        checked, any_ndps, line_warnings = _vr_check_lines(conn, clean, store=store,
+                                                           vendor=vendor, today=today)
+        _vr_require_ndps(actor, any_ndps)
+        warnings += line_warnings
+        receipts = set()
+        for line in checked:
+            ref = line["lot"].get("receipt_line_ref")
+            got = conn.execute("SELECT goods_receipt_id FROM goods_receipt_lines WHERE id = ?",
+                               (ref,)).fetchone() if ref is not None else None
+            receipts.add(got["goods_receipt_id"] if got else None)
+        source_receipt = next(iter(receipts)) if len(receipts) == 1 else None
+        total = 0
+        rid = conn.execute(
+            "INSERT INTO pharmacy_vendor_returns (vendor_id, store_id, source_receipt_ref, "
+            "status, reason, total_paise, created_by, idempotency_key, remarks) "
+            "VALUES (?, ?, ?, 'draft', ?, 0, ?, ?, ?)",
+            (vendor["id"], store["id"], source_receipt, why, actor_id, key, note)).lastrowid
+        for line in checked:
+            lot = line["lot"]
+            cost = lot.get("unit_cost_paise")
+            value = int(cost) * line["quantity_units"] if cost is not None else None
+            total += value or 0
+            conn.execute(
+                "INSERT INTO pharmacy_vendor_return_lines (pharmacy_vendor_return_id, line_no, "
+                "lot_id, helix_medication_id, batch_no, expiry_date, quantity_units, "
+                "unit_cost_paise, value_paise, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (rid, line["line_no"], lot["id"], lot["medication_id"], lot["lot_number"],
+                 str(lot["expiration_date"])[:10] if lot["expiration_date"] else None,
+                 line["quantity_units"], cost, value, line["reason"] or line["why_label"]))
+        conn.execute("UPDATE pharmacy_vendor_returns SET total_paise = ? WHERE id = ?",
+                     (total, rid))
+        _vr_audit(conn, actor, "pharmacy_vendor_return_created",
+                  summary=f"Return to vendor drafted: {len(checked)} lots to {vendor['name']}",
+                  return_id=rid,
+                  metadata={"vendor_return_id": str(rid), "vendor_id": str(vendor["id"]),
+                            "store_id": str(store["id"]), "controlled": any_ndps,
+                            "reason": why, "total_paise": total,
+                            "lines": [{"line_no": c["line_no"], "lot_id": c["lot_id"],
+                                       "drug_id": c["lot"]["medication_id"],
+                                       "units": c["quantity_units"], "why": c["why"]}
+                                      for c in checked]},
+                  audit_ctx=audit_ctx)
+        doc = _vr_decorate(conn, _vr_load(conn, rid))
+    return {"vendor_return": doc, "warnings": warnings, "replayed": False}
+
+
+def post_vendor_return(return_id: Any, *, actor: Mapping, witness_id: Any = None,
+                       witness_pin: Any = None, audit_ctx: Optional[Mapping] = None) -> dict:
+    """Send a draft back (the approve tier, never the person who drafted it):
+    one vendor_return movement per line, all or nothing, with the 'security'
+    audit row in the same immediate transaction. A held lot left empty is
+    closed as returned to the vendor. A controlled return needs a witness
+    confirmed by PIN, neither the drafter nor the poster. A return already
+    posted answers replayed True and posts nothing. The PHVR number is drawn
+    after the commit."""
+    from services import ndps_service
+
+    actor_id = _actor_id(actor)
+    with db_session() as conn:
+        row = _vr_load(conn, return_id)
+        if row["status"] in ("posted", "credited"):
+            return {"vendor_return": _vr_decorate(conn, row), "warnings": [], "replayed": True}
+        if row["status"] != "draft":
+            raise PurchasingError(f"a {VR_STATUS_LABELS.get(row['status'], row['status']).lower()} "
+                                  "return is not sent", code="illegal_transition")
+        if str(row["created_by"] or "") == actor_id:
+            raise PurchasingError("you drafted this return, so somebody else with approval "
+                                  "rights sends it. Nothing was changed.", code="same_person")
+        controlled = _vr_decorate(conn, row)["controlled"]
+    witness = None
+    if controlled:
+        if isinstance(witness_id, str) and witness_id.strip() == str(row["created_by"] or ""):
+            raise PurchasingError("the witness must be somebody other than the person who "
+                                  "drafted this return", code="witness_same_person")
+        try:
+            witness = ndps_service.verify_witness(
+                actor=actor, witness_id=witness_id, witness_pin=witness_pin,
+                purpose="a return of narcotic or psychotropic stock to the vendor",
+                target_type="pharmacy_vendor_return", target_id=row["id"],
+                audit_ctx=audit_ctx)
+        except ndps_service.NdpsError as exc:
+            raise PurchasingError(str(exc), code=exc.code) from exc
+    today = stock.site_today()
+    with db_session(immediate=True) as conn:
+        row = _vr_load(conn, return_id)
+        rid = int(row["id"])
+        if row["status"] in ("posted", "credited"):
+            return {"vendor_return": _vr_decorate(conn, row), "warnings": [], "replayed": True}
+        if row["status"] != "draft":
+            raise PurchasingError("this return changed while you were working on it. Nothing "
+                                  "was changed.", code="illegal_transition")
+        store = conn.execute("SELECT * FROM stores WHERE id = ?", (row["store_id"],)).fetchone()
+        if store is None:
+            raise PurchasingError("the store on this return no longer exists",
+                                  code="store_not_found")
+        store = _vr_store(conn, store["code"])
+        lines = [dict(r) for r in conn.execute(
+            "SELECT * FROM pharmacy_vendor_return_lines WHERE pharmacy_vendor_return_id = ? "
+            "ORDER BY line_no", (rid,)).fetchall()]
+        if not lines:
+            raise PurchasingError("this return has no lines", code="empty_document")
+        vendor_code = conn.execute("SELECT code FROM vendors WHERE id = ?",
+                                   (row["vendor_id"],)).fetchone()
+        controlled_now = any(
+            (conn.execute("SELECT ndps_category FROM helix_medication_master WHERE id = ?",
+                          (line["helix_medication_id"],)).fetchone() or
+             {"ndps_category": None})["ndps_category"] in stock.NDPS_CONTROLLED
+            for line in lines)
+        vendor, warnings = _vr_vendor(conn, vendor_code["code"] if vendor_code else None,
+                                      needs_ndps=controlled_now, today=today)
+        checked, any_ndps, line_warnings = _vr_check_lines(
+            conn, [{"lot_id": line["lot_id"], "quantity_units": int(line["quantity_units"]),
+                    "reason": line["reason"]} for line in lines],
+            store=store, vendor=vendor, today=today)
+        if any_ndps and witness is None:
+            raise PurchasingError("this return now carries narcotic or psychotropic stock, so "
+                                  "a witness is needed. Nothing was changed.",
+                                  code="witness_required")
+        warnings += line_warnings
+        moved: list[dict] = []
+        document = f"{VR_REFERENCE}:{rid}"
+        with ndps_service.entry_context(witness_id=witness, counterparty_type="vendor",
+                                        counterparty_ref=str(vendor["id"]),
+                                        document_ref=document):
+            for line, check in zip(lines, checked):
+                lot = check["lot"]
+                try:
+                    movement = stock.post_movement(
+                        conn, lot_id=lot["id"], movement_type="vendor_return",
+                        quantity_change=-int(line["quantity_units"]), actor_id=actor_id,
+                        reference_type=VR_REFERENCE, reference_id=str(rid),
+                        idempotency_key=f"{VR_REFERENCE}:{rid}:line:{line['line_no']}",
+                        remarks=f"Returned to {vendor['name']}",
+                        unit_cost_paise=lot.get("unit_cost_paise"))
+                except stock.InsufficientStock as exc:
+                    raise PurchasingError(f"line {line['line_no']}: {exc}",
+                                          code="exceeds_lot",
+                                          detail={"line_no": line["line_no"]}) from exc
+                except stock.StockError as exc:
+                    raise PurchasingError(f"line {line['line_no']}: {exc}", code=exc.code,
+                                          detail={"line_no": line["line_no"]}) from exc
+                closed = False
+                left = int(conn.execute("SELECT quantity FROM helix_inventory_lots WHERE id = ?",
+                                        (lot["id"],)).fetchone()[0] or 0)
+                if left == 0 and lot["status"] in ("quarantined", "recalled", "nsq",
+                                                   "pending_inspection"):
+                    try:
+                        stock.set_lot_status(
+                            conn, lot["id"], "returned_to_vendor", actor_id=actor_id,
+                            reason=f"Returned to {vendor['name']} on return {rid}",
+                            reference_type=VR_REFERENCE, reference_id=str(rid), today=today)
+                    except stock.StockError as exc:
+                        raise PurchasingError(f"line {line['line_no']}: {exc}", code=exc.code,
+                                              detail={"line_no": line["line_no"]}) from exc
+                    closed = True
+                moved.append({"line_no": line["line_no"], "lot_id": lot["id"],
+                              "drug_id": lot["medication_id"],
+                              "units": int(line["quantity_units"]),
+                              "movement_id": movement["id"], "lot_closed": closed})
+        cur = conn.execute(
+            "UPDATE pharmacy_vendor_returns SET status = 'posted', posted_by = ?, "
+            "posted_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'draft'", (actor_id, rid))
+        if cur.rowcount != 1:
+            raise PurchasingError("this return changed while you were working on it. Nothing "
+                                  "was changed.", code="illegal_transition")
+        _vr_audit(conn, actor, "pharmacy_vendor_return_posted",
+                  summary=(f"Return to vendor {rid} sent: "
+                           f"{sum(m['units'] for m in moved)} units to {vendor['name']}"),
+                  return_id=rid,
+                  metadata={"vendor_return_id": str(rid), "vendor_id": str(vendor["id"]),
+                            "store_id": str(store["id"]), "controlled": any_ndps,
+                            "witness_id": witness, "created_by": str(row["created_by"]),
+                            "lines": moved, "total_paise": row["total_paise"]},
+                  audit_ctx=audit_ctx)
+    if procurement._stamp_document_number(VR_NUMBER_KIND, rid) is None:
+        logger.error("return to vendor %s was posted but not numbered; stamp it again", rid)
+    with db_session() as conn:
+        doc = _vr_decorate(conn, _vr_load(conn, rid))
+    return {"vendor_return": doc, "warnings": warnings, "replayed": False}
+
+
+def record_vendor_credit(return_id: Any, *, credit_note_ref: Any, actor: Mapping,
+                         audit_ctx: Optional[Mapping] = None) -> dict:
+    """Record the vendor's credit note number against a posted return."""
+    _actor_id(actor)
+    ref = _vr_text(credit_note_ref, "the vendor's credit note number", required=True)
+    with db_session(immediate=True) as conn:
+        row = _vr_load(conn, return_id)
+        rid = int(row["id"])
+        if row["status"] == "credited":
+            if (row["vendor_credit_note_ref"] or "") == ref:
+                return {"vendor_return": _vr_decorate(conn, row), "warnings": [],
+                        "replayed": True}
+            raise PurchasingError(f"credit note {row['vendor_credit_note_ref']} is already "
+                                  "recorded for this return", code="already_credited")
+        if row["status"] != "posted":
+            raise PurchasingError("a credit note is recorded only for a return that was sent",
+                                  code="illegal_transition")
+        conn.execute("UPDATE pharmacy_vendor_returns SET status = 'credited', "
+                     "vendor_credit_note_ref = ?, credited_at = CURRENT_TIMESTAMP "
+                     "WHERE id = ? AND status = 'posted'", (ref, rid))
+        _vr_audit(conn, actor, "pharmacy_vendor_return_credited",
+                  summary=f"Vendor credit note {ref} recorded for return {rid}",
+                  return_id=rid,
+                  metadata={"vendor_return_id": str(rid), "credit_note_ref": ref},
+                  audit_ctx=audit_ctx)
+        doc = _vr_decorate(conn, _vr_load(conn, rid))
+    return {"vendor_return": doc, "warnings": [], "replayed": False}
+
+
+def cancel_vendor_return(return_id: Any, *, reason: Any, actor: Mapping,
+                         audit_ctx: Optional[Mapping] = None) -> dict:
+    """Give up a draft, with a reason (the write tier). Nothing has moved."""
+    actor_id = _actor_id(actor)
+    why = _vr_text(reason, "the reason for cancelling", required=True)
+    with db_session(immediate=True) as conn:
+        row = _vr_load(conn, return_id)
+        rid = int(row["id"])
+        if row["status"] != "draft":
+            raise PurchasingError("only a draft return is cancelled. A return that was sent "
+                                  "has left the hospital.", code="illegal_transition")
+        _vr_require_ndps(actor, _vr_decorate(conn, row, with_lines=False)["controlled"])
+        cur = conn.execute(
+            "UPDATE pharmacy_vendor_returns SET status = 'cancelled', cancelled_by = ?, "
+            "cancelled_at = CURRENT_TIMESTAMP, cancel_reason = ? WHERE id = ? "
+            "AND status = 'draft'", (actor_id, why, rid))
+        if cur.rowcount != 1:
+            raise PurchasingError("this return changed while you were working on it. Nothing "
+                                  "was changed.", code="illegal_transition")
+        _vr_audit(conn, actor, "pharmacy_vendor_return_cancelled",
+                  summary=f"Return to vendor {rid} cancelled before it was sent",
+                  return_id=rid, metadata={"vendor_return_id": str(rid), "reason": why},
+                  audit_ctx=audit_ctx)
+        doc = _vr_decorate(conn, _vr_load(conn, rid))
+    return {"vendor_return": doc, "warnings": [], "replayed": False}

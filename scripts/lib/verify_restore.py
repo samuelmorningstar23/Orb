@@ -269,6 +269,15 @@ MODULE_TABLES: dict[str, tuple[str, ...]] = {
     "clinic schedule": (
         "clinic_sessions", "clinic_session_exceptions",
     ),
+    # ── migration 67 (server/migrations_his/m0067_opd_charge_rules.py) ──
+    # Which code an outpatient consultation, a follow-up inside its window and
+    # the registration fee are charged against. Configuration, no patient
+    # data. Empty until a site switches ORB_OPD on and sets its rules. A
+    # restore that came back without it would charge every clinic the plain
+    # consultation code again and drop the registration fee unnoticed.
+    "outpatient charge rules": (
+        "opd_charge_rules",
+    ),
     # ── migration 60 (server/migrations_his/m0060_result_quarantine.py) ──
     # Interfaced results that matched no patient, held for laboratory staff to
     # attach to the right patient or discard with a reason, and every decision
@@ -295,6 +304,15 @@ MODULE_TABLES: dict[str, tuple[str, ...]] = {
     # its window again.
     "housekeeping links": (
         "housekeeping_movement_links",
+    ),
+    # ── migration 69 (server/migrations_his/m0069_bed_reservations.py) ──
+    # Beds held for a patient on the way (an admission, a transfer, a return
+    # from surgery), each with who held it, until when, and how the hold
+    # ended. Empty until a site switches ORB_ADT on. A restore that came back
+    # without it would offer a held bed to the next patient and lose who
+    # reserved which bed.
+    "bed reservations": (
+        "bed_reservations",
     ),
     # ── migration 61 (server/migrations_his/m0061_med_order_store.py) ──
     # The medication-order store: one row per medication order and its
@@ -326,6 +344,15 @@ MODULE_TABLES: dict[str, tuple[str, ...]] = {
     "ward record": (
         "ward_observation_settings", "ward_record_exports",
     ),
+    # ── migration 70 (server/migrations_his/m0070_facilities_spine.py) ──
+    # The facility spine: the hospital sites of this legal entity (row 1,
+    # MAIN, always), the departments master, which site each department-less
+    # account belongs to, and the named group-wide access grants. No patient
+    # data. A restore that came back without them would refuse to start (no
+    # facility 1) and lose which site every department and account belongs to.
+    "facilities": (
+        "facilities", "departments", "user_facilities", "enterprise_access_grants",
+    ),
 }
 
 ALL_MIGRATED_TABLES: tuple[str, ...] = tuple(
@@ -356,6 +383,10 @@ SEEDED_REFERENCE: dict[str, int] = {
     "housekeeping_linen_items": 1,
     "duty_shift_types": 1,
     "leave_types": 1,
+    # Migration 70 seeds facility 1 (MAIN), and facilities rows are never
+    # deleted. Orb refuses to start without facility 1, so a restore with none
+    # is not one it could come back from.
+    "facilities": 1,
 }
 
 

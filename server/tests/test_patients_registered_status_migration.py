@@ -315,9 +315,15 @@ def test_the_session_database_has_the_canonical_patients_shape(tmp_path):
         fresh_indexes = sorted(r[0] for r in db.execute(
             "SELECT name FROM sqlite_master WHERE tbl_name='patients' AND type='index' "
             "AND name NOT LIKE 'sqlite_autoindex%'"))
-    assert [r[1] for r in fresh] == list(m52.CANONICAL_COLUMNS)
+    # Migration 70 (the facility spine) appends registered_facility_id after
+    # this frozen list, on a fresh database and a rebuilt one by the same
+    # ALTER, so the two still agree column for column.
+    from migrations_his import m0070_facilities_spine as m70
+    later = [column for table, column, _ in m70.FACILITY_COLUMNS if table == "patients"]
+    assert [r[1] for r in fresh] == list(m52.CANONICAL_COLUMNS) + later
     conn = _legacy_db(sqlite3, tmp_path / "shape.db")
     _apply_in_runner_txn(conn)
+    m70.add_facility_columns(conn)
     rebuilt = [tuple(r) for r in conn.execute("PRAGMA table_info(patients)")]
     assert rebuilt == fresh
     assert sorted(m52.KNOWN_INDEXES) == fresh_indexes

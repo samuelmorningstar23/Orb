@@ -26,6 +26,7 @@ import {
   CLINICAL_MODULE_IDS,
   DEFAULT_FEATURE_FLAGS,
   DEFAULT_MODULE_FLAGS,
+  DEFAULT_PLATFORM_FLAGS,
   DIAGNOSTIC_MODULE_IDS,
   FEATURE_FLAG_IDS,
   FEATURE_TAB_FLAG,
@@ -40,6 +41,7 @@ import {
   currentFeatureFlags,
   currentHealthProbe,
   currentModuleFlags,
+  currentPlatformFlags,
   featurePanel,
   featureTabInstalled,
   getModuleOffNotice,
@@ -47,7 +49,10 @@ import {
   isRoleFeatureOn,
   offersFloatingSage,
   resetFeatureFlags,
+  resetPlatformFlags,
   setFeatureFlags,
+  setPlatformFlags,
+  subscribeModuleFlags,
   type FeatureFlagId,
   type FeatureTabId,
   doctorHomeInstalled,
@@ -771,6 +776,70 @@ describe('feature flags default off, and only the server can switch one on', () 
     await refreshModuleFlags(null as unknown as typeof fetch)
     // No fetch at all is not "pending forever": nothing can be checked.
     expect(currentHealthProbe()).toBe('failed')
+  })
+})
+
+describe('platform flags (multi-site) default off and come only from the probe', () => {
+  beforeEach(() => {
+    resetModuleFlags()
+    resetFeatureFlags()
+    resetPlatformFlags()
+  })
+  afterEach(() => {
+    resetModuleFlags()
+    resetFeatureFlags()
+    resetPlatformFlags()
+  })
+
+  it('both default off, so a single-site install shows no facility label', () => {
+    expect(DEFAULT_PLATFORM_FLAGS).toEqual({ multiSite: false, multiFacilityData: false })
+    expect(currentPlatformFlags()).toEqual({ multiSite: false, multiFacilityData: false })
+    expect(FEATURE_FLAG_IDS).toContain('multi_site')
+    expect(currentFeatureFlags().multi_site).toBe(false)
+  })
+
+  it('refreshModuleFlags adopts the platform object from the same answer', async () => {
+    const fakeFetch = (async () => ({
+      ok: true,
+      json: async () => ({
+        modules: {},
+        features: { multi_site: true },
+        platform: { multi_site: true, multi_facility_data: true },
+      }),
+    })) as unknown as typeof fetch
+    await refreshModuleFlags(fakeFetch)
+    expect(currentPlatformFlags()).toEqual({ multiSite: true, multiFacilityData: true })
+    expect(currentFeatureFlags().multi_site).toBe(true)
+  })
+
+  it('only a strict boolean counts, and a missing key leaves the flag as it was', () => {
+    setPlatformFlags({ multi_site: 'yes', multi_facility_data: 1 })
+    expect(currentPlatformFlags()).toEqual({ multiSite: false, multiFacilityData: false })
+    setPlatformFlags({ multi_facility_data: true })
+    expect(currentPlatformFlags()).toEqual({ multiSite: false, multiFacilityData: true })
+    setPlatformFlags({})
+    expect(currentPlatformFlags().multiFacilityData).toBe(true)
+  })
+
+  it('a failed or module-less answer leaves them off', async () => {
+    const throwing = (async () => { throw new Error('offline') }) as unknown as typeof fetch
+    await refreshModuleFlags(throwing)
+    expect(currentPlatformFlags().multiFacilityData).toBe(false)
+    const noModules = (async () => ({
+      ok: true, json: async () => ({ platform: { multi_facility_data: true } }),
+    })) as unknown as typeof fetch
+    await refreshModuleFlags(noModules)
+    expect(currentPlatformFlags().multiFacilityData).toBe(false)
+  })
+
+  it('every change notifies the one listener set', () => {
+    const seen: number[] = []
+    const off = subscribeModuleFlags(() => seen.push(1))
+    setPlatformFlags({ multi_site: true })
+    setPlatformFlags({ multi_site: true })
+    resetPlatformFlags()
+    off()
+    expect(seen.length).toBe(2)
   })
 })
 

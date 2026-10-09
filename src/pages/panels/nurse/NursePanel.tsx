@@ -24,6 +24,8 @@ import { useNow } from '../../../hooks/useNow'
 import { useVisiblePolling } from '../../../hooks/useVisiblePolling'
 import OfflineBanner from '../../../components/OfflineBanner'
 import VoidObservationButton from '../../../components/vitals/VoidObservationButton'
+import NotOnWardChip from '../../../components/adt/NotOnWardChip'
+import { notOnWardWords } from '../../../api/adt/presence'
 import './NursePanel.css'
 
 /* ═══════════════════════════════════════════════════
@@ -353,9 +355,14 @@ export default function NursePanel() {
     // to distrust both. The trailing `›` is aria-hidden, so the destination is
     // named here or nowhere (§9.4).
     const simulated = task.patient.vitals_source === 'simulated'
+    // adt-10, display only: the card carries presence only while Beds and
+    // admissions is on. The task, its due time and its place in the queue
+    // are unchanged (pausing them is adt-11).
+    const away = notOnWardWords(task.patient)
     const label = [
       task.patient.name,
       task.patient.bed ? `bed ${task.patient.bed}` : null,
+      away ? `${away.charAt(0).toLowerCase()}${away.slice(1)}` : null,
       // No score at all while scoring is switched off: the label says nothing
       // about one, rather than "NEWS2 not recorded".
       board?.scoring_enabled === false ? null : news2Description(task.patient.news2),
@@ -400,6 +407,7 @@ export default function NursePanel() {
             {/* Honesty label: the score beside this row came from the
                 simulator, not from this patient. */}
             {simulated ? <span className="orb-row__note">Simulated vitals</span> : null}
+            {away ? <span className="orb-row__note">{away}</span> : null}
           </span>
         </button>
       </li>
@@ -752,6 +760,9 @@ export default function NursePanel() {
                         .filter(Boolean)
                         .join(' · ')}
                     </span>
+                    {/* adt-10, display only: present only while Beds and
+                        admissions is on. */}
+                    <NotOnWardChip row={p} />
                   </div>
                 </div>
 

@@ -281,14 +281,17 @@ def build_medication_reconciliation(patient_id: str) -> dict:
         db = get_db()
         try:
             rows = db.execute(
-                """SELECT drug_name, dosage, route, frequency, status, source, verified_by
+                """SELECT drug_name, dosage, route, frequency, status, source, verified_by,
+                          held_at, hold_reason
                    FROM medications WHERE patient_id = ? ORDER BY drug_name COLLATE NOCASE""",
                 (patient_id,),
             ).fetchall()
         finally:
             db.close()
 
-    continued, stopped, unverified = [], [], []
+    from services.medorders import held as held_labels
+
+    continued, stopped, unverified, on_hold = [], [], [], []
     for r in rows:
         m = dict(r)
         entry = {
@@ -303,6 +306,14 @@ def build_medication_reconciliation(patient_id: str) -> dict:
         if (m.get("source") in ("llm_extracted", "agentic")) and not m.get("verified_by"):
             entry["needs_verification"] = True
             unverified.append(entry)
+        # A held order keeps its row active, so it stays in `continued` (a held
+        # drug must not vanish from the reconciliation) and is called out, like
+        # an unverified one: the prescriber decides whether it restarts or
+        # stops before the discharge script (medorders-6b).
+        if held_labels.is_held(m) and m.get("status") in ("active", "prn"):
+            entry["on_hold"] = True
+            entry["hold_label"] = held_labels.hold_phrase(m)
+            on_hold.append(entry)
         status = m.get("status")
         if status == "active":
             continued.append(entry)
@@ -314,7 +325,7 @@ def build_medication_reconciliation(patient_id: str) -> dict:
             continued.append(entry)
         elif status == "discontinued":
             stopped.append(entry)
-    return {
+    rec = {
         "continued": continued,
         "stopped": stopped,
         "unverified": unverified,
@@ -324,6 +335,12 @@ def build_medication_reconciliation(patient_id: str) -> dict:
             "unverified": len(unverified),
         },
     }
+    # Only when something is on hold, so every other reconciliation is exactly
+    # as before.
+    if on_hold:
+        rec["on_hold"] = on_hold
+        rec["counts"]["on_hold"] = len(on_hold)
+    return rec
 
 
 def med_rec_section(rec: dict) -> str:
@@ -345,6 +362,9 @@ def _render_med_rec_text(rec: dict) -> str:
             parts.append("[PRN: as needed]")
         if e.get("needs_verification"):
             parts.append("[UNVERIFIED: pharmacist review required]")
+        if e.get("on_hold"):
+            label = e.get("hold_label") or "on hold"
+            parts.append(f"[{label[:1].upper()}{label[1:]}]")
         return " ".join(parts)
 
     lines = ["MEDICATION RECONCILIATION (authoritative, from the medication record):"]
@@ -356,6 +376,10 @@ def _render_med_rec_text(rec: dict) -> str:
         lines.append("WARNING: AI-extracted medications NOT yet pharmacist-verified "
                      "(do not include on the discharge script until verified):")
         lines += [f"  - {_fmt(e)}" for e in rec["unverified"]]
+    if rec.get("on_hold"):
+        lines.append("WARNING: medications ON HOLD at discharge (the prescriber decides "
+                     "whether each restarts or stops before the discharge script):")
+        lines += [f"  - {_fmt(e)}" for e in rec["on_hold"]]
     return "\n".join(lines)
 
 

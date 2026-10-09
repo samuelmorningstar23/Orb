@@ -714,6 +714,21 @@ def build_board(department: str | None) -> dict:
             "meds_allergy_blocked": meds_allergy_blocked,
         })
 
+    # adt-10: whether each patient is on the ward, for the 'Not on ward since'
+    # chip. Only while ORB_ADT is on (presence_by_patient is None otherwise),
+    # so the board's payload with the module off is unchanged. DISPLAY ONLY:
+    # the obs and medication due times above, the order below and every
+    # count are worked out exactly as before; pausing them for a patient off
+    # the ward is adt-11 (ruling ADT-S4).
+    from services.adt.presence import presence_by_patient
+
+    presence = presence_by_patient([c["patient_id"] for c in cards])
+    if presence is not None:
+        for card in cards:
+            here = presence.get(card["patient_id"]) or {}
+            card["presence_status"] = here.get("presence_status")
+            card["presence_since"] = here.get("presence_since")
+
     _LEVEL_RANK = {"critical": 0, "elevated": 1, "stable": 2}
 
     def _priority(card: dict):
