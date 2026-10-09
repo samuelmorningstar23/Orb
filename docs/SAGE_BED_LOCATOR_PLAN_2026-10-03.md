@@ -407,3 +407,13 @@ Built on a copy of the 13e build (main as of 324e754 plus attempts 13 to 13e). s
 
 Review 13f found one blocking finding and nothing else: past `_BED_REF_CAP` (1,000 bed references) the locator stops reading and reports no bed, and `_refers_only_to` took that for "read nobody". So "this patient" carried a 1,100-bed order to the open chart, and a name reply carried it to that patient. 13f.1 adds one line: a capped message is never carried, like an over-long one. Everything else passed. 0 wrong charts in 614 rows per lane (old code 169 and 22). In 34 threads: 35 orders on the right patient, 0 on a wrong one (old code 14 right, 9 wrong, 24 with no patient), 0 unlabelled, 18 notices, all resolved by asking again. "yes" after nine 512 KB re-asks: 0.56 s.
 The ruled cost, measured: of 432 realistic chart-open questions answered "this patient", 44 end in a notice on a numbered ward (13e: 9). 22 are misread numbers ("give her 1 pint prbc"), and 13 really mention another bed ("her husband in bed 16 ..."), a class the ruling did not name. Asking again without the number or bed works every time; retyping the same words repeats the question.
+
+### Attempt 13f.2 (10 October)
+
+Review 13f.1 said SHIP with one ruling point, F-1: another department's bed code is read by the locator (`foreign`) but was not checked by the carry rule, so "kcl 20 mmol iv to OX-3", asked again with GM-612 offered, then "yes", drafted on GM-612. Samuel ruled to close it first. 13f.2 adds `located.foreign` to the same line as the cap: a message naming another department's bed is never carried. It only adds refusals. Its cap test also now uses a unique name, so its name-reply case fails on 13f (review 13f.1 noted the old one did not). Results:
+- tests/test_sage_bed_locator.py: 1,072 tests, and all 12 F-1 variants fail on 13f.1.
+- Guards plus the locator and order-gate suites: 5,086 passed.
+- All 128 probe files, review 13f.1's own included, on the final build with hashes first: 16,687 calls, one flagged row (the known artifact).
+- Review 13f.1's own probes: its foreign-code threads dropped from 108 flagged to 40, the rest now notices. The 40 left are "kcl 20 mmol iv to the patient in ICU 3" (spaces, not read as a code; ruled known) and the same messages at their own turn with no question (the single-question lane; the old code does the same).
+- The other review 13f.1 probes are unchanged.
+Code, patches, probes: docs/archive/bed-locator-attempt13f2-2026-10-10/.

@@ -342,3 +342,33 @@ Also reported, not blocking:
 - The A7 class reaches further than A7: in the certain case, an order for a person the locator does not read rides along ("... and kcl 20 mmol iv to her husband", "to the next bed", "to G-613", a misspelt name). On GM wards the old code does the same at the order's own turn; on numbered wards it drafts with no patient.
 - Some ward wordings for one bed label on two wards read as one patient ("bed 12 ward DWA", "DWA/12") and some as both ("DWA 12").
 Code, patches and both probe sets: docs/archive/bed-locator-attempt13f-2026-10-09/ (probes_review13f/ is the reviewer's). Main carries none of attempts 13 to 13f.
+
+## Attempt 13f.1 review (10 October): SHIP, with one ruling point, closed in 13f.2
+
+Attempt 13f.1 (13f plus one line: a paste past the bed cap is never carried) was reviewed on a frozen copy. Verdict: SHIP, no (R), (U) or (G) finding. Results:
+- G-CAP is closed on every path tested: 0 wrong across 655 cap threads, against 13f's 114 and the old code's 641.
+- No other way for the locator to stop reading and report nobody.
+- The 120-file re-run reproduced exactly.
+- Review 13f's own probes match 13f except the cap rows.
+- 2,331 suite tests passed.
+- The thread totals are unchanged from 13f: 35 orders on the right patient, 0 on a wrong one, 0 unlabelled.
+
+The ruling point, F-1: the carry rule never looked at another department's bed code, which the locator does read (`foreign`). So "give lasix 40 iv to GM-612", then "kcl 20 mmol iv to OX-3" (asked again, offering GM-612), then "yes", drafted the KCl on GM-612; "this patient" drafted it on the open chart. The reviewer counted it with the known class of a person the locator does not read ("to her husband"), and the old code does the same or worse. Samuel ruled to close it first, since the locator does read the code. 13f.2 adds `located.foreign` to the same line: a message naming another department's bed is never carried. It only adds refusals. "the patient in ICU 3" written with spaces is not read as a code and stays in the known class.
+
+The reviewer also noted that 13f.1's new cap test did not guard the read-branch path 13f actually carried (an order the detector does not read, then a name reply), because its name was shared and the reply asked again. 13f.2's version uses a unique name, and it fails on 13f.
+
+Code, patches and probes: docs/archive/bed-locator-attempt13f1-2026-10-09/ (probes_review13f1/ is the reviewer's) and docs/archive/bed-locator-attempt13f2-2026-10-10/.
+
+## Attempt 13f.2 review (10 October): F-1 closed while the census holds; one finding when it changes
+
+Attempt 13f.2 (13f.1 plus: a message naming another department's bed is never carried) was reviewed on a frozen copy. F-1 is closed on every path while the census stays the same between the message and the reply. Across 1,429 threads (every code shape, every reply, chart open and nothing open, re-ask chains and conversation offers): 0 orders landing through a reply and 0 unlabelled wrong-chart reads. On the same threads, 13f.1 had 655 and 118, and the old code 1,471 wrong own-turn drafts and 1,537 narrations. The 128-file re-run reproduced exactly, the only rows that differ from 13f.1 are department-code rows, and 2,344 suite tests passed.
+
+The blocking finding, G-CENSUS: the carry rule re-reads the earlier message against the census at reply time, and the locator counts another department's code only while that bed is occupied. If OX-3's patient is discharged or moves between "kcl 20 mmol iv to OX-3" and the reply, the message reads as nobody and is carried: KCl drafted on GM-612 after "yes", or on the open chart after "this patient". Reads answer from GM-612's chart, unlabelled when the reply was the bed. It is the same shape as the accepted known class "kcl 20 mmol iv to OX-4" with OX-4 empty, arrived at by a discharge in between.
+
+Also reported:
+- On numbered wards the single-question lane is worse than the old code. "kcl 20 mmol iv to OX-3" with bed 7 open drafts the KCl on bed 7, labelled, where the old code drafted with no patient. This predates 13f.2 and is not a reply landing.
+- `foreign` now also blocks carrying messages that mention another department's code as a place ("she was in ICU-03 till yesterday", "post ICU-03 stay"): 144 lost orders and 20 lost reads in the reviewer's set.
+- Asking again without the code works every time. But the order notice does not say why, so retyping the same words asks again (0 of 21 retypes succeeded).
+- A reply that is itself another department's code is asked again with no "outside your department" message.
+
+Probes: docs/archive/bed-locator-attempt13f2-2026-10-10/probes_review13f2/. Main carries none of attempts 13 to 13f.2.
