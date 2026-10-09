@@ -273,3 +273,22 @@ Code, patches and both probe sets: docs/archive/bed-locator-attempt13b-2026-10-0
 ### What attempts 13 and 13b showed
 
 The chart rule now holds everywhere: no reviewer found a wrong chart or an unlabelled miss in two reviews. What is left is the ORDER a reply settles. Both 13b findings come from the model still seeing an order the clinician never confirmed. In R1 the walk handed it to the model along with a new question. In G1 the order stayed in the model's history while the reply was answered as its own message. An order Sage asked "which patient?" about should reach the model only as the settled request, and only when the replies in between were about that same request.
+
+## Attempt 13c review (9 October): did not ship, on four order classes
+
+Attempt 13c (plan, "Attempt 13c") ended the exchange at a reply that brought a new patient into the question or cancelled, hid every request Sage asked "which patient?" about from the model, and let a settling reply hold go-ahead words and the request's own words. The new order bar (Samuel, 9 October): blocking is a narration shown with the order in the model's input, or an order drafted on a patient the clinician did not confirm for it.
+
+Items 1 to 3 pass again: 0 wrong charts in 534 rows per lane (old code 149 and 19), no label missing live or on reload, the strict invariant check over 9,778 calls reproduced exactly. 13b's R1 and G1 are fixed, and no asked-about order reaches the model's history on any lane. In 24 threads with a stub that acts only on its input, 13c drafted 27 orders on the right patient and 2 on the wrong one; 13b drafted 4 on the wrong one, the old code 32.
+
+It failed item 4(b) on four classes, each an order drafted on a patient nobody confirmed it for (labelled, needs approval):
+- G1, a reply that turns the order down is read as a confirmation: "<first name>, no thanks", "this patient, no lasix", "<surname> - no", "<first name> no kcl". "no", "thanks" and "you" are filler, the stop words were checked only on earlier messages, never on the settling reply, and 13c's request words and go-ahead words let "lasix", "kcl", "give" and "stat" through. 20 of 26 such rows drafted, against 7 in 13b; the old code never drafts after a decline.
+- G2, a new question about one of several offered patients steps back into the order: "give lasix 40 iv to Mr <surname>" with two patients of that surname, then "how is GM-533?", then "yes" drafts the lasix on GM-533, because the later question offers a subset of the earlier one. Same with one bed label on two wards, and in a realistic thread where the clinician ignores the order question.
+- G3, one message ordering for two patients is handed to the model whole once a reply picks one: "give lasix 40 iv to GM-532 and kcl 20 mmol iv to GM-533", then "GM-533".
+- G4, go-ahead words plus another patient's name move the order: "and <full name of GM-515>?" after a question about GM-512. A bare other name already did in 13b.
+Also reported, not blocking: context is lost after a settled read ("is GM-512 on heparin?", "yes", "should she be?" gives the model "should she be?" with history ["yes"]); lost orders ("this patient, push it", a discharged name, a chain past 20 messages); provenance still records the reply as the question, and shadow rows sit under the open chart.
+
+Code, patches and both probe sets: docs/archive/bed-locator-attempt13c-2026-10-09/ (probes_review13c/ is the reviewer's). Main carries none of attempts 13 to 13c.
+
+### What attempts 13b and 13c showed
+
+The chart side is settled: three reviews in a row found no wrong chart and no unlabelled miss. The order side has now failed twice the way attempts 3 to 8 failed on beds. Each rule for which replies may carry an order across the question (who-words, go-ahead words, stop words, which earlier questions to step over) is a list of what is NOT a new request, and every review finds a reply the list did not foresee. Attempt 8's lesson applies: list the certain side. An order should cross the question only in the one shape that cannot mean anything else. That shape is a question that offered exactly one patient, the order typed immediately before it, and a reply that is exactly "yes" or exactly that patient's bed. Every other reply to an order question should confirm the patient and ask for the order again, never draft it.
