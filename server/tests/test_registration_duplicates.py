@@ -316,7 +316,10 @@ def test_a_patient_admitted_at_the_admit_door_is_found(desk, warn_mode):
         db.execute("INSERT OR IGNORE INTO users (id, name, role, password_hash, department) "
                    "VALUES ('RGDDOC', 'Regdup Doctor', 'doctor', 'x', 'Cardiology')")
     phone = _phone()
+    # With registration on the admission door needs the typed hospital number
+    # in hospital mode (opd-5b, W6-B); it never mints one.
     out = admit_patient({"name": "Basavaraj Hiremath", "age": 70, "sex": "M", "phone": phone,
+                         "mrn": f"RGD-{uuid.uuid4().hex[:8].upper()}",
                          "department": "Cardiology", "ward": "CCU", "bed": "RGD1",
                          "admission_source": "er", "admission_type": "emergency",
                          "chief_complaint": "breathless", "initial_diagnosis": "breathless"},

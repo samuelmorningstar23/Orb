@@ -1,5 +1,6 @@
-"""Laboratory result entry: section worklists and manual entry with flags
-(lis-10).
+"""Laboratory results: section worklists and manual entry with flags
+(lis-10), technical validation, authorisation and release into the chart
+(lis-11), and delta checks (lis-12).
 
 Behind ORB_LAB (default off): every route that reaches this module answers
 404 while the laboratory is off, and nothing here writes while it is. Entry
@@ -39,9 +40,51 @@ reason in words. The age is the age when the sample was collected (from
 patients.date_of_birth, never the static patients.age); the range version is
 the one approved when the value is entered. A comparator result, a coded
 result and a text result carry no H or L.
-Critical limits (HH, LL) are NOT decided here: lis-11 and lis-15 raise
-criticals at technical validation (ruling LIS-R4). Entry stores
-is_critical 0 and no critical_limit_id.
+
+CRITICAL FLAGS (lis-11; ruling LIS-R1, strictest option): HH and LL come
+ONLY from a critical limit a pathologist approved (none ships), decided at
+entry and at each edit by the same rule as the range (the limit approved now,
+the patient's age at collection), at the reporting precision. "Critical
+above 6.5" means above: a value equal to a critical limit is not critical. A
+bound wholly beyond a limit ('>600' against "critical above 450") is
+critical, because the true value is certainly past it; a bound that could be
+either side is not. A critical flag outranks H or L. is_critical and
+critical_limit_id say which limit was crossed. This module raises no
+notification: the critical callback is lis-15 (wave 7), so until it lands the
+Validate screen tells the laboratory to phone the ward.
+
+DELTA CHECKS (lis-12; ruling LIS-R9 (a), strictest option): a numeric test
+with a delta kind and threshold in the catalogue (none ships one) compares a
+value with the patient's newest earlier live result for the same code,
+observed before this sample was collected, read through
+lab_observations.previous_result (julianday order, id DESC, simulated rows
+left out), from any lane. Absolute: the change in thousandths of the unit;
+percent: the change over the earlier value, the threshold in thousandths of
+a percent. A change AT or beyond the threshold is flagged. An earlier result
+outside the test's window (hours), none at all, a bound on either side, a
+text earlier result or an earlier result in another unit is not checked, and
+the result says why. A flag needs a technologist's reason before technical
+validation; the reason is kept with who and when and shown to the signatory.
+The check is decided at entry and at each edit and decided again at the
+reason and at technical validation, so a reason given against one earlier
+result never covers a different one.
+
+TECHNICAL VALIDATION, AUTHORISATION AND RELEASE (lis-11; rulings LIS-R5,
+LIS-R8, LIS-R16). No autoverification: a person technically validates every
+result (lab.result) and a signatory authorises it (lab.authorise, one sample
+at a time). While config.LAB_REQUIRE_DISTINCT_AUTHORISER is on (the shipped
+default until LIS-R5 is ruled) the signatory must be someone who did not
+enter, change, explain the delta of or technically validate that result;
+with it off one signatory may do every step, and the release records that
+one person did. Authorising releases the result in ONE immediate
+transaction: the result to 'released', one observations row per analyte (the
+chart, ward pack, timeline and Tier 1 read it there), the specimen's
+progress, the order reconciled by the completion rule (LIS-R16 (a): partial
+panels release analyte by analyte) and a fail-closed clinical_access audit
+row per result. The release never depends on the order's state: an order
+already moved outside the laboratory still receives the value, and
+reconcile_order_status records an 'order_state_conflict' exception. A
+signatory who disagrees sends the result back to the bench with a reason.
 
 EVERY WRITE is one BEGIN IMMEDIATE transaction with its clinical_access audit
 row inside it (fail-closed) and a lab_result_events row: 'entered' with the
@@ -64,13 +107,16 @@ from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Optional
 
+import config
 from database import db_session
 from db_backend import DBIntegrityError
-from permissions import LAB_RESULT, has_permission
+from permissions import LAB_AUTHORISE, LAB_RESULT, has_permission
 from services import lab_master_service as lm
+from services import lab_module
+from services import lab_observations as lobs
 from services import lab_order_service as los
 from services.audit_service import log_audit_event
-from services.clinical_time import utc_iso_now
+from services.clinical_time import to_utc_iso, utc_iso_now
 
 logger = logging.getLogger("orb.lab.results")
 
@@ -93,6 +139,31 @@ WORKLIST_ITEM_STATUSES = ("received", "resulted")
 _BENCH_SPECIMEN_STATUSES = ("received", "in_process")
 #: Result statuses an edit accepts.
 _EDITABLE_RESULT_STATUSES = ("entered",)
+
+#: The most results one technical validation or authorisation names.
+VALIDATION_BATCH_MAX = 100
+#: The most results each validation queue returns.
+VALIDATION_QUEUE_CAP = 500
+#: The status a released result carries in observations.
+RELEASED_OBSERVATION_STATUS = "final"
+#: The longest reason kept for a delta flag or a result sent back.
+REASON_MAX = 500
+#: Result events whose actor took part in a result: the signatory must not be
+#: one of them while two different people are required (ruling LIS-R5).
+_PART_EVENTS = ("entered", "edited", "delta_acknowledged", "tech_validated")
+
+#: The observations source labels this laboratory writes on a release.
+_LIS_SOURCES = ("lis_manual", "lis_analyser")
+
+#: Delta check outcomes. Only 'flagged' needs a reason.
+DELTA_FLAGGED = "flagged"
+DELTA_WITHIN = "within"
+DELTA_NO_PREVIOUS = "no_previous"
+DELTA_OUTSIDE_WINDOW = "outside_window"
+DELTA_BOUND = "bound"
+DELTA_PREVIOUS_NOT_NUMERIC = "previous_not_numeric"
+DELTA_UNIT_MISMATCH = "unit_mismatch"
+DELTA_NOT_CHECKED = "not_checked"
 
 _COMPARATOR = re.compile(r"^(<=|>=|<|>|≤|≥)\s*(.*)$")
 _NUMBER = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
@@ -244,6 +315,185 @@ def flag_text(result: dict) -> str:
     return "Within range"
 
 
+def critical_flag(value_milli: Optional[int], *, low_milli: Optional[int],
+                  high_milli: Optional[int], decimal_places: int,
+                  comparator: Optional[str] = None,
+                  bound_milli: Optional[int] = None) -> str:
+    """'LL', 'HH' or '' against an approved critical limit, at the reporting
+    precision. "Critical above 6.5" means above, so a value equal to a limit
+    is not critical.
+
+    A bound (comparator with `bound_milli`) is critical only when every value
+    it allows is past the limit: '>' at or above the high limit, '>=' above
+    it, '<' at or below the low limit, '<=' below it. Pure."""
+    low = at_precision(low_milli, decimal_places)
+    high = at_precision(high_milli, decimal_places)
+    if comparator:
+        bound = at_precision(bound_milli, decimal_places)
+        if bound is None:
+            return ""
+        if high is not None and ((comparator == ">" and bound >= high)
+                                 or (comparator == ">=" and bound > high)):
+            return "HH"
+        if low is not None and ((comparator == "<" and bound <= low)
+                                or (comparator == "<=" and bound < low)):
+            return "LL"
+        return ""
+    value = at_precision(value_milli, decimal_places)
+    if value is None:
+        return ""
+    if low is not None and value < low:
+        return "LL"
+    if high is not None and value > high:
+        return "HH"
+    return ""
+
+
+def _bound_milli(value_text: Optional[str], comparator: Optional[str]) -> Optional[int]:
+    """The number behind a stored bound ('<0.01' gives 10), or None."""
+    if not comparator or not value_text:
+        return None
+    text = str(value_text).strip()
+    if text.startswith(comparator):
+        text = text[len(comparator):]
+    try:
+        return int(Decimal(text.strip()) * 1000)
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _plain_number(milli: int) -> str:
+    """Thousandths as the shortest exact decimal: 1500 gives '1.5'."""
+    text = format(Decimal(int(milli)) / Decimal(1000), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _with_unit(text: str, unit: Optional[str]) -> str:
+    unit = (unit or "").strip()
+    return f"{text} {unit}" if unit else text
+
+
+def _unit_key(unit: Any) -> str:
+    return re.sub(r"\s+", "", str(unit or "")).casefold()
+
+
+def _previous_milli(previous: dict, decimal_places: int) -> Optional[int]:
+    """The earlier result's number at this test's reporting precision, or None
+    when it holds no number (a bound or a text result)."""
+    number = previous.get("value_numeric")
+    if number is None or isinstance(number, bool):
+        return None
+    try:
+        exact = Decimal(str(number))
+    except (InvalidOperation, ValueError):
+        return None
+    if not exact.is_finite():
+        return None
+    return at_precision(int((exact * 1000).to_integral_value(rounding=ROUND_HALF_UP)),
+                        decimal_places)
+
+
+def delta_threshold_text(kind: str, threshold_milli: int, unit: Optional[str]) -> str:
+    if kind == "percent":
+        return f"{_plain_number(threshold_milli)}%"
+    return _with_unit(_plain_number(threshold_milli), unit)
+
+
+def delta_check(*, value_milli: Optional[int], comparator: Optional[str], value_text: Any,
+                unit: Optional[str], decimal_places: int, kind: str, threshold_milli: int,
+                window_hours: Optional[int], previous: Optional[dict],
+                hours_before: Optional[float]) -> dict:
+    """One delta check (ruling LIS-R9). Pure.
+
+    `previous` is the newest earlier live result (id, value_numeric,
+    value_text, unit, observed_at, source, lab_result_id) or None;
+    `hours_before` is how long before this sample's collection it was
+    observed. Returns {status, note, kind, threshold_milli, threshold_text,
+    window_hours, previous, change_milli, change_text, percent_text, basis}.
+    Only status 'flagged' needs a reason; `basis` is what a reason is given
+    against (the earlier result and this value)."""
+    dp = int(decimal_places)
+    threshold_text = delta_threshold_text(kind, threshold_milli, unit)
+    prev_view = None
+    if previous is not None:
+        shown = lobs.display_value(previous)
+        prev_view = {
+            "observation_id": previous.get("id"),
+            "value_text": None if shown is None else str(shown),
+            "unit": previous.get("unit"),
+            "observed_at": previous.get("observed_at") or previous.get("recorded_at"),
+            "source": previous.get("source"),
+            # previous_result does not return lab_result_id; the source label
+            # says the same thing for a row this laboratory released.
+            "from_laboratory": (previous.get("lab_result_id") is not None
+                                or previous.get("source") in _LIS_SOURCES),
+        }
+    out = {"status": DELTA_NOT_CHECKED, "note": "", "kind": kind,
+           "threshold_milli": int(threshold_milli), "threshold_text": threshold_text,
+           "window_hours": window_hours, "previous": prev_view, "change_milli": None,
+           "change_text": None, "percent_text": None}
+
+    def done(status: str, note: str) -> dict:
+        out["status"] = status
+        out["note"] = note
+        out["basis"] = {"status": status,
+                        "previous_id": prev_view["observation_id"] if prev_view else None,
+                        "value_text": _seen_text(value_text)}
+        return out
+
+    if comparator or value_milli is None:
+        return done(DELTA_BOUND, "This value is a bound, so it is not delta-checked.")
+    if previous is None:
+        return done(DELTA_NO_PREVIOUS,
+                    "No earlier result for this test, so there is nothing to compare.")
+    if window_hours and hours_before is not None and hours_before > float(window_hours):
+        return done(DELTA_OUTSIDE_WINDOW,
+                    f"The last earlier result was {int(hours_before)} hours before this "
+                    f"sample, outside the {int(window_hours)}-hour delta window, so it is "
+                    "not compared.")
+    before = _previous_milli(previous, dp)
+    if before is None:
+        return done(DELTA_PREVIOUS_NOT_NUMERIC,
+                    f"The earlier result ({prev_view['value_text'] or 'blank'}) is not a "
+                    "number, so it is not compared.")
+    if _unit_key(previous.get("unit")) != _unit_key(unit):
+        then = (previous.get("unit") or "").strip() or "no unit"
+        now_unit = (unit or "").strip() or "no unit"
+        return done(DELTA_UNIT_MISMATCH,
+                    f"The earlier result is in {then} and this test reports in {now_unit}, "
+                    "so they are not compared.")
+    current = at_precision(value_milli, dp)
+    change = current - before
+    sign = "+" if change > 0 else ("-" if change < 0 else "")
+    out["change_milli"] = change
+    out["change_text"] = _with_unit(f"{sign}{lm.format_milli(abs(change), dp)}", unit)
+    previous_text = _with_unit(lm.format_milli(before, dp), unit)
+    if kind == "percent":
+        if before == 0:
+            flagged = change != 0
+            out["percent_text"] = None
+        else:
+            # Exact: |change| / |before| * 100 >= threshold, all in integers.
+            flagged = abs(change) * 100 * 1000 >= int(threshold_milli) * abs(before)
+            percent = (Decimal(abs(change)) * 100 / Decimal(abs(before))).quantize(
+                Decimal(1), rounding=ROUND_HALF_UP)
+            out["percent_text"] = f"{sign}{percent}%"
+    else:
+        flagged = abs(change) >= int(threshold_milli)
+    change_words = out["change_text"] + (f" ({out['percent_text']})"
+                                         if out["percent_text"] else "")
+    if flagged:
+        return done(DELTA_FLAGGED,
+                    f"Changed by {change_words} from the earlier {previous_text}, at or "
+                    f"beyond the delta limit of {threshold_text}. Give a reason before "
+                    "technical validation.")
+    return done(DELTA_WITHIN,
+                f"Changed by {change_words} from the earlier {previous_text}, within the "
+                f"delta limit of {threshold_text}.")
+
+
 # ════════════════════════════════════════════════════════════════════════════
 #  Reads
 # ════════════════════════════════════════════════════════════════════════════
@@ -288,9 +538,28 @@ def _result_block(row: dict, result_type: str) -> Optional[dict]:
         "comment": row["result_comment"],
         "entered_by_name": row["entered_by_name"],
         "entered_at": row["entered_at"],
+        "is_critical": int(row.get("is_critical") or 0),
+        "critical_limit_text": row.get("critical_limit_text"),
     }
     out["flag_text"] = flag_text({**out, "result_type": result_type})
+    out.update(_delta_view(row))
+    out["returned"] = (_returned_view(row.get("returned_json"))
+                       if row["result_status"] == "entered" else None)
     return out
+
+
+def _returned_view(raw: Any) -> Optional[dict]:
+    """Who sent a result back to the bench, when and why, from its latest
+    'returned' event, or None."""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return {"by_name": data.get("by_name"), "at": data.get("at"), "reason": data.get("reason")}
 
 
 _WORKLIST_SELECT = """
@@ -303,14 +572,22 @@ _WORKLIST_SELECT = """
            r.id AS result_id, r.status AS result_status, r.version AS result_version,
            r.value_text, r.comparator, r.unit AS result_unit, r.abnormal_flag,
            r.reference_range_id, r.reference_range_text, r.comment AS result_comment,
-           r.entered_at, eu.name AS entered_by_name
+           r.entered_at, eu.name AS entered_by_name,
+           r.is_critical, r.critical_limit_id, cl.display_text AS critical_limit_text,
+           r.delta_flag, r.delta_json, r.delta_ack_by, r.delta_ack_at, r.delta_ack_reason,
+           au.name AS delta_ack_by_name,
+           (SELECT e.after_json FROM lab_result_events e
+             WHERE e.result_id = r.id AND e.event_type = 'returned'
+             ORDER BY e.id DESC LIMIT 1) AS returned_json
     FROM lab_order_items i
     JOIN lab_specimens s ON s.id = i.specimen_id
     JOIN patients p ON p.id = s.patient_id
     LEFT JOIN lab_tests t ON t.id = i.test_id
     LEFT JOIN lab_results r ON r.order_item_id = i.id
          AND r.status NOT IN ('superseded', 'withdrawn')
-    LEFT JOIN users eu ON eu.id = r.entered_by"""
+    LEFT JOIN users eu ON eu.id = r.entered_by
+    LEFT JOIN users au ON au.id = r.delta_ack_by
+    LEFT JOIN lab_critical_limits cl ON cl.id = r.critical_limit_id"""
 
 
 def list_sections(conn) -> list[dict]:
@@ -485,11 +762,13 @@ def _item_for_entry(conn, order_item_id: Any) -> dict:
         raise LabResultError("not_found", "Test not found", status=404)
     row = conn.execute(
         """SELECT i.id AS item_id, i.order_id, i.patient_id, i.test_id, i.specimen_id,
+                  i.panel_test_id,
                   i.status AS item_status, i.cancelled_reason, i.updated_at AS item_updated_at,
                   cu.name AS cancelled_by_name,
                   s.status AS specimen_status, s.collected_at, s.received_at,
                   t.name AS test_name, t.result_type, t.unit, t.decimal_places,
-                  t.coded_values_json
+                  t.coded_values_json, t.code AS test_code, t.code_system AS test_code_system,
+                  t.delta_kind, t.delta_threshold_milli, t.delta_window_hours
            FROM lab_order_items i
            LEFT JOIN lab_specimens s ON s.id = i.specimen_id
            LEFT JOIN lab_tests t ON t.id = i.test_id
@@ -534,7 +813,8 @@ def _value_fields(conn, item: dict, value: Any) -> dict:
     dp = int(item.get("decimal_places") or 0)
     fields = {"value_milli": None, "comparator": None, "value_text": None,
               "unit": item.get("unit") or None, "decimal_places": dp,
-              "reference_range_id": None, "reference_range_text": None, "abnormal_flag": ""}
+              "reference_range_id": None, "reference_range_text": None, "abnormal_flag": "",
+              "is_critical": 0, "critical_limit_id": None}
     if result_type == "coded":
         fields["value_text"] = parse_coded(value, lm.coded_values(item))
         return fields
@@ -552,7 +832,105 @@ def _value_fields(conn, item: dict, value: Any) -> dict:
         fields["abnormal_flag"] = range_flag(
             parsed["value_milli"], low_milli=choice.row.get("low_milli"),
             high_milli=choice.row.get("high_milli"), decimal_places=dp)
+    limit = _critical_choice(conn, item)
+    if limit.row is not None:
+        crossed = critical_flag(
+            parsed["value_milli"], low_milli=limit.row.get("critical_low_milli"),
+            high_milli=limit.row.get("critical_high_milli"), decimal_places=dp,
+            comparator=parsed["comparator"],
+            bound_milli=_bound_milli(parsed["value_text"], parsed["comparator"]))
+        if crossed:
+            fields.update(abnormal_flag=crossed, is_critical=1,
+                          critical_limit_id=int(limit.row["id"]))
     return fields
+
+
+def _critical_choice(conn, item: dict) -> lm.RangeChoice:
+    """The approved critical limit for this patient, by the range's rule: the
+    version approved now, the age at collection (ruling LIS-R7 for the age
+    and sex). None ships (ruling LIS-R1)."""
+    demo = lm.patient_demographics(conn, item["patient_id"])
+    rows = lm.list_critical_limits(conn, test_id=item["test_id"])
+    return lm.select_applicable(
+        rows, sex=lm.normalise_sex(demo["sex"]),
+        age_days=lm.age_days_at(demo["date_of_birth"], item.get("collected_at") or utc_iso_now()),
+        limits=True)
+
+
+def _delta_for(conn, item: dict, value: dict) -> tuple[int, Optional[dict]]:
+    """(delta_flag, delta) for a value of this test (ruling LIS-R9). `value`
+    holds value_milli, comparator and value_text. (0, None) when the test
+    has no delta check configured or is not numeric."""
+    if (item.get("result_type") or "numeric") != "numeric":
+        return 0, None
+    kind = item.get("delta_kind")
+    threshold = item.get("delta_threshold_milli")
+    if kind not in lm.DELTA_KINDS or not threshold:
+        return 0, None
+    window = int(item["delta_window_hours"]) if item.get("delta_window_hours") else None
+    common = dict(value_milli=value.get("value_milli"), comparator=value.get("comparator"),
+                  value_text=value.get("value_text"), unit=item.get("unit"),
+                  decimal_places=int(item.get("decimal_places") or 0), kind=kind,
+                  threshold_milli=int(threshold), window_hours=window)
+    if value.get("comparator") or value.get("value_milli") is None:
+        # A bound is never delta-checked; delta_check says so.
+        return 0, delta_check(previous=None, hours_before=None, **common)
+    code = item.get("test_code")
+    collected = item.get("collected_at")
+    row = None
+    try:
+        if code and collected:
+            row = lobs.previous_result(conn, item["patient_id"], code, collected,
+                                       exclude_simulated=True)
+    except ValueError:
+        collected = None
+    if not code or not collected:
+        delta = delta_check(previous=None, hours_before=None, **common)
+        delta.update(status=DELTA_NOT_CHECKED,
+                     note="This sample has no readable collection time, so it is not "
+                          "delta-checked.")
+        delta["basis"]["status"] = DELTA_NOT_CHECKED
+        return 0, delta
+    previous, hours = None, None
+    if row is not None:
+        previous = dict(row)
+        instant = previous.get("observed_at") or previous.get("recorded_at")
+        hours = conn.execute("SELECT (julianday(?) - julianday(?)) * 24.0",
+                             (collected, instant)).fetchone()[0]
+    delta = delta_check(previous=previous, hours_before=hours, **common)
+    return (1 if delta["status"] == DELTA_FLAGGED else 0), delta
+
+
+def _stored_delta(row: dict) -> Optional[dict]:
+    raw = row.get("delta_json")
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _delta_reason_holds(row: dict, delta: Optional[dict]) -> bool:
+    """Whether the reason on file covers this delta check: one was given, and
+    against the same earlier result and the same value."""
+    if not delta or delta.get("status") != DELTA_FLAGGED:
+        return True
+    stored = _stored_delta(row) or {}
+    return bool(row.get("delta_ack_at")) and stored.get("basis") == delta.get("basis")
+
+
+def _delta_view(row: dict) -> dict:
+    """The delta fields every result answer carries."""
+    delta = _stored_delta(row)
+    acked = bool(row.get("delta_ack_at"))
+    return {
+        "delta": delta,
+        "needs_delta_reason": bool(row.get("delta_flag")) and not acked,
+        "delta_ack": ({"by_name": row.get("delta_ack_by_name"), "at": row.get("delta_ack_at"),
+                       "reason": row.get("delta_ack_reason")} if acked else None),
+    }
 
 
 def _clean_comment(comment: Any) -> Optional[str]:
@@ -564,18 +942,23 @@ def _clean_comment(comment: Any) -> Optional[str]:
 
 def _result_row(conn, result_id: int) -> dict:
     row = conn.execute(
-        """SELECT r.*, u.name AS entered_by_name, t.result_type
+        """SELECT r.*, u.name AS entered_by_name, t.result_type,
+                  au.name AS delta_ack_by_name, cl.display_text AS critical_limit_text
            FROM lab_results r
            LEFT JOIN users u ON u.id = r.entered_by
            LEFT JOIN lab_tests t ON t.id = r.test_id
+           LEFT JOIN users au ON au.id = r.delta_ack_by
+           LEFT JOIN lab_critical_limits cl ON cl.id = r.critical_limit_id
            WHERE r.id = ?""", (result_id,)).fetchone()
     out = dict(row)
     out["flag_text"] = flag_text(out)
+    out.update(_delta_view(out))
     return out
 
 
 _SNAPSHOT_KEYS = ("value_text", "comparator", "value_milli", "unit", "decimal_places",
-                  "abnormal_flag", "reference_range_id", "reference_range_text", "comment")
+                  "abnormal_flag", "reference_range_id", "reference_range_text", "comment",
+                  "is_critical", "critical_limit_id")
 
 
 def _snapshot(row: dict) -> dict:
@@ -591,7 +974,8 @@ def _seen_text(value: Any) -> str:
     return str(value if value is not None else "").strip()
 
 
-def _refuse_if_changed(conn, current: dict, expected: Any) -> None:
+def _refuse_if_changed(conn, current: dict, expected: Any, *,
+                       with_current: bool = True) -> None:
     """Refuse an edit made from a screen that is out of date (409
     'result_changed'), so a stale bench never overwrites another person's
     change in silence.
@@ -601,7 +985,9 @@ def _refuse_if_changed(conn, current: dict, expected: Any) -> None:
     are the same; nothing else is forgiven). A missing or malformed
     `expected` is refused the same way: an edit that cannot say what it saw
     is treated as stale. The refusal carries the current row and who last
-    saved it, so the bench can show what is now true."""
+    saved it, so the bench can show what is now true; with `with_current`
+    False (validation and authorisation, whose screens reload their audited
+    queue instead) it carries only which fields differ."""
     seen = expected if isinstance(expected, dict) else {}
     differs = [k for k in EXPECTED_KEYS
                if k not in seen or _seen_text(seen.get(k)) != _seen_text(current.get(k))]
@@ -614,6 +1000,12 @@ def _refuse_if_changed(conn, current: dict, expected: Any) -> None:
            WHERE e.result_id = ?
            ORDER BY e.id DESC LIMIT 1""", (current["id"],)).fetchone()
     by = last["actor_name"] if last is not None else None
+    if not with_current:
+        raise LabResultError(
+            "result_changed",
+            "This result has changed since your screen loaded. Nothing was saved. "
+            "Check the list again before you go on.",
+            result_id=int(current["id"]), changed_fields=differs)
     now_reads = _seen_text(current.get("value_text")) or "blank"
     raise LabResultError(
         "result_changed",
@@ -630,11 +1022,13 @@ def enter_result(order_item_id: Any, *, value: Any, comment: Any = None, actor: 
                  dept: Optional[str] = None,
                  request_meta: Optional[dict] = None) -> dict:
     """Enter one result by hand, in ONE immediate transaction: the
-    lab_results row (status 'entered', version 1, source 'lis_manual'), the
-    test to 'resulted', the 'entered' result event and the clinical_access
-    audit row. Refused: a test not on a received sample, cancelled, rejected
-    or already resulted; a value the test cannot take (precision, coded list).
-    The partial unique index refuses a second live result even under a race.
+    lab_results row (status 'entered', version 1, source 'lis_manual', its
+    range and critical flags and its delta check), the test to 'resulted',
+    the sample to 'in_process', the 'entered' result event and the
+    clinical_access audit row. Refused: a test not on a received sample,
+    cancelled, rejected or already resulted; a value the test cannot take
+    (precision, coded list). The partial unique index refuses a second live
+    result even under a race.
     """
     from permissions import patient_in_scope
 
@@ -649,6 +1043,7 @@ def enter_result(order_item_id: Any, *, value: Any, comment: Any = None, actor: 
             raise LabResultError("not_found", "Test not found", status=404)
         _refuse_item_state(item)
         fields = _value_fields(conn, item, value)
+        delta_flag, delta = _delta_for(conn, item, fields)
         now = utc_iso_now()
         try:
             cur = conn.execute(
@@ -656,15 +1051,16 @@ def enter_result(order_item_id: Any, *, value: Any, comment: Any = None, actor: 
                    (order_item_id, order_id, specimen_id, patient_id, test_id, version,
                     value_milli, comparator, value_text, unit, decimal_places, comment,
                     reference_range_id, reference_range_text, abnormal_flag,
-                    critical_limit_id, is_critical, entry_method, entered_by, entered_at,
-                    status, source)
-                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'manual', ?, ?,
+                    critical_limit_id, is_critical, delta_flag, delta_json,
+                    entry_method, entered_by, entered_at, status, source)
+                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?, ?,
                            'entered', 'lis_manual')""",
                 (item["item_id"], item["order_id"], item["specimen_id"], item["patient_id"],
                  item["test_id"], fields["value_milli"], fields["comparator"],
                  fields["value_text"], fields["unit"], fields["decimal_places"], comment,
                  fields["reference_range_id"], fields["reference_range_text"],
-                 fields["abnormal_flag"], actor_id, now))
+                 fields["abnormal_flag"], fields["critical_limit_id"], fields["is_critical"],
+                 delta_flag, json.dumps(delta, default=str) if delta else None, actor_id, now))
         except DBIntegrityError:
             raise LabResultError("result_exists",
                                  "A result is already entered for this test. Edit it instead.")
@@ -675,11 +1071,14 @@ def enter_result(order_item_id: Any, *, value: Any, comment: Any = None, actor: 
         if moved.rowcount != 1:
             raise LabResultError("result_exists",
                                  "A result is already entered for this test. Edit it instead.")
-        after = {**fields, "comment": comment}
+        after = {**fields, "comment": comment,
+                 "delta_status": delta["status"] if delta else None}
         conn.execute(
             "INSERT INTO lab_result_events (result_id, patient_id, event_type, actor, "
             "occurred_at, before_json, after_json) VALUES (?, ?, 'entered', ?, ?, NULL, ?)",
             (result_id, item["patient_id"], actor_id, now, json.dumps(after, default=str)))
+        los.sync_specimen_progress(conn, item["specimen_id"], actor_id=actor_id,
+                                   actor_role=actor.get("role"), now=now)
         los.reconcile_order_status(conn, item["order_id"], actor_id=actor_id,
                                    reason="Laboratory result entered")
         _audit(conn, action="lab_result_entered",
@@ -744,23 +1143,38 @@ def edit_result(result_id: Any, *, value: Any, expected: Any, comment: Any = Non
         after = {**fields, "comment": comment}
         if _snapshot(after) == before:
             return {"result": _result_row(conn, rid), "unchanged": True}
+        # The delta check is decided again for the new value. A reason given
+        # earlier stands only while it covers the same earlier result and
+        # the same value (ruling LIS-R9).
+        delta_flag, delta = _delta_for(conn, item, fields)
+        keep_reason = (bool(current.get("delta_ack_at")) and delta is not None
+                       and (_stored_delta(current) or {}).get("basis") == delta.get("basis"))
         now = utc_iso_now()
         cur = conn.execute(
             """UPDATE lab_results
                SET value_milli = ?, comparator = ?, value_text = ?, unit = ?,
                    decimal_places = ?, comment = ?, reference_range_id = ?,
-                   reference_range_text = ?, abnormal_flag = ?
+                   reference_range_text = ?, abnormal_flag = ?, critical_limit_id = ?,
+                   is_critical = ?, delta_flag = ?, delta_json = ?,
+                   delta_ack_by = CASE WHEN ? THEN delta_ack_by END,
+                   delta_ack_at = CASE WHEN ? THEN delta_ack_at END,
+                   delta_ack_reason = CASE WHEN ? THEN delta_ack_reason END
                WHERE id = ? AND status = 'entered'""",
             (fields["value_milli"], fields["comparator"], fields["value_text"], fields["unit"],
              fields["decimal_places"], comment, fields["reference_range_id"],
-             fields["reference_range_text"], fields["abnormal_flag"], rid))
+             fields["reference_range_text"], fields["abnormal_flag"],
+             fields["critical_limit_id"], fields["is_critical"], delta_flag,
+             json.dumps(delta, default=str) if delta else None,
+             1 if keep_reason else 0, 1 if keep_reason else 0, 1 if keep_reason else 0, rid))
         if cur.rowcount != 1:
             raise LabResultError("not_live", "This result is no longer current.")
         conn.execute(
             "INSERT INTO lab_result_events (result_id, patient_id, event_type, actor, "
             "occurred_at, before_json, after_json) VALUES (?, ?, 'edited', ?, ?, ?, ?)",
             (rid, current["patient_id"], actor_id, now, json.dumps(before, default=str),
-             json.dumps({**after, "reason": reason}, default=str)))
+             json.dumps({**after, "reason": reason,
+                         "delta_status": delta["status"] if delta else None,
+                         "delta_reason_kept": keep_reason}, default=str)))
         _audit(conn, action="lab_result_edited",
                summary=(f"Laboratory result changed before validation: "
                         f"{item.get('test_name') or item['test_id']}"),
@@ -770,3 +1184,668 @@ def edit_result(result_id: Any, *, value: Any, expected: Any, comment: Any = Non
                          "after": _snapshot(after), "reason": reason},
                request_meta=request_meta)
         return {"result": _result_row(conn, rid), "unchanged": False}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Delta reasons, technical validation, authorisation and release
+#  (lis-11, lis-12)
+# ════════════════════════════════════════════════════════════════════════════
+
+def _require_authorise_permission(actor: dict) -> None:
+    if not actor or not actor.get("id") or not has_permission(actor.get("role", ""),
+                                                              LAB_AUTHORISE):
+        raise LabResultError("permission_denied",
+                             "Only an authorised signatory authorises and releases results.",
+                             status=403)
+
+
+def distinct_authoriser_required() -> bool:
+    """Ruling LIS-R5, held: two different people unless the site has turned
+    config.LAB_REQUIRE_DISTINCT_AUTHORISER off. Anything but an explicit
+    False reads as on, the strictest option."""
+    return getattr(config, "LAB_REQUIRE_DISTINCT_AUTHORISER", True) is not False
+
+
+def _clean_reason(reason: Any, *, words: str) -> str:
+    text = re.sub(r"\s+", " ", str(reason if reason is not None else "")).strip()
+    if not text:
+        raise LabResultError("reason_required", words, status=422)
+    if len(text) > REASON_MAX:
+        raise LabResultError("too_long", f"A reason is at most {REASON_MAX} characters.",
+                             status=422)
+    return text
+
+
+def _result_id(value: Any) -> int:
+    try:
+        rid = int(value)
+    except (TypeError, ValueError):
+        raise LabResultError("not_found", "Result not found", status=404)
+    if rid <= 0:
+        raise LabResultError("not_found", "Result not found", status=404)
+    return rid
+
+
+def _batch(results: Any) -> list[tuple[int, Any]]:
+    """[(result_id, expected)] from a request's list, each result once.
+    Refused when empty, too long or naming a result twice."""
+    if not isinstance(results, list) or not results:
+        raise LabResultError("nothing_chosen", "Choose at least one result.", status=422)
+    if len(results) > VALIDATION_BATCH_MAX:
+        raise LabResultError("too_many",
+                             f"At most {VALIDATION_BATCH_MAX} results at a time.", status=422)
+    out: list[tuple[int, Any]] = []
+    seen: set[int] = set()
+    for entry in results:
+        entry = entry if isinstance(entry, dict) else {}
+        rid = _result_id(entry.get("result_id"))
+        if rid in seen:
+            raise LabResultError("duplicate_result", "A result is named twice.", status=422)
+        seen.add(rid)
+        out.append((rid, entry.get("expected")))
+    return out
+
+
+def _live_result(conn, rid: int, dept: Optional[str]) -> dict:
+    from permissions import patient_in_scope
+
+    row = conn.execute("SELECT * FROM lab_results WHERE id = ?", (rid,)).fetchone()
+    if row is None or not patient_in_scope(conn, row["patient_id"], dept):
+        raise LabResultError("not_found", "Result not found", status=404)
+    return dict(row)
+
+
+def _refuse_result_status(current: dict, wanted: str) -> None:
+    status = current["status"]
+    if status == wanted:
+        return
+    if status == "entered":
+        raise LabResultError("not_validated",
+                             "This result has not been technically validated yet.",
+                             result_id=current["id"])
+    if status == "tech_validated":
+        raise LabResultError("already_validated",
+                             "This result has already been technically validated.",
+                             result_id=current["id"])
+    if status == "released":
+        raise LabResultError("already_released", "This result has already been reported.",
+                             result_id=current["id"])
+    raise LabResultError("not_live", "This result is no longer current.",
+                         result_id=current["id"], result_status=status)
+
+
+def _item_in_step(conn, current: dict, item_status: str) -> dict:
+    item = _item_for_entry(conn, current["order_item_id"])
+    if item["item_status"] != item_status:
+        if item["item_status"] in ("cancelled", "rejected"):
+            _refuse_item_state(item)
+        raise LabResultError("not_live", "This result is no longer current.",
+                             result_id=current["id"], item_status=item["item_status"])
+    return item
+
+
+def _event(conn, rid: int, patient_id: str, event_type: str, actor_id: str, now: str,
+           *, before: Optional[dict] = None, after: Optional[dict] = None) -> None:
+    conn.execute(
+        "INSERT INTO lab_result_events (result_id, patient_id, event_type, actor, "
+        "occurred_at, before_json, after_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (rid, patient_id, event_type, actor_id, now,
+         json.dumps(before, default=str) if before is not None else None,
+         json.dumps(after, default=str) if after is not None else None))
+
+
+def _test_name(item: dict) -> str:
+    return item.get("test_name") or item["test_id"]
+
+
+def acknowledge_delta(result_id: Any, *, reason: Any, expected: Any, actor: dict,
+                      dept: Optional[str] = None,
+                      request_meta: Optional[dict] = None) -> dict:
+    """Give the technologist's reason for a delta flag (ruling LIS-R9 (a)),
+    in ONE immediate transaction with its clinical_access audit row
+    ('lab_delta_acknowledged') and a 'delta_acknowledged' result event.
+
+    The check is decided again first, against the earlier result as it is
+    now. If it is still flagged, the reason is kept against that check
+    (who, when, why, and what it was compared with). If it no longer flags
+    (the earlier result changed since the value was entered), the new check
+    is stored, nothing is acknowledged, and the answer says so
+    ('acknowledged' False), audited as 'lab_delta_rechecked'.
+
+    Only while the result is entered and not yet technically validated, and
+    only from a screen that showed the result as it is (`expected`)."""
+    _require_result_permission(actor)
+    text = _clean_reason(reason, words="Say why this change from the earlier result is "
+                                       "expected, or what was checked.")
+    rid = _result_id(result_id)
+    actor_id = actor["id"]
+    with db_session(immediate=True) as conn:
+        if not _tables_present(conn):
+            raise LabResultError("not_found", "Result not found", status=404)
+        current = _live_result(conn, rid, dept)
+        if current["status"] != "entered":
+            _refuse_result_status(current, "entered")
+        item = _item_in_step(conn, current, "resulted")
+        _refuse_if_changed(conn, current, expected, with_current=False)
+        flag, delta = _delta_for(conn, item, current)
+        if flag == 1 and current.get("delta_ack_at") and _delta_reason_holds(current, delta):
+            raise LabResultError("already_acknowledged",
+                                 "A reason has already been given for this delta flag.",
+                                 result_id=rid)
+        now = utc_iso_now()
+        if delta is None or flag != 1:
+            conn.execute(
+                "UPDATE lab_results SET delta_flag = ?, delta_json = ? "
+                "WHERE id = ? AND status = 'entered'",
+                (flag, json.dumps(delta, default=str) if delta else None, rid))
+            _event(conn, rid, current["patient_id"], "delta_rechecked", actor_id, now,
+                   before={"delta_flag": current.get("delta_flag")},
+                   after={"delta_flag": flag, "delta_status": delta["status"] if delta else None})
+            _audit(conn, action="lab_delta_rechecked",
+                   summary=f"Delta check decided again, no longer flagged: {_test_name(item)}",
+                   actor=actor, result_id=rid, patient_id=current["patient_id"],
+                   metadata={"test_id": current["test_id"],
+                             "delta_status": delta["status"] if delta else None},
+                   request_meta=request_meta)
+            return {"result": _result_row(conn, rid), "acknowledged": False,
+                    "message": "This value no longer needs a delta reason: "
+                               + (delta["note"] if delta else "no delta check applies.")}
+        conn.execute(
+            """UPDATE lab_results
+               SET delta_flag = 1, delta_json = ?, delta_ack_by = ?, delta_ack_at = ?,
+                   delta_ack_reason = ?
+               WHERE id = ? AND status = 'entered'""",
+            (json.dumps(delta, default=str), actor_id, now, text, rid))
+        _event(conn, rid, current["patient_id"], "delta_acknowledged", actor_id, now,
+               after={"reason": text, "basis": delta.get("basis"),
+                      "previous": delta.get("previous"), "change_text": delta.get("change_text"),
+                      "threshold_text": delta.get("threshold_text")})
+        _audit(conn, action="lab_delta_acknowledged",
+               summary=f"Delta flag explained before validation: {_test_name(item)}",
+               actor=actor, result_id=rid, patient_id=current["patient_id"],
+               metadata={"test_id": current["test_id"], "reason": text,
+                         "previous_observation_id": (delta.get("previous") or {}).get(
+                             "observation_id"),
+                         "change_text": delta.get("change_text"),
+                         "threshold_text": delta.get("threshold_text")},
+               request_meta=request_meta)
+        return {"result": _result_row(conn, rid), "acknowledged": True}
+
+
+def technically_validate(results: Any, *, actor: dict, dept: Optional[str] = None,
+                         request_meta: Optional[dict] = None) -> dict:
+    """Technically validate entered results (lab.result), in ONE immediate
+    transaction: all of them or none. Each result goes to 'tech_validated'
+    with who and when, its test to 'tech_validated', a 'tech_validated'
+    result event and a clinical_access audit row ('lab_result_tech_validated').
+
+    `results` is [{result_id, expected}], where `expected` is what the
+    screen showed of each (value_text, comment, abnormal_flag); a result
+    changed since is refused 409 'result_changed' and nothing is validated.
+    The delta check is decided again here: a flag with no reason on file for
+    the same earlier result and value is refused 409 'delta_reason_required'
+    (ruling LIS-R9 (a)). No autoverification (LIS-R8)."""
+    _require_result_permission(actor)
+    entries = _batch(results)
+    actor_id = actor["id"]
+    with db_session(immediate=True) as conn:
+        if not _tables_present(conn):
+            raise LabResultError("not_found", "Result not found", status=404)
+        now = utc_iso_now()
+        validated: list[int] = []
+        for rid, expected in entries:
+            current = _live_result(conn, rid, dept)
+            _refuse_result_status(current, "entered")
+            item = _item_in_step(conn, current, "resulted")
+            _refuse_if_changed(conn, current, expected, with_current=False)
+            flag, delta = _delta_for(conn, item, current)
+            if flag and not _delta_reason_holds(current, delta):
+                raise LabResultError(
+                    "delta_reason_required",
+                    f"{_test_name(item)} for this patient changed beyond its delta limit. "
+                    "Give a reason for the delta flag before technical validation. Nothing "
+                    "was validated.", result_id=rid)
+            moved = conn.execute(
+                """UPDATE lab_results
+                   SET status = 'tech_validated', tech_validated_by = ?, tech_validated_at = ?,
+                       delta_flag = ?, delta_json = ?
+                   WHERE id = ? AND status = 'entered'""",
+                (actor_id, now, flag, json.dumps(delta, default=str) if delta else None, rid))
+            item_moved = conn.execute(
+                "UPDATE lab_order_items SET status = 'tech_validated', updated_at = ? "
+                "WHERE id = ? AND status = 'resulted'", (now, item["item_id"]))
+            if moved.rowcount != 1 or item_moved.rowcount != 1:
+                raise LabResultError("not_live", "This result is no longer current.",
+                                     result_id=rid)
+            _event(conn, rid, current["patient_id"], "tech_validated", actor_id, now,
+                   after={"value_text": current["value_text"],
+                          "abnormal_flag": current["abnormal_flag"],
+                          "delta_status": delta["status"] if delta else None,
+                          "delta_reason": current.get("delta_ack_reason") if flag else None})
+            _audit(conn, action="lab_result_tech_validated",
+                   summary=f"Laboratory result technically validated: {_test_name(item)}",
+                   actor=actor, result_id=rid, patient_id=current["patient_id"],
+                   metadata={"order_item_id": item["item_id"], "order_id": item["order_id"],
+                             "specimen_id": item["specimen_id"], "test_id": item["test_id"],
+                             "value_text": current["value_text"],
+                             "abnormal_flag": current["abnormal_flag"],
+                             "is_critical": int(current.get("is_critical") or 0),
+                             "delta_flag": flag,
+                             "delta_reason": current.get("delta_ack_reason") if flag else None},
+                   request_meta=request_meta)
+            validated.append(rid)
+        return {"validated": len(validated),
+                "results": [_result_row(conn, rid) for rid in validated]}
+
+
+def _people_on(conn, current: dict) -> set[str]:
+    """Everyone who entered, changed, explained the delta of or technically
+    validated this result, now or before it was sent back to the bench."""
+    people = {current.get("entered_by"), current.get("tech_validated_by"),
+              current.get("delta_ack_by")}
+    for row in conn.execute(
+            f"SELECT DISTINCT actor FROM lab_result_events WHERE result_id = ? "
+            f"AND event_type IN ({_placeholders(_PART_EVENTS)})",
+            (current["id"], *_PART_EVENTS)).fetchall():
+        people.add(row[0])
+    return {p for p in people if p}
+
+
+def _observation_number(current: dict) -> Optional[float]:
+    """The number a released result plots and compares as, or None for a
+    bound, a coded or a text result: a bound is never a value."""
+    if current.get("comparator") or current.get("value_milli") is None:
+        return None
+    return float(Decimal(int(current["value_milli"])) / Decimal(1000))
+
+
+def _release_in_txn(conn, current: dict, item: dict, specimen: dict, *, actor: dict,
+                    now: str, one_person: bool, request_meta: Optional[dict]) -> int:
+    """Release one technically validated result on the caller's transaction:
+    the observations row, the result and its test to released, the result
+    event and the audit row. Returns the observation id."""
+    rid = int(current["id"])
+    actor_id = actor["id"]
+    test = conn.execute("SELECT code, code_system, name FROM lab_tests WHERE id = ?",
+                        (current["test_id"],)).fetchone()
+    code_system, _, code = str(current["test_id"]).partition(":")
+    test = dict(test) if test is not None else {"code": code or current["test_id"],
+                                                 "code_system": code_system or "LOCAL",
+                                                 "name": current["test_id"]}
+    panel_name = None
+    if item.get("panel_test_id"):
+        panel = conn.execute("SELECT name FROM lab_tests WHERE id = ?",
+                             (item["panel_test_id"],)).fetchone()
+        panel_name = panel[0] if panel is not None else None
+    observed_at = to_utc_iso(specimen["collected_at"])
+    cur = conn.execute(
+        """INSERT INTO observations
+           (patient_id, encounter_id, source, source_event_id, observation_code,
+            observation_code_system, observation_name, value_text, value_numeric, unit,
+            reference_range, abnormal_flag, status, observed_at, recorded_at, panel_name,
+            obr_group_id, created_at, order_id, specimen_id, lab_result_id)
+           VALUES (?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (current["patient_id"], current.get("source") or "lis_manual", test["code"],
+         test["code_system"], test["name"], current.get("value_text"),
+         _observation_number(current), current.get("unit"),
+         current.get("reference_range_text"), current.get("abnormal_flag") or None,
+         RELEASED_OBSERVATION_STATUS, observed_at, now, panel_name, specimen["id"], now,
+         current["order_id"], specimen["id"], rid))
+    observation_id = int(cur.lastrowid)
+    moved = conn.execute(
+        """UPDATE lab_results SET status = 'released', released_by = ?, released_at = ?,
+                                  observation_id = ?
+           WHERE id = ? AND status = 'tech_validated'""",
+        (actor_id, now, observation_id, rid))
+    item_moved = conn.execute(
+        "UPDATE lab_order_items SET status = 'released', updated_at = ? "
+        "WHERE id = ? AND status = 'tech_validated'", (now, item["item_id"]))
+    if moved.rowcount != 1 or item_moved.rowcount != 1:
+        raise LabResultError("not_live", "This result is no longer current.", result_id=rid)
+    _event(conn, rid, current["patient_id"], "released", actor_id, now,
+           after={"observation_id": observation_id, "value_text": current.get("value_text"),
+                  "abnormal_flag": current.get("abnormal_flag"), "one_person": one_person})
+    _audit(conn, action="lab_result_released",
+           summary=f"Laboratory result authorised and released: {_test_name(item)}",
+           actor=actor, result_id=rid, patient_id=current["patient_id"],
+           metadata={"order_item_id": item["item_id"], "order_id": item["order_id"],
+                     "specimen_id": specimen["id"], "test_id": current["test_id"],
+                     "observation_id": observation_id,
+                     "value_text": current.get("value_text"),
+                     "abnormal_flag": current.get("abnormal_flag"),
+                     "is_critical": int(current.get("is_critical") or 0),
+                     "entered_by": current.get("entered_by"),
+                     "tech_validated_by": current.get("tech_validated_by"),
+                     "one_person": one_person,
+                     "distinct_authoriser_required": not one_person
+                     and distinct_authoriser_required()},
+           request_meta=request_meta)
+    return observation_id
+
+
+def authorise_and_release(specimen_id: Any, results: Any, *, actor: dict,
+                          dept: Optional[str] = None,
+                          request_meta: Optional[dict] = None) -> dict:
+    """Authorise technically validated results on ONE sample and release
+    them into the chart (lab.authorise), in ONE immediate transaction: all
+    of the named results or none.
+
+    For each result: the observations row (one per analyte; value_numeric
+    NULL for a bound, a coded or a text result, value_text at the reporting
+    precision or the bound as written, observed_at the sample's collection
+    instant in canonical UTC, recorded_at now, the order, the accession and
+    the lab_results id, source 'lis_manual'), the result and its test to
+    'released', a 'released' result event and a clinical_access audit row
+    ('lab_result_released'). Then the sample's progress and each order by
+    the completion rule (LIS-R16 (a)); an order moved outside the
+    laboratory still receives the value and gets an 'order_state_conflict'
+    exception (reconcile_order_status). An audit row that cannot be written
+    commits nothing.
+
+    While two different people are required (LIS-R5, the default) a
+    signatory who entered, changed, explained the delta of or technically
+    validated a result is refused 403 'second_person_required' for it; with
+    the setting off the release records that one person did every step."""
+    from permissions import patient_in_scope
+
+    _require_authorise_permission(actor)
+    try:
+        accession = los.checked_accession(specimen_id)
+    except los.LabOrderError as err:
+        raise LabResultError(err.code, err.message, status=err.status)
+    entries = _batch(results)
+    distinct = distinct_authoriser_required()
+    actor_id = actor["id"]
+    with db_session(immediate=True) as conn:
+        if not _tables_present(conn):
+            raise LabResultError("not_found", "Specimen not found", status=404)
+        specimen = conn.execute(
+            "SELECT id, patient_id, status, collected_at FROM lab_specimens WHERE id = ?",
+            (accession,)).fetchone()
+        if specimen is None or not patient_in_scope(conn, specimen["patient_id"], dept):
+            raise LabResultError("not_found", "Specimen not found", status=404)
+        specimen = dict(specimen)
+        if specimen["status"] not in ("received", "in_process"):
+            raise LabResultError("specimen_not_on_bench",
+                                 "This sample is not on the bench, so nothing on it can be "
+                                 "released.", specimen_status=specimen["status"])
+        if not specimen.get("collected_at"):
+            raise LabResultError("no_collection_time",
+                                 "This sample has no collection time, so its results cannot "
+                                 "be placed on the chart. Correct the collection first.")
+        try:
+            to_utc_iso(specimen["collected_at"])
+        except ValueError:
+            raise LabResultError("no_collection_time",
+                                 "This sample's collection time cannot be read, so its "
+                                 "results cannot be placed on the chart.")
+        now = utc_iso_now()
+        released: list[int] = []
+        observations: list[int] = []
+        orders: list[str] = []
+        one_person_count = 0
+        for rid, expected in entries:
+            current = _live_result(conn, rid, dept)
+            if current.get("specimen_id") != accession:
+                raise LabResultError("not_on_this_sample",
+                                     "A result named is not on this sample. Nothing was "
+                                     "released.", result_id=rid)
+            _refuse_result_status(current, "tech_validated")
+            item = _item_in_step(conn, current, "tech_validated")
+            _refuse_if_changed(conn, current, expected, with_current=False)
+            took_part = actor_id in _people_on(conn, current)
+            if took_part and distinct:
+                raise LabResultError(
+                    "second_person_required",
+                    f"You entered, changed or validated {_test_name(item)} on this sample. "
+                    "This site requires a second person to authorise it. Nothing was "
+                    "released.", status=403, result_id=rid)
+            one_person = took_part
+            one_person_count += 1 if one_person else 0
+            observations.append(_release_in_txn(
+                conn, current, item, specimen, actor=actor, now=now, one_person=one_person,
+                request_meta=request_meta))
+            released.append(rid)
+            if item["order_id"] not in orders:
+                orders.append(item["order_id"])
+        progress = los.sync_specimen_progress(conn, accession, actor_id=actor_id,
+                                              actor_role=actor.get("role"), now=now,
+                                              detail="Results reported.")
+        order_outcomes = []
+        for order_id in orders:
+            outcome = los.reconcile_order_status(conn, order_id, actor_id=actor_id,
+                                                 reason="Laboratory result reported")
+            order_outcomes.append({"id": order_id, "status": outcome["status"],
+                                   "conflict": outcome["conflict"]})
+        status_now = conn.execute("SELECT status FROM lab_specimens WHERE id = ?",
+                                  (accession,)).fetchone()[0]
+        out = {"specimen": {"id": accession, "status": status_now, "moved_to": progress},
+               "released": len(released),
+               "results": [_result_row(conn, rid) for rid in released],
+               "observation_ids": observations,
+               "orders": order_outcomes,
+               "one_person": one_person_count}
+    # Released results close open work; a draining module may now be finished.
+    lab_module.refresh_drain_state()
+    return out
+
+
+def return_to_bench(result_id: Any, *, reason: Any, expected: Any, actor: dict,
+                    dept: Optional[str] = None,
+                    request_meta: Optional[dict] = None) -> dict:
+    """A signatory sends a technically validated result back to the bench
+    with a reason (lab.authorise), in ONE immediate transaction: the result
+    to 'entered' (its validation cleared, so it must be validated again), its
+    test to 'resulted' (back on the section's worklist), a 'returned' result
+    event naming who and why, and a clinical_access audit row
+    ('lab_result_returned'). Nothing is released."""
+    _require_authorise_permission(actor)
+    text = _clean_reason(reason, words="Say why the result goes back to the bench.")
+    rid = _result_id(result_id)
+    actor_id = actor["id"]
+    with db_session(immediate=True) as conn:
+        if not _tables_present(conn):
+            raise LabResultError("not_found", "Result not found", status=404)
+        current = _live_result(conn, rid, dept)
+        _refuse_result_status(current, "tech_validated")
+        item = _item_in_step(conn, current, "tech_validated")
+        _refuse_if_changed(conn, current, expected, with_current=False)
+        now = utc_iso_now()
+        moved = conn.execute(
+            """UPDATE lab_results SET status = 'entered', tech_validated_by = NULL,
+                                      tech_validated_at = NULL
+               WHERE id = ? AND status = 'tech_validated'""", (rid,))
+        item_moved = conn.execute(
+            "UPDATE lab_order_items SET status = 'resulted', updated_at = ? "
+            "WHERE id = ? AND status = 'tech_validated'", (now, item["item_id"]))
+        if moved.rowcount != 1 or item_moved.rowcount != 1:
+            raise LabResultError("not_live", "This result is no longer current.", result_id=rid)
+        by_name = conn.execute("SELECT name FROM users WHERE id = ?", (actor_id,)).fetchone()
+        _event(conn, rid, current["patient_id"], "returned", actor_id, now,
+               before={"status": "tech_validated",
+                       "tech_validated_by": current.get("tech_validated_by"),
+                       "tech_validated_at": current.get("tech_validated_at")},
+               after={"status": "entered", "reason": text, "at": now,
+                      "by_name": by_name[0] if by_name else None})
+        _audit(conn, action="lab_result_returned",
+               summary=f"Laboratory result sent back to the bench: {_test_name(item)}",
+               actor=actor, result_id=rid, patient_id=current["patient_id"],
+               metadata={"test_id": current["test_id"], "reason": text,
+                         "tech_validated_by": current.get("tech_validated_by")},
+               request_meta=request_meta)
+        return {"result": _result_row(conn, rid)}
+
+
+# ── The Validate screen's two queues ────────────────────────────────────────
+
+_QUEUE_SELECT = """
+    SELECT r.id AS result_id, r.order_item_id AS item_id, r.order_id, r.specimen_id,
+           r.patient_id, r.test_id, r.status, r.value_text, r.value_milli, r.comparator, r.unit,
+           r.abnormal_flag, r.reference_range_id, r.reference_range_text, r.comment,
+           r.is_critical, r.critical_limit_id, r.delta_flag, r.delta_json, r.delta_ack_by,
+           r.delta_ack_at, r.delta_ack_reason, r.entered_by, r.entered_at,
+           r.tech_validated_by, r.tech_validated_at,
+           s.priority, s.received_at, s.collected_at,
+           t.name AS test_name, t.short_name AS test_short_name, t.result_type,
+           t.code AS test_code, t.unit AS test_unit, t.decimal_places AS test_decimal_places,
+           t.delta_kind, t.delta_threshold_milli, t.delta_window_hours,
+           p.name AS patient_name, p.mrn, p.ward, p.bed,
+           eu.name AS entered_by_name, vu.name AS tech_validated_by_name,
+           au.name AS delta_ack_by_name, cl.display_text AS critical_limit_text,
+           (SELECT e.after_json FROM lab_result_events e
+             WHERE e.result_id = r.id AND e.event_type = 'returned'
+             ORDER BY e.id DESC LIMIT 1) AS returned_json
+    FROM lab_results r
+    JOIN lab_order_items i ON i.id = r.order_item_id
+    JOIN lab_specimens s ON s.id = r.specimen_id
+    JOIN patients p ON p.id = r.patient_id
+    LEFT JOIN lab_tests t ON t.id = r.test_id
+    LEFT JOIN users eu ON eu.id = r.entered_by
+    LEFT JOIN users vu ON vu.id = r.tech_validated_by
+    LEFT JOIN users au ON au.id = r.delta_ack_by
+    LEFT JOIN lab_critical_limits cl ON cl.id = r.critical_limit_id"""
+
+
+def _queue_rows(conn, *, result_status: str, item_status: str, scope_where: str,
+                scope_params: tuple, limit: int) -> list[dict]:
+    return [dict(r) for r in conn.execute(
+        f"""{_QUEUE_SELECT}
+            WHERE r.status = ? AND i.status = ?
+              AND s.status IN ({_placeholders(_BENCH_SPECIMEN_STATUSES)})
+              {scope_where}
+            ORDER BY {_PRIORITY_RANK_SQL}, julianday(s.received_at) ASC, s.id ASC, i.id ASC
+            LIMIT ?""",
+        (result_status, item_status, *_BENCH_SPECIMEN_STATUSES, *scope_params,
+         limit)).fetchall()]
+
+
+def _queue_entry(row: dict) -> dict:
+    result_type = row.get("result_type") or "numeric"
+    out = {
+        "result_id": row["result_id"],
+        "item_id": row["item_id"],
+        "order_id": row["order_id"],
+        "status": row["status"],
+        "test": {"id": row["test_id"], "name": row.get("test_name") or row["test_id"],
+                 "short_name": row.get("test_short_name") or row.get("test_name")
+                 or row["test_id"], "result_type": result_type},
+        "value_text": row["value_text"],
+        "comparator": row["comparator"],
+        "unit": row["unit"],
+        "abnormal_flag": row["abnormal_flag"] or "",
+        "reference_range_text": row["reference_range_text"],
+        "comment": row["comment"],
+        "is_critical": int(row.get("is_critical") or 0),
+        "critical_limit_text": row.get("critical_limit_text"),
+        "entered_by_name": row["entered_by_name"],
+        "entered_at": row["entered_at"],
+        "tech_validated_by_name": row.get("tech_validated_by_name"),
+        "tech_validated_at": row.get("tech_validated_at"),
+        "returned": (_returned_view(row.get("returned_json"))
+                     if row["status"] == "entered" else None),
+    }
+    out["flag_text"] = flag_text({**out, "result_type": result_type,
+                                  "reference_range_id": row.get("reference_range_id")})
+    out.update(_delta_view(row))
+    return out
+
+
+def _technical_entry(conn, row: dict) -> dict:
+    """A row waiting for technical validation, with its delta check decided
+    as technical validation will decide it: against the earlier result as it
+    is now, not as it was at entry. A value stored by a lane that did not
+    check it, or whose earlier result changed since, shows the check that
+    validation will apply, so the screen never offers a step the server
+    refuses without saying why."""
+    entry = _queue_entry(row)
+    item = {"result_type": row.get("result_type"), "delta_kind": row.get("delta_kind"),
+            "delta_threshold_milli": row.get("delta_threshold_milli"),
+            "delta_window_hours": row.get("delta_window_hours"),
+            "unit": row.get("test_unit"), "decimal_places": row.get("test_decimal_places"),
+            "test_code": row.get("test_code"), "collected_at": row.get("collected_at"),
+            "patient_id": row["patient_id"]}
+    flag, delta = _delta_for(conn, item, row)
+    entry["delta"] = delta
+    entry["needs_delta_reason"] = bool(flag) and not _delta_reason_holds(row, delta)
+    return entry
+
+
+def _grouped(rows: list[dict], entries: list[dict]) -> list[dict]:
+    groups: list[dict] = []
+    for row, entry in zip(rows, entries):
+        last = groups[-1] if groups else None
+        if last is None or last["specimen_id"] != row["specimen_id"]:
+            last = {"specimen_id": row["specimen_id"], "priority": row["priority"],
+                    "patient": {"id": row["patient_id"], "name": row["patient_name"],
+                                "mrn": row["mrn"], "ward": row["ward"], "bed": row["bed"]},
+                    "collected_at": row["collected_at"], "received_at": row["received_at"],
+                    "results": []}
+            groups.append(last)
+        last["results"].append(entry)
+    return groups
+
+
+def _part_takers(conn, result_ids: list[int]) -> dict[int, set[str]]:
+    """For each result, everyone who took part in it (as _people_on), in one
+    read per chunk."""
+    out: dict[int, set[str]] = {rid: set() for rid in result_ids}
+    for start in range(0, len(result_ids), 400):
+        chunk = result_ids[start:start + 400]
+        for row in conn.execute(
+                f"SELECT result_id, actor FROM lab_result_events "
+                f"WHERE result_id IN ({_placeholders(chunk)}) "
+                f"AND event_type IN ({_placeholders(_PART_EVENTS)})",
+                (*chunk, *_PART_EVENTS)).fetchall():
+            if row[1]:
+                out[int(row[0])].add(row[1])
+    return out
+
+
+def validation_queues(conn, *, actor: dict, dept: Optional[str],
+                      limit: int = VALIDATION_QUEUE_CAP) -> dict:
+    """The Validate screen: results entered and waiting for technical
+    validation, and results technically validated and waiting for a
+    signatory, each grouped by sample, STAT first then the oldest receipt.
+
+    Each authorisation row says whether this user may authorise it
+    ('you_took_part', and 'may_authorise' while two different people are
+    required, LIS-R5). `dept` is the caller's department_scope: None is
+    hospital-wide (the laboratory roles); a department keeps its own
+    patients, filtered in SQL before the LIMIT. A read: the route audits the
+    patients returned."""
+    from permissions import scope_patient_ids_sql
+
+    holds_authorise = has_permission((actor or {}).get("role", ""), LAB_AUTHORISE)
+    distinct = distinct_authoriser_required()
+    empty = {"technical": [], "authorisation": [], "can_authorise": holds_authorise,
+             "require_distinct_authoriser": distinct}
+    if not _tables_present(conn):
+        return empty
+    limit = max(1, min(int(limit or VALIDATION_QUEUE_CAP), VALIDATION_QUEUE_CAP))
+    scope_where, scope_params = "", ()
+    if dept is not None:
+        scope_sql, params = scope_patient_ids_sql(dept)
+        scope_where = f" AND r.patient_id IN ({scope_sql})"
+        scope_params = tuple(params)
+    technical = _queue_rows(conn, result_status="entered", item_status="resulted",
+                            scope_where=scope_where, scope_params=scope_params, limit=limit)
+    waiting = _queue_rows(conn, result_status="tech_validated", item_status="tech_validated",
+                          scope_where=scope_where, scope_params=scope_params, limit=limit)
+    takers = _part_takers(conn, [r["result_id"] for r in waiting])
+    actor_id = (actor or {}).get("id")
+    sign_entries = []
+    for row in waiting:
+        entry = _queue_entry(row)
+        people = takers.get(row["result_id"], set()) | {
+            p for p in (row.get("entered_by"), row.get("tech_validated_by"),
+                        row.get("delta_ack_by")) if p}
+        took_part = bool(actor_id) and actor_id in people
+        entry["you_took_part"] = took_part
+        entry["may_authorise"] = holds_authorise and not (took_part and distinct)
+        sign_entries.append(entry)
+    return {
+        "technical": _grouped(technical, [_technical_entry(conn, r) for r in technical]),
+        "authorisation": _grouped(waiting, sign_entries),
+        "can_authorise": holds_authorise,
+        "require_distinct_authoriser": distinct,
+    }

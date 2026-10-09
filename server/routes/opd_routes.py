@@ -28,10 +28,25 @@ Built: GET /patients/{patient_id}/record (opd-7, W3-A); GET /my-queue
 (opd-8, W4-F); GET /patients/{patient_id}/consultations, GET and PUT
 /visits/{visit_id}/consultation, POST .../consultation/sign and
 .../consultation/addenda, POST /visits/{visit_id}/complete (opd-10, W4-F);
-POST /visits/{visit_id}/allergy-review (opd-10a, W5-A).
+POST /visits/{visit_id}/allergy-review (opd-10a, W5-A); GET
+/terminology/search, GET and POST /visits/{visit_id}/orders, POST
+/visits/{visit_id}/orders/{order_id}/cancel, GET /visits/{visit_id}/print
+(opd-11, W6-A).
 
-Planned endpoints: POST /visits/{visit_id}/orders, /prescriptions; GET
-/terminology/search.
+Planned endpoints: POST /visits/{visit_id}/prescriptions (opd-12).
+
+INVESTIGATIONS (opd-11) are orders tied to the visit (orders.opd_visit_id)
+through orders_service.create_order, never through /api/orders, and order sets
+are never offered for an outpatient. Laboratory tests and imaging only, the
+code checked by terminology_service.describe_investigation and the order's
+words taken from the code list, not the client. The visit must be the
+caller's clinic's, current (inside the OPD scope window), neither cancelled
+nor finished, and the patient not admitted; the last three are re-read inside
+the order's own transaction, which also writes the audit row.
+
+PRINTS (opd-11) carry the patient's name, UHID, age and sex, what the record
+holds and nothing written for the print, and the doctor's name and
+users.registration_number only. A consultation prints only once signed.
 
 VISIT-ADDRESSED ROUTES (opd-10) resolve the visit and answer 404 unless its
 clinic is the caller's department (an account with no department reads every
@@ -39,19 +54,26 @@ clinic); writes are refused 409 once the patient has an active admission.
 Saves, signing, addenda and completion are audited INSIDE their transaction
 (clinical_record), so the change and its record land together.
 """
-from fastapi import APIRouter, Depends, HTTPException, Request
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 import config
+from database import db_session
 from permissions import (
     OPD_CONSULT,
     department_scope,
     log_phi_read,
+    opd_scope_window,
     require_patient_access,
     require_permission,
 )
 from routes.opt_in_gates import require_opd_feature
+from services import orders_service, registration_service, terminology_service
 from services.audit_service import AuditWriteError, log_audit_event
+from services.clinical_time import utc_iso_now
+from services.orders_service import OpdVisitOrderRefused, OrderManagedByLab
 from services.frontdesk_service import FrontDeskError, complete_opd_visit, get_opd_visit
 from services.opd_queue_service import (
     COMPLETION_DISPOSITIONS,
@@ -426,6 +448,363 @@ def record_visit_allergy_review(
         raise _consultation_http_error(err)
     except AuditWriteError:
         raise _audit_unavailable()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  The code lists, investigations and prints (opd-11, W6-A)
+# ═════════════════════════════════════════════════════════════════════════════
+
+#: What an outpatient order may be refused for, in the clinic's words.
+_INVESTIGATION_REFUSALS = {
+    "unknown_code": (422, "That code is not in the code list. Choose a test from the search."),
+    "not_an_investigation": (
+        422, "Only laboratory tests and imaging can be ordered for an outpatient here."),
+    "bedside_test": (
+        422, "That is a bedside test, done on a ward, not ordered from a clinic."),
+    "not_in_lab_catalogue": (
+        422, "The laboratory does not offer that test. Choose one from the search."),
+}
+
+
+class OpdOrderIn(BaseModel):
+    """POST body of an outpatient investigation. The order type and the words
+    on the order come from the code list, never from the client."""
+    model_config = ConfigDict(extra="forbid")
+    code_system: str = Field(..., max_length=20)
+    code: str = Field(..., max_length=64)
+    priority: Literal["routine", "urgent", "stat"] = "routine"
+
+
+class OpdOrderCancelIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(..., max_length=500)
+
+
+def _refuse(status: int, code: str, message: str) -> HTTPException:
+    return HTTPException(status_code=status, detail={"error": code, "message": message})
+
+
+def _require_current_visit(visit: dict) -> None:
+    """The visit must be inside the OPD scope window (permissions.
+    opd_scope_window, the window the OPD arm uses): a visit booked for a later
+    day opens nothing yet, and an old visit takes no new orders."""
+    first_day, last_day = opd_scope_window()
+    day = str(visit.get("visit_date") or "").strip()[:10]
+    if day and day > last_day:
+        raise _refuse(409, "visit_not_current",
+                      "This visit is booked for a later day. Order on the day of the visit.")
+    if not day or day < first_day:
+        raise _refuse(409, "visit_not_current",
+                      "This visit is too old to order on. Order from the patient's current visit.")
+
+
+def _lab_catalogue_in_use() -> bool:
+    """A laboratory test comes from the laboratory's own catalogue while the
+    laboratory module is on (the rule the Orders screen keeps)."""
+    return config.LAB_ENABLED is True
+
+
+def _clinicians(ids) -> dict:
+    """{user id: {name, registration_number}}: what a print says about a
+    clinician, and nothing else."""
+    wanted = sorted({i for i in ids if i})
+    if not wanted:
+        return {}
+    marks = ",".join("?" for _ in wanted)
+    with db_session() as db:
+        rows = db.execute(
+            f"SELECT id, name, registration_number FROM users WHERE id IN ({marks})", wanted
+        ).fetchall()
+    return {r["id"]: {"name": r["name"], "registration_number": r["registration_number"]}
+            for r in rows}
+
+
+def _order_view(order: dict, names: dict | None = None) -> dict:
+    """An outpatient order as the clinic sees it: no internal detail."""
+    who = (names or {}).get(order.get("ordered_by")) or {}
+    return {
+        "id": order["id"],
+        "opd_visit_id": order.get("opd_visit_id"),
+        "order_type": order["order_type"],
+        "code_system": order.get("code_system"),
+        "code": order.get("code"),
+        "description": order["description"],
+        "priority": order["priority"],
+        "status": order["status"],
+        "result_text": order.get("result_text"),
+        "result_at": order.get("result_at"),
+        "ordered_by_name": who.get("name"),
+        "created_at": order.get("created_at"),
+    }
+
+
+def _phi_read(request: Request, user: dict, **kwargs) -> None:
+    """A fail-closed phi_access row before anything is returned."""
+    try:
+        log_phi_read(request=request, user=user, **kwargs)
+    except AuditWriteError:
+        raise _audit_unavailable()
+
+
+@router.get("/terminology/search")
+def terminology_search(
+    q: str = Query("", max_length=120),
+    kind: Literal["diagnosis", "investigation"] = Query("diagnosis"),
+    user: dict = Depends(require_permission(OPD_CONSULT)),
+):
+    """The code lists behind the diagnosis and investigation pickers. No
+    patient data is read, so nothing is audited. A diagnosis stays free text
+    with an optional code (ruling OPD-N11); an investigation is a laboratory
+    test or imaging only."""
+    return terminology_service.search_terms(q, kind=kind, lab_catalogue=_lab_catalogue_in_use())
+
+
+@router.get("/visits/{visit_id}/orders")
+def visit_orders(
+    visit_id: str,
+    request: Request,
+    user: dict = Depends(require_permission(OPD_CONSULT)),
+):
+    """The investigations ordered on this visit, with their results when
+    back. Bounded by the visit's clinic, like the visit's note. Audited."""
+    visit = _visit_in_clinic(visit_id, department_scope(user))
+    orders = orders_service.list_visit_orders(visit_id)
+    _phi_read(request, user, action_type="opd_visit_orders_viewed",
+              summary_message=f"Investigations on OPD visit {visit_id} viewed ({len(orders)})",
+              patient_id=visit.get("patient_id"), target_type="opd_visit", target_id=visit_id,
+              metadata={"order_ids": [o["id"] for o in orders]})
+    names = _clinicians(o.get("ordered_by") for o in orders)
+    return {"visit_id": visit_id, "orders": [_order_view(o, names) for o in orders]}
+
+
+@router.post("/visits/{visit_id}/orders", status_code=201)
+def order_investigation(
+    visit_id: str,
+    data: OpdOrderIn,
+    request: Request,
+    user: dict = Depends(require_permission(OPD_CONSULT)),
+):
+    """Order a laboratory test or imaging for this outpatient visit, active at
+    once (the patient goes to the laboratory from the clinic).
+
+    Refused: another clinic's visit (404); a visit cancelled, finished, booked
+    for a later day or too old, or a patient now admitted (409); the same test
+    already ordered on the visit (409 already_ordered); a code that is not a
+    laboratory test or imaging, a bedside test, or (laboratory module on) a
+    test the laboratory does not offer (422). Order sets are not offered for
+    outpatients. Written with its audit row in one transaction."""
+    visit = _visit_in_clinic(visit_id, department_scope(user))
+    if visit.get("status") == "cancelled":
+        raise _refuse(409, "visit_cancelled", "This visit was cancelled; nothing can be ordered on it.")
+    if visit.get("status") == "completed":
+        raise _refuse(409, "visit_completed",
+                      "This visit is finished. Order from the patient's current visit.")
+    _require_current_visit(visit)
+    found = terminology_service.describe_investigation(
+        data.code_system, data.code, lab_catalogue=_lab_catalogue_in_use())
+    if found["refusal"]:
+        status, message = _INVESTIGATION_REFUSALS[found["refusal"]]
+        raise _refuse(status, found["refusal"], message)
+    system = data.code_system.strip().upper()
+    code = data.code.strip()
+
+    def _audit(db, order: dict) -> None:
+        log_audit_event(
+            correlation_id=f"opd-order-{order['id']}",
+            event_category="clinical_record",
+            action_type="opd_investigation_ordered",
+            outcome="success",
+            db=db,
+            summary_message=(f"{order['order_type'].capitalize()} order {order['id']} on OPD "
+                             f"visit {visit_id}: {order['description']} ({order['priority']})"),
+            actor_user_id=user.get("id"),
+            actor_role=user.get("role"),
+            patient_id=order["patient_id"],
+            target_type="order",
+            target_id=str(order["id"]),
+            request_path=request.url.path,
+            http_method=request.method,
+            ip_address=request.client.host if request.client else None,
+            metadata={"visit_id": visit_id, "order_type": order["order_type"],
+                      "code_system": order["code_system"], "code": order["code"],
+                      "priority": order["priority"], "written": "in_transaction"},
+        )
+
+    try:
+        order = orders_service.create_order(
+            patient_id=visit["patient_id"],
+            order_type=found["order_type"],
+            description=found["display"],
+            code=code,
+            code_system=system,
+            priority=data.priority,
+            ordered_by=user.get("id"),
+            source="clinician",
+            status="active",
+            opd_visit_id=visit_id,
+            in_transaction=_audit,
+        )
+    except OpdVisitOrderRefused as err:
+        raise _refuse(err.status, err.code, str(err))
+    except AuditWriteError:
+        raise _audit_unavailable()
+    except ValueError as err:
+        raise _refuse(422, "order_invalid", str(err))
+    return _order_view(order, _clinicians([order.get("ordered_by")]))
+
+
+@router.post("/visits/{visit_id}/orders/{order_id}/cancel")
+def cancel_investigation(
+    visit_id: str,
+    order_id: str,
+    data: OpdOrderCancelIn,
+    request: Request,
+    user: dict = Depends(require_permission(OPD_CONSULT)),
+):
+    """Cancel an investigation ordered on this visit, with a reason. An order
+    the laboratory has taken in is cancelled from the laboratory request
+    instead (409). Refused once the patient is admitted, on a visit outside
+    the OPD window, and for an order of another visit (404)."""
+    visit = _visit_in_clinic(visit_id, department_scope(user))
+    _require_current_visit(visit)
+    reason = (data.reason or "").strip()
+    if len(reason) < 3:
+        raise _refuse(422, "reason_required", "Say why the investigation is cancelled.")
+
+    def _belongs(db, order: dict) -> None:
+        if order.get("opd_visit_id") != visit_id:
+            raise OpdVisitOrderRefused("order_not_found", "Order not found", status=404)
+        if db.execute("SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' "
+                      "LIMIT 1", (order["patient_id"],)).fetchone() is not None:
+            raise OpdVisitOrderRefused(
+                "patient_admitted",
+                "This patient is now admitted. Manage the order from the inpatient chart.")
+
+    def _audit(db, prior: dict, moved: dict) -> None:
+        log_audit_event(
+            correlation_id=f"opd-order-cancel-{order_id}",
+            event_category="clinical_record",
+            action_type="opd_investigation_cancelled",
+            outcome="success",
+            db=db,
+            summary_message=f"Order {order_id} on OPD visit {visit_id} cancelled",
+            actor_user_id=user.get("id"),
+            actor_role=user.get("role"),
+            patient_id=moved["patient_id"],
+            target_type="order",
+            target_id=str(order_id),
+            request_path=request.url.path,
+            http_method=request.method,
+            ip_address=request.client.host if request.client else None,
+            metadata={"visit_id": visit_id, "prior_status": prior.get("status"),
+                      "reason": reason, "written": "in_transaction"},
+        )
+
+    try:
+        moved = orders_service.transition_order(
+            order_id, "cancelled", actor_id=user.get("id"), detail=reason,
+            before_move=_belongs, in_transaction=_audit)
+    except OpdVisitOrderRefused as err:
+        raise _refuse(err.status, err.code, str(err))
+    except OrderManagedByLab as err:
+        raise _refuse(409, "order_managed_by_lab", str(err))
+    except AuditWriteError:
+        raise _audit_unavailable()
+    except ValueError as err:
+        message = str(err)
+        if "not found" in message:
+            raise _refuse(404, "order_not_found", "Order not found")
+        raise _refuse(409, "order_not_cancellable", "This order can no longer be cancelled.")
+    return _order_view(moved, _clinicians([moved.get("ordered_by")]))
+
+
+@router.get("/visits/{visit_id}/print")
+def visit_print(
+    visit_id: str,
+    request: Request,
+    kind: Literal["consultation", "investigations"] = Query("consultation"),
+    user: dict = Depends(require_permission(OPD_CONSULT)),
+):
+    """What the consultation print or the investigation slip carries, read as
+    it is printed (audited as a print, fail-closed).
+
+    Only what the record holds: the patient's name, UHID, age and sex; the
+    signed note (a draft is never printed: 409 not_signed) or the visit's
+    investigations not cancelled (409 no_investigations when there are none);
+    and the doctor's name and registration number. No date of birth, phone,
+    address or allergy list (a visit-addressed answer never names allergens),
+    and no text written for the print."""
+    visit = _visit_in_clinic(visit_id, department_scope(user))
+    orders = [o for o in orders_service.list_visit_orders(visit_id)
+              if o.get("status") != "cancelled"]
+    note = None
+    if kind == "consultation":
+        try:
+            note = get_consultation(visit_id).get("consultation")
+        except ConsultationError as err:
+            raise _consultation_http_error(err)
+        if not note or note.get("status") != "signed":
+            raise _refuse(409, "not_signed", "Only a signed note can be printed. Sign it first.")
+        doctor_ids = [note.get("signed_by")]
+    else:
+        if not orders:
+            raise _refuse(409, "no_investigations", "No investigations are ordered on this visit.")
+        doctor_ids = [o.get("ordered_by") for o in orders]
+    names = _clinicians(doctor_ids + [o.get("ordered_by") for o in orders])
+    doctors = []
+    for uid in dict.fromkeys(i for i in doctor_ids if i):
+        who = names.get(uid) or {}
+        doctors.append({"name": who.get("name"), "registration_number": who.get("registration_number")})
+    _phi_read(request, user,
+              action_type=("opd_consultation_printed" if kind == "consultation"
+                           else "opd_investigation_slip_printed"),
+              summary_message=f"OPD {kind} print for visit {visit_id}",
+              patient_id=visit.get("patient_id"), target_type="opd_visit", target_id=visit_id,
+              metadata={"kind": kind, "order_ids": [o["id"] for o in orders],
+                        "consultation_id": (note or {}).get("id")})
+    consultation = None
+    if note:
+        consultation = {
+            "id": note["id"],
+            "chief_complaint": note.get("chief_complaint"),
+            "history": note.get("history"),
+            "examination": note.get("examination"),
+            "vitals": ({"values": note["vitals"].get("values") or {},
+                        "measured_at": note["vitals"].get("measured_at")}
+                       if note.get("vitals") else None),
+            "diagnoses": [{"text": d.get("text"), "code_system": d.get("code_system"),
+                           "code": d.get("code")} for d in note.get("diagnoses") or []],
+            "plan": note.get("plan"),
+            "advice": note.get("advice"),
+            "follow_up_date": note.get("follow_up_date"),
+            "follow_up_note": note.get("follow_up_note"),
+            "referral_department": note.get("referral_department"),
+            "signed_at": note.get("signed_at"),
+            "addenda": [{"body": a.get("body"), "created_at": a.get("created_at"),
+                         "author_name": a.get("author_name")} for a in note.get("addenda") or []],
+        }
+    try:
+        # The age as of today, the way the UHID card prints it (a stated age
+        # is aged from the day it was stated), never a date of birth.
+        card = registration_service.uhid_card(visit["patient_id"])
+    except registration_service.RegistrationError:
+        card = {"name": visit.get("patient_name"), "uhid": visit.get("patient_mrn"),
+                "age": visit.get("patient_age"), "sex": visit.get("patient_sex")}
+    return {
+        "kind": kind,
+        "printed_at": utc_iso_now(),
+        "visit": {"id": visit["id"], "visit_date": visit.get("visit_date"),
+                  "department": visit.get("department"),
+                  "token_number": visit.get("token_number")},
+        "patient": {"name": card.get("name"), "uhid": card.get("uhid"),
+                    "age": card.get("age"), "sex": card.get("sex")},
+        "consultation": consultation,
+        "investigations": [{k: v for k, v in _order_view(o, names).items()
+                            if k in ("description", "order_type", "priority", "status",
+                                     "created_at", "ordered_by_name")}
+                           for o in orders],
+        "doctors": doctors,
+    }
 
 
 @router.post("/visits/{visit_id}/complete")

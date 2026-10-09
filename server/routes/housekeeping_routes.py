@@ -15,6 +15,8 @@
     POST   /api/housekeeping/tasks/{id}/complete   the clean is finished → ready
     POST   /api/housekeeping/tasks/{id}/cancel     withdraw a request
     POST   /api/housekeeping/sync-discharges       run the turnaround sweep now
+    POST   /api/housekeeping/sync-movements        read the bed movement ledger now
+                                                   (ORB_ADT on; adt-7)
     GET    /api/housekeeping/turnaround            turnaround time per ward
     GET    /api/housekeeping/readiness             readiness NEXT TO capacity's number
     GET    /api/housekeeping/linen                 linen movement summary
@@ -88,6 +90,7 @@ from services.housekeeping_service import (
     record_linen_movement,
     register_unit,
     start_cleaning,
+    sync_adt_movements,
     sync_discharge_turnarounds,
     transition_unit,
     ward_readiness,
@@ -541,6 +544,31 @@ def post_sync_discharges(
            f"Discharge turnaround sweep: {result['created']} created, "
            f"{result['unmatched']} discharges with no registered bed",
            **{k: v for k, v in result.items() if k != "unmatched_wards"})
+    return result
+
+
+@router.post("/sync-movements")
+def post_sync_movements(
+    request: Request,
+    lookback_hours: int | None = Query(None, ge=1, le=720),
+    user: dict = Depends(require_housekeeping_write()),
+):
+    """Read the bed movement ledger now (Beds and admissions, adt-7): a
+    turnaround clean for each bed a patient left, and each bed a patient went
+    into marked occupied (the skipped clean recorded when it was not clean).
+
+    Idempotent (see `sync_adt_movements`): ten calls act once. The board runs
+    it on every load and the bed moves run it after they commit; this is for
+    an operator who has just registered a ward's beds. With ORB_ADT off it
+    reads and writes nothing and says so. Counts only: no movement id, bed of
+    a named patient or patient field is returned.
+    """
+    result = sync_adt_movements(lookback_hours=lookback_hours)
+    _audit(request, user, "housekeeping_movement_sync",
+           f"Bed movement sync: {result.get('vacated', 0) + result.get('tasks_raised', 0)} "
+           f"turnarounds raised, {result.get('occupied', 0) + result.get('occupied_unclean', 0)} "
+           "beds marked occupied",
+           **result)
     return result
 
 

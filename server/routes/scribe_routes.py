@@ -25,7 +25,9 @@ from services.scribe_service import (
 from services.scribe_providers import StageTimer
 from services.audit_service import AuditWriteError, log_audit_event
 from services.admission_service import (
+    DOOR_SCRIBE_QUICK_ADMIT,
     AdmissionInputError,
+    AdmissionRefused,
     admission_choices,
     admit_patient,
     attending_doctors,
@@ -1222,10 +1224,24 @@ def quick_admit(data: dict, user: dict = Depends(require_permission("patient.wri
         # a structured allergy that the prescribing interlock screens against.
         "allergies": allergy_entries(data.get("allergies")),
     }
+    import config
+    if config.feature_enabled("registration"):
+        # The patient index (opd-5b, ORB_REGISTRATION): this door honours
+        # ORB_UHID_SOURCE and the duplicate rule exactly as the admission form
+        # does, so the hospital number and a duplicate review are read here.
+        # With registration off both are ignored, as they always were (this
+        # door mints the number).
+        payload["mrn"] = text("mrn") or None
+        payload["duplicate_review"] = data.get("duplicate_review")
     try:
-        result = admit_patient(payload, user)
+        result = admit_patient(payload, user, door=DOOR_SCRIBE_QUICK_ADMIT)
     except PatientNameError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except AdmissionRefused as e:
+        # The patient index or the hospital number rule refused the admission
+        # (ORB_REGISTRATION), or the number is already on another record.
+        # Nothing was written.
+        raise HTTPException(status_code=e.status, detail=e.detail())
     except ValueError as e:
         # Only with ORB_ADT on (adt-5): the bed master refused the typed place
         # (an occupied bed, a bed not recorded clean, a boarder this lane

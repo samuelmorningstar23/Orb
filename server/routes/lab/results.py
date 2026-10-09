@@ -38,6 +38,32 @@ Built in lis-10 (W5-D), all lab.result, all served while the module drains
                                     current row (audited as phi_access
                                     'lab_result_conflict_viewed').
 Both writes are one immediate transaction with a clinical_access audit row.
+
+Built in lis-11 and lis-12 (W6-F), all served while the module drains
+(validating and releasing finish open work, ruling LIS-R21):
+  GET   /validation                 lab.result. The Validate screen: results
+                                    waiting for technical validation and
+                                    results waiting for a signatory, by
+                                    sample. Audited as phi_access
+                                    'lab_validation_viewed'.
+  POST  /results/{result_id}/delta-ack
+                                    lab.result. The technologist's reason
+                                    for a delta flag (ruling LIS-R9 (a)).
+  POST  /results/tech-validate      lab.result. Technically validate one or
+                                    more entered results, all or none; a
+                                    delta flag with no reason is refused.
+  POST  /results/authorise          lab.authorise. Authorise results on ONE
+                                    sample and release them into the chart,
+                                    all or none; while two different people
+                                    are required (LIS-R5) a signatory who
+                                    took part in a result is refused 403
+                                    'second_person_required'.
+  POST  /results/{result_id}/return lab.authorise. Send a validated result
+                                    back to the bench with a reason.
+Each write is one immediate transaction with a clinical_access audit row per
+result, and each says what its screen showed (`expected`); a result changed
+since is refused 409 'result_changed' without its current value (the screen
+reloads the audited queue instead).
 """
 from typing import Optional
 
@@ -45,7 +71,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from database import db_session
-from permissions import LAB_RESULT, department_scope, log_phi_read, require_permission
+from permissions import (LAB_AUTHORISE, LAB_RESULT, department_scope, log_phi_read,
+                         require_permission)
 from routes.lab.orders import audit_unavailable, request_meta
 from routes.opt_in_gates import require_lab_module
 from services import lab_result_service
@@ -162,3 +189,102 @@ def edit_result(result_id: int, body: EditBody, request: Request,
         raise _refusal(err)
     except AuditWriteError:
         raise audit_unavailable()
+
+
+# ── Validation and release (lis-11, lis-12) ─────────────────────────────────
+
+class ResultSeen(BaseModel):
+    """One result a validation or authorisation names, with what the screen
+    showed of it."""
+    model_config = ConfigDict(extra="forbid")
+    result_id: int
+    expected: ExpectedResult
+
+
+class TechValidateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    results: list[ResultSeen] = Field(
+        ..., min_length=1, max_length=lab_result_service.VALIDATION_BATCH_MAX)
+
+
+class AuthoriseBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    specimen_id: str = Field(..., min_length=1, max_length=40)
+    results: list[ResultSeen] = Field(
+        ..., min_length=1, max_length=lab_result_service.VALIDATION_BATCH_MAX)
+
+
+class ReasonBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(..., max_length=lab_result_service.REASON_MAX)
+    expected: ExpectedResult
+
+
+def _seen_list(results: list[ResultSeen]) -> list[dict]:
+    return [{"result_id": r.result_id, "expected": r.expected.model_dump()} for r in results]
+
+
+def _write(call):
+    """Run one validation write, turning its refusals into HTTP answers."""
+    try:
+        return call()
+    except lab_result_service.LabResultError as err:
+        raise _refusal(err)
+    except AuditWriteError:
+        raise audit_unavailable()
+
+
+@router.get("/validation")
+def get_validation(request: Request, user: dict = Depends(require_permission(LAB_RESULT))):
+    """Results waiting for technical validation and for a signatory. The
+    audit row records the patients actually returned."""
+    dept = department_scope(user)
+    with db_session() as db:
+        queues = lab_result_service.validation_queues(db, actor=user, dept=dept)
+    groups = queues["technical"] + queues["authorisation"]
+    patient_ids = sorted({g["patient"]["id"] for g in groups})
+    count = sum(len(g["results"]) for g in groups)
+    log_phi_read(
+        request=request, user=user,
+        action_type="lab_validation_viewed",
+        summary_message=f"Laboratory validation queues viewed ({count} results)",
+        target_type="lab_validation",
+        target_id="queues",
+        metadata={"count": count,
+                  "technical": sum(len(g["results"]) for g in queues["technical"]),
+                  "authorisation": sum(len(g["results"]) for g in queues["authorisation"]),
+                  "patient_count": len(patient_ids), "patient_ids": patient_ids[:200]},
+    )
+    return {**queues, "scope": {"department": dept, "hospital_wide": dept is None}}
+
+
+@router.post("/results/{result_id}/delta-ack")
+def acknowledge_delta(result_id: int, body: ReasonBody, request: Request,
+                      user: dict = Depends(require_permission(LAB_RESULT))):
+    return _write(lambda: lab_result_service.acknowledge_delta(
+        result_id, reason=body.reason, expected=body.expected.model_dump(), actor=user,
+        dept=department_scope(user), request_meta=request_meta(request)))
+
+
+@router.post("/results/tech-validate")
+def tech_validate(body: TechValidateBody, request: Request,
+                  user: dict = Depends(require_permission(LAB_RESULT))):
+    return _write(lambda: lab_result_service.technically_validate(
+        _seen_list(body.results), actor=user, dept=department_scope(user),
+        request_meta=request_meta(request)))
+
+
+@router.post("/results/authorise")
+def authorise(body: AuthoriseBody, request: Request,
+              user: dict = Depends(require_permission(LAB_AUTHORISE))):
+    return _write(lambda: lab_result_service.authorise_and_release(
+        body.specimen_id, _seen_list(body.results), actor=user, dept=department_scope(user),
+        request_meta=request_meta(request)))
+
+
+@router.post("/results/{result_id}/return")
+def return_to_bench(result_id: int, body: ReasonBody, request: Request,
+                    user: dict = Depends(require_permission(LAB_AUTHORISE))):
+    return _write(lambda: lab_result_service.return_to_bench(
+        result_id, reason=body.reason, expected=body.expected.model_dump(), actor=user,
+        dept=department_scope(user), request_meta=request_meta(request)))

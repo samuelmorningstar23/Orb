@@ -143,6 +143,8 @@ from permissions import (
 )
 from routes.opt_in_gates import require_opd_feature
 from services import registration_service
+from services.adt import core as adt_core
+from services.adt import transfer as adt_transfer
 from services.audit_service import AuditWriteError, log_audit_event
 from services.frontdesk_service import (
     FrontDeskError,
@@ -236,6 +238,10 @@ class TransferIn(BaseModel):
     reason: str
     notes: str | None = None
     idempotency_key: str | None = None
+    # Read only while Beds and admissions (ORB_ADT) is on, when this route
+    # delegates to the ADT writer (adt-6a); ignored with it off.
+    expected_bed_id: str | None = None
+    boarder_acknowledged: bool = False
 
 
 # ── Module switch ────────────────────────────────────────────────────────────
@@ -1304,6 +1310,15 @@ def create_transfer(
     After this returns, the caller may no longer be able to read the patient —
     that is the strict-handover policy, and it is a consequence of scope being
     derived live from the admission row (see frontdesk_service's module docstring).
+
+    BEDS AND ADMISSIONS ON (ORB_ADT, adt-6a): the move is made by the ADT
+    writer (services/adt/transfer.py) with the same three rules, plus the bed
+    lock, the cleaning rules for the bed moved into, the boarder
+    acknowledgement and expected_bed_id when sent. Its clinical_access
+    'patient_transferred' row is written INSIDE the move's transaction, so
+    this route writes no audit row of its own after the commit (one row per
+    transfer, never two). A typed ward and bed resolve against bed setup.
+    Refusals answer with the ADT writer's {error, message}. Off: unchanged.
     """
     patient_id = (data.patient_id or "").strip()
     if not patient_id:
@@ -1316,6 +1331,10 @@ def create_transfer(
         raise HTTPException(status_code=422, detail="A transfer reason is required")
 
     enforce_patient_scope(user, patient_id)
+
+    if adt_core.adt_on():
+        return _delegated_transfer(data, request, user, patient_id=patient_id,
+                                   to_department=to_department, reason=reason)
 
     try:
         result = transfer_patient(
@@ -1367,6 +1386,49 @@ def create_transfer(
         },
     )
     return result
+
+
+def _delegated_transfer(data: TransferIn, request: Request, user: dict, *, patient_id: str,
+                        to_department: str, reason: str) -> dict:
+    """POST /transfers while ORB_ADT is on: the ADT writer moves the patient
+    and audits inside its own transaction. The old request carries typed ward
+    and bed text and an optional body idempotency key; with no key one is
+    made here, so a retried request without one is refused as no change
+    rather than recorded twice. The patient's scope was checked by the
+    caller, on the sending side."""
+    key = (request.headers.get("Idempotency-Key") or data.idempotency_key or "").strip()
+    kwargs = {}
+    if "expected_bed_id" in data.model_fields_set:
+        kwargs["expected_bed_id"] = data.expected_bed_id
+    has_bed = bool((data.to_bed or "").strip())
+    has_ward = bool((data.to_ward or "").strip())
+    try:
+        return adt_transfer.transfer(
+            None, patient_id=patient_id, actor=user, to_department=to_department,
+            reason=reason, ward_text=data.to_ward, bed_text=data.to_bed,
+            # The old form left ward and bed blank to keep them: the patient
+            # stays where they lie. A ward with no bed is awaiting a bed there.
+            keep_location=not has_bed and not has_ward,
+            awaiting_bed=has_ward and not has_bed,
+            boarder_acknowledged=data.boarder_acknowledged,
+            require_expected_bed=False, notes=data.notes,
+            idempotency_key=key or f"frontdesk-{uuid.uuid4().hex}",
+            request_meta={
+                "request_path": request.url.path,
+                "http_method": request.method,
+                "ip_address": request.client.host if request.client else None,
+                "user_agent": request.headers.get("user-agent"),
+            },
+            **kwargs,
+        )
+    except adt_core.AdtError as err:
+        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
+    except AuditWriteError:
+        raise HTTPException(status_code=503, detail={
+            "error": "audit_unavailable",
+            "message": ("The record of this transfer could not be written, so nothing was "
+                        "changed. Try again in a moment."),
+        })
 
 
 @router.get("/patients/{patient_id}/movements")

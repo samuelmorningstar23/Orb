@@ -34,9 +34,18 @@
  * A housekeeping board is read on a corridor trolley by staff who hold no
  * clinical grant. The only clinical fact present is "terminal clean", which a
  * housekeeper needs in order to choose PPE.
+ *
+ * BEDS AND ROOMS WITH BEDS AND ADMISSIONS ON (adt-7, ORB_ADT). Bed setup is
+ * then the only register of beds (the server refuses a bed here, 409), so
+ * 'Beds & rooms' points to Bed setup on the Beds tab instead of offering the
+ * register form, and the beds already registered stay listed with their
+ * cleaning actions. Moves, admissions and discharges reach the queue by
+ * themselves then (the server reads the bed movement record). Off: unchanged.
  */
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
+import { gotoTab } from '../../lib/orbBus'
+import { currentModuleFlags, subscribeModuleFlags } from '../../shellConfig'
 import {
   cancelRequest, completeCleaning, createUnit, formatMinutes, getLinen, getMeta,
   getOverview, getTasks, getTurnaround, getUnits, HousekeepingApiError,
@@ -218,6 +227,9 @@ export default function HousekeepingPanel() {
   const [wardFilter, setWardFilter] = useState('')
   const [requestFor, setRequestFor] = useState<HousekeepingUnit | null>(null)
   const [pending, setPending] = useState<Pending | null>(null)
+  /* Beds and admissions (ORB_ADT): beds are then set up in Bed setup only. */
+  const modules = useSyncExternalStore(subscribeModuleFlags, currentModuleFlags)
+  const bedsInBedSetup = modules.adt === true
 
   const handle = useCallback((e: unknown) => {
     if (e instanceof HousekeepingApiError && e.isModuleDisabled) {
@@ -466,6 +478,7 @@ export default function HousekeepingPanel() {
               wards={wards}
               meta={meta}
               busy={busy}
+              bedsInBedSetup={bedsInBedSetup}
               onCreate={registerUnit}
               onTransition={(u, s) => setPending({ kind: 'transition', unit: u, to: s })}
               onOccupy={u => setPending({ kind: 'occupy', unit: u })}
@@ -920,8 +933,12 @@ function LinenView({ summary, wards, busy, onRecord }: {
 
 /* ── Register ────────────────────────────────────────────────────────────── */
 
-function RegisterView({ units, wards, meta, busy, onCreate, onTransition, onOccupy, onRequest }: {
+function RegisterView({
+  units, wards, meta, busy, bedsInBedSetup = false, onCreate, onTransition, onOccupy, onRequest,
+}: {
   units: HousekeepingUnit[]
+  /** Beds and admissions is on: beds are set up in Bed setup, not here. */
+  bedsInBedSetup?: boolean
   /** The wards this hospital already has: the capacity screen's, and those
    *  holding registered beds. */
   wards: string[]
@@ -944,7 +961,19 @@ function RegisterView({ units, wards, meta, busy, onCreate, onTransition, onOccu
   return (
     <section className="hk-section">
       {refusal && <div className="hk-notice hk-notice--danger" role="alert">{refusal}</div>}
-      <form
+      {bedsInBedSetup && (
+        <div className="hk-notice" role="note" data-testid="hk-beds-in-bed-setup">
+          <p>
+            Beds are set up in Bed setup on the Beds tab while beds and admissions is switched
+            on, so this screen no longer registers them. The beds below keep their cleaning
+            actions, and moves, admissions and discharges reach the cleaning queue by themselves.
+          </p>
+          <button type="button" className="hk-btn" onClick={() => gotoTab('adt')}>
+            Open Beds
+          </button>
+        </div>
+      )}
+      {!bedsInBedSetup && <form
         className="hk-form"
         onSubmit={async e => {
           e.preventDefault()
@@ -994,15 +1023,15 @@ function RegisterView({ units, wards, meta, busy, onCreate, onTransition, onOccu
                 disabled={busy !== null || !code.trim() || !ward.trim()}>
           Register bed
         </button>
-      </form>
+      </form>}
 
-      <p className="hk-foot">
+      {!bedsInBedSetup && <p className="hk-foot">
         A newly registered bed starts as <strong>needs cleaning</strong>, not ready.
         Registering a bed is inventory; &ldquo;ready&rdquo; is a claim that somebody
         cleaned it, and no import may make that claim on a person&apos;s behalf.
         The bed label must match what the ward admits with, or a discharge will not
         find its bed.
-      </p>
+      </p>}
 
       {units.length === 0 ? (
         <Empty title="No beds registered" detail="Add this hospital's beds above." />

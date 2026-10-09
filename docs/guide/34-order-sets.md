@@ -328,18 +328,18 @@ sequenceDiagram
 
 ### File: `server/routes/orders_routes.py`: the five endpoints
 
-#### `OrderSetItemSelection` / `OrderSetApplyRequest`: `server/routes/orders_routes.py:48` / `:65`
+#### `OrderSetItemSelection` / `OrderSetApplyRequest`: `server/routes/orders_routes.py:57` / `:74`
 **Signature:** Pydantic bodies. `OrderSetApplyRequest` carries `patient_id` and an optional `items: list[OrderSetItemSelection]`.
 **Does:** The preview/apply request shape.
 **On screen:** the panel sends `{patient_id}` only (`src/api/orderSets.ts:126`, `:137`).
 **Gotchas:** **the patient is named in the body, not the path.** That is why both routes call `enforce_patient_scope(user, req.patient_id)` explicitly (`:135`, `:166`) instead of using the path-shaped `require_patient_access` dependency, the dependency cannot see a body field.
 **Breaks if you change it:** moving `patient_id` to the path without changing the guard, or removing the explicit `enforce_patient_scope`, opens a cross-ward hole: any `ORDER_WRITE` holder could apply a protocol to any patient in the hospital.
 
-#### `_selections`: `server/routes/orders_routes.py:80`
+#### `_selections`: `server/routes/orders_routes.py:89`
 **Signature:** `(req) -> list[dict] | None`
 **Does:** `[s.model_dump() for s in req.items] if req.items else None`.
 
-#### `_order_set_status`: `server/routes/orders_routes.py:84`
+#### `_order_set_status`: `server/routes/orders_routes.py:93`
 **Signature:** `(e: OrderSetError) -> int` → 404 or 400
 **Does:** Maps a service error to a status code by inspecting its message.
 **Gotchas:** it is **string matching on the exception message**, "not found" or "Unknown order set". Reword either message in the service and the endpoint silently starts returning 400 where it returned 404.

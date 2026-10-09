@@ -1,9 +1,19 @@
 /**
- * Orb, Beds and admissions API: placing a patient in a bed (adt-5).
+ * Orb, Beds and admissions API: placing a patient in a bed (adt-5), and
+ * moving one (adt-6a).
  *
  *   POST /api/adt/admissions/{id}/bed   a bed for an admission awaiting one,
  *                                       or a correction of a bed recorded
  *                                       wrongly (adt.bed or patient.write)
+ *   GET  /api/adt/move-options          the Move screen's wards, beds,
+ *                                       authorisers and covered departments
+ *   GET  /api/adt/admissions/{id}/location
+ *                                       where the admission lies now
+ *   POST /api/adt/admissions/{id}/bed-change
+ *                                       another bed, same treating department
+ *                                       (adt.bed or patient.write)
+ *   POST /api/adt/transfers             another treating department
+ *                                       (adt.transfer or patient.write)
  *
  * The admission itself is POST /api/admissions/admit (the admission form's
  * own route, not under /api/adt). With ORB_ADT on, GET /api/admissions/options
@@ -24,7 +34,7 @@
  * PIN into this form there and then. A name alone is refused. The PIN is
  * sent once and never kept: the form clears it after every send.
  */
-import { adtPost } from './index'
+import { adtGet, adtPost, toAdtError } from './index'
 
 /** What placing a patient in a bed needs, besides choosing it. */
 export type BedNeed = 'out_of_service_reason' | 'not_clean_reason' | 'terminal_clean_authorisation'
@@ -338,4 +348,157 @@ export function assignBed(admissionId: string, request: AssignBedRequest,
   key: string): Promise<PlacedAdmission> {
   return adtPost<PlacedAdmission>(`/admissions/${encodeURIComponent(admissionId)}/bed`,
     request, key)
+}
+
+// ── Moves (adt-6a) ───────────────────────────────────────────────────────────
+
+/** GET /api/adt/move-options: no patient data. */
+export interface MoveOptions {
+  master: AdmissionMaster
+  /** Departments with clinical cover: where a transfer may go (rule C). */
+  departments: string[]
+}
+
+export function getMoveOptions(): Promise<MoveOptions> {
+  return adtGet<MoveOptions>('/move-options')
+}
+
+/** What keeping the current place on a transfer resolves to in bed setup,
+ *  read the way the server's writer resolves it: a typed, unlinked ward that
+ *  matches a ward of bed setup is that ward. */
+export interface KeptPlace {
+  /** The ward's code in bed setup, or null when the place matches none. */
+  ward: string | null
+  ward_department: string | null
+  bed: string | null
+  /** Housekeeping records the bed out of service: keeping it needs a reason. */
+  out_of_service: boolean
+}
+
+/** Where an admission lies now (GET /api/adt/admissions/{id}/location). */
+export interface AdmissionLocation {
+  admission_id: string
+  department: string | null
+  ward: string | null
+  bed: string | null
+  ward_id: string | null
+  bed_id: string | null
+  ward_department: string | null
+  linked: boolean
+  awaiting_bed: boolean
+  boarder: boolean
+  kept_place?: KeptPlace | null
+}
+
+export function getAdmissionLocation(admissionId: string): Promise<AdmissionLocation> {
+  return adtGet<AdmissionLocation>(`/admissions/${encodeURIComponent(admissionId)}/location`)
+}
+
+/** The body of a bed change; a transfer adds its own fields. */
+export interface MoveRequest {
+  bed_id?: string
+  ward_id?: string
+  ward?: string
+  bed?: string
+  extra_bed?: boolean
+  /** The bed the screen showed (null for none). Always sent. */
+  expected_bed_id: string | null
+  reason: string
+  moved_at?: string
+  notes?: string
+  out_of_service_reason?: string
+  boarder_acknowledged?: boolean
+  not_clean_reason?: string
+  terminal_clean_authorised_by?: string
+  terminal_clean_reason?: string
+  terminal_clean_authoriser_pin?: string
+}
+
+export interface TransferRequest extends MoveRequest {
+  admission_id: string
+  to_department: string
+  /** Moved off the old bed, waiting for a bed on the receiving ward. */
+  awaiting_bed?: boolean
+  /** The department changes; the patient stays where they lie. */
+  keep_location?: boolean
+}
+
+/** What a move answers. A replay carries only `replayed`, `admission_id`
+ *  and the movement's id, type and time: the chart may already have been
+ *  handed over to another department. */
+export interface MoveResult {
+  replayed: boolean
+  admission_id: string
+  movement: { id: string; movement_type: string; moved_at?: string | null; [key: string]: unknown }
+  patient_id?: string
+  current_department?: string | null
+  current_ward?: string | null
+  current_bed?: string | null
+  ward_id?: string | null
+  bed_id?: string | null
+  linked?: boolean
+  awaiting_bed?: boolean
+  boarder?: boolean
+  department_changed?: boolean
+}
+
+/** The placement fields of a move for the picker's choice. 'No bed yet' is
+ *  only for a transfer; a bed change always names a bed. */
+export function movePlacement(master: AdmissionMaster | null | undefined, choice: BedChoice,
+  { allowAwaiting }: { allowAwaiting: boolean }): Partial<TransferRequest> {
+  const placed = bedChoicePayload(master, choice)
+  const out: Partial<TransferRequest> = {}
+  if (placed.ward_id) out.ward_id = placed.ward_id
+  else if (placed.ward) out.ward = placed.ward
+  if (placed.bed_id) out.bed_id = placed.bed_id
+  else if (placed.bed) out.bed = placed.bed
+  if (placed.awaiting_bed && allowAwaiting) out.awaiting_bed = true
+  if (placed.extra_bed) out.extra_bed = true
+  if (placed.boarder_acknowledged) out.boarder_acknowledged = true
+  if (placed.out_of_service_reason) out.out_of_service_reason = placed.out_of_service_reason
+  if (placed.not_clean_reason) out.not_clean_reason = placed.not_clean_reason
+  if (placed.terminal_clean_authorised_by) {
+    out.terminal_clean_authorised_by = placed.terminal_clean_authorised_by
+    out.terminal_clean_reason = placed.terminal_clean_reason
+    if (placed.terminal_clean_authoriser_pin) {
+      out.terminal_clean_authoriser_pin = placed.terminal_clean_authoriser_pin
+    }
+  }
+  return out
+}
+
+/** Move an admitted patient to another bed, keeping the treating department.
+ *  Throws AdtApiError; branch on its `code`. */
+export function changeBed(admissionId: string, request: MoveRequest,
+  key: string): Promise<MoveResult> {
+  return adtPost<MoveResult>(`/admissions/${encodeURIComponent(admissionId)}/bed-change`,
+    request, key)
+}
+
+/** Transfer an admitted patient to another treating department. Throws
+ *  AdtApiError; branch on its `code`. */
+export function transferAdmission(request: TransferRequest, key: string): Promise<MoveResult> {
+  return adtPost<MoveResult>('/transfers', request, key)
+}
+
+/** The words for a failed move: the server's own words when it gave them. */
+export function moveFailureWords(err: unknown): string {
+  const failure = toAdtError(err)
+  if (failure.isUnreachable) {
+    return 'Could not reach the server, so it is not known whether the move was recorded. '
+      + 'Send it again: the same move is never recorded twice.'
+  }
+  // A 403 that carries its own refusal (a signing PIN that is not right) is
+  // printed in its words; only a refused permission reads as the role.
+  if (failure.isForbidden && (failure.code === 'permission_denied' || failure.code === 'http_403')) {
+    return 'Your role cannot make this move.'
+  }
+  if (failure.code === 'state_changed') {
+    return 'Where this patient lies changed since this screen opened. Close it and open it again.'
+  }
+  if (failure.code === 'idempotency_key_reused') {
+    return 'This screen was already used for another move. Close it and open it again.'
+  }
+  if (failure.isNotFound) return 'This patient is not on your list, so they cannot be moved from here.'
+  return failure.message || 'The move was not recorded. Nothing was changed.'
 }

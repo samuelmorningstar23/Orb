@@ -258,7 +258,10 @@ def _load_qr_path(patient_id: str):
     db = get_db()
     try:
         return db.execute(
-            "SELECT qr_code_path FROM discharge_summaries WHERE patient_id = ? ORDER BY discharged_at DESC LIMIT 1",
+            # Latest summary first, id breaking a tie (two stays discharged in
+            # one second), so a readmitted patient's code is the last stay's.
+            "SELECT qr_code_path FROM discharge_summaries WHERE patient_id = ? "
+            "ORDER BY discharged_at DESC, id DESC LIMIT 1",
             (patient_id,),
         ).fetchone()
     finally:
@@ -487,10 +490,25 @@ def list_discharged(
             f"(SELECT datetime(e.ended_at) FROM ({summary_less_ends_sql()}) e "
             "WHERE e.patient_id = p.id ORDER BY julianday(e.ended_at) DESC LIMIT 1)"
         )
+        # ONE row per patient (opd-17b). A patient discharged twice has two
+        # summaries, and the plain LEFT JOIN listed them twice, so the page
+        # held more rows than X-Total-Count said. The row carries the latest
+        # summary, and its time is the later of that summary and the latest
+        # end recorded with no summary. For a patient with one stay that is
+        # exactly the old COALESCE (only one of the two exists).
+        latest_summary = (
+            "(SELECT ds2.id FROM discharge_summaries ds2 WHERE ds2.patient_id = p.id "
+            "ORDER BY julianday(ds2.discharged_at) DESC, ds2.id DESC LIMIT 1)"
+        )
+        ended_at = (
+            "(SELECT t.at FROM (SELECT ds.discharged_at AS at "
+            f"UNION ALL SELECT {ended_without_summary} AS at) t "
+            "WHERE t.at IS NOT NULL ORDER BY julianday(t.at) DESC LIMIT 1)"
+        )
         patients = db.execute(
             f"""SELECT p.id, p.name, p.mrn, p.bed, p.ward, p.diagnosis,
                        p.age, p.sex, p.admission_date,
-                       COALESCE(ds.discharged_at, {ended_without_summary}) AS discharged_at,
+                       {ended_at} AS discharged_at,
                        ds.summary,
                        (SELECT a.id FROM admissions a WHERE a.patient_id = p.id
                          ORDER BY a.created_at DESC, a.rowid DESC LIMIT 1) AS admission_id,
@@ -501,9 +519,9 @@ def list_discharged(
                                 WHERE c.patient_id = p.id
                                   AND c.status = 'pending') AS has_pending_charges
                 FROM patients p
-                LEFT JOIN discharge_summaries ds ON ds.patient_id = p.id
+                LEFT JOIN discharge_summaries ds ON ds.id = {latest_summary}
                 WHERE p.status = 'discharged' {dept_clause}
-                ORDER BY COALESCE(ds.discharged_at, {ended_without_summary}) DESC
+                ORDER BY discharged_at DESC
                 LIMIT ? OFFSET ?""",
             dept_param + (limit, offset),
         ).fetchall()

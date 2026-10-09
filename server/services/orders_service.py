@@ -38,6 +38,14 @@ result or cancel an order behind the laboratory's back, and a 'completed'
 order is billed (billing_service._COMPLETED_ORDER_STATUSES) before any test
 was run. Orders with no laboratory items (a bedside test, an order activated
 while the laboratory was off, an unmapped code) keep the free-text path.
+
+Outpatient investigations (opd-11). POST /api/opd/visits/{visit_id}/orders
+calls create_order with opd_visit_id: the order carries the visit, and the
+visit is re-read inside the order's own transaction (_check_opd_visit), so an
+order is never written against a cancelled or finished visit, another
+patient's visit, a patient admitted meanwhile, or a test already ordered on
+the visit. The orders routes (routes/orders_routes.py) are unchanged and never
+pass it.
 """
 import json
 import logging
@@ -92,6 +100,54 @@ class OrderManagedByLab(ValueError):
 
     def __init__(self, message: str = LAB_MANAGED_MESSAGE):
         super().__init__(message)
+
+
+class OpdVisitOrderRefused(ValueError):
+    """An order tied to an outpatient visit (opd_visit_id) that the visit no
+    longer allows (opd-11). Raised inside the order's own transaction, so
+    nothing is written. `code` is detail.error, `status` the HTTP status the
+    OPD route answers with. A ValueError subclass so a caller that only knows
+    "bad request" still refuses."""
+
+    def __init__(self, code: str, message: str, status: int = 409):
+        super().__init__(message)
+        self.code = code
+        self.status = status
+
+
+def _check_opd_visit(conn, opd_visit_id: str, patient_id: str, *,
+                     code_system: str | None, code: str | None) -> None:
+    """The visit an outpatient order names, read in the order's own
+    transaction: it exists and is this patient's, it was not cancelled or
+    finished, the patient has no active admission anywhere (the inpatient
+    chart owns their orders then), and the same test is not already ordered
+    on it (a second tap of Order is not a second blood draw)."""
+    visit = conn.execute(
+        "SELECT id, patient_id, status FROM opd_visits WHERE id = ?", (opd_visit_id,)
+    ).fetchone()
+    if visit is None or visit["patient_id"] != patient_id:
+        raise OpdVisitOrderRefused("visit_not_found", "OPD visit not found", status=404)
+    if visit["status"] == "cancelled":
+        raise OpdVisitOrderRefused("visit_cancelled",
+                                   "This visit was cancelled; nothing can be ordered on it.")
+    if visit["status"] == "completed":
+        raise OpdVisitOrderRefused(
+            "visit_completed",
+            "This visit is finished. Order from the patient's current visit.")
+    if conn.execute(
+        "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
+        (patient_id,),
+    ).fetchone() is not None:
+        raise OpdVisitOrderRefused(
+            "patient_admitted",
+            "This patient is now admitted. Order from the inpatient chart.")
+    if code and conn.execute(
+        "SELECT 1 FROM orders WHERE opd_visit_id = ? AND upper(code_system) = ? AND code = ? "
+        "AND status != 'cancelled' LIMIT 1",
+        (opd_visit_id, (code_system or "").upper(), code),
+    ).fetchone() is not None:
+        raise OpdVisitOrderRefused(
+            "already_ordered", "This test is already ordered on this visit.")
 
 
 def _now() -> str:
@@ -158,12 +214,24 @@ def create_order(
     detail: dict | None = None,
     status: str = "draft",
     pre_persist_gate=None,
+    opd_visit_id: str | None = None,
+    in_transaction=None,
 ) -> dict:
     """Create a new order (default status 'draft') and write an order_events row.
 
     Validates any supplied code against `terminology`. Unknown codes are
     rejected. `lab`/`imaging`/`medication`/`procedure` orders require a valid
     code; `nursing`/`other` orders may be free-text (no code).
+
+    `opd_visit_id` (opd-11) ties the order to an outpatient visit
+    (orders.opd_visit_id, migration 50). The write then runs in an immediate
+    transaction that first re-reads the visit (_check_opd_visit) and raises
+    OpdVisitOrderRefused, writing nothing, when the visit is not this
+    patient's, was cancelled or finished, the patient is now admitted, or the
+    same code is already ordered on it. `in_transaction(conn, order)` runs
+    inside the same transaction after the order and its event are written
+    (the OPD route's audit row); if it raises, nothing is kept. With both left
+    as None the order is written exactly as before.
     """
     if order_type not in {"lab", "imaging", "medication", "procedure", "nursing", "other"}:
         raise ValueError(f"Invalid order_type: {order_type}")
@@ -207,18 +275,39 @@ def create_order(
     now = _now()
     detail_json = json.dumps(detail) if detail is not None else None
 
-    with db_session() as conn:
-        conn.execute(
-            """INSERT INTO orders
-               (id, patient_id, order_type, code, code_system, description, priority,
-                status, ordered_by, source, detail_json, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (order_id, patient_id, order_type, code,
-             code_system.upper() if code_system else None,
-             description, priority, status, ordered_by, source, detail_json, now, now),
-        )
-        _record_event(conn, order_id, None, status, ordered_by, "order created")
-        row = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+    if opd_visit_id is None and in_transaction is None:
+        with db_session() as conn:
+            conn.execute(
+                """INSERT INTO orders
+                   (id, patient_id, order_type, code, code_system, description, priority,
+                    status, ordered_by, source, detail_json, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (order_id, patient_id, order_type, code,
+                 code_system.upper() if code_system else None,
+                 description, priority, status, ordered_by, source, detail_json, now, now),
+            )
+            _record_event(conn, order_id, None, status, ordered_by, "order created")
+            row = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+    else:
+        with db_session(immediate=True) as conn:
+            if opd_visit_id is not None:
+                _check_opd_visit(conn, opd_visit_id, patient_id,
+                                 code_system=code_system, code=code)
+            conn.execute(
+                """INSERT INTO orders
+                   (id, patient_id, order_type, code, code_system, description, priority,
+                    status, ordered_by, source, detail_json, created_at, updated_at,
+                    opd_visit_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (order_id, patient_id, order_type, code,
+                 code_system.upper() if code_system else None,
+                 description, priority, status, ordered_by, source, detail_json, now, now,
+                 opd_visit_id),
+            )
+            _record_event(conn, order_id, None, status, ordered_by, "order created")
+            row = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+            if in_transaction is not None:
+                in_transaction(conn, dict(row))
     created = dict(row)
     _after_lab_activation(created, ordered_by)
     return created
@@ -229,7 +318,8 @@ def create_order(
 # ══════════════════════════════════════════════════════════════════════════
 
 def transition_order(order_id: str, to_status: str, actor_id: str | None = None,
-                     detail: str | None = None) -> dict:
+                     detail: str | None = None, *, before_move=None,
+                     in_transaction=None) -> dict:
     """Guarded, idempotent state transition.
 
     Raises ValueError for an unknown order or an illegal transition, and
@@ -241,6 +331,12 @@ def transition_order(order_id: str, to_status: str, actor_id: str | None = None,
     IMMEDIATE (lis-7): the "does the laboratory manage it?" read and the write
     are one transaction, so an order the laboratory takes in at the same
     instant cannot also be moved by hand.
+
+    `before_move(conn, order)` runs in the transaction after the laboratory
+    guard and before anything is written, and may raise to refuse (the OPD
+    cancel checks the order is its visit's). `in_transaction(conn, prior,
+    moved)` runs after a real move is written, before commit (its audit row),
+    and is not called for a no-op. Both None: exactly the old behaviour.
     """
     if to_status not in LEGAL_TRANSITIONS:
         raise ValueError(f"Unknown target status: {to_status}")
@@ -253,6 +349,9 @@ def transition_order(order_id: str, to_status: str, actor_id: str | None = None,
         # ── The laboratory's own orders (lis-7) ──
         if to_status != "active" and is_lab_managed(conn, order_id):
             raise OrderManagedByLab()
+
+        if before_move is not None:
+            before_move(conn, dict(order))
 
         current = order["status"]
 
@@ -280,6 +379,8 @@ def transition_order(order_id: str, to_status: str, actor_id: str | None = None,
         )
         _record_event(conn, order_id, current, to_status, actor_id, detail)
         row = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+        if in_transaction is not None:
+            in_transaction(conn, dict(order), dict(row))
     moved = dict(row)
     if to_status == "active":
         _after_lab_activation(moved, actor_id)
@@ -446,6 +547,17 @@ def list_orders(patient_id: str, status: str | None = None) -> list[dict]:
                 "SELECT * FROM orders WHERE patient_id = ? ORDER BY created_at DESC",
                 (patient_id,),
             ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def list_visit_orders(opd_visit_id: str) -> list[dict]:
+    """The orders raised from one outpatient visit (opd-11), oldest first, so
+    an investigation slip reads in the order the doctor asked."""
+    with db_session() as conn:
+        rows = conn.execute(
+            "SELECT * FROM orders WHERE opd_visit_id = ? ORDER BY created_at ASC, id ASC",
+            (opd_visit_id,),
+        ).fetchall()
         return [dict(r) for r in rows]
 
 

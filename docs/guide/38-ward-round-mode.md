@@ -292,26 +292,26 @@ The module docstring (`:1-24`) names the three load-bearing rules: bed order is 
 
 The docstring (`:1-22`) states the two rules: **no invented clinical scoring** (every clinical judgement is a field the server computed) and **absence of data is a finding, not a clean bill**.
 
-#### `HANDOVER_HOUR` / `CLOSED_INSIGHT_STATES` / `DOCUMENTATION_TYPES` / `SEVERITY_RANK`: `src/components/round/roundSummary.ts:30` / `:33` / `:36` / `:70`
+#### `HANDOVER_HOUR` / `CLOSED_INSIGHT_STATES` / `DOCUMENTATION_TYPES` / `SEVERITY_RANK`: `src/components/round/roundSummary.ts:41` / `:44` / `:47` / `:81`
 **Signature:** `20` / `Set(['dismissed','acted','resolved','superseded'])` / `Set(['note','scribe'])` / `{critical:0, warning:1, info:2}`
 **Does:** The four constants the module's judgement is made of.
 **On screen:** `HANDOVER_HOUR` is printed through `formatClinicalTime`, so the first column's heading reads "Since 08:00 PM yesterday", on the same 12-hour clock as the rows under it. `SEVERITY_RANK` is the order of the issues list. `CLOSED_INSIGHT_STATES` decides which Sage flags appear at all.
 **Breaks if you change it:** move `HANDOVER_HOUR` to 22 and a 21:00 event silently drops out of "what changed overnight". Add a state to `CLOSED_INSIGHT_STATES` that Sage does not actually use and every insight in that state disappears from the round with no trace. Drop `'scribe'` from `DOCUMENTATION_TYPES` and a doctor who dictated through Scribe is still told "No plan documented today yet".
 
-#### `startOfLocalDay` / `sameLocalDay`: `src/components/round/roundSummary.ts:72` / `:76`
+#### `startOfLocalDay` / `sameLocalDay`: `src/components/round/roundSummary.ts:83` / `:87`
 **Signature:** `(Date) -> Date` / `(a, b) -> boolean`
 **Does:** Local-midnight helpers.
 **On screen:** they decide whether the window label says "today" or "yesterday", whether a note counts as today's plan, and the "Day N" number.
 **Breaks if you change it:** anything UTC-based here shifts every one of those by 5½ hours in India.
 
-#### `overnightWindow`: `src/components/round/roundSummary.ts:86`
+#### `overnightWindow`: `src/components/round/roundSummary.ts:97`
 **Signature:** `(now) -> {start: Date, sinceLabel: string}`
 **Does:** The period the change feed covers, back to the most recent 20:00, which is yesterday's for a morning round and today's after 20:00.
 **On screen:** **the first column's heading, verbatim**, "Since 08:00 PM yesterday" (`src/components/round/RoundSummaryView.tsx:136-138`), and the empty-state sentence "No notes, doses, orders or alerts were charted since 08:00 PM yesterday." (`:150`). The label used to be a 24-hour "20:00", which sat over rows printed as "06:40 AM" (`src/components/round/roundSummary.ts:89-90`).
 **Why the label is a field and not a format call at the render site:** the doctor must know **exactly** what period the feed covers rather than trusting a vague "recent". "Recent" on a clinical screen is an invitation to assume.
 **Breaks if you change it:** compute the boundary in UTC and in IST it lands at 01:30, mid-round, so the feed would start excluding the evening the doctor is asking about. Pinned by `roundSummary.test.ts:71-83`.
 
-#### `changesSince`: `src/components/round/roundSummary.ts:102`
+#### `changesSince`: `src/components/round/roundSummary.ts:113`
 **Signature:** `(story, window, limit = 6) -> {events, hidden}`
 **Does:** In-window events, newest first, capped. `hidden` is what the cap removed.
 **On screen:** the first column's list (`src/components/round/RoundSummaryView.tsx:154-164`), one row per event with a time and a title, and, when `hidden > 0`, the line "**3 more events overnight: open the full chart to see them.**" (`:165-170`). The view calls it with `limit = 5` (`:108`), not the default.
@@ -319,14 +319,14 @@ The docstring (`:1-22`) states the two rules: **no invented clinical scoring** (
 **Why `hidden` exists at all:** "3 more overnight" and "nothing else happened" are **different clinical facts**, and a screen that does not scroll must never silently truncate.
 **Breaks if you change it:** returning a bare array removes the only signal that the column is incomplete. Defaulting an undated event to `now` puts an event of unknown age at the top of "what changed overnight". Pinned by `roundSummary.test.ts:98-125`.
 
-#### `openInsightsFor`: `src/components/round/roundSummary.ts:122`
+#### `openInsightsFor`: `src/components/round/roundSummary.ts:135`
 **Signature:** `(patientId, insights) -> SageInsight[]`
 **Does:** Filters the whole-ward insight list down to this patient's open ones.
 **On screen:** the Sage rows in **both** the issues column and the decisions column.
 **Why it takes a nullable id:** `decisionsToday` may be called with no card at all, and returning nothing is correct there.
 **Breaks if you change it:** drop the `patient_id` equality and another patient's Sage flag renders under this patient's name at a bedside, a cross-patient safety display error, and the sort of thing the ward would (correctly) never trust the panel again after.
 
-#### `currentIssues`: `src/components/round/roundSummary.ts:152`
+#### `currentIssues`: `src/components/round/roundSummary.ts:165`
 **Signature:** `(card: NursePatientCard | null, insights) -> RoundIssue[]`, sorted critical → warning → info
 **Does:** Everything wrong with this patient right now.
 **On screen:** the **middle column**. Each issue is a coloured dot, a bold label, the severity **word** (`src/components/round/RoundSummaryView.tsx:195`, the word as well as the colour), and a detail line.
@@ -340,7 +340,7 @@ The docstring (`:1-22`) states the two rules: **no invented clinical scoring** (
 **Why the empty list is so tightly constrained:** it returns empty **only** when the server actually scored the patient and found nothing. An empty list on a clinical screen reads as "nothing wrong", and the product has already been bitten by this once (`src/components/errorStates.test.tsx`).
 **Breaks if you change it:** return `[]` when `card` is null and a patient the ward board did not carry renders as "No active issues", a confident all-clear derived from a missing row. Re-derive NEWS2 here instead of passing the server's through and you get a second, subtly different implementation that disagrees with the nurse's screen at 3am. Pinned by `roundSummary.test.ts:127-226`.
 
-#### `decisionsToday`: `src/components/round/roundSummary.ts:267`
+#### `decisionsToday`: `src/components/round/roundSummary.ts:282`
 **Signature:** `(card, insights, hasPlanToday) -> RoundDecision[]`
 **Does:** What this round has to decide.
 **On screen:** the **third column**. Three sources:
@@ -351,14 +351,14 @@ The docstring (`:1-22`) states the two rules: **no invented clinical scoring** (
 **Why it is deliberately short:** a list of "consider reviewing" items is noise at a bedside. Only concrete, actionable things get a line.
 **Breaks if you change it:** derive `hasPlanToday` internally from the story and the "No plan documented today yet" line stays on screen for several seconds after the doctor saved her plan, which teaches her the save did not work.
 
-#### `documentedToday`: `src/components/round/roundSummary.ts:316`
+#### `documentedToday`: `src/components/round/roundSummary.ts:331`
 **Signature:** `(story, now) -> boolean`
 **Does:** Has a `note` or `scribe` event been written for this patient today?
 **On screen:** it is the **only** thing that removes the "No plan documented today yet" line from the third column.
 **Why doses and orders do not count (stated at `:298-301`):** treating a patient is not the same as reviewing one, and conflating them silences the prompt on **exactly the patients who are being managed but not seen**.
 **Breaks if you change it:** widen `DOCUMENTATION_TYPES` to include `medication` or `order` and the round stops asking for a plan on the sickest patients on the ward, who are the ones with the most orders. Pinned by `roundSummary.test.ts:279-292`.
 
-#### `admissionDay`: `src/components/round/roundSummary.ts:327`
+#### `admissionDay`: `src/components/round/roundSummary.ts:342`
 **Signature:** `(admissionDate, now) -> number | null`
 **Does:** Ward day number, admission date is **day 1**, counted the way a whiteboard counts it.
 **On screen:** the "Day 4" segment of the patient header meta line (`src/components/round/RoundSummaryView.tsx:123`). Null renders nothing at all rather than "Day null".

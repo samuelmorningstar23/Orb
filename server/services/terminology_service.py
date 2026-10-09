@@ -54,6 +54,219 @@ def get_display(code_system: str, code: str) -> str | None:
 
 
 # ══════════════════════════════════════════════════════════════════════════
+#  SEARCH: THE OUTPATIENT PICKERS (opd-11, W6-A, 9 October 2026)
+# ══════════════════════════════════════════════════════════════════════════
+# GET /api/opd/terminology/search reads these. Two lists, both read only:
+#
+#   * DIAGNOSIS: ICD-10 codes, and SNOMED CT disorders and findings (a SNOMED
+#     procedure, body structure or substance is not a diagnosis). A diagnosis
+#     is free text first (ruling OPD-N11): the picker only offers a code to go
+#     with the text, and an unknown code is still saved, as unvalidated
+#     (opd_service.normalise_diagnoses).
+#   * INVESTIGATION: what a clinic may order for an outpatient, laboratory
+#     tests and imaging only. No medicine (an outpatient prescription is
+#     opd-12, behind the allergy review and the interlocks), no procedure, no
+#     nursing order, and no bedside test (ruling LIS-R18: ketones, VBG and ABG
+#     are done at a ward bedside, which a clinic does not have). While the
+#     laboratory module is on, a laboratory test comes from the laboratory's
+#     own catalogue only, the rule the Orders screen keeps, so the laboratory
+#     can take in every test a clinic orders.
+#
+# describe_investigation is the server's own check on a code a clinic sends:
+# the route trusts the order type and the words it returns, never the
+# client's. Nothing here scores, bands or advises.
+
+SEARCH_MIN_CHARS = 2
+SEARCH_MAX_RESULTS = 20
+SEARCH_KINDS = ("diagnosis", "investigation")
+DIAGNOSIS_CODE_SYSTEMS = ("ICD10", "SNOMED")
+#: SNOMED CT semantic tags that name a diagnosis.
+_SNOMED_DIAGNOSIS_TAGS = ("(disorder)", "(finding)")
+#: The order types an outpatient clinic may raise as an investigation.
+INVESTIGATION_ORDER_TYPES = ("lab", "imaging")
+#: Orb's local codes say what they are in their prefix.
+_LOCAL_PREFIX_TYPES = (
+    ("ORB-LAB-", "lab"),
+    ("ORB-IMG-", "imaging"),
+    ("ORB-PROC-", "procedure"),
+    ("ORB-MED-", "medication"),
+)
+#: Orb's local laboratory codes for tests done at the bedside (ruling LIS-R18).
+BEDSIDE_LOCAL_CODES = frozenset({"ORB-LAB-ABG", "ORB-LAB-VBG", "ORB-LAB-BLOOD-KETONES"})
+
+
+def _like_pattern(text: str) -> str:
+    return "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
+def _has_table(conn, name: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+    ).fetchone() is not None
+
+
+def _local_type(code: str) -> str | None:
+    upper = (code or "").upper()
+    for prefix, kind in _LOCAL_PREFIX_TYPES:
+        if upper.startswith(prefix):
+            return kind
+    return None
+
+
+def _catalogue_row(conn, code_system: str, code: str):
+    if not _has_table(conn, "lab_tests"):
+        return None
+    return conn.execute(
+        "SELECT name, performed_at, active, orderable FROM lab_tests "
+        "WHERE code_system = ? AND code = ?",
+        (code_system, code),
+    ).fetchone()
+
+
+def describe_investigation(code_system: str, code: str, *, lab_catalogue: bool = False) -> dict:
+    """Whether a clinic may order this code as an outpatient investigation.
+
+    Returns {order_type, display, refusal}: `refusal` is None when it may,
+    else one of 'unknown_code' (not active in terminology, nor in the
+    laboratory catalogue while it is in use), 'not_an_investigation' (a
+    medicine, a procedure, a diagnosis or anything else that is not a
+    laboratory test or imaging), 'bedside_test' (ruling LIS-R18) or
+    'not_in_lab_catalogue' (the laboratory module is on and the laboratory
+    does not offer this test). `display` is the stored wording, which the
+    order carries as its description; the client's own text is never used.
+    """
+    system = (code_system or "").strip().upper()
+    value = (code or "").strip()
+    out = {"order_type": None, "display": None, "refusal": "unknown_code"}
+    if not system or not value:
+        return out
+    with db_session() as conn:
+        term = conn.execute(
+            "SELECT display FROM terminology WHERE code_system = ? AND code = ? AND is_active = 1",
+            (system, value),
+        ).fetchone()
+        catalogue = _catalogue_row(conn, system, value) if system in ("LOINC", "LOCAL") else None
+    in_catalogue = bool(catalogue and catalogue["active"] and catalogue["orderable"])
+    if system == "LOINC":
+        kind = "lab"
+    elif system == "LOCAL":
+        kind = _local_type(value) or ("lab" if catalogue is not None else None)
+    else:
+        kind = None
+    display = (catalogue["name"] if in_catalogue else None) or (term["display"] if term else None)
+    if term is None and not in_catalogue:
+        return out
+    out.update(order_type=kind, display=display, refusal=None)
+    if kind not in INVESTIGATION_ORDER_TYPES:
+        out["refusal"] = "not_an_investigation"
+    elif kind == "lab" and (value.upper() in BEDSIDE_LOCAL_CODES
+                            or (catalogue is not None and catalogue["performed_at"] == "ward_poct")):
+        out["refusal"] = "bedside_test"
+    elif kind == "lab" and lab_catalogue and not in_catalogue:
+        out["refusal"] = "not_in_lab_catalogue"
+    return out
+
+
+def search_terms(query: str, *, kind: str, limit: int = SEARCH_MAX_RESULTS,
+                 lab_catalogue: bool = False) -> dict:
+    """Codes whose wording or code contains `query` (case ignored), for the
+    outpatient pickers. `kind` is 'diagnosis' or 'investigation' (ValueError
+    otherwise). Fewer than SEARCH_MIN_CHARS characters searches nothing.
+
+    Returns {kind, results, truncated, min_chars}; each result is
+    {code_system, code, display} and, for an investigation, its order_type.
+    No patient data is read or returned."""
+    if kind not in SEARCH_KINDS:
+        raise ValueError(f"kind must be one of {', '.join(SEARCH_KINDS)}")
+    text = (query or "").strip()[:120]
+    limit = max(1, min(int(limit or SEARCH_MAX_RESULTS), SEARCH_MAX_RESULTS))
+    answer = {"kind": kind, "results": [], "truncated": False, "min_chars": SEARCH_MIN_CHARS}
+    if len(text) < SEARCH_MIN_CHARS:
+        return answer
+    pattern = _like_pattern(text.lower())
+    rows: list[dict] = []
+    with db_session() as conn:
+        if kind == "diagnosis":
+            tags = " OR ".join("display LIKE ?" for _ in _SNOMED_DIAGNOSIS_TAGS)
+            found = conn.execute(
+                f"""SELECT code_system, code, display FROM terminology
+                     WHERE is_active = 1
+                       AND (code_system = 'ICD10' OR (code_system = 'SNOMED' AND ({tags})))
+                       AND (lower(display) LIKE ? ESCAPE '\\' OR lower(code) LIKE ? ESCAPE '\\')
+                     ORDER BY CASE WHEN lower(code) = ? THEN 0
+                                   WHEN lower(display) LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END,
+                              code_system, display, code
+                     LIMIT ?""",
+                (*(f"%{t}" for t in _SNOMED_DIAGNOSIS_TAGS), pattern, pattern,
+                 text.lower(), _like_pattern(text.lower())[1:], limit + 1),
+            ).fetchall()
+            rows = [{"code_system": r["code_system"], "code": r["code"],
+                     "display": r["display"]} for r in found]
+        else:
+            rows = _investigation_rows(conn, text.lower(), pattern, limit + 1,
+                                       lab_catalogue=lab_catalogue)
+    answer["truncated"] = len(rows) > limit
+    answer["results"] = rows[:limit]
+    return answer
+
+
+def _investigation_rows(conn, text: str, pattern: str, limit: int, *,
+                        lab_catalogue: bool) -> list[dict]:
+    """Laboratory tests and imaging a clinic may order, best match first.
+    Every row also passes describe_investigation's rules."""
+    bedside = sorted(BEDSIDE_LOCAL_CODES)
+    marks = ",".join("?" for _ in bedside)
+    poct = ""
+    params_poct: tuple = ()
+    if _has_table(conn, "lab_tests"):
+        poct = (" AND NOT EXISTS (SELECT 1 FROM lab_tests p WHERE p.code_system = t.code_system "
+                "AND p.code = t.code AND p.performed_at = 'ward_poct')")
+    rows: list[dict] = []
+    if lab_catalogue and _has_table(conn, "lab_tests"):
+        for r in conn.execute(
+            """SELECT code_system, code, name FROM lab_tests
+                WHERE active = 1 AND orderable = 1 AND performed_at = 'lab'
+                  AND (lower(name) LIKE ? ESCAPE '\\' OR lower(short_name) LIKE ? ESCAPE '\\'
+                       OR lower(code) LIKE ? ESCAPE '\\')
+                ORDER BY CASE WHEN lower(code) = ? THEN 0 ELSE 1 END, name, code
+                LIMIT ?""",
+            (pattern, pattern, pattern, text, limit),
+        ).fetchall():
+            if r["code"].upper() in BEDSIDE_LOCAL_CODES:
+                continue
+            rows.append({"code_system": r["code_system"], "code": r["code"],
+                         "display": r["name"], "order_type": "lab"})
+        lab_sql = None
+    else:
+        lab_sql = (f"""SELECT t.code_system, t.code, t.display, 'lab' AS order_type
+                        FROM terminology t
+                       WHERE t.is_active = 1
+                         AND (t.code_system = 'LOINC'
+                              OR (t.code_system = 'LOCAL' AND upper(t.code) LIKE 'ORB-LAB-%'))
+                         AND upper(t.code) NOT IN ({marks}){poct}
+                         AND (lower(t.display) LIKE ? ESCAPE '\\' OR lower(t.code) LIKE ? ESCAPE '\\')""",
+                   (*bedside, pattern, pattern))
+    imaging_sql = ("""SELECT t.code_system, t.code, t.display, 'imaging' AS order_type
+                       FROM terminology t
+                      WHERE t.is_active = 1 AND t.code_system = 'LOCAL'
+                        AND upper(t.code) LIKE 'ORB-IMG-%'
+                        AND (lower(t.display) LIKE ? ESCAPE '\\' OR lower(t.code) LIKE ? ESCAPE '\\')""",
+                   (pattern, pattern))
+    for sql, params in ([lab_sql] if lab_sql else []) + [imaging_sql]:
+        for r in conn.execute(
+            f"SELECT * FROM ({sql}) ORDER BY CASE WHEN lower(code) = ? THEN 0 ELSE 1 END, "
+            "display, code LIMIT ?",
+            (*params, text, limit),
+        ).fetchall():
+            rows.append({"code_system": r["code_system"], "code": r["code"],
+                         "display": r["display"], "order_type": r["order_type"]})
+    rows.sort(key=lambda r: (0 if r["code"].lower() == text else 1,
+                             0 if r["display"].lower().startswith(text) else 1,
+                             r["display"].lower(), r["code"]))
+    return rows[:limit]
+
+
+# ══════════════════════════════════════════════════════════════════════════
 #  CURATED STARTER SET
 # ══════════════════════════════════════════════════════════════════════════
 # (code_system, code, display) — all real codes / real displays.

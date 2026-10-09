@@ -413,6 +413,362 @@ def _adt_replay_on(db, plan: dict, user: dict, name: str) -> dict | None:
     }
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+#  The admission doors join the patient index (opd-5b, W6-B)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# ALWAYS ON, whatever the switches say: a hospital number (MRN) typed on the
+# admission form that is already on another record is refused with 409
+# 'mrn_in_use' naming nobody. It used to reach the UNIQUE constraint on
+# patients.mrn and come back as a raw 500 after the whole form was filled.
+#
+# WITH REGISTRATION ON (ORB_REGISTRATION, default off), both doors (the
+# admission form and Scribe's quick admission) behave as the registration desk
+# does (services/registration_service.py), so neither door can open a second
+# chart for a patient the index already holds:
+#   * the hospital number follows ORB_UHID_SOURCE (ruling OPD-N1). Hospital
+#     mode needs the typed number (422 uhid_required; never a random MRN) in
+#     the site's format; Orb mode issues it from the UHID series inside the
+#     admission's transaction (a typed one is 422 uhid_assigned_by_orb; 409
+#     uhid_series_not_configured until the series is set up);
+#   * the patient index is searched with what the form says (name, phone,
+#     date of birth or age, sex, the hospital number) through
+#     patient_matching.find_candidates_on, and the answer is judged by the
+#     desk's own rule (registration_service._review_needs, config.
+#     DUPLICATE_MODE, ruling OPD-S2 built strictest): the same hospital
+#     number is a hard refusal in every mode; 'block' (the shipped default)
+#     refuses a probable duplicate and a check that could not compare every
+#     record that may be a probable one; anything else the index found needs
+#     a duplicate_review naming every candidate with a reason, audited under
+#     patient_identity, with a worklist row per candidate. Every such refusal
+#     is 409 error 'possible_existing_patient' with the candidates as minimal
+#     index cards (no date of birth, only the phone's last 4 digits), shown
+#     only to a caller who holds registration.read; the disclosure is audited
+#     fail-closed in its own write, so a refusal whose record cannot be
+#     written is 503 and shows nobody;
+#   * the new patient's match keys are written in the same transaction, and a
+#     fail-closed patient_identity row records the check.
+# Admitting an existing patient onto their own record (opd-17a, opd-17c) is
+# not built yet, so the refusal says so; the override is the only way past a
+# reviewable match. With registration off none of this runs and the doors are
+# exactly as before, except the 409 above.
+
+#: The admission doors, as the audit names them.
+DOOR_ADMISSION_FORM = "admission_form"
+DOOR_SCRIBE_QUICK_ADMIT = "scribe_quick_admit"
+ADMISSION_DOORS = (DOOR_ADMISSION_FORM, DOOR_SCRIBE_QUICK_ADMIT)
+
+#: The one error word every index refusal at an admission door carries; the
+#: detail's 'reason' says which rule refused it.
+POSSIBLE_EXISTING_PATIENT = "possible_existing_patient"
+
+MRN_IN_USE_MESSAGE = (
+    "That hospital number is already on another record, so this admission was not "
+    "saved. Check the number on the patient's papers."
+)
+#: Added while registration is off, where a blank number is minted.
+MRN_IN_USE_BLANK_HINT = " Or leave it blank to give this patient a new one."
+#: Said on every index refusal: the route that would admit the existing
+#: patient onto their own record is not built yet (opd-17a, opd-17c).
+ADMIT_EXISTING_NOT_BUILT = (
+    "Admitting a patient who already has a record onto that record is not available "
+    "yet, so ask an administrator before admitting them."
+)
+
+
+class AdmissionRefused(Exception):
+    """A refusal at an admission door, with a machine word, plain words and the
+    HTTP status the routes answer with. Raised before the admission commits;
+    nothing of it is saved. Not a ValueError on purpose, so no route's broad
+    ValueError handler can turn it into a 500."""
+
+    def __init__(self, code: str, message: str, *, status: int = 409, **extra):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status = status
+        self.extra = extra
+
+    def detail(self) -> dict:
+        return {"error": self.code, "message": self.message, **self.extra}
+
+
+class _DoorRefusal(Exception):
+    """Carries an index refusal out of the admission's transaction, so its
+    disclosure audit is written on a write of its own (an audit row written
+    inside a rolled-back transaction is lost)."""
+
+    def __init__(self, refused: AdmissionRefused, *, metadata: dict, shown: bool):
+        super().__init__(refused.message)
+        self.refused = refused
+        self.metadata = metadata
+        self.shown = shown
+
+
+def _registration_on() -> bool:
+    """True while ORB_REGISTRATION is on (read at call time)."""
+    import config
+
+    return bool(config.feature_enabled("registration"))
+
+
+def _mrn_in_use() -> AdmissionRefused:
+    hint = "" if _registration_on() else MRN_IN_USE_BLANK_HINT
+    return AdmissionRefused("mrn_in_use", MRN_IN_USE_MESSAGE + hint, status=409)
+
+
+def _door_review(raw) -> dict | None:
+    """The duplicate_review an admission door may send past a reviewable
+    match: {decision: 'admit_new', candidate_ids: [...], reason}. None when
+    absent. Same reason rule as the registration desk."""
+    from services import registration_service as reg
+
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or raw.get("decision") != "admit_new":
+        raise AdmissionRefused(
+            "bad_duplicate_review",
+            "A duplicate review must say 'admit_new' and list the records you checked.",
+            status=422)
+    ids = raw.get("candidate_ids") or []
+    if not isinstance(ids, list) or not all(isinstance(i, str) and i.strip() for i in ids):
+        raise AdmissionRefused("bad_duplicate_review",
+                               "List the records you checked by their ids.", status=422)
+    reason = raw.get("reason")
+    reason = " ".join(reason.split()) if isinstance(reason, str) else ""
+    if len(reason) < reg.REASON_MIN_CHARS:
+        raise AdmissionRefused(
+            "override_reason_required",
+            f"Give a reason of at least {reg.REASON_MIN_CHARS} characters. It is the only "
+            "thing that explains this to whoever reads it next.", status=422)
+    return {"decision": "admit_new", "candidate_ids": sorted({i.strip() for i in ids}),
+            "reason": reason[:1000]}
+
+
+def _door_identity_plan(data: dict, door: str) -> dict:
+    """What the patient index asks of this admission, checked BEFORE any
+    session opens. {'on': False} while registration is off (the door is as it
+    was). Raises AdmissionRefused (422 or 409) for a hospital number the site's
+    rule refuses."""
+    if not _registration_on():
+        return {"on": False}
+    import config
+    from services import registration_service as reg
+
+    source = config.UHID_SOURCE
+    typed = data.get("mrn")
+    typed = typed.strip() if isinstance(typed, str) else None
+    uhid = None
+    if source == "orb":
+        if typed:
+            raise AdmissionRefused(
+                "uhid_assigned_by_orb",
+                "This site issues hospital numbers itself. Leave the hospital number blank.",
+                status=422)
+    else:
+        try:
+            uhid = reg._hospital_uhid(typed)
+        except reg.RegistrationError as exc:
+            raise AdmissionRefused(exc.code, exc.message, status=exc.status) from exc
+    return {"on": True, "door": door, "uhid_source": source, "uhid": uhid,
+            "review": _door_review(data.get("duplicate_review"))}
+
+
+def _may_see_index_cards(user: dict) -> bool:
+    """Index cards go to a caller who may search the patient index (ruling
+    OPD-N4): today every admitting role does; anyone else is told how many
+    records were found, never whose."""
+    from permissions import REGISTRATION_READ, has_permission
+
+    return bool(has_permission(user.get("role") or "", REGISTRATION_READ))
+
+
+def _door_refusal(reason: str, message: str, candidates: list[dict], *, mode: str,
+                  scan: dict, user: dict, door: str, override_allowed: bool) -> _DoorRefusal:
+    shown = _may_see_index_cards(user)
+    ids = [c["patient_id"] for c in candidates]
+    refused = AdmissionRefused(
+        POSSIBLE_EXISTING_PATIENT, f"{message} {ADMIT_EXISTING_NOT_BUILT}", status=409,
+        reason=reason, candidates=candidates if shown else [],
+        candidate_count=len(candidates), candidates_hidden=not shown, mode=mode,
+        check_incomplete=scan["check_incomplete"], override_allowed=override_allowed,
+        admit_existing_available=False)
+    return _DoorRefusal(refused, shown=shown, metadata={
+        "reason_code": reason, "door": door, "mode": mode,
+        "matched_patient_ids": ids, "bands": [c["band"] for c in candidates],
+        "candidates_shown": shown, **scan})
+
+
+def _door_index_check_on(db, plan: dict, *, name: str, data: dict, date_of_birth,
+                         user: dict) -> dict:
+    """Search the patient index for this admission inside its own immediate
+    transaction and apply the desk's duplicate rule (section note above).
+    Raises _DoorRefusal (candidates to disclose) or AdmissionRefused. Returns
+    the facts the admission writes after its rows: the hospital number to
+    store and what the check found."""
+    from permissions import department_scope
+    from services import patient_matching as pm
+    from services import registration_service as reg
+
+    series = None
+    if plan["uhid_source"] == "orb":
+        series = reg._uhid_series_on(db)
+        if not series or not int(series.get("is_configured") or 0):
+            raise AdmissionRefused(
+                "uhid_series_not_configured",
+                "Hospital numbers cannot be issued yet: the UHID series is not set up on "
+                "this site. Ask an administrator to configure it.", status=409)
+    probe = pm.probe_from(
+        name=name, phone=data.get("phone"), date_of_birth=date_of_birth,
+        age_years=None if date_of_birth else data.get("age"), sex=data.get("sex"),
+        uhid=plan["uhid"])
+    found = pm.find_candidates_on(
+        db, probe, dob_visible=reg._dob_visible_to(db, department_scope(user)))
+    candidates = reg._decorate_candidates(db, found["candidates"])
+    needs = reg._review_needs(candidates, unseen_band=found.get("unseen_band"))
+    scan = reg._scan_facts(found, needs)
+    mode, door = needs["mode"], plan["door"]
+    if needs["hard"]:
+        raise _door_refusal(
+            "existing_record",
+            "A patient with this hospital number already has a record, so this admission "
+            "was not saved and the patient does not get a second chart.",
+            needs["hard"], mode=mode, scan=scan, user=user, door=door, override_allowed=False)
+    if needs["blocked"] and needs["probable"]:
+        raise _door_refusal(
+            "probable_duplicate",
+            "This looks like a patient who already has a record, so this admission was not "
+            "saved. This site does not admit past a probable duplicate.",
+            needs["probable"] + needs["possible"], mode=mode, scan=scan, user=user,
+            door=door, override_allowed=False)
+    if needs["blocked"]:
+        raise _door_refusal(
+            "duplicate_check_incomplete",
+            "Too many records share this phone number, name or date of birth for the "
+            "duplicate check to compare them all, and one it did not compare may be this "
+            "patient, so this admission was not saved. Search the patient index for them, "
+            "and leave out a phone number that is not the patient's own.",
+            needs["possible"], mode=mode, scan=scan, user=user, door=door,
+            override_allowed=False)
+    reviewed: list[dict] = []
+    review = plan["review"]
+    if needs["review_required"]:
+        listed = needs["probable"] + needs["possible"]
+        if review is None:
+            message = (
+                "This may be a patient who already has a record, so this admission was not "
+                "saved yet. Check each record. To admit as a new patient anyway, give a reason."
+                if listed else
+                "Too many records share this phone number, name or date of birth for the "
+                "duplicate check to compare them all, so this may be a patient who already "
+                "has a record and this admission was not saved yet. Search the patient index "
+                "for them. To admit as a new patient anyway, give a reason.")
+            raise _door_refusal(
+                "duplicate_review_required", message,
+                listed, mode=mode, scan=scan, user=user, door=door,
+                override_allowed=_may_see_index_cards(user))
+        if any(c["patient_id"] not in review["candidate_ids"] for c in listed):
+            raise _door_refusal(
+                "duplicate_review_stale",
+                "More possible matches were found since you checked, so this admission was "
+                "not saved. Review the list again.",
+                listed, mode=mode, scan=scan, user=user, door=door,
+                override_allowed=_may_see_index_cards(user))
+        reviewed = listed
+    uhid = plan["uhid"]
+    if series is not None:
+        from services.billing_masters import SeriesNotConfigured, allocate_series_number
+        try:
+            uhid = allocate_series_number(db, reg.UHID_SERIES, require_configured=True)["number"]
+        except SeriesNotConfigured:
+            raise AdmissionRefused(
+                "uhid_series_not_configured",
+                "Hospital numbers cannot be issued yet: the UHID series is not set up on "
+                "this site.", status=409)
+        if reg._uhid_in_use_on(db, uhid):
+            raise AdmissionRefused(
+                "uhid_series_collision",
+                "The next number in the UHID series is already in use. Ask an administrator "
+                "to check the series before admitting anyone.", status=409)
+    return {"mrn": uhid, "mode": mode, "scan": scan, "reviewed": reviewed,
+            "review": review if needs["review_required"] else None,
+            "review_used": bool(needs["review_required"])}
+
+
+def _door_record_on(db, facts: dict, plan: dict, *, patient_id: str, admission_id: str,
+                    user: dict, now: str, request_meta: dict | None) -> None:
+    """After the admission's rows: the worklist row for each candidate the
+    clinician admitted past, and the fail-closed patient_identity rows, in the
+    admission's transaction (an unwritable row rolls the admission back)."""
+    from permissions import department_scope
+    from services.audit_service import log_audit_event
+
+    meta = dict(request_meta or {})
+    review = facts["review"]
+    for c in facts["reviewed"]:
+        a, b = sorted((patient_id, c["patient_id"]))
+        db.execute(
+            """INSERT INTO patient_duplicate_candidates (patient_id, candidate_patient_id,
+                   score, reasons_json, status, source, detected_at, detected_by,
+                   overridden_by, override_reason)
+               VALUES (?, ?, ?, ?, 'open', 'admission', ?, ?, ?, ?)
+               ON CONFLICT(patient_id, candidate_patient_id) DO NOTHING""",
+            (a, b, int(c["score"]), json.dumps(c["reasons"]), now, user["id"],
+             user["id"], review["reason"] if review else None))
+
+    def audit(action: str, summary: str, metadata: dict) -> None:
+        log_audit_event(
+            correlation_id=f"admission-identity-{admission_id}",
+            event_category="patient_identity", action_type=action, outcome="success",
+            db=db, summary_message=summary, actor_user_id=user.get("id"),
+            actor_role=user.get("role"), target_type="patient", target_id=str(patient_id),
+            patient_id=patient_id, request_path=meta.get("request_path"),
+            http_method=meta.get("http_method"), ip_address=meta.get("ip_address"),
+            user_agent=meta.get("user_agent"),
+            metadata={"department": department_scope(user), "door": plan["door"],
+                      "admission_id": admission_id, **metadata})
+
+    scan = facts["scan"]
+    audit("admission_identity_checked",
+          f"Patient {patient_id} created at an admission door after a patient index check",
+          {"uhid_source": plan["uhid_source"], "mode": facts["mode"],
+           "duplicate_review": facts["review_used"],
+           "candidate_scan_truncated": scan["truncated"],
+           "check_incomplete": scan["check_incomplete"]})
+    if facts["review_used"]:
+        audit("admission_duplicate_override",
+              (f"Admitted {patient_id} past {len(facts['reviewed'])} possible duplicate(s)"
+               if facts["reviewed"] else
+               f"Admitted {patient_id} past a duplicate check that could not compare every "
+               "record"),
+              {"mode": facts["mode"], "reason": review["reason"] if review else None,
+               "candidate_ids": [c["patient_id"] for c in facts["reviewed"]],
+               "scores": [c["score"] for c in facts["reviewed"]],
+               "bands": [c["band"] for c in facts["reviewed"]], **scan})
+
+
+def _audit_door_refusal(refusal: _DoorRefusal, user: dict, request_meta: dict | None) -> None:
+    """The disclosure record of an index refusal, on its own write and
+    fail-closed: AuditWriteError reaches the route (503) and nobody is shown."""
+    import uuid as _uuid
+
+    from permissions import department_scope
+    from services.audit_service import log_audit_event
+
+    meta = dict(request_meta or {})
+    with db_session() as db:
+        log_audit_event(
+            correlation_id=str(_uuid.uuid4()), event_category="patient_identity",
+            action_type="admission_index_refused", outcome="denied", db=db,
+            summary_message=f"Admission refused at the patient index: "
+                            f"{refusal.metadata.get('reason_code')}",
+            actor_user_id=user.get("id"), actor_role=user.get("role"),
+            target_type="patient_index", target_id=None, patient_id=None,
+            request_path=meta.get("request_path"), http_method=meta.get("http_method"),
+            ip_address=meta.get("ip_address"), user_agent=meta.get("user_agent"),
+            metadata={"department": department_scope(user), **refusal.metadata})
+
+
 def _location_warning(target: dict) -> str | None:
     """Ruling F104 until a site turns strict on: a ward or bed not in bed
     setup is admitted unlinked, and said so."""
@@ -427,7 +783,34 @@ def _location_warning(target: dict) -> str | None:
 
 
 def admit_patient(data: dict, user: dict, *, idempotency_key: str | None = None,
-                  request_meta: dict | None = None) -> dict:
+                  request_meta: dict | None = None, door: str = DOOR_ADMISSION_FORM) -> dict:
+    """Admit a patient through one of the admission doors (`door`: the
+    admission form or Scribe's quick admission). The transaction is _admit's.
+
+    Here, whatever the switches say, a hospital number another record already
+    holds is AdmissionRefused 'mrn_in_use' (409, naming nobody), including the
+    race where two admissions with one typed number pass their checks at once
+    and the UNIQUE constraint refuses the second. With registration on, an
+    index refusal (section 'The admission doors join the patient index') has
+    its disclosure audited on a write of its own before it is raised; if that
+    row cannot be written the caller gets AuditWriteError (503) and nobody is
+    shown."""
+    from db_backend import DBIntegrityError
+
+    try:
+        return _admit(data, user, idempotency_key=idempotency_key,
+                      request_meta=request_meta, door=door)
+    except _DoorRefusal as refusal:
+        _audit_door_refusal(refusal, user, request_meta)
+        raise refusal.refused from None
+    except DBIntegrityError as exc:
+        if "patients.mrn" in str(exc):
+            raise _mrn_in_use() from exc
+        raise
+
+
+def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
+           request_meta: dict | None = None, door: str = DOOR_ADMISSION_FORM) -> dict:
     """
     Transactional admission orchestrator.
     Creates records in patients, admissions, patient_profiles, channels, messages, and sage_room_memory.
@@ -440,6 +823,12 @@ def admit_patient(data: dict, user: dict, *, idempotency_key: str | None = None,
     location and location_warning. With the module off, idempotency_key,
     request_meta and data['terminal_clean_authoriser_pin'] are ignored and
     nothing differs from before.
+
+    With ORB_REGISTRATION on (opd-5b) the transaction is immediate too, the
+    hospital number follows ORB_UHID_SOURCE, the patient index is searched
+    before a row is written, and the new patient's match keys and the
+    patient_identity record of the check commit with the admission; the answer
+    adds 'index_check'. data['duplicate_review'] is read only then.
     """
     # THE registration name rule (services/patient_name_rule.py). A provided
     # name with fewer than two letters raises PatientNameError here, before a
@@ -454,6 +843,11 @@ def admit_patient(data: dict, user: dict, *, idempotency_key: str | None = None,
     # or print it; with the module off it is dropped unread.
     data = dict(data)
     authoriser_pin = data.pop("terminal_clean_authoriser_pin", None)
+
+    # The patient index (opd-5b, ORB_REGISTRATION): {'on': False} while it is
+    # off. Checked first, so a hospital number the site's rule refuses is said
+    # before a signing PIN is checked or a session opens.
+    door_plan = _door_identity_plan(data, door)
 
     # Beds and admissions (ORB_ADT): None while the module is off.
     adt_plan = (_adt_admission_plan(data, idempotency_key, user, request_meta, authoriser_pin)
@@ -489,9 +883,27 @@ def admit_patient(data: dict, user: dict, *, idempotency_key: str | None = None,
     admission_date = now
     adt_prepared = None
 
-    # Immediate only with ORB_ADT on, so the bed check and the write see the
-    # same state and two admissions to one bed give one admission and one 409.
-    with db_session(immediate=adt_plan is not None) as db:
+    # Immediate only with ORB_ADT or ORB_REGISTRATION on, so the bed check, the
+    # patient index check and the write see the same state: two admissions to
+    # one bed give one admission and one 409, and two admissions of one person
+    # give one chart and one 409.
+    with db_session(immediate=adt_plan is not None or door_plan["on"]) as db:
+        if adt_plan is not None:
+            # A replay answers the first admission and writes nothing, so it
+            # comes before every check (its own patient would match itself).
+            replay = _adt_replay_on(db, adt_plan, user, name)
+            if replay is not None:
+                return replay
+        door_facts = (_door_index_check_on(db, door_plan, name=name, data=data,
+                                           date_of_birth=date_of_birth, user=user)
+                      if door_plan["on"] else None)
+        if door_facts is not None:
+            mrn = door_facts["mrn"]
+        elif data.get("mrn") and db.execute(
+                "SELECT 1 FROM patients WHERE mrn = ?", (mrn,)).fetchone() is not None:
+            # Always on (opd-5b): a typed number already on a record is a 409
+            # naming nobody, never the UNIQUE constraint's raw 500.
+            raise _mrn_in_use()
         if adt_plan is None:
             # Checked before this admission writes its own patient row, so the
             # patient being admitted is never counted as the bed's other occupant.
@@ -499,9 +911,6 @@ def admit_patient(data: dict, user: dict, *, idempotency_key: str | None = None,
             if bed_warning:
                 logger.warning("Admission %s: %s", admission_id, bed_warning)
         else:
-            replay = _adt_replay_on(db, adt_plan, user, name)
-            if replay is not None:
-                return replay
             from services.adt.core import prepare_place_on
 
             # Every placement rule is applied here, before a row about the
@@ -573,7 +982,14 @@ def admit_patient(data: dict, user: dict, *, idempotency_key: str | None = None,
                 now
             )
         )
-        
+        if door_facts is not None:
+            # The new record's match keys, from the values just stored, so the
+            # next door or desk finds this patient without a resync.
+            from services import patient_matching as _pm
+            _pm.upsert_keys_on(db, patient_id, {
+                "name": name, "phone": data.get("phone"),
+                "date_of_birth": date_of_birth, "sex": data.get("sex")})
+
         # 2. Create Admission Record
         db.execute(
             """INSERT INTO admissions (
@@ -782,6 +1198,13 @@ def admit_patient(data: dict, user: dict, *, idempotency_key: str | None = None,
             )
         )
 
+        if door_facts is not None:
+            # The worklist rows and the fail-closed patient_identity record of
+            # the index check, with the admission or not at all.
+            _door_record_on(db, door_facts, door_plan, patient_id=patient_id,
+                            admission_id=admission_id, user=user, now=now,
+                            request_meta=request_meta)
+
         placed = None
         if adt_plan is not None:
             from services.adt.core import place_admission_on
@@ -834,4 +1257,14 @@ def admit_patient(data: dict, user: dict, *, idempotency_key: str | None = None,
         # With ORB_ADT on: when the stay began, the admission movement and
         # where the patient was placed. Empty, so absent, while it is off.
         **adt_answer,
+        # With ORB_REGISTRATION on: how the hospital number was set and any
+        # duplicate review the clinician admitted past. Absent while it is off.
+        **({"index_check": {
+            "uhid_source": door_plan["uhid_source"],
+            "duplicate_review": ({
+                "reason": door_facts["review"]["reason"] if door_facts["review"] else None,
+                "candidate_ids": [c["patient_id"] for c in door_facts["reviewed"]],
+                "check_incomplete": door_facts["scan"]["check_incomplete"],
+            } if door_facts["review_used"] else None),
+        }} if door_facts is not None else {}),
     }

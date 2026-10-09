@@ -287,6 +287,15 @@ MODULE_TABLES: dict[str, tuple[str, ...]] = {
     "lab analysers": (
         "lab_instruments", "lab_instrument_test_map",
     ),
+    # ── migration 66 (server/migrations_his/m0066_housekeeping_movement_links.py) ──
+    # Which bed movements housekeeping has acted on: the turnaround clean it
+    # raised, or the bed it marked occupied, for each movement and side. No
+    # patient data. Empty until a site switches ORB_ADT on. A restore that
+    # came back without it would have the next sync act on every movement in
+    # its window again.
+    "housekeeping links": (
+        "housekeeping_movement_links",
+    ),
     # ── migration 61 (server/migrations_his/m0061_med_order_store.py) ──
     # The medication-order store: one row per medication order and its
     # append-only ledger of who prescribed, verified, held, stopped and gave

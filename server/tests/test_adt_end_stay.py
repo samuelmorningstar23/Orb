@@ -197,18 +197,22 @@ def test_migration_59_keeps_existing_rows_as_admin_and_refuses_an_unknown_source
 def test_flag_off_discharge_writes_the_same_rows_as_before(monkeypatch):
     monkeypatch.setattr(config, "ADT_ENABLED", False)
     p = _patient(bundle=True)
-    # A second (wrongly) active admission is closed too, as it always was.
+    # A second (wrongly) active admission used to be closed too. Since
+    # migration 65 (opd-17b, W6-B) the database refuses to hold one at all
+    # (idx_admissions_one_active), so only the one admission is closed here.
     second = f"ADM-ES2{_tag()}"
-    with db_session() as db:
-        db.execute("INSERT INTO admissions (id, patient_id, admitted_by, department, status) "
-                   "VALUES (?, ?, 'D001', ?, 'active')", (second, p["pid"], DEPT))
+    with pytest.raises(DBIntegrityError):
+        with db_session() as db:
+            db.execute("INSERT INTO admissions (id, patient_id, admitted_by, department, status) "
+                       "VALUES (?, ?, 'D001', ?, 'active')", (second, p["pid"], DEPT))
+    assert _one("SELECT id FROM admissions WHERE id = ?", (second,)) is None
     result = discharge_service.discharge_patient(
         p["pid"], "D001", "Summary text", [], discharge_type="death", confirm_mrn="wrong")
     assert result["status"] == "success"
     assert set(result) == {"status", "summary_id", "discharged_at", "review_status", "summary_url",
                            "qr_code_url", "secure_link_issued", "secure_link_reason"}
     assert _one("SELECT status FROM patients WHERE id = ?", (p["pid"],))["status"] == "discharged"
-    for aid in (p["aid"], second):
+    for aid in (p["aid"],):
         adm = _admission(aid)
         assert adm["status"] == "discharged"
         assert (adm["discharged_at"], adm["discharge_type"], adm["discharged_by"]) == (None, None, None)
@@ -803,7 +807,12 @@ def _two_stays(ward: str) -> str:
     return pid
 
 
-def test_inpatient_days_count_per_stay_only_with_adt_on(monkeypatch):
+def test_inpatient_days_count_per_stay_whatever_the_module_says(monkeypatch):
+    # Amended by stay keying (opd-17b, W6-B): with ADT off this patient used
+    # to count only the current stay (about 1 day). A patient with more than
+    # one admission Orb opened is now counted stay by stay in every module
+    # state, so the off figure equals the on one. A patient with one stay is
+    # counted exactly as before (tests/test_stay_keying.py).
     ward = f"NB-{_tag()}"
     _two_stays(ward)
     start = datetime.now(timezone.utc) - timedelta(days=7)
@@ -811,7 +820,9 @@ def test_inpatient_days_count_per_stay_only_with_adt_on(monkeypatch):
     monkeypatch.setattr(config, "ADT_ENABLED", False)
     with db_session() as db:
         off = nabh_service._inpatient_days(db, start, end, ward)
-    assert "stays" not in off and 0.9 <= off["inpatient_days"] <= 1.1   # current stay only
+    assert off["stays"] == 2 and off["patients"] == 1 and off["repeat_stay_patients"] == 1
+    assert 2.9 <= off["inpatient_days"] <= 3.1   # 2 days ended + 1 day open
+    assert "stay by stay" in off["method"]
     monkeypatch.setattr(config, "ADT_ENABLED", True)
     with db_session() as db:
         on = nabh_service._inpatient_days(db, start, end, ward)

@@ -1,0 +1,250 @@
+/* ConsultationEditor.css: the OPD consultation note, its diagnosis picker
+ * and the visit's investigations (opd-11). Orb "Quiet Clinical" (flat).
+ *
+ * Builds on OpdPanel.css (.opd-field, .opd-btn, .opd-hint, .opd-line ...):
+ *  * no `opacity` for state; disabled controls use the --btn-disabled-* trio;
+ *  * tap targets 24px minimum, --tap-min under `pointer: coarse`;
+ *  * NOTHING here colours a vital or a result: OPD vitals are plain text
+ *    (rulings OPD-S3 and OPD-S6), so there is no status colour in this file.
+ *
+ * Namespaced `.opd-cons`, `.opd-dx` and `.opd-inv`.
+ */
+
+.opd-cons__form,
+.opd-cons__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.opd-field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.opd-field-row > .opd-field {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.opd-cons .opd-field input,
+.opd-inv .opd-field input,
+.opd-dx .opd-field input {
+  min-height: 36px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.opd-cons .opd-field input:focus-visible,
+.opd-inv .opd-field input:focus-visible,
+.opd-dx .opd-field input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.opd-cons .opd-field input:disabled,
+.opd-inv .opd-field input:disabled,
+.opd-dx .opd-field input:disabled {
+  background: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-border);
+  color: var(--btn-disabled-text);
+}
+
+/* ── Vitals: plain boxes, no colour ── */
+
+.opd-cons__vitals {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.opd-cons__vitals legend {
+  padding: 0 var(--space-1);
+}
+
+.opd-cons__vital-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: var(--space-3);
+}
+
+.opd-cons__review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+}
+
+/* ── Diagnoses ── */
+
+.opd-dx {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.opd-dx__list,
+.opd-dx__results,
+.opd-inv__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.opd-dx__item,
+.opd-inv__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.opd-dx__item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.opd-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 24px;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.opd-check input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent-deep);
+}
+
+.opd-check input[type='checkbox']:disabled {
+  cursor: not-allowed;
+}
+
+.opd-dx__find,
+.opd-inv__find,
+.opd-dx__choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.opd-dx__choices > .opd-btn {
+  align-self: flex-start;
+}
+
+.opd-dx__result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  width: 100%;
+  min-height: 36px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.opd-dx__result:hover:not(:disabled) {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+}
+
+.opd-dx__result:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.opd-dx__result:disabled {
+  background: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-border);
+  color: var(--btn-disabled-text);
+  cursor: not-allowed;
+}
+
+.opd-dx__result-code {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Investigations ── */
+
+.opd-inv__item {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.opd-inv__what {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.opd-inv__name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Cancelled: struck through in the quieter text colour, never faded. */
+.opd-inv__name--cancelled {
+  font-weight: 500;
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.opd-inv__cancel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+@media (pointer: coarse) {
+  .opd-cons .opd-field input,
+  .opd-inv .opd-field input,
+  .opd-dx .opd-field input,
+  .opd-dx__result,
+  .opd-check {
+    min-height: var(--tap-min);
+  }
+}

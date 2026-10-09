@@ -5,6 +5,7 @@ from auth import get_current_user
 from permissions import require_permission
 from services.admission_service import (
     AdmissionInputError,
+    AdmissionRefused,
     admission_choices,
     admit_patient,
     require_listed_attending,
@@ -95,6 +96,13 @@ class AdmissionRequest(BaseModel):
     terminal_clean_reason: Optional[str] = None
     terminal_clean_authoriser_pin: Optional[str] = None
 
+    # The patient index (opd-5b). Read ONLY while ORB_REGISTRATION is on.
+    #: Past a reviewable possible duplicate: {decision: 'admit_new',
+    #: candidate_ids: [every record the refusal listed], reason}. Never past
+    #: the same hospital number, and never past a probable duplicate while
+    #: ORB_DUPLICATE_MODE is 'block' (the shipped default).
+    duplicate_review: Optional[Dict[str, Any]] = None
+
 @router.get("/options")
 def admission_options(user: dict = Depends(require_permission("patient.write"))):
     """What the admission form chooses from: covered departments, attending
@@ -160,6 +168,12 @@ def process_admission(
         raise HTTPException(status_code=400, detail=str(e))
     except AdmissionInputError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except AdmissionRefused as e:
+        # Always: a hospital number already on another record (409
+        # mrn_in_use, naming nobody). With ORB_REGISTRATION on: the hospital
+        # number rule (422 or 409) and the patient index (409
+        # possible_existing_patient). Nothing was written.
+        raise HTTPException(status_code=e.status, detail=e.detail())
     except AdtError as e:
         # Only with ORB_ADT on: the bed master refused the place, in words,
         # and nothing was written.

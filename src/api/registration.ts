@@ -21,6 +21,11 @@
  * "no known allergies": the server refuses any unknown field, and a clinician
  * records allergies at the consultation.
  *
+ * THE RECORD (opd-6b). The registration record, its reasoned corrections
+ * (against row_version), the change history and the UHID card are read
+ * through the scoped routes; a reader let in only by an outpatient visit gets
+ * the hidden fields back empty and cannot correct them.
+ *
  * Behind the 'registration' feature: every /api/registration call answers 404
  * with detail.error 'feature_disabled' while it is off (isFeatureDisabled).
  * Uses the shared apiFetch, so src/api/client.ts is untouched.
@@ -210,6 +215,134 @@ export function registerVisitWithIdentity(input: VisitWithIdentityInput): Promis
       identity_check: statedBody(input.identity),
     }),
   })
+}
+
+// ── The registration record, corrections and the UHID card (opd-6b) ─────────
+
+/** The patient_demographics fields the desk records and may correct. An
+ *  identity document is its type and last 4 characters only (ruling OPD-N10):
+ *  there is no field for a full Aadhaar or any other full number. */
+export interface RegistrationDemographics {
+  guardian_relation: string | null
+  guardian_name: string | null
+  marital_status: string | null
+  preferred_language: string | null
+  address_line: string | null
+  city: string | null
+  district: string | null
+  state_code: string | null
+  pin_code: string | null
+  alt_phone: string | null
+  email: string | null
+  id_document_type: string | null
+  id_document_last4: string | null
+  occupation: string | null
+}
+
+/** GET /api/registration/patients/{id}: the record for a reader in scope.
+ *  Read through an outpatient visit only (access.arm 'opd_visit'), the date
+ *  of birth, contact, address, next of kin, identity document and ABHA come
+ *  back empty and are listed in hidden_fields; they cannot be corrected from
+ *  there either. */
+export interface RegistrationRecord {
+  patient_id: string
+  uhid: string | null
+  name: string
+  sex: string | null
+  date_of_birth: string | null
+  age: number | null
+  age_stated: boolean
+  age_recorded_on: string | null
+  phone: string | null
+  phone_last4?: string | null
+  emergency_contact_name: string | null
+  emergency_contact_phone: string | null
+  address: string | null
+  record_status: string | null
+  inpatient_now: boolean
+  demographics: RegistrationDemographics
+  registration: {
+    registered_at: string | null
+    registered_by_name: string | null
+    registration_source: string | null
+    uhid_source: string | null
+    updated_at: string | null
+    updated_by_name: string | null
+  }
+  row_version: number
+  discharge_link_possible: boolean
+  date_of_birth_hint: string | null
+  abha: { id: number; abha_number: string | null; abha_address: string | null
+    verification_label: string; is_verified: boolean }[]
+  abha_on_file?: boolean
+  hidden_fields?: string[]
+  access?: { arm?: string; scope_until?: string } | null
+}
+
+export function fetchRegistrationRecord(patientId: string): Promise<RegistrationRecord> {
+  return apiFetch<RegistrationRecord>(`/registration/patients/${encodeURIComponent(patientId)}`)
+}
+
+/** The fields a correction may carry. 'uhid' is the administrator's alone. */
+export type CorrectableField =
+  | 'name' | 'sex' | 'date_of_birth' | 'age_years' | 'phone'
+  | 'emergency_contact_name' | 'emergency_contact_phone' | 'uhid'
+  | keyof RegistrationDemographics
+
+export type RegistrationChanges = Partial<Record<CorrectableField, string | number | null>>
+
+export interface CorrectionResult {
+  patient: RegistrationRecord
+  changed_fields: string[]
+}
+
+/** A reasoned correction against the row_version the drawer read. A stale
+ *  version is refused 409 'stale_row_version' with current_row_version. */
+export function correctRegistration(
+  patientId: string,
+  rowVersion: number,
+  reason: string,
+  changes: RegistrationChanges,
+): Promise<CorrectionResult> {
+  return apiFetch<CorrectionResult>(`/registration/patients/${encodeURIComponent(patientId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ row_version: rowVersion, reason, ...changes }),
+  })
+}
+
+export interface IdentityChange {
+  id: number
+  field: string
+  old_value: string | null
+  new_value: string | null
+  reason: string
+  changed_by: string | null
+  changed_by_name: string | null
+  changed_at: string
+  /** True when the reader may not see this field's values (OPD visit reach). */
+  values_hidden?: boolean
+}
+
+export function fetchRegistrationChanges(patientId: string): Promise<{ patient_id: string; changes: IdentityChange[] }> {
+  return apiFetch<{ patient_id: string; changes: IdentityChange[] }>(
+    `/registration/patients/${encodeURIComponent(patientId)}/changes`)
+}
+
+/** What the UHID card carries: number, name, age and sex, and the day the
+ *  patient was registered. Reading it is audited as a card print. */
+export interface UhidCard {
+  patient_id: string
+  uhid: string | null
+  name: string
+  sex: string | null
+  age: number | null
+  age_stated: boolean
+  registered_on: string | null
+  uhid_source: string | null
+}
+
+export function fetchUhidCard(patientId: string): Promise<UhidCard> {
+  return apiFetch<UhidCard>(`/registration/patients/${encodeURIComponent(patientId)}/card`)
 }
 
 // ── Errors ───────────────────────────────────────────────────────────────────

@@ -8,7 +8,7 @@
  * the health probe has not answered yet. With the profile off the chart is as
  * it was.
  */
-import { render, screen, act, waitFor, cleanup } from '@testing-library/react'
+import { render, screen, act, cleanup } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { openPatient } from '../../lib/orbBus'
 
@@ -65,7 +65,6 @@ vi.mock('../../components/vigil/PatientStory', () => ({ default: () => null }))
 vi.mock('../../components/ClinicalCourseTimeline', () => ({ ClinicalCourseTimeline: () => <div data-testid="course" /> }))
 
 import VigilPanel from './VigilPanel'
-import { dischargePatient, getAdministrations, getPatientForecast, prefetchSageContext } from '../../api/client'
 import { ActivePatientProvider } from '../../contexts/ActivePatientProvider'
 import { ActiveViewProvider } from '../../contexts/ActiveViewProvider'
 import { resetClinicalSwitches, setClinicalSwitches } from '../../shellConfig'

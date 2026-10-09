@@ -337,6 +337,118 @@ export function completeOpdVisitWithDisposition(
   })
 }
 
+// ── The code lists (opd-11) ──────────────────────────────────────────────────
+
+export type TerminologyKind = 'diagnosis' | 'investigation'
+
+/** One code from the server's code list. An investigation also says what it
+ *  orders: a laboratory test or imaging, nothing else. */
+export interface TerminologyHit {
+  code_system: string
+  code: string
+  display: string
+  order_type?: 'lab' | 'imaging'
+}
+
+export interface TerminologySearch {
+  kind: TerminologyKind
+  results: TerminologyHit[]
+  truncated: boolean
+  min_chars: number
+}
+
+/** Search the diagnosis or investigation code list. No patient data. */
+export function searchTerminology(query: string, kind: TerminologyKind): Promise<TerminologySearch> {
+  const params = new URLSearchParams({ q: query, kind })
+  return apiFetch<TerminologySearch>(`/opd/terminology/search?${params.toString()}`)
+}
+
+// ── Investigations (opd-11) ──────────────────────────────────────────────────
+
+export type OrderPriority = 'routine' | 'urgent' | 'stat'
+
+/** An investigation ordered on an outpatient visit. Its words come from the
+ *  code list; the server never takes them from this client. */
+export interface OpdOrder {
+  id: string
+  opd_visit_id: string | null
+  order_type: 'lab' | 'imaging' | string
+  code_system: string | null
+  code: string | null
+  description: string
+  priority: OrderPriority | string
+  status: 'active' | 'in_progress' | 'completed' | 'resulted' | 'cancelled' | 'draft' | string
+  result_text: string | null
+  result_at: string | null
+  ordered_by_name: string | null
+  created_at: string | null
+}
+
+export function fetchVisitOrders(visitId: string): Promise<{ visit_id: string; orders: OpdOrder[] }> {
+  return apiFetch<{ visit_id: string; orders: OpdOrder[] }>(`${opdVisitPath(visitId)}/orders`)
+}
+
+/** Order a laboratory test or imaging on the visit, active at once. Only the
+ *  code and the priority are sent. */
+export function orderInvestigation(
+  visitId: string,
+  hit: Pick<TerminologyHit, 'code_system' | 'code'>,
+  priority: OrderPriority = 'routine',
+): Promise<OpdOrder> {
+  return apiFetch<OpdOrder>(`${opdVisitPath(visitId)}/orders`, {
+    method: 'POST',
+    body: JSON.stringify({ code_system: hit.code_system, code: hit.code, priority }),
+  })
+}
+
+export function cancelInvestigation(visitId: string, orderId: string, reason: string): Promise<OpdOrder> {
+  return apiFetch<OpdOrder>(
+    `${opdVisitPath(visitId)}/orders/${encodeURIComponent(orderId)}/cancel`,
+    { method: 'POST', body: JSON.stringify({ reason }) },
+  )
+}
+
+// ── Prints (opd-11) ──────────────────────────────────────────────────────────
+
+export type VisitPrintKind = 'consultation' | 'investigations'
+
+/** What a print carries, read as it is printed (the server audits it). The
+ *  doctor is named with their registration number and nothing else. */
+export interface VisitPrint {
+  kind: VisitPrintKind
+  printed_at: string
+  visit: { id: string; visit_date: string | null; department: string | null; token_number: number | null }
+  patient: { name: string | null; uhid: string | null; age: number | null; sex: string | null }
+  consultation: {
+    id: string
+    chief_complaint: string | null
+    history: string | null
+    examination: string | null
+    vitals: { values: OpdVitals['values']; measured_at: string | null } | null
+    diagnoses: { text: string; code_system: string | null; code: string | null }[]
+    plan: string | null
+    advice: string | null
+    follow_up_date: string | null
+    follow_up_note: string | null
+    referral_department: string | null
+    signed_at: string | null
+    addenda: { body: string; created_at: string | null; author_name: string | null }[]
+  } | null
+  investigations: {
+    description: string
+    order_type: string
+    priority: string
+    status: string
+    created_at: string | null
+    ordered_by_name: string | null
+  }[]
+  doctors: { name: string | null; registration_number: string | null }[]
+}
+
+export function fetchVisitPrint(visitId: string, kind: VisitPrintKind): Promise<VisitPrint> {
+  return apiFetch<VisitPrint>(`${opdVisitPath(visitId)}/print?kind=${kind}`)
+}
+
 // ── The live nudge ───────────────────────────────────────────────────────────
 
 /** The socket event the server pushes after any queue change in a clinic.

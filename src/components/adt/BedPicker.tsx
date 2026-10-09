@@ -49,6 +49,11 @@ export interface BedPickerProps {
   onChange: (next: BedChoice) => void
   /** The server's last refusal about the place, in its own words. */
   refusal?: { code: string; message: string } | null
+  /** 'move' when the picker chooses where an admitted patient moves to (the
+   *  Move screen, adt-6a): the words say move, not admit. Default 'admit'. */
+  verb?: 'admit' | 'move'
+  /** Offer 'No bed yet'. False on a bed change, which always names a bed. */
+  allowNoBed?: boolean
 }
 
 const NO_BED = '__no_bed__'
@@ -57,7 +62,10 @@ function bedTitle(bed: MasterBedChoice): string {
   return `Bed ${bed.bed_label ?? bed.unit_code}`
 }
 
-export default function BedPicker({ master, department, value, onChange, refusal }: BedPickerProps) {
+export default function BedPicker({
+  master, department, value, onChange, refusal, verb = 'admit', allowNoBed = true,
+}: BedPickerProps) {
+  const moving = verb === 'move'
   const uid = useId()
   const ward = chosenWard(master, value)
   const bed = chosenBed(master, value)
@@ -154,23 +162,27 @@ export default function BedPicker({ master, department, value, onChange, refusal
                   checked={value.boarderAcknowledged}
                   onChange={(e) => set({ boarderAcknowledged: e.target.checked })}
                 />
-                <span>I have read this. Admit as a boarder.</span>
+                <span>{moving ? 'I have read this. Move as a boarder.' : 'I have read this. Admit as a boarder.'}</span>
               </label>
             </div>
           )}
 
           <div className="bed-picker__beds" role="radiogroup" aria-label={`Beds on ${ward.code}`}>
-            <label className={`bed-picker__bed${selected === NO_BED ? ' bed-picker__bed--on' : ''}`}>
-              <input
-                type="radio"
-                name={`${uid}-bed`}
-                value={NO_BED}
-                checked={selected === NO_BED}
-                onChange={() => chooseBed(NO_BED)}
-              />
-              <span className="bed-picker__bed-title">No bed yet</span>
-              <span className="bed-picker__bed-status">Admit to the ward, awaiting a bed</span>
-            </label>
+            {allowNoBed && (
+              <label className={`bed-picker__bed${selected === NO_BED ? ' bed-picker__bed--on' : ''}`}>
+                <input
+                  type="radio"
+                  name={`${uid}-bed`}
+                  value={NO_BED}
+                  checked={selected === NO_BED}
+                  onChange={() => chooseBed(NO_BED)}
+                />
+                <span className="bed-picker__bed-title">No bed yet</span>
+                <span className="bed-picker__bed-status">
+                  {moving ? 'Moved to the ward, awaiting a bed' : 'Admit to the ward, awaiting a bed'}
+                </span>
+              </label>
+            )}
             {ward.beds.map((b) => (
               <div
                 key={b.bed_id}
@@ -215,7 +227,7 @@ export default function BedPicker({ master, department, value, onChange, refusal
           {value.extraBed && bed && (
             <p className="bed-picker__note" role="note">
               An extra bed with its own label ({bed.bed_label}A, or the next free letter) is
-              added beside bed {bed.bed_label}, and the patient is admitted to it. It is counted
+              added beside bed {bed.bed_label}, and the patient is {moving ? 'moved' : 'admitted'} to it. It is counted
               as an extra bed until a bed manager retires it.
             </p>
           )}

@@ -285,8 +285,11 @@ def test_good_values_pass_and_status_updates_never_fire_the_triggers(tmp_path):
     with db_session() as db:
         pid = _admit(None, None)[0]
         aid = f"ADM-OK{_tag()}"
+        # An ended stay beside the patient's active one: since migration 65
+        # (opd-17b, W6-B) a patient holds one active admission only.
         db.execute("INSERT INTO admissions (id, patient_id, admitted_by, presence_status, "
-                   "discharge_type) VALUES (?, ?, 'D001', 'on_leave', NULL)", (aid, pid))
+                   "discharge_type, status) VALUES (?, ?, 'D001', 'on_leave', NULL, 'discharged')",
+                   (aid, pid))
         db.execute("UPDATE admissions SET discharge_type = 'death', presence_status = 'absconded' "
                    "WHERE id = ?", (aid,))
     # A legacy row holding a value outside the vocabulary (written before the

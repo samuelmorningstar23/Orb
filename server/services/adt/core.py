@@ -516,6 +516,7 @@ def locate_admission_on(
     out_of_service_reason: Optional[str] = None, boarder_acknowledged: bool = False,
     moved_at: Any = None, idempotency_key: Optional[str] = None, notes: Optional[str] = None,
     request_meta: Optional[dict] = None, extra_detail: Optional[dict] = None,
+    to_department: Optional[str] = None,
 ) -> dict:
     """Put an active admission in a place, on the caller's connection.
 
@@ -532,6 +533,16 @@ def locate_admission_on(
     before it was cleaned, who authorised a bed awaiting a terminal clean, the
     extra bed that was added). Callers that place a patient into a bed go
     through place_admission_on, which applies those rules first.
+
+    `to_department` (adt-6a, a transfer only) is the treating department the
+    admission moves to, already resolved against clinical cover by the caller
+    (services/adt/transfer.py, rule C) before its session opened. It is written
+    to admissions.department in the same statement as the place (rule A: the
+    same admission row, status untouched), the movement records it as 'to',
+    and the boarder rule reads it: the ward is judged against the department
+    the patient will be treated by, and a patient who stays on a ward while
+    their treating department changes becomes a boarder there. Absent (every
+    other caller), the department is never written and nothing here differs.
 
     The caller must hold db_session(immediate=True) as the outermost session,
     so the occupancy check and the write see the same state."""
@@ -571,28 +582,42 @@ def locate_admission_on(
                 "add an extra bed with its own label.",
                 code="bed_occupied", bed_id=bed["id"])
 
+    # The treating department after this write: unchanged, except for a
+    # transfer that names the department it moves to (adt-6a).
+    treating = to_department if to_department is not None else adm.get("department")
+    department_changes = to_department is not None and to_department != adm.get("department")
     boarder = (ward is not None and ward.get("department") is not None
-               and not _same(ward.get("department"), adm.get("department"))
-               and ward["id"] != adm.get("ward_id"))
+               and not _same(ward.get("department"), treating)
+               and (ward["id"] != adm.get("ward_id") or department_changes))
     if boarder and not boarder_acknowledged:
-        raise AdtConflict(boarder_words(ward, adm.get("department")),
+        raise AdtConflict(boarder_words(ward, treating),
                           code="boarder_acknowledgement_required",
                           ward_department=ward.get("department"),
-                          treating_department=adm.get("department"))
+                          treating_department=treating)
 
     before = {"department": adm.get("department"), "ward": adm.get("ward"), "bed": adm.get("bed"),
               "ward_id": adm.get("ward_id"), "bed_id": adm.get("bed_id")}
-    after = {"department": adm.get("department"), "ward": target["ward_text"],
+    after = {"department": treating, "ward": target["ward_text"],
              "bed": target["bed_text"], "ward_id": target["ward_id"], "bed_id": target["bed_id"]}
-    if all(before[k] == after[k] for k in ("ward", "bed", "ward_id", "bed_id")):
+    if all(before[k] == after[k] for k in ("department", "ward", "bed", "ward_id", "bed_id")):
         raise AdtConflict("The admission is already recorded at that place", code="no_change")
 
     try:
-        db.execute(
-            "UPDATE admissions SET ward_id = ?, bed_id = ?, ward = ?, bed = ? "
-            "WHERE id = ? AND status = 'active'",
-            (after["ward_id"], after["bed_id"], after["ward"], after["bed"], admission_id),
-        )
+        if department_changes:
+            # Rule A: the same admission row carries the new department; its
+            # status is not touched (rule B).
+            db.execute(
+                "UPDATE admissions SET ward_id = ?, bed_id = ?, ward = ?, bed = ?, department = ? "
+                "WHERE id = ? AND status = 'active'",
+                (after["ward_id"], after["bed_id"], after["ward"], after["bed"], treating,
+                 admission_id),
+            )
+        else:
+            db.execute(
+                "UPDATE admissions SET ward_id = ?, bed_id = ?, ward = ?, bed = ? "
+                "WHERE id = ? AND status = 'active'",
+                (after["ward_id"], after["bed_id"], after["ward"], after["bed"], admission_id),
+            )
     except DBIntegrityError as exc:
         # The partial unique index: another writer took the bed between the
         # check above and this statement (only possible without an immediate
@@ -612,7 +637,7 @@ def locate_admission_on(
         detail["out_of_service_reason"] = target["out_of_service_reason"]
     if boarder:
         detail["boarder"] = {"ward_department": ward.get("department"),
-                             "treating_department": adm.get("department")}
+                             "treating_department": treating}
     actor_name = None
     if _actor_id(actor):
         name_row = db.execute("SELECT name FROM users WHERE id = ?", (_actor_id(actor),)).fetchone()
@@ -637,18 +662,18 @@ def locate_admission_on(
         audit_on(
             db, category="clinical_access", action="boarder_placed",
             summary=(f"Admission {admission_id} placed on {ward['code']} "
-                     f"({ward.get('department')}) while treated by {adm.get('department')}"),
+                     f"({ward.get('department')}) while treated by {treating}"),
             actor=actor, patient_id=adm["patient_id"], target_type="admission",
             target_id=admission_id, request_meta=request_meta,
             metadata={"movement_id": movement["id"], "ward_id": ward["id"],
                       "ward_department": ward.get("department"),
-                      "treating_department": adm.get("department"),
+                      "treating_department": treating,
                       "acknowledged": True},
         )
         _case_room_line_on(
             db, adm["patient_id"],
             f"Placed as a boarder on {ward['code']} ({ward.get('department')}), "
-            f"bed {after['bed'] or 'not yet chosen'}. {boarder_words(ward, adm.get('department'))}")
+            f"bed {after['bed'] or 'not yet chosen'}. {boarder_words(ward, treating)}")
 
     return {
         "replayed": False,
@@ -1485,13 +1510,15 @@ def place_admission_on(
     db, *, admission_id: str, actor: Optional[dict], movement_type: str, reason: str,
     prepared: dict, boarder_acknowledged: bool = False, expected_bed_id: Any = _UNSET,
     moved_at: Any = None, idempotency_key: Optional[str] = None, notes: Optional[str] = None,
-    request_meta: Optional[dict] = None,
+    request_meta: Optional[dict] = None, to_department: Optional[str] = None,
 ) -> dict:
     """Write the place prepare_place_on checked, through the single location
     writer (locate_admission_on), with what the rules recorded in the
     movement's detail. An admission with no ward and no bed writes its
     'admission' movement and audit directly, as there is no place to write.
-    The caller holds the immediate session the preparation ran in."""
+    The caller holds the immediate session the preparation ran in.
+    `to_department` is a transfer's new treating department (adt-6a), passed
+    through to locate_admission_on."""
     target = prepared["target"]
     if movement_type == "admission" and not any(
             (target["ward_id"], target["bed_id"], target["ward_text"], target["bed_text"])):
@@ -1506,7 +1533,7 @@ def place_admission_on(
         out_of_service_reason=prepared.get("out_of_service_reason"),
         boarder_acknowledged=boarder_acknowledged, moved_at=moved_at,
         idempotency_key=idempotency_key, notes=notes, request_meta=request_meta,
-        extra_detail=prepared["detail"] or None)
+        extra_detail=prepared["detail"] or None, to_department=to_department)
 
 
 def assign_bed(

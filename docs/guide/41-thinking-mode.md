@@ -446,10 +446,10 @@ sequenceDiagram
 **Why it is read here and not later (`:1483-1486`):** the ContextVar belongs to the request's task, and a streaming generator is not guaranteed to be iterated inside it. Read it in the request's own context or you read the default.
 **Breaks if you change it:** move this read into the generator and every refused turn records "thinking ON" regardless of what the clinician chose.
 
-#### `select_provider` in `query_ollama`: `server/services/sage_service.py:1841`
+#### `select_provider` in `query_ollama`: `server/services/sage_service.py:1938`
 **Does:** Replaced the two lines that used to pick the model and the provider.
 **On screen:** everything; this is where the tier choice becomes real.
-**Gotchas:** `route_info=info` is passed **before** `info.update(lane=…, model=…)` at `:1361-1364`. The order matters only because the key sets must stay disjoint, see `stamp`.
+**Gotchas:** `route_info=info` is passed **before** `info.update(lane=…, model=…)` at `:1940-1949`. The order matters only because the key sets must stay disjoint, see `stamp`.
 **Breaks if you change it:** revert to `select_chat_model()` and the toggle becomes decorative: the client still sends `thinking`, the route still binds it, and nothing reads it. Nothing fails; every answer is just careful. That is the safe direction of failure, and it is deliberate.
 
 #### The provenance row: `server/services/sage_provenance_service.py:607-625`

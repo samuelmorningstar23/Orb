@@ -24,8 +24,13 @@
  *      visit type and complaint. The server re-checks the identity with the
  *      visit, so a new patient's visit carries what the desk just typed and
  *      the UHID the registration returned.
+ *   5. AFTER THE VISIT (opd-6b). The token slip (OpdTokenSlipPrint), the UHID
+ *      card (UhidCardPrint, read from the server, which audits it as a card
+ *      print) and the registration details drawer (DemographicsDrawer) with
+ *      reasoned corrections and their history.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import {
   fetchConsultingDoctors,
@@ -37,6 +42,7 @@ import {
   errorCode,
   errorDetail,
   fetchRegistrationConfig,
+  fetchUhidCard,
   isFeatureDisabled,
   newRequestKey,
   registerNewPatient,
@@ -47,8 +53,12 @@ import {
   type RegisteredVisit,
   type RegistrationConfig,
   type StatedIdentity,
+  type UhidCard,
 } from '../../../api/registration'
+import OpdTokenSlipPrint from '../../../components/print/OpdTokenSlipPrint'
+import UhidCardPrint from '../../../components/print/UhidCardPrint'
 import { REGISTRATION_WRITE, hasPermission, type Permission } from '../../../lib/roles'
+import DemographicsDrawer from './DemographicsDrawer'
 import IdentityConfirmDialog from './IdentityConfirmDialog'
 import PatientIndexSearch from './PatientIndexSearch'
 import { cardMeta } from './indexCard'
@@ -525,7 +535,28 @@ export default function RegisterPatientView({
   const [config, setConfig] = useState<RegistrationConfig | null>(null)
   const [configError, setConfigError] = useState('')
   const [doctors, setDoctors] = useState<ConsultingDoctor[]>([])
+  /* opd-6b: the token slip, the UHID card and the registration details of
+     the patient whose visit was just registered. */
+  const [printing, setPrinting] = useState<{ kind: 'slip' } | { kind: 'card'; card: UhidCard } | null>(null)
+  const [printError, setPrintError] = useState('')
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const canRegisterNew = holds(REGISTRATION_WRITE)
+
+  /* The card's contents are read from the server, which audits the read as a
+     card print. */
+  const printCard = async (patientId: string) => {
+    setPrintError('')
+    try {
+      const card = await fetchUhidCard(patientId)
+      if (card?.patient_id !== patientId) {
+        setPrintError('The card that came back is not this patient’s. Nothing was printed.')
+        return
+      }
+      setPrinting({ kind: 'card', card })
+    } catch (err) {
+      setPrintError(String(errorDetail(err)?.message ?? errorText(err)))
+    }
+  }
 
   const loadSettings = useCallback(async () => {
     setConfigError('')
@@ -545,7 +576,12 @@ export default function RegisterPatientView({
   // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch trigger: the setState is the loader's own result, not state derived from props.
   useEffect(() => { void loadSettings() }, [loadSettings])
 
-  const reset = useCallback(() => setStep({ kind: 'find' }), [])
+  const reset = useCallback(() => {
+    setStep({ kind: 'find' })
+    setPrinting(null)
+    setPrintError('')
+    setDetailsOpen(false)
+  }, [])
   const toVisit = (patient: ChosenPatient, stated: StatedIdentity, source: 'search' | 'new',
     card?: IndexCard, note?: string) => setStep({ kind: 'visit', patient, stated, source, card, note })
 
@@ -628,6 +664,20 @@ export default function RegisterPatientView({
             {step.visit.doctor_name ?? 'the next free doctor'} in {step.visit.department}.
           </p>
           <div className="rpv-actions">
+            <button type="button" className="rpv-btn" onClick={() => setPrinting({ kind: 'slip' })}>
+              Print token slip
+            </button>
+            {step.patient.uhid && (
+              <button type="button" className="rpv-btn" onClick={() => { void printCard(step.patient.patient_id) }}>
+                Print UHID card
+              </button>
+            )}
+            <button type="button" className="rpv-btn" onClick={() => setDetailsOpen(true)}>
+              Registration details
+            </button>
+          </div>
+          {printError && <p className="rpv-error" role="alert">{printError}</p>}
+          <div className="rpv-actions">
             {context === 'desk' && (
               <button type="button" className="rpv-btn" onClick={() => openView('opd')}>
                 Open the OPD queue
@@ -638,6 +688,23 @@ export default function RegisterPatientView({
             </button>
           </div>
         </div>
+      )}
+
+      {step.kind === 'done' && detailsOpen && (
+        <DemographicsDrawer
+          patientId={step.patient.patient_id}
+          patientName={step.patient.name}
+          holds={holds}
+          onClose={() => setDetailsOpen(false)}
+        />
+      )}
+      {step.kind === 'done' && printing?.kind === 'slip' && createPortal(
+        <OpdTokenSlipPrint visit={step.visit} onAfterPrint={() => setPrinting(null)} />,
+        document.body,
+      )}
+      {printing?.kind === 'card' && createPortal(
+        <UhidCardPrint card={printing.card} onAfterPrint={() => setPrinting(null)} />,
+        document.body,
       )}
     </div>
   )

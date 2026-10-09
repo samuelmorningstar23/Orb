@@ -112,6 +112,8 @@ __all__ = [
     "cancel_opd_visit",
     "transfer_patient",
     "list_patient_movements",
+    "resolve_covering_department",
+    "uncovered_department_words",
 ]
 
 
@@ -351,6 +353,22 @@ def _resolve_covering_department(name: str) -> Optional[str]:
         if canonical.casefold() == wanted:
             return canonical
     return None
+
+
+#: Public name for the anti-orphaning resolver (adt-6a): the ADT transfer
+#: writer (services/adt/transfer.py) resolves a destination with the same rule,
+#: before its immediate session opens, exactly as transfer_patient does.
+resolve_covering_department = _resolve_covering_department
+
+
+def uncovered_department_words(to_department: object) -> str:
+    """Rule C's refusal, in the words both transfer lanes give: the front
+    desk's own lane (transfer_patient) and the ADT writer it delegates to."""
+    return (
+        f"{to_department!r} is not a department with clinical cover. "
+        "Transferring there would leave the patient admitted on a ward that "
+        "appears on nobody's board."
+    )
 
 
 def list_transfer_destinations() -> list[dict]:
@@ -1309,6 +1327,16 @@ def transfer_patient(
         returned unchanged rather than writing a movement to nowhere.
     """
     ensure_frontdesk_schema()
+    # With Beds and admissions (ORB_ADT) on, the bed master's single location
+    # writer owns admissions.ward/bed and patients.ward/bed, and the route
+    # delegates to services/adt/transfer.py (adt-6a). This lane writes those
+    # columns directly, so it refuses rather than become a second writer.
+    from services.adt.core import adt_on
+    if adt_on():
+        raise FrontDeskError(
+            "Beds and admissions is switched on, so a transfer is recorded through it: "
+            "use the Transfer screen, which checks the bed and records the move."
+        )
     patient_id = (patient_id or "").strip()
     if not patient_id:
         raise FrontDeskError("patient_id is required")
@@ -1320,11 +1348,7 @@ def transfer_patient(
 
     canonical_dept = _resolve_covering_department(to_department)
     if canonical_dept is None:
-        raise FrontDeskError(
-            f"{to_department!r} is not a department with clinical cover. "
-            "Transferring there would leave the patient admitted on a ward that "
-            "appears on nobody's board."
-        )
+        raise FrontDeskError(uncovered_department_words(to_department))
 
     ward = _clean(to_ward, _MAX_LABEL_LEN)
     bed = _clean(to_bed, _MAX_LABEL_LEN)

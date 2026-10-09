@@ -1,0 +1,224 @@
+/* Outpatient prints (opd-11, opd-6b): the consultation and investigation
+   slip on an A4 sheet, the UHID card on a CR80 card (86 x 54 mm) and the OPD
+   token slip on an 80 mm receipt roll.
+
+   Each view portals one .opd-print-layout to <body>. On screen it is hidden;
+   when printing, the app is taken out of the flow (so the first page is the
+   print, never an empty sheet) and only this subtree is shown, black on white.
+   The card and the slip have named pages of their own; the A4 sheet uses the
+   default page. src/print.css is untouched: these rules sit beside it, in the
+   same shape as its specimen-label block.
+
+   Nothing here colours a value: a print is black text and rules only. */
+
+body > .opd-print-layout {
+  display: none;
+}
+
+@page uhid-card {
+  size: 86mm 54mm;
+  margin: 0;
+}
+
+@page opd-token-slip {
+  size: 80mm 120mm;
+  margin: 0;
+}
+
+@media print {
+  body > .opd-print-layout {
+    display: block;
+  }
+
+  /* The app and any other portal (a drawer the print was opened from) leave
+     the flow, so the print starts on the first page. */
+  body:has(> .opd-print-layout) > :not(.opd-print-layout) {
+    display: none !important;
+  }
+
+  .opd-print-layout,
+  .opd-print-layout * {
+    visibility: visible !important;
+  }
+
+  .opd-print-layout {
+    position: static !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.4;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .opd-print-layout * {
+    color: #000000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    animation: none !important;
+    transition: none !important;
+  }
+
+  /* ── A4: consultation and investigation slip ── */
+
+  .opd-print-sheet__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12mm;
+    border-bottom: 0.5mm solid #000000;
+    padding-bottom: 2mm;
+    margin-bottom: 4mm;
+  }
+
+  .opd-print-sheet__title {
+    margin: 0;
+    font-size: 14pt;
+    font-weight: 700;
+  }
+
+  .opd-print-sheet__meta {
+    margin: 0;
+    text-align: right;
+    font-size: 9.5pt;
+  }
+
+  .opd-print-sheet__patient {
+    display: grid;
+    grid-template-columns: repeat(3, auto);
+    justify-content: start;
+    gap: 1mm 8mm;
+    margin: 0 0 4mm;
+  }
+
+  .opd-print-sheet__patient dt {
+    font-size: 8.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .opd-print-sheet__patient dd {
+    margin: 0;
+    font-weight: 700;
+  }
+
+  .opd-print-sheet__section {
+    margin: 0 0 3.5mm;
+    break-inside: avoid;
+  }
+
+  .opd-print-sheet__label {
+    margin: 0 0 1mm;
+    font-size: 9pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 0.2mm solid #000000;
+  }
+
+  .opd-print-sheet__text {
+    margin: 0;
+    white-space: pre-wrap;
+  }
+
+  .opd-print-sheet__list {
+    margin: 0;
+    padding-left: 5mm;
+  }
+
+  .opd-print-sheet__table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .opd-print-sheet__table th,
+  .opd-print-sheet__table td {
+    border: 0.2mm solid #000000 !important;
+    padding: 1.5mm 2mm;
+    text-align: left;
+    vertical-align: top;
+    font-size: 9.5pt;
+  }
+
+  .opd-print-sheet__foot {
+    margin-top: 10mm;
+    break-inside: avoid;
+  }
+
+  .opd-print-sheet__sign {
+    border-bottom: 0.2mm solid #000000;
+    width: 70mm;
+    height: 10mm;
+    margin-bottom: 1mm;
+  }
+
+  /* ── The UHID card ── */
+
+  .opd-print-layout--card .uhid-card {
+    page: uhid-card;
+    box-sizing: border-box;
+    width: 86mm;
+    height: 54mm;
+    padding: 3mm 4mm;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    border: 0.3mm solid #000000;
+    font-size: 8pt;
+    line-height: 1.25;
+  }
+
+  .uhid-card__name {
+    font-size: 11pt;
+    font-weight: 700;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .uhid-card__barcode {
+    display: block;
+    width: 100%;
+    height: 11mm;
+  }
+
+  .uhid-card__number {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 11pt;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-align: center;
+  }
+
+  /* ── The token slip ── */
+
+  .opd-print-layout--slip .opd-token-slip {
+    page: opd-token-slip;
+    box-sizing: border-box;
+    width: 80mm;
+    padding: 4mm 5mm;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5mm;
+    font-size: 9.5pt;
+    text-align: center;
+  }
+
+  .opd-token-slip__token {
+    font-size: 34pt;
+    font-weight: 700;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .opd-token-slip__rule {
+    border: none;
+    border-top: 0.3mm dashed #000000;
+    margin: 1.5mm 0;
+  }
+}

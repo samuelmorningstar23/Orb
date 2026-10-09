@@ -22,6 +22,14 @@
  *     records the review: the allergies the patient has (charted, which is
  *     what the interlocks screen), no known allergies, or why they could not
  *     be asked. A note is signed only after one.
+ *   * THE NOTE (opd-11). On the doctor's own visits the record carries the
+ *     consultation editor (opd/ConsultationEditor.tsx): complaint, history,
+ *     examination, timed vitals as plain values, diagnoses as free text with
+ *     an optional code, plan, advice, follow-up, referral; save, sign, addenda
+ *     and the consultation print. Investigations (laboratory tests and imaging
+ *     only, no order sets) are ordered on the visit, with their slip. Finish
+ *     visit shows what the note says about a follow-up or a referral;
+ *     admission from this screen is not offered yet (opd-17a).
  *
  * WHAT THIS SCREEN NEVER DOES, by design (docs/his_design/opd.json):
  *   * It never shows a NEWS2, a band, a colour on a vital or AI advice. OPD
@@ -58,6 +66,7 @@ import {
   type CodeLabel,
   type ConsultationView,
   type MyQueue,
+  type OpdConsultation,
   type OpdQueueVisit,
   type OpdRecord,
   type OpdVitals,
@@ -65,10 +74,11 @@ import {
 import { useFocusTrap } from '../../hooks/useFocusTrap'
 import { useVisiblePolling } from '../../hooks/useVisiblePolling'
 import { formatClinicalDateKey, formatClinicalDateTime } from '../../lib/datetime'
-import { bloodPressure, vitalTemperature, vitalWhole } from '../../lib/vitals'
 import { assessmentOf, reviewStateOf, type AllergyAssessment } from '../../api/opdAllergyReview'
 import RegisterPatientView from './frontdesk/RegisterPatientView'
 import AllergyReviewDialog from './opd/AllergyReviewDialog'
+import ConsultationEditor from './opd/ConsultationEditor'
+import { opdVitalsLine } from './opd/opdVitals'
 import './OpdPanel.css'
 
 /** Used until /api/opd/meta answers; the server's list wins once it does. */
@@ -199,18 +209,7 @@ function QueueSection({
 // ── The record of the open patient ───────────────────────────────────────────
 
 function vitalsLine(v: OpdVitals): string {
-  const x = v.values
-  const parts: string[] = []
-  if (x.heart_rate != null) parts.push(`Pulse ${vitalWhole(x.heart_rate)} per min`)
-  if (x.systolic_bp != null || x.diastolic_bp != null) {
-    parts.push(`BP ${bloodPressure(x.systolic_bp, x.diastolic_bp, '?')} mmHg`)
-  }
-  if (x.respiratory_rate != null) parts.push(`Breathing ${vitalWhole(x.respiratory_rate)} per min`)
-  if (x.spo2 != null) parts.push(`SpO2 ${vitalWhole(x.spo2)}%`)
-  if (x.temperature != null) parts.push(`Temperature ${vitalTemperature(x.temperature)} °C`)
-  if (x.weight_kg != null) parts.push(`Weight ${x.weight_kg} kg`)
-  if (x.height_cm != null) parts.push(`Height ${x.height_cm} cm`)
-  return parts.join(', ')
+  return opdVitalsLine(v.values)
 }
 
 function NoteState({ view }: { view: ConsultationView | null }) {
@@ -309,6 +308,7 @@ function RecordPane({
   canFinish,
   onFinish,
   onReview,
+  onNoteChanged,
 }: {
   visit: OpdQueueVisit
   record: OpdRecord | null
@@ -318,6 +318,8 @@ function RecordPane({
   onFinish: () => void
   /** Record the allergy review (opd-10a); offered on the doctor's own visits. */
   onReview?: () => void
+  /** The note editor (opd-11): offered on the doctor's own visits. */
+  onNoteChanged?: (view: ConsultationView) => void
 }) {
   if (error) return <p className="opd-error" role="alert">{error}</p>
   /* Never draw one patient's record or note under another patient's token. */
@@ -393,7 +395,19 @@ function RecordPane({
           )}
       </section>
 
-      <NoteState view={visitNote} />
+      {onNoteChanged && visitNote ? (
+        <ConsultationEditor
+          key={visit.id}
+          visitId={visit.id}
+          patientName={p.name}
+          view={visitNote}
+          onChanged={onNoteChanged}
+          onReviewAllergies={onReview}
+          visitOpen={visit.status !== 'completed' && visit.status !== 'cancelled'}
+        />
+      ) : (
+        <NoteState view={visitNote} />
+      )}
 
       <section className="opd-block" aria-label="Signed outpatient notes">
         <h4 className="opd-subhead">Signed outpatient notes</h4>
@@ -445,15 +459,42 @@ function RecordPane({
 
 // ── Finish visit ─────────────────────────────────────────────────────────────
 
+/** What the note says about the outcome chosen (opd-11): the follow-up date
+ *  or the clinic referred to, as written, or that the note does not say. */
+function DispositionNote({ disposition, note }: { disposition: string; note: OpdConsultation | null }) {
+  if (disposition === 'follow_up') {
+    return note?.follow_up_date ? (
+      <p className="opd-hint">
+        Follow-up on {formatClinicalDateKey(note.follow_up_date)}, from the note. The front desk books
+        the appointment.
+      </p>
+    ) : (
+      <p className="opd-hint">
+        The note has no follow-up date. Add one to the note, or tell the front desk when.
+      </p>
+    )
+  }
+  if (disposition === 'referred_internal') {
+    return note?.referral_department ? (
+      <p className="opd-hint">Referred to {note.referral_department}, from the note.</p>
+    ) : (
+      <p className="opd-hint">The note names no clinic to refer to. Add it to the note.</p>
+    )
+  }
+  return null
+}
+
 function FinishVisitDialog({
   visit,
   signed,
+  note,
   dispositions,
   onClose,
   onDone,
 }: {
   visit: OpdQueueVisit
   signed: boolean
+  note: OpdConsultation | null
   dispositions: CodeLabel[]
   onClose: () => void
   onDone: () => void
@@ -500,8 +541,16 @@ function FinishVisitDialog({
             onChange={e => setDisposition(e.target.value)}>
             <option value="">Choose the outcome…</option>
             {dispositions.map(d => <option key={d.code} value={d.code}>{d.label}</option>)}
+            {/* Admitting from outpatients is its own step (opd-17a), not built yet. */}
+            <option value="advise_admission" disabled>Advise admission (not available here yet)</option>
           </select>
         </div>
+        <DispositionNote disposition={disposition} note={note} />
+        {disposition === '' && (
+          <p className="opd-hint">
+            To admit the patient, send them to the admission desk with your note.
+          </p>
+        )}
         {!signed && (
           <div className="opd-field">
             <label htmlFor="opd-no-note-reason">Why is there no signed note?</label>
@@ -648,6 +697,33 @@ export default function OpdPanel() {
     setRecord(null)
     setNote(null)
     setRecordError('')
+  }, [])
+
+  /* Read the open record and note again without closing them (after an
+     allergy review), under the same rule as openRecord: an answer is used
+     only while its patient is still the one open. */
+  const refreshRecord = useCallback(async (visit: OpdQueueVisit) => {
+    const seq = ++openSeq.current
+    try {
+      const [r, n] = await Promise.all([fetchOpdRecord(visit.patient_id), fetchConsultation(visit.id)])
+      if (!mounted.current || seq !== openSeq.current) return
+      if (r?.patient?.id !== visit.patient_id || n?.visit_id !== visit.id) {
+        setRecordError('The record that came back is not this patient’s. Open the patient again.')
+        return
+      }
+      setRecord(r)
+      setNote(n)
+    } catch (err) {
+      if (!mounted.current || seq !== openSeq.current) return
+      setNotice('')
+      setError(errorText(err))
+    }
+  }, [])
+
+  /* The note editor's answer (opd-11): kept only while it is still the open
+     visit's note. */
+  const noteChanged = useCallback((view: ConsultationView) => {
+    setNote(prev => (prev && prev.visit_id === view.visit_id ? view : prev))
   }, [])
 
   /* `done` builds the notice from the visit the server returned (its token
@@ -808,6 +884,7 @@ export default function OpdPanel() {
                 canFinish={!!mineOpen}
                 onFinish={() => setFinishing(true)}
                 onReview={mineOpen ? () => setReviewing(true) : undefined}
+                onNoteChanged={mineOpen ? noteChanged : undefined}
               />
             )
             : <p className="opd-empty">Choose a patient to open their outpatient record.</p>}
@@ -824,7 +901,9 @@ export default function OpdPanel() {
             setReviewing(false)
             setNotice(`Allergy review saved for ${openVisit.patient_name ?? record.patient.name}: `
               + `${result.assessment.status_label.toLowerCase()}.`)
-            void openRecord(openVisit)
+            /* Read the record and the note again in place, so a note being
+               written is not closed (and its unsaved words lost). */
+            void refreshRecord(openVisit)
           }}
         />
       )}
@@ -833,6 +912,7 @@ export default function OpdPanel() {
         <FinishVisitDialog
           visit={openVisit}
           signed={openNote.consultation?.status === 'signed'}
+          note={openNote.consultation}
           dispositions={dispositions}
           onClose={() => setFinishing(false)}
           onDone={() => {

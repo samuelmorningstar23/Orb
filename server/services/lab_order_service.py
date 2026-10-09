@@ -138,6 +138,12 @@ immediate transaction with its clinical_access audit row:
 The receiving lists (samples in transit, timed from the collection event,
 and rejected samples waiting for a decision) are hospital-wide for the
 laboratory and department-scoped for any account with a department.
+
+THE TUBE ON THE BENCH (lis-11). sync_specimen_progress moves a received
+sample to 'in_process' once a result is entered for it and to 'completed'
+once every test on it is reported or cancelled, never backwards, with a
+specimen event each time. lab_result_service calls it inside its entry and
+release transactions; cancel_order calls it for a tube that keeps tests.
 """
 from __future__ import annotations
 
@@ -1018,6 +1024,66 @@ def _order_state_conflict(conn, order_id: str, out: dict, current: str, target: 
     return out
 
 
+#: Item statuses that mean a result exists for the test (entered or later).
+_RESULTED_OR_LATER = ("resulted", "tech_validated", "released")
+#: Specimen statuses whose progress the bench moves on (lis-11).
+_SPECIMEN_ON_THE_BENCH = ("received", "in_process")
+
+
+def specimen_progress_target(item_statuses: list[str]) -> Optional[str]:
+    """Where a received sample stands, from its tests (lis-11). Pure.
+
+      * 'completed' when at least one test is reported and every other test
+        is reported or cancelled: nothing is left to do on the tube;
+      * 'in_process' when any test has a result (entered, validated or
+        reported);
+      * None otherwise (still waiting for the bench).
+    A rejected test never completes a tube: rejection has its own path."""
+    if not item_statuses:
+        return None
+    if (any(s == "released" for s in item_statuses)
+            and all(s in _FINISHED_ITEM_STATUSES for s in item_statuses)):
+        return "completed"
+    if any(s in _RESULTED_OR_LATER for s in item_statuses):
+        return "in_process"
+    return None
+
+
+def sync_specimen_progress(conn, specimen_id: Optional[str], *, actor_id: Optional[str],
+                           actor_role: Optional[str], now: Optional[str] = None,
+                           detail: Optional[str] = None) -> Optional[str]:
+    """Move a sample on the bench forward, on the caller's write transaction:
+    received to in_process once a result is entered, and to completed once
+    every test is reported or cancelled (specimen_progress_target). Never
+    backwards, and never a sample that is not on the bench (planned,
+    collected, rejected, cancelled or already completed). Each move writes a
+    specimen event. Returns the new status, or None when nothing moved."""
+    if not specimen_id:
+        return None
+    row = conn.execute("SELECT status, patient_id FROM lab_specimens WHERE id = ?",
+                       (specimen_id,)).fetchone()
+    if row is None or row["status"] not in _SPECIMEN_ON_THE_BENCH:
+        return None
+    statuses = [r[0] for r in conn.execute(
+        "SELECT status FROM lab_order_items WHERE specimen_id = ?", (specimen_id,)).fetchall()]
+    target = specimen_progress_target(statuses)
+    if target is None or target == row["status"]:
+        return None
+    now = now or utc_iso_now()
+    moved = conn.execute(
+        "UPDATE lab_specimens SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+        (target, now, specimen_id, row["status"]))
+    if moved.rowcount != 1:
+        return None
+    words = ("Every test on this specimen is reported or cancelled" if target == "completed"
+             else "A result has been entered for this specimen")
+    _specimen_event(conn, specimen_id, row["patient_id"], target,
+                    actor_id=actor_id, actor_role=actor_role, now=now,
+                    detail=f"{words}." + (f" {detail}" if detail else ""),
+                    metadata={"from": row["status"], "to": target})
+    return target
+
+
 def cancel_order(order_id: str, *, actor: dict, reason: str, dept: Optional[str],
                  request_meta: Optional[dict] = None) -> dict:
     """Cancel an order the laboratory manages, whoever asks (the ward with
@@ -1116,6 +1182,12 @@ def cancel_order(order_id: str, *, actor: dict, reason: str, dept: Optional[str]
                             actor_id=actor_id, actor_role=actor_role, now=now,
                             detail=f"{words}. Reason: {reason}",
                             metadata={"order_id": order_id, "tests": tests, "reason": reason})
+            if event == "items_cancelled":
+                # A tube on the bench whose other tests are all reported is
+                # finished once these are cancelled (lis-11).
+                sync_specimen_progress(conn, specimen_id, actor_id=actor_id,
+                                       actor_role=actor_role, now=now,
+                                       detail="The remaining tests were cancelled.")
 
         reconciled = reconcile_order_status(
             conn, order_id, actor_id=actor_id,

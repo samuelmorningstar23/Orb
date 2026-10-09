@@ -95,6 +95,7 @@ from typing import Any, Iterable
 from database import db_session
 from services.adt.core import AdtError, adt_on
 from services.adt.end_stay import end_stay_on
+from services.adt.transfer import roster_move_on, sync_housekeeping_after_commit
 from services.clinical_records_service import allergy_entries, record_allergies_on
 
 # The pilot hospital is in India. A roster gives a DATE ("28/07/2026"); the
@@ -1507,11 +1508,42 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
     disposition is written (a guessed 'routine' would understate mortality).
     A close an end-of-stay check refuses is left open and reported under
     admissions.close_refused, never half-written. Off: unchanged.
+
+    ORB_ADT ON (adt-6a): a ward, bed or department update of an open admission
+    is a move like any other, through services/adt/transfer.roster_move_on in
+    this same transaction: a department change is a transfer resolved against
+    clinical cover (rule C, read before the transaction), anything else a bed
+    change, each with its movement row and its audit. The patients row's ward
+    and bed are then written by the ADT writer only. A file cannot type a
+    cleaning reason, name an authoriser or acknowledge a boarder, so a move
+    that needs one is left as it was and reported under
+    admissions.update_refused with the writer's words, never half-written.
     """
     adt = adt_on()
     result = plan(content, mapping, date_order=date_order,
                   update_existing=update_existing, header_line=header_line,
                   default_department=default_department)
+
+    # ORB_ADT on: what the ADT writer needs, read BEFORE the immediate session
+    # (each opens a session of its own): the departments with clinical cover,
+    # and the bed each moving admission held when the file was planned, so a
+    # bed changed since by someone else is refused as state_changed.
+    covering: list[str] = []
+    planned_beds: dict[str, Any] = {}
+    moving = [r["admission"]["admission_id"] for r in result["rows"]
+              if (r.get("admission") or {}).get("action") == "update"
+              and (r.get("admission") or {}).get("admission_id")]
+    if adt and moving:
+        from services.frontdesk_service import list_covering_departments
+
+        covering = list_covering_departments()
+        with db_session() as db:
+            for i in range(0, len(moving), 500):
+                chunk = moving[i:i + 500]
+                for r in db.execute(
+                        f"SELECT id, bed_id FROM admissions WHERE id IN ({','.join('?' * len(chunk))})",
+                        chunk).fetchall():
+                    planned_beds[r["id"]] = r["bed_id"]
 
     run_id = f"RI-{uuid.uuid4().hex[:10].upper()}"
     started = datetime.now(timezone.utc).isoformat()
@@ -1521,6 +1553,7 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
     admissions_updated: list[str] = []
     admissions_closed: list[str] = []
     close_refused: list[str] = []
+    update_refused: list[str] = []
     allergies_charted = 0
 
     with db_session(immediate=adt) as db:
@@ -1544,6 +1577,12 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
                 created_ids.append(patient_id)
             elif row["action"] == "update":
                 changed = [c for c in _WRITABLE if c in row["changes"]]
+                if (adt and (row.get("admission") or {}).get("action") in ("update", "unchanged")
+                        and (row.get("admission") or {}).get("admission_id")):
+                    # The patient has an open admission: its ward and bed
+                    # mirror is written by the ADT writer alone (below), so a
+                    # move it refuses never leaves this row naming a new place.
+                    changed = [c for c in changed if c not in ("ward", "bed")]
                 if changed:
                     db.execute(
                         f"UPDATE patients SET {', '.join(f'{c} = ?' for c in changed)} WHERE id = ?",
@@ -1603,6 +1642,35 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
                 adm["admission_id"] = admission_id
                 admissions_created.append(admission_id)
 
+            elif adm.get("action") == "update" and adt:
+                # ORB_ADT on: the same move every other door records (adt-6a),
+                # inside a savepoint so a refused move leaves nothing behind.
+                db.execute("SAVEPOINT roster_move")
+                try:
+                    moved = roster_move_on(
+                        db, admission_id=adm["admission_id"],
+                        actor={"id": actor_user_id, "role": actor_role},
+                        changes=adm.get("changes", {}), covering=covering,
+                        reason=f"Roster import {run_id}"
+                               + (f" from '{source_filename}'" if source_filename else ""),
+                        expected_bed_id=planned_beds.get(adm["admission_id"]),
+                    )
+                except AdtError as exc:
+                    db.execute("ROLLBACK TO SAVEPOINT roster_move")
+                    db.execute("RELEASE SAVEPOINT roster_move")
+                    if exc.code == "no_change":
+                        # The file names the place already recorded (in the
+                        # master's spelling): nothing to move.
+                        adm["action"] = "unchanged"
+                        continue
+                    adm["action"] = "update_refused"
+                    adm["refusal"] = {"code": exc.code, "message": str(exc)}
+                    update_refused.append(adm["admission_id"])
+                    continue
+                db.execute("RELEASE SAVEPOINT roster_move")
+                adm["movement_id"] = moved["movement_id"]
+                admissions_updated.append(adm["admission_id"])
+
             elif adm.get("action") == "update":
                 changed = [c for c in ("ward", "bed", "department") if c in adm.get("changes", {})]
                 if changed:
@@ -1657,6 +1725,7 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
         }
         if adt:
             admissions["close_refused"] = len(close_refused)
+            admissions["update_refused"] = len(update_refused)
         db.execute(
             """INSERT INTO roster_import_runs
                    (id, actor_user_id, source_filename, mapping_json, date_order,
@@ -1670,6 +1739,11 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
              json.dumps({**summary, "admissions": admissions,
                          "allergies": {"charted": allergies_charted}}), note, started),
         )
+
+    if adt and (admissions_updated or admissions_closed):
+        # adt-7: the beds' housekeeping records follow, best-effort; a
+        # failure here never undoes the import.
+        sync_housekeeping_after_commit()
 
     result["run_id"] = run_id
     result["applied"] = True

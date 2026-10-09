@@ -133,6 +133,7 @@ __all__ = [
     "list_tasks",
     "get_task",
     "sync_discharge_turnarounds",
+    "sync_adt_movements",
     "ward_turnaround_report",
     "ward_readiness",
     "list_linen_items",
@@ -978,26 +979,41 @@ def force_occupied(
             unit["is_isolation_room"] = bool(unit.get("is_isolation_room"))
             unit["clean_was_skipped"] = False
             return unit
-        skipped = unit["state"] != "vacant_ready"
-        updated = _apply_transition(
-            db, unit, "occupied",
-            actor_user_id=actor_user_id, actor_role=actor_role,
-            reason=(f"OCCUPIED WITHOUT COMPLETED CLEAN (was {unit['state']}): {why}"
-                    if skipped else why),
-            task_id=None, occurred_at=now, allow_illegal=True,
-        )
-        if skipped:
-            db.execute(
-                """UPDATE housekeeping_tasks
-                      SET status = 'cancelled', cancelled_at = ?, cancelled_by_user_id = ?,
-                          cancel_reason = ?
-                    WHERE unit_id = ? AND status IN ('open', 'in_progress')""",
-                (now, actor_user_id,
-                 f"Unit occupied before the clean finished: {why}", unit["id"]),
-            )
+        updated, skipped = _force_occupied_on(
+            db, unit, why=why, actor_user_id=actor_user_id, actor_role=actor_role,
+            occurred_at=now, cancelled_at=now)
     updated["is_isolation_room"] = bool(updated.get("is_isolation_room"))
     updated["clean_was_skipped"] = skipped
     return updated
+
+
+def _force_occupied_on(db, unit: dict, *, why: str, actor_user_id: str | None,
+                       actor_role: str | None, occurred_at: str,
+                       cancelled_at: str) -> tuple[dict, bool]:
+    """The record force_occupied writes, on the caller's connection: the unit
+    moved to occupied with the skipped clean named on its ledger, and any open
+    or running clean on it cancelled with the same reason. The ONE place that
+    sets allow_illegal. Two callers: force_occupied (a person records it) and
+    sync_adt_movements (a bed movement put a patient in a bed not recorded
+    clean; adt-7). Returns (unit, clean_was_skipped)."""
+    skipped = unit["state"] != "vacant_ready"
+    updated = _apply_transition(
+        db, unit, "occupied",
+        actor_user_id=actor_user_id, actor_role=actor_role,
+        reason=(f"OCCUPIED WITHOUT COMPLETED CLEAN (was {unit['state']}): {why}"
+                if skipped else why),
+        task_id=None, occurred_at=occurred_at, allow_illegal=True,
+    )
+    if skipped:
+        db.execute(
+            """UPDATE housekeeping_tasks
+                  SET status = 'cancelled', cancelled_at = ?, cancelled_by_user_id = ?,
+                      cancel_reason = ?
+                WHERE unit_id = ? AND status IN ('open', 'in_progress')""",
+            (cancelled_at, actor_user_id,
+             f"Unit occupied before the clean finished: {why}", unit["id"]),
+        )
+    return updated, skipped
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1616,6 +1632,418 @@ def sync_discharge_turnarounds(
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  Beds and admissions: the movement ledger, read by housekeeping (adt-7)
+# ═════════════════════════════════════════════════════════════════════════════
+
+#: Movement types that can take a patient OUT of a bed (the bed board's list,
+#: services/bed_master_service.VACATING_MOVEMENT_TYPES).
+_ADT_VACATING_TYPES: frozenset[str] = frozenset(
+    {"discharge", "transfer", "bed_change", "bed_swap", "correction", "location_linked"})
+
+#: Movement types that can put a patient INTO a bed.
+_ADT_OCCUPYING_TYPES: frozenset[str] = frozenset(
+    {"admission", "bed_assigned", "bed_change", "transfer", "bed_swap", "correction",
+     "location_linked"})
+
+
+def sync_adt_movements(
+    *,
+    lookback_hours: int | None = None,
+    now: datetime | None = None,
+) -> dict:
+    """Bring the housekeeping register up to date with the bed movement
+    ledger (patient_movements), while Beds and admissions (ORB_ADT) is on.
+
+    A PULL, LIKE THE DISCHARGE SWEEP, AND FOR THE SAME REASON. An ADT write
+    path is a clinical write path; nothing here may make a move, an admission
+    or a discharge slower or fail. So the ADT routes call this AFTER their own
+    transaction has committed, inside a try that swallows any failure, and
+    the housekeeping board runs it on every load (overview). Running it ten
+    times acts once: each movement side it handles gets a row in
+    housekeeping_movement_links (migration 66) in the same transaction as
+    what it did, and a turnaround task is keyed UNIQUE on (source_type,
+    source_ref) underneath that.
+
+    FOR EACH MOVEMENT in the lookback window (config.
+    HOUSEKEEPING_DISCHARGE_LOOKBACK_HOURS), oldest first, so a bed someone
+    moved into and then out of ends where it really is:
+
+      the bed the patient LEFT ('from' side; a discharge, transfer, bed change,
+      swap, correction or link that names another bed)
+        a turnaround clean is raised. A discharge is source_type 'discharge'
+        with source_ref the discharge summary's id when the end has one, else
+        the movement's own id: exactly the key the discharge sweep uses, so
+        one end of stay is one task whichever sweep sees it first. Any other
+        move is source_type 'transfer' with the movement id. vacated_at is the
+        movement's moved_at (when the patient left, not when this noticed).
+        The clean is TERMINAL when the stay that left carried isolation
+        precautions (read through adt core carried_isolation, so '[]' is no
+        precaution) or the bed or its room is an isolation room, or a terminal
+        clean is still owed on the bed (an isolation stay left it since it was
+        last recorded clean, read from the ledger as the placement rule
+        reads it, so a terminal clean skipped once is not lost). A bed
+        housekeeping holds as occupied, or as ready, becomes needs cleaning;
+        one already dirty, being cleaned or out of service keeps its state.
+        A bed recorded clean after the patient left keeps its state, and the
+        task is closed as cancelled with that reason (the clean is recorded,
+        and a ready bed's task could never be started). A bed another active
+        admission holds by its master bed id was given to that patient before
+        this departure's clean: when that admission's own arrival is still to
+        be recorded in the same run (a discharge and the next admission
+        synced together, the usual case, since neither the admission form nor
+        the doctor's discharge runs this), the bed becomes needs cleaning here
+        and the arrival records the skipped clean below; when its arrival is
+        already recorded (an admission timed before this departure), the bed
+        gets the same force_occupied record here, naming that arrival. No
+        turnaround is left open on a bed a patient lies in.
+
+      the bed the patient went INTO ('to' side), while the patient still
+      lies there (a bed they have since left is not marked occupied after the
+      fact, which would undo a clean recorded since)
+        a bed recorded clean (vacant_ready) is marked occupied. A bed NOT
+        recorded clean is marked occupied with the skipped clean on its own
+        ledger, naming the movement, and its open cleans are cancelled with
+        that reason: housekeeping's force_occupied record. The placement
+        rules (ADT-S2 (c)) already asked for the reason or the authoriser
+        before the patient was put there; this records that it happened.
+
+    A movement into the same bed it left (a department-only transfer)
+    touches nothing. A discharge a reopen corrected is void (the ledger rule
+    of adt-8b) and raises nothing. A bed not on the register, or on a ward
+    whose cleaning is not tracked, is recorded as skipped and left alone.
+
+    Off (ORB_ADT off, or housekeeping switched off): nothing is read or
+    written. Returns counts: {processed, vacated, tasks_raised, occupied,
+    occupied_unclean, skipped, lookback_hours}."""
+    from services.adt.core import _vacated_with_isolation_on, adt_on, carried_isolation
+
+    hours = int(lookback_hours if lookback_hours is not None
+                else config.HOUSEKEEPING_DISCHARGE_LOOKBACK_HOURS)
+    hours = max(1, min(24 * 30, hours))
+    out: dict[str, Any] = {"processed": 0, "vacated": 0, "tasks_raised": 0, "occupied": 0,
+                           "occupied_unclean": 0, "skipped": 0, "lookback_hours": hours}
+    if not adt_on():
+        out["off"] = "adt"
+        return out
+    if not getattr(config, "HOUSEKEEPING_ENABLED", False):
+        out["off"] = "housekeeping"
+        return out
+    ensure_housekeeping_schema()
+    from migrations_his.m0066_housekeeping_movement_links import ensure_links_on
+
+    now = now or datetime.now(timezone.utc)
+    cutoff = (now - timedelta(hours=hours)).isoformat()
+
+    types = tuple(sorted(_ADT_VACATING_TYPES | _ADT_OCCUPYING_TYPES))
+    marks = ",".join("?" for _ in types)
+    pending_sql = f"""SELECT m.id, m.admission_id, m.movement_type, m.moved_at,
+                       m.from_ward, m.from_bed, m.from_bed_id,
+                       m.to_ward, m.to_bed, m.to_bed_id, m.discharge_summary_id,
+                       a.isolation_precautions
+                  FROM patient_movements m
+                  LEFT JOIN admissions a ON a.id = m.admission_id
+                 WHERE m.movement_type IN ({marks})
+                   AND julianday(m.moved_at) >= julianday(?)
+                   AND (NOT EXISTS (SELECT 1 FROM housekeeping_movement_links l
+                                     WHERE l.movement_id = m.id AND l.side = 'from')
+                        OR NOT EXISTS (SELECT 1 FROM housekeeping_movement_links l
+                                        WHERE l.movement_id = m.id AND l.side = 'to'))
+                 ORDER BY julianday(m.moved_at), m.rowid"""
+
+    # A plain read first: the board runs this on every load, and taking the
+    # write lock to find nothing to do would hold up every writer in turn.
+    with db_session() as db:
+        present = {r[0] for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN "
+            "('patient_movements', 'housekeeping_movement_links')").fetchall()}
+        if "patient_movements" not in present:
+            return out
+        if "housekeeping_movement_links" in present and db.execute(
+                f"SELECT 1 FROM ({pending_sql}) LIMIT 1", types + (cutoff,)).fetchone() is None:
+            return out
+
+    with db_session(immediate=True) as db:
+        # Migration 66 creates the table; this is its idempotent fallback.
+        ensure_links_on(db)
+        movements = [_row(r) for r in db.execute(pending_sql, types + (cutoff,)).fetchall()]
+        if not movements:
+            return out
+
+        units = {r["id"]: _row(r) for r in db.execute(
+            "SELECT id, unit_code, ward, ward_id, room_id, bed_label, state, state_since, "
+            "is_isolation_room FROM housekeeping_units WHERE is_active = 1").fetchall()}
+        wards = {r["id"]: _row(r) for r in db.execute(
+            "SELECT id, code, cleaning_tracked FROM wards").fetchall()} if db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wards'").fetchone() else {}
+        isolation_rooms = {r[0] for r in db.execute(
+            "SELECT id FROM ward_rooms WHERE is_isolation = 1").fetchall()} if db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ward_rooms'").fetchone() else set()
+        ward_by_code = {_norm_key(w["code"]): w for w in wards.values() if w.get("code")}
+        master_by_label: dict[tuple[str, str], dict] = {}
+        legacy_by_ward_bed: dict[tuple[str, str], dict] = {}
+        by_code: dict[str, dict] = {}
+        for unit in units.values():
+            by_code[_norm_key(unit["unit_code"])] = unit
+            if unit.get("ward_id"):
+                master_by_label[(unit["ward_id"], _norm_key(unit.get("bed_label")))] = unit
+            else:
+                label = unit.get("bed_label") or unit.get("unit_code")
+                legacy_by_ward_bed[(_norm_key(unit["ward"]), _norm_key(label))] = unit
+
+        def _unit_for(bed_id: Any, ward_text: Any, bed_text: Any) -> Optional[dict]:
+            if bed_id:
+                return units.get(bed_id)
+            if not str(bed_text or "").strip():
+                return None
+            ward = ward_by_code.get(_norm_key(ward_text))
+            if ward is not None:
+                found = master_by_label.get((ward["id"], _norm_key(bed_text)))
+                if found is not None:
+                    return found
+            return (legacy_by_ward_bed.get((_norm_key(ward_text), _norm_key(bed_text)))
+                    or by_code.get(_norm_key(bed_text))
+                    or by_code.get(_norm_key(f"{ward_text}/{bed_text}")))
+
+        def _lies_in_now(admission_id: Optional[str], unit: dict) -> bool:
+            """The movement's admission is active and recorded in `unit` now."""
+            if not admission_id:
+                return False
+            adm = db.execute("SELECT status, ward, bed, bed_id FROM admissions WHERE id = ?",
+                             (admission_id,)).fetchone()
+            if adm is None or adm["status"] != "active":
+                return False
+            here = _unit_for(adm["bed_id"], adm["ward"], adm["bed"])
+            return here is not None and here["id"] == unit["id"]
+
+        def _tracked(unit: dict) -> bool:
+            ward = wards.get(unit.get("ward_id") or "")
+            return ward is None or bool(ward.get("cleaning_tracked"))
+
+        def _link(movement_id: str, side: str, unit: Optional[dict], effect: str,
+                  task_id: Optional[str] = None, note: Optional[str] = None) -> None:
+            db.execute(
+                """INSERT OR IGNORE INTO housekeeping_movement_links
+                       (movement_id, side, unit_id, effect, task_id, note, applied_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (movement_id, side, (unit or {}).get("id"), effect, task_id, note, _now()))
+            out["skipped" if effect == "skipped" else {
+                "vacated": "vacated", "task_raised": "tasks_raised", "occupied": "occupied",
+                "occupied_unclean": "occupied_unclean"}[effect]] += 1
+
+        linked = {(r[0], r[1]) for r in db.execute(
+            f"""SELECT movement_id, side FROM housekeeping_movement_links
+                 WHERE movement_id IN ({",".join("?" for _ in movements)})""",
+            tuple(m["id"] for m in movements)).fetchall()}
+        voided = {r[0] for r in db.execute(
+            f"""SELECT corrects_movement_id FROM patient_movements
+                 WHERE corrects_movement_id IN ({",".join("?" for _ in movements)})""",
+            tuple(m["id"] for m in movements)).fetchall()}
+
+        # The arrivals this run has still to record, by (admission, bed), at
+        # their latest place in the run. A discharge and the next admission
+        # into the same bed usually wait for the same run (neither the
+        # admission form nor the doctor's discharge runs this sync), and by
+        # then the new admission already holds the bed: its own arrival,
+        # further down the run, is what records that placement.
+        arrivals_ahead: dict[tuple[str, str], int] = {}
+        for pos, m in enumerate(movements):
+            if (m["id"], "to") in linked or m["movement_type"] not in _ADT_OCCUPYING_TYPES \
+                    or not m.get("admission_id"):
+                continue
+            into = _unit_for(m.get("to_bed_id"), m.get("to_ward"), m.get("to_bed"))
+            left = _unit_for(m.get("from_bed_id"), m.get("from_ward"), m.get("from_bed"))
+            if into is None or (left is not None and left["id"] == into["id"]):
+                continue
+            arrivals_ahead[(m["admission_id"], into["id"])] = pos
+
+        occupying = tuple(sorted(_ADT_OCCUPYING_TYPES))
+        occupying_marks = ",".join("?" for _ in occupying)
+
+        for pos, m in enumerate(movements):
+            out["processed"] += 1
+            mid = m["id"]
+            from_unit = _unit_for(m.get("from_bed_id"), m.get("from_ward"), m.get("from_bed"))
+            to_unit = _unit_for(m.get("to_bed_id"), m.get("to_ward"), m.get("to_bed"))
+            same_bed = (from_unit is not None and to_unit is not None
+                        and from_unit["id"] == to_unit["id"])
+
+            # ── the bed the patient left ──
+            if (mid, "from") not in linked:
+                if m["movement_type"] not in _ADT_VACATING_TYPES or from_unit is None or same_bed:
+                    note = ("same_bed" if same_bed else
+                            "not_on_register" if (m.get("from_bed_id") or m.get("from_bed"))
+                            and m["movement_type"] in _ADT_VACATING_TYPES else "no_bed")
+                    _link(mid, "from", from_unit, "skipped", note=note)
+                elif m["movement_type"] == "discharge" and mid in voided:
+                    _link(mid, "from", from_unit, "skipped", note="end_reopened")
+                elif not _tracked(from_unit):
+                    _link(mid, "from", from_unit, "skipped", note="cleaning_not_tracked")
+                else:
+                    if m["movement_type"] == "discharge":
+                        source_type = "discharge"
+                        source_ref = (str(m["discharge_summary_id"])
+                                      if m.get("discharge_summary_id") is not None else mid)
+                        request_type = "discharge_turnaround"
+                        words = "Discharge turnaround (raised automatically from the bed movement record)"
+                    else:
+                        source_type, source_ref = "transfer", mid
+                        request_type = "transfer_turnaround"
+                        words = "Transfer turnaround (raised automatically from the bed movement record)"
+                    # One clinical fact crosses, as a boolean (see the
+                    # discharge sweep): did the stay that left carry isolation
+                    # precautions? The text is never copied.
+                    terminal = (carried_isolation(m.get("isolation_precautions"))
+                                or bool(from_unit.get("is_isolation_room"))
+                                or (from_unit.get("room_id") in isolation_rooms))
+                    if not terminal and wards.get(from_unit.get("ward_id") or ""):
+                        # A terminal clean skipped once is still owed: a stay
+                        # with isolation precautions left this bed since it
+                        # was last recorded clean (and a patient was put in
+                        # before that clean, cancelling it). The placement
+                        # rule reads the ledger the same way (adt core).
+                        terminal = from_unit["id"] in _vacated_with_isolation_on(
+                            db, wards=[wards[from_unit["ward_id"]]], bed_ids=[from_unit["id"]])
+                    vacated_at = m.get("moved_at") or _now()
+                    created = True
+                    try:
+                        task_id = _insert_task(
+                            db, unit=from_unit, request_type=request_type, priority="routine",
+                            clean_type="terminal" if terminal else "standard",
+                            description=words,
+                            precaution_note=(
+                                "Terminal clean: this bed's last occupant was nursed with "
+                                "isolation precautions, or this is a designated isolation room. "
+                                "Follow the hospital's terminal-clean protocol and PPE."
+                                if terminal else None),
+                            source_type=source_type, source_ref=source_ref,
+                            requested_by_user_id=None, requested_at=_now(),
+                            vacated_at=vacated_at)
+                    except DBIntegrityError:
+                        # The discharge sweep (or an earlier run) raised it:
+                        # one end of stay is one task.
+                        created = False
+                        existing = db.execute(
+                            "SELECT id FROM housekeeping_tasks WHERE source_type = ? AND source_ref = ?",
+                            (source_type, source_ref)).fetchone()
+                        task_id = existing["id"] if existing else None
+                    # The bed's own state: a bed housekeeping holds as occupied,
+                    # or as ready but not cleaned since the patient left (the
+                    # bed board's rule: a tie reads as not cleaned), becomes
+                    # needs cleaning.
+                    cleaned_since = from_unit["state"] == "vacant_ready" and db.execute(
+                        "SELECT 1 FROM housekeeping_unit_events WHERE unit_id = ? "
+                        "AND to_state = 'vacant_ready' AND julianday(occurred_at) > julianday(?) "
+                        "LIMIT 1", (from_unit["id"], vacated_at)).fetchone() is not None
+                    # Another active admission holding the bed by its master bed
+                    # id was put there before this departure's clean. When its
+                    # own arrival is still to be recorded in this run (a
+                    # discharge and the next admission synced together, the
+                    # usual case), the bed is marked needing cleaning here and
+                    # that arrival records the skipped clean, naming itself.
+                    # When its arrival is already recorded (an admission timed
+                    # before this departure, read while the bed still showed
+                    # occupied), the skipped clean is recorded here, naming it.
+                    # Either way no turnaround is left open on a bed a patient
+                    # lies in, where it could never be started.
+                    settled = [r[0] for r in db.execute(
+                        "SELECT id FROM admissions WHERE bed_id = ? AND status = 'active' "
+                        "AND id <> ? ORDER BY id",
+                        (from_unit["id"], m.get("admission_id") or "")).fetchall()
+                        if arrivals_ahead.get((r[0], from_unit["id"]), -1) <= pos]
+                    if cleaned_since:
+                        # The clean this departure owed is already recorded. Its
+                        # task is still raised (it holds the key, so the
+                        # discharge sweep cannot raise a second one later) but
+                        # not left open: a ready bed's task can never be
+                        # started, and would sit on the next patient's bed.
+                        if task_id:
+                            db.execute(
+                                """UPDATE housekeeping_tasks
+                                      SET status = 'cancelled', cancelled_at = ?,
+                                          cancelled_by_user_id = NULL, cancel_reason = ?
+                                    WHERE id = ? AND status = 'open'""",
+                                (_now(), "Bed recorded clean after the patient left "
+                                 f"(movement {mid}): no clean owed for this departure", task_id))
+                        _link(mid, "from", from_unit, "task_raised" if created else "skipped",
+                              task_id=task_id, note="cleaned_since")
+                    elif from_unit["state"] in ("occupied", "vacant_ready"):
+                        updated = _apply_transition(
+                            db, from_unit, "vacant_dirty", actor_user_id=None,
+                            actor_role=None,
+                            reason=("patient discharged" if source_type == "discharge"
+                                    else "patient moved to another bed"),
+                            task_id=task_id, occurred_at=vacated_at)
+                        from_unit.update(state=updated["state"],
+                                         state_since=updated["state_since"])
+                        if settled:
+                            arrival = db.execute(
+                                f"""SELECT id, moved_at,
+                                           julianday(moved_at) > julianday(?) AS later
+                                      FROM patient_movements
+                                     WHERE admission_id = ? AND to_bed_id = ?
+                                       AND movement_type IN ({occupying_marks})
+                                       AND (from_bed_id IS NULL OR from_bed_id <> to_bed_id)
+                                     ORDER BY julianday(moved_at) DESC, rowid DESC LIMIT 1""",
+                                (vacated_at, settled[0], from_unit["id"]) + occupying).fetchone()
+                            updated, _skipped = _force_occupied_on(
+                                db, from_unit,
+                                why=(f"movement {arrival['id']}" if arrival
+                                     else "another stay already holds this bed"),
+                                actor_user_id=None, actor_role=None,
+                                occurred_at=(arrival["moved_at"] if arrival and arrival["later"]
+                                             else vacated_at),
+                                cancelled_at=_now())
+                            from_unit.update(state=updated["state"],
+                                             state_since=updated["state_since"])
+                            out["occupied_unclean"] += 1
+                            _link(mid, "from", from_unit, "vacated", task_id=task_id,
+                                  note="occupied_without_clean")
+                        else:
+                            _link(mid, "from", from_unit, "vacated", task_id=task_id)
+                    elif created:
+                        _link(mid, "from", from_unit, "task_raised", task_id=task_id)
+                    else:
+                        _link(mid, "from", from_unit, "skipped", task_id=task_id,
+                              note="task_exists")
+
+            # ── the bed the patient went into ──
+            if (mid, "to") not in linked:
+                if m["movement_type"] not in _ADT_OCCUPYING_TYPES or to_unit is None or same_bed:
+                    note = ("same_bed" if same_bed else
+                            "not_on_register" if (m.get("to_bed_id") or m.get("to_bed"))
+                            and m["movement_type"] in _ADT_OCCUPYING_TYPES else "no_bed")
+                    _link(mid, "to", to_unit, "skipped", note=note)
+                elif not _tracked(to_unit):
+                    _link(mid, "to", to_unit, "skipped", note="cleaning_not_tracked")
+                elif not _lies_in_now(m.get("admission_id"), to_unit):
+                    # The patient has since left this bed (or the stay ended):
+                    # marking it occupied now would undo whatever housekeeping
+                    # recorded after they left. The bed's departure is handled
+                    # by the later movement.
+                    _link(mid, "to", to_unit, "skipped", note="no_longer_there")
+                elif to_unit["state"] == "occupied":
+                    _link(mid, "to", to_unit, "skipped", note="already_occupied")
+                else:
+                    when = m.get("moved_at") or _now()
+                    if to_unit["state"] == "vacant_ready":
+                        updated = _apply_transition(
+                            db, to_unit, "occupied", actor_user_id=None, actor_role=None,
+                            reason=f"Patient placed in this bed (movement {mid})",
+                            task_id=None, occurred_at=when)
+                        effect = "occupied"
+                    else:
+                        # A bed not recorded clean: housekeeping's honest
+                        # record of a skipped clean, naming the movement.
+                        updated, _skipped = _force_occupied_on(
+                            db, to_unit, why=f"movement {mid}", actor_user_id=None,
+                            actor_role=None, occurred_at=when, cancelled_at=_now())
+                        effect = "occupied_unclean"
+                    to_unit.update(state=updated["state"], state_since=updated["state_since"])
+                    _link(mid, "to", to_unit, effect)
+    return out
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  Turnaround reporting
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -1992,12 +2420,20 @@ def overview(*, sync: bool = True) -> dict:
     """
     ensure_housekeeping_schema()
     sweep: dict[str, Any] = {"skipped": True}
+    adt_sync: dict[str, Any] = {"skipped": True}
     if sync:
         try:
             sweep = sync_discharge_turnarounds()
         except Exception as exc:  # noqa: BLE001
             logger.warning("discharge turnaround sweep failed: %s", exc, exc_info=True)
             sweep = {"error": "sweep_failed", "detail": str(exc)}
+        # Beds and admissions (adt-7): the bed movement ledger, read the same
+        # way. Nothing while ORB_ADT is off; a failure never blanks the board.
+        try:
+            adt_sync = sync_adt_movements()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("bed movement sync failed: %s", exc, exc_info=True)
+            adt_sync = {"error": "sync_failed", "detail": str(exc)}
 
     open_tasks = list_tasks(status="open", limit=200)
     active = list_tasks(status="in_progress", limit=200)
@@ -2028,6 +2464,7 @@ def overview(*, sync: bool = True) -> dict:
         "queue": (active + open_tasks)[:50],
         "readiness": readiness,
         "discharge_sweep": sweep,
+        "movement_sync": adt_sync,
         "expected_minutes": {
             "standard": expected_minutes_for("standard"),
             "terminal": expected_minutes_for("terminal"),

@@ -54,6 +54,15 @@
  * (./frontdesk/RegisterPatientView.tsx): the patient index search first, the
  * identity check, a new registration only after a search. With the feature
  * off the form is exactly the one it always was.
+ *
+ * ── TRANSFERS WITH BEDS AND ADMISSIONS (adt-6a, ORB_ADT on) ─────────────────
+ * While the server's 'adt' module is on, Transfer opens the Move screen
+ * (components/adt/MoveDrawer) instead of the typed ward and bed form: the
+ * receiving department from the covered list, a bed of bed setup through the
+ * bed picker (or the ward with no bed yet, or the current bed kept), and the
+ * same handover words. It posts to /api/adt/transfers; the old form posts to
+ * /api/frontdesk/transfers, which delegates to the same writer while the
+ * module is on. With the module off this screen is unchanged.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
@@ -81,9 +90,13 @@ import {
 } from '../../api/frontdesk'
 import './FrontDeskPanel.css'
 import { formatClinicalDateTime } from '../../lib/datetime'
-import { OPD_CONSULT, PATIENT_READ_ALL, hasPermission, type Permission } from '../../lib/roles'
+import {
+  ADT_BED, ADT_TRANSFER, OPD_CONSULT, PATIENT_READ_ALL, PATIENT_WRITE, hasPermission,
+  type Permission,
+} from '../../lib/roles'
 import QueueView, { type OpdModeQueue } from './frontdesk/QueueView'
-import { currentFeatureFlags, subscribeModuleFlags } from '../../shellConfig'
+import { currentFeatureFlags, currentModuleFlags, subscribeModuleFlags } from '../../shellConfig'
+import MoveDrawer from '../../components/adt/MoveDrawer'
 import {
   discoverFrontDeskViews,
   visibleFrontDeskViews,
@@ -119,6 +132,8 @@ interface WardPatient {
   ward: string | null
   bed: string | null
   admission_department?: string | null
+  /** The active admission (GET /api/vigil/patients), for the Move screen. */
+  admission_id?: string | null
 }
 
 function errorText(err: unknown): string {
@@ -668,16 +683,74 @@ function TransferModal({
   )
 }
 
+// ── Move modal (Beds and admissions on) ─────────────────────────────────────
+
+function MoveModal({
+  patient,
+  holds,
+  onClose,
+  onDone,
+}: {
+  patient: WardPatient
+  holds: (permission: string) => boolean
+  onClose: () => void
+  onDone: () => void
+}) {
+  const modalRef = useFocusTrap<HTMLDivElement>(onClose)
+  return createPortal(
+    <div className="fd-modal-backdrop" onClick={onClose}>
+      <div
+        className="fd-modal"
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="fd-move-title"
+        onClick={e => e.stopPropagation()}
+      >
+        {patient.admission_id ? (
+          <MoveDrawer
+            key={patient.admission_id}
+            admissionId={patient.admission_id}
+            patient={{ name: patient.name, mrn: patient.mrn }}
+            canTransfer={holds(ADT_TRANSFER) || holds(PATIENT_WRITE)}
+            canChangeBed={holds(ADT_BED) || holds(PATIENT_WRITE)}
+            initialMode="transfer"
+            titleId="fd-move-title"
+            onDone={onDone}
+            onClose={onClose}
+          />
+        ) : (
+          <>
+            <h2 className="fd-modal__title" id="fd-move-title">Transfer {patient.name}</h2>
+            <p className="fd-modal__lede">
+              No active admission is on record for this patient, so there is no stay to move.
+            </p>
+            <div className="fd-modal__actions">
+              <button type="button" className="fd-btn fd-btn--quiet" onClick={onClose}>Close</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
 // ── Transfers view ───────────────────────────────────────────────────────────
 
 function TransfersView({
   patients,
   destinations,
   onTransferred,
+  adtOn = false,
+  holds = roleHolds,
 }: {
   patients: WardPatient[]
   destinations: TransferDestination[]
   onTransferred: () => void
+  /** Beds and admissions is on: Transfer opens the Move screen (adt-6a). */
+  adtOn?: boolean
+  holds?: (permission: string) => boolean
 }) {
   const [selected, setSelected] = useState<WardPatient | null>(null)
   const [historyFor, setHistoryFor] = useState<string>('')
@@ -775,7 +848,15 @@ function TransfersView({
         </section>
       )}
 
-      {selected && (
+      {selected && adtOn && (
+        <MoveModal
+          patient={selected}
+          holds={holds}
+          onClose={() => setSelected(null)}
+          onDone={() => { setSelected(null); onTransferred() }}
+        />
+      )}
+      {selected && !adtOn && (
         <TransferModal
           patient={selected}
           destinations={destinations}
@@ -814,6 +895,10 @@ export default function FrontDeskPanel({
      view that meets `feature_disabled` later sets `featureGone`, and the desk
      drops back to its two built-in sections without a reload. */
   const features = useSyncExternalStore(subscribeModuleFlags, currentFeatureFlags)
+  /* Beds and admissions (ORB_ADT), as the shell's health probe last read it:
+     Transfer then opens the Move screen (adt-6a). */
+  const modules = useSyncExternalStore(subscribeModuleFlags, currentModuleFlags)
+  const adtOn = modules.adt === true
   const [featureGone, setFeatureGone] = useState(false)
   const registrationOn = features.registration === true && !featureGone
   /* A desk-only account (registration.* and no chart): the clinical board and
@@ -976,6 +1061,8 @@ export default function FrontDeskPanel({
           patients={patients}
           destinations={destinations}
           onTransferred={load}
+          adtOn={adtOn}
+          holds={holds}
         />
       ) : (
         <div className="fd-opd">

@@ -668,6 +668,11 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
     'end_of_stay' block listing the open escalation chains (never closed) and
     the bundles it closed.
 
+    STAY KEYING (opd-17b, every flag). The summary carries admission_id, the
+    stay it ends (migration 65), so a second stay on the same record is never
+    read as the first: the active admission the close below ends, or NULL for
+    a patient with no admission row.
+
     THE LINK IS CONDITIONAL, THE DISCHARGE IS NOT. A secure link is only printed
     when the patient has a second factor the portal can actually check — see
     services/discharge_access_service.second_factor_status, which is the same
@@ -750,6 +755,15 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
             raise AdtConflict("This stay cannot end yet", code="discharge_preconditions",
                               preconditions=problems)
 
+        # The stay this summary ends (opd-17b, every flag): the patient's
+        # active admission, read BEFORE the close below flips it. Migration 65
+        # lets a patient hold one active admission only, so this is the stay
+        # being closed. None for a patient with no admission row (records
+        # written before admissions existed): the summary then carries NULL,
+        # which every stay-keyed reader treats as "not known".
+        stay = admission if admission is not None else current_admission_on(db, patient_id)
+        stay_admission_id = (stay or {}).get("id")
+
         # Atomicity / idempotency: claim the discharge first. If the patient was
         # not 'admitted' (already discharged), bail before writing duplicate
         # summaries/tokens. close_admission_on makes the claim, closes every
@@ -764,9 +778,11 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
         # has read it yet. See mark_discharge_summary_reviewed.
         db.execute(
             """INSERT INTO discharge_summaries
-               (patient_id, author_id, summary, timeline_json, qr_code_path, review_status)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (patient_id, author_id, summary, json.dumps(timeline), qr_path, REVIEW_DRAFT)
+               (patient_id, author_id, summary, timeline_json, qr_code_path, review_status,
+                admission_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (patient_id, author_id, summary, json.dumps(timeline), qr_path, REVIEW_DRAFT,
+             stay_admission_id)
         )
         summary_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
         discharged_at = db.execute(

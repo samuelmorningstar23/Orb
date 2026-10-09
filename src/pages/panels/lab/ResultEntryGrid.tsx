@@ -26,6 +26,14 @@
  * validated it, or the test was cancelled), the grid says so through onStale
  * and the worklist reloads; a row whose result changed on the server is then
  * drawn again from it.
+ *
+ * DELTA CHECKS (lis-12, ruling LIS-R9 (a)). After a value is saved the row
+ * shows the server's delta check under it: the earlier result it was
+ * compared with and the change, in the server's words. A flagged change asks
+ * for the technologist's reason, which the Validate screen needs before the
+ * result can be technically validated; a reason already given is shown with
+ * who gave it. A value changed after a reason was given needs a new one (the
+ * server clears it). A result a signatory sent back says who sent it and why.
  */
 import { Fragment, useState, type KeyboardEvent } from 'react'
 
@@ -39,7 +47,8 @@ import {
   type WorklistItem,
 } from '../../../api/lab/results'
 import { formatAccession, priorityText } from '../../../api/lab/specimens'
-import { formatClinicalTime, parseUTC } from '../../../lib/datetime'
+import { acknowledgeDelta, deltaFieldsOf, returnedOf } from '../../../api/lab/validation'
+import { formatClinicalDateTime, formatClinicalTime, parseUTC } from '../../../lib/datetime'
 import { matchCodedValue, parseLabNumber } from '../../../lib/labValue'
 import './LabBench.css'
 
@@ -71,8 +80,10 @@ const STALE_CODES = new Set([
  */
 function rowKey(item: WorklistItem): string {
   const r = item.result
+  // The delta reason is part of the server's copy too, so a reason given on
+  // another bench draws the row again.
   return `${item.item_id}:${r
-    ? `${r.id}:${r.value_text ?? ''}:${r.comment ?? ''}:${r.abnormal_flag ?? ''}`
+    ? `${r.id}:${r.value_text ?? ''}:${r.comment ?? ''}:${r.abnormal_flag ?? ''}:${deltaFieldsOf(r).delta_ack?.at ?? ''}`
     : 'none'}`
 }
 
@@ -131,6 +142,10 @@ function ResultRow({ item, onSaved, onStale }: RowProps) {
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [deltaReason, setDeltaReason] = useState('')
+  const [deltaBusy, setDeltaBusy] = useState(false)
+  const [deltaError, setDeltaError] = useState<string | null>(null)
+  const [deltaNotice, setDeltaNotice] = useState<string | null>(null)
 
   const typedProblem = (): string | null => {
     if (test.result_type === 'numeric') {
@@ -189,78 +204,201 @@ function ResultRow({ item, onSaved, onStale }: RowProps) {
     }
   }
 
+  const giveDeltaReason = async () => {
+    if (!saved || deltaBusy) return
+    if (!deltaReason.trim()) {
+      setDeltaError('Say why this change from the earlier result is expected, or what was checked.')
+      return
+    }
+    setDeltaBusy(true)
+    setDeltaError(null)
+    try {
+      const out = await acknowledgeDelta(saved.id, deltaReason.trim(), seenOf(saved))
+      setSaved(out.result as unknown as EnteredResult)
+      setDeltaReason('')
+      setDeltaNotice(out.acknowledged ? null : (out.message ?? 'This value no longer needs a delta reason.'))
+      onSaved(out.acknowledged
+        ? `${test.name} for ${item.patient.name}: delta reason saved.`
+        : `${test.name} for ${item.patient.name}: ${out.message ?? 'no delta reason is needed now.'}`)
+    } catch (err) {
+      const failure = toLabError(err)
+      setDeltaError(failure.message || 'The reason could not be saved.')
+      if (STALE_CODES.has(failure.code) && onStale) {
+        onStale(`${test.name} for ${item.patient.name}: ${failure.message}`)
+      }
+    } finally {
+      setDeltaBusy(false)
+    }
+  }
+
   const label = `${test.name} for ${item.patient.name}`
   const rangeText = saved?.reference_range_text ?? item.range.text
+  const deltaInfo = saved ? deltaFieldsOf(saved) : null
+  const returned = saved ? returnedOf(saved) : null
+  // 'No earlier result' under every first value would only be noise.
+  const showDelta = (!!deltaInfo?.delta && deltaInfo.delta.status !== 'no_previous') || !!deltaNotice
+  const showNotes = showDelta || !!returned
 
   return (
-    <tr>
-      <td>
-        <span className="lab-bench-strong">{test.name}</span>
-      </td>
-      <td>
-        {test.result_type === 'coded' ? (
-          <select
-            className="lab-bench-input lab-bench-input--value"
-            aria-label={`Result, ${label}`}
-            value={matchCodedValue(value, test.coded_values) ?? ''}
-            onChange={e => setValue(e.target.value)}
-          >
-            <option value="">Choose</option>
-            {test.coded_values.map(v => <option key={v} value={v}>{v}</option>)}
-          </select>
-        ) : (
-          <input
-            className={`lab-bench-input${test.result_type === 'numeric' ? ' lab-bench-input--value' : ''}`}
-            aria-label={`Result, ${label}`}
-            value={value}
-            inputMode={test.result_type === 'numeric' ? 'decimal' : undefined}
-            autoComplete="off"
-            spellCheck={test.result_type === 'text'}
-            onChange={e => setValue(e.target.value)}
-            onKeyDown={onKey}
-          />
-        )}
-        {error && <p className="lab-bench-error" role="alert">{error}</p>}
-      </td>
-      <td className="lab-bench-quiet">{test.unit}</td>
-      <td className="lab-bench-quiet">{test.result_type === 'numeric' ? rangeText : ''}</td>
-      <td>
-        {saved
-          ? <span className={isOutOfRange(saved) ? 'lab-bench-flag lab-bench-flag--out' : 'lab-bench-quiet'}>{saved.flag_text}</span>
-          : <span className="lab-bench-quiet">Not entered</span>}
-      </td>
-      <td>
-        <input
-          className="lab-bench-input lab-bench-input--comment"
-          aria-label={`Comment, ${label}`}
-          value={comment}
-          maxLength={1000}
-          onChange={e => setComment(e.target.value)}
-          onKeyDown={onKey}
-        />
-        {saved && changed && (
+    <>
+      <tr>
+        <td>
+          <span className="lab-bench-strong">{test.name}</span>
+        </td>
+        <td>
+          {test.result_type === 'coded' ? (
+            <select
+              className="lab-bench-input lab-bench-input--value"
+              aria-label={`Result, ${label}`}
+              value={matchCodedValue(value, test.coded_values) ?? ''}
+              onChange={e => setValue(e.target.value)}
+            >
+              <option value="">Choose</option>
+              {test.coded_values.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          ) : (
+            <input
+              className={`lab-bench-input${test.result_type === 'numeric' ? ' lab-bench-input--value' : ''}`}
+              aria-label={`Result, ${label}`}
+              value={value}
+              inputMode={test.result_type === 'numeric' ? 'decimal' : undefined}
+              autoComplete="off"
+              spellCheck={test.result_type === 'text'}
+              onChange={e => setValue(e.target.value)}
+              onKeyDown={onKey}
+            />
+          )}
+          {error && <p className="lab-bench-error" role="alert">{error}</p>}
+        </td>
+        <td className="lab-bench-quiet">{test.unit}</td>
+        <td className="lab-bench-quiet">{test.result_type === 'numeric' ? rangeText : ''}</td>
+        <td>
+          {saved
+            ? <span className={isOutOfRange(saved) ? 'lab-bench-flag lab-bench-flag--out' : 'lab-bench-quiet'}>{saved.flag_text}</span>
+            : <span className="lab-bench-quiet">Not entered</span>}
+        </td>
+        <td>
           <input
             className="lab-bench-input lab-bench-input--comment"
-            aria-label={`Why it is changed, ${label}`}
-            placeholder="Why it is changed"
-            value={reason}
-            maxLength={500}
-            onChange={e => setReason(e.target.value)}
+            aria-label={`Comment, ${label}`}
+            value={comment}
+            maxLength={1000}
+            onChange={e => setComment(e.target.value)}
             onKeyDown={onKey}
           />
-        )}
-      </td>
-      <td>
-        <button
-          type="button"
-          className="lab-bench-btn lab-bench-btn--primary"
-          disabled={busy || !changed}
-          onClick={() => void save()}
-        >
-          {busy ? 'Saving…' : saved ? 'Save change' : 'Save'}
-        </button>
-      </td>
-    </tr>
+          {saved && changed && (
+            <input
+              className="lab-bench-input lab-bench-input--comment"
+              aria-label={`Why it is changed, ${label}`}
+              placeholder="Why it is changed"
+              value={reason}
+              maxLength={500}
+              onChange={e => setReason(e.target.value)}
+              onKeyDown={onKey}
+            />
+          )}
+        </td>
+        <td>
+          <button
+            type="button"
+            className="lab-bench-btn lab-bench-btn--primary"
+            disabled={busy || !changed}
+            onClick={() => void save()}
+          >
+            {busy ? 'Saving…' : saved ? 'Save change' : 'Save'}
+          </button>
+        </td>
+      </tr>
+      {showNotes && (
+        <tr className="lab-bench-subrow">
+          <td colSpan={7}>
+            {returned && (
+              <p className="lab-bench-note lab-bench-note--warn" role="status">
+                Sent back to the bench{returned.by_name ? ` by ${returned.by_name}` : ''}
+                {returned.at ? ` at ${formatClinicalTime(returned.at)}` : ''}
+                {returned.reason ? `: ${returned.reason}` : ''}. Check it, then validate it again.
+              </p>
+            )}
+            {showDelta && (
+              <DeltaNote
+                label={label}
+                info={deltaInfo}
+                notice={deltaNotice}
+                reason={deltaReason}
+                busy={deltaBusy}
+                error={deltaError}
+                onReason={setDeltaReason}
+                onSubmit={() => void giveDeltaReason()}
+              />
+            )}
+          </td>
+        </tr>
+      )}
+    </>
+  )
+}
+
+interface DeltaNoteProps {
+  label: string
+  info: ReturnType<typeof deltaFieldsOf> | null
+  notice: string | null
+  reason: string
+  busy: boolean
+  error: string | null
+  onReason: (value: string) => void
+  onSubmit: () => void
+}
+
+/** The server's delta check under a saved row, and the reason box a flagged
+ *  change needs before technical validation. */
+function DeltaNote({ label, info, notice, reason, busy, error, onReason, onSubmit }: DeltaNoteProps) {
+  const delta = info?.delta ?? null
+  const flagged = delta?.status === 'flagged'
+  const earlier = delta?.previous
+  return (
+    <div
+      className={`lab-bench-note${flagged ? (info?.needs_delta_reason ? ' lab-bench-note--warn' : ' lab-bench-note--ok') : ''}`}
+      role="status"
+      aria-label={`Delta check, ${label}`}
+    >
+      {notice && <p>{notice}</p>}
+      {delta && (
+        <p>
+          <span className="lab-bench-strong">{flagged ? 'Delta flag. ' : 'Delta check. '}</span>
+          {delta.note}
+          {earlier?.observed_at
+            ? ` The earlier result was ${formatClinicalDateTime(earlier.observed_at)}.`
+            : ''}
+        </p>
+      )}
+      {flagged && info?.delta_ack && (
+        <p>
+          Reason{info.delta_ack.by_name ? ` from ${info.delta_ack.by_name}` : ''}: {info.delta_ack.reason}
+        </p>
+      )}
+      {flagged && info?.needs_delta_reason && (
+        <div className="lab-bench-actions">
+          <input
+            className="lab-bench-input"
+            aria-label={`Delta reason, ${label}`}
+            placeholder="Why the change is expected, or what was checked"
+            value={reason}
+            maxLength={500}
+            onChange={e => onReason(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                onSubmit()
+              }
+            }}
+          />
+          <button type="button" className="lab-bench-btn" disabled={busy} onClick={onSubmit}>
+            {busy ? 'Saving…' : 'Save reason'}
+          </button>
+        </div>
+      )}
+      {error && <p className="lab-bench-error" role="alert">{error}</p>}
+    </div>
   )
 }
 

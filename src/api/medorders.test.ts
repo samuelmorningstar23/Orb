@@ -45,7 +45,8 @@ describe('the medication-order client', () => {
 
   it('sends the Idempotency-Key header on create, only when given', async () => {
     await createMedOrder({ patient_id: 'P1', drug_name: 'Paracetamol', status: 'draft' }, 'k-1')
-    let [path, options] = apiFetch.mock.calls.at(-1) as [string, RequestInit]
+    const [path] = apiFetch.mock.calls.at(-1) as [string, RequestInit]
+    let [, options] = apiFetch.mock.calls.at(-1) as [string, RequestInit]
     expect(path).toBe('/medorders/orders')
     expect(options.method).toBe('POST')
     expect(options.headers).toEqual({ 'Idempotency-Key': 'k-1' })

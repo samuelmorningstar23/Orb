@@ -1428,31 +1428,109 @@ def _per_stay_counting_on(db) -> bool:
     ).fetchone() is not None
 
 
-def _inpatient_days_per_stay(db, start: datetime, horizon: datetime,
-                             ward: Optional[str]) -> dict:
-    """Inpatient-days inside [start, horizon), one stay at a time (adt-8a).
+def _native_admission_filter(db, alias: str = "a") -> str:
+    """SQL that keeps the admissions Orb itself opened, leaving out encounters
+    a history import filed (migration 15's import_run_id). Empty where the
+    column does not exist."""
+    cols = {r[1] for r in db.execute("PRAGMA table_info(admissions)").fetchall()}
+    return f"{alias}.import_run_id IS NULL" if "import_run_id" in cols else ""
 
-    Each admission counts from its start (the recorded arrival time, else when
-    the admission was written) to its end: the end of stay the module recorded
-    (admissions.discharged_at), else, for a stay still active, the end of the
-    window, else the first discharge summary at or after its start, else the
-    patient's last vital signs after its start. A ward filter takes the ward
-    each stay was recorded on. A patient with no admission row at all (records
-    written before admissions existed) is counted from patients.admission_date
-    as the older method did, so nobody counted before drops out."""
+
+def _repeat_stay_patients(db) -> set[str]:
+    """Patients holding more than one admission Orb opened itself (stay
+    keying, opd-17b): a readmission onto the same record, or a roster import
+    that opened a new stay for a patient discharged before. Empty on every
+    database where each patient has one stay, so every figure below is exactly
+    what it was there. Encounters a history import filed are not counted: they
+    are the old system's stays, whose incidents Orb never recorded, so adding
+    them would lower every rate."""
+    native = _native_admission_filter(db)
+    where = f"WHERE {native}" if native else ""
+    return {r[0] for r in db.execute(
+        f"SELECT a.patient_id FROM admissions a {where} "
+        "GROUP BY a.patient_id HAVING COUNT(*) > 1").fetchall()}
+
+
+def _last_vital_in_stay(db, patient_id: str, since: datetime,
+                        before: Optional[datetime]) -> Optional[datetime]:
+    """The patient's last vital signs at or after `since` and before `before`
+    (no upper bound when None): where one stay of a patient admitted more than
+    once ends when it records no end and has no summary. The patient's latest
+    vital overall is not that: it is taken in their NEXT stay, and closing the
+    earlier stay there would count the days they were at home as inpatient
+    days, which lowers every rate. julianday() compares any stored spelling
+    as a time; the bounds are checked again here, since it keeps only
+    milliseconds."""
+    sql = ("SELECT timestamp FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+           "AND julianday(timestamp) >= julianday(?)")
+    params: list[Any] = [patient_id, since.isoformat()]
+    if before is not None:
+        sql += " AND julianday(timestamp) < julianday(?)"
+        params.append(before.isoformat())
+    row = db.execute(sql + " ORDER BY timestamp DESC, id DESC LIMIT 1", params).fetchone()
+    when = _dt(row[0]) if row else None
+    if when is None or when < since or (before is not None and when >= before):
+        return None
+    return when
+
+
+def _per_stay_totals(db, start: datetime, horizon: datetime, ward: Optional[str], *,
+                     only_patients: Optional[set] = None, native_only: bool = False,
+                     include_legacy: bool = True) -> dict:
+    """The per-stay count behind _inpatient_days_per_stay, as raw hours.
+
+    A patient with ONE admission is counted exactly as before (adt-8a). A
+    patient with several (stay keying, opd-17b) has each stay ended, when the
+    admission itself records no end, by the discharge summary keyed to that
+    admission (discharge_summaries.admission_id, migration 65), else the first
+    summary at or after its start and before the next stay's, else its own
+    last vital signs (at or after its start and before the next stay's, never
+    one taken in the next stay: _last_vital_in_stay), else its start; and no
+    stay is counted past the start of the next one, so two stays are never
+    the same hours counted twice and the days between them are never counted.
+
+    `only_patients` restricts the count to those patients; `native_only`
+    leaves out encounters a history import filed; `include_legacy` counts the
+    patients with no admission row from patients.admission_date."""
+    native = _native_admission_filter(db) if native_only else ""
     stays = [dict(r) for r in db.execute(
         "SELECT a.id, a.patient_id, a.ward, a.status, a.admitted_at, a.created_at, "
-        "a.discharged_at FROM admissions a"
+        "a.discharged_at FROM admissions a" + (f" WHERE {native}" if native else "")
     ).fetchall()]
+    if only_patients is not None:
+        stays = [s for s in stays if s["patient_id"] in only_patients]
     with_stays = {s["patient_id"] for s in stays}
+
+    # Each repeat patient's stays in order, so a stay knows when the next began.
+    by_patient: dict[str, list[dict]] = {}
+    for s in stays:
+        by_patient.setdefault(s["patient_id"], []).append(s)
+    next_start: dict[Any, Optional[datetime]] = {}
+    repeat: set[str] = set()
+    for pid, own in by_patient.items():
+        if len(own) < 2:
+            continue
+        repeat.add(pid)
+        ordered = sorted(own, key=lambda s: (_dt(s.get("admitted_at")) or _dt(s.get("created_at"))
+                                             or datetime.max.replace(tzinfo=timezone.utc)))
+        for here, after in zip(ordered, ordered[1:] + [None]):
+            next_start[id(here)] = (
+                (_dt(after.get("admitted_at")) or _dt(after.get("created_at")))
+                if after is not None else None)
     stays = _ward_filter(stays, ward)
 
     summaries: dict[str, list[datetime]] = {}
-    for row in db.execute("SELECT patient_id, discharged_at FROM discharge_summaries").fetchall():
+    keyed: dict[str, list[datetime]] = {}
+    summary_cols = {r[1] for r in db.execute("PRAGMA table_info(discharge_summaries)").fetchall()}
+    keyed_sql = ", admission_id" if "admission_id" in summary_cols else ", NULL AS admission_id"
+    for row in db.execute(f"SELECT patient_id, discharged_at{keyed_sql} FROM discharge_summaries"
+                          ).fetchall():
         when = _dt(row["discharged_at"])
         if when:
             summaries.setdefault(row["patient_id"], []).append(when)
-    for times in summaries.values():
+            if row["admission_id"] and row["patient_id"] in repeat:
+                keyed.setdefault(row["admission_id"], []).append(when)
+    for times in (*summaries.values(), *keyed.values()):
         times.sort()
     last_vital: dict[str, datetime] = {}
     for row in db.execute(
@@ -1470,56 +1548,91 @@ def _inpatient_days_per_stay(db, start: datetime, horizon: datetime,
         stay_start = _dt(stay.get("admitted_at")) or _dt(stay.get("created_at"))
         if stay_start is None:
             continue
+        pid = stay["patient_id"]
+        following = next_start.get(id(stay)) if pid in repeat else None
         stay_end = _dt(stay.get("discharged_at"))
         if stay_end is None or stay_end < stay_start:
             if (stay.get("status") or "active") == "active":
                 stay_end = horizon
                 open_stays += 1
-            else:
-                later = [t for t in summaries.get(stay["patient_id"], []) if t >= stay_start]
+            elif pid in repeat:
+                own = [t for t in keyed.get(stay["id"], []) if t >= stay_start]
+                later = own or [t for t in summaries.get(pid, [])
+                                if t >= stay_start and (following is None or t < following)]
                 if later:
                     stay_end = later[0]
                 else:
-                    vital = last_vital.get(stay["patient_id"])
+                    # Its own last vital signs, never one from the next stay.
+                    stay_end = _last_vital_in_stay(db, pid, stay_start, following) or stay_start
+                    assumed_ends += 1
+            else:
+                later = [t for t in summaries.get(pid, []) if t >= stay_start]
+                if later:
+                    stay_end = later[0]
+                else:
+                    vital = last_vital.get(pid)
                     stay_end = vital if vital and vital >= stay_start else stay_start
                     assumed_ends += 1
+        if following is not None and following > stay_start and stay_end > following:
+            stay_end = following
         overlap = _overlap_hours(stay_start, stay_end, start, horizon)
         if overlap > 0:
             hours += overlap
-            counted.add(stay["patient_id"])
+            counted.add(pid)
             stay_count += 1
 
-    # Patients with no admission row: the older, per-patient method.
-    legacy = [dict(r) for r in db.execute(
-        "SELECT id, ward, admission_date, status FROM patients "
-        "WHERE COALESCE(status, 'admitted') <> 'registered'"
-    ).fetchall()]
-    legacy = _ward_filter([p for p in legacy if p["id"] not in with_stays], ward)
-    for patient in legacy:
-        stay_start = _dt(patient.get("admission_date"))
-        if stay_start is None:
-            continue
-        times = summaries.get(patient["id"], [])
-        stay_end = times[-1] if times else None
-        if stay_end is None or stay_end <= stay_start:
-            if (patient.get("status") or "admitted").strip() == "admitted":
-                stay_end = horizon
-                open_stays += 1
-            else:
-                stay_end = last_vital.get(patient["id"]) or stay_start
-                assumed_ends += 1
-        overlap = _overlap_hours(stay_start, stay_end, start, horizon)
-        if overlap > 0:
-            hours += overlap
-            counted.add(patient["id"])
-            stay_count += 1
+    if include_legacy:
+        # Patients with no admission row: the older, per-patient method.
+        legacy = [dict(r) for r in db.execute(
+            "SELECT id, ward, admission_date, status FROM patients "
+            "WHERE COALESCE(status, 'admitted') <> 'registered'"
+        ).fetchall()]
+        legacy = _ward_filter([p for p in legacy if p["id"] not in with_stays], ward)
+        for patient in legacy:
+            stay_start = _dt(patient.get("admission_date"))
+            if stay_start is None:
+                continue
+            times = summaries.get(patient["id"], [])
+            stay_end = times[-1] if times else None
+            if stay_end is None or stay_end <= stay_start:
+                if (patient.get("status") or "admitted").strip() == "admitted":
+                    stay_end = horizon
+                    open_stays += 1
+                else:
+                    stay_end = last_vital.get(patient["id"]) or stay_start
+                    assumed_ends += 1
+            overlap = _overlap_hours(stay_start, stay_end, start, horizon)
+            if overlap > 0:
+                hours += overlap
+                counted.add(patient["id"])
+                stay_count += 1
 
+    return {"hours": hours, "counted": counted, "stays": stay_count,
+            "open_stays": open_stays, "assumed_ends": assumed_ends,
+            "repeat_stay_patients": repeat}
+
+
+def _inpatient_days_per_stay(db, start: datetime, horizon: datetime,
+                             ward: Optional[str]) -> dict:
+    """Inpatient-days inside [start, horizon), one stay at a time (adt-8a).
+
+    Each admission counts from its start (the recorded arrival time, else when
+    the admission was written) to its end: the end of stay the module recorded
+    (admissions.discharged_at), else, for a stay still active, the end of the
+    window, else the first discharge summary at or after its start, else the
+    patient's last vital signs after its start. A ward filter takes the ward
+    each stay was recorded on. A patient with no admission row at all (records
+    written before admissions existed) is counted from patients.admission_date
+    as the older method did, so nobody counted before drops out. A patient with
+    several stays has each ended by its own summary and never counted past the
+    next one's start (_per_stay_totals, opd-17b)."""
+    totals = _per_stay_totals(db, start, horizon, ward)
     return {
-        "inpatient_days": round(hours / 24.0, 1),
-        "patients": len(counted),
-        "stays": stay_count,
-        "open_stays": open_stays,
-        "assumed_ends": assumed_ends,
+        "inpatient_days": round(totals["hours"] / 24.0, 1),
+        "patients": len(totals["counted"]),
+        "stays": totals["stays"],
+        "open_stays": totals["open_stays"],
+        "assumed_ends": totals["assumed_ends"],
         "method": (
             "Counted per stay: each admission from its start (the recorded arrival "
             "time, else when the admission was recorded) to its recorded end of stay, "
@@ -1541,6 +1654,10 @@ def _inpatient_days(db, start: datetime, end: datetime, ward: Optional[str]) -> 
     it makes the hospital look worse, never better. That is the only direction
     an accreditation pack may be wrong in, which is why this is shipped with the
     bias stated rather than held back for a stay table that does not exist yet.
+    Since stay keying (opd-17b) a patient with more than one admission Orb
+    opened is the exception: their stays are counted one by one from the
+    admissions (_per_stay_totals), whatever the beds and admissions module
+    says, and the result then adds 'stays' and 'repeat_stay_patients'.
 
     `patients.ward` is likewise the CURRENT ward, not the ward the patient
     occupied on each day, so a ward filter attributes the whole stay to where
@@ -1564,7 +1681,13 @@ def _inpatient_days(db, start: datetime, end: datetime, ward: Optional[str]) -> 
         "SELECT id, ward, admission_date, status FROM patients "
         "WHERE COALESCE(status, 'admitted') <> 'registered'"
     ).fetchall()]
-    patients = _ward_filter(patients, ward)
+    # Stay keying (opd-17b): a patient with more than one stay Orb opened
+    # (a readmission onto the same record) is counted stay by stay below,
+    # never as one stay from the latest admission date to the latest
+    # discharge. Nobody else changes: on a database where each patient has
+    # one stay this set is empty and every figure is what it was.
+    repeat = _repeat_stay_patients(db)
+    patients = _ward_filter([p for p in patients if p["id"] not in repeat], ward)
 
     discharges: dict[str, datetime] = {}
     for row in db.execute(
@@ -1606,7 +1729,7 @@ def _inpatient_days(db, start: datetime, end: datetime, ward: Optional[str]) -> 
             hours += overlap
             counted.add(patient["id"])
 
-    return {
+    result = {
         # One decimal: the screen printed "199.9583". The rates are computed
         # from this same figure, so the printed numbers reproduce each other.
         "inpatient_days": round(hours / 24.0, 1),
@@ -1621,6 +1744,36 @@ def _inpatient_days(db, start: datetime, end: datetime, ward: Optional[str]) -> 
             "admission is visible, so repeat stays inside the period are under-counted, "
             "which raises every rate computed on this denominator."),
     }
+    if not repeat:
+        return result
+    # The repeat stays, one admission at a time, with the per-stay rules
+    # (each ended by its own summary, none counted past the next one's start).
+    # When none falls in this period and ward the answer is the one above,
+    # exactly as before.
+    single = len(counted)
+    extra = _per_stay_totals(db, start, horizon, ward, only_patients=repeat,
+                             native_only=True, include_legacy=False)
+    if not extra["stays"]:
+        return result
+    hours += extra["hours"]
+    counted |= extra["counted"]
+    result.update({
+        "inpatient_days": round(hours / 24.0, 1),
+        "patients": len(counted),
+        "stays": single + extra["stays"],
+        "repeat_stay_patients": len(extra["counted"]),
+        "open_stays": open_stays + extra["open_stays"],
+        "assumed_ends": assumed_ends + extra["assumed_ends"],
+        "method": (
+            "Counted from each patient's admission date to their latest discharge, "
+            "within the period and up to now. A patient still admitted counts to the "
+            "end of the period; a discharged patient with no discharge summary is "
+            "closed at their last recorded vital signs. A patient admitted more than "
+            "once is counted stay by stay: each admission from its start to the "
+            "discharge summary of that stay, else to the last vital signs taken in "
+            "that stay, else it adds no days, and never past the start of the next stay."),
+    })
+    return result
 
 
 def _register_in_use(db, start: datetime, end: datetime, ward: Optional[str]) -> dict:

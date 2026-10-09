@@ -666,6 +666,117 @@ def _is_covered(event: dict, covered_windows: list[dict]) -> bool:
 _NEVER_ADMITTED_EXCLUDED = " WHERE COALESCE(status, 'admitted') <> 'registered'"
 
 
+def _last_vital_in_stay(conn, patient_id: str, since: datetime,
+                        before: Optional[datetime]) -> Optional[datetime]:
+    """The patient's last vital signs at or after `since` and before `before`
+    (no upper bound when None), or None. This is where one stay of a patient
+    admitted more than once is closed when it records no end and has no
+    summary, so no reading from the next stay ever stretches it over the days
+    the patient was at home (that would OVER-state bed-days and deflate the
+    false-alert rate). A set marked entered in error is skipped; skipping it
+    can only move the end earlier, the direction this instrument may be wrong in.
+    julianday() compares any stored spelling as a time; the bounds are
+    checked again here, since it keeps only milliseconds."""
+    sql = ("SELECT timestamp FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+           "AND julianday(timestamp) >= julianday(?)")
+    params: list[Any] = [patient_id, since.isoformat()]
+    if before is not None:
+        sql += " AND julianday(timestamp) < julianday(?)"
+        params.append(before.isoformat())
+    try:
+        row = conn.execute(sql + " ORDER BY timestamp DESC, id DESC LIMIT 1", params).fetchone()
+    except Exception:
+        logger.debug("scorecard: vitals unavailable for a repeat stay", exc_info=True)
+        return None
+    when = _dt(row[0]) if row else None
+    if when is None or when < since or (before is not None and when >= before):
+        return None
+    return when
+
+
+def _repeat_stays(conn) -> dict[str, list[dict]]:
+    """Each stay of every patient with more than one admission Orb opened
+    (stay keying, opd-17b): {patient_id: [{ward, start, end, active,
+    next_start}]}, oldest first.
+
+    The census readers below take a patients row as one stay, from the
+    current admission date to the latest discharge row. For a patient
+    readmitted onto the same record that merged two stays into one span
+    (the gap between them counted as occupied), so such a patient is read
+    stay by stay from `admissions` instead. `end` is the admission's own end
+    (admissions.discharged_at), else the discharge summary keyed to it
+    (discharge_summaries.admission_id, migration 65), else the first summary
+    at or after its start and before the next stay's; None when none is
+    found (the caller applies its usual "still here" or last-vital rule).
+    `last_vital` is, for a stay that has ended with no end found, the last
+    vital signs taken inside it (_last_vital_in_stay), else None: never the
+    patient's latest vital overall, which is taken in the next stay and would
+    close this one at the next one's start, counting the days at home as
+    occupied. No stay ends after the next one starts. Encounters a history import
+    filed are left out, as the census never counted them. Empty when every
+    patient has one stay, so every figure is exactly what it was."""
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(admissions)").fetchall()}
+        native = "WHERE a.import_run_id IS NULL" if "import_run_id" in cols else ""
+        repeat = [r[0] for r in conn.execute(
+            f"SELECT a.patient_id FROM admissions a {native} "
+            "GROUP BY a.patient_id HAVING COUNT(*) > 1").fetchall()]
+    except Exception:
+        logger.debug("scorecard: admissions unavailable for repeat stays", exc_info=True)
+        return {}
+    if not repeat:
+        return {}
+    out: dict[str, list[dict]] = {}
+    for chunk in (repeat[i:i + 400] for i in range(0, len(repeat), 400)):
+        marks = ",".join("?" * len(chunk))
+        extra = "AND a.import_run_id IS NULL" if native else ""
+        rows = conn.execute(
+            f"SELECT a.id, a.patient_id, a.ward, a.status, a.admitted_at, a.created_at, "
+            f"a.discharged_at FROM admissions a WHERE a.patient_id IN ({marks}) {extra}",
+            chunk).fetchall()
+        for row in rows:
+            r = dict(row)
+            start = _dt(r.get("admitted_at")) or _dt(r.get("created_at"))
+            out.setdefault(r["patient_id"], []).append({
+                "id": r["id"], "ward": r.get("ward"), "start": start,
+                "end": _dt(r.get("discharged_at")),
+                "active": (r.get("status") or "active") == "active"})
+    summaries: dict[str, list[tuple[datetime, Any]]] = defaultdict(list)
+    try:
+        scols = {r[1] for r in conn.execute("PRAGMA table_info(discharge_summaries)").fetchall()}
+        keyed = "admission_id" if "admission_id" in scols else "NULL AS admission_id"
+        for chunk in (list(out)[i:i + 400] for i in range(0, len(out), 400)):
+            marks = ",".join("?" * len(chunk))
+            for row in conn.execute(
+                f"SELECT patient_id, discharged_at, {keyed} FROM discharge_summaries "
+                f"WHERE patient_id IN ({marks})", chunk).fetchall():
+                when = _dt(row["discharged_at"])
+                if when:
+                    summaries[row["patient_id"]].append((when, row["admission_id"]))
+    except Exception:
+        logger.debug("scorecard: discharge_summaries unavailable for repeat stays", exc_info=True)
+    far = datetime.max.replace(tzinfo=timezone.utc)
+    for pid, stays in out.items():
+        stays.sort(key=lambda st: st["start"] or far)
+        times = sorted(summaries.get(pid, []), key=lambda t: t[0])
+        for here, after in zip(stays, stays[1:] + [None]):
+            here["next_start"] = after["start"] if after is not None else None
+            here["last_vital"] = None
+            if here["end"] is None and not here["active"] and here["start"] is not None:
+                own = [t for t, aid in times if aid == here["id"] and t >= here["start"]]
+                later = own or [t for t, _aid in times if t >= here["start"]
+                                and (here["next_start"] is None or t < here["next_start"])]
+                here["end"] = later[0] if later else None
+                if here["end"] is None:
+                    here["last_vital"] = _last_vital_in_stay(
+                        conn, pid, here["start"], here["next_start"])
+            if (here["end"] is not None and here["next_start"] is not None
+                    and here["start"] is not None and here["next_start"] > here["start"]
+                    and here["end"] > here["next_start"]):
+                here["end"] = here["next_start"]
+    return out
+
+
 def _occupied_bed_days(conn, covered_windows: list[dict], ward: Optional[str]) -> dict:
     """Bed-days inside COVERED ward-shift time only.
 
@@ -715,12 +826,19 @@ def _occupied_bed_days(conn, covered_windows: list[dict], ward: Optional[str]) -
     for window in covered_windows:
         windows_by_ward[window["ward"]].append(window)
 
+    # Stay keying (opd-17b): a patient readmitted onto the same record is
+    # read stay by stay below; everyone else exactly as before.
+    patient_rows = {dict(r)["id"]: dict(r) for r in rows}
+    repeat = {pid: st for pid, st in _repeat_stays(conn).items() if pid in patient_rows}
+
     bed_hours = 0.0
     counted: set[str] = set()
     open_stays = 0
     assumed_ends = 0
     for row in rows:
         patient = dict(row)
+        if patient["id"] in repeat:
+            continue
         patient_ward = patient.get("ward") or _UNSPECIFIED_WARD
         if ward and patient_ward != ward:
             continue
@@ -748,7 +866,41 @@ def _occupied_bed_days(conn, covered_windows: list[dict], ward: Optional[str]) -
             bed_hours += overlap
             counted.add(patient["id"])
 
-    return {
+    stays_counted = len(counted)
+    repeat_counted: set[str] = set()
+    for pid, stays in repeat.items():
+        for stay in stays:
+            stay_ward = stay["ward"] or patient_rows[pid].get("ward") or _UNSPECIFIED_WARD
+            if ward and stay_ward != ward:
+                continue
+            relevant = windows_by_ward.get(stay_ward) or []
+            stay_start = stay["start"]
+            if not relevant or stay_start is None:
+                continue
+            stay_end = stay["end"]
+            if stay_end is None:
+                if stay["active"]:
+                    stay_end = max(w["end"] for w in relevant)
+                    open_stays += 1
+                else:
+                    # Its own last vital signs, never one from the next stay.
+                    stay_end = stay.get("last_vital") or stay_start
+                    assumed_ends += 1
+                following = stay["next_start"]
+                if following is not None and stay_start < following < stay_end:
+                    stay_end = following
+            if stay_end <= stay_start:
+                continue
+            overlap = 0.0
+            for window in relevant:
+                overlap += _overlap_hours(stay_start, stay_end, window["start"], window["end"])
+            if overlap > 0:
+                bed_hours += overlap
+                counted.add(pid)
+                repeat_counted.add(pid)
+                stays_counted += 1
+
+    result = {
         "bed_days": round(bed_hours / 24.0, 4),
         "patients": len(counted),
         "open_stays": open_stays,
@@ -758,6 +910,16 @@ def _occupied_bed_days(conn, covered_windows: list[dict], ward: Optional[str]) -
                    "discharge row are closed at their last recorded vital (under-states "
                    "bed-days, inflates the rate)"),
     }
+    if repeat_counted:
+        # Only when a repeat stay was counted here: otherwise the answer is
+        # exactly the one-stay-per-patient answer it always was.
+        result["stays"] = stays_counted
+        result["repeat_stay_patients"] = len(repeat_counted)
+        result["method"] += ("; a patient admitted more than once is counted stay by stay, "
+                             "each admission to the discharge summary of that stay, else to "
+                             "the last vital recorded in that stay, and never past the start "
+                             "of the next")
+    return result
 
 
 # ── Metric scaffolding ───────────────────────────────────────────────────────
@@ -1660,6 +1822,13 @@ def _census_wards(conn, start: datetime, end: datetime,
         return set(), {**diagnostics, "note": "no patients on the appliance"}
 
     patients = [dict(r) for r in rows]
+    # Stay keying (opd-17b): a patient readmitted onto the same record is
+    # placed in time stay by stay (see the loop's tail); everyone else exactly
+    # as before.
+    by_id = {p.get("id"): p for p in patients}
+    repeat = {pid: st for pid, st in _repeat_stays(conn).items() if pid in by_id}
+    if repeat:
+        patients = [p for p in patients if p.get("id") not in repeat]
     needs_end = any((p.get("status") or "admitted").strip() != "admitted" for p in patients)
     discharges: dict[str, datetime] = {}
     last_vital: dict[str, datetime] = {}
@@ -1716,8 +1885,54 @@ def _census_wards(conn, start: datetime, end: datetime,
         if stay_start < end and stay_end > start:
             wards.add(patient_ward)
             diagnostics["patients_in_window"] += 1
+    if repeat:
+        _census_repeat_stays(conn, repeat, by_id, start, end, ward, wards, diagnostics)
     diagnostics["wards_from_census"] = len(wards)
     return wards, diagnostics
+
+
+def _census_repeat_stays(conn, repeat: dict, by_id: dict, start: datetime, end: datetime,
+                         ward: Optional[str], wards: set, diagnostics: dict) -> None:
+    """_census_wards for patients with more than one stay (opd-17b): each
+    stay is placed in time on its own, with the same rules as one stay (no
+    end and still here: the window's end; no end and gone: the last vital
+    taken inside that stay, as _occupied_bed_days reads it, else its start;
+    undateable and gone: left out). The diagnostics count
+    such a patient once in patients_scanned and patients_in_window, and add
+    repeat_stay_patients and repeat_stays_in_window, so two stays are visible as
+    two. Only called when such a patient exists."""
+    for pid, stays in repeat.items():
+        scanned = in_window = False
+        for stay in stays:
+            stay_ward = stay["ward"] or by_id[pid].get("ward") or _UNSPECIFIED_WARD
+            if ward and stay_ward != ward:
+                continue
+            scanned = True
+            stay_start, stay_end = stay["start"], stay["end"]
+            if stay_start is None:
+                diagnostics["undated_admissions"] += 1
+                if not stay["active"] and stay_end is None:
+                    continue
+                stay_start = start
+            if stay_end is None:
+                if stay["active"]:
+                    stay_end = end
+                else:
+                    stay_end = stay.get("last_vital") or stay_start
+                    following = stay["next_start"]
+                    if following is not None and stay_start < following < stay_end:
+                        stay_end = following
+            if stay_start < end and stay_end > start:
+                wards.add(stay_ward)
+                in_window = True
+                diagnostics["repeat_stays_in_window"] = (
+                    diagnostics.get("repeat_stays_in_window", 0) + 1)
+        if scanned:
+            diagnostics["patients_scanned"] += 1
+            diagnostics["repeat_stay_patients"] = diagnostics.get("repeat_stay_patients", 0) + 1
+            diagnostics.setdefault("repeat_stays_in_window", 0)
+        if in_window:
+            diagnostics["patients_in_window"] += 1
 
 
 def _wards_in_scope(conn, events: list[dict], ward: Optional[str],
