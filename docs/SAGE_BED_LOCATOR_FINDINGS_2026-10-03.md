@@ -305,3 +305,23 @@ It failed item 4 on two findings, both rules 13d applied in one branch only:
 Also reported: G-C, the history restore put a message the many-patients notice had refused back into the model's history, and a later turn narrated or drafted its order (detector-dependent); an undetected order then a bare other name drafted on that patient where a detected order got the notice; "this patient" binds to the chart open when the reply is typed; voice passes a NOT_CARRIED notice to the model instead of speaking it; "yes" after nine 512 KB re-asks took 2.0 to 2.8 s, close to the 3 s budget; provenance still records the reply as the question.
 
 Code, patches and both probe sets: docs/archive/bed-locator-attempt13d-2026-10-09/ (probes_review13d/ is the reviewer's). Main carries none of attempts 13 to 13d.
+
+## Attempt 13e review (9 October): did not ship; every failure came through an exception inside the one rule
+
+Attempt 13e (plan, "Attempt 13e") applied one carry rule to reads and orders alike: a reply carries a message only when everyone it reads is the patient the reply chose, with three exceptions. One ambiguous reference could include that patient (one bed label on two wards, or one name word all of them share). An exact "this patient" could disown readings Sage was unsure of. And a list of negation phrases kept "this patient" off messages that ruled it out. It was built on main with 324e754's wider order detector and reviewed against main as it is, the old bed matcher with the new detector.
+
+Items 1 to 3 pass for the fifth review running: 0 wrong charts in 574 rows per lane (old code 157 and 20), every miss labelled, every other-bed question settled in one reply, the strict invariant check over 10,812 calls reproduced exactly. In the reviewer's 30 threads with a stub that acts on its input: 30 orders on the right patient, 2 on a wrong one, 0 narrations with the order in the model's input, 0 unlabelled; the old code 11 right, 29 wrong, 34 narrations, 31 unlabelled. Review 13d's 30 threads: 31 right, 0 wrong.
+
+It failed item 4(b) on four classes. Each is one of the three exceptions, beaten:
+- G1, one shared name word: "give lasix 40 iv to Rajesh Kumar and kcl 20 mmol iv to Suresh Kumar", then "this patient" on Suresh's chart, drafted Rajesh's lasix on Suresh. The rule checked that all matched patients share a word in the message, not that they were read from that one word. Same with shared first names, and with an order the detector misses.
+- G2, unsure readings disowned by "this patient": "give lasix 40 iv to 12 and kcl 20 mmol iv to 13", "12 would benefit from lasix 40 iv and 13 could do with kcl 20 mmol iv", and "bed 12 stat ... bed 13 stat" (a trailing "stat" makes a bed unsure) all went to the open chart.
+- G3, the negation list: "give lasix 40 iv to bed 12 instead of this patient", then "this patient", drafted on the patient the message excluded; also "rather than", "unlike", "excluding", "leave this patient alone".
+- G4, one bed label on two wards written as two references: "bed 12 in DWA ... and bed 12 in DWB ...", and the KCl for DWB's bed 12 landed on DWA's.
+None of these is a regression against the old code, which drafts these orders with no patient at their own turn and then narrates or drafts on the wrong patient at the reply. The bar's item 4 is absolute, though.
+Also reported: "yes" after nine 512 KB re-asks took up to 2.69 s, because the order detector reads every message before the three-message cap; "<name>, thanks" after an undetected order drafts on that patient where a detected order gets the notice; voice gives its own model the raw history.
+
+Code, patches and both probe sets: docs/archive/bed-locator-attempt13e-2026-10-09/ (probes_review13e/ is the reviewer's). Main carries none of attempts 13 to 13e.
+
+### What attempt 13e showed
+
+The rule held; its exceptions did not. Each exception (one ambiguous reference, unsure readings disowned by "this patient", a list of negation phrases) was there to keep an ordinary read working, and each was a list that a reviewer beat. Attempt 8's lesson again: the certain side only. A reply carries a message only when everything the message read is the chosen patient by itself, or it read nobody. Then a shared name, a misread number or a two-ward bed costs the clinician a retype. They can no longer cost an order on the wrong patient.
