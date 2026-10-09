@@ -325,3 +325,20 @@ Code, patches and both probe sets: docs/archive/bed-locator-attempt13e-2026-10-0
 ### What attempt 13e showed
 
 The rule held; its exceptions did not. Each exception (one ambiguous reference, unsure readings disowned by "this patient", a list of negation phrases) was there to keep an ordinary read working, and each was a list that a reviewer beat. Attempt 8's lesson again: the certain side only. A reply carries a message only when everything the message read is the chosen patient by itself, or it read nobody. Then a shared name, a misread number or a two-ward bed costs the clinician a retype. They can no longer cost an order on the wrong patient.
+
+## Attempt 13f review (9 October): one finding, in the rule's own logic
+
+Attempt 13f (plan, "Attempt 13f") removed every exception from the carry rule: a reply carries an earlier message only when everything it read is the chosen patient on their own, or it read nobody.
+
+Items 1 to 3 pass for the sixth review running: 0 wrong charts in 614 rows per lane (old code 169 numbered, 22 GM), every other-bed question settled in one reply, every miss labelled. Item 4 passes everywhere but one hole. In 34 ward-round threads with a stub that acts on its input:
+- NEW: 35 orders on the right patient, 0 on a wrong one, 0 unlabelled answers, 18 notices, all resolved by asking again.
+- Old code: 14 right, 9 wrong, 24 drafted with no patient, 31 narrations with the order in the model's input, 45 unlabelled answers.
+Every certain-case reply shape drafts on the offered bed, and no reply naming another bed carries. "yes" after nine 512 KB re-asks: 0.56 s (13e: 2.69 s). The strict invariant check over 11,540 calls reproduced exactly.
+
+The one blocking finding, G-CAP: a paste with more than 1,000 bed references stops the locator, which then reports no bed, and the carry rule took that for "read nobody". "give lasix 40 iv to beds 1, 2, 3, ..." (1,100 references), then "this patient", drafted the lasix on the open chart, a patient the paste never named; a name reply carried it to that patient. The reviewer found no realistic message that reaches it. The fix is one line: a capped message is never carried, like an over-long one (13f.1).
+
+Also reported, not blocking:
+- The ruled cost, measured: of 432 realistic chart-open questions answered "this patient", 44 end in a notice on a numbered ward (13e: 9). 22 are misread numbers ("give her 1 pint prbc", "give 1 amp calcium gluconate"); retyping them verbatim repeats the question, while writing the number as a word works. 13 really mention another bed ("her husband in bed 16 ...", "same sliding scale as bed 14?"), a class the ruling did not name; asking again without the bed works.
+- The A7 class reaches further than A7: in the certain case, an order for a person the locator does not read rides along ("... and kcl 20 mmol iv to her husband", "to the next bed", "to G-613", a misspelt name). On GM wards the old code does the same at the order's own turn; on numbered wards it drafts with no patient.
+- Some ward wordings for one bed label on two wards read as one patient ("bed 12 ward DWA", "DWA/12") and some as both ("DWA 12").
+Code, patches and both probe sets: docs/archive/bed-locator-attempt13f-2026-10-09/ (probes_review13f/ is the reviewer's). Main carries none of attempts 13 to 13f.
