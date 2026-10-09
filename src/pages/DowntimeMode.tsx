@@ -31,6 +31,7 @@ import { formatClinicalDate, formatClinicalDateTime } from '../lib/datetime';
 import { useOfflineSnapshot } from '../hooks/useOfflineSnapshot';
 import OfflineBanner from '../components/OfflineBanner';
 import { useClinicalSwitches } from '../shellConfig';
+import { PATIENT_READ_ALL, currentRole, hasPermission } from '../lib/roles';
 import SwitchesGate from '../components/SwitchesGate';
 import './DowntimeMode.css';
 
@@ -48,6 +49,11 @@ function fmt(dt?: string | null): string {
   // new Date(raw) read them as local time and shifted every printed time.
   return formatClinicalDateTime(dt) || String(dt);
 }
+
+/** Said to a signed-in role the server refuses the snapshot to (the ward
+ *  clerk, the pharmacist): every downtime route needs vitals.read, which only
+ *  the roles holding patient.read_all hold. */
+const NOT_KEPT_FOR_ROLE = 'Downtime copies are kept for nurses and doctors.';
 
 /** Said instead of a raw "Failed to fetch" whenever Orb does not answer. */
 const UNREACHABLE_GUIDANCE =
@@ -154,6 +160,10 @@ function DowntimeModeBody({ patientId: patientIdProp }: DowntimeModeProps) {
   const { scoringEnabled, wardRecord } = useClinicalSwitches();
   const params = useParams<{ patientId?: string }>();
   const patientId = patientIdProp || params.patientId || '';
+  /* A role the server refuses (a ward clerk who types the address) gets one
+     plain sentence and no buttons, and nothing is asked. */
+  const role = currentRole();
+  const keptForRole = role === '' || hasPermission(PATIENT_READ_ALL, role);
 
   const [env, setEnv] = useState<DowntimeSnapshotEnvelope | null>(null);
   const [loading, setLoading] = useState(true);
@@ -164,6 +174,10 @@ function DowntimeModeBody({ patientId: patientIdProp }: DowntimeModeProps) {
   const [liveFailed, setLiveFailed] = useState(false);
 
   const load = useCallback(async () => {
+    if (!keptForRole) {
+      setLoading(false);
+      return;
+    }
     if (!patientId) {
       setError('No patient selected.');
       setLoading(false);
@@ -193,7 +207,7 @@ function DowntimeModeBody({ patientId: patientIdProp }: DowntimeModeProps) {
     } finally {
       setLoading(false);
     }
-  }, [patientId]);
+  }, [patientId, keptForRole]);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
   useEffect(() => { void load(); }, [load]);
@@ -276,6 +290,19 @@ function DowntimeModeBody({ patientId: patientIdProp }: DowntimeModeProps) {
   const labResults = snap?.lab_results;
   const labReports = snap?.recent_lab_reports;
   const labsInCopy = !!snap && ('lab_results' in snap || 'recent_lab_reports' in snap);
+
+  if (!keptForRole) {
+    return (
+      <div className="downtime-mode">
+        <div className="dt-toolbar">
+          <div className="dt-toolbar__title">
+            <span className="dt-dot" aria-hidden /> EHR Downtime Mode
+          </div>
+        </div>
+        <div className="dt-empty" role="status"><p>{NOT_KEPT_FOR_ROLE}</p></div>
+      </div>
+    );
+  }
 
   return (
     <div className="downtime-mode">
