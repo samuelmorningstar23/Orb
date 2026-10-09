@@ -27,6 +27,7 @@ interface VerifiedSummary {
   comorbidities?: string[];
   medications: VerifiedDischargeSummary['medications'];
   unverified_medication_count?: number;
+  drug_chart?: boolean;
   site_name?: string | null;
 }
 
@@ -165,6 +166,9 @@ export default function DischargeAccess() {
                 dischargedAt={summaryData.discharged_at}
                 siteName={summaryData.site_name}
                 unverifiedMedicationCount={summaryData.unverified_medication_count || 0}
+                /* An Orb Ward Record computer keeps the drug chart on paper,
+                   and its answer says so: no medicines section at all. */
+                showMedicines={summaryData.drug_chart !== false}
                 timeline={summaryData.timeline}
               />
             </div>

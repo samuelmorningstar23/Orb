@@ -295,14 +295,17 @@ describe('a discharge with the models switched off (review, 9 October 2026)', ()
 describe('the medication list under the Ward Record profile (9 October 2026)', () => {
   const MED = { id: 7, drug_name: 'Paracetamol', dosage: '1 g', route: 'Oral', frequency: 'QDS', status: 'active', unverified: false }
 
-  it('lists the charted drugs with no Administer button and asks for no administrations', async () => {
+  it('draws no medications button, no Print medications, no Administer button and no drug, and asks for no administrations', async () => {
+    // The drug chart stays on paper under the profile ("hide the drug lists"),
+    // even when an older server still sends a medication row.
     h.detail = { ...chartWithNoScore(), medications: [MED] }
     act(() => { setClinicalSwitches({ scoring_enabled: false, models_enabled: false, ward_record: true }) })
     vi.mocked(getAdministrations).mockClear()
     await openChart()
-    await act(async () => { document.getElementById('btn-meds-reports')!.click() })
-    expect(await screen.findByText('Paracetamol')).toBeTruthy()
+    expect(document.getElementById('btn-meds-reports')).toBeNull()
+    expect(screen.queryByRole('button', { name: /print medications/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /^Administer$/ })).toBeNull()
+    expect(screen.queryByText(/Paracetamol/)).toBeNull()
     expect(getAdministrations).not.toHaveBeenCalled()
   })
 

@@ -106,6 +106,9 @@ interface InpatientRecordPrintViewProps {
   comorbidities?: string[];
   /** Active and as-needed orders, with the unverified flag the chart carries. */
   medications: RecordMedication[];
+  /** False on an Orb Ward Record computer, whose drug chart stays on paper:
+   *  the record has no medicines section at all, not even an empty one. */
+  showMedicines?: boolean;
   latestVitals?: RecordVitals | null;
   notes: RecordNote[];
   siteName?: string | null;
@@ -113,8 +116,8 @@ interface InpatientRecordPrintViewProps {
 }
 
 export function InpatientRecordPrintView({
-  patient, allergies, problems, comorbidities = [], medications, latestVitals,
-  notes, siteName, printedAt = new Date(),
+  patient, allergies, problems, comorbidities = [], medications, showMedicines = true,
+  latestVitals, notes, siteName, printedAt = new Date(),
 }: InpatientRecordPrintViewProps) {
   return (
     <div className="discharge-print-layout inpatient-record-print" data-testid="inpatient-record-print">
@@ -163,19 +166,21 @@ export function InpatientRecordPrintView({
         <p><strong>LATEST RECORDED VITALS:</strong> {vitalsLine(latestVitals)}</p>
       </div>
 
-      <div className="discharge-section">
-        <p><strong>ACTIVE MEDICINES:</strong></p>
-        {medications.length > 0 ? (
-          <ol className="discharge-meds-list" style={{ paddingLeft: '24px', margin: '8px 0', lineHeight: '1.6' }}>
-            {medications.map((m, i) => (
-              <li key={m.id ?? i}>
-                {medicationLine(m)}
-                {m.unverified ? ' Awaiting pharmacist verification.' : ''}
-              </li>
-            ))}
-          </ol>
-        ) : <p>No active medicines recorded.</p>}
-      </div>
+      {showMedicines && (
+        <div className="discharge-section">
+          <p><strong>ACTIVE MEDICINES:</strong></p>
+          {medications.length > 0 ? (
+            <ol className="discharge-meds-list" style={{ paddingLeft: '24px', margin: '8px 0', lineHeight: '1.6' }}>
+              {medications.map((m, i) => (
+                <li key={m.id ?? i}>
+                  {medicationLine(m)}
+                  {m.unverified ? ' Awaiting pharmacist verification.' : ''}
+                </li>
+              ))}
+            </ol>
+          ) : <p>No active medicines recorded.</p>}
+        </div>
+      )}
 
       <div className="discharge-section">
         <p><strong>SIGNED NOTES:</strong></p>

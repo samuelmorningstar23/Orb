@@ -151,7 +151,7 @@ function DowntimeModeBody({ patientId: patientIdProp }: DowntimeModeProps) {
   /* Scoring switched off on this computer (the Orb Ward Record): no NEWS2
      badge, no drivers line and no escalation field, even from a copy saved on
      this device before it was switched off. */
-  const { scoringEnabled } = useClinicalSwitches();
+  const { scoringEnabled, wardRecord } = useClinicalSwitches();
   const params = useParams<{ patientId?: string }>();
   const patientId = patientIdProp || params.patientId || '';
 
@@ -252,6 +252,10 @@ function DowntimeModeBody({ patientId: patientIdProp }: DowntimeModeProps) {
   const degraded = isCopy || !offline.online || offline.unreachable;
   const snap = shown?.snapshot;
   const demo = snap?.demographics;
+  /* On an Orb Ward Record computer the drug chart stays on paper: no
+     medicines section, not even an empty one. The snapshot says so itself
+     (drug_chart false), so a copy saved on this device needs no probe. */
+  const drugChart = !wardRecord && snap?.drug_chart !== false;
   // Which SpO₂ table the NEWS2 was scored on (COPD / type-2 failure = Scale 2).
   const scale2 = snap?.news2?.spo2_scale === 2;
 
@@ -446,7 +450,7 @@ function DowntimeModeBody({ patientId: patientIdProp }: DowntimeModeProps) {
           </section>
 
           {/* Medications */}
-          <section className="dt-section">
+          {drugChart && <section className="dt-section">
             <h2 className="dt-section-title">Active medications ({snap.medications.length})</h2>
             {snap.medications.length === 0 ? (
               <div className="dt-empty-inline">No active medications recorded.</div>
@@ -470,7 +474,7 @@ function DowntimeModeBody({ patientId: patientIdProp }: DowntimeModeProps) {
                 </table>
               </div>
             )}
-          </section>
+          </section>}
 
           {/* Recent lab results: interfaced analytes, then Orb's lab reports */}
           <section className="dt-section">

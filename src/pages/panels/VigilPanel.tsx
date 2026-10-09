@@ -1594,6 +1594,11 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
   // `risk` is deliberately NOT read from `data`: there it is the throttled
   // trend array's score. Everything below reads the one observation.
   const { patient, trend, notes, medications } = data
+  /* On an Orb Ward Record computer the drug chart stays on paper: no
+     Medications button, no medicines list or form, no Print medications and
+     no medicines section on a print. The chart answer says so itself
+     (drug_chart false), so this holds before the health probe answers. */
+  const drugChart = !wardRecord && data.drug_chart !== false
   /* How the stay ended (Beds and admissions on only). LAMA, absconded and
      death go to End of stay; a DAMA is a discharge that needs the MRN typed
      back (matching the one on file) and a reason before it can be sent. */
@@ -1858,9 +1863,11 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
             <button className="command-bar__btn" onClick={() => { setLabSearchQuery(''); setLabReportsModalOpen(true); }} id="btn-lab-reports">
               <Icon name="flask" size={13} /> Labs
             </button>
-            <button className="command-bar__btn" onClick={() => setMedsListModalOpen(true)} id="btn-meds-reports">
-              <Icon name="pill" size={13} /> Medications
-            </button>
+            {drugChart && (
+              <button className="command-bar__btn" onClick={() => setMedsListModalOpen(true)} id="btn-meds-reports">
+                <Icon name="pill" size={13} /> Medications
+              </button>
+            )}
             <button className="command-bar__btn" onClick={() => setNotesHistoryModalOpen(true)} id="btn-notes">
               <Icon name="note" size={13} /> Notes
             </button>
@@ -1885,12 +1892,16 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
             </button>
           </div>
           <div className="command-bar__group" role="group" aria-label="Print">
-            <button className="command-bar__btn" onClick={() => setPrintType('record')} title="The inpatient record as charted: identity, allergies, problems, active medicines, latest vitals and signed notes">
+            <button className="command-bar__btn" onClick={() => setPrintType('record')} title={drugChart
+              ? 'The inpatient record as charted: identity, allergies, problems, active medicines, latest vitals and signed notes'
+              : 'The inpatient record as charted: identity, allergies, problems, latest vitals and signed notes'}>
               <Icon name="printer" size={13} /> Print record
             </button>
-            <button className="command-bar__btn" onClick={() => setPrintType('meds')}>
-              <Icon name="printer" size={13} /> Print medications
-            </button>
+            {drugChart && (
+              <button className="command-bar__btn" onClick={() => setPrintType('meds')}>
+                <Icon name="printer" size={13} /> Print medications
+              </button>
+            )}
           </div>
           {canDischarge && (
             <div className="command-bar__group" role="group" aria-label="Discharge">
@@ -2719,7 +2730,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
 
       
       {/* ═══ Medications Modal ═══ */}
-      {medsListModalOpen && (
+      {drugChart && medsListModalOpen && (
         <ModalOverlay onClose={() => setMedsListModalOpen(false)}>
           <div className="modal glass-card" role="dialog" aria-modal="true" aria-labelledby="meds-list-modal-title" style={{ maxWidth: 800, width: '100%' }} onClick={e => e.stopPropagation()}>
             <h2 className="modal__title" id="meds-list-modal-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -2913,7 +2924,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
       })()}
 
       {/* Add Medication Modal */}
-      {addMedModalOpen && (
+      {drugChart && addMedModalOpen && (
         <ModalOverlay onClose={() => { if (!isSubmitting) { setAddMedModalOpen(false); setMedError(null) } }}>
           <div className="modal glass-card" role="dialog" aria-modal="true" aria-labelledby="add-med-modal-title" style={{ maxWidth: 640 }} onClick={e => e.stopPropagation()}>
             <h2 className="modal__title" id="add-med-modal-title">Add Medication</h2>
@@ -3014,7 +3025,8 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
           allergies={chartedAllergies}
           problems={Array.isArray(data.problems) ? data.problems : []}
           comorbidities={patientC}
-          medications={currentMedications(medications)}
+          medications={drugChart ? currentMedications(medications) : []}
+          showMedicines={drugChart}
           latestVitals={Object.keys(latest).length ? latest : null}
           notes={signedNotes(notes, data.scribe_notes)}
           siteName={data.site_name}
@@ -3024,8 +3036,9 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
       {(printType === 'discharge' || printType === 'discharge-timeline') && dischargeSummary && createPortal(
         <DischargePrintView
           patient={patient}
-          medications={currentMedications(medications).filter(m => !m.unverified)}
-          unverifiedMedicationCount={currentMedications(medications).filter(m => m.unverified).length}
+          medications={drugChart ? currentMedications(medications).filter(m => !m.unverified) : []}
+          unverifiedMedicationCount={drugChart ? currentMedications(medications).filter(m => m.unverified).length : 0}
+          showMedicines={drugChart}
           summary={dischargeSummary.summary}
           summaryStatus={dischargeSummary.review_status === 'reviewed' ? 'reviewed' : 'draft'}
           reviewedByName={dischargeSummary.reviewed_by_name}
@@ -3038,7 +3051,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
         />,
         document.body
       )}
-      {printType === 'meds' && createPortal(
+      {printType === 'meds' && drugChart && createPortal(
         <Suspense fallback={null}>
           <MedListPrintView
             patientName={patient.name}

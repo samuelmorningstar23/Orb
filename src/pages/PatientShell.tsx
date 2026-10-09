@@ -15,6 +15,7 @@ import './PatientShell.css'
 import { CareTeamCard } from '../components/bridge/CareTeamCard'
 import { VitalsTrendsCard } from '../components/bridge/VitalsTrendsCard'
 import { useFocusTrap } from '../hooks/useFocusTrap'
+import { useClinicalSwitches } from '../shellConfig'
 import { formatClinicalDate, formatClinicalDateTime, parseUTC } from '../lib/datetime'
 
 /* ── helpers ── */
@@ -200,6 +201,12 @@ export default function PatientShell() {
   /* ── Reports state ── */
   const [reports, setReports] = useState<BridgeReports | null>(null)
   const [reportsLoading, setReportsLoading] = useState(false)
+  /* On an Orb Ward Record computer the drug chart stays on paper, and the
+     records answer says so (drug_chart false): no Medications button and no
+     medicines list. The button waits for that answer, so it never shows for
+     a moment and then goes. */
+  const { wardRecord } = useClinicalSwitches()
+  const drugChart = !wardRecord && reports !== null && reports.drug_chart !== false
   const [selectedReportDetail, setSelectedReportDetail] = useState<ReportDetail | null>(null)
   const [medsModalOpen, setMedsModalOpen] = useState(false)
   const [docsModalOpen, setDocsModalOpen] = useState(false)
@@ -630,7 +637,7 @@ export default function PatientShell() {
                     <label className="appt__label">Note for your doctor <span className="appt__optional">(optional)</span></label>
                     <textarea
                       className="appt__note"
-                      placeholder="e.g. I'd like to discuss my medication…"
+                      placeholder={drugChart ? "e.g. I'd like to discuss my medication…" : "e.g. I'd like to discuss my results…"}
                       value={note}
                       onChange={e => setNote(e.target.value)}
                       rows={2}
@@ -674,10 +681,12 @@ export default function PatientShell() {
           <div className="bridge__card glass-card" style={{ padding: '20px 22px' }}>
             <h2 className="bridge__reports-title">My Records</h2>
             <div className="detail__actions" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '16px' }}>
-              <button className="detail__action-btn" onClick={() => setMedsModalOpen(true)} id="bridge-btn-meds">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-6 9h6m-6 4h3"/></svg>
-                Medications
-              </button>
+              {drugChart && (
+                <button className="detail__action-btn" onClick={() => setMedsModalOpen(true)} id="bridge-btn-meds">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-6 9h6m-6 4h3"/></svg>
+                  Medications
+                </button>
+              )}
               <button className="detail__action-btn" onClick={() => setDocsModalOpen(true)} id="bridge-btn-docs">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
                 Report History
@@ -747,7 +756,7 @@ export default function PatientShell() {
       </main>
 
       {/* ─── Modals (outside bridge__content to avoid stacking context) ─── */}
-      {medsModalOpen && (
+      {drugChart && medsModalOpen && (
         <PortalModal
           overlayClass={`modal-overlay${closingModal === 'meds' ? ' modal-overlay--closing' : ''}`}
           modalClass={`modal glass-card${closingModal === 'meds' ? ' modal--closing' : ''}`}

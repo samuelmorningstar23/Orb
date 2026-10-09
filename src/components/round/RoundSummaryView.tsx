@@ -27,6 +27,7 @@ import {
   changesSince,
   currentIssues,
   decisionsToday,
+  drugChartShown,
   overnightWindow,
 } from './roundSummary'
 import { RoundDegraded, RoundEmpty, RoundError, RoundLoading } from './RoundStates'
@@ -181,7 +182,9 @@ export default function RoundSummaryView({
           {issues.length === 0 ? (
             <RoundEmpty
               title="No active issues"
-              detail="The ward board scores this patient as stable, observations are up to date and no medication is overdue."
+              detail={drugChartShown()
+                ? 'The ward board scores this patient as stable, observations are up to date and no medication is overdue.'
+                : 'Observations are up to date.'}
             />
           ) : (
             <ul className="round-list">
@@ -208,7 +211,9 @@ export default function RoundSummaryView({
           {decisions.length === 0 ? (
             <RoundEmpty
               title="Nothing outstanding"
-              detail="No unverified medications, no open Sage suggestions, and today's plan is already documented."
+              detail={drugChartShown()
+                ? "No unverified medications, no open Sage suggestions, and today's plan is already documented."
+                : "Today's plan is already documented."}
             />
           ) : (
             <ul className="round-list">

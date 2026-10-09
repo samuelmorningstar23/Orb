@@ -153,6 +153,9 @@ export interface DowntimeSnapshot {
   allergies: DowntimeAllergy[];
   problems: DowntimeProblem[];
   medications: DowntimeMedication[];
+  /** False on an Orb Ward Record computer, whose drug chart stays on paper:
+   *  the page draws no medicines section. Absent from an older snapshot. */
+  drug_chart?: boolean;
   latest_vitals: DowntimeVitals | null;
   news2: DowntimeNews2 | null;
   recent_notes: DowntimeNote[];

@@ -61,6 +61,9 @@ interface DischargePrintViewProps {
   comorbidities?: string[];
   /** Medicines left off because a pharmacist has not verified them yet. */
   unverifiedMedicationCount?: number;
+  /** False on an Orb Ward Record computer, whose drug chart stays on paper:
+   *  the summary has no medicines section at all, not even an empty one. */
+  showMedicines?: boolean;
   siteName?: string | null;
   timeline?: DischargeTimelineEntry[];
 }
@@ -93,6 +96,7 @@ export function DischargePrintView({
   allergies,
   comorbidities,
   unverifiedMedicationCount,
+  showMedicines = true,
   siteName,
   timeline,
 }: DischargePrintViewProps) {
@@ -174,7 +178,7 @@ export function DischargePrintView({
         )}
       </div>
 
-      <div className="discharge-section">
+      {showMedicines && <div className="discharge-section">
         <p><strong>DISCHARGE MEDICINES:</strong></p>
         {medications.length > 0 ? (
           <ol className="discharge-meds-list" style={{ paddingLeft: '24px', margin: '8px 0', lineHeight: '1.6' }}>
@@ -195,7 +199,7 @@ export function DischargePrintView({
             pharmacist verification and {unverifiedMedicationCount === 1 ? 'is' : 'are'} not listed. Ask the hospital before taking {unverifiedMedicationCount === 1 ? 'it' : 'them'}.
           </p>
         )}
-      </div>
+      </div>}
 
       {timeline && timeline.length > 0 && (
         <div className="discharge-section" style={{ marginTop: '24px' }}>

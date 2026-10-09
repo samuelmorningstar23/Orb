@@ -8,6 +8,7 @@ import {
   type StoryType,
 } from '../../api/client'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
+import { useClinicalSwitches } from '../../shellConfig'
 import { parseUTC } from '../../lib/datetime'
 import './PatientStory.css'
 
@@ -84,8 +85,18 @@ function msOf(ts: string | null): number | null {
   return isNaN(t) ? null : t
 }
 
+/** The story types that are the drug chart, which an Orb Ward Record computer
+ *  keeps on paper. The server leaves them out there; the story drops any it is
+ *  sent too, so no Meds or eMAR chip or line is drawn. */
+const DRUG_CHART_TYPES: readonly StoryType[] = ['medication', 'administration']
+
 export default function PatientStory({ patientId, patientName, onClose }: Props) {
-  const [events, setEvents] = useState<StoryEvent[]>([])
+  const [allEvents, setEvents] = useState<StoryEvent[]>([])
+  const { wardRecord } = useClinicalSwitches()
+  const events = useMemo(
+    () => (wardRecord ? allEvents.filter(e => !DRUG_CHART_TYPES.includes(e.type)) : allEvents),
+    [allEvents, wardRecord],
+  )
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [reviewedAt, setReviewedAt] = useState<string | null>(null)

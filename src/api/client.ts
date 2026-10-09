@@ -984,6 +984,10 @@ export interface PatientDetail {
   risk_history: { score: number; level: string; drivers: string[]; timestamp: string }[];
   lens_analyses: LensAnalysisRow[];
   medications: ChartMedicationRow[];
+  /** False on an Orb Ward Record computer, whose drug chart stays on paper:
+   *  `medications` is empty and the chart draws no medicines at all, even
+   *  before its own health probe answers. Absent from an older server. */
+  drug_chart?: boolean;
 }
 
 export async function getPatientDetail(patientId: string): Promise<PatientDetail> {
@@ -2003,6 +2007,8 @@ export interface BridgeDischargeView {
 export interface BridgeReports {
   patient_id: string;
   medications: BridgeMedication[];
+  /** False on an Orb Ward Record computer: no Medications button is drawn. */
+  drug_chart?: boolean;
   clinical_documents: BridgeDocument[];
   labs: BridgeDocument[];
   discharge_summary: BridgeDischargeView | null;
@@ -3186,6 +3192,9 @@ export interface VerifiedDischargeSummary {
     status: 'active' | 'prn';
   }[];
   unverified_medication_count: number;
+  /** False on an Orb Ward Record computer: the page prints no medicines
+   *  section. Absent from an older server. */
+  drug_chart?: boolean;
   site_name: string | null;
 }
 

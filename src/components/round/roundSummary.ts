@@ -25,6 +25,17 @@ import type { SageInsight, StoryEvent } from '../../api/client'
 import { parseUTC, formatClinicalTime, formatUTCDateTime } from '../../lib/datetime'
 import { humaniseEnum } from '../../lib/humanise'
 import { datedDetail, insightValuesAt, type DatedInsight } from '../sage/insightTime'
+import { currentClinicalSwitches } from '../../shellConfig'
+
+/** False on an Orb Ward Record computer, whose drug chart stays on paper: the
+ *  round names no medicine, counts no dose and says nothing about medicines,
+ *  not even that none is overdue. Read at call time. */
+export function drugChartShown(): boolean {
+  return !currentClinicalSwitches().wardRecord
+}
+
+/** The story types that are the drug chart (left out under the profile). */
+const DRUG_CHART_STORY_TYPES = new Set<string>(['medication', 'administration'])
 
 /** Hour of the evening handover. Everything after it is "overnight". */
 const HANDOVER_HOUR = 20
@@ -104,8 +115,10 @@ export function changesSince(
   window: OvernightWindow,
   limit = 6,
 ): ChangeFeed {
+  const drugChart = drugChartShown()
   const inWindow = story
     .filter(e => {
+      if (!drugChart && DRUG_CHART_STORY_TYPES.has(e.type)) return false
       if (!e.timestamp) return false // Undated: never assume it was recent.
       const t = parseUTC(e.timestamp)
       return !isNaN(t.getTime()) && t >= window.start
@@ -162,7 +175,9 @@ export function currentIssues(
       id: 'no-card',
       severity: 'warning',
       label: 'No ward data for this patient',
-      detail: 'Observations, medications and scores could not be matched to this bed. Check the chart directly.',
+      detail: drugChartShown()
+        ? 'Observations, medications and scores could not be matched to this bed. Check the chart directly.'
+        : 'Observations could not be matched to this bed. Check the chart directly.',
       source: 'observation',
     }]
   }
@@ -228,7 +243,7 @@ export function currentIssues(
     })
   }
 
-  if ((card.meds_overdue ?? 0) > 0) {
+  if (drugChartShown() && (card.meds_overdue ?? 0) > 0) {
     issues.push({
       id: 'meds-overdue',
       severity: 'warning',
@@ -271,7 +286,7 @@ export function decisionsToday(
 ): RoundDecision[] {
   const decisions: RoundDecision[] = []
 
-  for (const m of card?.medications ?? []) {
+  for (const m of drugChartShown() ? card?.medications ?? [] : []) {
     if (!m.unverified) continue
     decisions.push({
       id: `med-${m.medication_id}`,
