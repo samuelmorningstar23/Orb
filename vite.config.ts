@@ -4,6 +4,7 @@ import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { devAllowedHosts } from './vite.hosts'
+import { ORB_NAVIGATE_FALLBACK, ORB_PAGE_CACHING } from './vite.pwa'
 
 // The ORB_* settings the dev server's Host check is built from. Orb keeps one
 // .env for every mode, and values exported by run-orb.sh take precedence.
@@ -45,7 +46,11 @@ export default defineConfig({
         // Precache fonts too (woff2) so an installed / offline launch keeps the
         // self-hosted typography instead of falling back to system fonts.
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-        navigateFallbackDenylist: [/^\/api/, /^\/uploads/, /^\/socket.io/],
+        // A page load asks the server first, so the switches the server writes
+        // into the page are this computer's own today, not the install day's
+        // (vite.pwa.ts). Offline it falls back to a saved copy of the page.
+        navigateFallback: ORB_NAVIGATE_FALLBACK,
+        runtimeCaching: [ORB_PAGE_CACHING],
       },
       includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
