@@ -201,6 +201,10 @@ def test_every_mounted_route_starts_with_the_store_gate_and_is_a_plain_def():
     import main
     for route in _routes_under(main.app):
         names = [d.call.__name__ for d in route.dependant.dependencies]
+        # The Orb Ward Record refusal comes first, declared at include_router
+        # in main.py (services/drug_chart, 9 October 2026); then the gates.
+        assert names[:1] == ["require_drug_chart"], (route.path, names)
+        names = names[1:]
         assert names and names[0] == STORE_GATE, (sorted(route.methods), route.path, names)
         assert not inspect.iscoroutinefunction(route.endpoint), route.path
         module = route.endpoint.__module__
