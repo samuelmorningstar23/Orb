@@ -2119,6 +2119,11 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
           read is worth reporting. It never gates the draft — a patient whose
           band has since improved still has an assessment somebody must
           resolve. */}
+      {/* Its routes answer 404 Switched off with scoring or the models off
+          (relay_routes._assessment_switched_on, and so on every Orb Ward
+          Record computer), so it is not mounted then: it asked, and polled,
+          a route that cannot answer. */}
+      {scoringEnabled && modelsEnabled && !wardRecord && (
       <SageAlertAssessment
         patientId={patientId}
         riskLevel={risk?.level}
@@ -2130,6 +2135,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
            "why NEWS2" belongs to which observation. */
         onTier1Shown={setTier1OnScreen}
       />
+      )}
 
       {/* Discharge Modal
           The drafted summary is shown HERE, to the doctor, labelled as an
