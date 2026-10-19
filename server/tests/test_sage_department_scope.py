@@ -508,9 +508,13 @@ def test_own_patients_are_still_fully_answered(ward, name, dx, bed, drug, phrasi
 
 
 def test_own_patient_by_bed_still_resolves(ward):
+    """Reached through the which-patient question since bed locator attempt 10
+    (Samuel, 6 October: Sage never opens a bed's chart on its own reading;
+    "yes" confirms). Still this department's own patient, by bed."""
     p = ward["mine"]["Meenakshi Varadarajan"]
     context, *_rest = _ctx(f"how is the patient in bed {p['bed']}", ward["doctor"])
-    assert _rest[-1] in ("PATIENT_SPECIFIC", "CONTEXTUAL_FOLLOWUP")
+    assert _rest[-1] == "DISAMBIGUATE", _rest[-1]
+    assert context.startswith("Which patient do you mean?")
     assert p["name"] in context
 
 

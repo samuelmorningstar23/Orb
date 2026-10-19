@@ -288,7 +288,11 @@ def _patient(name, ward, bed, dept):
 def _retire(*pids):
     with db_session() as db:
         for pid in pids:
-            db.execute("UPDATE patients SET name = 'Ward Rule Retired Probe', status = 'discharged' "
+            # No ordinary words in the name: "Ward Rule Retired Probe" matched
+            # "ward" in any later file's question (an out-of-department refusal
+            # in test_sage_bed_locator.py when this file ran first).
+            db.execute("UPDATE patients SET name = 'Qzxwretired Vvqprobe', bed = NULL, "
+                       "status = 'discharged' "
                        "WHERE id = ?", (pid,))
 
 
@@ -314,9 +318,12 @@ def test_a_general_question_names_no_ccu_patient(ccu_ward, question):
 
 
 def test_a_real_ccu_reference_still_locates_the_ward(ccu_ward):
+    """A ward named on its own is answered from the ward census (bed locator
+    attempt 9), or asked about; either way every CCU patient is located."""
     context, *_rest, pctx, qscope = get_relevant_context(
         "Any concerns in CCU tonight?", ccu_ward["user"], history=[])
-    assert qscope == "DISAMBIGUATE"
+    assert qscope in ("DISAMBIGUATE", "BROAD"), qscope
+    assert pctx is None
     assert all(name in context for name in ccu_ward["names"])
 
 
@@ -331,9 +338,14 @@ def test_or_ward_general_question_attaches_no_chart():
         *_, pctx, qscope = get_relevant_context(
             "Should I give amoxicillin or cefuroxime for cellulitis?", user, history=[])
         assert pctx is None or pctx["patient_id"] != pid, qscope
-        *_, pctx, qscope = get_relevant_context(
+        # A real "back from OR" still locates the ward: its census (bed locator
+        # attempt 9 answers a ward named on its own from the census) or that
+        # patient's chart, never another chart.
+        context, *_, pctx, qscope = get_relevant_context(
             "Is the patient back from OR stable?", user, history=[])
-        assert pctx is not None and pctx["patient_id"] == pid, qscope
+        assert qscope in ("PATIENT_SPECIFIC", "BROAD"), qscope
+        assert "Thangavelu Ramanathapuram" in context, qscope
+        assert pctx is None or pctx["patient_id"] == pid, qscope
     finally:
         _retire(pid)
 
@@ -411,10 +423,41 @@ def client():
     return TestClient(app)
 
 
-def test_a_which_patient_turn_is_labelled_phi(client, monkeypatch):
+def test_a_which_patient_turn_never_reaches_the_model(client, monkeypatch):
     """A misspelt name that fuzzily matches two patients: retrieval lists both
-    (DISAMBIGUATE) with no chart, and the classifier, reading exact words, said
-    general_knowledge. The label must describe what the model was given."""
+    (DISAMBIGUATE) with no chart. The server writes the which-patient question
+    (ruling A, bed locator attempt 9), so the patient rows never reach the
+    model and there is no inference to label."""
+    dept = f"Ward Rule Label {uuid.uuid4().hex[:4]}"
+    pids = [_patient("Thiruvengadam Iyer", "WL-1", "WL-11", dept),
+            _patient("Thiruvengadam Rao", "WL-1", "WL-12", dept)]
+    user = _user(dept)
+    called = []
+
+    def _capture(query, context, history, scope, **kw):
+        called.append(context)
+
+        async def _gen():
+            yield "ok"
+        return _gen()
+
+    monkeypatch.setattr("routes.sage_routes.query_ollama", _capture)
+    try:
+        headers = {"Authorization": f"Bearer {create_token(user['id'], 'doctor')}"}
+        r = client.post("/api/sage/query", headers=headers,
+                        json={"query": "Any update on thiruvengadem today"})
+        assert r.status_code == 200, r.text
+        assert "Thiruvengadam Iyer" in r.text and "Thiruvengadam Rao" in r.text
+        assert "Which patient do you mean?" in r.text
+        assert called == []
+    finally:
+        _retire(*pids)
+
+
+def test_a_census_turn_is_labelled_phi(client, monkeypatch):
+    """A census (BROAD) turn hands the model a row per patient with no chart.
+    The classifier flags census keywords itself; the label must describe what
+    the model was given."""
     dept = f"Ward Rule Label {uuid.uuid4().hex[:4]}"
     pids = [_patient("Thiruvengadam Iyer", "WL-1", "WL-11", dept),
             _patient("Thiruvengadam Rao", "WL-1", "WL-12", dept)]
@@ -436,11 +479,52 @@ def test_a_which_patient_turn_is_labelled_phi(client, monkeypatch):
     try:
         headers = {"Authorization": f"Bearer {create_token(user['id'], 'doctor')}"}
         r = client.post("/api/sage/query", headers=headers,
-                        json={"query": "Any update on thiruvengadem today"})
+                        json={"query": "Quick overview please"})
+        assert r.status_code == 200, r.text
+        assert "Thiruvengadam Iyer" in seen["context"] and "Thiruvengadam Rao" in seen["context"]
+        # The classifier reads the census keyword itself; the route's upgrade
+        # ("patient rows in the prompt") is the backstop when it does not.
+        c = seen["classification"]
+        assert c is not None and c.contains_phi is True, c and c.reasons
+    finally:
+        _retire(*pids)
+
+
+
+def test_the_route_labels_census_rows_when_the_classifier_misses_them(client, monkeypatch):
+    """The route's backstop, pinned: when the classifier says general_knowledge
+    but retrieval put census rows in the prompt, the route upgrades the label
+    ("patient rows in the prompt"). Nothing else would notice it deleted."""
+    import services.ai_governance as gov_mod
+    monkeypatch.setattr(gov_mod, "classify_query_sensitivity",
+                        lambda *a, **k: gov_mod.QueryClassification(
+                            contains_phi=False, query_class="general_knowledge", reasons=[]))
+    dept = f"Ward Rule Backstop {uuid.uuid4().hex[:4]}"
+    pids = [_patient("Thiruvengadam Iyer", "WL-1", "WL-11", dept),
+            _patient("Thiruvengadam Rao", "WL-1", "WL-12", dept)]
+    user = _user(dept)
+    seen = {}
+
+    def _capture(query, context, history, scope, **kw):
+        seen["context"] = context
+        seen["classification"] = kw.get("classification")
+
+        async def _gen():
+            route_info = kw.get("route_info")
+            if route_info is not None:
+                route_info.update({"provider": "stub", "model": "stub"})
+            yield "ok"
+        return _gen()
+
+    monkeypatch.setattr("routes.sage_routes.query_ollama", _capture)
+    try:
+        headers = {"Authorization": f"Bearer {create_token(user['id'], 'doctor')}"}
+        r = client.post("/api/sage/query", headers=headers,
+                        json={"query": "Quick overview please"})
         assert r.status_code == 200, r.text
         assert "Thiruvengadam Iyer" in seen["context"] and "Thiruvengadam Rao" in seen["context"]
         c = seen["classification"]
         assert c is not None and c.contains_phi is True, c and c.reasons
-        assert any("patient rows in the prompt" in r for r in c.reasons), c.reasons
+        assert any("patient rows in the prompt" in x for x in c.reasons), c.reasons
     finally:
         _retire(*pids)

@@ -42,6 +42,26 @@ _PRODUCER_JOIN_SECONDS = 5.0        # grace for the producer to stop after cance
 # carry no chart snapshot and no source trail at all while typed ones did.
 _VOICE_RETRIEVAL: contextvars.ContextVar = contextvars.ContextVar("orb_voice_retrieval", default=None)
 
+# R026, rulings A and E, on the spoken lane too. When retrieval writes the
+# which-patient question, the voice lane SPEAKS THAT TEXT and never asks the
+# model to (the typed lane does the same). When the answer comes from a chart
+# the clinician did not name, its first words are that patient's name and bed.
+# Per request, like the collector above.
+_VOICE_DIRECT: contextvars.ContextVar = contextvars.ContextVar("orb_voice_direct", default=None)
+_VOICE_LABEL: contextvars.ContextVar = contextvars.ContextVar("orb_voice_label", default=None)
+
+
+def _as_history(conversation_history) -> list:
+    """The spoken lane's [{query, response}] as retrieval's [{role, content}],
+    so the ask-again rule and the conversation's patient work here too."""
+    out = []
+    for entry in (conversation_history or [])[-10:]:
+        if not isinstance(entry, dict):
+            continue
+        out.append({"role": "user", "content": str(entry.get("query") or "")})
+        out.append({"role": "assistant", "content": str(entry.get("response") or "")})
+    return out
+
 
 def collect_voice_retrieval() -> dict:
     """Start collecting this turn's retrieval; returns the dict that fills.
@@ -363,7 +383,7 @@ class VoiceAgent:
         except Exception as e:
             print(f"[VoiceAgent] Failed to load model: {e}")
     
-    def _build_system_prompt(self, query: str, user: dict, patient_id: Optional[str] = None, is_follow_up: bool = False, is_first_turn: bool = False) -> str:
+    def _build_system_prompt(self, query: str, user: dict, patient_id: Optional[str] = None, is_follow_up: bool = False, is_first_turn: bool = False, history: Optional[list] = None) -> str:
         """Build system prompt with relevant context, scoped to `user`.
 
         `user` is required and positional — the spoken lane reads the same
@@ -375,7 +395,14 @@ class VoiceAgent:
         record = _VOICE_RETRIEVAL.get()
         try:
             from services.sage_service import get_relevant_context
-            context, scope, sources, confidence, escalation, patient_context_dict, query_scope = get_relevant_context(query, user, patient_id)
+            context, scope, sources, confidence, escalation, patient_context_dict, query_scope = get_relevant_context(query, user, patient_id, history)
+            # Spoken as written, no model: the which-patient question, and the
+            # notice for a request a reply did not carry over (bed locator
+            # attempt 13e; review 13d found the notice handed to the model).
+            if query_scope in ("DISAMBIGUATE", "NOT_CARRIED"):
+                _VOICE_DIRECT.set(context)
+            elif isinstance(patient_context_dict, dict) and patient_context_dict.get("answer_label"):
+                _VOICE_LABEL.set(patient_context_dict["answer_label"])
             # What the spoken answer was built from, for the turn's provenance.
             if record is not None:
                 record["sources"].extend(sources or [])
@@ -432,6 +459,15 @@ RULES:
         if not base_prompt:
             if patient_id:
                 context = build_patient_context(patient_id, user)
+                # This fallback reads the open chart itself, so it is named
+                # first like any other chart the clinician did not name
+                # (ruling E). build_patient_context already refuses a chart
+                # outside the department; the label helper checks again.
+                if context and not _VOICE_LABEL.get():
+                    from services.sage_service import answer_label_for_patient
+                    _label = answer_label_for_patient(patient_id, user)
+                    if _label:
+                        _VOICE_LABEL.set(_label)
                 base_prompt = VOICE_SYSTEM_PROMPT.format(
                     hospital_name=self.hospital_name,
                     patient_context=context,
@@ -464,6 +500,11 @@ RULES:
     
     def generate(self, query: str, user: dict, patient_id: Optional[str] = None) -> str:
         """Synchronous generation — returns full response."""
+        _VOICE_DIRECT.set(None)
+        _VOICE_LABEL.set(None)
+        system_prompt = self._build_system_prompt(query, user, patient_id, is_follow_up=False, is_first_turn=True)
+        if _VOICE_DIRECT.get():
+            return _VOICE_DIRECT.get()
         if not self._loaded:
             self.load()
         if not self._loaded:
@@ -472,8 +513,6 @@ RULES:
         from mlx_lm import generate as mlx_generate
         from mlx_lm.sample_utils import make_sampler
         from services.gpu_coordinator import vram_guard
-        
-        system_prompt = self._build_system_prompt(query, user, patient_id, is_follow_up=False, is_first_turn=True)
         
         messages = [
             {"role": "system", "content": system_prompt},
@@ -500,7 +539,8 @@ RULES:
             cleaned_response += final_flush
         
         print(f"[VoiceAgent] Generated {len(cleaned_response)} cleaned chars in {elapsed_ms}ms")
-        return cleaned_response.strip()
+        _label = _VOICE_LABEL.get()
+        return f"{_label} {cleaned_response.strip()}" if _label else cleaned_response.strip()
     
     async def generate_stream(self, query: str, user: dict, patient_id: Optional[str] = None, conversation_history: Optional[list] = None) -> AsyncGenerator[str, None]:
         """Async streaming generation — yields token strings for real-time TTS.
@@ -508,6 +548,18 @@ RULES:
         Acquires the UMSQ GPU lock at PRIORITY_SAGE (1) — highest priority.
         This guarantees Sage voice queries always preempt background Vigil/Forecast scoring.
         """
+        # Retrieval first: a which-patient turn is answered by the server's own
+        # question and never reaches (or loads) the model.
+        _VOICE_DIRECT.set(None)
+        _VOICE_LABEL.set(None)
+        is_first_turn = not bool(conversation_history)
+        is_follow_up = bool(conversation_history)
+        system_prompt = self._build_system_prompt(query, user, patient_id, is_follow_up, is_first_turn,
+                                                  history=_as_history(conversation_history))
+        if _VOICE_DIRECT.get():
+            yield _VOICE_DIRECT.get()
+            return
+
         if not self._loaded:
             self.load()
         if not self._loaded:
@@ -520,10 +572,11 @@ RULES:
         from mlx_lm import stream_generate
         from mlx_lm.sample_utils import make_sampler
         from services.gpu_coordinator import umsq, vram_guard, PRIORITY_SAGE
-        
-        is_first_turn = not bool(conversation_history)
-        is_follow_up = bool(conversation_history)
-        system_prompt = self._build_system_prompt(query, user, patient_id, is_follow_up, is_first_turn)
+
+        # Ruling E: the patient's name and bed are the first words spoken when
+        # the clinician did not name them.
+        if _VOICE_LABEL.get():
+            yield _VOICE_LABEL.get() + " "
         
         messages = [
             {"role": "system", "content": system_prompt},

@@ -92,17 +92,22 @@ def test_asking_about_a_colleague_is_not_a_missing_patient():
     assert "NO MATCHING PATIENT" not in context
 
 
-def test_summarise_a_real_patient_by_name_and_bed_attaches_the_chart():
-    """From a fresh chat: no history, no open chart."""
+def test_summarise_a_real_patient_by_name_and_bed_finds_the_patient():
+    """From a fresh chat: no history, no open chart. Since bed locator attempt
+    12 (Samuel, 6 October) a bed is always confirmed before its chart opens,
+    a full name with it included, so Sage asks about exactly this patient;
+    "yes" opens the chart."""
     user = _user()
     first, last = "Rajesh", _word()
     bed = f"GM-{random.randint(100, 999)}"
     pid = _patient(f"{first} {last}", bed)
     context, _scope, _src, _conf, _esc, pctx, qscope = get_relevant_context(
         f"Summarise {first} {last} in bed {bed}", user, history=[])
-    assert qscope == "PATIENT_SPECIFIC", qscope
-    assert pctx is not None and pctx["patient_id"] == pid
+    assert qscope == "DISAMBIGUATE", qscope
+    assert pctx is None
+    assert context.startswith("Which patient do you mean?") and f"{first} {last}" in context
     assert "NO MATCHING PATIENT" not in context
+    assert pid
 
 
 # ── the fuzzy matcher ────────────────────────────────────────────────────────

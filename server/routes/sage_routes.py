@@ -1862,6 +1862,33 @@ def _save_turn(user_id: str, query: str, full_response: str, meta_json,
                           conversation_id=conversation_id)
 
 
+def _with_label(text: str | None, label: str | None) -> str | None:
+    """Plain answer text with the ruling E label in front, once."""
+    if not label or not text or text.startswith(label):
+        return text
+    return f"{label}\n\n{text}"
+
+
+def _labelled(raw: str, label: str | None) -> str:
+    """The saved answer with the ruling-E label in it, so a reopened
+    conversation shows which patient it was about: inside <concise_answer> for
+    the XML contract (the screen shows only that), after a NOACT| marker, or
+    first. Never into an ACT| reply: its action JSON must follow the marker
+    for parse_fast_response, and attempt 6 broke that on reload. The action
+    card names its patient."""
+    if not label or not raw or label in raw:
+        return raw
+    if "<concise_answer>" in raw:
+        return raw.replace("<concise_answer>", f"<concise_answer>{label}\n\n", 1)
+    marker, end = _leading_marker(raw.strip())
+    if marker == _MARKER_ACT:
+        return raw
+    if marker == _MARKER_NOACT:
+        lead = len(raw) - len(raw.lstrip())
+        return raw[:lead + end] + f"{label}\n\n" + raw[lead + end:]
+    return f"{label}\n\n{raw}"
+
+
 def _save_voice_turn(user_id: str, query: str, full_response: str, meta_json=None):
     save_conversation(user_id, "user", f"[voice] {query}")
     if full_response:
@@ -2377,6 +2404,13 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
     # separated by the entire LLM stream.
     history = await run_db(get_conversation_history, user["id"], limit=6,
                            conversation_id=conversation_id)
+    # The which-patient exchange a reply may settle, read further back than the
+    # prompt window (bed locator attempt 13b): a re-ask chain must not lose the
+    # message that started it.
+    from services.sage_service import _last_turn_asked_which_patient
+    question_history = (await run_db(get_conversation_history, user["id"], limit=20,
+                                     conversation_id=conversation_id)
+                        if _last_turn_asked_which_patient(history) else None)
 
     # ── Retrieval, deferred into the stream (2026-07 UX/latency pass) ──
     # Previously get_relevant_context() ran HERE, synchronously in the async
@@ -2393,8 +2427,11 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
         # to permissions.department_scope(user), and `effective_patient_id` —
         # which comes from the request/view_context — is vetted against that
         # same department rather than trusted.
+        # Passed only when there is an exchange to read, so every other turn
+        # makes the same call as before.
+        _qh = {"question_history": question_history} if question_history is not None else {}
         _context, _scope, _sources, _confidence, _escalation, _pcd, _qscope = get_relevant_context(
-            query, user, effective_patient_id, history
+            query, user, effective_patient_id, history, **_qh
         )
         # A mutation turn must NEVER ride a prose lane: broad/aggregate scopes
         # use the prose prompt (no <action_intent> contract), so the
@@ -2426,7 +2463,14 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
             with db_session() as _db:
                 _view_patient_in_scope = _patient_in_scope(
                     _db, effective_patient_id, _dept_scope(user))
-        view_line = _describe_view(view_context, _view_patient_in_scope)
+        # Not on a no-such-patient turn (R026): the clinician asked about a
+        # bed or name nobody here holds, no chart was attached, and the open
+        # patient's name on this line would be the one patient the model
+        # could drift to.
+        from services.sage_service import NO_MATCHING_PATIENT_NOTICE
+        view_line = _describe_view(
+            view_context,
+            _view_patient_in_scope and NO_MATCHING_PATIENT_NOTICE not in (_context or ""))
         # NEVER add the view line to an OUT_OF_SCOPE notice. For every other
         # scope `_context` is prompt material the model reads and the clinician
         # never sees, so describing their screen in it is exactly right. The
@@ -2448,7 +2492,9 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
         # with the real turn, and the patient facts were re-prefilled from
         # scratch every time. Stable first, volatile last — the same rule the
         # A → B → C channel order already follows.
-        if view_line and _qscope != "OUT_OF_SCOPE":
+        # Nor to the which-patient question (R026): it is streamed verbatim
+        # too, and attempt 4 showed the clinician this line inside it.
+        if view_line and _qscope not in ("OUT_OF_SCOPE", "DISAMBIGUATE", "NOT_CARRIED"):
             _context = f"{_context}\n{view_line}" if _context else view_line
         # ── SHADOW: `context.compiled`, and the episode this whole turn hangs on ──
         # Done HERE because this body is already on a to_thread worker (rule 2:
@@ -2492,6 +2538,9 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
     classification = await run_db(classify_query_sensitivity, query, effective_patient_id, view_context)
 
     async def stream_response():
+        # Raised below when a reply settles the which-patient question of an
+        # order (attempt 13b).
+        nonlocal is_deterministic_mutation
         full_response = ""
         cancelled = False
         t_first_token = None
@@ -2559,6 +2608,23 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
         if isinstance(patient_context_dict, dict) and patient_context_dict.get("patient_id"):
             turn_patient_id = patient_context_dict["patient_id"]
 
+        # ── A reply settled WHO; the earlier message says WHAT (attempt 13b) ──
+        # "give her lasix 40 iv", the which-patient question, then "yes": the
+        # gate above read only "yes", so a model's "the order is placed" reached
+        # the screen with nothing drafted (review 13, S1). Every message of the
+        # exchange goes through the gate, and the model and the grounding
+        # check are given the clinician's words instead of "yes".
+        model_query = query
+        if isinstance(patient_context_dict, dict) and patient_context_dict.get("question_what"):
+            model_query = patient_context_dict["question_what"]
+            if not is_deterministic_mutation and any(
+                    _mutation_gate(t) for t in patient_context_dict.get("question_exchange") or ()):
+                is_deterministic_mutation = True
+                xml_streamer = _streamer_cls(
+                    SentenceStreamSanitizer(_strip_forbidden_streaming),
+                    mutation_locked=True,
+                )
+
         # ── The classification must describe what the model was actually GIVEN ──
         # classify_query_sensitivity runs before retrieval and reads the words
         # plus the request (patient_id / view_context). Sticky anchoring can
@@ -2582,7 +2648,8 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
         # misspelt name that fuzzily matched two patients ("thiruvengadem") put
         # both names in the prompt under `general_knowledge`, and the thinking
         # floor's context markers do not see a disambiguation list either.
-        _rows_class = {"DISAMBIGUATE": "patient_scoped", "BROAD": "census_broad"}.get(query_scope)
+        _rows_class = {"DISAMBIGUATE": "patient_scoped", "NOT_CARRIED": "patient_scoped",
+                       "BROAD": "census_broad"}.get(query_scope)
         if _rows_class and not classification.contains_phi:
             classification.contains_phi = True
             classification.query_class = _rows_class
@@ -2622,11 +2689,57 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
             )
             return
 
+        # ── Which patient? Asked DETERMINISTICALLY, no model (ruling A, R026) ──
+        # Retrieval wrote the question (sage_service._which_patient_question):
+        # the candidates' beds and names from this clinician's own department.
+        # It used to be a bare list handed to the model under the general
+        # prompt with nothing telling it to ask, and in a replay the model
+        # answered generically with invented citations instead. Same shape and
+        # accounting as the out-of-scope answer above: a non-answer, so never
+        # `sage.drafted`, and provenance names no patient.
+        # Also a request a reply did not carry over (bed locator attempt 13d):
+        # the server's notice, the same no-model accounting.
+        if query_scope in ("DISAMBIGUATE", "NOT_CARRIED"):
+            _no_model_class = "which_patient" if query_scope == "DISAMBIGUATE" else "not_carried"
+            yield f"data: {json.dumps({'content': context})}\n\n"
+            yield f"data: {json.dumps({'metadata': {'action_state': None, 'sources': [], 'confidence': 'high', 'escalation': False, 'display_mode': 'concise', 'query_scope': query_scope, 'patient_context_used': False, 'patient_id': None, 'patient_name': None, 'timing': {'retrieval_ms': round(t_retrieval)}}})}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+            await _sh_refused(None, SHADOW_CHAT_LANE, _no_model_class, "retrieval", user)
+            await _prov_record(
+                turn_id=shadow_turn_id, lane=SHADOW_CHAT_LANE, outcome="refused",
+                user=user, question=query, patient_id=None,
+                query_scope=query_scope, refusal_class=_no_model_class,
+                answer=context, route_info=route_info or _no_model_route_info,
+                confidence="high",
+                timings={"retrieval_ms": round(t_retrieval)},
+            )
+            # SAVED, unlike the out-of-scope answer: the next turn must know it
+            # followed this question, or "yes" goes to the open chart. This
+            # branch returns before the try/finally that saves every other
+            # turn, which is how attempt 4 lost it in production.
+            await run_db(_save_turn, user["id"], query, context, None,
+                         conversation_id=conversation_id)
+            return
+
         yield f"data: {json.dumps({'stage': 'generating', 'retrieval_ms': round(t_retrieval)})}\n\n"
 
+        # Ruling E: an answer from a chart the clinician did not name in this
+        # turn (the open chart, or the conversation's patient) starts with that
+        # patient's name and bed, written here by the server, so a reference
+        # to another patient that retrieval missed is visible, not silent.
+        _answer_label = (patient_context_dict.get("answer_label")
+                         if isinstance(patient_context_dict, dict) else None)
+        if _answer_label:
+            yield f"data: {json.dumps({'content': _answer_label + chr(10) + chr(10)})}\n\n"
+
+        # Never in front of the model: a request Sage answered with the
+        # which-patient question, and the question (attempt 13c). A settled
+        # request arrives as `model_query`; an unsettled order cannot be
+        # narrated by a model that never saw it.
+        from services.sage_service import history_for_model
         try:
             async for chunk in query_ollama(
-                query, context, history, scope,
+                model_query, context, history_for_model(history), scope,
                 classification=classification,
                 user_id=user["id"],
                 patient_id=turn_patient_id,
@@ -2691,7 +2804,7 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                     if scope == "quick":
                         _q_answer = _strip_forbidden(full_response)
                         _q_grounding = assess_answer_grounding(
-                            answer=_q_answer, sources=sources or [], query=query,
+                            answer=_q_answer, sources=sources or [], query=model_query,
                             prompt_context=context, patient_context=None,
                         )
                         _q_conf, _q_basis = classify_answer_confidence(
@@ -2944,7 +3057,7 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                 grounding = assess_answer_grounding(
                     answer=parsed_json.get("concise_answer", ""),
                     sources=sources or [],
-                    query=query,
+                    query=model_query,
                     prompt_context=context,
                     patient_context=patient_context_dict,
                 )
@@ -3115,6 +3228,14 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                     if safe_answer:
                         yield f"data: {json.dumps({'content': safe_answer})}\n\n"
 
+                # Ruling E: the screen replaces the streamed text with
+                # `structured_response.concise_answer` once it arrives, so the
+                # label must be IN it, not only in the stream (attempt 5 lost it
+                # here).
+                if _answer_label and parsed_json.get("concise_answer") \
+                        and not parsed_json["concise_answer"].startswith(_answer_label):
+                    parsed_json["concise_answer"] = f"{_answer_label}\n\n{parsed_json['concise_answer']}"
+
                 yield f"data: {json.dumps({'metadata': metadata})}\n\n"
 
                 # Also yield the structured parsed JSON as a separate event for frontend rendering
@@ -3195,7 +3316,10 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                     # its presence IS the statement "content is not what was
                     # shown". Unbound on every other path, hence the locals()
                     # probe the rest of this literal already uses.
-                    "safe_answer": (turn_safe_answer
+                    # With the ruling E label when the screen showed one: a
+                    # reloaded order turn is read from here (/history), and
+                    # attempt 7 reloaded "Drafted request for ..." unlabelled.
+                    "safe_answer": (_with_label(turn_safe_answer, _answer_label)
                                     if 'turn_safe_answer' in locals() else None),
                     "parsed_response": parsed_json if not cancelled and 'parsed_json' in locals() else {}
                 })
@@ -3210,8 +3334,8 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
             # disconnect still lets the save complete rather than raising
             # "async generator ignored GeneratorExit". Both writes are appends,
             # so ordering against a concurrent turn does not matter.
-            await run_db(_save_turn, user["id"], query, full_response, meta_json,
-                         conversation_id=conversation_id)
+            await run_db(_save_turn, user["id"], query, _labelled(full_response, _answer_label),
+                         meta_json, conversation_id=conversation_id)
 
             # ══ PROVENANCE: everything needed to REPLAY this turn ══════════════
             # Same "every exit lands here" property as the shadow block below, and
