@@ -1,0 +1,10 @@
+Collected 17411 tests in 525 files; 6 isolated shards started: [2902, 2902, 2902, 2902, 2902, 2901]
+Shard 3 exited 0 after 231.64s
+Shard 5 exited 0 after 230.65s
+Shard 2 exited 0 after 262.12s
+Shard 6 exited 0 after 270.18s
+Shard 4 exited 0 after 401.31s
+Shard 1 exited 0 after 492.83s
+Combined 6 files
+Wrote JSON report to /private/tmp/orb-engineering-full-20261020-v3/coverage.json
+{"collected": 17411, "elapsed_seconds": 519.4, "passed": true}

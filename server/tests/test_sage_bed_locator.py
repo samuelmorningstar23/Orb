@@ -135,8 +135,10 @@ def _patient(dept, bed, ward=None, status="admitted", name=None):
 
 
 @pytest.fixture(scope="module")
-def h():
-    """The whole synthetic hospital, seeded once, so every bed and ward prefix
+def h(isolated_module_database):
+    """An owned fresh census: other modules' retired bed labels are not absence.
+
+    The whole synthetic hospital, seeded once, so every bed and ward prefix
     below is on record for every test, exactly as on a real site."""
     s = {}
     s["num"] = {b: _patient(NUM, b) for b in ("7", "12", "14")}

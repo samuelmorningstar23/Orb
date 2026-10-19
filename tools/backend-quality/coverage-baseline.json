@@ -1,0 +1,1538 @@
+{
+  "server/auth.py": {
+    "missing_branches": 8,
+    "missing_statements": 28
+  },
+  "server/cleanup_data.py": {
+    "missing_branches": 32,
+    "missing_statements": 63
+  },
+  "server/config.py": {
+    "missing_branches": 33,
+    "missing_statements": 50
+  },
+  "server/database.py": {
+    "missing_branches": 29,
+    "missing_statements": 79
+  },
+  "server/db_backend.py": {
+    "missing_branches": 4,
+    "missing_statements": 7
+  },
+  "server/facility_fence.py": {
+    "missing_branches": 2,
+    "missing_statements": 5
+  },
+  "server/main.py": {
+    "missing_branches": 61,
+    "missing_statements": 236
+  },
+  "server/migrate.py": {
+    "missing_branches": 20,
+    "missing_statements": 71
+  },
+  "server/migrations.py": {
+    "missing_branches": 31,
+    "missing_statements": 48
+  },
+  "server/migrations_his/__init__.py": {
+    "missing_branches": 1,
+    "missing_statements": 1
+  },
+  "server/migrations_his/m0048_users_role_batch.py": {
+    "missing_branches": 1,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0049_helix_tables_in_runner.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0050_registration_opd_foundation.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0051_adt_movement_ledger.py": {
+    "missing_branches": 4,
+    "missing_statements": 4
+  },
+  "server/migrations_his/m0052_patients_status_registered.py": {
+    "missing_branches": 4,
+    "missing_statements": 4
+  },
+  "server/migrations_his/m0053_adt_bed_master.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0054_pharmacy_store_schema.py": {
+    "missing_branches": 5,
+    "missing_statements": 4
+  },
+  "server/migrations_his/m0055_lab_contract.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0056_observations_lab_links.py": {
+    "missing_branches": 1,
+    "missing_statements": 1
+  },
+  "server/migrations_his/m0057_clinic_sessions.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0058_adt_admission_location.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0059_adt_discharge_dispositions.py": {
+    "missing_branches": 1,
+    "missing_statements": 1
+  },
+  "server/migrations_his/m0060_result_quarantine.py": {
+    "missing_branches": 1,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0061_med_order_store.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0062_opd_consultations.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0063_patient_allergy_assessments.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0064_lab_analysers.py": {
+    "missing_branches": 1,
+    "missing_statements": 1
+  },
+  "server/migrations_his/m0065_stay_keying.py": {
+    "missing_branches": 6,
+    "missing_statements": 3
+  },
+  "server/migrations_his/m0066_housekeeping_movement_links.py": {
+    "missing_branches": 1,
+    "missing_statements": 1
+  },
+  "server/migrations_his/m0067_opd_charge_rules.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0068_appointments_slots.py": {
+    "missing_branches": 4,
+    "missing_statements": 4
+  },
+  "server/migrations_his/m0069_bed_reservations.py": {
+    "missing_branches": 2,
+    "missing_statements": 1
+  },
+  "server/migrations_his/m0070_facilities_spine.py": {
+    "missing_branches": 4,
+    "missing_statements": 4
+  },
+  "server/migrations_his/m0071_med_order_schedule_times.py": {
+    "missing_branches": 2,
+    "missing_statements": 1
+  },
+  "server/migrations_his/m0072_invoice_supplier_snapshot.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0076_surgery_who_checklist_column.py": {
+    "missing_branches": 2,
+    "missing_statements": 4
+  },
+  "server/migrations_his/m0077_vitals_entry_and_void.py": {
+    "missing_branches": 1,
+    "missing_statements": 1
+  },
+  "server/migrations_his/m0078_ward_record_rounds.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0079_medication_source_note.py": {
+    "missing_branches": 1,
+    "missing_statements": 1
+  },
+  "server/migrations_his/m0080_sage_insight_observed_at.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0081_local_operations.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0082_reporting_finance.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0083_offline_clinical_records.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0084_record_governance.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0085_infection_surveillance.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/migrations_his/m0086_radiation_safety.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/models/__init__.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/models/forecast_lstm.py": {
+    "missing_branches": 10,
+    "missing_statements": 32
+  },
+  "server/models/message.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/models/user.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/models/vigil_cfc.py": {
+    "missing_branches": 8,
+    "missing_statements": 21
+  },
+  "server/offline_policy.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/permissions.py": {
+    "missing_branches": 9,
+    "missing_statements": 12
+  },
+  "server/request_limits.py": {
+    "missing_branches": 3,
+    "missing_statements": 2
+  },
+  "server/roles.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/__init__.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/abdm_routes.py": {
+    "missing_branches": 6,
+    "missing_statements": 40
+  },
+  "server/routes/admin_routes.py": {
+    "missing_branches": 9,
+    "missing_statements": 27
+  },
+  "server/routes/admin_users_routes.py": {
+    "missing_branches": 24,
+    "missing_statements": 47
+  },
+  "server/routes/admission_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 16
+  },
+  "server/routes/adt/__init__.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/adt/board.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/adt/census.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/adt/end_stay.py": {
+    "missing_branches": 0,
+    "missing_statements": 2
+  },
+  "server/routes/adt/master.py": {
+    "missing_branches": 0,
+    "missing_statements": 3
+  },
+  "server/routes/adt/moves.py": {
+    "missing_branches": 3,
+    "missing_statements": 10
+  },
+  "server/routes/adt/presence.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/adt/reservations.py": {
+    "missing_branches": 5,
+    "missing_statements": 7
+  },
+  "server/routes/appointments_routes.py": {
+    "missing_branches": 53,
+    "missing_statements": 84
+  },
+  "server/routes/audit_routes.py": {
+    "missing_branches": 8,
+    "missing_statements": 11
+  },
+  "server/routes/auth_routes.py": {
+    "missing_branches": 41,
+    "missing_statements": 63
+  },
+  "server/routes/backup_routes.py": {
+    "missing_branches": 1,
+    "missing_statements": 6
+  },
+  "server/routes/billing_routes.py": {
+    "missing_branches": 2,
+    "missing_statements": 33
+  },
+  "server/routes/biomedical_routes.py": {
+    "missing_branches": 5,
+    "missing_statements": 76
+  },
+  "server/routes/bridge_routes.py": {
+    "missing_branches": 11,
+    "missing_statements": 19
+  },
+  "server/routes/bundle_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 6
+  },
+  "server/routes/capacity_sim_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 5
+  },
+  "server/routes/care_plan_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 7
+  },
+  "server/routes/clinical_records_routes.py": {
+    "missing_branches": 3,
+    "missing_statements": 7
+  },
+  "server/routes/coding_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/command_center_routes.py": {
+    "missing_branches": 1,
+    "missing_statements": 0
+  },
+  "server/routes/compliance_routes.py": {
+    "missing_branches": 4,
+    "missing_statements": 29
+  },
+  "server/routes/cssd_routes.py": {
+    "missing_branches": 2,
+    "missing_statements": 9
+  },
+  "server/routes/dialysis_record_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 7
+  },
+  "server/routes/dietary_routes.py": {
+    "missing_branches": 6,
+    "missing_statements": 42
+  },
+  "server/routes/discharge_access_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/downtime_routes.py": {
+    "missing_branches": 1,
+    "missing_statements": 6
+  },
+  "server/routes/emar_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/emergency_record_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 7
+  },
+  "server/routes/facility_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/feedback_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 3
+  },
+  "server/routes/fhir_export_routes.py": {
+    "missing_branches": 11,
+    "missing_statements": 25
+  },
+  "server/routes/finance_tools_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 22
+  },
+  "server/routes/flight_recorder_routes.py": {
+    "missing_branches": 3,
+    "missing_statements": 1
+  },
+  "server/routes/forecast_routes.py": {
+    "missing_branches": 1,
+    "missing_statements": 19
+  },
+  "server/routes/frontdesk_routes.py": {
+    "missing_branches": 10,
+    "missing_statements": 40
+  },
+  "server/routes/helix_routes.py": {
+    "missing_branches": 6,
+    "missing_statements": 17
+  },
+  "server/routes/housekeeping_routes.py": {
+    "missing_branches": 1,
+    "missing_statements": 44
+  },
+  "server/routes/impact_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 4
+  },
+  "server/routes/import_mapping.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/infection_surveillance_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 12
+  },
+  "server/routes/ingestion_routes.py": {
+    "missing_branches": 11,
+    "missing_statements": 41
+  },
+  "server/routes/ipass_routes.py": {
+    "missing_branches": 2,
+    "missing_statements": 10
+  },
+  "server/routes/lab/__init__.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/lab/analysers.py": {
+    "missing_branches": 0,
+    "missing_statements": 3
+  },
+  "server/routes/lab/criticals.py": {
+    "missing_branches": 0,
+    "missing_statements": 2
+  },
+  "server/routes/lab/master.py": {
+    "missing_branches": 1,
+    "missing_statements": 11
+  },
+  "server/routes/lab/orders.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/lab/reports.py": {
+    "missing_branches": 3,
+    "missing_statements": 6
+  },
+  "server/routes/lab/results.py": {
+    "missing_branches": 0,
+    "missing_statements": 2
+  },
+  "server/routes/lab/specimens.py": {
+    "missing_branches": 0,
+    "missing_statements": 4
+  },
+  "server/routes/lab/tat.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/lens_routes.py": {
+    "missing_branches": 11,
+    "missing_statements": 25
+  },
+  "server/routes/local_operations_http.py": {
+    "missing_branches": 1,
+    "missing_statements": 4
+  },
+  "server/routes/medorders/__init__.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/medorders/core.py": {
+    "missing_branches": 3,
+    "missing_statements": 7
+  },
+  "server/routes/medorders/lifecycle.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/medorders/schedule.py": {
+    "missing_branches": 1,
+    "missing_statements": 2
+  },
+  "server/routes/medorders/supply.py": {
+    "missing_branches": 0,
+    "missing_statements": 2
+  },
+  "server/routes/medorders/verify.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/metrics_routes.py": {
+    "missing_branches": 6,
+    "missing_statements": 10
+  },
+  "server/routes/model_governance_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 4
+  },
+  "server/routes/mortuary_routes.py": {
+    "missing_branches": 2,
+    "missing_statements": 6
+  },
+  "server/routes/nabh_routes.py": {
+    "missing_branches": 1,
+    "missing_statements": 64
+  },
+  "server/routes/nurse_routes.py": {
+    "missing_branches": 1,
+    "missing_statements": 4
+  },
+  "server/routes/offline_workflow_routes.py": {
+    "missing_branches": 1,
+    "missing_statements": 2
+  },
+  "server/routes/opd_routes.py": {
+    "missing_branches": 6,
+    "missing_statements": 37
+  },
+  "server/routes/ops_routes.py": {
+    "missing_branches": 1,
+    "missing_statements": 3
+  },
+  "server/routes/opt_in_gates.py": {
+    "missing_branches": 0,
+    "missing_statements": 1
+  },
+  "server/routes/orders_routes.py": {
+    "missing_branches": 7,
+    "missing_statements": 16
+  },
+  "server/routes/patient_timeline_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/payer_routes.py": {
+    "missing_branches": 3,
+    "missing_statements": 29
+  },
+  "server/routes/payments_routes.py": {
+    "missing_branches": 7,
+    "missing_statements": 19
+  },
+  "server/routes/perioperative_record_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 8
+  },
+  "server/routes/pharmacy_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/pharmacy_store/__init__.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/pharmacy_store/counts.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/pharmacy_store/lots.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/pharmacy_store/masters.py": {
+    "missing_branches": 3,
+    "missing_statements": 19
+  },
+  "server/routes/pharmacy_store/ndps.py": {
+    "missing_branches": 0,
+    "missing_statements": 13
+  },
+  "server/routes/pharmacy_store/purchasing.py": {
+    "missing_branches": 2,
+    "missing_statements": 20
+  },
+  "server/routes/pharmacy_store/returns.py": {
+    "missing_branches": 0,
+    "missing_statements": 14
+  },
+  "server/routes/pharmacy_store/stock.py": {
+    "missing_branches": 0,
+    "missing_statements": 2
+  },
+  "server/routes/pharmacy_store/transfers.py": {
+    "missing_branches": 2,
+    "missing_statements": 17
+  },
+  "server/routes/pharmacy_store/vendor_returns.py": {
+    "missing_branches": 2,
+    "missing_statements": 14
+  },
+  "server/routes/pharmacy_store/ward.py": {
+    "missing_branches": 0,
+    "missing_statements": 22
+  },
+  "server/routes/procurement_routes.py": {
+    "missing_branches": 7,
+    "missing_statements": 34
+  },
+  "server/routes/pulse_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/radiation_safety_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 5
+  },
+  "server/routes/radiology_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 5
+  },
+  "server/routes/record_governance_routes.py": {
+    "missing_branches": 4,
+    "missing_statements": 9
+  },
+  "server/routes/registration_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 20
+  },
+  "server/routes/relay_routes.py": {
+    "missing_branches": 48,
+    "missing_statements": 60
+  },
+  "server/routes/reporting_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 7
+  },
+  "server/routes/roster_import_routes.py": {
+    "missing_branches": 4,
+    "missing_statements": 11
+  },
+  "server/routes/sage_proactive_routes.py": {
+    "missing_branches": 9,
+    "missing_statements": 24
+  },
+  "server/routes/sage_routes.py": {
+    "missing_branches": 62,
+    "missing_statements": 97
+  },
+  "server/routes/schedule_routes.py": {
+    "missing_branches": 2,
+    "missing_statements": 8
+  },
+  "server/routes/scribe_routes.py": {
+    "missing_branches": 52,
+    "missing_statements": 150
+  },
+  "server/routes/search_routes.py": {
+    "missing_branches": 2,
+    "missing_statements": 1
+  },
+  "server/routes/shadow_routes.py": {
+    "missing_branches": 47,
+    "missing_statements": 89
+  },
+  "server/routes/surgery_routes.py": {
+    "missing_branches": 24,
+    "missing_statements": 45
+  },
+  "server/routes/vigil_routes.py": {
+    "missing_branches": 23,
+    "missing_statements": 57
+  },
+  "server/routes/ward_record_routes.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/routes/workforce_routes.py": {
+    "missing_branches": 3,
+    "missing_statements": 63
+  },
+  "server/security_headers.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/services/__init__.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/services/abdm_service.py": {
+    "missing_branches": 63,
+    "missing_statements": 91
+  },
+  "server/services/actor_names.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/services/admission_service.py": {
+    "missing_branches": 53,
+    "missing_statements": 58
+  },
+  "server/services/adt/__init__.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/services/adt/clerk.py": {
+    "missing_branches": 23,
+    "missing_statements": 24
+  },
+  "server/services/adt/clinical_pause.py": {
+    "missing_branches": 1,
+    "missing_statements": 1
+  },
+  "server/services/adt/core.py": {
+    "missing_branches": 55,
+    "missing_statements": 57
+  },
+  "server/services/adt/end_stay.py": {
+    "missing_branches": 27,
+    "missing_statements": 29
+  },
+  "server/services/adt/live.py": {
+    "missing_branches": 4,
+    "missing_statements": 4
+  },
+  "server/services/adt/presence.py": {
+    "missing_branches": 9,
+    "missing_statements": 7
+  },
+  "server/services/adt/reservations.py": {
+    "missing_branches": 25,
+    "missing_statements": 26
+  },
+  "server/services/adt/transfer.py": {
+    "missing_branches": 59,
+    "missing_statements": 55
+  },
+  "server/services/adt_census_service.py": {
+    "missing_branches": 11,
+    "missing_statements": 10
+  },
+  "server/services/ai_governance.py": {
+    "missing_branches": 4,
+    "missing_statements": 16
+  },
+  "server/services/allergy_interlock.py": {
+    "missing_branches": 3,
+    "missing_statements": 8
+  },
+  "server/services/appointment_types.py": {
+    "missing_branches": 1,
+    "missing_statements": 1
+  },
+  "server/services/asr_model_files.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/services/asr_worker_protocol.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/services/audio_conversion.py": {
+    "missing_branches": 1,
+    "missing_statements": 6
+  },
+  "server/services/audit_middleware.py": {
+    "missing_branches": 0,
+    "missing_statements": 1
+  },
+  "server/services/audit_service.py": {
+    "missing_branches": 7,
+    "missing_statements": 14
+  },
+  "server/services/batch_coordinator.py": {
+    "missing_branches": 11,
+    "missing_statements": 6
+  },
+  "server/services/bed_master_service.py": {
+    "missing_branches": 97,
+    "missing_statements": 89
+  },
+  "server/services/billing_masters.py": {
+    "missing_branches": 26,
+    "missing_statements": 32
+  },
+  "server/services/billing_service.py": {
+    "missing_branches": 66,
+    "missing_statements": 94
+  },
+  "server/services/biomedical_service.py": {
+    "missing_branches": 63,
+    "missing_statements": 100
+  },
+  "server/services/bootstrap_service.py": {
+    "missing_branches": 18,
+    "missing_statements": 51
+  },
+  "server/services/bot_service.py": {
+    "missing_branches": 43,
+    "missing_statements": 95
+  },
+  "server/services/bridge_service.py": {
+    "missing_branches": 7,
+    "missing_statements": 16
+  },
+  "server/services/bridge_stay.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/services/capacity_sim_service.py": {
+    "missing_branches": 3,
+    "missing_statements": 6
+  },
+  "server/services/case_room_alerts.py": {
+    "missing_branches": 4,
+    "missing_statements": 9
+  },
+  "server/services/clinic_schedule_service.py": {
+    "missing_branches": 20,
+    "missing_statements": 34
+  },
+  "server/services/clinical_knowledge.py": {
+    "missing_branches": 48,
+    "missing_statements": 117
+  },
+  "server/services/clinical_records_service.py": {
+    "missing_branches": 5,
+    "missing_statements": 5
+  },
+  "server/services/clinical_time.py": {
+    "missing_branches": 4,
+    "missing_statements": 5
+  },
+  "server/services/coding_service.py": {
+    "missing_branches": 12,
+    "missing_statements": 9
+  },
+  "server/services/command_center_service.py": {
+    "missing_branches": 12,
+    "missing_statements": 44
+  },
+  "server/services/compliance_service.py": {
+    "missing_branches": 17,
+    "missing_statements": 23
+  },
+  "server/services/consent_service.py": {
+    "missing_branches": 29,
+    "missing_statements": 34
+  },
+  "server/services/corpus_loader.py": {
+    "missing_branches": 72,
+    "missing_statements": 120
+  },
+  "server/services/crypto_service.py": {
+    "missing_branches": 5,
+    "missing_statements": 11
+  },
+  "server/services/cssd_service.py": {
+    "missing_branches": 19,
+    "missing_statements": 25
+  },
+  "server/services/dietary_service.py": {
+    "missing_branches": 48,
+    "missing_statements": 92
+  },
+  "server/services/discharge_access_service.py": {
+    "missing_branches": 9,
+    "missing_statements": 18
+  },
+  "server/services/discharge_service.py": {
+    "missing_branches": 20,
+    "missing_statements": 34
+  },
+  "server/services/downtime_service.py": {
+    "missing_branches": 22,
+    "missing_statements": 55
+  },
+  "server/services/drug_chart.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/services/drug_safety_service.py": {
+    "missing_branches": 17,
+    "missing_statements": 16
+  },
+  "server/services/emar_service.py": {
+    "missing_branches": 10,
+    "missing_statements": 31
+  },
+  "server/services/escalation_service.py": {
+    "missing_branches": 38,
+    "missing_statements": 83
+  },
+  "server/services/event_bus.py": {
+    "missing_branches": 9,
+    "missing_statements": 29
+  },
+  "server/services/facility_identity.py": {
+    "missing_branches": 39,
+    "missing_statements": 48
+  },
+  "server/services/facility_service.py": {
+    "missing_branches": 30,
+    "missing_statements": 32
+  },
+  "server/services/feedback_service.py": {
+    "missing_branches": 7,
+    "missing_statements": 8
+  },
+  "server/services/fhir_export_service.py": {
+    "missing_branches": 26,
+    "missing_statements": 15
+  },
+  "server/services/field_crypto.py": {
+    "missing_branches": 3,
+    "missing_statements": 3
+  },
+  "server/services/finance_tools_service.py": {
+    "missing_branches": 64,
+    "missing_statements": 104
+  },
+  "server/services/flight_recorder_service.py": {
+    "missing_branches": 28,
+    "missing_statements": 42
+  },
+  "server/services/forecast_service.py": {
+    "missing_branches": 30,
+    "missing_statements": 95
+  },
+  "server/services/front_office_mis.py": {
+    "missing_branches": 8,
+    "missing_statements": 9
+  },
+  "server/services/frontdesk_service.py": {
+    "missing_branches": 28,
+    "missing_statements": 29
+  },
+  "server/services/gpu_coordinator.py": {
+    "missing_branches": 8,
+    "missing_statements": 6
+  },
+  "server/services/helix_db.py": {
+    "missing_branches": 3,
+    "missing_statements": 15
+  },
+  "server/services/helix_service.py": {
+    "missing_branches": 14,
+    "missing_statements": 20
+  },
+  "server/services/history_import_service.py": {
+    "missing_branches": 108,
+    "missing_statements": 147
+  },
+  "server/services/hospital_time.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/services/host_gate.py": {
+    "missing_branches": 1,
+    "missing_statements": 3
+  },
+  "server/services/housekeeping_service.py": {
+    "missing_branches": 60,
+    "missing_statements": 81
+  },
+  "server/services/impact_service.py": {
+    "missing_branches": 7,
+    "missing_statements": 18
+  },
+  "server/services/india_states.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/services/infection_surveillance_service.py": {
+    "missing_branches": 11,
+    "missing_statements": 10
+  },
+  "server/services/inference_cache.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/services/ingestion_adapters.py": {
+    "missing_branches": 66,
+    "missing_statements": 88
+  },
+  "server/services/ingestion_service.py": {
+    "missing_branches": 20,
+    "missing_statements": 34
+  },
+  "server/services/interaction_db.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/services/ipass_service.py": {
+    "missing_branches": 14,
+    "missing_statements": 26
+  },
+  "server/services/knowledge_worker.py": {
+    "missing_branches": 24,
+    "missing_statements": 113
+  },
+  "server/services/lab_accession.py": {
+    "missing_branches": 2,
+    "missing_statements": 2
+  },
+  "server/services/lab_critical_service.py": {
+    "missing_branches": 83,
+    "missing_statements": 115
+  },
+  "server/services/lab_instrument_service.py": {
+    "missing_branches": 34,
+    "missing_statements": 39
+  },
+  "server/services/lab_master_service.py": {
+    "missing_branches": 91,
+    "missing_statements": 135
+  },
+  "server/services/lab_module.py": {
+    "missing_branches": 12,
+    "missing_statements": 29
+  },
+  "server/services/lab_observations.py": {
+    "missing_branches": 4,
+    "missing_statements": 2
+  },
+  "server/services/lab_order_service.py": {
+    "missing_branches": 58,
+    "missing_statements": 87
+  },
+  "server/services/lab_portal_service.py": {
+    "missing_branches": 16,
+    "missing_statements": 19
+  },
+  "server/services/lab_report_service.py": {
+    "missing_branches": 22,
+    "missing_statements": 28
+  },
+  "server/services/lab_result_service.py": {
+    "missing_branches": 84,
+    "missing_statements": 118
+  },
+  "server/services/lab_tat_service.py": {
+    "missing_branches": 13,
+    "missing_statements": 19
+  },
+  "server/services/lens_service.py": {
+    "missing_branches": 2,
+    "missing_statements": 1
+  },
+  "server/services/llm_providers.py": {
+    "missing_branches": 12,
+    "missing_statements": 35
+  },
+  "server/services/llm_queue_service.py": {
+    "missing_branches": 15,
+    "missing_statements": 26
+  },
+  "server/services/local_operations_common.py": {
+    "missing_branches": 3,
+    "missing_statements": 3
+  },
+  "server/services/local_transformers.py": {
+    "missing_branches": 6,
+    "missing_statements": 7
+  },
+  "server/services/loop_watchdog.py": {
+    "missing_branches": 45,
+    "missing_statements": 141
+  },
+  "server/services/medication_safety_gate.py": {
+    "missing_branches": 6,
+    "missing_statements": 15
+  },
+  "server/services/medorders/__init__.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/services/medorders/adoption.py": {
+    "missing_branches": 8,
+    "missing_statements": 8
+  },
+  "server/services/medorders/ai_lanes.py": {
+    "missing_branches": 2,
+    "missing_statements": 1
+  },
+  "server/services/medorders/chart_lane.py": {
+    "missing_branches": 14,
+    "missing_statements": 19
+  },
+  "server/services/medorders/core.py": {
+    "missing_branches": 21,
+    "missing_statements": 23
+  },
+  "server/services/medorders/cpoe.py": {
+    "missing_branches": 18,
+    "missing_statements": 25
+  },
+  "server/services/medorders/emar_check.py": {
+    "missing_branches": 2,
+    "missing_statements": 6
+  },
+  "server/services/medorders/held.py": {
+    "missing_branches": 1,
+    "missing_statements": 3
+  },
+  "server/services/medorders/outpatient.py": {
+    "missing_branches": 25,
+    "missing_statements": 35
+  },
+  "server/services/medorders/queries.py": {
+    "missing_branches": 3,
+    "missing_statements": 3
+  },
+  "server/services/medorders/schedule.py": {
+    "missing_branches": 17,
+    "missing_statements": 19
+  },
+  "server/services/medorders/screening.py": {
+    "missing_branches": 10,
+    "missing_statements": 16
+  },
+  "server/services/medorders/supply.py": {
+    "missing_branches": 13,
+    "missing_statements": 17
+  },
+  "server/services/metrics_service.py": {
+    "missing_branches": 8,
+    "missing_statements": 14
+  },
+  "server/services/mfa_service.py": {
+    "missing_branches": 0,
+    "missing_statements": 4
+  },
+  "server/services/model_governance_service.py": {
+    "missing_branches": 1,
+    "missing_statements": 4
+  },
+  "server/services/model_router.py": {
+    "missing_branches": 5,
+    "missing_statements": 15
+  },
+  "server/services/model_switch.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/services/money.py": {
+    "missing_branches": 16,
+    "missing_statements": 13
+  },
+  "server/services/mortuary_service.py": {
+    "missing_branches": 6,
+    "missing_statements": 17
+  },
+  "server/services/nabh_service.py": {
+    "missing_branches": 71,
+    "missing_statements": 98
+  },
+  "server/services/ndps_service.py": {
+    "missing_branches": 41,
+    "missing_statements": 42
+  },
+  "server/services/nervous_system_triggers.py": {
+    "missing_branches": 17,
+    "missing_statements": 69
+  },
+  "server/services/news2_text.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/services/note_text.py": {
+    "missing_branches": 7,
+    "missing_statements": 4
+  },
+  "server/services/nurse_shift_service.py": {
+    "missing_branches": 24,
+    "missing_statements": 44
+  },
+  "server/services/offline_clinical_records.py": {
+    "missing_branches": 24,
+    "missing_statements": 27
+  },
+  "server/services/offline_workflows.py": {
+    "missing_branches": 9,
+    "missing_statements": 9
+  },
+  "server/services/ollama_gateway.py": {
+    "missing_branches": 1,
+    "missing_statements": 12
+  },
+  "server/services/opd_charges_service.py": {
+    "missing_branches": 15,
+    "missing_statements": 11
+  },
+  "server/services/opd_queue_service.py": {
+    "missing_branches": 28,
+    "missing_statements": 34
+  },
+  "server/services/opd_service.py": {
+    "missing_branches": 37,
+    "missing_statements": 39
+  },
+  "server/services/ops_health_service.py": {
+    "missing_branches": 53,
+    "missing_statements": 98
+  },
+  "server/services/order_sets_service.py": {
+    "missing_branches": 25,
+    "missing_statements": 45
+  },
+  "server/services/order_wording.py": {
+    "missing_branches": 2,
+    "missing_statements": 2
+  },
+  "server/services/orders_service.py": {
+    "missing_branches": 30,
+    "missing_statements": 38
+  },
+  "server/services/patient_matching.py": {
+    "missing_branches": 6,
+    "missing_statements": 12
+  },
+  "server/services/patient_name_rule.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/services/patient_portal_access.py": {
+    "missing_branches": 1,
+    "missing_statements": 1
+  },
+  "server/services/patient_specific_screen.py": {
+    "missing_branches": 20,
+    "missing_statements": 42
+  },
+  "server/services/patient_story_service.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/services/patient_timeline_service.py": {
+    "missing_branches": 18,
+    "missing_statements": 26
+  },
+  "server/services/payer_service.py": {
+    "missing_branches": 83,
+    "missing_statements": 103
+  },
+  "server/services/payments_service.py": {
+    "missing_branches": 83,
+    "missing_statements": 112
+  },
+  "server/services/pharmacy_crash_cart_service.py": {
+    "missing_branches": 45,
+    "missing_statements": 53
+  },
+  "server/services/pharmacy_master_service.py": {
+    "missing_branches": 76,
+    "missing_statements": 78
+  },
+  "server/services/pharmacy_purchasing_service.py": {
+    "missing_branches": 75,
+    "missing_statements": 101
+  },
+  "server/services/pharmacy_stock_reports.py": {
+    "missing_branches": 15,
+    "missing_statements": 16
+  },
+  "server/services/pharmacy_stock_service.py": {
+    "missing_branches": 45,
+    "missing_statements": 51
+  },
+  "server/services/pharmacy_store_service.py": {
+    "missing_branches": 43,
+    "missing_statements": 59
+  },
+  "server/services/pharmacy_transfer_service.py": {
+    "missing_branches": 114,
+    "missing_statements": 140
+  },
+  "server/services/pharmacy_verification_service.py": {
+    "missing_branches": 18,
+    "missing_statements": 14
+  },
+  "server/services/pin_security.py": {
+    "missing_branches": 8,
+    "missing_statements": 9
+  },
+  "server/services/procurement_service.py": {
+    "missing_branches": 105,
+    "missing_statements": 123
+  },
+  "server/services/radiation_safety_service.py": {
+    "missing_branches": 6,
+    "missing_statements": 6
+  },
+  "server/services/record_governance_service.py": {
+    "missing_branches": 15,
+    "missing_statements": 17
+  },
+  "server/services/registration_service.py": {
+    "missing_branches": 59,
+    "missing_statements": 76
+  },
+  "server/services/relay_service.py": {
+    "missing_branches": 20,
+    "missing_statements": 36
+  },
+  "server/services/reporting_finance_common.py": {
+    "missing_branches": 4,
+    "missing_statements": 4
+  },
+  "server/services/reporting_service.py": {
+    "missing_branches": 19,
+    "missing_statements": 21
+  },
+  "server/services/result_quarantine_service.py": {
+    "missing_branches": 34,
+    "missing_statements": 53
+  },
+  "server/services/retrieval_calibration.py": {
+    "missing_branches": 10,
+    "missing_statements": 21
+  },
+  "server/services/retrieval_eval.py": {
+    "missing_branches": 8,
+    "missing_statements": 10
+  },
+  "server/services/retrieval_query.py": {
+    "missing_branches": 2,
+    "missing_statements": 2
+  },
+  "server/services/room_fit_service.py": {
+    "missing_branches": 22,
+    "missing_statements": 42
+  },
+  "server/services/roster_import.py": {
+    "missing_branches": 33,
+    "missing_statements": 46
+  },
+  "server/services/rxnorm_corrector.py": {
+    "missing_branches": 46,
+    "missing_statements": 103
+  },
+  "server/services/rxnorm_reconciler.py": {
+    "missing_branches": 3,
+    "missing_statements": 3
+  },
+  "server/services/sage_ambient_service.py": {
+    "missing_branches": 104,
+    "missing_statements": 185
+  },
+  "server/services/sage_assessment_service.py": {
+    "missing_branches": 59,
+    "missing_statements": 157
+  },
+  "server/services/sage_feedback_service.py": {
+    "missing_branches": 5,
+    "missing_statements": 25
+  },
+  "server/services/sage_handoff_service.py": {
+    "missing_branches": 19,
+    "missing_statements": 33
+  },
+  "server/services/sage_history_service.py": {
+    "missing_branches": 8,
+    "missing_statements": 14
+  },
+  "server/services/sage_narrator_service.py": {
+    "missing_branches": 5,
+    "missing_statements": 23
+  },
+  "server/services/sage_proactive_service.py": {
+    "missing_branches": 15,
+    "missing_statements": 35
+  },
+  "server/services/sage_provenance_service.py": {
+    "missing_branches": 18,
+    "missing_statements": 44
+  },
+  "server/services/sage_relay_context.py": {
+    "missing_branches": 1,
+    "missing_statements": 1
+  },
+  "server/services/sage_service.py": {
+    "missing_branches": 80,
+    "missing_statements": 115
+  },
+  "server/services/scribe_providers.py": {
+    "missing_branches": 13,
+    "missing_statements": 50
+  },
+  "server/services/scribe_service.py": {
+    "missing_branches": 35,
+    "missing_statements": 132
+  },
+  "server/services/seasonal_calendar.py": {
+    "missing_branches": 18,
+    "missing_statements": 28
+  },
+  "server/services/sepsis_bundle_service.py": {
+    "missing_branches": 4,
+    "missing_statements": 9
+  },
+  "server/services/shadow_export_service.py": {
+    "missing_branches": 21,
+    "missing_statements": 36
+  },
+  "server/services/shadow_scorecard_service.py": {
+    "missing_branches": 46,
+    "missing_statements": 80
+  },
+  "server/services/shadow_service.py": {
+    "missing_branches": 38,
+    "missing_statements": 105
+  },
+  "server/services/shadow_verdicts.py": {
+    "missing_branches": 0,
+    "missing_statements": 1
+  },
+  "server/services/site_config_service.py": {
+    "missing_branches": 25,
+    "missing_statements": 27
+  },
+  "server/services/stay_times.py": {
+    "missing_branches": 5,
+    "missing_statements": 6
+  },
+  "server/services/surgery_escalation_service.py": {
+    "missing_branches": 16,
+    "missing_statements": 25
+  },
+  "server/services/surgery_scope.py": {
+    "missing_branches": 3,
+    "missing_statements": 2
+  },
+  "server/services/surgery_service.py": {
+    "missing_branches": 24,
+    "missing_statements": 41
+  },
+  "server/services/terminology_service.py": {
+    "missing_branches": 18,
+    "missing_statements": 28
+  },
+  "server/services/thinking_mode.py": {
+    "missing_branches": 5,
+    "missing_statements": 9
+  },
+  "server/services/timeline_service.py": {
+    "missing_branches": 22,
+    "missing_statements": 44
+  },
+  "server/services/vigil_service.py": {
+    "missing_branches": 31,
+    "missing_statements": 75
+  },
+  "server/services/vital_charting.py": {
+    "missing_branches": 1,
+    "missing_statements": 1
+  },
+  "server/services/vitals_carry.py": {
+    "missing_branches": 1,
+    "missing_statements": 8
+  },
+  "server/services/vitals_source/__init__.py": {
+    "missing_branches": 2,
+    "missing_statements": 6
+  },
+  "server/services/vitals_source/base.py": {
+    "missing_branches": 5,
+    "missing_statements": 5
+  },
+  "server/services/vitals_source/bench_simulator.py": {
+    "missing_branches": 18,
+    "missing_statements": 47
+  },
+  "server/services/vitals_source/hl7v2.py": {
+    "missing_branches": 15,
+    "missing_statements": 22
+  },
+  "server/services/vitals_source/manual_source.py": {
+    "missing_branches": 2,
+    "missing_statements": 7
+  },
+  "server/services/vitals_source/mllp.py": {
+    "missing_branches": 3,
+    "missing_statements": 5
+  },
+  "server/services/vitals_source/monitor_source.py": {
+    "missing_branches": 12,
+    "missing_statements": 36
+  },
+  "server/services/vitals_source/profile_adapter.py": {
+    "missing_branches": 6,
+    "missing_statements": 12
+  },
+  "server/services/vitals_source/registry.py": {
+    "missing_branches": 0,
+    "missing_statements": 5
+  },
+  "server/services/vitals_source/simulator_source.py": {
+    "missing_branches": 4,
+    "missing_statements": 6
+  },
+  "server/services/vitals_source/sink.py": {
+    "missing_branches": 10,
+    "missing_statements": 24
+  },
+  "server/services/vitals_source/vendor_profiles.py": {
+    "missing_branches": 7,
+    "missing_statements": 8
+  },
+  "server/services/voice_agent_service.py": {
+    "missing_branches": 133,
+    "missing_statements": 246
+  },
+  "server/services/ward_record_service.py": {
+    "missing_branches": 48,
+    "missing_statements": 49
+  },
+  "server/services/ward_reference.py": {
+    "missing_branches": 1,
+    "missing_statements": 1
+  },
+  "server/services/warm_policy.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/services/whisper_daemon.py": {
+    "missing_branches": 18,
+    "missing_statements": 94
+  },
+  "server/services/who_checklist.py": {
+    "missing_branches": 5,
+    "missing_statements": 9
+  },
+  "server/services/workforce_service.py": {
+    "missing_branches": 80,
+    "missing_statements": 106
+  },
+  "server/services/world_model_service.py": {
+    "missing_branches": 9,
+    "missing_statements": 18
+  },
+  "server/spa_bootstrap.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/ws/__init__.py": {
+    "missing_branches": 0,
+    "missing_statements": 0
+  },
+  "server/ws/realtime.py": {
+    "missing_branches": 34,
+    "missing_statements": 84
+  },
+  "server/ws/scribe_stream.py": {
+    "missing_branches": 22,
+    "missing_statements": 33
+  }
+}

@@ -11,14 +11,13 @@ lane (a prefetched pool, which may predate the rule).
 Embeddings are zero vectors and the query is lexical-only, so this runs in
 seconds and does not depend on which embedder is installed.
 """
-import numpy as np
 import pytest
 
 import config
-from config import EMBEDDING_DIM
 from database import db_session
 from services import clinical_knowledge as ck
 from services import sage_service
+from tests.knowledge_fixtures import lexical_knowledge_models
 
 SEPSIS_ANTIBIOTICS = ("empiric antibiotic sepsis ESBL piperacillin tazobactam "
                       "meropenem ceftriaxone institution")
@@ -44,24 +43,15 @@ def _drop_store():
                 pass
 
 
-def _no_embedding(_text):
-    raise RuntimeError("lexical-only in this test")
-
-
 @pytest.fixture(scope="module")
 def corpus():
-    mp = pytest.MonkeyPatch()
-    mp.setattr(ck, "_embed_texts",
-               lambda texts: [np.zeros(EMBEDDING_DIM, dtype=np.float32).tobytes() for _ in texts])
-    _drop_store()
-    ck.init_knowledge_base()
-    mp.setattr(ck, "_embed_text", _no_embedding)
-    # The deterministic lexical reranker, never a 2 GB model mid-test.
-    mp.setattr(ck, "_cross_encoder", None)
-    mp.setattr(ck, "_cross_encoder_checked", True)
-    yield
-    _drop_store()
-    mp.undo()
+    # Explicit seeding works even when the launcher disables automatic startup
+    # seeding; queries still exercise genuine FTS with dense retrieval unavailable.
+    with lexical_knowledge_models() as seed_builtin:
+        _drop_store()
+        seed_builtin()
+        yield
+        _drop_store()
 
 
 @pytest.fixture

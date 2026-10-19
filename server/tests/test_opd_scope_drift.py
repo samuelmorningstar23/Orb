@@ -27,8 +27,10 @@ from __future__ import annotations
 import ast
 import inspect
 import pathlib
+import typing
 
 from fastapi.routing import APIRoute
+from pydantic import BaseModel
 
 SERVER = pathlib.Path(__file__).resolve().parent.parent
 
@@ -111,6 +113,18 @@ def _dependency_calls(dependant):
     for dep in dependant.dependencies:
         yield dep.call
         yield from _dependency_calls(dep)
+
+
+def _typed_body_names_patient(endpoint):
+    """Use the public endpoint contract, not FastAPI's private ModelField API."""
+    try:
+        hints = typing.get_type_hints(endpoint)
+        return any(inspect.isclass(hints.get(name, parameter.annotation))
+                   and issubclass(hints.get(name, parameter.annotation), BaseModel)
+                   and "patient_id" in hints.get(name, parameter.annotation).model_fields
+                   for name, parameter in inspect.signature(endpoint).parameters.items())
+    except (TypeError, ValueError, NameError):
+        return False
 
 
 def _arm_routes(app=None):
@@ -243,8 +257,24 @@ def test_a_body_named_arm_route_scopes_the_body_patient_in_its_own_source():
             src = inspect.getsource(route.endpoint).replace(" ", "")
             assert "enforce_patient_scope(user,patient_id,opd_arm=True)" in src, route.path
             assert route.body_field is not None, route.path
-            model = route.body_field.type_
-            assert "patient_id" in getattr(model, "model_fields", {}), route.path
+            assert _typed_body_names_patient(route.endpoint), route.path
+
+
+def test_body_patient_inspection_resolves_annotations_and_refuses_untyped_bodies():
+    class PatientBody(BaseModel):
+        patient_id: str
+
+    class OtherBody(BaseModel):
+        reason: str
+
+    namespace = {"PatientBody": PatientBody, "OtherBody": OtherBody}
+    exec("def typed(body: PatientBody): pass\n"
+         "def untyped(body: dict): pass\n"
+         "def other(body: OtherBody): pass\n"
+         "def unresolved(body: MissingBody): pass\n", namespace)
+    assert _typed_body_names_patient(namespace["typed"])
+    for name in ("untyped", "other", "unresolved"):
+        assert not _typed_body_names_patient(namespace[name]), name
 
 
 def test_no_write_route_outside_the_outpatient_homes_carries_the_arm():

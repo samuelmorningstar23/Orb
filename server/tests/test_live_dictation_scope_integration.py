@@ -7,7 +7,7 @@ import socketio
 
 from auth import create_token
 from database import db_session
-from tests.test_security_remediation import people, open_namespace, stop_socket_test_server
+from tests.test_security_remediation import people as people, open_namespace, stop_socket_test_server
 from ws import realtime
 
 

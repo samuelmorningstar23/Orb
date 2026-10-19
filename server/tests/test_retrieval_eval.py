@@ -17,6 +17,7 @@ from database import db_session
 from services import clinical_knowledge as ck
 from services import corpus_loader
 from services import retrieval_eval
+from tests.knowledge_fixtures import lexical_knowledge_models
 
 CORPUS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "corpus")
 
@@ -52,11 +53,12 @@ def _drop_store():
 def seeded_corpus():
     """Seed the built-in corpus and load the sample loader corpus, then tear down
     the shared store so sibling test modules start clean."""
-    _drop_store()
-    ck.init_knowledge_base()
-    corpus_loader.load_directory(CORPUS_DIR, default_trust_tier=3)
-    yield
-    _drop_store()
+    with lexical_knowledge_models() as seed_builtin:
+        _drop_store()
+        seed_builtin()
+        corpus_loader.load_directory(CORPUS_DIR, default_trust_tier=3)
+        yield
+        _drop_store()
 
 
 def test_questions_bank_loads():

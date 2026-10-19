@@ -288,8 +288,13 @@ def test_structure_route_emits_an_error_event_when_the_save_fails(monkeypatch):
         json={"transcript": "chest pain since morning", "format": "soap"},
     )
     assert resp.status_code == 200, resp.text
-    assert '"error": "database is locked"' in resp.text
-    assert '"done"' not in resp.text
+    events = [json.loads(line.removeprefix("data: "))
+              for line in resp.text.splitlines() if line.startswith("data: ")]
+    errors = [event for event in events if "error" in event]
+    assert errors == [{"error": "Note drafting failed. Please retry.",
+                       "code": "scribe_stream_failed", "terminal": True}]
+    assert "database is locked" not in resp.text, "internal storage errors must stay in server logs"
+    assert not any("done" in event or "id" in event for event in events)
 
 
 # ── 2. Transcript serving writes a fail-closed phi_access row ────────────────

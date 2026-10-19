@@ -1264,19 +1264,58 @@ def test_a_clinician_from_another_ward_sees_none_of_the_chain(monkeypatch):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  9. KNOWN DEFECTS, PINNED
+#  9. SHADOW PROVENANCE AND PROXY REGRESSIONS
 # ═════════════════════════════════════════════════════════════════════════════
-# These are xfail(strict=True): they FAIL today and the suite goes RED the day
-# they start passing. That is deliberate — a defect recorded only in a report is
-# a defect nobody is told about when it is fixed, and a defect recorded as a
-# passing test that asserts the wrong behaviour is worse.
-@pytest.mark.xfail(strict=True, reason=(
-    "DEFECT: relay_routes._emit_action_outcome:351 hard-codes lane='chat' on "
-    "action.approved / action.declined, so a clinician's verdict on a card "
-    "proposed on the simulator or manual lane is filed under a lane the alert "
-    "never touched. The scorecard drops simulator rows by default, so the "
-    "proposal vanishes and its 'chat' resolution survives as a clinician action "
-    "that no proposal preceded. See the report for the fix design."))
+@pytest.mark.parametrize("lane", ["manual", "simulator", None])
+@pytest.mark.parametrize("state,kind", [
+    ("confirmed", "action.approved"), ("dismissed", "action.declined"),
+])
+def test_action_resolution_keeps_assessment_origin_and_ambient_chat_fallback(monkeypatch, lane, state, kind):
+    from routes.relay_routes import ActionTransitionRequest, _transition_action
+
+    patient, doctor = _mk_patient(), _mk_doctor()
+    action_id = uuid.uuid4().hex
+    original_episode = "origin-" + uuid.uuid4().hex
+    with db_session() as db:
+        db.execute(
+            "INSERT INTO sage_actions (id, room_id, patient_id, action_type, target) "
+            "VALUES (?, ?, ?, 'transfer_to_surgery', 'test only')",
+            (action_id, _room(patient), patient),
+        )
+        if lane:
+            assessment_id = uuid.uuid4().hex
+            db.execute(
+                """INSERT INTO sage_assessments
+                   (id, patient_id, channel_id, episode_id, lane, state, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, 'ready', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+                (assessment_id, patient, _room(patient), original_episode, lane),
+            )
+            db.execute(
+                "INSERT INTO sage_assessment_actions (assessment_id, action_id, created_at) "
+                "VALUES (?, ?, CURRENT_TIMESTAMP)",
+                (assessment_id, action_id),
+            )
+
+    if lane:
+        # A delayed decision must not create/choose a newer episode, even when
+        # its original shadow proposal was unavailable or has been archived.
+        def unexpected_episode(*args, **kwargs):
+            raise AssertionError("the assessment already identifies the original episode")
+
+        monkeypatch.setattr(shadow_service, "open_episode", unexpected_episode)
+
+    updated = _transition_action(
+        action_id, _room(patient),
+        ActionTransitionRequest(state=state, version=1, reason="test decision"), doctor,
+    )
+    assert updated["state"] == state
+    rows = _shadow(patient, kind)
+    assert len(rows) == 1
+    assert rows[0]["lane"] == (lane or "chat")
+    if lane:
+        assert rows[0]["episode_id"] == original_episode
+
+
 async def test_the_clinicians_verdict_is_filed_under_the_lane_the_alert_was_raised_on(monkeypatch):
     """The lane string IS the finding — the same shape as 2026-08-14's Defect A.
 
@@ -1328,13 +1367,6 @@ async def test_the_clinicians_verdict_is_filed_under_the_lane_the_alert_was_rais
         f"as simulator-lane while its resolution survived as 'chat'")
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "DEFECT: shadow_scorecard_service._time_saved pools the total_ms of EVERY "
-    "sage.drafted, and the new alert assessment is timed. A ~45 s machine-"
-    "initiated draft nobody asked for now sits in the same p50 as a 2 s "
-    "clinician question and is multiplied by the 240 s manual-lookup baseline. "
-    "sage_assessment_service:181 declares narrowing _time_saved by query_class a "
-    "REQUIRED FOLLOW-UP; it has not shipped. See the report for the fix design."))
 def test_the_alert_assessment_does_not_inflate_the_time_saved_proxy(monkeypatch):
     """THE HONEST-NUMBER GUARD, and it is the number most likely to be quoted.
 
@@ -1348,7 +1380,7 @@ def test_the_alert_assessment_does_not_inflate_the_time_saved_proxy(monkeypatch)
     `test_wedge_loop.test_the_alert_draft_carries_no_latency_into_the_time_saved_
     proxy` kept the OLD one-sentence garnish out of this denominator by leaving
     it untimed. The replacement is genuinely timed — correctly, the timings are
-    real — so the exclusion now has to happen on the read side, and it has not.
+    real — so the exclusion happens on the read side by query_class.
     """
     from fastapi.testclient import TestClient
     from services import shadow_scorecard_service
@@ -1384,6 +1416,7 @@ def test_the_alert_assessment_does_not_inflate_the_time_saved_proxy(monkeypatch)
         f"the alert assessment moved the answer-latency p50 to "
         f"{detail['total_ms_p50']} — a machine-initiated draft is being priced "
         f"against a clinician's manual lookup")
+    assert detail["answers"] == detail["timed_answers"] == 1
 
 
 async def test_the_assessments_news2_and_its_level_come_from_the_same_computation(monkeypatch):

@@ -48,10 +48,11 @@ const getMessages = vi.fn((channelId: string) => {
   return d.promise
 })
 const markChannelRead = vi.fn(async (_channelId: string) => ({ status: 'ok', marked_read: 0 }))
-const sendMessage = vi.fn(async (channel_id: string, content: string) => ({
+const sentMessage = (channel_id: string, content: string) => ({
   id: 999, channel_id, sender_id: 'me', sender_name: 'Nurse Priya', sender_role: 'nurse',
   content, message_type: 'text', timestamp: '2026-08-06T10:05:00Z',
-}))
+})
+const sendMessage = vi.fn(async (channel_id: string, content: string) => sentMessage(channel_id, content))
 
 // What a socket.io listener receives: one payload, or none.
 type SocketHandler = (payload?: unknown) => void
@@ -91,6 +92,21 @@ const goBack = () => {
   expect(back).toBeTruthy()
   fireEvent.click(back)
 }
+async function openLoadedRoom(channelId = 'ch-bed3') {
+  const channel = CHANNELS.find(c => c.id === channelId)!
+  const before = queues[channelId]?.length ?? 0
+  await openChannel(channel.name)
+  await waitFor(() => expect(queues[channelId]?.length).toBe(before + 1))
+  const content = `Current thread for ${channelId}`
+  await act(async () => { queues[channelId][before].resolve([msg(channelId === 'ch-bed3' ? 300 : 700, channelId, content)]) })
+  await screen.findByText(content)
+}
+const composer = () => screen.getByRole('textbox', { name: 'Message' })
+const sendButton = () => screen.getByRole('button', { name: 'Send message' })
+function composeAndSend(content: string) {
+  fireEvent.change(composer(), { target: { value: content } })
+  fireEvent.click(sendButton())
+}
 const unreadBadgeFor = (name: string): string | null => {
   const row = screen.getByText(name).closest('.relay-channel-item') as HTMLElement | null
   if (!row) return null
@@ -101,10 +117,11 @@ const unreadBadgeFor = (name: string): string | null => {
 beforeEach(() => {
   getMessages.mockClear()
   markChannelRead.mockClear()
-  sendMessage.mockClear()
+  sendMessage.mockReset()
+  sendMessage.mockImplementation(async (channelId: string, content: string) => sentMessage(channelId, content))
   for (const k of Object.keys(queues)) delete queues[k]
 })
-afterEach(() => cleanup())
+afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 describe('A — ATTACK: late thread from an abandoned room', () => {
   it('must not paint bed 3 content under the bed 7 header', async () => {
@@ -204,15 +221,9 @@ describe('D — HAPPY PATH: failed load, then Retry', () => {
 })
 
 describe('F — ATTACK 2: message:new delivered on the PERSONAL socket room', () => {
-  /* server/ws/realtime.py:173 puts every socket permanently in `user:<id>`.
-     server/routes/surgery_routes.py:400 and
-     server/services/sage_handoff_service.py:489 emit `message:new` into that
-     personal room carrying the OTHER patient's channel_id. RelayPanel's
-     handleNewMsg (RelayPanel.tsx:108) appends without checking channel_id —
-     handleTyping right below it DOES check. No race required. */
-  // LIVE DEFECT — `it.fails` asserts the bleed is STILL present. It goes red
-  // the moment handleNewMsg starts checking msg.channel_id, which is the fix.
-  it.fails('must not append a foreign-channel message to the open thread', async () => {
+  /* A socket permanently joins a personal user room as well as the currently
+     open case room. Personal notifications may carry another channel_id. */
+  it('must not append a foreign-channel message to the open thread', async () => {
     render(<RelayPanel />)
     await openChannel('Bed 7 — Rahul Menon')
     await waitFor(() => expect(queues['ch-bed7']?.length).toBe(1))
@@ -235,12 +246,9 @@ describe('F — ATTACK 2: message:new delivered on the PERSONAL socket room', ()
 })
 
 describe('G — ATTACK 3: post-send refresh landing after a channel switch', () => {
-  /* handleSend re-fetches the thread AFTER the send round-trip
-     (RelayPanel.tsx:300-302) and calls setMessages unconditionally — the
-     ownership stamp added to loadMessages does not cover this path. */
-  // LIVE DEFECT — `it.fails` asserts the bleed is STILL present. It goes red
-  // once handleSend's refresh carries the same ownership stamp loadMessages got.
-  it.fails('must not repaint the open room with the room the message was sent to', async () => {
+  /* The post-send refresh is independent of the ordinary room loader and
+     must carry the same room and request ownership bounds. */
+  it('must not repaint the open room with the room the message was sent to', async () => {
     render(<RelayPanel />)
     await openChannel('Bed 3 — Anita Rao')
     await waitFor(() => expect(queues['ch-bed3']?.length).toBe(1))
@@ -275,6 +283,109 @@ describe('G — ATTACK 3: post-send refresh landing after a channel switch', () 
     expect(screen.getByText('Bed 7 — Rahul Menon')).toBeInTheDocument()
     expect(screen.queryByText(/BED THREE/)).toBeNull()
     expect(screen.getByText(/BED SEVEN/)).toBeInTheDocument()
+  })
+})
+
+describe('send responses and the composer belong to one room visit', () => {
+  it('does not apply an abandoned send response or refresh to the next room', async () => {
+    const pending = defer<ReturnType<typeof sentMessage>>()
+    sendMessage.mockImplementationOnce(() => pending.promise)
+    render(<RelayPanel />)
+    await openLoadedRoom()
+    composeAndSend('Bed three message')
+    expect(sendButton()).toBeDisabled()
+
+    goBack()
+    await openLoadedRoom('ch-bed7')
+    expect(sendButton()).toBeEnabled()
+    fireEvent.change(composer(), { target: { value: 'New bed seven draft' } })
+    await act(async () => { pending.resolve(sentMessage('ch-bed3', 'Bed three message')) })
+    await settle()
+
+    expect(composer()).toHaveValue('New bed seven draft')
+    expect(screen.queryByText('Bed three message')).toBeNull()
+    expect(screen.getByText('Current thread for ch-bed7')).toBeInTheDocument()
+    expect(queues['ch-bed3']).toHaveLength(1)
+    expect(sendButton()).toBeEnabled()
+  })
+
+  it.each(['ch-bed7', 'ch-bed3'])('does not restore an abandoned failed send into a new visit to %s', async channelId => {
+    const pending = defer<ReturnType<typeof sentMessage>>()
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    sendMessage.mockImplementationOnce(() => pending.promise)
+    render(<RelayPanel />)
+    await openLoadedRoom()
+    composeAndSend('Abandoned bed three message')
+    goBack()
+    await openLoadedRoom(channelId)
+    fireEvent.change(composer(), { target: { value: 'Draft for the current visit' } })
+
+    const failure = new Error('Old send refused')
+    await act(async () => { pending.reject(failure) })
+    await settle()
+    expect(logged).toHaveBeenCalledWith('Send error:', failure)
+    expect(composer()).toHaveValue('Draft for the current visit')
+    expect(screen.queryByText('Old send refused')).toBeNull()
+    expect(screen.queryByText('Abandoned bed three message')).toBeNull()
+    expect(sendButton()).toBeEnabled()
+  })
+
+  it('does not let an old send completion enable a newer room send still in flight', async () => {
+    const oldSend = defer<ReturnType<typeof sentMessage>>()
+    const newSend = defer<ReturnType<typeof sentMessage>>()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    sendMessage.mockImplementationOnce(() => oldSend.promise).mockImplementationOnce(() => newSend.promise)
+    render(<RelayPanel />)
+    await openLoadedRoom()
+    composeAndSend('Bed three message')
+    goBack()
+    await openLoadedRoom('ch-bed7')
+    composeAndSend('Bed seven message')
+
+    await act(async () => { oldSend.reject(new Error('Old send refused')) })
+    await settle()
+    expect(sendButton()).toBeDisabled()
+    expect(composer()).toHaveValue('')
+    expect(screen.queryByText('Old send refused')).toBeNull()
+
+    await act(async () => { newSend.resolve(sentMessage('ch-bed7', 'Bed seven message')) })
+    await waitFor(() => expect(queues['ch-bed7']).toHaveLength(2))
+    await act(async () => { queues['ch-bed7'][1].resolve([msg(999, 'ch-bed7', 'Bed seven message')]) })
+    expect(await screen.findByText('Bed seven message')).toBeInTheDocument()
+    expect(sendButton()).toBeEnabled()
+  })
+
+  it('restores the current room failed send and explains the refusal inline', async () => {
+    const failure = new Error('You may no longer send to this room.')
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    sendMessage.mockRejectedValueOnce(failure)
+    render(<RelayPanel />)
+    await openLoadedRoom()
+    composeAndSend('Please review bed three')
+    expect(await screen.findByRole('alert')).toHaveTextContent(failure.message)
+    expect(composer()).toHaveValue('Please review bed three')
+    expect(screen.queryByText('Please review bed three')).toBeNull()
+    expect(sendButton()).toBeEnabled()
+  })
+
+  it('does not carry an unsent patient draft into another room', async () => {
+    render(<RelayPanel />)
+    await openLoadedRoom()
+    fireEvent.change(composer(), { target: { value: 'Bed three draft' } })
+    goBack()
+    await openLoadedRoom('ch-bed7')
+    expect(composer()).toHaveValue('')
+  })
+
+  it('ignores a foreign message update and still accepts the current room update', async () => {
+    render(<RelayPanel />)
+    await openLoadedRoom('ch-bed7')
+    const handler = socketHandlers['message:update'].at(-1)!
+    await act(async () => { handler(msg(700, 'ch-bed3', 'Foreign update')) })
+    expect(screen.queryByText('Foreign update')).toBeNull()
+    expect(screen.getByText('Current thread for ch-bed7')).toBeInTheDocument()
+    await act(async () => { handler(msg(700, 'ch-bed7', 'Corrected current room message')) })
+    expect(await screen.findByText('Corrected current room message')).toBeInTheDocument()
   })
 })
 

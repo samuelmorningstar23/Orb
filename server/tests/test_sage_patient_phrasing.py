@@ -22,6 +22,10 @@ from services.sage_service import _is_clinical_vocabulary, _name_match, _name_to
 
 DEPT = "Phrasing Medicine"
 
+# These cases assert that a requested name/bed does not exist. The session DB
+# retains other modules' discharged charts, which the real resolver searches.
+pytestmark = pytest.mark.usefixtures("isolated_module_database")
+
 
 @pytest.fixture(autouse=True)
 def _no_live_retrieval(monkeypatch):

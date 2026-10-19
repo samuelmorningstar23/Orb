@@ -19,6 +19,9 @@ import re
 from unittest import mock
 
 import pytest
+
+# Census-sensitive scenarios own their database, including retired charts.
+pytestmark = pytest.mark.usefixtures("isolated_module_database")
 from fastapi.testclient import TestClient
 
 with mock.patch("config.INGESTION_MODE", "hybrid"):
@@ -37,7 +40,7 @@ client = TestClient(app)
 
 
 @pytest.fixture(scope="module", autouse=True)
-def helix_tables():
+def helix_tables(isolated_module_database):
     # The action-state override looks meds up in helix_medication_master.
     from services.helix_db import init_helix_db
     init_helix_db()

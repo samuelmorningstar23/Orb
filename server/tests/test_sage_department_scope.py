@@ -153,9 +153,15 @@ def _discharge(patient_ids):
 
 
 @pytest.fixture(scope="module")
-def ward():
+def ward(isolated_module_database):
     """The whole scenario: one General Medicine doctor with five patients, and
-    five patients she has no business reading, one per other department."""
+    five patients she has no business reading, one per other department.
+
+    Absence assertions need a fresh census: discharged charts from earlier
+    modules remain searchable, and even a surname such as ``Vitals`` can match
+    an otherwise invented patient's question. Keep those charts in their own
+    database rather than changing the resolver or deleting their audit history.
+    """
     doctor = _mk_user("doctor", GM)
     mine = {}
     for name, dx, bed, drug in IN_SCOPE_PATIENTS:

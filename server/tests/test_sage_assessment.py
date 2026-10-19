@@ -139,6 +139,10 @@ SOURCES = [
 ]
 
 
+# Keep the missing-machine-principal scenario independent of system-authored
+# rows left by other modules. Real foreign keys remain enabled throughout.
+pytestmark = pytest.mark.usefixtures("isolated_module_database")
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  Fixtures
 # ═════════════════════════════════════════════════════════════════════════════

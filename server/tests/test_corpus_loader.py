@@ -19,6 +19,7 @@ import pytest
 from database import db_session
 from services import corpus_loader
 from services.clinical_knowledge import search_guidelines
+from tests.knowledge_fixtures import lexical_knowledge_models
 
 # Sample corpus lives at server/corpus/ (sibling of tests/).
 CORPUS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "corpus")
@@ -30,6 +31,12 @@ SAMPLE_DOC_IDS = {
     "REF-CAP-CURB65-001",
     "SOP-HH-001",
 }
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _lexical_backend():
+    with lexical_knowledge_models():
+        yield
 
 
 @pytest.fixture(scope="module")

@@ -94,7 +94,7 @@ add('Request limits now count actual streamed bytes, including routes that previ
 add('Bridge and six hospital-domain clients, plus Forecast and Appointments, use the shared cookie/session/CSRF transport. Sage history groups the latest 200 stored messages by original thread and local date; delayed microphone, ASR and speech callbacks cannot submit into a replacement conversation.')
 h('Startup, backups and engineering tools [1, 3, 4]')
 add('Added database-aware readiness, installer failure propagation and shutdown checks that target owned processes. Backup publication now uses unique private destinations, shared locks and integrity receipts before rotation. Restore verification covers 199 tables in 47 groups, including all 45 tables added by migrations 81-86. The later extraction-security finding is now fixed through authenticated staging and archive containment (page 6).')
-add('Browser and speech benchmarks now use owned disposable databases and synthetic data. Removed confirmed unused code and duplicate parsers, updated supported timestamp/model APIs, bounded Vite discovery, added advisory scanning and a candidate packaging workflow. The earlier strict Python gate covered two utility files. This follow-up adds an independent three-utility gate (page 8); neither covers the full backend.')
+add('Browser and speech benchmarks now use owned disposable databases and synthetic data. Removed confirmed unused code and duplicate parsers, updated supported timestamp/model APIs, bounded Vite discovery, added advisory scanning and a candidate packaging workflow. The earlier strict Python gate covered two utility files. The follow-ups expand the independent gate to six utilities and add full-backend regression budgets (pages 8-9); legacy diagnostics remain explicit.')
 h('ML dependencies and honest answer completion [4]')
 add('Replaced the legacy FlagEmbedding training dependency chain with local-only inference adapters, updated Torch/Transformers, and required safe checkpoint loading. Fresh candidate scans reported zero advisories across 70 installed packages and the 76-package Apple production resolution. Existing appliance environments were not upgraded.')
 add('Sage now requires nonempty content, valid stream framing and explicit successful completion. Engine errors, premature EOF and length-truncated output do not become successful replayable answers. We also repaired an informational prompt being misclassified as a medication command and aligned shared-model context reuse.')
@@ -175,8 +175,22 @@ h('Fresh verification and boundaries')
 add('The recorded checks cover synthetic authenticated sockets, failed Lens persistence/cleanup, bounded native concurrency, stale-session isolation, private speech hints, model/input cache invalidation, component lifecycles and real Chromium audio. 279 selected-commit backend checks and 87 frontend checks passed. Two final browser audio cases passed; the three-utility quality gate measured 100% statement/branch coverage. Source hashes and overlapping selections are recorded in the evidence. [14]', 'SmallOrb')
 add('These are local engineering checks. They do not establish native speech accuracy, approved clinical models, busy-ward GPU capacity, Safari/iPad acceptance, hosted CI success or site deployment. Existing unrelated workspace changes are excluded from the selected commit.', 'SmallOrb')
 
-page(9,'What is still left to do in Orb')
-add('This is the remaining-work summary as of 20 October. Built-but-disabled modules are not counted as missing. Open engineering, owner decisions and site acceptance require different next steps. [1-3, 7, 11-13]')
+page(9,'Engineering follow-up and fresh evidence')
+add('20 October follow-up: completed additional local reliability and maintainability work using the existing product behavior. No deployment, live database, appliance runtime, model weights or external integration was changed. The exact selected commit is checked separately from concurrent workspace changes. [15]')
+table(['Area','What changed'],[
+('Backend structure','Extracted security headers, escaped SPA bootstrap and model-warming policy into typed modules. Preserved routing, header, streaming and operator-unload behavior. Time budgets reject non-finite values; retry exponents remain bounded.'),
+('API and room isolation','Moved 98 public contracts into a type-only module. Added bounded UTF-8 SSE framing, split line-ending support, incomplete-event failures and reader cleanup. Relay rejects foreign-room socket events and stale send/refresh callbacks. Drafts and send status belong to the current room visit.'),
+('Known defects closed','Ambient whole-word triggers preserve clinical inflections and intentional stems without matching ordinary prefix words. Action outcomes retain their originating assessment lane and episode. Background alert drafts no longer inflate the clinician time-saved proxy. Removed unreachable substitution code and repaired undefined bindings; clinical rules remain intact.'),
+('Reliable acceptance tests','Removed fixed-date expiry from simulated-result fixtures, supplied synthetic QR encryption keys, updated Lens fixtures to the successful-stream contract and gave absent-patient bed-locator tests their own census. Explicit lexical seeding, real socket-manager fixtures and an owned test interpreter remove model-cache and checkout-venv assumptions. Restore scripts honor the selected interpreter and use portable file times. Product rules remain intact.'),
+('Backend-wide quality checks','Added a standalone full-scope lint/type/annotation inventory and regression gate. Critical undefined-name, syntax and duplicate-binding checks have no allowlist. Per-module branch/statement coverage budgets and a reusable isolated acceptance runner accompany CI wiring.'),
+('Strict utility checks','Expanded the strict gate from three to six utilities: lint, formatting, mypy strict and complete statement/branch coverage. The 67 pure checks cover 122 statements and 34 branches at 100%. Broader backend checks use measured legacy budgets, not a claim of full strict compliance.')
+],[145,354],compact=True)
+h('Verification and the remaining engineering debt')
+add('Full working-copy evidence: 17,410 backend passes and 8 explicit skips; 3,722 frontend tests passed. Final selected frontend: 3,252 passed, with typecheck and production build. A final selected backend fix selection passed 696 tests with one skip; all seven previously expected backend failures now pass normally. The coverage cohort, fixture reruns and later defect delta have separate source records. Statement/branch coverage for the working-copy snapshot was 88.37% / 80.18%. [15]', 'SmallOrb')
+add('Legacy cleanup is still open: the selected source inventory has 7,835 lint diagnostics, 996 typing diagnostics, 4,117 missing annotation slots and 371 files needing formatting. The gate prevents unreviewed regressions; it does not remove this existing debt. Hosted CI and site/hardware acceptance are unperformed.', 'SmallOrb')
+
+page(10,'What is still left to do in Orb')
+add('This is the remaining-work summary as of 20 October. Built-but-disabled modules are not counted as missing. Open engineering, owner decisions and site acceptance require different next steps. [1-3, 7, 11-13, 15]')
 table(['Area / status','Remaining work and next step'],[
 
 ('Session policy / decision + build','Set expiry/renewal policy, cross-tab session coherence and the offline cache revocation contract, including persistent-storage deletion failure. Implement and test the agreed behavior.'),
@@ -184,14 +198,14 @@ table(['Area / status','Remaining work and next step'],[
 ('Clinical governance / decisions','Resolve discharge/escalation handling, laboratory critical-result and restricted-record/break-glass rules. Obtain approved local ranges, thresholds, protocols and sign-offs before enabling dependent behavior.'),
 ('Sage bed locator / follow-ups','R026 itself shipped on 19 October (f5a0afb). Four separate items remain: an unrecognised off-ward drug destination, order-notice wording, bare-number matching on coded wards, and relative/unsupported patient references carried in a confirmed reply. These require their own rulings.'),
 ('AI / validation + performance','Measure cold startup, chart preparation and busy-ward concurrency. Complete clinical model validation, train/serve parity, benchmark/promotion gates and licensed-data work. The existing non-sepsis extract adapter is not evidence of a trained or approved model.'),
-('Infrastructure / ongoing engineering','The new strict gate covers three inference utilities; full-backend typing, coverage and modularisation remain ongoing work. Hosted CI/release acceptance is unperformed. A PostgreSQL port needs its own database integration and acceptance environment.'),
+('Infrastructure / remaining debt','Six utilities now pass strict typing and full scoped coverage; full-backend diagnostic and coverage regression gates are implemented. Legacy lint/type/annotation/format cleanup and further decomposition remain. Hosted CI/release acceptance is unperformed. PostgreSQL requires its own integration and environment.'),
 ('Recovery / site acceptance','Rebuild/validate the candidate runtime on the intended appliance. Run restore/key-escrow, signed-media recovery, power-loss, backup-under-load and hardware soak/concurrency drills.'),
 ('Hospital adoption / field work','Confirm the pilot site, accountable clinical lead, workflows, training, acceptance criteria and approved feature enablement. The 13 local modules remain default-off until deliberately accepted.'),
 ('External integration / scope decision','ABDM, claims/insurers, payment gateways, PACS/DICOM, analysers/devices and external reporting remain unconnected. Reconcile any proposed transport with the strict offline policy before implementation.'),
 ('Product expansion / backlog','Inter-facility transfer and unswept multi-site surfaces remain gated. Later Pulse stages (authored warnings/LAN sensors, local disease trends and recall/stock workflows) remain future work; existing local records do not complete every HIS epic.')
 ],[154,345], compact=True)
 
-page(10,'Source record and status boundaries')
+page(11,'Source record and status boundaries')
 h('How to use the remaining-work list')
 add('Engineering items can move through implementation and focused acceptance. Held behavior needs the owner or clinical authority to decide first. Site/hardware evidence requires a real controlled exercise. External integrations require both an explicit product decision and compatible permissions/transport. Earlier foundation logs are historical: later executable behavior and current rulings take precedence.')
 h('Sources used')
@@ -211,9 +225,10 @@ sources=[
 ('12','Owner decisions and clinical policy holds','docs/RULINGS_NEEDED_2026-10.md'),
 ('13','HIS epic plan and held follow-ons','docs/HIS_BUILD_PLAN_2026-10.md'),
 ('14','Independent engineering fixes and fresh verification','docs/ORB_AUTONOMOUS_FIXES_2026-10-19.md; docs/audit-2026-10/autonomous-fixes-20261019/verification.json'),
+('15','20 October engineering follow-up and verification','docs/ORB_ENGINEERING_COMPLETION_2026-10-20.md; docs/audit-2026-10/engineering-20261020/verification.json'),
 ]
 for n,label,path in sources: add(f'<b>[{n}] {label}</b><br/>{path}','SmallOrb')
-add('Repository reviewed through e0427fb, including bed-locator shipment f5a0afb, the security/UI remediation and this independent-engineering follow-up. Existing concurrent changes remain separate from this work. Updated 20 October 2026; this document records implementation and evidence, not deployment or clinical approval.', 'SmallOrb')
+add('Repository reviewed through fa1159a, including bed-locator shipment f5a0afb, the security/UI remediation and both engineering follow-ups. Existing concurrent changes remain separate from this work. Updated 20 October 2026; this document records implementation and evidence, not deployment or clinical approval.', 'SmallOrb')
 
 def footer(c, doc):
     w,hh=A4

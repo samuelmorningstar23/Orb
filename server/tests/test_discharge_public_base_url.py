@@ -48,6 +48,12 @@ _DEFAULT = "http://localhost:5173"
 _APPLIANCE = "https://orb.hospital.local:8000"
 
 
+@pytest.fixture(autouse=True)
+def synthetic_qr_encryption_key(monkeypatch):
+    # Real encryption is mandatory in the production-profile URL tests too.
+    monkeypatch.setattr("services.crypto_service.UPLOAD_ENCRYPTION_KEY", "synthetic-qr-test-key")
+
+
 def _prod(base_url):
     return mock.patch.multiple("config", DEPLOYMENT_PROFILE="prod", PUBLIC_APP_BASE_URL=base_url)
 

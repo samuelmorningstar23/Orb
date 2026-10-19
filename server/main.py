@@ -285,34 +285,9 @@ def _configure_vitals_sources():
 KEEP_WARM_MAX_BACKOFF_TICKS = 12
 
 
-def _warm_budget_seconds() -> float:
-    """How long a warm ping may hold the background lane before giving up.
-
-    45 s, down from 120 s. The old number was sized on "a cold 27B load takes
-    ~80 s" — true, and the wrong question: `keep_warm_loop` holds the ONE
-    background LLM slot for the whole wait, and holding it does not help the
-    load finish. Ollama loads models on its own side; Orb blocking its own slot
-    meanwhile only starves the alert path. Measured 2026-08-15: 33 warm pings
-    each hung the full 120 s = 20 % of wall clock with Tier-2 advice unable to
-    run, and not one of them succeeded.
-    """
-    try:
-        return max(5.0, float(os.getenv("ORB_KEEP_WARM_BUDGET", "45")))
-    except (TypeError, ValueError):
-        return 45.0
-
-
-def keep_warm_backoff_ticks(failures: int) -> int:
-    """Intervals to skip after `failures` consecutive failed re-warms.
-
-    Doubling, capped. The loop cannot win a fight it keeps restarting: retrying
-    a load that cannot complete, every interval, forever, converts a transient
-    eviction into a permanent 2-minutes-in-10 blackout of the alert lane. Zero
-    for `failures <= 0` so a success resets to "check again next interval".
-    """
-    if failures <= 0:
-        return 0
-    return min(2 ** (failures - 1), KEEP_WARM_MAX_BACKOFF_TICKS)
+from collections.abc import Collection, Iterable
+from services.warm_policy import warm_budget_seconds as _warm_budget_seconds
+from services.warm_policy import keep_warm_backoff_ticks
 
 
 #: Tiers an administrator unloaded from the header AI panel. The unload route
@@ -323,11 +298,9 @@ def keep_warm_backoff_ticks(failures: int) -> int:
 _OPERATOR_UNLOADED: set[str] = set()
 
 
-def models_to_warm(configured, resident=frozenset()) -> list[str]:
-    """Configured tiers that background warming may load: not resident, and not
-    held unloaded by an administrator. Order-preserving and de-duplicated."""
-    return [m for m in dict.fromkeys(configured)
-            if m not in resident and m not in _OPERATOR_UNLOADED]
+def models_to_warm(configured: Iterable[str], resident: Collection[str] = frozenset()) -> list[str]:
+    from services.warm_policy import select_models_to_warm
+    return select_models_to_warm(configured, resident, _OPERATOR_UNLOADED)
 
 
 @asynccontextmanager
@@ -971,7 +944,7 @@ app.add_middleware(FacilityFence, roots=_FENCE_HTTP_ROOTS)
 
 
 # ── CORS ──
-from config import CORS_ORIGINS, DEPLOYMENT_PROFILE
+from config import DEPLOYMENT_PROFILE
 from routes.auth_routes import MFA_ENROLL_TICKET_HEADER
 
 # Response headers the BROWSER is allowed to read cross-origin. `allow_headers`
@@ -1012,38 +985,7 @@ app.add_middleware(
 # tightened once that script is gone. HSTS only on a connection that is already
 # HTTPS (directly, or as the proxy reports it): browsers ignore it over plain
 # HTTP, and a dev box on http://localhost must not be pinned to HTTPS.
-_SECURITY_HEADERS = (
-    (b"x-content-type-options", b"nosniff"),
-    (b"referrer-policy", b"no-referrer"),
-    (b"x-frame-options", b"SAMEORIGIN"),
-    (b"content-security-policy", b"frame-ancestors 'self'; object-src 'none'; base-uri 'self'"),
-)
-_HSTS = (b"strict-transport-security", b"max-age=31536000")
-
-
-class _SecurityHeadersMiddleware:
-    def __init__(self, app):
-        self.app = app
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-        forwarded = dict(scope.get("headers") or []).get(b"x-forwarded-proto", b"")
-        https = scope.get("scheme") == "https" or forwarded.split(b",")[0].strip().lower() == b"https"
-
-        async def send_with_headers(message):
-            if message["type"] == "http.response.start":
-                headers = list(message.get("headers") or [])
-                present = {k.lower() for k, _ in headers}
-                for name, value in _SECURITY_HEADERS + ((_HSTS,) if https else ()):
-                    # A route that set its own value keeps it.
-                    if name not in present:
-                        headers.append((name, value))
-                message = {**message, "headers": headers}
-            await send(message)
-
-        await self.app(scope, receive, send_with_headers)
+from security_headers import SecurityHeadersMiddleware as _SecurityHeadersMiddleware
 
 
 app.add_middleware(_SecurityHeadersMiddleware)
@@ -1679,25 +1621,7 @@ def spa_switches() -> dict:
     }
 
 
-def spa_switches_script(switches: dict) -> str:
-    """The inline script for the page. Every '<', '>' and '&' in the JSON is
-    written as a \\u escape, so no value can close the script tag or open a
-    comment; ensure_ascii covers the two JavaScript line separators."""
-    payload = _json.dumps(switches, separators=(",", ":"), ensure_ascii=True)
-    payload = (payload.replace("<", "\\u003c").replace(">", "\\u003e")
-               .replace("&", "\\u0026"))
-    return f"<script>window.__ORB_SWITCHES__={payload};</script>"
-
-
-def spa_index_with_switches(html: str, switches: dict) -> str:
-    """index.html with the switches script placed before its first script
-    (the app's module script), or before </head> when there is none."""
-    script = spa_switches_script(switches)
-    for marker in ("<script", "</head>"):
-        at = html.find(marker)
-        if at != -1:
-            return html[:at] + script + html[at:]
-    return script + html
+from spa_bootstrap import spa_switches_script, spa_index_with_switches
 
 
 _SPA_INDEX_TEXT: str | None = None

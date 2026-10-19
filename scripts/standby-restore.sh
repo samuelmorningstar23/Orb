@@ -70,6 +70,7 @@
 #   ORB_BACKUP_MIN_BYTES     size floor (default 1048576 = 1 MiB)
 #   ORB_PORT                 port probed to detect a live Orb (default 8000)
 #   ORB_STANDBY_FORCE=1      restore even if an Orb server is answering (DANGEROUS)
+#   ORB_PYTHON              optional absolute interpreter path (venv or CI runtime)
 #
 # Exit codes: 0 restored (or --check-only passed) · 1 precondition failed ·
 #             2 the candidate backup failed verification (NOTHING was installed)
@@ -144,7 +145,9 @@ list_backups() { ls -1t "$SOURCE_DIR"/${PREFIX}*${SUFFIX} 2>/dev/null || true; }
 RESULT_STAGE="preconditions"
 
 PYTHON="${ORB_PYTHON:-$REPO_ROOT/server/.venv/bin/python}"
-[ -x "$PYTHON" ] || PYTHON="$(command -v python3 || true)"
+if [ -z "${ORB_PYTHON:-}" ] && [ ! -x "$PYTHON" ]; then
+    PYTHON="$(command -v python3 || true)"
+fi
 [ -n "$PYTHON" ] && [ -x "$PYTHON" ] || die "no usable python interpreter found."
 "$PYTHON" -c 'import sqlcipher3' 2>/dev/null || \
     die "interpreter '$PYTHON' has no sqlcipher3 — use server/.venv/bin/python, or pip install sqlcipher3-wheels.
@@ -181,7 +184,9 @@ if [ "${ORB_STANDBY_FORCE:-0}" != "1" ]; then
         and something else is on that port, stop it, or set ORB_STANDBY_FORCE=1."
     fi
     if [ -f "$DB_PATH-wal" ]; then
-        WAL_AGE=$(( $(date +%s) - $(stat -f %m "$DB_PATH-wal" 2>/dev/null || echo 0) ))
+        WAL_MTIME="$("$PYTHON" -c 'import os, sys; print(int(os.path.getmtime(sys.argv[1])))' "$DB_PATH-wal")" \
+            || die "cannot inspect the live WAL file; refusing to overwrite an unchecked database."
+        WAL_AGE=$(( $(date +%s) - WAL_MTIME ))
         if [ "$WAL_AGE" -lt 300 ]; then
             die "$DB_PATH-wal was modified ${WAL_AGE}s ago — something is writing to this database.
         Refusing to restore over an active database. Stop Orb on this machine first."
@@ -204,7 +209,8 @@ ABS_DB="$(cd "$(dirname "$DB_PATH")" 2>/dev/null && pwd)/$(basename "$DB_PATH")"
 [ "$ABS_TARGET" != "$ABS_DB" ] || die "the chosen backup IS the standby database. Refusing."
 
 BYTES="$(wc -c < "$ABS_TARGET" | tr -d ' ')"
-AGE_S=$(( $(date +%s) - $(stat -f %m "$ABS_TARGET") ))
+TARGET_MTIME="$("$PYTHON" -c 'import os, sys; print(int(os.path.getmtime(sys.argv[1])))' "$ABS_TARGET")"
+AGE_S=$(( $(date +%s) - TARGET_MTIME ))
 
 log "Standby restore on $(hostname -s)"
 log "Source   : $ABS_TARGET"

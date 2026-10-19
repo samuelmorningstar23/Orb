@@ -206,7 +206,7 @@ async def _raise_red_flag(red_flag: dict, patient_context: dict) -> bool:
         failed = False
         try:
             room_closed = await run_db(_case_room_closed, patient_id)
-        except Exception as e:  # noqa: BLE001: unknown counts as closed, never as heard
+        except Exception as e:  # noqa: BLE001 - unknown counts as closed, never as heard
             room_closed = True
             logger.error("Bridge red flag (%s) for %s: could not check the case room: %s",
                          category, patient_id, e)
@@ -215,7 +215,7 @@ async def _raise_red_flag(red_flag: dict, patient_context: dict) -> bool:
                 _store_red_flag, patient_id,
                 _red_flag_post(category, red_flag.get("matched"), patient_context.get("bed")),
             )
-        except Exception as e:  # noqa: BLE001: the patient's reply must still go out
+        except Exception as e:  # noqa: BLE001 - the patient's reply must still go out
             failed = True
             logger.error("Bridge red flag (%s) for %s: case-room post FAILED: %s",
                          category, patient_id, e)
@@ -230,7 +230,7 @@ async def _raise_red_flag(red_flag: dict, patient_context: dict) -> bool:
             try:
                 from ws.realtime import sio
                 await sio.emit("message:new", msg, room=channel_id)
-            except Exception as e:  # noqa: BLE001: stored; shows on the next load
+            except Exception as e:  # noqa: BLE001 - stored; shows on the next load
                 logger.warning("Bridge red flag for %s stored but not pushed live: %s",
                                patient_id, e)
         elif not failed:

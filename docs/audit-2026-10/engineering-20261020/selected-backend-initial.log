@@ -1,0 +1,15 @@
+/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8
+Collected 16157 tests in 474 files; 6 isolated shards started: [2693, 2693, 2693, 2693, 2693, 2692]
+Shard 6 exited 1 after 230.09s
+Shard 1 exited 0 after 272.79s
+Shard 3 exited 0 after 311.71s
+Shard 5 exited 0 after 370.72s
+Shard 4 exited 1 after 401.25s
+Shard 2 exited 0 after 482.4s
+{"collected": 16157, "elapsed_seconds": 512.08, "passed": false}
+Traceback (most recent call last):
+  File "/private/tmp/launch_orb_engineering_selected_full.py", line 12, in <module>
+    subprocess.run(['/private/tmp/orb-engineering-runtime-20261020/bin/python',str(work/'tools/backend-quality/run_backend.py'),'--output','/private/tmp/orb-engineering-selected-full-20261020-v7','--python','/private/tmp/orb-engineering-runtime-20261020/bin/python'],cwd=work,check=True)
+  File "/usr/local/lib/python3.12/subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['/private/tmp/orb-engineering-runtime-20261020/bin/python', '/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/tools/backend-quality/run_backend.py', '--output', '/private/tmp/orb-engineering-selected-full-20261020-v7', '--python', '/private/tmp/orb-engineering-runtime-20261020/bin/python']' returned non-zero exit status 1.

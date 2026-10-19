@@ -24,3 +24,10 @@ torch==2.6.0
 # Test tooling
 pytest==8.3.4
 pytest-asyncio==0.25.3
+
+# Execute private-media and synthetic SQLCipher restore tests instead of skipping.
+bcrypt==4.2.1
+cryptography==50.0.2
+qrcode==8.2
+pypng==0.20220715.0
+sqlcipher3-wheels==0.5.7

@@ -13,6 +13,7 @@ synthetic content.
 import asyncio
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
@@ -72,9 +73,10 @@ def test_a_newer_simulated_result_does_not_hide_an_older_genuine_one():
     from services.patient_specific_screen import _latest_creatinine
 
     pid = _patient()
-    _lab(pid, CREAT_NORMAL_LOOKING, source=None, created_at="2026-10-03T01:00:00+00:00")
+    now = datetime.now(timezone.utc)
+    _lab(pid, CREAT_NORMAL_LOOKING, source=None, created_at=(now - timedelta(hours=2)).isoformat())
     _lab(pid, "BMP\n  Creatinine: 1.0 mg/dL    (ref: 0.7-1.3)", source="simulated",
-         created_at="2026-10-03T02:00:00+00:00")
+         created_at=(now - timedelta(hours=1)).isoformat())
     with db_session() as db:
         found = _latest_creatinine(db, pid)
     # The simulated normal value is not read, so it cannot mask the genuine raised one.

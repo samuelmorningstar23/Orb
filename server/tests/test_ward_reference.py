@@ -15,6 +15,9 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
+
+# Census-sensitive scenarios own their database, including retired charts.
+pytestmark = pytest.mark.usefixtures("isolated_module_database")
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -416,7 +419,7 @@ def test_retrieval_and_classifier_agree_on_wards(table):
 
 # ── the route's label follows the prompt ─────────────────────────────────────
 @pytest.fixture(scope="module")
-def client():
+def client(isolated_module_database):
     from routes.sage_routes import router as sage_router
     app = FastAPI()
     app.include_router(sage_router)

@@ -53,9 +53,9 @@ _CREATED: list[str] = []
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _discharge_seeded_patients():
+def _discharge_seeded_patients(isolated_module_database):
     """TEST-ISOLATION LAW: this module seeds `status='admitted'` patients into a
-    session DB shared by every other file.
+    module DB, isolated from charts retained by other files.
 
     Left admitted they are not a cosmetic leak. `bot_service._generate_vitals`
     appends a reading to EVERY admitted patient on a simulation tick, so a
@@ -117,7 +117,7 @@ def _mk_patient(name, diagnosis, bed, drug, department):
 
 
 @pytest.fixture(scope="module")
-def ward():
+def ward(isolated_module_database):
     doctor = _mk_user()
     return {
         "doctor": doctor,

@@ -92,15 +92,17 @@ export default function RelayPanel() {
   // thread's own error line: this is about the message the user just tried to
   // send, and it must sit beside the box her text is still in.
   const [sendError, setSendError] = useState<string | null>(null)
-  // A refusal belongs to the message that was refused, and that message is
-  // gone the moment the reader moves to another patient's room. Carrying it
-  // across would put "your entry has not been saved" above a room where
-  // nothing was attempted. Cleared DURING the render that changes rooms
+  // The draft, send status and refusal belong to one patient's room. Carrying
+  // them into another room risks sending the old patient's text under a new
+  // name or leaving the new composer disabled by an abandoned send.
+  // Cleared DURING the render that changes rooms
   // (React's pattern for resetting state when a value changes), not in an
   // effect a render later (react-hooks/set-state-in-effect).
-  const [sendErrorRoom, setSendErrorRoom] = useState(selectedChannel)
-  if (sendErrorRoom !== selectedChannel) {
-    setSendErrorRoom(selectedChannel)
+  const [composerRoom, setComposerRoom] = useState(selectedChannel)
+  if (composerRoom !== selectedChannel) {
+    setComposerRoom(selectedChannel)
+    setNewMessage('')
+    setSending(false)
     setSendError(null)
   }
   const [sortBy, setSortBy] = useState<'recency' | 'urgency'>('recency')
@@ -137,8 +139,14 @@ export default function RelayPanel() {
      any passive effect or promise callback, rather than during the render
      itself (react-hooks/refs). */
   const msgReqSeqRef = useRef(0)
+  const sendReqSeqRef = useRef(0)
   const selectedChannelRef = useRef<string | null>(null)
-  useLayoutEffect(() => { selectedChannelRef.current = selectedChannel }, [selectedChannel])
+  useLayoutEffect(() => {
+    selectedChannelRef.current = selectedChannel
+    // Returning to the same room is a new visit, too. An old send may finish
+    // after a new send has started there and must not settle its composer.
+    sendReqSeqRef.current += 1
+  }, [selectedChannel])
   /* Read receipts for messages that arrive in the open room. The room used to
      be marked read only when it opened, so every message the reader watched
      arrive stayed unread and came back as a badge on the list. `shown` is the
@@ -340,12 +348,16 @@ export default function RelayPanel() {
       // reader was parked in the channel they just left.
       stickToBottomRef.current = true
       // (A send error from the previous room is cleared during the render that
-      // changed rooms: see sendErrorRoom.)
+      // changed rooms: see composerRoom.)
       shownChannelRef.current = null
       // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
       loadMessages(selectedChannel)
 
       const handleNewMsg = (msg: Message) => {
+        // Personal socket rooms can deliver traffic for other case rooms.
+        // Attribution follows the payload and the currently committed room,
+        // rather than whichever subscription happened to receive it.
+        if (msg.channel_id !== selectedChannel || selectedChannelRef.current !== selectedChannel) return
         setMessages(prev => {
           if (prev.find(m => m.id === msg.id)) return prev;
           // The broadcast of MY OWN send usually beats the POST response back.
@@ -368,6 +380,7 @@ export default function RelayPanel() {
         }
       }
       const handleUpdateMsg = (msg: Message) => {
+        if (msg.channel_id !== selectedChannel || selectedChannelRef.current !== selectedChannel) return
         setMessages(prev => prev.map(m => m.id === msg.id ? msg : m))
       }
       // Wrong-room detection. A `flag` can arrive later than the message it is
@@ -528,6 +541,12 @@ export default function RelayPanel() {
     }
     setSendError(null)
 
+    const channelId = selectedChannel
+    const threadSeq = msgReqSeqRef.current
+    const sendSeq = ++sendReqSeqRef.current
+    const ownsComposer = () => sendSeq === sendReqSeqRef.current && selectedChannelRef.current === channelId
+    const ownsThread = () => ownsComposer() && threadSeq === msgReqSeqRef.current
+
     const user = getUser()
 
     // Optimistic update: add the message to the list immediately.
@@ -536,7 +555,7 @@ export default function RelayPanel() {
     const optimisticMsg: Message = {
       id: Date.now(), // temp id
       client_key: `opt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      channel_id: selectedChannel,
+      channel_id: channelId,
       sender_id: user?.id || 'unknown',
       sender_name: user?.name || 'You',
       sender_role: user?.role || 'doctor',
@@ -553,7 +572,8 @@ export default function RelayPanel() {
     inputRef.current?.focus()
 
     try {
-      const sent = await sendMessage(selectedChannel, content)
+      const sent = await sendMessage(channelId, content)
+      if (!ownsThread()) return
       // Swap the temp entry for what the send actually produced. mergeById is
       // load-bearing: if the socket echo already claimed the bubble (or landed
       // as its own entry), the map below would otherwise leave two entries
@@ -577,7 +597,8 @@ export default function RelayPanel() {
       const queuedOffline = typeof sent?.id === 'number' && sent.id < 0
       if (!queuedOffline) {
         try {
-          const freshMsgs = await getMessages(selectedChannel)
+          const freshMsgs = await getMessages(channelId)
+          if (!ownsThread()) return
           freshMsgs.sort((a: Message, b: Message) => parseUTC(a.timestamp).getTime() - parseUTC(b.timestamp).getTime())
           setMessages(mergeById(freshMsgs))
         } catch (refreshErr) {
@@ -587,11 +608,13 @@ export default function RelayPanel() {
       }
     } catch (err) {
       console.error('Send error:', err)
+      if (!ownsComposer()) return
       // Genuine send failure — remove the optimistic message
-      setMessages(prev => prev.filter(m => m.id !== optimisticMsg.id))
-      setNewMessage(content) // Restore the message so user can retry
+      if (ownsThread()) setMessages(prev => prev.filter(m => m.id !== optimisticMsg.id))
+      setNewMessage(draft => draft || content) // Restore without replacing a newer draft.
+      setSendError(err instanceof Error ? err.message : 'Could not send this message.')
     } finally {
-      setSending(false)
+      if (ownsComposer()) setSending(false)
     }
   }
   // Resolve a structured alert (Confirm/Escalate). Awaits the request so we can

@@ -388,12 +388,26 @@ def _emit_action_outcome(db, kind: str, action_dict: dict, user: dict, decline_r
         patient_id = action_dict.get("patient_id")
         if not patient_id:
             return
-        episode_id, _ = shadow_service.open_episode(
-            patient_id, "chat", trigger="sage_ambient_action", db=db)
+        # An assessment card belongs to its originating alert, even when a
+        # newer episode has opened before the clinician decides. Ambient chat
+        # cards have no assessment link and retain their existing chat path.
+        origin = db.execute(
+            """SELECT a.episode_id, a.lane
+               FROM sage_assessment_actions link
+               JOIN sage_assessments a ON a.id = link.assessment_id
+               WHERE link.action_id = ? AND a.patient_id = ?
+               LIMIT 1""",
+            (action_dict.get("id"), patient_id),
+        ).fetchone()
+        lane = origin["lane"] if origin else "chat"
+        episode_id = origin["episode_id"] if origin else None
+        if not episode_id:
+            episode_id, _ = shadow_service.open_episode(
+                patient_id, lane, trigger="sage_ambient_action", db=db)
         if not episode_id:
             return
         shadow_service.emit_many([shadow_service.build(
-            kind, episode_id, "chat",
+            kind, episode_id, lane,
             patient_id=patient_id,
             actor_user_id=user.get("id"), actor_role=user.get("role"),
             subject_type="sage_actions", subject_id=action_dict.get("id"),

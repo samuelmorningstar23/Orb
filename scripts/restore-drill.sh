@@ -57,6 +57,7 @@
 #   ORB_BACKUP_DIR         (optional) where to look (default: <repo>/backups).
 #   ORB_DB_PATH            (optional) live DB, used ONLY to refuse to drill on it.
 #   ORB_BACKUP_MIN_BYTES   (optional) sanity floor (default: 1048576 = 1 MiB).
+#   ORB_PYTHON             (optional) absolute interpreter path (venv or CI runtime).
 #   ORB_BACKUP_REQUIRE_NONEMPTY (optional) comma-separated module groups that
 #                          MUST hold rows, e.g. "billing,payments". Set this
 #                          once a module goes live: until then an empty module
@@ -97,8 +98,10 @@ die()  { printf '[drill][fail] %s\n' "$*" >&2; exit "${2:-1}"; }
 list_backups() { ls -1t "$BACKUP_DIR"/${PREFIX}*${SUFFIX} 2>/dev/null || true; }
 
 # ── Preconditions ────────────────────────────────────────────────────────────
-PYTHON="$REPO_ROOT/server/.venv/bin/python"
-[ -x "$PYTHON" ] || PYTHON="$(command -v python3 || true)"
+PYTHON="${ORB_PYTHON:-$REPO_ROOT/server/.venv/bin/python}"
+if [ -z "${ORB_PYTHON:-}" ] && [ ! -x "$PYTHON" ]; then
+    PYTHON="$(command -v python3 || true)"
+fi
 [ -n "$PYTHON" ] && [ -x "$PYTHON" ] || die "no usable python interpreter found."
 
 # The venv is the only interpreter with sqlcipher3. Surface that here rather
@@ -133,7 +136,8 @@ if [ -f "$DB_PATH" ]; then
 fi
 
 BYTES="$(wc -c < "$ABS_TARGET" | tr -d ' ')"
-AGE_DAYS="$(( ( $(date +%s) - $(stat -f %m "$ABS_TARGET") ) / 86400 ))"
+TARGET_MTIME="$("$PYTHON" -c 'import os, sys; print(int(os.path.getmtime(sys.argv[1])))' "$ABS_TARGET")"
+AGE_DAYS="$(( ( $(date +%s) - TARGET_MTIME ) / 86400 ))"
 
 log "Backup under test : $ABS_TARGET"
 log "Size              : $(du -h "$ABS_TARGET" | awk '{print $1}') (${BYTES} bytes)"

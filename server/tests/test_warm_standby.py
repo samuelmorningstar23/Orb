@@ -65,7 +65,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "standby-restore.sh"
 DRILL = REPO_ROOT / "scripts" / "restore-drill.sh"
 VERIFIER = REPO_ROOT / "scripts" / "lib" / "verify_restore.py"
-VENV_PY = REPO_ROOT / "server" / ".venv" / "bin" / "python"
 
 TEST_PYTHON = Path(sys.executable)
 
@@ -75,7 +74,7 @@ sqlcipher = pytest.importorskip("sqlcipher3", reason="standby restore requires t
 
 pytestmark = pytest.mark.skipif(
     not SCRIPT.exists(),
-    reason="needs scripts/standby-restore.sh and the server venv",
+    reason="needs scripts/standby-restore.sh",
 )
 
 # The shared verifier is imported directly as well as driven through the shell,
@@ -295,6 +294,7 @@ def standby(tmp_path):
     return {
         "source": source, "target": target, "receipt": receipt,
         "env": {
+            "ORB_PYTHON": str(TEST_PYTHON),
             "ORB_STANDBY_SOURCE_DIR": str(source),
             "ORB_DB_PATH": str(target),
             "ORB_STANDBY_RECEIPT": str(receipt),
@@ -647,6 +647,7 @@ def _run_drill(backup: Path, tmp_path: Path, env_extra=None):
     bypassed, and nothing in the real backups/ directory is read.
     """
     env = dict(os.environ)
+    env["ORB_PYTHON"] = str(TEST_PYTHON)
     env["ORB_DB_ENCRYPTION_KEY"] = TEST_KEY
     env["ORB_BACKUP_DIR"] = str(backup.parent)
     env["ORB_DB_PATH"] = str(tmp_path / "no-such-live.db")
@@ -669,7 +670,7 @@ def _run_verifier(db: Path, *args, env_extra=None):
     env.pop("ORB_BACKUP_REQUIRE_NONEMPTY", None)
     env.update(env_extra or {})
     return subprocess.run(
-        [str(VENV_PY), str(VERIFIER), "--db", str(db), *args],
+        [str(TEST_PYTHON), str(VERIFIER), "--db", str(db), *args],
         capture_output=True, text=True, env=env, timeout=120,
     )
 
@@ -1151,7 +1152,7 @@ def _eval_in_server(snippet: str, env_extra=None) -> str:
     env.pop("ORB_DB_PATH", None)
     env.update(env_extra or {})
     result = subprocess.run(
-        [str(VENV_PY), "-c", snippet],
+        [str(TEST_PYTHON), "-c", snippet],
         capture_output=True, text=True, timeout=120,
         cwd=str(REPO_ROOT / "server"), env=env,
     )

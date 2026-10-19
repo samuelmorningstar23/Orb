@@ -86,7 +86,7 @@ function renderView(props: Partial<{ canManage: boolean; onFeatureOff: () => voi
   )
 }
 
-beforeEach(() => apiFetch.mockReset())
+beforeEach(() => { apiFetch.mockReset() })
 afterEach(() => vi.restoreAllMocks())
 
 describe('ClinicSessionsView', () => {

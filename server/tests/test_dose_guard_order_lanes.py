@@ -150,20 +150,27 @@ def test_relay_agentic_confirm_refuses_it(patient):
     doctor = _user("doctor", pin="4321")
     room = f"case-{patient}"
     action_id = str(uuid.uuid4())
+    # Use the exact seeded catalog identity. A generic-only target may resolve
+    # to another module's brand (with different stock) in the shared test DB.
+    medication_name = f"Paracetamol 500mg Tablet DoseGuard {uuid.uuid4().hex[:8]}"
+    medication_id = f"MED-DG-{uuid.uuid4().hex[:8]}"
+    lot_id = f"LOT-DG-{uuid.uuid4().hex[:8]}"
     with db_session() as db:
         # In the formulary and in stock, so nothing but the dose can stop it.
         db.execute(
-            """INSERT OR IGNORE INTO helix_medication_master (id, name, generic_name, form, strength)
-               VALUES ('MED-DG-PCM', 'Paracetamol 500mg Tablet', 'Paracetamol', 'Tablet', '500mg')""")
+            """INSERT INTO helix_medication_master (id, name, generic_name, form, strength)
+               VALUES (?, ?, 'Paracetamol', 'Tablet', '500mg')""",
+            (medication_id, medication_name))
         db.execute(
-            """INSERT OR IGNORE INTO helix_inventory_lots (id, medication_id, lot_number, quantity, expiration_date)
-               VALUES ('LOT-DG-PCM', 'MED-DG-PCM', 'LOTDGPCM', 50, '2029-12-31')""")
+            """INSERT INTO helix_inventory_lots (id, medication_id, lot_number, quantity, expiration_date)
+               VALUES (?, ?, ?, 50, '2029-12-31')""",
+            (lot_id, medication_id, lot_id))
         db.execute("INSERT INTO channels (id, name, type, patient_id) VALUES (?, ?, 'case_room', ?)",
                    (room, "Dose guard room", patient))
         db.execute(
             """INSERT INTO sage_actions (id, room_id, patient_id, action_type, target, rationale, state)
-               VALUES (?, ?, ?, 'prescribe', 'Paracetamol', 'fever', 'suggested')""",
-            (action_id, room, patient))
+               VALUES (?, ?, ?, 'prescribe', ?, 'fever', 'suggested')""",
+            (action_id, room, patient, medication_name))
     resp = client.post(
         f"/api/relay/channels/{room}/sage_actions/{action_id}/confirm_agentic",
         headers=_hdr(doctor),

@@ -1,4 +1,4 @@
-# This gate covers these three utilities only, not the full backend.
+# This gate covers these six utilities only, not the full backend.
 [tool.ruff]
 target-version = "py312"
 line-length = 100
@@ -7,12 +7,12 @@ select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["server/offline_policy.py", "server/services/asr_worker_protocol.py", "server/services/inference_cache.py"]
+files = ["server/offline_policy.py", "server/services/asr_worker_protocol.py", "server/services/inference_cache.py", "server/security_headers.py", "server/spa_bootstrap.py", "server/services/warm_policy.py"]
 [tool.coverage.run]
 branch = true
 relative_files = true
 data_file = ".coverage-local-inference"
-include = ["server/offline_policy.py", "server/services/asr_worker_protocol.py", "server/services/inference_cache.py"]
+include = ["server/offline_policy.py", "server/services/asr_worker_protocol.py", "server/services/inference_cache.py", "server/security_headers.py", "server/spa_bootstrap.py", "server/services/warm_policy.py"]
 [tool.coverage.report]
 show_missing = true
 precision = 2

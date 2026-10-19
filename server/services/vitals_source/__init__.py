@@ -37,7 +37,11 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .manual_source import ManualEntrySource
+    from .registry import VitalsSourceRegistry
 
 # Contract only — stdlib dependencies, safe to import anywhere.
 from .base import (

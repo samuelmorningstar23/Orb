@@ -34,9 +34,13 @@ async def test_lens_service_calls_correct_model():
             b'{"message": {"content": "\\n- Normal cardiac silhouette."}}',
             b'{"message": {"content": "\\n\\nIMPRESSION:"}}',
             b'{"message": {"content": "\\n- No acute cardiopulmonary findings."}}',
+            b'{"done": true}',
         ]
 
         class MockResponse:
+            def raise_for_status(self):
+                pass
+
             async def aiter_lines(self):
                 for line in mock_response_lines:
                     yield line

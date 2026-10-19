@@ -1,0 +1,250 @@
+{
+  "attempt_boundaries": [
+    "Earlier scratch exports omitted frontend/document fixtures; those attempts were stopped and superseded.",
+    "Native fresh-runtime tests required explicit test fixtures for model tiers, encrypted QR, date windows and shared-census/stock isolation.",
+    "Counts from focused selections overlap the complete runs.",
+    "The broad selected coverage cohort precedes three final known-defect fixes; their 696-check selected-source delta is separate and all seven expected cases pass there.",
+    "Relay fixes are included in the final 3252-test frontend run; earlier expected frontend failures are superseded.",
+    "Existing concurrent product changes remain outside this selected commit."
+  ],
+  "critical_lint": "passed with no allowlist",
+  "date": "2026-10-20",
+  "extraction_review": {
+    "intentional_protocol_replacements": 2,
+    "public_contracts_preserved": 98,
+    "runtime_function_bodies_preserved": 124
+  },
+  "final_backend_defect_selection": {
+    "formerly_expected_backend_cases_now_ordinary_passes": 7,
+    "formerly_expected_frontend_cases_now_ordinary_passes": 2,
+    "passed": 696,
+    "production_files": [
+      "server/services/sage_ambient_service.py",
+      "server/routes/relay_routes.py",
+      "server/services/shadow_scorecard_service.py"
+    ],
+    "skipped": 1,
+    "source_sha256": {
+      "server/routes/relay_routes.py": "610322c7a6621a2915740dfb4641dbe2df9f7655436f581ae547b0369db90cbc",
+      "server/services/sage_ambient_service.py": "349a9638cfe33317dbb4dcd708665692b1f866b4f265abf429fef2f474e92187",
+      "server/services/shadow_scorecard_service.py": "967efed791ef5f94165c7ff6c639b47b1a67b70af3b374ae6b3a80b09a016330",
+      "server/tests/test_sage_ambient_retraction.py": "9bafa30baa5c2abb990ab956895f66d2ecdd30f6c713afceacc99833ad415513",
+      "server/tests/test_shadow_scorecard.py": "d6c11efdd2650b343e37cc9092d877229878e415f21425ef58aba8d66985b9b3",
+      "server/tests/test_wedge_end_to_end.py": "1897c69d9b4de8ad7561dacbee3dc88c795148d76b843b864589a22cddd048e9"
+    }
+  },
+  "focused_selected_backend_passed": 1150,
+  "frontend": {
+    "selected_api": {
+      "files": 20,
+      "passed": 116
+    },
+    "selected_full": {
+      "expected_failure": 0,
+      "files": 334,
+      "passed": 3252
+    },
+    "selected_production_build": "passed",
+    "selected_source_sha256": {
+      "src/api/client.ts": "9f49e7284a5ef0160d265db6a71bada85125f0a4e9b084c6c9f4a1037a7e6236",
+      "src/api/contracts.ts": "168d7d8c1e1bdf75bed1b9f789af61340e368107b1c2f7aa3274b5272ceda1f5",
+      "src/api/pharmacyStore/index.test.ts": "ba520b2f2132c2d14933bc0811b1d5be22e4839e713e18bd6f50541558580c20",
+      "src/api/sse.framing.test.ts": "a05f8d26af41d33ccaa03b9cbdf67b6184c90bcaf730c8db0cdcd4bce8f87aa9",
+      "src/api/sse.ts": "9f211ebe5e633868cc93b4ed3e6a833e9d1fc05b7acce27ec1308a71e55c4c81",
+      "src/pages/panels/RelayPanel.tsx": "0acbcc1b57e73ff895b0a359dca4bf4d7f2a4e00dea2c5f2d2a3f9c2b3bfb33f",
+      "src/pages/panels/RelayPanel.verify.test.tsx": "4060aedf0d4fb7eb413fd3d9d9b316594fe5e8d215c0827c9e4972d3ddd66b95",
+      "src/pages/panels/frontdesk/ClinicSessionsView.test.tsx": "7dc6f5197762ee61a713e63734dc9b823bfff48af7fd73d33f9599bf6ae7fe2e"
+    },
+    "selected_typecheck": "passed",
+    "working_copy": {
+      "files": 369,
+      "passed": 3722
+    }
+  },
+  "legacy_selected_diagnostics": {
+    "files": 387,
+    "lint": 7835,
+    "missing_annotation_slots": 4117,
+    "typing": 996,
+    "unformatted_files": 371
+  },
+  "legacy_working_copy_diagnostics": {
+    "files": 434,
+    "lint": 8499,
+    "missing_annotation_slots": 4983,
+    "typing": 1081,
+    "unformatted_files": 417
+  },
+  "nonfunctional_final_cleanup": "Removed empty EOF lines after verification; Python ASTs unchanged.",
+  "parent_commit": "fa1159a",
+  "quality_tool_tests_passed": 24,
+  "scope": "Local engineering follow-up; no deployment or live appliance data/environment changes",
+  "selected_backend_before_final_known_defect_fixes": {
+    "boundary": "Failed shards were rerun in full after test-only census-isolation fixes; other passing shards retained. Production source identical across every accepted shard.",
+    "collected": 16157,
+    "counts": {
+      "expected_failure": 7,
+      "passed": 16139,
+      "skipped": 11
+    },
+    "coverage": {
+      "covered_branches": 20773,
+      "covered_lines": 70053,
+      "excluded_lines": 350,
+      "missing_branches": 5325,
+      "missing_lines": 9631,
+      "num_branches": 26098,
+      "num_partial_branches": 4133,
+      "num_statements": 79684,
+      "percent_branches_covered": 79.59613763506782,
+      "percent_branches_covered_display": "80",
+      "percent_covered": 85.86148872208882,
+      "percent_covered_display": "86",
+      "percent_statements_covered": 87.91350835801416,
+      "percent_statements_covered_display": "88"
+    },
+    "fixture_reruns": [
+      4,
+      6
+    ],
+    "measured_modules": 340
+  },
+  "source_sha256": {
+    ".github/workflows/ci.yml": "78ac1742ebecc8b9ba339aafa605f2203bf71e490368991d813469cec9ed98b8",
+    "scripts/build_work_summary_pdf.py": "ff41439e588c1fa4caf7b14ca8a740dfc5d01d26858ee35963a63585045d18de",
+    "scripts/restore-drill.sh": "2aa334fc16afb9280a185cacb63a57e0c68cd4a1ab04f077762f301def8c92d1",
+    "scripts/standby-restore.sh": "4b4094cea7b91d530ebadd2ec86d5e81f784ea0dd0dda5ca7978159a85c26c45",
+    "server/main.py": "cf906e183da429b416f342f83fd3935a40b067e67874928b3c753e0198ef6ecb",
+    "server/routes/relay_routes.py": "610322c7a6621a2915740dfb4641dbe2df9f7655436f581ae547b0369db90cbc",
+    "server/scripts/test_medgemma_questions.py": "a3747a3e099918c4666a7dd2255a50223ed313f72c8afcd2de6fc58d8466fa4c",
+    "server/security_headers.py": "6e19c7275aec2cbbeb11523eec5332bc7b738d879b9eb0822facf63a411a9a20",
+    "server/services/bridge_service.py": "2cb4f00c58b5e3b0779c72a7e515e9a8b8824719361ab5e981c0a8d5a78fa02b",
+    "server/services/helix_service.py": "8ddb0defdae3dc1e02aba64b1d1af57393836bff362f6bb0534695b0fced67ea",
+    "server/services/news2_text.py": "5078a070cd4247c95c2a8455c17c2cc0fdadb8fd2591c0642aab06d1edf046be",
+    "server/services/sage_ambient_service.py": "349a9638cfe33317dbb4dcd708665692b1f866b4f265abf429fef2f474e92187",
+    "server/services/shadow_scorecard_service.py": "967efed791ef5f94165c7ff6c639b47b1a67b70af3b374ae6b3a80b09a016330",
+    "server/services/vigil_service.py": "7d76f3689de915703a08728a994a8430a98c2cb794485ce806225a3a5488a8a0",
+    "server/services/vitals_source/__init__.py": "dfd1cbeefc87bc6a8dd2b120b357e7a13d41d594f8799fcfa0dc05da9eff0dab",
+    "server/services/warm_policy.py": "e7d7bb4d175e34e776c13e87ba0b37128c890233aa0a439693e6a8ad09eba5d4",
+    "server/services/whisper_daemon.py": "0404a7472d51157d0238211e050bbd9e226c9e218467cd1ee8e71754522ad458",
+    "server/spa_bootstrap.py": "47a0e9ad3146e08acbece3fb0b35df17c846510de39392a4be42faf79a485440",
+    "server/tests/conftest.py": "251e0ab6ff53a63db7151f9aa3b1c25813526beb97bfbab5342915b1ca11958e",
+    "server/tests/knowledge_fixtures.py": "f2bb03e407ea155a10d13ade6ad7c196c07dcf940bb417803711f7455a25e8c1",
+    "server/tests/test_action_lane_gates.py": "da16b82b5aadb95ea9fc72ef3d809ceaebb7bdefbf35ceca3846727e4d537607",
+    "server/tests/test_aggregate_reasoning.py": "ac8e5b9b646f5c15ee57b46e694b6b7913e57f0bd48b5e5abe0790cd391dd6bd",
+    "server/tests/test_corpus_loader.py": "b281d03eafba02a507908cd42e2036491e391ffc1e11c70913e9657e36be40da",
+    "server/tests/test_discharge_public_base_url.py": "c42fd1a8dc32be455c588f2a61772a26b56fa299c683fc20e6b50314b686dcde",
+    "server/tests/test_dose_guard_order_lanes.py": "f51f89e2d94102f2515d33dd7d452fffb9cfba22b081bdc50225fa109b1c76f0",
+    "server/tests/test_evidence_relevance.py": "67c70f73177e0de2023e97674b69385bedfb14fe4e422414c0c023ca1760ee48",
+    "server/tests/test_infrastructure_modules.py": "aa5ce35361ce65cbbacbed559961cda6528e9a86030d4d99bf3f258a6bc8f9e1",
+    "server/tests/test_lens.py": "afde3a91f5a0a3f9defd4a0233b2a3a2f9ec4b3dca63defd1c2af4b716eee5a8",
+    "server/tests/test_live_dictation_scope_integration.py": "9f375d9ea6018821b2845d191eeb007206d646ec3560998702ad45540124b817",
+    "server/tests/test_multisite_spine.py": "a644d4175b4f44ee316e1af11f711ba195c439c0fc4d35d467d45cdb3cd84574",
+    "server/tests/test_opd_scope_drift.py": "d3fde5d56fde84284a87c3c90eaa91781d0337418a2715adab46b5fb91666baf",
+    "server/tests/test_opd_socket_rooms.py": "f158d9c5ea04d6d44856e34a24a463dd6409e5de6566198ad3535405428a731b",
+    "server/tests/test_patient_specific_screen.py": "fd9a082afe67240e48068261290b7e14127f19f9c67e513a92031902dafb54de",
+    "server/tests/test_reranker.py": "2732187fc4fe5fd46d4efba948f99e80dd4df99cd64ddc50b4e2e05953163094",
+    "server/tests/test_retrieval_eval.py": "8b002c8c6e93bfe3d7f3ebbba576465fc408d689cab6a852a773670bd347aa03",
+    "server/tests/test_sage_ambient_retraction.py": "9bafa30baa5c2abb990ab956895f66d2ecdd30f6c713afceacc99833ad415513",
+    "server/tests/test_sage_assessment.py": "87f7ee3efebb04fe6e43a88bcd3c993e9250bf0f85ad5a32432e0dd8cc22433c",
+    "server/tests/test_sage_bed_locator.py": "52e4a54f152364171fac1b94f91d1a26268d0e4257dcf9c55b42f9ee89c41c5b",
+    "server/tests/test_sage_department_scope.py": "41d95c04a568f274b33287d4633dd91c70e0badf1be2fc21ff6e56053a567b11",
+    "server/tests/test_sage_patient_phrasing.py": "a688228d716f07999cd970e6c85bec5286fe5b9f376d498aeccfd5d670d762bf",
+    "server/tests/test_sage_sticky_anchor.py": "75f72ec3be74e97e3414be8ff1e7993c96c9866d29e680e51fe2568a8c0f38a6",
+    "server/tests/test_sage_streaming.py": "ee9afcc28673aa053f7fc935f861108be73f6b0aa8e94cd26e25d1d9aa239e40",
+    "server/tests/test_scribe_sign_ack_and_audit.py": "b04cd75bc444663f969354a16c788a6fd0b4d9898ece52d84ea7ef4e25084df4",
+    "server/tests/test_shadow_scorecard.py": "d6c11efdd2650b343e37cc9092d877229878e415f21425ef58aba8d66985b9b3",
+    "server/tests/test_simulated_results.py": "abd9f575c1beb1f83ec78601b0820b2d001574b51da9ba1f6f232c0e719867b8",
+    "server/tests/test_synthetic_corpus_exclusion.py": "fc15eb4ed638023e5d0afceccf0cd9050f3067a2dfad65ba641a550b314f9c06",
+    "server/tests/test_ward_reference.py": "b2d69fd38e015a1556846531447330df18838a639e7a7e00f2ba6ab2369e8301",
+    "server/tests/test_warm_standby.py": "1439caf41d07a85a4bf742c30b6d34afeb6dff0f062959818d8b172f6bfd282a",
+    "server/tests/test_wedge_end_to_end.py": "1897c69d9b4de8ad7561dacbee3dc88c795148d76b843b864589a22cddd048e9",
+    "src/api/client.ts": "9f49e7284a5ef0160d265db6a71bada85125f0a4e9b084c6c9f4a1037a7e6236",
+    "src/api/contracts.ts": "168d7d8c1e1bdf75bed1b9f789af61340e368107b1c2f7aa3274b5272ceda1f5",
+    "src/api/pharmacyStore/index.test.ts": "ba520b2f2132c2d14933bc0811b1d5be22e4839e713e18bd6f50541558580c20",
+    "src/api/sse.framing.test.ts": "a05f8d26af41d33ccaa03b9cbdf67b6184c90bcaf730c8db0cdcd4bce8f87aa9",
+    "src/api/sse.ts": "9f211ebe5e633868cc93b4ed3e6a833e9d1fc05b7acce27ec1308a71e55c4c81",
+    "src/pages/panels/RelayPanel.tsx": "0acbcc1b57e73ff895b0a359dca4bf4d7f2a4e00dea2c5f2d2a3f9c2b3bfb33f",
+    "src/pages/panels/RelayPanel.verify.test.tsx": "4060aedf0d4fb7eb413fd3d9d9b316594fe5e8d215c0827c9e4972d3ddd66b95",
+    "src/pages/panels/frontdesk/ClinicSessionsView.test.tsx": "7dc6f5197762ee61a713e63734dc9b823bfff48af7fd73d33f9599bf6ae7fe2e",
+    "tools/backend-quality/backend_quality.py": "c415141a6195b2b6d0885cbc76e2b4d33c0c6b8010a927de05fd6a61107ef3b7",
+    "tools/backend-quality/coverage.ini": "c2ac07f61c556c7f2f87b1fee612804b9dc3e40d00f66dda08f1f2d42fa837bc",
+    "tools/backend-quality/run_backend.py": "b3143f3bd46165f910dbb1c6d71e92cd0f3f43d16bfc0baa722de875baaf81c0",
+    "tools/backend-quality/test_backend_quality.py": "4db045a781d0efd822979cb1713b30a443bc9ff153932a580b3f8d9da81864a3",
+    "tools/backend-quality/test_runner.py": "58fef4783bf9732a85d68d6c90daf8c81639653a148a8efddcb11ad5dfc3deab",
+    "tools/local-inference-quality/check.sh": "4fbfbcd71e7cf9d92ebd8f3b9e054762fde92b3ddf81b48f3a43d5c510bf58f8",
+    "tools/local-inference-quality/pyproject.toml": "96877bb4d41636f41f2a3f88221d27a769a2396cca512f65aeea52f8b2f9c029"
+  },
+  "strict_utilities": {
+    "branches": 34,
+    "coverage_percent": 100,
+    "deselected_integrations": 4,
+    "passed": 67,
+    "statements": 122
+  },
+  "unperformed": [
+    "Hosted CI/release run",
+    "Deployment",
+    "Real encrypted-backup restore/key escrow",
+    "Target-site hardware/load/power-loss qualification",
+    "Clinical/model approval and native speech accuracy"
+  ],
+  "working_copy_backend": {
+    "collected_before_serial_cleanup": 17411,
+    "counts": {
+      "passed": 17410,
+      "skipped": 8
+    },
+    "coverage": {
+      "covered_branches": 22854,
+      "covered_lines": 76863,
+      "excluded_lines": 327,
+      "missing_branches": 5650,
+      "missing_lines": 10120,
+      "num_branches": 28504,
+      "num_partial_branches": 4440,
+      "num_statements": 86983,
+      "percent_branches_covered": 80.17822060061745,
+      "percent_branches_covered_display": "80",
+      "percent_covered": 86.3447833955337,
+      "percent_covered_display": "86",
+      "percent_statements_covered": 88.36554269225022,
+      "percent_statements_covered_display": "88"
+    },
+    "measured_modules": 384,
+    "skips": [
+      {
+        "reason": "needs the real ORB_DB_ENCRYPTION_KEY and a real backup on disk",
+        "test": "tests.test_warm_standby::test_real_encrypted_backup_verifies"
+      },
+      {
+        "reason": "no direct channels in this database",
+        "test": "tests.test_relay_channel_scope::test_direct_messages_are_membership_scoped"
+      },
+      {
+        "reason": "no cross-encoder on this machine \u2014 lexical relevance cannot separate alert-shaped queries, which is measured, not assumed",
+        "test": "tests.test_evidence_relevance::test_an_alert_retrieves_the_patients_own_guideline[DKA]"
+      },
+      {
+        "reason": "no cross-encoder on this machine \u2014 lexical relevance cannot separate alert-shaped queries, which is measured, not assumed",
+        "test": "tests.test_evidence_relevance::test_an_alert_retrieves_the_patients_own_guideline[dengue]"
+      },
+      {
+        "reason": "no cross-encoder on this machine \u2014 lexical relevance cannot separate alert-shaped queries, which is measured, not assumed",
+        "test": "tests.test_evidence_relevance::test_an_alert_retrieves_the_patients_own_guideline[sepsis_cap]"
+      },
+      {
+        "reason": "no cross-encoder on this machine \u2014 lexical relevance cannot separate alert-shaped queries, which is measured, not assumed",
+        "test": "tests.test_evidence_relevance::test_an_alert_retrieves_the_patients_own_guideline[UTI]"
+      },
+      {
+        "reason": "no cross-encoder on this machine \u2014 lexical relevance cannot separate alert-shaped queries, which is measured, not assumed",
+        "test": "tests.test_evidence_relevance::test_an_alert_retrieves_the_patients_own_guideline[COPD]"
+      },
+      {
+        "reason": "no cross-encoder on this machine \u2014 lexical relevance cannot separate alert-shaped queries, which is measured, not assumed",
+        "test": "tests.test_evidence_relevance::test_the_drivers_alone_are_what_used_to_fail"
+      }
+    ]
+  }
+}

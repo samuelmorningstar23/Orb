@@ -51,11 +51,13 @@ _SIGNAL_PATTERNS = re.compile(
     r'wors|deteriorat|desat|dropping|unstable|critical|emergenc|urgent|'
     r'transfer|escalat|consult|surgery|intubat|ventilat|code\s|rapid\s|'
     r'bleed|sepsis|arrest|shock|anaphyla|'
-    r'start|stop|add|discontinue|switch|change|hold|prescribe|'
+    # Closed word forms avoid routine "address" / "startled" chatter while
+    # preserving clinical inflections such as "added" and "starting".
+    r'start(?:ed|ing|s)?\b|stop|add(?:ed|ing|s)?\b|discontinue|switch|change|hold|prescribe|'
     r'imaging|mri|ct\sscan|xray|echo|ultrasound|'
     r'disagree|unsure|uncertain|concerned|worried|'
-    r'discharge|home|step.?down|icu|fever|tachy|brady|hypoten|hyperten|'
-    r'pain|dyspne|respiratory|oxygen|spo2|bp\s|hr\s|temp\s|'
+    r'discharge|home\b|step.?down|icu|fever|tachy|brady|hypoten|hyperten|'
+    r'pain(?:ful(?:ly)?|less|s)?\b|dyspne|respiratory|oxygen|spo2|bp\s|hr\s|temp\s|'
     r'infect|antibiotic|culture|resist|allerg|reaction|'
     r'dose|dosage|mg|mcg|units|drip|bolus|infusion|'
     # RETRACTIONS AND CORRECTIONS. Added 2026-08-05 after nine measured runs in

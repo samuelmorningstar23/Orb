@@ -1397,10 +1397,7 @@ async def generate_ai_recommendation(vitals_summary: str, risk_level: str, drive
     from services.llm_queue_service import llm_queue
     from services import ollama_gateway
     from config import AMBIENT_LLM_MODEL
-    import asyncio
-    import httpx
     import json
-    import time
 
     if time.monotonic() < _LLM_BREAKER["open_until"]:
         return _FALLBACK_RECOMMENDATION

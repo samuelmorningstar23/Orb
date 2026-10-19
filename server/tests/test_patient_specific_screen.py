@@ -94,13 +94,17 @@ QUIET_PULSE = {
 
 
 @pytest.fixture(autouse=True)
-def _formulary():
+def _formulary(isolated_module_database):
     """The hospital's own catalogue — the thing brand resolution reads.
 
     METOLAR is the load-bearing row: an Indian ward charts the brand, the
     beta-blocker stem lives in the generic, and `_active_medications` resolves
     one to the other through `allergy_interlock.resolve_ingredients_bulk` before
     `classify_drug` ever sees it.
+
+    Use this module's catalogue: stock-rule fixtures deliberately put strength
+    and unit words in brand names, which would contaminate the drug-name-only
+    lexicon invariant below when the files share a session database.
     """
     from services import interaction_db
     from services.helix_db import HELIX_SCHEMA

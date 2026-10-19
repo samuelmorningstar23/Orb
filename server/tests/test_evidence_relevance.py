@@ -52,6 +52,7 @@ from services import clinical_knowledge as ck
 from services import corpus_loader
 from services import retrieval_calibration as rc
 from services import retrieval_query as rq
+from tests.knowledge_fixtures import lexical_knowledge_models
 
 CORPUS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "corpus")
 
@@ -85,13 +86,19 @@ def _drop_store():
 
 @pytest.fixture(scope="module")
 def seeded_corpus():
-    """Seed corpus + loader corpus — the shape a shipped appliance retrieves
-    from — then tear the shared store down for sibling modules."""
-    _drop_store()
-    ck.init_knowledge_base()
-    corpus_loader.load_directory(CORPUS_DIR, default_trust_tier=3)
-    yield
-    _drop_store()
+    """Exercise the real seeded FTS store without depending on cached weights.
+
+    The suite's fast-boot setting suppresses automatic knowledge seeding. Seed
+    explicitly, with unavailable dense retrieval and cross-encoder, so these
+    assertions verify genuine lexical relevance rather than an empty store.
+    Actual local model compatibility is checked separately.
+    """
+    with lexical_knowledge_models() as seed_builtin:
+        _drop_store()
+        seed_builtin()
+        corpus_loader.load_directory(CORPUS_DIR, default_trust_tier=3)
+        yield
+        _drop_store()
 
 
 @pytest.fixture(autouse=True)

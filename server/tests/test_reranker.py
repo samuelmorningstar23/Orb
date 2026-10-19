@@ -17,6 +17,7 @@ import pytest
 from database import db_session
 from services import clinical_knowledge as ck
 from services.clinical_knowledge import rerank_results, search_guidelines
+from tests.knowledge_fixtures import lexical_knowledge_models
 
 
 _SHARED_TABLES = (
@@ -51,10 +52,11 @@ def _drop_store():
 def seeded_kb():
     """Build the seeded knowledge base once, then drop it so other test modules
     (e.g. test_corpus_loader) see a clean shared store."""
-    _drop_store()
-    ck.init_knowledge_base()
-    yield
-    _drop_store()
+    with lexical_knowledge_models() as seed_builtin:
+        _drop_store()
+        seed_builtin()
+        yield
+        _drop_store()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

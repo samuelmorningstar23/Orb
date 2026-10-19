@@ -74,6 +74,8 @@ def news2_description(news2: Mapping | None, *, scale: bool = True) -> str:
     `level` is printed as given: a caller holding a CfC-escalated level is
     responsible for saying so.
     """
+    if news2 is None:
+        return NOT_RECORDED
     total = news2_total(news2)
     if total is None:
         return NOT_RECORDED

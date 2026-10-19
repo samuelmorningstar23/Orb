@@ -1555,6 +1555,10 @@ def _time_saved(events: list[dict], start: datetime, end: datetime) -> dict:
         e for e in events
         if e["kind"] == "sage.drafted" and e["_t"] is not None and start <= e["_t"] < end
         and e["payload"].get("cancelled") is not True
+        # Alert drafts are machine-initiated, not a lookup a clinician asked
+        # for. Keep their real timings in the log, outside this proxy's count
+        # and latency distribution. Legacy interactive rows have no class.
+        and not str(e["payload"].get("query_class") or "").startswith("VIGIL_ALERT_")
     ]
     ttfts = [float(d["payload"]["ttft_ms"]) for d in drafts
              if isinstance(d["payload"].get("ttft_ms"), (int, float))]

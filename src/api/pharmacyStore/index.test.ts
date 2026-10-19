@@ -13,6 +13,16 @@ vi.mock('../client', async () => {
 const client = await import('../client')
 const apiFetch = vi.mocked(client.apiFetch)
 
+// jsdom's browser Blob has FileReader support, but no Blob.text().
+function readBlob(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(blob)
+  })
+}
+
 import {
   PHARMACY_STORE_API_PREFIX,
   PHARMACY_STORE_MODULE_ID,
@@ -115,7 +125,7 @@ describe('pharmacy store API base', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const blob = await pharmacyStoreDownload('/ndps/export.csv', { store: 'VAULT' })
-    expect(await blob.text()).toBe('a,b\n1,2\n')
+    expect(await readBlob(blob)).toBe('a,b\n1,2\n')
     expect(String(fetchMock.mock.calls[0][0])).toMatch(/\/api\/pharmacy-store\/ndps\/export\.csv\?store=VAULT$/)
 
     const err = (await pharmacyStoreDownload('/ndps/export.csv')
@@ -171,7 +181,7 @@ describe('pharmacy store download and an expired session', () => {
   it('refreshes once and retries the download', async () => {
     const calls = stubLapsedSession()
     const blob = await pharmacyStoreDownload('/ndps/export.csv')
-    expect(await blob.text()).toBe('drug,qty\nmorphine,4\n')
+    expect(await readBlob(blob)).toBe('drug,qty\nmorphine,4\n')
     expect(calls).toHaveLength(3)
     expect(refreshes(calls)).toBe(1)
     expect(expired).toHaveLength(0)
@@ -203,8 +213,8 @@ describe('pharmacy store download and an expired session', () => {
       pharmacyStoreDownload('/ndps/export.csv'),
       pharmacyStoreDownload('/stock/export.csv'),
     ])
-    expect(await a.text()).toContain('morphine')
-    expect(await b.text()).toContain('morphine')
+    expect(await readBlob(a)).toContain('morphine')
+    expect(await readBlob(b)).toContain('morphine')
     expect(refreshes(calls)).toBe(1)
     expect(expired).toHaveLength(0)
   })

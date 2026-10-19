@@ -2,7 +2,7 @@
 
 This independent gate adds strict typing, lint/format checks and 100% statement
 and branch coverage for the loopback-origin validator, private ASR stdin protocol
-and bounded inference cache. It supplements the existing importer/release gate;
+bounded inference cache, security-header middleware, SPA bootstrap and warm-model policy. It supplements the existing importer/release gate;
 it does not claim whole-backend compliance.
 
 From a separate Python 3.12 developer environment:

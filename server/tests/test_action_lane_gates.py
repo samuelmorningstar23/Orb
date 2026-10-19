@@ -49,6 +49,16 @@ from tests.action_lane_corpus import (
 CHART_CONTEXT = "PATIENT: Ananya Kapoor, 54y/F, Bed GM-101\nVitals: ...\n"
 
 
+@pytest.fixture(autouse=True)
+def _two_model_tiers(monkeypatch):
+    # These tests exercise the safety floor's override of an available fast
+    # tier. No local Ollama installation is needed to establish that premise.
+    monkeypatch.setattr(thinking_mode, "LLM_MODEL", "test-careful:27b")
+    monkeypatch.setattr(thinking_mode, "THINKING_FAST_MODEL", "test-fast:4b")
+    monkeypatch.setattr(thinking_mode, "THINKING_FAST_MODE_ENABLED", True)
+    monkeypatch.setattr(thinking_mode, "FAST_MODE_SAFETY_FLOOR", True)
+
+
 @pytest.mark.parametrize("section,query,want_mutation,want_floor", ALL_ROWS)
 def test_corpus_records_what_the_gates_actually_say(
         section, query, want_mutation, want_floor):

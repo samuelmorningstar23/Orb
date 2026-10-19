@@ -78,7 +78,7 @@ def transcribe(audio_path: str, hints: str = "", language: str = "en") -> dict:
     """Run transcription on a warm model. Returns result dict."""
     global _whisper_model, _model_name
     
-    if _whisper_model is None:
+    if _whisper_model is None or _model_name is None:
         return {"text": "", "error": "Model not loaded", "status": "error"}
     
     t0 = time.time()
@@ -210,7 +210,7 @@ def run_daemon(socket_addr: str, model_name: str):
 
 def test_transcribe(audio_path: str):
     """Quick standalone test (no daemon, just load and transcribe)."""
-    model = load_model(DEFAULT_MODEL)
+    load_model(DEFAULT_MODEL)
     result = transcribe(audio_path)
     print(json.dumps(result, indent=2))
 

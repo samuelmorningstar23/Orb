@@ -1,0 +1,257 @@
+
+ RUN  v4.1.11 /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8
+
+Error: Not implemented: navigation (except hash changes)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at navigateFetch (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/window/navigation.js:77:3)
+    at exports.navigate (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/window/navigation.js:55:3)
+    at Timeout._onTimeout (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLHyperlinkElementUtils-impl.js:81:7)
+    at listOnTimeout (node:internal/timers:635:17)
+    at processTimers (node:internal/timers:571:7) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:261:16
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:358:18
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:261:16
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:358:18
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:261:16
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:358:18
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:261:16
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:358:18
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:261:16
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:358:18
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:261:16
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:358:18
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:261:16
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:358:18
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:261:16
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:358:18
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:261:16
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:358:18
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:261:16
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:358:18
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:261:16
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at safeContext (/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:228:19)
+    at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-selected-fixes-_iiamyf8/src/components/Aurora.tsx:358:18
+    at Object.react_stack_bottom_frame (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:25989:20)
+    at runWithFiberInDEV (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:874:13)
+    at commitHookEffectListMount (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13249:29)
+    at commitHookPassiveMountEffects (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:13336:11)
+    at commitPassiveMountOnFiber (/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/react-dom/cjs/react-dom-client.development.js:15484:13) undefined
+
+ Test Files  334 passed (334)
+      Tests  3243 passed | 2 expected fail (3245)
+   Start at  01:22:50
+   Duration  33.82s (transform 19.05s, setup 18.23s, import 61.23s, tests 122.40s, environment 120.45s)

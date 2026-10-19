@@ -184,16 +184,16 @@ def test_one_content_free_emit_reaches_the_desk_and_doctor_rooms(monkeypatch, op
 
 def test_a_socket_in_two_of_the_rooms_hears_the_nudge_once():
     """python-socketio resolves a list of rooms to one set of participants."""
-    from socketio.base_manager import BaseManager
+    from socketio import AsyncServer
 
-    mgr = BaseManager()   # the server's AsyncManager inherits get_participants
-    mgr.set_server(types.SimpleNamespace(eio=types.SimpleNamespace(
-        generate_id=lambda: uuid.uuid4().hex)))
+    # Exercise the installed server's real manager contract, including its
+    # packet serializer, without opening a transport or binding a socket.
+    mgr = AsyncServer(async_mode="asgi").manager
     mgr.initialize()
-    sid = mgr.connect("eio-1", "/")
+    sid = asyncio.run(mgr.connect("eio-1", "/"))
     mgr.basic_enter_room(sid, "/", f"dept:{DEPT}")
     mgr.basic_enter_room(sid, "/", f"opd:{DEPT}")
-    other = mgr.connect("eio-2", "/")
+    other = asyncio.run(mgr.connect("eio-2", "/"))
     mgr.basic_enter_room(other, "/", "opd:__all__")
     heard = [s for s, _ in mgr.get_participants("/", realtime.queue_nudge_rooms(DEPT))]
     assert sorted(heard) == sorted([sid, other])

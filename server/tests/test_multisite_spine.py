@@ -438,7 +438,62 @@ def _facilities_check() -> dict:
     return next(c for c in payload["checks"] if c["key"] == "facilities")
 
 
-def test_the_status_page_reports_one_facility_in_words():
+@pytest.fixture
+def clean_facilities_status_db(request, monkeypatch, tmp_path):
+    """Give the clean-appliance scenario its own store, leaving session rows alone.
+
+    Other modules legitimately create department spelling variants. The status
+    page must report those, so a healthy scenario cannot share their database.
+    The polluted parameter also proves that switching stores is reversible.
+    """
+    import database
+
+    marker = f"Spine Isolation {uuid.uuid4().hex[:8]}"
+    uid = f"MSIS{uuid.uuid4().hex[:8]}"
+    polluted = request.param
+
+    def assert_session_variant():
+        check = _facilities_check()
+        assert check["status"] != "ok"
+        assert any(v["where"] == "staff accounts" and v["spelling"] == marker.lower()
+                   and v["master_spelling"] == marker
+                   for v in check["detail"]["department_spelling_variants"])
+
+    try:
+        if polluted:
+            with db_session() as db:
+                db.execute("INSERT INTO departments (name, seeded_from) VALUES (?, 'test')",
+                           (marker,))
+                db.execute("INSERT INTO users (id, name, role, department, password_hash) "
+                           "VALUES (?, 'Isolation Test', 'doctor', ?, 'test-only')",
+                           (uid, marker.lower()))
+            assert_session_variant()
+
+        with monkeypatch.context() as isolated:
+            path = tmp_path / "orb_test_facilities_status.db"
+            isolated.setattr(database, "DB_PATH", path)
+            isolated.setattr(config, "DB_PATH", path)
+            isolated.setenv("ORB_DB_PATH", str(path))
+            database.init_db()
+            FS.invalidate_cache()
+            try:
+                yield
+            finally:
+                FS.invalidate_cache()
+
+        if polluted:
+            assert_session_variant()
+    finally:
+        if polluted:
+            with db_session() as db:
+                db.execute("DELETE FROM users WHERE id = ?", (uid,))
+                db.execute("DELETE FROM departments WHERE name = ?", (marker,))
+        FS.invalidate_cache()
+
+
+@pytest.mark.parametrize("clean_facilities_status_db", [False, True], indirect=True,
+                         ids=["clean-session", "polluted-session"])
+def test_the_status_page_reports_one_facility_in_words(clean_facilities_status_db):
     check = _facilities_check()
     assert check["status"] == "ok", check
     assert check["summary"].startswith("One facility is on record (")

@@ -187,19 +187,6 @@ _WHOLE_WORD_PREFIX_TRAPS = [
 ]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="KNOWN PRE-EXISTING DEFECT (not from the retraction fix): the Gate 5 "
-           "alternation has a leading `(?:^|\\b)` but NO trailing boundary, so "
-           "whole-word entries match as prefixes — `add` fires on 'address' and "
-           "'additional', `home` on 'homesick', `pain` on 'painting', `start` on "
-           "'startled'. Each false match costs a real 4B inference on the single "
-           "GPU slot. Fixing it means adding \\b to the whole-word alternatives "
-           "only, leaving the intentional stems (wors|deteriorat|haemolys|...) "
-           "unanchored. Deliberately NOT fixed here: it changes Gate 5 admission "
-           "volume across the board and would invalidate the retraction "
-           "measurement this file accompanies.",
-)
 @pytest.mark.parametrize("token,text", _WHOLE_WORD_PREFIX_TRAPS,
                          ids=[f"{t}-in-{x.split()[1]}" for t, x in _WHOLE_WORD_PREFIX_TRAPS])
 def test_whole_word_tokens_do_not_match_as_prefixes(token, text):
@@ -209,6 +196,18 @@ def test_whole_word_tokens_do_not_match_as_prefixes(token, text):
     assert m is None or m.group(1).lower() != token, (
         f"{token!r} matched as a prefix in {text!r} — a wasted 4B inference"
     )
+
+
+@pytest.mark.parametrize("text", [
+    "Start treatment after the ward round.", "Treatment started this morning.",
+    "Starting treatment after the ward round.", "Add treatment after the ward round.",
+    "Treatment added this morning.", "Adding treatment after the ward round.",
+    "Ready to go home.", "She reports pain.", "The leg is painful.",
+    "Painfully limited movement.", "Painless swelling noted.",
+    "He is worsening.", "She is deteriorating.", "The sample was haemolysed.",
+])
+def test_word_boundaries_preserve_clinical_forms_and_intentional_stems(text):
+    assert _gate_signal(text)
 
 
 # ─────────────────────────────────────────────────────────────────────

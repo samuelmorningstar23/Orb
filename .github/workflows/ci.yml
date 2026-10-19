@@ -30,8 +30,20 @@ jobs:
           # tests never use, eating runner disk shared with the rest of the job.
           pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements-dev.txt
-      - name: Run tests
-        run: pytest -q
+      - name: Verify encryption and restore test dependencies
+        run: python -c "import bcrypt, cryptography, qrcode, png, sqlcipher3"
+      - name: Run tests with complete backend coverage
+        run: |
+          python -m pip install coverage==7.16.2
+          python -m coverage run --rcfile=../tools/backend-quality/coverage.ini -m pytest -q
+          python -m coverage json --rcfile=../tools/backend-quality/coverage.ini -o backend-coverage.json
+          python ../tools/backend-quality/backend_quality.py coverage --report backend-coverage.json --baseline ../tools/backend-quality/coverage-baseline.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-coverage
+          path: server/backend-coverage.json
+          if-no-files-found: warn
 
   local-inference-quality:
     name: Local inference utilities (strict checks)
@@ -51,6 +63,22 @@ jobs:
           name: local-inference-coverage
           path: local-inference-coverage.json
           if-no-files-found: warn
+
+  backend-wide-quality:
+    name: Backend-wide engineering budgets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned standalone check tools
+        run: python -m pip install -r tools/local-inference-quality/requirements.txt
+      - name: Reject critical Python defects and unreviewed quality debt
+        run: |
+          python -m ruff check --select E9,F63,F7,F82,F811 server
+          python tools/backend-quality/backend_quality.py check
+          python -m pytest --noconftest -q tools/backend-quality
 
   frontend:
     name: Frontend (build + tests)

@@ -1,0 +1,16 @@
+All checks passed!
+6 files already formatted
+Success: no issues found in 6 source files
+...................................................................      [100%]
+67 passed, 4 deselected in 0.53s
+Name                                     Stmts   Miss Branch BrPart    Cover   Missing
+--------------------------------------------------------------------------------------
+server/offline_policy.py                    17      0      6      0  100.00%
+server/security_headers.py                  28      0      8      0  100.00%
+server/services/asr_worker_protocol.py      24      0      8      0  100.00%
+server/services/inference_cache.py          24      0      6      0  100.00%
+server/services/warm_policy.py              16      0      2      0  100.00%
+server/spa_bootstrap.py                     13      0      4      0  100.00%
+--------------------------------------------------------------------------------------
+TOTAL                                      122      0     34      0  100.00%
+Wrote JSON report to local-inference-coverage.json

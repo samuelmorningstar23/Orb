@@ -1002,6 +1002,38 @@ def test_time_saved_is_a_labelled_proxy_with_visible_assumptions(monkeypatch):
     assert sources["Clinical time saved"].startswith("would require a controlled comparison")
 
 
+@pytest.mark.parametrize("query_class", [
+    "VIGIL_ALERT_ASSESSMENT", "VIGIL_ALERT_PATIENT_FACTS",
+    "VIGIL_ALERT_NO_PATIENT_FACTS", "VIGIL_ALERT_RECOMMENDATION",
+])
+@pytest.mark.parametrize("interactive", [False, True])
+def test_machine_alert_drafts_do_not_count_as_clinician_lookup_time(monkeypatch, query_class, interactive):
+    monkeypatch.setitem(sc.MIN_N, "time_saved", 1)
+    monkeypatch.setenv("ORB_SCORECARD_MANUAL_LOOKUP_SECONDS", "240")
+    with db_session() as conn:
+        _patients(conn)
+        _cover(conn)
+        _emit(conn, "sage.drafted", "ep_machine", D23, lane="manual", patient_id="P1",
+              payload={"query_class": query_class, "ttft_ms": 10000, "total_ms": 45000})
+        if interactive:
+            _emit(conn, "sage.drafted", "ep_question", D23, lane="chat", patient_id="P1",
+                  payload={"query_class": "PATIENT", "ttft_ms": 400, "total_ms": 2000})
+
+    metric = _card()["metrics"]["time_saved"]
+    detail = metric["detail"]
+    assert detail["answers"] == detail["timed_answers"] == int(interactive)
+    if interactive:
+        assert detail["total_ms_p50"] == 2000.0
+        assert detail["ttft_ms_p50"] == 400.0
+        assert detail["saved_hours"] == pytest.approx(238 / 3600)
+        assert metric["state"] == "reported"
+    else:
+        assert detail["total_ms_p50"] is None
+        assert detail["saved_hours"] is None
+        assert metric["state"] == "insufficient_data"
+        assert metric["value"] is None
+
+
 def test_cancelled_sage_drafts_are_not_timed_answers(monkeypatch):
     monkeypatch.setitem(sc.MIN_N, "time_saved", 1)
     with db_session() as conn:

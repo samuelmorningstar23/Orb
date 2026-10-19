@@ -7,6 +7,11 @@ so the turn is PHI-free and audited as such. These tests prove:
   2. any per-patient signal downgrades it back to PHI,
   3. the aggregate context contains NO patient identifiers.
 """
+import pytest
+
+# Aggregate examples assume no patient name/bed matches their ordinary words.
+pytestmark = pytest.mark.usefixtures("isolated_module_database")
+
 from services.ai_governance import classify_query_sensitivity
 from services.sage_service import _is_aggregate_only, build_aggregate_context, get_relevant_context
 

@@ -67,8 +67,8 @@ def main():
         device = "mps" if torch.backends.mps.is_available() else "cpu"
         print(f"Using device: {device}")
         
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-        model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float16 if device == "mps" else torch.float32)
+        tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
+        model = AutoModelForCausalLM.from_pretrained(model_path, local_files_only=True, torch_dtype=torch.float16 if device == "mps" else torch.float32)
         model.to(device)
         
         def ask(prompt):
@@ -125,9 +125,10 @@ def main():
     print("\n=== TESTING COMPLETE. UNLOADING MODEL ===\n")
     
     # Clean up model references and run garbage collection to free memory
-    del model
+    # Clear the closure cell without deleting its binding (keeps static checks valid).
+    model = None
     if 'tokenizer' in locals():
-        del tokenizer
+        tokenizer = None
     
     gc.collect()
     
