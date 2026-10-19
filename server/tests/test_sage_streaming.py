@@ -104,6 +104,30 @@ def _chunked(text: str, size: int) -> list[str]:
     return [text[i:i + size] for i in range(0, len(text), size)]
 
 
+@pytest.mark.parametrize("partial", [False, True])
+def test_failed_model_stream_has_no_success_or_replayable_partial(monkeypatch, partial):
+    token = _login()
+    saved = []
+
+    async def broken(*args, **kwargs):
+        if partial:
+            yield "NOACT|A partial synthetic answer. "
+        raise RuntimeError("Synthetic local engine failure")
+
+    monkeypatch.setattr(sage_routes, "query_ollama", broken)
+    monkeypatch.setattr(sage_routes, "_save_turn", lambda *args, **kwargs: saved.append(args))
+    response = client.post(
+        "/api/sage/query", headers={"Authorization": f"Bearer {token}"},
+        json={"query": "What does the term tachycardia mean?"},
+    )
+    events = _collect_events(response.text)
+    assert any(event.get("code") == "SAGE_STREAM_FAILED" for event in events)
+    assert not any(event.get("done") is True for event in events)
+    assert "Synthetic local engine failure" not in response.text
+    assert len(saved) == 1
+    assert saved[0][2] == ""  # The user turn can remain; a failed draft cannot replay as an answer.
+
+
 # The FAST (answer-first) contract shipped 2026-07-31 is what production emits;
 # the XML contract survives behind ORB_SAGE_XML_CONTRACT=1 as the rollback path.
 # The streaming properties below must hold on BOTH, so the tests run against

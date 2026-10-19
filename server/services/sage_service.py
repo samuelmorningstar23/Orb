@@ -14,6 +14,7 @@ import threading
 import difflib
 import functools
 from collections import Counter
+from contextlib import aclosing
 from datetime import datetime, timezone
 from functools import lru_cache
 from typing import AsyncGenerator, NamedTuple
@@ -719,8 +720,16 @@ _CHANGE_VERBS = (
     r"up[\s-]?titrate|down[\s-]?titrate|titrate|double|halve|taper|wean|"
     r"restart|resume|recommence"
 )
+# Narrow the VERB match, never veto the whole utterance: an informational
+# "give a concise overview" can still be followed by "and give heparin".
+# Mentioning medication in the overview's subject is not administering it.
+_GIVE_INFORMATION_OBJECT = (
+    r"(?:(?:a|an|the)\s+)?"
+    r"(?:(?:concise|brief|short|detailed|quick)\s+){0,2}(?:overview|summary)\b"
+)
+_GIVE_ORDER_VERB = rf"give(?!\s+me\b)(?!\s+{_GIVE_INFORMATION_OBJECT})"
 _ADD_VERBS = (
-    r"add|start|prescribe|order|commence|initiate|give(?!\s+me\b)|"
+    rf"add|start|prescribe|order|commence|initiate|{_GIVE_ORDER_VERB}|"
     r"put\s+(?:him|her|them|the\s+patient)\s+on"
 )
 
@@ -766,7 +775,7 @@ MUTATION_PATTERNS = [
     #    "start the sepsis bundle", "order a chest X-ray"). "give me …" is
     #    excluded: an information request ("give me the census"), not an order.
     r"^(add|start|prescribe|order|commence|initiate)\b",
-    r"^give\b(?!\s+me\b)",
+    rf"^{_GIVE_ORDER_VERB}\b",
     # 5. Chart / record housekeeping.
     r"\b(place (?:an? )?order|update (?:the |his |her |their )?chart|add (?:a )?note|"
     r"write (?:a )?note|record this|document this)\b",
@@ -779,6 +788,11 @@ MUTATION_PATTERNS = [
 ]
 
 _MUTATION_RE = [re.compile(p) for p in MUTATION_PATTERNS]
+# The old bare leading give conservatively locked unknown objects. Retain that
+# protection for a later imperative after the newly recognized informational
+# lead, without widening unrelated reads such as "please give the file".
+_INFORMATIONAL_GIVE_LEAD = re.compile(rf"^{_ORDER_HEAD}give\s+{_GIVE_INFORMATION_OBJECT}")
+_LATER_GIVE_ORDER_RE = re.compile(rf"{_ORDER_HEAD}{_GIVE_ORDER_VERB}\b")
 
 # 7 to 10 (9 October 2026). What a ward round types that 1 to 6 did not read;
 # the shapes with no verb at the head are in services/order_wording.py. Kept
@@ -809,7 +823,7 @@ WARD_ORDER_PATTERNS = [
     rf"till\s+\S+(?:\s+\S+){{0,3}}))?"
     rf"(?:\s+for\s+(?:bed\s+|cot\s+)?[a-z]{{0,4}}-?\d{{1,4}})?"
     rf"(?:\s*,(?![^.?!]*\b(?:given|gave|received|charted|since|yesterday)\b)[^.?!]*)?\s*$",
-    rf"{_ORDER_HEAD}(?:do\s+not|don'?t|dont)\s+(?:give|start|add|restart|push|run)\b{_GAP}"
+    rf"{_ORDER_HEAD}(?:do\s+not|don'?t|dont)\s+(?:{_GIVE_ORDER_VERB}|start|add|restart|push|run)\b{_GAP}"
     rf"\b{_ANY_THERAPY}\b",
 ]
 
@@ -962,6 +976,9 @@ def _is_gate_drug(token: str) -> bool:
 
 def _matches_order_pattern(q: str, ward: bool = True) -> bool:
     if any(pattern.search(q) for pattern in _MUTATION_RE):
+        return True
+    informational_lead = _INFORMATIONAL_GIVE_LEAD.match(q)
+    if informational_lead and _LATER_GIVE_ORDER_RE.search(q, informational_lead.end()):
         return True
     if _FORMULARY_RE is not None and _FORMULARY_RE.search(q):
         return True
@@ -1959,12 +1976,15 @@ async def query_ollama(
         marker_asserted=server_asserts_marker(scope, choice.model),
     )
     await llm_queue.acquire(priority=1)
+    inference_outcome = "error"
     try:
-        async for chunk in provider.astream_chat(messages, options):
-            # Yield the RAW chunk — do not strip markdown here. Stripping
-            # per-chunk corrupts tokens that span chunk boundaries and
-            # flattens the formatting the frontend markdown renderer needs.
-            yield chunk
+        async with aclosing(provider.astream_chat(messages, options)) as stream:
+            async for chunk in stream:
+                # Yield the RAW chunk — do not strip markdown here. Stripping
+                # per-chunk corrupts tokens that span chunk boundaries and
+                # flattens the formatting the frontend markdown renderer needs.
+                yield chunk
+        inference_outcome = "served"
     finally:
         llm_queue.release()
         # Fire-and-forget: queue background (P3, careful-tier) summarization for
@@ -1994,7 +2014,7 @@ async def query_ollama(
             # (often at a client hang-up, where awaiting is not safe either).
             record_inference_soon(
                 provider=provider.name, model=choice.model,
-                purpose="sage_chat", outcome="served",
+                purpose="sage_chat", outcome=inference_outcome,
                 classification=classification, user_id=user_id,
                 patient_id=patient_id,
             )

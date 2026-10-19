@@ -61,3 +61,7 @@ The blind runs are the honest figures: orders caught 73%, 68%, 86% and 82% (old 
 ## How to re-run
 
 `cd server && env -i PATH=/usr/bin:/bin HOME=$HOME ORB_DEPLOYMENT_PROFILE=dev ORB_JWT_SECRET=suite-only-secret-0123456789abcdef0123456789 .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_order_gate_wording.py tests/test_sage_guardrails.py`
+
+## 19 October: an informational give is not an order
+
+Adopted from the 12 October pass at Samuel's request: "give" followed by an overview or a summary ("Give a concise overview of my department's admitted patients", "bed 12: give a brief summary of her meds") no longer counts as an order. Before, pattern 4 read any message opening with "give" as one, which also forced the department question into the 512-token simple scope. An order later in the same message is still read ("give a summary and give heparin 5000 units"), and so is every ward shape after it ("give a summary, then lasix 40 iv stat for bed 12"). The four blind sets are unchanged by it, row for row. The plain English cases are in tests/test_sage_scope_budget.py and the ward-wording ones in test_an_informational_give_beside_ward_wording in tests/test_order_gate_wording.py.

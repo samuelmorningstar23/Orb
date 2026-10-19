@@ -109,6 +109,23 @@ def test_every_brand_the_name_matcher_knows_is_a_drug_to_the_gate():
         assert detect_mutation_intent(f"stop the {brand}") is True, brand
 
 
+@pytest.mark.parametrize("query,order", [
+    # The informational "give" (adopted from the 12 October pass, tested in
+    # tests/test_sage_scope_budget.py) read with the ward wording: a summary is
+    # still a read after a bed reference, and an order after the summary is
+    # still an order in every shape the order gate reads.
+    ("bed 12 give a concise overview", False),
+    ("bed 12: give a brief summary of her meds", False),
+    ("give a summary of lasix 40 iv bd", False),
+    ("bed 12 give a summary and give lasix 40 iv", True),
+    ("give a summary, then lasix 40 iv stat for bed 12", True),
+    ("give an overview, inj lasix 40 iv stat", True),
+    ("give a concise overview, bed 12 lasix 40 iv de do", True),
+])
+def test_an_informational_give_beside_ward_wording(query, order):
+    assert detect_mutation_intent(query) is order
+
+
 # ── Cost ──────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("text", [

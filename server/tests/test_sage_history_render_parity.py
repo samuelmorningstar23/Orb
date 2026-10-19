@@ -261,12 +261,10 @@ def test_the_whole_payload_is_clean_when_every_shape_is_stored_at_once():
         _seed(raw, question=f"question for {_id}")
 
     messages = _history()
-    # The endpoint serves a fixed 20-row window and each turn seeds TWO rows
-    # (question + answer), so the window holds the most recent 10 turns however
-    # many fixtures exist above — what matters is that EVERY answer inside it is
-    # clean, whichever contract era it came from.
-    assert len(messages) == 20
-    assert len(_answers(messages)) == min(len(STORED_TURNS), 10)
+    # The browsing window now holds 200 messages, retaining multi-turn threads.
+    # Every answer must still use the same safe display projection as live chat.
+    assert len(messages) == min(2 * len(STORED_TURNS), 200)
+    assert len(_answers(messages)) == min(len(STORED_TURNS), 100)
     for m in _answers(messages):
         _assert_clean(m["content"], "/history[mixed]")
 

@@ -1,6 +1,7 @@
 """Orb Sage — AI Intelligence Routes"""
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from auth import get_current_user
 from permissions import department_scope, require_patient_access, require_permission
 from services.sage_service import query_ollama, get_relevant_context, save_conversation, get_conversation_history, detect_mutation_intent, declares_action
@@ -1998,7 +1999,7 @@ def _history_safe_answer(sources_json, previous: dict | None) -> str | None:
     return None
 
 
-def _history_rows(user_id: str, limit: int = 20) -> list:
+def _history_rows(user_id: str, limit: int = 200) -> list:
     """This user's recent turns ACROSS threads, WITH each answer's timing.
 
     Deliberately not sage_service.list_conversation_turns: that reader does not
@@ -2027,16 +2028,16 @@ def _history_rows(user_id: str, limit: int = 20) -> list:
         rows = db.execute(
             """SELECT role, content, sources, conversation_id, timestamp
                FROM sage_conversations
-               WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?""",
+               WHERE user_id = ? ORDER BY timestamp DESC, id DESC LIMIT ?""",
             (user_id, limit),
         ).fetchall()
         out = []
-        previous = None
+        previous_by_thread = {}
         for r in reversed(rows):
             content = r["content"]
             if r["role"] == "assistant":
-                content = _history_safe_answer(r["sources"], previous) or _display_answer(content)
-            previous = {"role": r["role"], "content": r["content"]}
+                content = _history_safe_answer(r["sources"], previous_by_thread.get(r["conversation_id"])) or _display_answer(content)
+            previous_by_thread[r["conversation_id"]] = {"role": r["role"], "content": r["content"]}
             msg = {
                 "role": r["role"],
                 "content": content,
@@ -3245,6 +3246,7 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
         except Exception as e:
             print(f"  [Sage] Stream error: {e}")
             sh_failure = "stream"
+            yield f"data: {json.dumps({'error': 'Sage could not complete this answer. Please retry.', 'code': 'SAGE_STREAM_FAILED'})}\n\n"
         finally:
             meta_json = None
             if full_response:
@@ -3334,7 +3336,8 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
             # disconnect still lets the save complete rather than raising
             # "async generator ignored GeneratorExit". Both writes are appends,
             # so ordering against a concurrent turn does not matter.
-            await run_db(_save_turn, user["id"], query, _labelled(full_response, _answer_label),
+            await run_db(_save_turn, user["id"], query,
+                         "" if sh_failure else _labelled(full_response, _answer_label),
                          meta_json, conversation_id=conversation_id)
 
             # ══ PROVENANCE: everything needed to REPLAY this turn ══════════════
@@ -3991,21 +3994,51 @@ def get_ai_posture(user: dict = Depends(get_current_user)):
     return ai_posture()
 
 
+class SagePrefetchRequest(BaseModel):
+    patient_id: str = Field(min_length=1, strict=True)
+    hint: str | None = None
+
+
+def _audit_prefetch_patient(request: Request, user: dict, patient_id: str) -> None:
+    """Verify existence and audit the authorized chart warm off the loop."""
+    from permissions import log_phi_read
+
+    with db_session() as db:
+        exists = db.execute("SELECT 1 FROM patients WHERE id = ?", (patient_id,)).fetchone()
+    if exists is None:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    log_phi_read(
+        request=request, user=user, action_type="sage_context_prefetched",
+        summary_message=f"Sage context prefetched for patient {patient_id}",
+        patient_id=patient_id,
+    )
+
+
 @router.post("/prefetch")
-async def sage_prefetch(request: Request, user: dict = Depends(require_permission("sage.query"))):
+async def sage_prefetch(
+    request: Request,
+    body: SagePrefetchRequest,
+    user: dict = Depends(require_permission("sage.query", "patient.read_all")),
+):
     """Speculative context prefetch: the client calls this when a clinician
     OPENS a patient, so retrieval (facts + guideline RAG) leaves the TTFT
     critical path. Re-keys the same warm path a critical Vigil alert uses
     (nervous_system_triggers → sage_decision_cache), with a shorter TTL since
-    a UI navigation is a weaker signal than a critical alert."""
-    body = await request.json()
-    patient_id = body.get("patient_id")
-    if not patient_id:
-        return {"error": "patient_id is required"}
+    a UI navigation is a weaker signal than a critical alert.
+
+    This caller-named chart must pass the same permission and department/
+    facility boundary as a patient read before the system warm path can touch
+    its cache or assemble any facts. A cache hit never bypasses authorization.
+    """
+    from permissions import enforce_patient_scope
+
+    patient_id = body.patient_id
+    await run_db(enforce_patient_scope, user, patient_id)
+    await run_db(_audit_prefetch_patient, request, user, patient_id)
     from services.nervous_system_triggers import warm_patient_context
     ok = await warm_patient_context(
         patient_id,
-        query_hint=body.get("hint") or "",
+        query_hint=body.hint or "",
         ttl_minutes=5,
         reason="ui_patient_opened",
     )
