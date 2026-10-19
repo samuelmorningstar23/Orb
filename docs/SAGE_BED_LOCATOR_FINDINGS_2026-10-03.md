@@ -1,6 +1,6 @@
 # Sage bed and ward lookup: findings, 3 October 2026
 
-Status: open. Twelve fixes were built between 3 and 6 October. All twelve failed independent review and were backed out; main has the original substring bed matching (plus the shared ward rule, services/ward_reference.py). R026 is RULED (a) with D2 to D4, Q1 to Q3, A to F, G (the shipping bar) and H (orders), and on 6 October Samuel ruled that every bed is confirmed before Sage opens its chart. See "Attempt 11 review": every failure since attempt 10 came through an EXCEPTION to that rule; attempt 12 removed the exceptions and failed on the conversation logic around the rule ("Attempt 12 review").
+Status: SHIPPED 19 October 2026 (f5a0afb), attempt 13f.2, after fourteen independent reviews; the last two passed (13f.1 SHIP; 13f.2 SHIP once Samuel ruled G-CENSUS, a bed emptied between message and reply, into the known class). See "Shipped" at the end.
 
 ## The defect today
 
@@ -372,3 +372,13 @@ Also reported:
 - A reply that is itself another department's code is asked again with no "outside your department" message.
 
 Probes: docs/archive/bed-locator-attempt13f2-2026-10-10/probes_review13f2/. Main carries none of attempts 13 to 13f.2.
+
+## Shipped (19 October): attempt 13f.2, f5a0afb
+
+Samuel ruled G-CENSUS into the known class: a bed emptied between the message and the reply is the same shape as an order for an empty bed. Attempt 13f.2 was merged onto main past HIS waves 7 and 8 by a three-way merge from its base, 324e754: clean onto HEAD, with one line resolved against an uncommitted parallel edit in sage_routes.py (save nothing on a failed stream, otherwise the labelled answer). The uncommitted parallel edits in sage_service.py, sage_routes.py and two Sage tests are left unstaged. The full Sage guard list on main with the change: 4,149 passed. The same list on main without it: 3,075 passed.
+
+Open, for separate rulings (none is a reply landing, and the old code is the same or worse):
+- On numbered wards, "kcl 20 mmol iv to OX-3" typed with bed 7 open drafts the KCl on bed 7, labelled, where the old code drafted with no patient (the single-question lane).
+- The order notice ("Nothing has been drafted. To draft an order for this patient, type it again.") does not say why, so retyping the same words asks again when the message mentioned another bed or department; the read notice does say why.
+- On a GM-coded ward a bare number ("712") is not read as bed GM-712.
+- An order for a person the locator does not read ("to her husband", "to the next bed", "the patient in ICU 3") rides along in a certain-case reply.
