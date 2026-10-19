@@ -27,11 +27,20 @@ into a hospital LAN, and before the account that administers every chart in two
 wards is reachable over the network with a single factor. It works on an
 account that already exists too (--id ADM001 --enroll-mfa).
 
+FACILITY (multisite-6, 10 October 2026). --facility CODE (env ORB_ADMIN_FACILITY,
+default MAIN) names the facility the new admin works at. MAIN, facility 1, writes
+nothing extra: an account with no home facility row works at facility 1, as
+every account did before multi-site. Any other facility needs ORB_MULTI_SITE on,
+must exist and be open, and is refused for an admin given a --department (that
+account works at its department's facility). Its home row is written in the
+same transaction as the account, with a fail-closed security audit row.
+
 Usage:
     python server/scripts/create_admin.py                      # interactive prompts
     python server/scripts/create_admin.py --enroll-mfa         # + TOTP at the console
     python server/scripts/create_admin.py --id ADM001 --name "Jane Doe"
     python server/scripts/create_admin.py --id ADM001 --enroll-mfa   # enrol an existing admin
+    python server/scripts/create_admin.py --facility SAT1      # admin of facility SAT1
     ORB_ADMIN_ID=ADM001 ORB_ADMIN_NAME="Jane Doe" ORB_ADMIN_PASSWORD=... \
         python server/scripts/create_admin.py --non-interactive
 
@@ -76,6 +85,62 @@ def _existing_admin(db) -> str | None:
         (SYSTEM_USER_ID,),
     ).fetchone()
     return row[0] if row else None
+
+
+MAIN_FACILITY_CODE = "MAIN"
+
+
+def resolve_facility(db, code: str | None, department: str | None) -> tuple[int | None, str | None]:
+    """(facility id for a home row, or None for none; a refusal in words, or
+    None). MAIN (facility 1, the default) needs no row. Any other facility
+    needs ORB_MULTI_SITE on, must exist and be open, and is refused for an
+    account with a department (it works at its department's facility)."""
+    import config
+    wanted = (code or MAIN_FACILITY_CODE).strip().upper()
+    if wanted == MAIN_FACILITY_CODE:
+        return None, None
+    if department:
+        return None, ("A home facility is only for an admin without a department. "
+                      "Leave --department out, or leave --facility at MAIN.")
+    if not config.feature_enabled("multi_site"):
+        return None, ("Multi-site is switched off (ORB_MULTI_SITE), so the first admin "
+                      "works at facility MAIN.")
+    has_table = db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                           "AND name = 'facilities'").fetchone()
+    row = db.execute("SELECT id, is_active FROM facilities WHERE code = ? COLLATE NOCASE",
+                     (wanted,)).fetchone() if has_table else None
+    if row is None:
+        return None, f"There is no facility with the code {wanted}."
+    if not row["is_active"]:
+        return None, f"Facility {wanted} is closed."
+    return int(row["id"]), None
+
+
+def _write_home_row(db, user_id: str, facility_id: int, code: str) -> None:
+    """The home row and its security audit row, inside the caller's
+    transaction. Fail-closed: a failed audit write raises AuditWriteError and
+    the account is rolled back with it."""
+    import uuid
+    import getpass as _getpass
+    from services.audit_service import log_audit_event
+    reason = "Home facility chosen when the first admin was created at the console"
+    cur = db.execute(
+        "INSERT INTO user_facilities (user_id, facility_id, kind, granted_by, granted_at, reason) "
+        "VALUES (?, ?, 'home', ?, CURRENT_TIMESTAMP, ?)",
+        (user_id, facility_id, "console", reason))
+    try:
+        operator = _getpass.getuser()
+    except Exception:
+        operator = None
+    log_audit_event(
+        correlation_id=str(uuid.uuid4()), event_category="security",
+        action_type="user_facility_assigned", outcome="success", db=db,
+        summary_message=f"Home facility {code} set for user {user_id} at the console",
+        actor_user_id=None, actor_role="console", source_type="console",
+        target_type="user", target_id=user_id,
+        metadata={"facility_id": facility_id, "user_facility_id": cur.lastrowid,
+                  "reason": reason, "operator": operator,
+                  "script": "create_admin.py"})
 
 
 def enroll_mfa(user_id: str, *, account_label: str | None = None) -> bool:
@@ -161,6 +226,11 @@ def main() -> int:
     parser.add_argument("--name", default=os.getenv("ORB_ADMIN_NAME"), help="Full name shown in the UI")
     parser.add_argument("--department", default=os.getenv("ORB_ADMIN_DEPARTMENT"), help="Optional department")
     parser.add_argument(
+        "--facility",
+        default=os.getenv("ORB_ADMIN_FACILITY") or MAIN_FACILITY_CODE,
+        help="Code of the facility the admin works at (default MAIN, facility 1).",
+    )
+    parser.add_argument(
         "--non-interactive",
         action="store_true",
         help="Never prompt; take values from flags/env or exit 2 with instructions.",
@@ -229,8 +299,14 @@ def main() -> int:
         return 1
 
     department = (args.department or "").strip() or None
+    with db_session() as db:
+        facility_id, facility_problem = resolve_facility(db, args.facility, department)
+    if facility_problem:
+        print(f"[fail] {facility_problem}", file=sys.stderr)
+        return 1
     password_hash = hash_password(password)
 
+    from services.audit_service import AuditWriteError
     try:
         with db_session() as db:
             # Re-check inside the transaction so two concurrent runs cannot both
@@ -243,9 +319,17 @@ def main() -> int:
                    VALUES (?, ?, 'admin', ?, ?, 1, 0)""",
                 (user_id, name, department, password_hash),
             )
+            if facility_id is not None:
+                _write_home_row(db, user_id, facility_id, args.facility.strip().upper())
     except DBIntegrityError:
         print(f"[fail] A user with id '{user_id}' already exists.", file=sys.stderr)
         return 1
+    except AuditWriteError as e:
+        print(f"[fail] The audit trail could not record the home facility, so nothing "
+              f"was saved: {e}", file=sys.stderr)
+        return 1
+    if facility_id is not None:
+        print(f"[ ok ] Home facility {args.facility.strip().upper()} set for '{user_id}'.")
 
     print(f"[ ok ] Admin account '{user_id}' created. Sign in with that ID and the password you set.")
 

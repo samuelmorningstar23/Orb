@@ -20,7 +20,9 @@
  *     confirmed (ruling ADT-S6 is not applied, so scope does not change);
  *   - 'No bed yet' admits to the ward awaiting a bed;
  *   - a ward not in bed setup can still be typed: the admission is kept
- *     unlinked until a bed manager links it.
+ *     unlinked until a bed manager links it. Not on a site with strict
+ *     locations on (adt-16, master.strict_locations), where the server
+ *     refuses a place not in bed setup, so it is not offered.
  * The bed's words (Available, Needs cleaning, Occupied) are the server's,
  * printed as sent. Nothing about who lies in an occupied bed reaches here.
  */
@@ -117,7 +119,8 @@ export default function BedPicker({
               {w.department ? `, ${w.department}` : ''}
             </option>
           ))}
-          <option value={TYPED_WARD}>A ward not in bed setup</option>
+          {/* adt-16: with strict locations on the server refuses a typed place. */}
+          {!master.strict_locations && <option value={TYPED_WARD}>A ward not in bed setup</option>}
         </select>
       </label>
 

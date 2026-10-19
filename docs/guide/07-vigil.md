@@ -64,9 +64,9 @@ Consumers outside this guide: the I-PASS handoff generator calls `get_patient_ri
 1. Every 5 seconds (`VITALS_INTERVAL_SECONDS = 5`, `server/config.py:156`), the app-lifespan task calls `run_vitals_bot(sio)` (`server/main.py:120-127`). The bot is a *simulator* (severity-aware random walk), in `ingestion` mode it is disabled and real feeds take over (`server/main.py:115-118`).
 2. The bot batch-INSERTs one new `vitals` row per admitted patient, carrying forward `consciousness` and `on_oxygen` from the previous row so the full 7-parameter NEWS2 can be scored (`server/services/bot_service.py:188-223`).
 3. For each patient it calls `compute_news2(...)` (`server/services/bot_service.py:199-200`) and emits a `vitals:update` socket event containing the raw vitals plus the `risk` dict (`server/services/bot_service.py:250-252`).
-4. `evaluate_and_dispatch_alerts` posts a formatted alert message into the patient's Relay case-room for any non-stable NEWS2 level, with a 2-minute cooldown that escalations bypass (`server/services/bot_service.py:259-437`), and publishes a `vigil.alert.critical` event on the in-process event bus (`server/services/bot_service.py:400-415`).
+4. `evaluate_and_dispatch_alerts` posts a formatted alert message into the patient's Relay case-room for any non-stable NEWS2 level, with a 2-minute cooldown that escalations bypass (`server/services/bot_service.py:814-1101`), and publishes a `vigil.alert.critical` event on the in-process event bus (`server/services/bot_service.py:411-426`).
 5. The event-bus subscriber `on_critical_vigil_alert` auto-opens a Sepsis Six bundle via `maybe_autostart`/`start_bundle` (`server/services/nervous_system_triggers.py:26-41`, registered at `server/services/nervous_system_triggers.py:228`).
-6. In the browser, `VigilPanel` listens on `vitals:update`: the roster patches each row's risk badge (throttled to one update per 2 s, `src/pages/panels/VigilPanel.tsx:34-50`), and the open detail view prepends the vital to its chart data (throttled to 5 s, `src/pages/panels/VigilPanel.tsx:251-275`).
+6. In the browser, `VigilPanel` listens on `vitals:update`: the roster patches each row's risk badge (throttled to one update per 2 s, `src/pages/panels/VigilPanel.tsx:322-354`), and the open detail view prepends the vital to its chart data (throttled to 5 s, `src/pages/panels/VigilPanel.tsx:253-277`).
 
 ```mermaid
 sequenceDiagram
@@ -93,19 +93,19 @@ sequenceDiagram
 
 ### Flow 2: opening a patient card
 
-1. Clicking a roster row sets `selectedPatientId`, mounting `PatientDetailView` (`src/pages/panels/VigilPanel.tsx:217-231`).
+1. Clicking a roster row sets `selectedPatientId`, mounting `PatientDetailView` (`src/pages/panels/VigilPanel.tsx:219-233`).
 2. The view fetches `GET /api/vigil/patients/{id}` via `getPatientDetail` (`src/api/client.ts:618-620`), which bundles patient row, latest 288 vitals, notes, scribe notes, risk history, lens analyses, medications, live risk, and trend in one payload (`server/routes/vigil_routes.py:524-581`).
 3. Server-side, the score of the chart's own latest row (`risk_for_row`, which scores that row rather than asking `get_patient_risk` to read the latest again) and `get_vitals_trend` are offloaded to a thread with `asyncio.to_thread` so CfC torch inference cannot block the event loop (`server/routes/vigil_routes.py:652-656`).
-4. The `AiNarrative` sub-component opens the SSE stream `GET /patients/{id}/analysis` and renders tokens as they arrive (`src/pages/panels/VigilPanel.tsx:1714-1745`).
-5. `CareBundleTimer` mounts beneath the command bar (`src/pages/panels/VigilPanel.tsx:891`) and starts its own 15 s poll of `/api/bundles/patient/{id}?active_only=true`.
+4. The `AiNarrative` sub-component opens the SSE stream `GET /patients/{id}/analysis` and renders tokens as they arrive (`src/pages/panels/VigilPanel.tsx:1722-1753`).
+5. `CareBundleTimer` mounts beneath the command bar (`src/pages/panels/VigilPanel.tsx:893`) and starts its own 15 s poll of `/api/bundles/patient/{id}?active_only=true`.
 
 ### Flow 3: a care bundle's life
 
-1. **Open**: either a clinician clicks "Start Sepsis Six" (`src/components/vigil/CareBundleTimer.tsx:164-165` → `POST /api/bundles/patient/{id}/start`) or Vigil auto-opens on NEWS2 ≥ 7 (`server/services/sepsis_bundle_service.py:167-180`). `start_bundle` is idempotent: an existing active bundle of the same type is returned instead of stacking a duplicate (`server/services/sepsis_bundle_service.py:47-54`).
+1. **Open**: either a clinician clicks "Start Sepsis Six" (`src/components/vigil/CareBundleTimer.tsx:164-165` → `POST /api/bundles/patient/{id}/start`) or Vigil auto-opens on NEWS2 ≥ 7 (`server/services/sepsis_bundle_service.py:174-187`). `start_bundle` is idempotent: an existing active bundle of the same type is returned instead of stacking a duplicate (`server/services/sepsis_bundle_service.py:47-54`).
 2. **Tick**: the widget renders a client-side 1 s clock off `triggered_at` and tints it red past 60 minutes (`src/components/vigil/CareBundleTimer.tsx:74-104`).
-3. **Complete elements**: each "Mark done" posts `POST /api/bundles/{id}/complete/{element}`, stamping the element's `*_at` column; when all six are stamped the bundle auto-transitions to `completed` (`server/services/sepsis_bundle_service.py:65-85`).
-4. **Decorate**: every read passes through `_decorate`, which computes per-element states (`pending`/`overdue`/`done_on_time`/`done_late`) and two distinct percentages, completion (done regardless of timing) vs. compliance (done *within* target) (`server/services/sepsis_bundle_service.py:122-163`).
-5. **Cancel**: `POST /api/bundles/{id}/cancel` flips `active → cancelled` only (`server/services/sepsis_bundle_service.py:88-94`).
+3. **Complete elements**: each "Mark done" posts `POST /api/bundles/{id}/complete/{element}`, stamping the element's `*_at` column; when all six are stamped the bundle auto-transitions to `completed` (`server/services/sepsis_bundle_service.py:114-143`).
+4. **Decorate**: every read passes through `_decorate`, which computes per-element states (`pending`/`overdue`/`done_on_time`/`done_late`) and two distinct percentages, completion (done regardless of timing) vs. compliance (done *within* target) (`server/services/sepsis_bundle_service.py:129-170`).
+5. **Cancel**: `POST /api/bundles/{id}/cancel` flips `active → cancelled` only (`server/services/sepsis_bundle_service.py:95-101`).
 
 Bundle status state machine: `active → completed` (automatic, all elements stamped) or `active → cancelled` (explicit). The schema also allows `expired` (`server/database.py:641`) but no code ever sets it.
 
@@ -262,7 +262,7 @@ Bundle status state machine: `active → completed` (automatic, all elements sta
 **Why it exists:** Rule-based, auditable, and instantly available, the "Phase 1" displayed risk while the CfC ensemble matures (`server/services/vigil_service.py:351-357`).
 **Data in/out:** scalar vitals in, dict out (shape kept compatible with the legacy MEWS output, docstring line 237).
 **Talks to:** called by `get_patient_risk` (line 376), the vitals bot (`server/services/bot_service.py:199`), ingestion (`server/services/ingestion_service.py:558`), downtime snapshots (`server/services/downtime_service.py:181`), command center (`server/services/command_center_service.py:163`), admission (`server/services/admission_service.py:149`), and the test suite.
-**Change guide (worked example, tighten the critical band to ≥6):** change `if score >= 7` at line 313 to `>= 6`. Knock-on effects: `maybe_autostart` still fires at raw ≥ 7 (`server/services/sepsis_bundle_service.py:173`) so bundles would lag the new critical band, decide whether to lower it too; the alert bridge keys off `level` so alert volume rises (`server/services/bot_service.py:275-276`); update `test_band_critical_at_seven` (`server/tests/test_news2.py:184-188`). Footgun: do NOT touch the normalized `score` divisor thinking it changes escalation, bands come from the raw integer only.
+**Change guide (worked example, tighten the critical band to ≥6):** change `if score >= 7` at line 313 to `>= 6`. Knock-on effects: `maybe_autostart` still fires at raw ≥ 7 (`server/services/sepsis_bundle_service.py:180`) so bundles would lag the new critical band, decide whether to lower it too; the alert bridge keys off `level` so alert volume rises (`server/services/bot_service.py:275-276`); update `test_band_critical_at_seven` (`server/tests/test_news2.py:184-188`). Footgun: do NOT touch the normalized `score` divisor thinking it changes escalation, bands come from the raw integer only.
 **Gotchas:** `on_oxygen` +2 applies in both scales (line 279); Scale 2 selection comes from the DB flag `patients.on_scale_2` (migration at `server/database.py:1167-1169`), which every scoring lane now reads, the simulator included (`server/services/bot_service.py:252`, fixed 2026-10-02, see Discrepancies #5).
 
 ### compute_mews: `server/services/vigil_service.py:404`
@@ -284,7 +284,7 @@ Bundle status state machine: `active → completed` (automatic, all elements sta
 **Signature:** `(patient_id, hours=6) → {"trend": "deteriorating"|"stable"|"improving"|"insufficient_data", hr_delta, sbp_delta, spo2_delta}`
 **Does:** Compares average HR/SBP/SpO2/RR of the last `hours` against the preceding equal window.
 **How it works:** 1. Two `AVG(...)` queries split at UTC ISO cutoffs (lines 418–438). 2. `insufficient_data` if either window empty (line 441–442). 3. Concern points: HR up > 10, SBP down > 10, SpO2 down > 2 (lines 450–453). 4. ≥2 concerns → deteriorating; 0 concerns and |ΔHR| < 5 → stable; else improving if SpO2 +1 or SBP +5, otherwise stable (lines 455–460).
-**Why it exists:** cheap direction-of-travel signal for the detail view banner (`src/pages/panels/VigilPanel.tsx:1009-1011`) and I-PASS.
+**Why it exists:** cheap direction-of-travel signal for the detail view banner (`src/pages/panels/VigilPanel.tsx:1011-1013`) and I-PASS.
 **Gotchas:** thresholds are heuristics, not literature-derived; cutoffs are ISO strings compared lexicographically against stored timestamps, consistent for bot-written rows (same `isoformat()` shape) but fragile against mixed formats.
 
 ### generate_patient_analysis: `server/services/vigil_service.py:572`
@@ -300,7 +300,7 @@ Bundle status state machine: `active → completed` (automatic, all elements sta
 **Signature:** `async (vitals_summary: str, risk_level: str, drivers: list) → str`
 **Does:** One-sentence next-step recommendation for critical alerts, non-streaming, priority 3 (background) in the LLM queue.
 **How it works:** single Ollama chat call, temperature 0.1, 64 tokens (lines 663–683); hard fallback string on any failure (line 686).
-**Talks to:** called only by the alert bridge for critical alerts (`server/services/bot_service.py:364-366`).
+**Talks to:** called only by the alert bridge for critical alerts (`server/services/bot_service.py:375-377`).
 **Gotchas:** a slow Ollama here delays the whole alert dispatch loop, it is awaited inline.
 
 ### server/services/sepsis_bundle_service.py: the bundle state machine
@@ -330,20 +330,20 @@ UTC-aware `datetime.now(timezone.utc)` and its `isoformat()`. All bundle timesta
 **Talks to:** `complete` route; the route converts `ValueError` to HTTP 400 (`server/routes/bundle_routes.py:49-52`).
 **Gotchas:** `actor_id` is accepted but never persisted (see Discrepancies #9); the f-string column interpolation at line 76 is safe only via the whitelist check at line 68.
 
-### cancel_bundle: `server/services/sepsis_bundle_service.py:88`
+### cancel_bundle: `server/services/sepsis_bundle_service.py:95`
 **Signature:** `(bundle_id) → bool`
 **Does:** `UPDATE ... SET status='cancelled' WHERE id=? AND status='active'`; returns whether a row changed. Completed/cancelled bundles cannot be cancelled again (rowcount 0 → route 404).
 
-### get_active_bundles / get_bundles_for_patient: `server/services/sepsis_bundle_service.py:97` / `:103`
+### get_active_bundles / get_bundles_for_patient: `server/services/sepsis_bundle_service.py:104` / `:110`
 **Signature:** `() → list[dict]` (all active, oldest first) / `(patient_id, active_only=False) → list[dict]` (newest first).
 **Does:** Decorated list reads.
 **Talks to:** `active_bundles` and `patient_bundles` routes; the command center wallboard calls `get_active_bundles` directly (`server/services/command_center_service.py:191-193`).
 **Gotchas:** `active_only` appends a constant SQL fragment, not user input, parameterization is preserved.
 
-### _parse: `server/services/sepsis_bundle_service.py:113`
+### _parse: `server/services/sepsis_bundle_service.py:120`
 `(ts) → datetime | None`; ISO parse with `Z→+00:00`, returning None on garbage so decoration never throws on bad rows.
 
-### _decorate: `server/services/sepsis_bundle_service.py:122`
+### _decorate: `server/services/sepsis_bundle_service.py:129`
 **Signature:** `(row: dict) → dict` (mutates and returns)
 **Does:** Attaches the computed timer state to a raw DB row, the heart of the state machine.
 **How it works:** 1. `elapsed_min` from `triggered_at` (falling back to now if unparseable, line 124). 2. Per element: stamped → `done_on_time` iff completion − trigger ≤ target, else `done_late` (breach); unstamped → `overdue` if `elapsed > target` (breach) else `pending` (lines 131–148). 3. Aggregates: `completed_count`, `total_count` (6), `completion_pct` = done/total, `compliance_pct` = **on-time**/total, `on_track` = zero breaches (lines 150–163). The comment at lines 156–160 is the key metric definition: a bundle finished late can be 100% complete but < 100% compliant, the headline pilot metric never lies about the 1-hour target.
@@ -351,7 +351,7 @@ UTC-aware `datetime.now(timezone.utc)` and its `isoformat()`. All bundle timesta
 **Data in/out:** DB row in; row + `elapsed_min, elements[], completed_count, total_count, completion_pct, compliance_pct, on_track` out (mirrored by the `CareBundle` TypeScript interface, `src/api/bundles.ts:40-58`).
 **Gotchas:** decoration happens at read time, an `overdue` element flips state as the clock passes target without any DB write, which is why the widget polls.
 
-### maybe_autostart: `server/services/sepsis_bundle_service.py:167`
+### maybe_autostart: `server/services/sepsis_bundle_service.py:174`
 **Signature:** `(patient_id, news2: dict) → dict | None`
 **Does:** Opens a sepsis bundle when `news2["raw_news2"] >= 7` (the RCP urgent-review threshold); idempotent and exception-swallowing so the monitoring path can never be broken by bundle failures (lines 171–180).
 **Talks to:** called by `on_critical_vigil_alert` (`server/services/nervous_system_triggers.py:35`); tested at `server/tests/test_sepsis_bundle.py:62-69`.
@@ -422,13 +422,13 @@ Router: `APIRouter(prefix="/api/vigil", tags=["vigil"])` (`server/routes/vigil_r
 ### get_qr_code: `server/routes/vigil_routes.py:861`
 **Signature:** `GET /api/vigil/patients/{patient_id}/qr` · `discharge.read` → `FileResponse` PNG
 **Does:** Serves the discharge QR image. The long docstring (lines 475–483) records the fixed vulnerability: this endpoint used to be **unauthenticated**, and the QR embeds the plaintext long-lived discharge access token, so anyone with a patient_id could recover the bearer secret guarding the discharge record. Now gated like its neighbors.
-**Talks to:** consumed via `getDischargeQrObjectUrl`, which fetches the image as an authenticated blob and hands the component an object URL (`src/api/client.ts:894-898`, used at `src/pages/panels/VigilPanel.tsx:306-323`), a plain `<img src>` cannot carry the Authorization header.
+**Talks to:** consumed via `getDischargeQrObjectUrl`, which fetches the image as an authenticated blob and hands the component an object URL (`src/api/client.ts:894-898`, used at `src/pages/panels/VigilPanel.tsx:308-325`), a plain `<img src>` cannot carry the Authorization header.
 
 ### create_patient: `server/routes/vigil_routes.py:885`
 **Signature:** `POST /api/vigil/patients` · `patient.write` → `{id, user_id, channel_id, temporary_password, message}`
 **Does:** Admits a new patient: creates a patient *user account* with a unique one-time password (never a shared default, the security note at lines 509–513 records the old "patient123" hole), the patient record, a Relay case-room channel, and an initial admission message (lines 503–544).
 **Data in/out:** `temporary_password` is returned exactly once; only its hash is stored (comment lines 546–547).
-**Talks to:** `auth.hash_password`; the created `channels` row is what the alert bridge later posts into (`server/services/bot_service.py:385-388`).
+**Talks to:** `auth.hash_password`; the created `channels` row is what the alert bridge later posts into (`server/services/bot_service.py:396-399`).
 **Gotchas:** IDs are `PAT`/`P`/`CH-` + uuid4 hex slices, human-typable, not sequential.
 
 ### server/routes/bundle_routes.py: the bundle REST surface
@@ -495,21 +495,21 @@ Maps the four server-computed element states to label + design-token color (pend
 
 ### src/pages/panels/VigilPanel.tsx: the dashboard
 
-### VigilPanel: `src/pages/panels/VigilPanel.tsx:66`
-**Signature:** `({role?: string|null}) → JSX`, default export, lazy-mounted by the clinician shell (`src/pages/ClinicianShell.tsx:203`, rendered inside an error boundary at line 453; see guide 01-app-shell).
+### VigilPanel: `src/pages/panels/VigilPanel.tsx:68`
+**Signature:** `({role?: string|null}) → JSX`, default export, lazy-mounted by the clinician shell (`src/pages/ClinicianShell.tsx:230`, rendered inside an error boundary at line 453; see guide 01-app-shell).
 **Does:** The roster screen: three/four metric cards, the Sage insights feed, sortable patient list; swaps itself for `PatientDetailView` when a row is clicked.
 **How it works:** 1. `loadPatients` on mount + 30 s interval (lines 26–30). 2. A `vitals:update` socket listener patches risk level/score into the matching row, throttled to one update per 2 s via a `useRef` timestamp (a ref, not state, so the throttle doesn't itself cause renders; lines 32–49). 3. `sortedPatients` is a `useMemo`: sort by `risk_score` desc ("stability") or admission date desc ("recent"), then a second stabilizing sort forces the hardcoded emergency patient (PAT007 + General Surgery) to the top (lines 62–81). 4. Header metrics count elevated/critical; admins also see a bed-occupancy card computed against a hardcoded 35 beds (lines 92–116).
 **Data in/out:** `Patient[]` from `GET /api/vigil/patients`.
 **Talks to:** `getPatients`, `socket` (guide 06-realtime), `SageInsightsFeed` (Sage guide), `PatientRow`, `PatientDetailView`.
 **Gotchas:** the socket patch uses `newVital.risk?.score || p.risk_score`, a legitimate score of exactly 0 is falsy and keeps the stale value (line 43); the 2 s throttle drops (not defers) intermediate events, acceptable because another arrives in 5 s.
 
-### isEmergency / PatientRow: `src/pages/panels/VigilPanel.tsx:371` / `:377`
+### isEmergency / PatientRow: `src/pages/panels/VigilPanel.tsx:373` / `:379`
 **Signature:** `(p: Patient) → boolean`; `memo(({patient, onClick}) → JSX)`
 **Does:** One roster row: risk dot (`patient-row__risk--{level}`), name (+EMERGENCY badge for the hardcoded case), bed, diagnosis, and the risk score rendered as a percentage (line 182).
 **Why memo:** the roster re-renders on every socket patch; `memo` skips rows whose props didn't change.
 **Gotchas:** `(p.risk_score * 100).toFixed(0)%` displays the normalized NEWS2 *index* as a percentage, exactly what the backend comment warns against presenting as a probability (`server/services/vigil_service.py:322-329`). Discrepancies #11.
 
-### PatientDetailView: `src/pages/panels/VigilPanel.tsx:437`
+### PatientDetailView: `src/pages/panels/VigilPanel.tsx:439`
 **Signature:** `({patientId, onBack}) → JSX`
 **Does:** The patient "command center": sticky command bar, care-bundle timer, admission timeline, risk gauge + AI narrative, lab trends, and eight modals (discharge, note view/add, report view, notes history, reports history, diag reports, lab reports, meds, med add, lab graph) plus print portals.
 **How it works (state and effects):**
@@ -528,19 +528,19 @@ Maps the four server-computed element states to label + design-token color (pend
 **Render highlights:** command bar with per-vital warn thresholds and hover sparklines (`renderSparkline`, lines 736–788, an inline SVG polyline over the last ≤40 points); `<CareBundleTimer patientId>` (line 877); timeline with rich hover tooltips whose items open the report modal (lines 882–979); risk panel with `RiskGauge`, driver list, trend banner, `AiNarrative` (lines 981–1000); lab grid with hover mini-charts and a Recharts `LineChart` deep-dive modal including a green reference band (`ReferenceArea`, lines 1503–1556); discharge modal embedding `DischargePrintView` and the QR (lines 1078–1155); print views injected via `createPortal(…, document.body)` so `window.print()` isn't clipped by `display:none` ancestors (lines 1610–1631).
 **Why it exists:** one screen answering "how is this patient, what happened, what do we do next" without navigation.
 **Talks to:** `getPatientDetail`, `dischargePatient`, `addClinicalNote`, `addMedication`, `getPatientForecast`, `getDischargeQrObjectUrl`, `socket`, `useActivePatient`, `CareBundleTimer`, `HandoffPrintView`/`DischargePrintView`, Recharts.
-**Change guide (worked example, show raw NEWS2 next to the percentage):** the detail payload already carries `risk.raw_news2` (from `compute_news2`'s return); render it beside the badge at `src/pages/panels/VigilPanel.tsx:823` (`{risk.raw_news2 != null ? \`NEWS2 ${risk.raw_news2}\` : ''}`) and in `RiskGauge`'s label. Knock-on: socket-replaced risk (line 264) also has `raw_news2` (the bot emits full `compute_news2` output), so live updates keep working. Footgun: `risk_history` rows from the DB store only the normalized score, historical raw values aren't persisted.
+**Change guide (worked example, show raw NEWS2 next to the percentage):** the detail payload already carries `risk.raw_news2` (from `compute_news2`'s return); render it beside the badge at `src/pages/panels/VigilPanel.tsx:825` (`{risk.raw_news2 != null ? \`NEWS2 ${risk.raw_news2}\` : ''}`) and in `RiskGauge`'s label. Knock-on: socket-replaced risk (line 264) also has `raw_news2` (the bot emits full `compute_news2` output), so live updates keep working. Footgun: `risk_history` rows from the DB store only the normalized score, historical raw values aren't persisted.
 **Gotchas:** `data` is `any` throughout, no compile-time contract with the route; the chart-series socket merge compares against `prev.vitals[0].timestamp`, so a burst of history loaded newest-first is required (the route guarantees `ORDER BY timestamp DESC`, `server/routes/vigil_routes.py:129`).
 
-### VitalCard: `src/pages/panels/VigilPanel.tsx:2083`
+### VitalCard: `src/pages/panels/VigilPanel.tsx:2091`
 **Signature:** `({label, value, unit, icon, warn}) → JSX`
 **Does:** Legacy small vital tile (icon/value/unit/label with a warn variant). Defined but not referenced anywhere in the current render tree, dead code kept around.
 
-### RiskGauge: `src/pages/panels/VigilPanel.tsx:2188`
+### RiskGauge: `src/pages/panels/VigilPanel.tsx:2196`
 **Signature:** `({score: number (0–1), level: string}) → JSX`
 **Does:** SVG donut: circumference `2π·40`, `strokeDashoffset = C·(1−score)` animated over 1 s, color keyed to level (red/amber/green literals, line 1655), center label shows `{pct}%` + level.
 **Gotchas:** same percentage-presentation caveat as `PatientRow`.
 
-### AiNarrative: `src/pages/panels/VigilPanel.tsx:2222`
+### AiNarrative: `src/pages/panels/VigilPanel.tsx:2230`
 **Signature:** `({patientId, onNarrativeReady?}) → JSX`
 **Does:** Streams the SSE analysis into a growing text block with shimmer placeholders, an expandable full-screen "glass window" portal, and a callback that hands the finished text up (the parent reuses it in discharge/handoff print views, lines 1111–1112, 1618).
 **How it works:** 1. The stream effect creates an `AbortController` and a `cancelled` flag; cleanup aborts the fetch and suppresses late state writes, the canonical stale-closure/unmount guard (lines 1695–1726). 2. `getPatientAnalysis` (from `src/api/client.ts:833-876`) reads the SSE stream, accumulates `data.content` chunks, invokes `onChunk` with the running full text, skips `[DONE]`, and *drops* unparseable frames rather than injecting parse-error text into a clinician-facing narrative (comment `src/api/client.ts:866-871`). 3. A body-scroll lock effect while expanded (lines 1689–1693). 4. Error state renders a muted "AI analysis unavailable" line (lines 1750–1754).
@@ -592,7 +592,7 @@ Maps the four server-computed element states to label + design-token color (pend
 | POST | `/api/bundles/{bundle_id}/complete/{element}` | alert.read |
 | POST | `/api/bundles/{bundle_id}/cancel` | alert.read |
 
-**Socket events** (transport owned by guide 06-realtime): `vitals:update`, server→client broadcast, no room, emitted every 5 s per patient by the bot (`server/services/bot_service.py:252`) and by ingestion (`server/services/ingestion_service.py:600`); payload `{patient_id, timestamp, heart_rate, systolic_bp, diastolic_bp, spo2, temperature, respiratory_rate, consciousness, on_oxygen, risk}` where `risk` is the full `compute_news2` dict. `message:new`, server→case-room, carries Vigil alert messages (`server/services/bot_service.py:432`); owned by Relay but originated here.
+**Socket events** (transport owned by guide 06-realtime): `vitals:update`, server→client broadcast, no room, emitted every 5 s per patient by the bot (`server/services/bot_service.py:252`) and by ingestion (`server/services/ingestion_service.py:600`); payload `{patient_id, timestamp, heart_rate, systolic_bp, diastolic_bp, spo2, temperature, respiratory_rate, consciousness, on_oxygen, risk}` where `risk` is the full `compute_news2` dict. `message:new`, server→case-room, carries Vigil alert messages (`server/services/bot_service.py:443`); owned by Relay but originated here.
 
 **DB tables** (schema in guide 04-database-schema): reads/writes `vitals` (`server/database.py:94`), `risk_scores` (`:104`, read + pruned here, written by admission/ingestion/seed), `care_bundles` (`:623`), `patients` (incl. `on_scale_2`), `clinical_documents`, `scribe_notes`, `lens_analyses`, `medications`, `discharge_summaries`, `users`, `channels`, `messages`, `admissions`.
 
@@ -625,8 +625,8 @@ Maps the four server-computed element states to label + design-token color (pend
 6. **Unauthenticated debug endpoint**, `GET /api/vigil/test-stream` has no auth dependency (`server/routes/vigil_routes.py:13-33`) and streams a hardcoded fake-patient sentence. Harmless content, but it is the only open route on an otherwise fully RBAC-gated router and should be removed.
 7. **Timestamp-format mismatch in the vitals window**, `get_patient_vitals` compares stored ISO `T`-separator timestamps against SQLite's `datetime('now','-Nh')` space-separator format (`server/routes/vigil_routes.py:244-248`). Lexicographically `'T' (0x54) > ' ' (0x20)`, so any row from the *same calendar day* as the cutoff passes the filter even if older than the window, `?hours=6` can return up to a full day.
 8. **Trainer checkpoints on loss despite its own advice**, the comment says a clinical model "must be judged on AUROC/AUPRC" (`server/scripts/train_vigil_cfc.py:326-328`), but the save condition remains `vl < best_val` (line 333); metrics are recorded in the checkpoint but do not gate it. Related: acknowledged train/serve MAP definition skew (lines 57–62) and pickle-based `torch.load(weights_only=False)` RCE exposure (`server/services/vigil_service.py:77-84`).
-9. **`actor_id` accepted but dropped**, `complete_element(..., actor_id=...)` never persists who completed the element (`server/services/sepsis_bundle_service.py:65-85`); attribution exists only in the route's audit event (`server/routes/bundle_routes.py:53-60`). Also `cancel` writes no audit event at all, and the `expired` bundle status in the schema (`server/database.py:641`) is never set by any code.
+9. **`actor_id` accepted but dropped**, `complete_element(..., actor_id=...)` never persists who completed the element (`server/services/sepsis_bundle_service.py:114-143`); attribution exists only in the route's audit event (`server/routes/bundle_routes.py:53-60`). Also `cancel` writes no audit event at all, and the `expired` bundle status in the schema (`server/database.py:641`) is never set by any code.
 10. **Write endpoints behind a read-named permission**, bundle start/complete/cancel require `alert.read` (`server/routes/bundle_routes.py:29,48,65`); note-add requires `patient.read_all` (`server/routes/vigil_routes.py:282`). Both are mutations gated by permissions whose names imply read-only.
-11. **Normalized index displayed as a percentage**, the backend documents `score` as "NOT a calibrated probability" and says the UI "must label it as such" (`server/services/vigil_service.py:322-329`), yet the roster, bed badge, and risk gauge all render `score*100` with a `%` sign (`src/pages/panels/VigilPanel.tsx:186,809,1672`).
-12. **Demo hardcoding in the UI**, patient `PAT007`/General Surgery is force-pinned to the top with an EMERGENCY badge (`src/pages/panels/VigilPanel.tsx:74-80,158`); comorbidity tags are fabricated from an MRN hash with no "estimated" disclaimer (lines 524–527), unlike lab trends which do get an amber Estimated badge (lines 1011–1018); bed occupancy divides by a hardcoded 35 (line 113). Additionally the roster's socket patch `newVital.risk?.score || p.risk_score` keeps a stale score when the new score is exactly 0 (line 43), and `VitalCard` (line 1638) is dead code.
+11. **Normalized index displayed as a percentage**, the backend documents `score` as "NOT a calibrated probability" and says the UI "must label it as such" (`server/services/vigil_service.py:322-329`), yet the roster, bed badge, and risk gauge all render `score*100` with a `%` sign (`src/pages/panels/VigilPanel.tsx:188,811,1680`).
+12. **Demo hardcoding in the UI**, patient `PAT007`/General Surgery is force-pinned to the top with an EMERGENCY badge (`src/pages/panels/VigilPanel.tsx:76-82,160`); comorbidity tags are fabricated from an MRN hash with no "estimated" disclaimer (lines 524–527), unlike lab trends which do get an amber Estimated badge (lines 1011–1018); bed occupancy divides by a hardcoded 35 (line 113). Additionally the roster's socket patch `newVital.risk?.score || p.risk_score` keeps a stale score when the new score is exactly 0 (line 43), and `VitalCard` (line 1638) is dead code.
 13. **Bundle target comment drift**, the schema comment says "1-hour / 3-hour targets" (`server/database.py:626`) but every coded element target is 60 minutes (`server/services/sepsis_bundle_service.py:24-29`); `ElapsedTimer`'s red tint also hardcodes 60 min rather than reading per-element targets (`src/components/vigil/CareBundleTimer.tsx:84-85`).

@@ -171,7 +171,7 @@ which one guards each route:
    staffer) or `Depends(require_permission(...))` / `Depends(require_role(...))`
    (specific capability). This is the vast majority of routes.
 2. **Patient self-scope**, `Depends(require_patient_self())`
-   (`permissions.py:225`): the caller must have role `patient`; the service
+   (`permissions.py:234`): the caller must have role `patient`; the service
    layer additionally scopes every query to that patient's own `user_id`. Only
    the `/api/bridge/*` routes use this.
 3. **Machine-to-machine API key**, the `X-API-Key` header, constant-time
@@ -274,22 +274,22 @@ current even if the token is stale, this is deliberate and load-bearing for
 authz. The `device_id` it may attach is for **audit metadata only**; the actor is
 always `user["id"]`, never the device (`auth.py:472-473`).
 
-#### require_permission: `server/permissions.py:377`
+#### require_permission: `server/permissions.py:386`
 **Signature:** `(*permissions) -> dependency`
 **Does:** builds a dependency that requires the caller's role to hold **all**
 listed permissions.
-**How it works:** the inner `_checker` (`permissions.py:389`) resolves
+**How it works:** the inner `_checker` (`permissions.py:398`) resolves
 `get_current_user`, computes `missing = permissions - ROLE_PERMISSIONS[role]`,
 and if anything is missing writes a `permission_denied` audit event and raises
 `403` with a structured body (`{error, message, required, missing}`).
 **Why it exists:** least-privilege enforcement in one auditable place, instead of
 scattered `if role == ...` checks.
 **Talks to:** `ROLE_PERMISSIONS` (`permissions.py:105`), `log_audit_event`.
-**Gotchas:** the 403 body here is a **dict** (`permissions.py:429`), whereas most
+**Gotchas:** the 403 body here is a **dict** (`permissions.py:438`), whereas most
 other errors use a string `detail`. The frontend must handle both shapes, see
 Conventions.
 
-#### require_patient_self: `server/permissions.py:524`
+#### require_patient_self: `server/permissions.py:533`
 **Signature:** `() -> dependency`
 **Does:** requires role `patient`; returns the user dict for self-scoped queries.
 **Gotchas:** this only checks the *role*, not that a given `patient_id` in the
@@ -739,7 +739,7 @@ status to signal parse outcome**: 200 parsed/duplicate, 207 partial, 422 failed
 
 | Method | Path | Auth | Request | Response | Purpose | Handler |
 |---|---|---|---|---|---|---|
-| POST | `/api/admissions/admit` | perm: patient.write | `AdmissionRequest` (large model, `admission_routes.py:10`) | admission result | Transactional admission across modules. | `admission_routes.py:54` |
+| POST | `/api/admissions/admit` | perm: patient.write | `AdmissionRequest` (large model, `admission_routes.py:11`) | admission result | Transactional admission across modules. | `admission_routes.py:59` |
 
 **audit_routes.py, `/api/audit`**
 

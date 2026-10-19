@@ -35,7 +35,7 @@ The panel's own module docstring states it in the first five lines (`src/pages/p
 
 ```mermaid
 graph TD
-  SHELL[ClinicianShell.tsx:551<br/>tab 'round'] --> PANEL[RoundPanel.tsx:84]
+  SHELL[ClinicianShell.tsx:581<br/>tab 'round'] --> PANEL[RoundPanel.tsx:84]
   PANEL -->|getShiftBoard| B1[/nurse/board, NEWS2, meds, allergies/]
   PANEL -->|getPatients| B2[/vigil/patients, admission day, risk/]
   PANEL -->|getSageInsights| B3[/sage/insights/]
@@ -95,7 +95,7 @@ graph TD
 
 ### Flow 1: mounting a round
 
-1. `ClinicianShell` renders `<RoundPanel />` inside a `PanelErrorBoundary` when the `round` tab is selected (`src/pages/ClinicianShell.tsx:551-555`). The panel is **lazily imported** (`src/pages/ClinicianShell.tsx:120`) so `Round.css` and the whole subsystem stay out of the main bundle.
+1. `ClinicianShell` renders `<RoundPanel />` inside a `PanelErrorBoundary` when the `round` tab is selected (`src/pages/ClinicianShell.tsx:581-585`). The panel is **lazily imported** (`src/pages/ClinicianShell.tsx:121`) so `Round.css` and the whole subsystem stay out of the main bundle.
 2. The mount effect (`src/pages/panels/RoundPanel.tsx:276`) runs three things in order: **purge** every other clinician's and every other day's round from this device (`purgeForeignRoundState`), **restore** this clinician's round for today (`loadRoundState`), then load the ward data.
 3. `loadRoster` (`src/pages/panels/RoundPanel.tsx:159`) fires **three requests in parallel through `Promise.allSettled`**, the ward board, the patient board, and Sage insights, so one failure cannot cancel the others.
 4. `mergeRoster` fuses the two rosters and `buildQueue` sorts them into the corridor walk.
@@ -662,7 +662,7 @@ The docstring (`:1-21`) states the PHI posture: transcription is **always** the 
 **Signature:** `useCallback((e: React.KeyboardEvent<HTMLDivElement>) => void)`
 **Does:** `S` = seen, `K` = skip, `N` = next, `P` = previous.
 **On screen:** the printed legend under the buttons (`:701-703`) and the small key caps inside the two big buttons (`:689`, `:697`).
-**Why it is bound to the panel root and not to `window` (`:419-421`):** this panel **stays mounted (hidden)** when the clinician switches tabs, the shell toggles `display`, not the tree (`src/pages/ClinicianShell.tsx:552`). A window-level listener would let a stray "n" typed in Messages silently advance the round.
+**Why it is bound to the panel root and not to `window` (`:419-421`):** this panel **stays mounted (hidden)** when the clinician switches tabs, the shell toggles `display`, not the tree (`src/pages/ClinicianShell.tsx:582`). A window-level listener would let a stray "n" typed in Messages silently advance the round.
 **The two other guards:** modifier keys and already-defaulted events are ignored (`:423`); any event from an `INPUT`, `TEXTAREA`, `SELECT` or contenteditable is ignored (`:424-428`), so typing "skip antibiotics" in the plan box does not skip three patients.
 **Breaks if you change it:** move it to `window` and the round advances from other panels. Drop the input guard and dictating a plan mutates the queue under the doctor. Pinned by `RoundPanel.test.tsx:360` and `:375`.
 
@@ -710,14 +710,14 @@ The docstring (`:1-21`) states the PHI posture: transcription is **always** the 
 **Signature:** `{id: 'round', label: 'Ward Round', pillar: 'Ward Round', icon: …}`
 **Does:** The sidebar item.
 **On screen:** the "Ward Round" tab, with an icon drawn as **beds along a corridor walked in order** (`:400-404`), the comment says it: the round is a route, not a list. Localised at `src/i18n/locales/en.json:21` and `hi.json:21`, with the description "Bed-by-bed ward round with one-screen summary & dictation" (`en.json:52`).
-**Breaks if you change it:** the `id` is also the `Tab` union member (`src/shellConfig.tsx:31`), the panel `id`/`aria-labelledby` pair (`src/pages/ClinicianShell.tsx:552`) and the `shouldRenderPanel` key. Renaming it in one place breaks the tab-panel association silently, the panel renders, but screen readers lose the relationship.
+**Breaks if you change it:** the `id` is also the `Tab` union member (`src/shellConfig.tsx:31`), the panel `id`/`aria-labelledby` pair (`src/pages/ClinicianShell.tsx:582`) and the `shouldRenderPanel` key. Renaming it in one place breaks the tab-panel association silently, the panel renders, but screen readers lose the relationship.
 
-#### The lazy import and the panel branch: `src/pages/ClinicianShell.tsx:120` / `:551-555`
+#### The lazy import and the panel branch: `src/pages/ClinicianShell.tsx:121` / `:581-585`
 **Does:** Loads the panel and its CSS on demand, wrapped in a `PanelErrorBoundary`.
 **On screen:** the round itself. Note the branch keeps the panel **mounted and hidden** (`display: 'none'`) once visited, which is exactly why `onKeyDown` is bound to the panel root rather than to `window`.
 **Breaks if you change it:** import it eagerly and 1,200 lines of round CSS plus the whole subsystem land in the main bundle for every user including nurses, who do not have this tab. Remove the error boundary and a render error in one column takes down the shell.
 
-#### Role tab order: `src/shellConfig.tsx:674` (doctors), `:856` (surgeons)
+#### Role tab order: `src/shellConfig.tsx:682` (doctors), `:856` (surgeons)
 **Does:** Ward Round sits **third** for doctors, after Today and the patient roster, and **second** for surgeons, after the roster. Nurses do not get the item at all.
 **On screen:** the vertical position of the "Ward Round" item in the left sidebar. The app opens on each role's `home` (`getLandingTab`, `:1015`), which is `today` for doctors (`:833`) and `vigil` for surgeons (`:854`), so tab order no longer decides the landing panel.
 **Why (stated at `:662-671`):** a doctor is not always rounding, it is roughly an hour of a long day, so the round is one tap away and never the thing the app opens on.

@@ -39,7 +39,15 @@ Built in adt-6b (W7-C):
                                             patient.write, because the treating
                                             department goes back
 
-Every move carries an Idempotency-Key and expected_bed_id (409 'state_changed' on a mismatch) and writes its patient_movement audit in the same transaction; a transfer that changes the treating department also writes clinical_access 'patient_transferred' there. A ward clerk never changes the treating department (ruling ADT-S8, held): the clerk holds adt.bed, not adt.transfer.
+Built in adt-17b (W9-A):
+  POST /ordered-transfers                   the ward clerk (adt.bed, own department):
+                                            carry out a transfer a doctor ordered, naming
+                                            that doctor (ruling ADT-S8 (b), build default)
+
+Every move carries an Idempotency-Key and expected_bed_id (409 'state_changed' on a mismatch) and writes its patient_movement audit in the same transaction; a transfer that changes the treating department also writes clinical_access 'patient_transferred' there. A ward clerk never changes the treating department on POST /transfers (the clerk holds adt.bed, not adt.transfer); the clerk's own lane is POST /ordered-transfers, which needs the ordering doctor named (ADT-S8 (b)).
+
+After every move commits the bed boards hear a content-free 'adt:changed'
+{ward_id} (adt-19, services/adt/live.py); a refusal or a replay pushes nothing.
 
 Every handler is a plain def (FastAPI threadpools it); the work runs in one
 immediate session in services/adt/core.assign_bed or services/adt/transfer.py.
@@ -56,12 +64,21 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from permissions import ADT_BED, ADT_TRANSFER, PATIENT_WRITE, has_permission, require_any_permission
-from routes.adt.end_stay import _meta, _scoped_admission
+from routes.adt.end_stay import _meta, _scoped_admission, require_ward_clerk
+from services.adt import clerk as adt_clerk
 from services.adt import core as adt_core
 from services.adt import transfer as adt_transfer
+from services.adt.live import notify_adt_changed
 from services.audit_service import AuditWriteError
 
 router = APIRouter()
+
+
+def _pushed(answer: dict, *admission_ids: str) -> dict:
+    """adt-19: after a move committed (not a replay), the bed boards refetch."""
+    if not answer.get("replayed"):
+        notify_adt_changed(answer=answer, admission_ids=admission_ids)
+    return answer
 
 
 class AssignBedIn(BaseModel):
@@ -153,7 +170,7 @@ def assign_admission_bed(
     if not placed.get("replayed"):
         # adt-7: the bed's housekeeping record follows, best-effort.
         adt_transfer.sync_housekeeping_after_commit()
-    return placed
+    return _pushed(placed, admission_id)
 
 
 def _audit_unavailable(what: str) -> HTTPException:
@@ -280,13 +297,14 @@ def change_admission_bed(
         return replay
     _scoped_admission(admission_id, user, request)
     try:
-        return adt_transfer.change_bed(
+        moved = adt_transfer.change_bed(
             admission_id, actor=user, reason=body.reason, idempotency_key=idempotency_key,
             request_meta=_meta(request), **_move_kwargs(body))
     except adt_core.AdtError as err:
         raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
     except AuditWriteError:
         raise _audit_unavailable("move")
+    return _pushed(moved, admission_id)
 
 
 @router.post("/transfers")
@@ -314,7 +332,7 @@ def create_adt_transfer(
         return replay
     _scoped_admission(body.admission_id, user, request)
     try:
-        return adt_transfer.transfer(
+        moved = adt_transfer.transfer(
             body.admission_id, actor=user, to_department=body.to_department,
             reason=body.reason, awaiting_bed=body.awaiting_bed,
             keep_location=body.keep_location, idempotency_key=idempotency_key,
@@ -323,6 +341,54 @@ def create_adt_transfer(
         raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
     except AuditWriteError:
         raise _audit_unavailable("transfer")
+    return _pushed(moved, body.admission_id)
+
+
+class OrderedTransferIn(TransferIn):
+    """A transfer the ward clerk carries out on a doctor's order (ADT-S8 (b)).
+    The transfer's own fields, plus the doctor who ordered it."""
+    #: The doctor who ordered the transfer: the patient's attending doctor or
+    #: a doctor of the patient's current department. Recorded as named by the
+    #: clerk, never as the doctor's own act.
+    ordered_by: str
+
+
+@router.post("/ordered-transfers")
+def create_ordered_transfer(
+    body: OrderedTransferIn,
+    request: Request,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    user: dict = Depends(require_ward_clerk),
+):
+    """The ward clerk carries out a transfer a doctor ordered: another
+    treating department, through the same transfer writer as POST /transfers
+    (rule C, the bed lock, the cleaning rules, the boarder acknowledgement,
+    patient_movement and clinical_access 'patient_transferred'), plus the
+    ordering doctor checked (422 ordering_doctor_required, _invalid or
+    _not_treating) and named in the movement's reason, a fail-closed
+    clinical_access 'transfer_order_carried_out' row naming the doctor and the
+    clerk, and a case-room line. A move inside one department is 409
+    no_department_change (a bed change needs no order). The patient must be
+    in the clerk's department (404 otherwise, audited). The sender's own retry
+    with the same Idempotency-Key answers that it was replayed, with no
+    patient field, even once the chart has been handed over."""
+    replay = adt_transfer.replayed_answer(idempotency_key, admission_id=body.admission_id,
+                                          actor=user, movement_type="transfer")
+    if replay is not None:
+        return replay
+    _scoped_admission(body.admission_id, user, request)
+    try:
+        moved = adt_clerk.ordered_transfer(
+            body.admission_id, actor=user, ordered_by=body.ordered_by,
+            to_department=body.to_department, reason=body.reason,
+            awaiting_bed=body.awaiting_bed, keep_location=body.keep_location,
+            idempotency_key=idempotency_key, request_meta=_meta(request),
+            **_move_kwargs(body))
+    except adt_core.AdtError as err:
+        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
+    except AuditWriteError:
+        raise _audit_unavailable("transfer")
+    return _pushed(moved, body.admission_id)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -378,7 +444,7 @@ def swap_admission_beds(
     if "expected_second_bed_id" in body.model_fields_set:
         kwargs["expected_second_bed_id"] = body.expected_second_bed_id
     try:
-        return adt_transfer.swap_beds(
+        swapped = adt_transfer.swap_beds(
             body.first_admission_id, body.second_admission_id, actor=user, reason=body.reason,
             moved_at=body.moved_at, notes=body.notes,
             out_of_service_reason=body.out_of_service_reason,
@@ -392,6 +458,7 @@ def swap_admission_beds(
         raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
     except AuditWriteError:
         raise _audit_unavailable("swap")
+    return _pushed(swapped, body.first_admission_id, body.second_admission_id)
 
 
 class CorrectionIn(BaseModel):
@@ -443,7 +510,7 @@ def correct_admission_movement(
     if "expected_bed_id" in body.model_fields_set:
         kwargs["expected_bed_id"] = body.expected_bed_id
     try:
-        return adt_transfer.correct_movement(
+        corrected = adt_transfer.correct_movement(
             movement_id, actor=user, reason=body.reason,
             may_change_department=may_change_department, notes=body.notes,
             out_of_service_reason=body.out_of_service_reason,
@@ -457,3 +524,4 @@ def correct_admission_movement(
         raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
     except AuditWriteError:
         raise _audit_unavailable("correction")
+    return _pushed(corrected, found["admission_id"])

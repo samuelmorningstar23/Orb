@@ -11,7 +11,7 @@ Built 2026-08-07.
 | | Column | Set by | Used for |
 |---|---|---|---|
 | **Tablet PIN** | `users.device_pin_hash` | `POST /api/auth/device-pin` (self) · `POST /api/auth/device-pin/{user_id}` (admin) | Signing in to a ward tablet. This chapter. |
-| **Signing PIN** | `users.pin_hash` | `POST /api/admin/users/{user_id}/pin` (`server/routes/admin_users_routes.py:334`) | Co-signing an agentic medication order. Guide 08-relay / guide 14-helix. |
+| **Signing PIN** | `users.pin_hash` | `POST /api/admin/users/{user_id}/pin` (`server/routes/admin_users_routes.py:973`) | Co-signing an agentic medication order. Guide 08-relay / guide 14-helix. |
 
 They are deliberately separate. If unlocking the tablet used the same secret, anyone who shoulder-surfs an unlock typed thirty times a shift on a shared screen could also countersign a medication order in that nurse's name, two independent controls collapsed into one. Migration 12's docstring says exactly this at `server/migrations.py:743-751`.
 
@@ -60,7 +60,7 @@ graph TD
 | `server/migrations.py` | 1719 | Migration 12, `_m12_device_pin_identity` (`:713`), four `users` columns plus `enrolled_devices` (`:772`). |
 | `src/api/deviceAuth.ts` | 85 | The typed client: `DeviceStatus` (`:20`), `getDeviceStatus` (`:36`), `bindDevice` (`:49`), `pinLogin` (`:69`), `setOwnDevicePin` (`:80`). |
 | `src/pages/Login.tsx` | 506 | The only screen that uses any of it. PIN state (`:30`–`:37`), device probe (`:42`), `pinMode` (`:71`), `applyLoginResponse` (`:81`), `handlePinLogin` (`:106`), `handleBindDevice` (`:132`), `handleSubmit` (`:210`), the PIN form (`:297`), the two toggle buttons (`:439`, `:459`). |
-| `src/App.tsx` | 201 | `authMethod` on the user (`:35`), `IDLE_LOCK_MS` / `SHARED_DEVICE_IDLE_MS` (`:51`/`:52`), the shared-device branch (`:99`-`:105`), `logout` (`:146`). |
+| `src/App.tsx` | 201 | `authMethod` on the user (`:32`), `IDLE_LOCK_MS` / `SHARED_DEVICE_IDLE_MS` (`:51`/`:52`), the shared-device branch (`:99`-`:105`), `logout` (`:146`). |
 | `src/hooks/useIdleTimer.ts` | 87 | `useIdleTimer` (`:20`). |
 | `src/pages/Login.pin.test.tsx` | n/a | The behavioural spec for the screen: pad shown only when enrolled, fallback always available, the async-race escape hatch. |
 
@@ -469,7 +469,7 @@ This file predates the tablet feature and is used by it only for hashing. Everyt
 
 ### Files: `src/App.tsx` and `src/AppRoot.tsx`: the shared-device session rules
 
-#### `User.authMethod`: `App.tsx:23`
+#### `User.authMethod`: `App.tsx:32`
 **Signature:** `authMethod?: 'password' | 'pin'`
 **Does:** Records how this session was created. `'pin'` means a shared, enrolled ward tablet.
 **On screen:** invisible, but it is the switch for every rule below.
@@ -532,7 +532,7 @@ This file predates the tablet feature and is used by it only for hashing. Everyt
 
 2. **There is no "set my tablet PIN" screen.** `setOwnDevicePin` exists at `src/api/deviceAuth.ts:80` and no component imports it; `POST /api/auth/device-pin/{user_id}` (admin provisioning) has no caller either. So in practice a nurse cannot get a tablet PIN through the UI at all, the whole feature is currently reachable only through the API.
 
-3. **The audit's mapping of `/api/admin/users/{id}/pin` to this feature is wrong.** That endpoint (`server/routes/admin_users_routes.py:334`) sets `users.pin_hash`, the *signing* PIN for agentic medication orders. It is a different credential with a different threat model. Documented here only so nobody wires it to the tablet.
+3. **The audit's mapping of `/api/admin/users/{id}/pin` to this feature is wrong.** That endpoint (`server/routes/admin_users_routes.py:973`) sets `users.pin_hash`, the *signing* PIN for agentic medication orders. It is a different credential with a different threat model. Documented here only so nobody wires it to the tablet.
 
 4. **`enrolled_devices.last_seen_at` is only stamped on a *successful* PIN login.** It is written inside `_clear_pin_failures` (`auth_routes.py:265`), which runs on the success path of `pin_login` and nowhere else. So the column tracks "last successful PIN sign-in", not "last contact", a tablet used all day by someone who signs in once shows a timestamp from that morning, and a tablet whose users only ever fail shows nothing at all. `_device_public` reports it at `auth_routes.py:992`.
 

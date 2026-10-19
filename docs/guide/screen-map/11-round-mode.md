@@ -12,12 +12,12 @@ cited wherever a visible value comes out of them. Styling is `src/components/rou
 (1150 lines).
 
 **How to get to this screen.** Left nav → **Ward Round**. The nav entry is declared at
-`src/pages/ClinicianShell.tsx:58-67`, `id: 'round', label: 'Ward Round', pillar: 'Ward Round'`, 
+`src/pages/ClinicianShell.tsx:59-68`, `id: 'round', label: 'Ward Round', pillar: 'Ward Round'`, 
 with a "three beds along a corridor plus a tick" SVG at `:61-66`. The visible label is not that
-`label` field: the nav renders `t('nav.round')` at `ClinicianShell.tsx:565`, which resolves through
+`label` field: the nav renders `t('nav.round')` at `ClinicianShell.tsx:595`, which resolves through
 `src/i18n/locales/en.json:7` → `"round": "Ward Round"` (Hindi in `hi.json`). The tooltip is
-`t('nav.round') + ' · Orb Ward Round'` (`ClinicianShell.tsx:562`). The panel is lazily imported at
-`ClinicianShell.tsx:116` and mounted at `ClinicianShell.tsx:515-518`:
+`t('nav.round') + ' · Orb Ward Round'` (`ClinicianShell.tsx:592`). The panel is lazily imported at
+`ClinicianShell.tsx:117` and mounted at `ClinicianShell.tsx:545-548`:
 
 ```
 {shouldRenderPanel('round') && (
@@ -27,17 +27,17 @@ with a "three beds along a corridor plus a tick" SVG at `:61-66`. The visible la
 
 `RoundPanel` takes **no props** (`RoundPanel.tsx:77`).
 
-**Who sees the tab.** Per-role tab lists at `ClinicianShell.tsx:182-205`. `'round'` appears in
+**Who sees the tab.** Per-role tab lists at `ClinicianShell.tsx:209-232`. `'round'` appears in
 exactly three lists, all doctors: `case 'surgeon'` (`:189`), and both branches of `case 'doctor'`
 (`:194-196`). It is **second** in every one of them, deliberately, the comment at `:190-193`
 says the roster stays the landing tab because a doctor is not always rounding. A **nurse**
 (`:200`), **admin** (`:201`), **pharmacist** (`:202`) and the `default` role (`:203`) have no Ward
 Round tab and no route to `RoundPanel`. Because `shouldRenderPanel` requires both membership and a
-visit (`ClinicianShell.tsx:325`), the panel does not even mount, and fires no requests, until the
+visit (`ClinicianShell.tsx:352`), the panel does not even mount, and fires no requests, until the
 tab is tapped once.
 
 **Panel lifetime.** Once visited the panel stays mounted, hidden with `display:none`
-(`ClinicianShell.tsx:516`). That is why the keyboard shortcuts are bound to the panel root and not
+(`ClinicianShell.tsx:546`). That is why the keyboard shortcuts are bound to the panel root and not
 to `window`, see the comment at `RoundPanel.tsx:334-336`.
 
 **Layout in one sentence.** A column (`.orb-panel.round-panel`, root at `RoundPanel.tsx:435-441`,
@@ -524,7 +524,7 @@ on whose session it is. Event kinds come from the `SOURCES` table at
 administration, order, order_event, observation, bundle, problem, allergy, discharge.
 **Access control:** `require_patient_access("patient.read_all",
 audit_action="patient_story_viewed")` (`vigil_routes.py:470-472`), off-ward patients get **404,
-not 403** (`permissions.py:453-455`), and each successful read writes a fail-closed `phi_access`
+not 403** (`permissions.py:462-464`), and each successful read writes a fail-closed `phi_access`
 audit row.
 **Change this →** a plan you save in this panel comes back into *this very list* as a note titled
 **"Manual Entry"** (title supplied by `addClinicalNote` at `client.ts:1324`, rendered by

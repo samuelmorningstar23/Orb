@@ -25,8 +25,11 @@ checked against the master. Text alone (a typed ward 'gm-1', a typed bed ' 12 ')
 links when it matches a ward code, and then a bed label on that ward, without
 regard to capital letters or surrounding spaces; the mirrors then take the
 master's spelling (GM-1, 12). Text that matches nothing keeps the typed text
-with the id left NULL ('unlinked'). Strict refusal of unknown places is adt-16
-(ORB_ADT_STRICT_LOCATIONS), not this module.
+with the id left NULL ('unlinked'), unless the site has switched strict
+locations on (adt-16, ORB_ADT_STRICT_LOCATIONS, ruling F104): then a ward not
+in bed setup is refused on every lane, and so is a bed not in bed setup on a
+ward whose bed register is marked complete (a ward still being set up keeps
+the unlinked place, with the warning). See 'Strict locations' below.
 
 REFUSALS, each with words and before anything is written:
   * a bed another active admission holds (the partial unique index
@@ -84,6 +87,9 @@ __all__ = [
     # how they confirm it.
     "AdtPinRefused", "AdtLocked", "carried_isolation", "confirm_terminal_authoriser",
     "terminal_authoriser_eligible_on",
+    # adt-16 (W9-A): strict locations (ruling F104).
+    "AdtUnlistedPlace", "STRICT_LOCATION_CODES", "strict_locations_on",
+    "strict_place_refusal",
 ]
 
 _MAX_REASON = 2000
@@ -140,6 +146,14 @@ class AdtLocked(AdtError):
     """PIN entry is locked for that person after too many wrong PINs. 429."""
 
     http_status = 429
+
+
+class AdtUnlistedPlace(AdtError):
+    """A ward or bed that is not in bed setup, on a site with strict
+    locations on (adt-16). 400: the person must choose a place from bed
+    setup, or ask a bed manager to set it up."""
+
+    http_status = 400
 
 
 def http_detail(err: AdtError) -> dict:
@@ -467,6 +481,93 @@ def _resolve_target(db, *, ward_id: Optional[str], bed_id: Optional[str],
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  Strict locations (adt-16, W9-A; ORB_ADT_STRICT_LOCATIONS, ruling F104)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# F104 as ruled (the architect's recommendation): a ward or bed that is not in
+# bed setup is admitted unlinked and said so (the warning) until the bed
+# manager has set the hospital up; then the site turns strict on. With strict
+# on (default off; it needs ORB_ADT, config.FEATURE_PREREQUISITES):
+#   * a ward bed setup does not hold is refused on every lane that names a
+#     place: the admission form, Scribe's quick admission, a bed assignment, a
+#     bed change, a transfer (the front desk's included, which delegates to
+#     services/adt/transfer.py), a correction, and a roster file (its rows are
+#     rejected in the dry run too, services/roster_import.py);
+#   * a bed bed setup does not hold is refused on a ward whose bed register
+#     the bed manager has marked complete. On a ward still being set up the
+#     typed bed is kept unlinked with the warning, as before: the per-ward
+#     half of 'warn until setup is complete';
+#   * a bed label with no ward names no place and is refused;
+#   * the place an admission is ALREADY recorded at is never refused (a
+#     transfer that keeps the patient where they lie, a stay recorded before
+#     strict was switched on): strict governs the places a request names
+#     anew, and the bed manager links an old one from the reconciliation list.
+# A refusal is 400 with words and is raised before anything is written.
+
+#: The refusal codes strict locations answers with.
+STRICT_LOCATION_CODES: tuple[str, ...] = ("ward_not_in_setup", "bed_not_in_setup")
+
+
+def strict_locations_on() -> bool:
+    """True while ORB_ADT_STRICT_LOCATIONS is on and its prerequisite (ORB_ADT
+    on) holds. Read at call time."""
+    return bool(config.feature_enabled("adt_strict_locations"))
+
+
+def _recorded_place_on(db, admission_id: Optional[str]) -> Optional[dict]:
+    """The place an admission is recorded at now, or None (no admission yet)."""
+    if not admission_id:
+        return None
+    return _row(db.execute("SELECT ward, bed, ward_id, bed_id FROM admissions WHERE id = ?",
+                           (admission_id,)).fetchone())
+
+
+def strict_place_refusal(target: dict, *, recorded: Optional[dict] = None) -> Optional[AdtError]:
+    """The refusal strict locations gives the place `target` (what
+    resolve_place_on returned), or None: always None while strict is off.
+
+    `recorded` is the admission's current place (ward, bed, ward_id, bed_id);
+    a place equal to it is never refused (see the section comment)."""
+    if not strict_locations_on():
+        return None
+    ward, bed = target.get("ward"), target.get("bed")
+    w_text, b_text = _text(target.get("ward_text")), _text(target.get("bed_text"))
+    rec = recorded or {}
+    if ward is None and w_text:
+        # Exempt only the very place recorded (ward AND bed): another bed on
+        # an unlisted ward is a new place bed setup does not hold.
+        if (not _text(rec.get("ward_id")) and _same(w_text, rec.get("ward"))
+                and not _text(rec.get("bed_id")) and _same(b_text, rec.get("bed"))):
+            return None
+        return AdtUnlistedPlace(
+            f"Ward {w_text} is not in bed setup, and this hospital records only wards and beds "
+            "from bed setup. Choose a ward from the list, or ask a bed manager to set this ward "
+            "up. Nothing was saved.", code="ward_not_in_setup", ward=w_text)
+    if bed is None and b_text:
+        if ward is None:
+            if not _text(rec.get("ward")) and not _text(rec.get("bed_id")) \
+                    and _same(b_text, rec.get("bed")):
+                return None
+            return AdtUnlistedPlace(
+                f"Bed {b_text} names no ward from bed setup. Choose the ward and the bed from "
+                "the list. Nothing was saved.", code="bed_not_in_setup", bed=b_text)
+        if not ward.get("register_complete"):
+            # F104, per ward: this ward is still being set up, so the typed
+            # bed is kept unlinked with the warning.
+            return None
+        same_ward = (rec.get("ward_id") == ward["id"]
+                     or (not _text(rec.get("ward_id")) and _same(rec.get("ward"), ward["code"])))
+        if same_ward and not _text(rec.get("bed_id")) and _same(b_text, rec.get("bed")):
+            return None
+        return AdtUnlistedPlace(
+            f"Bed {b_text} is not in bed setup on {ward['code']}, whose bed register is "
+            "complete. Choose a bed from the list or No bed yet, or ask a bed manager to add "
+            "the bed. Nothing was saved.", code="bed_not_in_setup",
+            ward_id=ward["id"], bed=b_text)
+    return None
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  The single location writer
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -574,6 +675,11 @@ def locate_admission_on(
     target = _resolve_target(db, ward_id=ward_id, bed_id=bed_id, ward_text=ward_text,
                              bed_text=bed_text, out_of_service_reason=out_of_service_reason)
     ward, bed = target["ward"], target["bed"]
+    # adt-16: with strict locations on, a place not in bed setup is refused
+    # here too, so no lane that writes a place can leave one unlinked.
+    unlisted = strict_place_refusal(target, recorded=adm)
+    if unlisted is not None:
+        raise unlisted
 
     if bed is not None:
         holder = db.execute(
@@ -1492,6 +1598,13 @@ def prepare_place_on(
     target = resolve_place_on(db, ward_id=ward_id, bed_id=bed_id, ward_text=ward_text,
                               bed_text=bed_text, out_of_service_reason=out_of_service_reason)
     ward, bed = target["ward"], target["bed"]
+    if strict_locations_on():
+        # adt-16: a place not in bed setup, refused before anything about the
+        # patient is written (the admission door writes its rows after this).
+        unlisted = strict_place_refusal(target,
+                                        recorded=_recorded_place_on(db, admission_id))
+        if unlisted is not None:
+            raise unlisted
     if bed is not None:
         if _holder_on(db, admission_id=admission_id, ward=ward, bed=bed) is not None:
             raise AdtConflict(

@@ -23,12 +23,24 @@
  *   3. No reply: the server could not be reached, with a way to try again.
  *   4. Otherwise the views this user may see, as tabs. With none open to
  *      this role, a sentence saying so.
+ *
+ * THE WARD CLERK'S ADMISSION (adt-17b, ruling ADT-S5 (a), a build default for
+ * Samuel to confirm). The ward clerk gets one button above the views, 'Admit
+ * a patient', which opens the admission form in its registration-only mode
+ * (AdmitPatientModal `clerk`): who the patient is, the hospital's own number,
+ * the bed and the attending doctor, and nothing clinical. Once the admission
+ * is recorded the shell's 'orb:data-changed' is announced, so the board (and
+ * every other open list) re-reads at once; the server's live 'adt:changed'
+ * (adt-19) says the same to every other board.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { getAdtMeta, toAdtError, type AdtMeta } from '../../api/adt'
+import { isClerkRole } from '../../api/adt/clerk'
+import AdmitPatientModal from '../../components/AdmitPatientModal'
 import ModuleOffNotice from '../../components/ModuleOffNotice'
-import { hasPermission, type Permission } from '../../lib/roles'
+import { announceDataChanged } from '../../contexts/PanelActiveContext'
+import { currentRole, hasPermission, type Permission } from '../../lib/roles'
 import { discoverViews, visibleViews, type AdtViewEntry } from './adt/viewRegistry'
 import './BedBoardPanel.css'
 
@@ -37,9 +49,19 @@ const INSTALLED_VIEWS: readonly AdtViewEntry[] = discoverViews(
   import.meta.glob('./adt/*View.tsx', { eager: true }),
 )
 
+/** A 'permission' that names a role instead (adt-17b): the ward clerk's tile
+ *  actions ('Left the ward', 'Ordered transfer') ask for 'role:ward_clerk',
+ *  because the server's clerk lanes are the ward clerk's alone
+ *  (server/services/adt/clerk.CLERK_ROLES) while the administrator holds
+ *  adt.bed too. It only HIDES; the server refuses anyone else. */
+const ROLE_GATE_PREFIX = 'role:'
+
 /** The client permission mirror. A permission it does not list reads as not
  *  held, so a view gated on it stays hidden rather than shown. */
 function roleHolds(permission: string): boolean {
+  if (permission.startsWith(ROLE_GATE_PREFIX)) {
+    return currentRole() === permission.slice(ROLE_GATE_PREFIX.length)
+  }
   return hasPermission(permission as Permission)
 }
 
@@ -55,12 +77,25 @@ interface BedBoardPanelProps {
   views?: readonly AdtViewEntry[]
   /** Tests only: whether the signed-in user holds a permission. */
   holds?: (permission: string) => boolean
+  /** Tests only: the signed-in user's role. The shell mounts the panel
+   *  without it, which means the stored session's role. */
+  role?: string
 }
 
-export default function BedBoardPanel({ views = INSTALLED_VIEWS, holds = roleHolds }: BedBoardPanelProps) {
+export default function BedBoardPanel({
+  views = INSTALLED_VIEWS, holds = roleHolds, role,
+}: BedBoardPanelProps) {
   const [probe, setProbe] = useState<Probe>({ state: 'checking' })
   const [attempt, setAttempt] = useState(0)
   const [chosenId, setChosenId] = useState<string | null>(null)
+  const [admitting, setAdmitting] = useState(false)
+  // adt-17b: only the ward clerk admits from here; the server checks again.
+  const clerk = isClerkRole(role ?? currentRole())
+
+  const admitted = useCallback(() => {
+    setAdmitting(false)
+    announceDataChanged()
+  }, [])
 
   useEffect(() => {
     let live = true
@@ -121,6 +156,22 @@ export default function BedBoardPanel({ views = INSTALLED_VIEWS, holds = roleHol
             you need one.
           </p>
         </section>
+      )}
+
+      {probe.state === 'ready' && clerk && (
+        <div className="bb-toolbar">
+          <p className="bb-sub">
+            Admitting here records who the patient is and where they lie. A doctor records the
+            clinical details.
+          </p>
+          <button type="button" className="bb-btn" onClick={() => setAdmitting(true)}>
+            Admit a patient
+          </button>
+        </div>
+      )}
+
+      {admitting && (
+        <AdmitPatientModal clerk onClose={() => setAdmitting(false)} onSuccess={admitted} />
       )}
 
       {probe.state === 'ready' && active && (

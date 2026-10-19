@@ -332,7 +332,7 @@ Jargon: **FHIR** (Fast Healthcare Interoperability Resources) is the standard JS
 
 ### Downtime routes: `server/routes/downtime_routes.py`
 
-Router prefix is `/api/downtime` (`server/routes/downtime_routes.py:23`), registered in `main.py` via `app.include_router(downtime_router)` (`server/main.py:701`). Jargon: **RBAC** (Role-Based Access Control), permissions are attached to roles; `require_permission("x")` is a FastAPI **dependency** (a function FastAPI runs before the handler) that 403s if the caller's role lacks permission `x` (`server/permissions.py:377`). The two *read* routes here use the stricter `require_patient_access("vitals.read")`, which additionally scopes the caller to that patient.
+Router prefix is `/api/downtime` (`server/routes/downtime_routes.py:23`), registered in `main.py` via `app.include_router(downtime_router)` (`server/main.py:701`). Jargon: **RBAC** (Role-Based Access Control), permissions are attached to roles; `require_permission("x")` is a FastAPI **dependency** (a function FastAPI runs before the handler) that 403s if the caller's role lacks permission `x` (`server/permissions.py:386`). The two *read* routes here use the stricter `require_patient_access("vitals.read")`, which additionally scopes the caller to that patient.
 
 #### capture: `server/routes/downtime_routes.py:26`
 **Route:** `POST /api/downtime/capture/{patient_id}` · auth `vitals.read`

@@ -2,9 +2,12 @@
  * Medication orders API (the order store, medorders-4, W5-E): a thin typed
  * client for /api/medorders. The Orders screen signs CPOE and order-set
  * medicines through signMedOrder (medorders-7, W7-F) and places a CPOE
- * medicine with its fields through createCpoeMedicationOrder; the chart's
- * order list, the to-sign view and the round's hold groups arrive in later
- * waves.
+ * medicine with its fields through createCpoeMedicationOrder. The chart's
+ * order list (components/medorders/MedOrderList), its timeline and the
+ * doctor's to-sign chip read this module too (medorders-10, W9-D): the
+ * status chip words, the supply line, the last dose and which steps a
+ * signed-in person is offered all come from the helpers below, so every
+ * screen says them the same way.
  *
  * Every call exists only while the server's 'med_order_store' feature is on
  * (ORB_MED_ORDER_STORE). With it off the server answers 404
@@ -20,7 +23,7 @@
  * the order, its status and its version, never a drug: a screen that cares
  * re-reads the order over REST.
  */
-import { apiFetch, socket, type MedicationSafety } from './client'
+import { apiFetch, socket, type AdministrationRecord, type MedicationSafety } from './client'
 import { formatClinicalDateTime } from '../lib/datetime'
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
@@ -66,7 +69,49 @@ export interface MedOrder {
   updated_at: string
   /** FHIR MedicationRequest.status for this order. */
   fhir_status: string | null
+  /** GET /patient/{id} only (medorders-10): the people on the order by name. */
+  prescriber_name?: string | null
+  verified_by_name?: string | null
+  entered_by_name?: string | null
+  status_changed_by_name?: string | null
+  /** GET /patient/{id} only: the latest supply row, or null for 'supply not
+   *  linked' (no supply was ever requested for this order). */
+  supply?: MedOrderSupplyLine | null
+  /** GET /patient/{id} only: the last bedside record on the order's ledger. */
+  last_dose?: MedOrderLastDose | null
   [key: string]: unknown
+}
+
+/** Who did a step on the order's ledger, and when. */
+export interface MedOrderActor {
+  by: string | null
+  by_name: string | null
+  by_role: string | null
+  at: string | null
+}
+
+/** The latest pharmacy supply row behind an order, as the chart lists it. */
+export interface MedOrderSupplyLine {
+  helix_order_id: string | null
+  /** The latest supply event: supply_requested, supply_reviewing,
+   *  supply_verified, supply_rejected, dispensed or received. */
+  state: string | null
+  at: string | null
+  requested_at: string | null
+  dispensed: MedOrderActor | null
+  received: MedOrderActor | null
+}
+
+/** The last bedside record on an order's ledger. */
+export interface MedOrderLastDose extends MedOrderActor {
+  kind: 'administered' | 'not_given'
+  reason: string | null
+  /** The administration record this dose is: ref_type
+   *  'medication_administration' and ref_id its id, as text. The marker for a
+   *  dose given across a charted allergy lives on that record
+   *  (ledgerAdministration, then givenAcrossAllergy). */
+  ref_type?: string | null
+  ref_id?: string | null
 }
 
 /** A chart row the store has not adopted yet, shown as the order it would
@@ -302,6 +347,47 @@ export async function cancelMedOrderDraft(
   return body.order
 }
 
+/** Hold, resume and stop (ruling MO-R2 (a): the prescriber only, each with a
+ *  reason). The server's routes for these are medorders-6a, which is not
+ *  built yet (routes/medorders/lifecycle.py is still empty), so no screen
+ *  offers them while this is false. Flip it in the change that serves
+ *  POST /medorders/orders/{id}/hold, /resume and /stop. */
+export const MEDORDER_HOLD_STOP_ROUTES = false
+
+/** Put a live order on hold. Doses are refused at the bedside while it is
+ *  held; 'not given (held)' can always be recorded. */
+export function holdMedOrder(orderId: string, reason: string, expectedVersion: number):
+Promise<MedOrderStepResult> {
+  return apiFetch<MedOrderStepResult>(`${orderPath(orderId)}/hold`, {
+    method: 'POST',
+    body: JSON.stringify({ reason, expected_version: expectedVersion }),
+  })
+}
+
+/** Resume a held order. The server screens it again (a 428 carries alerts to
+ *  acknowledge, as at sign). */
+export function resumeMedOrder(
+  orderId: string,
+  reason: string,
+  expectedVersion: number,
+  safetyAck?: { acknowledged: boolean; reason: string },
+): Promise<MedOrderStepResult> {
+  return apiFetch<MedOrderStepResult>(`${orderPath(orderId)}/resume`, {
+    method: 'POST',
+    body: JSON.stringify({ reason, expected_version: expectedVersion,
+      ...(safetyAck ? { safety_ack: safetyAck } : {}) }),
+  })
+}
+
+/** Stop a live or held order for good. */
+export function stopMedOrder(orderId: string, reason: string, expectedVersion: number):
+Promise<MedOrderStepResult> {
+  return apiFetch<MedOrderStepResult>(`${orderPath(orderId)}/stop`, {
+    method: 'POST',
+    body: JSON.stringify({ reason, expected_version: expectedVersion }),
+  })
+}
+
 /** Place a CPOE medicine with the lifecycle on: POST /api/orders with the
  *  drug's fields in detail.medication. The server writes the orders draft and
  *  its linked draft medication order together; nothing reaches the ward until
@@ -411,6 +497,8 @@ export const MED_ORDER_EVENT_WORDS: Record<string, string> = {
   supply_rejected: 'Supply rejected',
   dispensed: 'Dispensed',
   received: 'Received on the ward',
+  administered: 'Dose given',
+  not_given: 'Dose not given',
 }
 
 export function medOrderEventWords(kind: string): string {
@@ -449,6 +537,221 @@ export function linkedOrderNotice(order: HelixLinkedOrder, lifecycleOn: boolean)
     default:
       return `${MED_ORDER_STATUS_WORDS[order.status] ?? 'Ended'}. Pharmacy does not supply an order that has ended.`
   }
+}
+
+// ── The chart's words (medorders-10) ─────────────────────────────────────────
+
+/** Who did a step on the ledger, by role ("a nurse"): the chart never prints
+ *  a login id. */
+const EVENT_ROLE_WORDS: Record<string, string> = {
+  doctor: 'a doctor',
+  clinician: 'a doctor',
+  nurse: 'a nurse',
+  pharmacist: 'a pharmacist',
+  admin: 'an administrator',
+  system: 'Orb',
+}
+
+export function medOrderEventActorWords(event: Pick<MedOrderEvent, 'actor_role' | 'actor_id'>): string {
+  const role = (event.actor_role ?? '').trim()
+  if (role && EVENT_ROLE_WORDS[role]) return EVENT_ROLE_WORDS[role]
+  if (event.actor_id === 'system') return 'Orb'
+  return role ? `a ${role.replace(/_/g, ' ')}` : 'a colleague'
+}
+
+/** Extra words a step carries, from its payload, in plain language. */
+export function medOrderEventDetailWords(event: MedOrderEvent): string | null {
+  const payload = (event.payload ?? {}) as Record<string, unknown>
+  if (event.kind === 'administered' && payload.before_pharmacist_check === true) {
+    return 'Given before the pharmacist checked the order'
+  }
+  if (event.kind === 'amended') {
+    const changes = payload.changes
+    if (changes && typeof changes === 'object') {
+      const fields = Object.keys(changes as Record<string, unknown>)
+        .map(f => f.replace(/_/g, ' '))
+      if (fields.length) return `Changed: ${fields.join(', ')}`
+    }
+  }
+  return null
+}
+
+/** How a status chip is drawn. The label always says the status in words;
+ *  the tone only adds a coloured border (never colour alone). */
+export type MedOrderTone = 'neutral' | 'ok' | 'warn' | 'danger'
+
+export interface MedOrderChip {
+  label: string
+  tone: MedOrderTone
+}
+
+/** The chart's status chip. `verifyBeforeDose` is the server's
+ *  'med_order_verify_before_dose' feature: with it on, every prescribed order
+ *  waits for a pharmacist before its first dose (ruling MO-R1). */
+export function medOrderChip(
+  order: { status: MedOrderStatus; needs_verification?: boolean | null; verified_by?: string | null },
+  opts: { verifyBeforeDose?: boolean } = {},
+): MedOrderChip {
+  switch (order.status) {
+    case 'draft':
+      return { label: 'Awaiting signature', tone: 'warn' }
+    case 'prescribed':
+      return order.needs_verification || (opts.verifyBeforeDose && !order.verified_by)
+        ? { label: 'Awaiting pharmacist', tone: 'warn' }
+        : { label: 'Prescribed', tone: 'neutral' }
+    case 'verified':
+      return { label: 'Verified by pharmacist', tone: 'ok' }
+    case 'held':
+      return { label: 'On hold', tone: 'danger' }
+    case 'stopped':
+      return { label: 'Stopped', tone: 'neutral' }
+    case 'completed':
+      return { label: 'Completed', tone: 'neutral' }
+    case 'cancelled':
+      return { label: 'Cancelled', tone: 'neutral' }
+    case 'rejected':
+      return { label: 'Rejected by pharmacy', tone: 'danger' }
+    default:
+      return { label: 'Status not known', tone: 'warn' }
+  }
+}
+
+/** Statuses an order can still move on from. */
+export const LIVE_MED_ORDER_STATUSES: readonly MedOrderStatus[] =
+  ['draft', 'prescribed', 'verified', 'held']
+
+export function isLiveMedOrder(order: Pick<MedOrder, 'status'>): boolean {
+  return LIVE_MED_ORDER_STATUSES.includes(order.status)
+}
+
+/** A step a person can take on an order from the chart. */
+export type MedOrderStep = 'sign' | 'hold' | 'resume' | 'stop' | 'cancel'
+
+/** Steps that need a written reason (the server's REASON_REQUIRED_KINDS). */
+export const REASON_REQUIRED_STEPS: readonly MedOrderStep[] = ['hold', 'resume', 'stop', 'cancel']
+
+export interface MedOrderStepContext {
+  /** The signed-in person holds medication.prescribe. */
+  mayPrescribe: boolean
+  /** The signed-in person's id (a draft's creator may cancel it). */
+  userId: string | null
+  /** The server's 'med_order_lifecycle' feature: every write needs it. */
+  lifecycleOn: boolean
+  /** Hold, resume and stop are served (MEDORDER_HOLD_STOP_ROUTES). */
+  holdStopAvailable: boolean
+}
+
+/** Which steps the chart offers this person on this order, in the order the
+ *  buttons are drawn. The server decides; this only avoids offering a press
+ *  it is already known to refuse. Ruling MO-R2 (a): sign, hold, resume and
+ *  stop are the prescriber's; a draft is cancelled by whoever entered it or a
+ *  prescriber; a signed order is never cancelled here (stop it instead). */
+export function medOrderSteps(order: Pick<MedOrder, 'status' | 'entered_by'>,
+  ctx: MedOrderStepContext): MedOrderStep[] {
+  if (!ctx.lifecycleOn) return []
+  const steps: MedOrderStep[] = []
+  const holdStop = ctx.mayPrescribe && ctx.holdStopAvailable
+  switch (order.status) {
+    case 'draft':
+      if (ctx.mayPrescribe) steps.push('sign')
+      if (ctx.mayPrescribe || (ctx.userId !== null && order.entered_by === ctx.userId)) {
+        steps.push('cancel')
+      }
+      break
+    case 'prescribed':
+    case 'verified':
+      if (holdStop) steps.push('hold', 'stop')
+      break
+    case 'held':
+      if (holdStop) steps.push('resume', 'stop')
+      break
+    default:
+      break
+  }
+  return steps
+}
+
+export const MED_ORDER_STEP_LABELS: Record<MedOrderStep, string> = {
+  sign: 'Sign',
+  hold: 'Hold',
+  resume: 'Resume',
+  stop: 'Stop',
+  cancel: 'Cancel',
+}
+
+function actorWords(actor: MedOrderActor | null | undefined): string {
+  const name = (actor?.by_name ?? '').trim()
+  return name || 'a colleague'
+}
+
+function atWords(at: string | null | undefined): string {
+  const when = formatClinicalDateTime(at)
+  return when ? ` at ${when}` : ''
+}
+
+/** The supply line under an order: where the pharmacy's supply of it stands,
+ *  or 'Supply not linked' when no supply was ever requested for it (a drug
+ *  given from ward stock or the patient's own, or one nobody asked for). */
+export function supplyLineWords(order: Pick<MedOrder, 'supply'>): string {
+  const supply = order.supply
+  if (!supply || !supply.state) return 'Supply not linked'
+  switch (supply.state) {
+    case 'supply_requested':
+      return `Requested from pharmacy${atWords(supply.requested_at ?? supply.at)}`
+    case 'supply_reviewing':
+      return 'Pharmacy is reviewing the supply'
+    case 'supply_verified':
+      return 'Supply checked by pharmacy, not yet dispensed'
+    case 'supply_rejected':
+      return 'Pharmacy rejected the supply'
+    case 'dispensed':
+      return `Dispensed by ${actorWords(supply.dispensed)}${atWords(supply.dispensed?.at)}, ` +
+        'not yet received on the ward'
+    case 'received':
+      return `Dispensed by ${actorWords(supply.dispensed)}, received on the ward by ` +
+        `${actorWords(supply.received)}${atWords(supply.received?.at)}`
+    default:
+      return 'Supply status not known'
+  }
+}
+
+/** The chart's administration record a ledger dose points at (a last dose or
+ *  a 'Dose given' event: ref_type 'medication_administration', ref_id the
+ *  record's id), or undefined when it points at none or the chart has not read
+ *  that record. Whether the dose was given across a charted allergy is then
+ *  givenAcrossAllergy(record) from api/client, the one derivation every
+ *  surface uses. */
+export function ledgerAdministration(
+  records: readonly AdministrationRecord[] | null | undefined,
+  ref: { ref_type?: string | null; ref_id?: string | null } | null | undefined,
+): AdministrationRecord | undefined {
+  if (!records || !ref || ref.ref_type !== 'medication_administration') return undefined
+  if (ref.ref_id === null || ref.ref_id === undefined || String(ref.ref_id).trim() === '') {
+    return undefined
+  }
+  const id = String(ref.ref_id).trim()
+  return records.find(a => String(a.id) === id)
+}
+
+/** The last bedside record, or null when the order's ledger has none. */
+export function lastDoseWords(order: Pick<MedOrder, 'last_dose'>): string | null {
+  const dose = order.last_dose
+  if (!dose) return null
+  const who = actorWords(dose)
+  if (dose.kind === 'administered') return `Last dose given by ${who}${atWords(dose.at)}`
+  const why = (dose.reason ?? '').trim()
+  return `Last dose not given${why ? ` (${why})` : ''}, recorded by ${who}${atWords(dose.at)}`
+}
+
+/** The first words of the bedside's refusal for a held order
+ *  (server/services/medorders/core.py _HELD_WORDS). The eMAR answers it as a
+ *  flat 422 with those words, so this is how the Administer screen knows the
+ *  refusal is a hold. MedOrderList.test.tsx pins it against the server file. */
+export const HELD_REFUSAL_START = 'This medicine is on hold'
+
+/** Is this eMAR refusal the hold? */
+export function isHeldRefusal(message: string | null | undefined): boolean {
+  return typeof message === 'string' && message.trim().startsWith(HELD_REFUSAL_START)
 }
 
 // ── Live updates ─────────────────────────────────────────────────────────────

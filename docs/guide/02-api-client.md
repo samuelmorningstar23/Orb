@@ -75,7 +75,7 @@ sequenceDiagram
 ### Flow 2: session lifecycle (login → socket → logout)
 
 1. `login()` POSTs credentials to `/auth/login`, then persists `token` → `orb_token` and `user` → `orb_user` (`src/api/client.ts:278-288`).
-2. It calls `authenticateSocket()` (`src/api/client.ts:592`, defined at `:57`), which re-points the socket.io handshake auth at the fresh token and forces a disconnect/reconnect (`src/api/client.ts:57-64`). The socket itself is a module-level singleton created on first import with `auth` as a *callback* that re-reads the token on every connection attempt (`src/api/client.ts:42-49`), but with `autoConnect: false` (`:43`), so it opens only once a token or session cookie exists (`:54`); the server's `connect` handler verifies the handshake before accepting (`server/ws/realtime.py:295`, guide 06-realtime).
+2. It calls `authenticateSocket()` (`src/api/client.ts:592`, defined at `:57`), which re-points the socket.io handshake auth at the fresh token and forces a disconnect/reconnect (`src/api/client.ts:57-64`). The socket itself is a module-level singleton created on first import with `auth` as a *callback* that re-reads the token on every connection attempt (`src/api/client.ts:42-49`), but with `autoConnect: false` (`:43`), so it opens only once a token or session cookie exists (`:54`); the server's `connect` handler verifies the handshake before accepting (`server/ws/realtime.py:358`, guide 06-realtime).
 3. On logout, `AppRoot.tsx:90` calls `deauthenticateSocket()` (`src/api/client.ts:60-65`) and clears storage via `clearToken()` (`src/api/client.ts:73-76`), so neither REST nor realtime keeps the old identity.
 4. Any 401 from any endpoint at any time repeats the logout effect automatically (Flow 1, step 5).
 
@@ -97,7 +97,7 @@ Orb is built as a **PWA (Progressive Web App)**, a website that installs like an
 1. `addClinicalNote` and `addMedication` check `navigator.onLine` (the browser's connectivity flag) before sending (`src/api/client.ts:806`, `:821`).
 2. If offline, `queueRequest` appends `{id: crypto.randomUUID(), url, method, body, timestamp}` to the `orb_offline_queue` array in localStorage (`src/api/client.ts:216-227`) and the wrapper returns an **optimistic response**, a fabricated success object with a fake `offline-<timestamp>` id (`src/api/client.ts:808-809`, `:823-824`) so the UI proceeds as if the save succeeded.
 3. When the browser fires the `online` event, `processOfflineQueue` (`src/api/client.ts:229`, registered at `:264`) replays each item through `apiFetch`, which attaches a *fresh* auth header at replay time, removing an item only after the server confirms it, and keeping failures for the next retry (`src/api/client.ts:240-260`).
-4. `ClinicianShell` polls the queue length every 2 s to render the "pending / synced" badge (`src/pages/ClinicianShell.tsx:270-312`).
+4. `ClinicianShell` polls the queue length every 2 s to render the "pending / synced" badge (`src/pages/ClinicianShell.tsx:297-339`).
 
 ```mermaid
 graph TD
@@ -265,7 +265,7 @@ graph TD
 **The retry trap (`:413-419`):** minting a key per *call* protects the offline replay but not a user-initiated retry. A bedside dose whose response was lost to a Wi-Fi drop looks like a failure; the nurse taps Given again; a fresh key goes out; the server charts a **second** dose. Any caller that exposes a retry affordance for a clinical write must mint one key per attempt and reuse it, `AdministerModal` is the reference implementation.
 **Also here, the two eviction helpers.** `clearOfflineQueue()` (`:365-369`) drops everything on sign-out or user switch, because the queue holds free clinical text, patient ids and dose payloads, PHI belonging to whoever is walking away from a shared tablet. `clearForeignOfflineQueue(userId)` (`:382-389`) drops only entries whose author is not the current user and **returns** them, so the caller can decide whether anyone needs telling.
 **Data in/out:** path/method/body → JSON array in localStorage.
-**Talks to:** written through `offlineMutate` by the offline-capable writes; read by `processOfflineQueue` and (read-only, for the badge count) by `src/pages/ClinicianShell.tsx:481-533`.
+**Talks to:** written through `offlineMutate` by the offline-capable writes; read by `processOfflineQueue` and (read-only, for the badge count) by `src/pages/ClinicianShell.tsx:511-563`.
 **Gotchas:** the queue is per-browser-profile: a clinician switching devices leaves pending writes stranded on the first device.
 
 #### processOfflineQueue (+ the `online` listener): `src/api/client.ts:465` / `:567`
@@ -811,7 +811,7 @@ Purpose (header `:1-8`): the closed loop for AI-charted medications, list meds w
 |---|---|---|---|
 | `orb_token` | raw JWT | `setToken` (`client.ts:68`) | `getToken` (`:24`), socket handshake (`:45`) |
 | `orb_user` | JSON `StoredUser` | `setUser` (`:90`) | `getUser` (`:95`), App session restore |
-| `orb_offline_queue` | JSON `OfflineRequest[]` | `queueRequest`/`processOfflineQueue` (`:216`, `:257`) | replay loop (`:229`) and ClinicianShell's badge (`ClinicianShell.tsx:277-286`) |
+| `orb_offline_queue` | JSON `OfflineRequest[]` | `queueRequest`/`processOfflineQueue` (`:216`, `:257`) | replay loop (`:229`) and ClinicianShell's badge (`ClinicianShell.tsx:304-313`) |
 
 **Socket contract:** handshake `auth: {token: <JWT or null>}` (`client.ts:43-46`); the server must verify it in `connect(sid, environ, auth)` and refuse unauthenticated clients (`server/ws/realtime.py:168`; full event catalog in guide 06-realtime).
 
@@ -857,7 +857,7 @@ Purpose (header `:1-8`): the closed loop for AI-charted medications, list meds w
 ## Discrepancies and open questions
 
 1. *(resolved, was: "Offline replay is not actually idempotent".)* The key is now minted, stored **and** replayed. `offlineMutate` (`src/api/client.ts:428`) mints an `Idempotency-Key` (`:435`) and uses it for BOTH paths: queued via `queueRequest(path, method, body, idempotencyKey)` (`:437`, stored on the record at `:399`) or sent straight through as a header when online (`:442`). `processOfflineQueue` replays it, `headers: req.idempotencyKey ? { 'Idempotency-Key': req.idempotencyKey } : undefined` (`:525`). **The residual hazard is different and worth keeping in view:** the default mints one key *per call*, which protects the automatic offline replay but not a **user-initiated retry**. The docstring spells out the exact clinical failure (`src/api/client.ts:413-419`): a bedside dose whose response was lost to a Wi-Fi drop looks like a failure, the nurse taps Given again, a fresh key goes out, and the server charts a SECOND dose. Callers that expose a retry affordance for a clinical write must mint one key per attempt and reuse it (as `AdministerModal` does). There is also a routing rule attached (`:421-426`): only mutations safe to apply without a synchronous server response, free-text notes, relay messages, bedside charting of an already-verified med, may go through `offlineMutate`. Safety-gated writes stay online-required and fail loudly, because a severe drug-interaction alert (428) cannot be acknowledged while offline.
-2. **The queue only drains on an `online` event** (`src/api/client.ts:264`). If the app is closed while offline and reopened while online, no event fires and queued writes sit until the next offline→online transition. Nothing calls `processOfflineQueue` at startup, and ClinicianShell's poller only *counts* the queue (`src/pages/ClinicianShell.tsx:277-312`).
+2. **The queue only drains on an `online` event** (`src/api/client.ts:264`). If the app is closed while offline and reopened while online, no event fires and queued writes sit until the next offline→online transition. Nothing calls `processOfflineQueue` at startup, and ClinicianShell's poller only *counts* the queue (`src/pages/ClinicianShell.tsx:304-339`).
 3. **`structureNote` silently swallows all streamed errors.** The `throw new Error(data.error)` at `src/api/client.ts:692` is caught by the enclosing `catch (e)` whose body is only a comment (`:694-698`), so a server-reported structuring failure returns `{id: 0, structured_note: <partial>}` as if it succeeded. The condition `e.message !== 'Structuring failed'` guards an empty block, clearly a refactoring remnant.
 4. **`querySageVoice` swallows most streamed errors.** The `throw` at `src/api/client.ts:594` is only re-thrown when the message is exactly `'Voice agent query failed'` (`:596-598`); any other `data.error` text is discarded and a truncated response is returned as success.
 5. **Dead demo endpoints.** `triggerDeterioration` and `getEscalationStatus` (`src/api/client.ts:1058`, `:1065`) target `/api/demo/*`, but no demo router exists anywhere in `server/` and no component imports them, calling them would 404.

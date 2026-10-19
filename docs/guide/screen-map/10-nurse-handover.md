@@ -83,12 +83,12 @@ trend but not the "if SpO2 falls below 92%…" plan, even though that plan is in
 
 Left nav → **My Shift** (`src/pages/ClinicianShell.tsx:27`, `id: 'shift', label: 'My Shift',
 pillar: 'Nurse Mode'`; mounted at `:715-717` inside a `PanelErrorBoundary`). For a nurse this is
-the landing screen: the per-role tab list at `ClinicianShell.tsx:200` puts `'shift'` first and the
+the landing screen: the per-role tab list at `ClinicianShell.tsx:227` puts `'shift'` first and the
 shell opens `accessibleTabs[0]`.
 
 Inside that panel, the third tab in the strip, **Handover**, switches `view` to `'handover'`
 (`NursePanel.tsx:37` declares the three views, `:256` is the label, `:258-271` the button). The tab
-panel is rendered at `NursePanel.tsx:374-378`:
+panel is rendered at `NursePanel.tsx:393-397`:
 
 ```
 {board && view === 'handover' && (
@@ -96,12 +96,12 @@ panel is rendered at `NursePanel.tsx:374-378`:
     <HandoverSheet patients={board.patients} />
 ```
 
-`board` is **not** raw state, it is `offline.data` from `useOfflineSnapshot` (`NursePanel.tsx:136-140`).
+`board` is **not** raw state, it is `offline.data` from `useOfflineSnapshot` (`NursePanel.tsx:282-286`).
 That matters twice: with no board at all the tab renders **nothing** (the `board &&` guard), and
 with a cached board the handover list is built from a copy that the banner above it dates.
 
 The full-page sheet at `/handoff/:patientId` is reached from a **different** screen: the `HANDOFF`
-button on the Vigil patient command bar (`src/pages/panels/VigilPanel.tsx:1254`, 
+button on the Vigil patient command bar (`src/pages/panels/VigilPanel.tsx:1262`, 
 `window.open('/handoff/' + patientId, '_blank')`). The route is registered at `src/AppRoot.tsx:186` and
 is open to every signed-in non-patient role. **Nothing in Nurse Mode links to it.**
 
@@ -128,7 +128,7 @@ Styled at `NursePanel.css:124-131` (flex row, `--text-md`, weight 700, `--text-p
 **Change this →** the heading text changes. It is the only `<h2>` in the tab panel, so it is also
 what a screen-reader user lands on when they jump by heading after activating the tab. Removing it
 leaves the panel with no heading at all, the `aria-labelledby="nurse-tab-handover"` on the wrapper
-(`NursePanel.tsx:375`) still names the region, but nothing inside it is a heading.
+(`NursePanel.tsx:394`) still names the region, but nothing inside it is a heading.
 
 ### The explanatory hint under the heading
 **Where:** directly under "Shift handover", small muted text, two lines wide on a tablet.
@@ -173,7 +173,7 @@ patients to hand over.</p>}`. Styled at `NursePanel.css:154-162` (dashed `--bord
 **Data from:** `patients.length`, i.e. `board.patients` from `getShiftBoard()`.
 **Server:** the board comes from the nurse shift-board route (screen 08); its patient set is scoped
 server-side from the signed-in user's department, never from anything the screen sends
-(`NursePanel.tsx:206-209`).
+(`NursePanel.tsx:224-227`).
 **Change this →** the sentence changes. Note the header and the empty pill still render above it, 
 you will see "Shift handover", the hint, "0 of 0 handed over", and then this line. It disappears the
 moment the board returns one patient.
@@ -310,10 +310,10 @@ the literal `'Could not draft handover'` when the thrown value is not an `Error`
   (`ipass_routes.py:32-35` converts the `ValueError` from `ipass_service.py:404`), **or** the
   patient is outside the caller's department and `require_patient_access` deliberately returns 404
   rather than 403 so the screen cannot confirm the patient exists
-  (`server/permissions.py:453-455`, raise at `:499`).
+  (`server/permissions.py:462-464`, raise at `:499`).
 - **403 "Insufficient permissions"**, the role lacks `vitals.read`
   (`ipass_routes.py:27-29`; `require_permission` builds the structured 403 at
-  `server/permissions.py:426-431`, and `apiFetch` re-throws it with `.status = 403` at
+  `server/permissions.py:435-440`, and `apiFetch` re-throws it with `.status = 403` at
   `src/api/client.ts:210-224`). In practice unreachable from Nurse Mode: `nurse` holds
   `VITALS_READ` (`server/permissions.py:121`).
 - **"Failed to fetch"**, the appliance is unreachable.
@@ -595,7 +595,7 @@ card's left edge turns green, the header pill increments, and the button's resti
 
 # B. The full-page I-PASS sheet: `/handoff/:patientId`
 
-Reached from Vigil's `HANDOFF` button (`src/pages/panels/VigilPanel.tsx:1254`), which opens a **new
+Reached from Vigil's `HANDOFF` button (`src/pages/panels/VigilPanel.tsx:1262`), which opens a **new
 browser tab**. The route is `src/AppRoot.tsx:186`, gated only on "signed in and not a patient";
 `src/pages/HandoffPage.tsx:5-9` pulls `patientId` from the URL and renders
 `<IpassHandoffView patientId={patientId} />`, or the bare text **"No patient specified."** (`:7`) if
@@ -758,7 +758,7 @@ line is `{bundle_type} ({compliance_pct}% compliant), outstanding: …` or `all 
 `sepsis_bundle_service.get_bundles_for_patient(patient_id, active_only=True)` (`:103-110`).
 `compliance_pct` is elements completed **within** target, deliberately different from
 `completion_pct` so a late-but-finished bundle never reads 100% compliant
-(`sepsis_bundle_service.py:156-161`).
+(`sepsis_bundle_service.py:163-168`).
 **Change this →** `compliance_pct` of `null` prints an em-dash (`IpassHandoffView.tsx:240`).
 Completing a bundle element flips its line to `all elements complete` here and simultaneously
 removes its `OVERDUE (…)` / `Pending (…)` bullet from the Handover tab's action list (§A.5).
@@ -832,12 +832,12 @@ saving.
 # C. Cross-cutting states
 
 ### While the shift board itself is loading
-`NursePanel.tsx:283` renders `Loading your shift…` and the guard at `:374` (`board && view ===
+`NursePanel.tsx:301` renders `Loading your shift…` and the guard at `:374` (`board && view ===
 'handover'`) means the **entire Handover tab is absent** until a board exists. The tab button is
 still present and clickable, you switch to an empty region.
 
 ### Offline
-`OfflineBanner` renders above the tab strip content at `NursePanel.tsx:274`
+`OfflineBanner` renders above the tab strip content at `NursePanel.tsx:292`
 (`<OfflineBanner snapshot={offline} what="shift board" />`), so it sits above the handover list too.
 Its wording is built in `src/components/OfflineBanner.tsx:83-132`: heading `Offline, not live` or
 `Can't reach Orb, not live` (`:83`), then `Showing the shift board saved at 14:32, 9 minutes old.
@@ -853,22 +853,22 @@ empty, and the banner reads `There is no saved copy of the shift board on this d
 nothing to show.` (`OfflineBanner.tsx:111-117`).
 
 ### Background refresh
-`NursePanel.tsx:145-149` re-fetches the board every 60s (`REFRESH_MS`, `:55`) unless an obs or med
+`NursePanel.tsx:163-167` re-fetches the board every 60s (`REFRESH_MS`, `:55`) unless an obs or med
 sheet is open. That refreshes the row headers (name, bed, NEWS2 badge) but **never** the I-PASS
 drafts, which are cached per patient in `drafts` and only ever fetched on first expand.
 
 ### Permission-denied
 Reaching this tab at all requires the shell to grant the `shift` tab, which it does for `nurse`
-(`ClinicianShell.tsx:200`). Within it: `GET /draft` needs `vitals.read` and `POST /save` needs
+(`ClinicianShell.tsx:227`). Within it: `GET /draft` needs `vitals.read` and `POST /save` needs
 `scribe.create_draft`. The gap that matters is `admin`, which has the first and not the second
 (`server/permissions.py:142-143`), an administrator sees every document and is refused at Save.
 Every denial writes a `permission_denied` audit row before the 403 is raised
-(`server/permissions.py:406-424`), and every cross-ward attempt writes `patient_scope_denied` before
+(`server/permissions.py:415-433`), and every cross-ward attempt writes `patient_scope_denied` before
 the 404 (`:480-499`).
 
 ### Audit trail
 Opening a row writes a `phi_access` row with action `ipass_draft_viewed`
-(`ipass_routes.py:28`, executed at `permissions.py:501-511`). Saving writes
+(`ipass_routes.py:28`, executed at `permissions.py:510-520`). Saving writes
 `ipass_handoff_saved` with the note id and the patient (`ipass_routes.py:55-70`). Both are on the
 hash chain. Expanding five patients therefore leaves five PHI-read rows, one per expand, and, since
 re-expanding a cached row does not refetch, exactly one per patient per panel mount.

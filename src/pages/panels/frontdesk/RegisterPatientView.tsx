@@ -28,6 +28,12 @@
  *      card (UhidCardPrint, read from the server, which audits it as a card
  *      print) and the registration details drawer (DemographicsDrawer) with
  *      reasoned corrections and their history.
+ *   6. NOTICE AND CONSENT (opd-19). The new-patient form records the
+ *      patient's preferred language and, for an account holding
+ *      consent.record, offers the privacy notice and consent step
+ *      (RegistrationConsentFields): record it now with the registration, or
+ *      not now. The receptionist does not hold consent.record until counsel
+ *      agrees (ruling OPD-N3), so her form says a doctor records consent.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -57,11 +63,20 @@ import {
 } from '../../../api/registration'
 import OpdTokenSlipPrint from '../../../components/print/OpdTokenSlipPrint'
 import UhidCardPrint from '../../../components/print/UhidCardPrint'
-import { REGISTRATION_WRITE, hasPermission, type Permission } from '../../../lib/roles'
+import { CONSENT_RECORD, REGISTRATION_WRITE, hasPermission, type Permission } from '../../../lib/roles'
 import DemographicsDrawer from './DemographicsDrawer'
 import IdentityConfirmDialog from './IdentityConfirmDialog'
 import PatientIndexSearch from './PatientIndexSearch'
+import RegistrationConsentFields from './RegistrationConsentFields'
 import { cardMeta } from './indexCard'
+import {
+  consentInput,
+  consentReady,
+  emptyConsentDraft,
+  rememberNoticeVersion,
+  underAdultAge,
+  type ConsentDraft,
+} from './registrationConsent'
 import type { FrontDeskViewProps } from './viewRegistry'
 import './RegisterPatientView.css'
 
@@ -136,6 +151,7 @@ interface Refusal {
 function NewPatientForm({
   config,
   initialName,
+  canRecordConsent,
   onRegistered,
   onChooseExisting,
   onCancel,
@@ -143,11 +159,18 @@ function NewPatientForm({
 }: {
   config: RegistrationConfig
   initialName: string
+  /** opd-19: the account holds consent.record. */
+  canRecordConsent: boolean
   onRegistered: (patient: ChosenPatient, stated: StatedIdentity, note?: string) => void
   onChooseExisting: (card: IndexCard) => void
   onCancel: () => void
   onFeatureOff: () => void
 }) {
+  /* opd-19: the consent step is offered only when the server describes it
+     and this account may record it (the server checks again). */
+  const consentOptions = canRecordConsent ? config.consent : undefined
+  const [preferredLanguage, setPreferredLanguage] = useState('')
+  const [consent, setConsent] = useState<ConsentDraft>(emptyConsentDraft)
   const [name, setName] = useState(initialName)
   const [sex, setSex] = useState('')
   const [ageMode, setAgeMode] = useState<'dob' | 'age'>('dob')
@@ -169,8 +192,15 @@ function NewPatientForm({
   const ageOk = ageMode === 'dob'
     ? dob !== ''
     : Number.isInteger(ageNumber) && ageNumber >= 0 && ageNumber <= 130
+  /* opd-19: a patient under the adult age (or of no usable age yet) does not
+     consent for themselves; the server refuses the same. */
+  const consentMinor = consentOptions
+    ? underAdultAge(consentOptions, ageMode === 'dob' ? { dateOfBirth: dob } : { ageYears: ageNumber })
+    : null
+  const consentOk = !consentOptions
+    || consentReady(consentOptions, consent, preferredLanguage, consentMinor)
   const ready = !busy && config.uhid_ready && name.trim() !== '' && sex !== '' && ageOk
-    && (!hospitalMode || uhid.trim() !== '')
+    && (!hospitalMode || uhid.trim() !== '') && consentOk
   const reasonOk = reason.trim().length >= (config.reason_min_chars || 8)
 
   /* What was typed changed: the candidates were about the old details. */
@@ -180,6 +210,7 @@ function NewPatientForm({
     setError('')
   }
 
+  const consentBody = consentOptions ? consentInput(consentOptions, consent, preferredLanguage) : undefined
   const input = (): NewPatientInput => ({
     name: name.trim(),
     sex,
@@ -187,6 +218,8 @@ function NewPatientForm({
     ...(phone.trim() ? { phone: phone.trim() } : {}),
     ...(hospitalMode && uhid.trim() ? { uhid: uhid.trim() } : {}),
     ...(config.abdm_enabled && abha.trim() ? { abha_number: abha.trim() } : {}),
+    ...(preferredLanguage.trim() ? { preferred_language: preferredLanguage.trim() } : {}),
+    ...(consentBody ? { consent: consentBody } : {}),
   })
 
   const submit = async (withReview: boolean) => {
@@ -211,10 +244,18 @@ function NewPatientForm({
         ...(registered.uhid ? { uhid: registered.uhid }
           : digits.length >= 4 ? { phone_last4: digits.slice(-4) } : {}),
       }
+      /* opd-19: what the server says it recorded, never what was typed. */
+      const recorded = result.consents?.[0]
+      if (body.consent) rememberNoticeVersion(body.consent.notice_version)
+      const consentNote = recorded
+        ? `Consent to treatment recorded, with notice version ${recorded.notice_version} in `
+          + `${recorded.notice_language}.`
+        : undefined
+      const notes = [ageMode === 'age' ? NO_DOB_HINT : undefined, consentNote].filter(Boolean)
       onRegistered(
         { patient_id: registered.patient_id, name: body.name, uhid: registered.uhid },
         stated,
-        ageMode === 'age' ? NO_DOB_HINT : undefined,
+        notes.length ? notes.join(' ') : undefined,
       )
     } catch (err) {
       if (isFeatureDisabled(err)) {
@@ -322,6 +363,27 @@ function NewPatientForm({
           </p>
         </div>
       )}
+
+      <div className="rpv-field">
+        <label htmlFor="rpv-new-language">Preferred language</label>
+        <input id="rpv-new-language" type="text" value={preferredLanguage} autoComplete="off"
+          maxLength={200} disabled={busy} list={config.consent ? 'rpv-new-language-list' : undefined}
+          onChange={e => setPreferredLanguage(e.target.value)} />
+        {config.consent && (
+          <datalist id="rpv-new-language-list">
+            {config.consent.notice_languages.map(l => <option key={l} value={l} />)}
+          </datalist>
+        )}
+      </div>
+
+      {consentOptions ? (
+        <RegistrationConsentFields options={consentOptions} draft={consent} minor={consentMinor}
+          preferredLanguage={preferredLanguage} disabled={busy} onChange={setConsent} />
+      ) : config.consent ? (
+        <p className="rpv-hint">
+          Consent is not recorded at this desk. A doctor records the patient’s consent.
+        </p>
+      ) : null}
 
       <p className="rpv-hint">
         Allergies are not recorded here. The doctor asks about them at the consultation.
@@ -541,6 +603,7 @@ export default function RegisterPatientView({
   const [printError, setPrintError] = useState('')
   const [detailsOpen, setDetailsOpen] = useState(false)
   const canRegisterNew = holds(REGISTRATION_WRITE)
+  const canRecordConsent = holds(CONSENT_RECORD)
 
   /* The card's contents are read from the server, which audits the read as a
      card print. */
@@ -628,6 +691,7 @@ export default function RegisterPatientView({
         <NewPatientForm
           config={config}
           initialName={nameFrom(step.typed)}
+          canRecordConsent={canRecordConsent}
           onCancel={reset}
           onFeatureOff={onFeatureOff}
           onChooseExisting={card => setStep({ kind: 'confirm', card })}

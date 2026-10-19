@@ -46,6 +46,11 @@ registration_service.py holds the rules):
 POST /patients also takes an optional payer {payer_code, policy_number,
 member_id} (opd-13), recorded unverified with no admission; with a live
 registration-fee rule the answer carries the fee line raised once.
+POST /patients also takes an optional consent step (opd-19) {notice_acknowledged,
+treatment_consent, notice_version, notice_language, method, given_by,
+proxy_name, proxy_relationship, evidence_ref}: one consent row in the same
+transaction, consent.record only (403 consent_permission_required otherwise,
+ruling OPD-N3); the answer then carries "consents".
 Every handler is a plain def (FastAPI runs it in the threadpool), so the
 database work never touches the event loop.
 """
@@ -53,7 +58,7 @@ import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 import config
 from permissions import (
@@ -135,6 +140,23 @@ class RetireRuleIn(BaseModel):
     reason: Optional[str] = Field(None, max_length=500)
 
 
+class RegistrationConsentIn(BaseModel):
+    """The notice and consent step (opd-19): the patient was given the privacy
+    notice (its version and language) and agrees to treatment. Needs
+    consent.record (403 consent_permission_required otherwise; ruling OPD-N3).
+    The rules are registration_service._consent_values."""
+    model_config = ConfigDict(extra="forbid")
+    notice_acknowledged: Optional[StrictBool] = None
+    treatment_consent: Optional[StrictBool] = None
+    notice_version: Optional[str] = Field(None, max_length=40)
+    notice_language: Optional[str] = Field(None, max_length=40)
+    method: Optional[str] = Field(None, max_length=40)
+    given_by: Optional[str] = Field(None, max_length=20)
+    proxy_name: Optional[str] = _TEXT
+    proxy_relationship: Optional[str] = Field(None, max_length=80)
+    evidence_ref: Optional[str] = Field(None, max_length=120)
+
+
 class RegistrationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(..., max_length=200)
@@ -166,6 +188,8 @@ class RegistrationRequest(BaseModel):
     idempotency_key: Optional[str] = Field(None, max_length=200)
     # opd-13: the payer category the patient names, optional.
     payer: Optional[PayerIn] = None
+    # opd-19: the notice and consent step, optional.
+    consent: Optional[RegistrationConsentIn] = None
 
 
 class MatchRequest(BaseModel):

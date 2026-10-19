@@ -90,12 +90,58 @@ def _safety_summary(safety: dict) -> dict:
         }
         for a in (safety.get("allergy_alerts") or []) + (safety.get("interaction_alerts") or [])
     ]
-    return {
+    duplicate = safety.get("duplicate_check") or {}
+    alerts += [
+        {"type": "duplicate", "severity": None, "match": None, "message": f.get("message")}
+        for f in (duplicate.get("findings") or [])
+    ]
+    out = {
         "blocking": bool(safety.get("blocking")),
         "screen_failed": bool(safety.get("screen_failed")),
         "alerts": alerts,
         "coverage_note": safety.get("coverage_note"),
     }
+    # Only when the exact binding screened by name (medorders-20): which
+    # names the screen ran on, the bound product's first.
+    if safety.get("screened_names"):
+        out["screened_as"] = list(safety["screened_names"])
+    return out
+
+
+class _ScreenedOrder(dict):
+    """The gate's payload for a Sage order, carrying the exact formulary
+    binding it was screened for (medorders-20, ai_lanes.SageBinding). A dict,
+    so every reader of the screen reads it as before; the binding goes no
+    further than _write_helix."""
+    binding = None
+
+
+def _norm_name(name) -> str:
+    return " ".join(str(name or "").lower().split())
+
+
+def _merge_screens(screens: list, names: list) -> dict:
+    """One payload for the names one Sage order was screened as (the bound
+    product's name, then the card's when it reads differently). Every alert
+    of every screen, the worst severity, and screened only if every name was:
+    nothing reads cleaner than one of the screens said."""
+    rank = {"none": 0, "mild": 1, "moderate": 2, "severe": 3}
+    merged = dict(screens[0])
+    for extra in screens[1:]:
+        for key in ("allergy_alerts", "interaction_alerts", "unscreened_with"):
+            have = list(merged.get(key) or [])
+            have += [a for a in (extra.get(key) or []) if a not in have]
+            merged[key] = have
+        if rank.get(extra.get("max_severity"), 0) > rank.get(merged.get("max_severity"), 0):
+            merged["max_severity"] = extra.get("max_severity")
+        merged["blocking"] = bool(merged.get("blocking")) or bool(extra.get("blocking"))
+        merged["safe"] = bool(merged.get("safe", True)) and bool(extra.get("safe", True))
+        merged["interaction_screened"] = (bool(merged.get("interaction_screened"))
+                                          and bool(extra.get("interaction_screened")))
+        notes = [n for n in (merged.get("coverage_note"), extra.get("coverage_note")) if n]
+        merged["coverage_note"] = " ".join(dict.fromkeys(notes)) or None
+    merged["screened_names"] = list(names)
+    return merged
 
 
 def parse_safety(raw):
@@ -383,39 +429,83 @@ def _screen_helix(action: dict, actor_id: str) -> dict:
     # interactive=False is the correct mode here for the same reason: there is
     # nobody to type an acknowledgement, so a severe alert or a failed screen
     # must route to human review rather than be acknowledged away.
+    #
+    # EXACT BINDING (medorders-20, ORB_MED_ORDER_LIFECYCLE on): the product is
+    # bound first (services/medorders/ai_lanes.bind_sage_product, the
+    # reconciler at 0.8), and the screen runs on the bound PRODUCT's name, as
+    # the Relay confirm path screens it, on its generic name when the name does
+    # not carry it, then on the card's own words when they read differently,
+    # so what is screened is what is dispensed and what is charted. Any screen
+    # stopping the order stops it. With the lifecycle off, exactly as before:
+    # the card's words, one screen.
     from services.medication_safety_gate import (
         MedicationSafetyBlocked, enforce_medication_safety,
     )
+    from services.medorders import ai_lanes
+    binding = None
+    names = [target_med]
+    if ai_lanes.exact_binding_on():
+        try:
+            binding = ai_lanes.bind_sage_product(target_med)
+        except Exception as e:
+            # The catalogue could not be read: nothing is bound, so nothing
+            # goes to pharmacy; the card's drug is still screened and charted.
+            logger.error("Sage binding for '%s' failed: %s", target_med, e)
+            binding = ai_lanes.unbound(
+                (target_med or "").strip(), ai_lanes.NOT_BOUND_CATALOGUE_UNREADABLE,
+                "the formulary could not be read, so no product was chosen")
+        if binding.bound:
+            # The product's name; its generic name when the name does not
+            # carry it (a brand: the order-time allergy match reads names,
+            # not the formulary); the card's words when they read differently.
+            names = [binding.product["name"]]
+            generic = binding.product.get("generic_name")
+            if generic and _norm_name(generic) not in _norm_name(binding.product["name"]):
+                names.append(generic)
+            if _norm_name(target_med) not in {_norm_name(n) for n in names}:
+                names.append(target_med)
+    screened_name = target_med
     try:
-        return enforce_medication_safety(
-            patient_id, target_med,
-            actor_id=actor_id,
-            entry_point="sage.agentic_handoff",
-            interactive=False,
-        )
+        screens = []
+        for screened_name in names:
+            screens.append(enforce_medication_safety(
+                patient_id, screened_name,
+                actor_id=actor_id,
+                entry_point="sage.agentic_handoff",
+                interactive=False,
+            ))
     except MedicationSafetyBlocked as e:
         logger.warning("BLOCKED agentic order '%s' for %s: %s (%s)",
-                       target_med, patient_id,
+                       screened_name, patient_id,
                        e.safety.get("allergy_alerts"), e.reason)
         if e.safety.get("screen_failed"):
-            reason = (f"Not charted: the drug-safety screen could not run, so {target_med} "
+            reason = (f"Not charted: the drug-safety screen could not run, so {screened_name} "
                       "was not checked. Order it through pharmacist verification.")
         else:
             severe = [a.get("message") for a in
                       (e.safety.get("allergy_alerts") or []) + (e.safety.get("interaction_alerts") or [])
                       if a.get("severity") == "severe" and a.get("message")]
-            reason = f"Not charted: the drug-safety screen blocked {target_med}. " + " ".join(severe)
+            # The same medicine already ordered (ruling MO-R6, lifecycle on).
+            duplicate = (e.safety.get("duplicate_check") or {}).get("message")
+            if duplicate:
+                severe.append(duplicate)
+            reason = f"Not charted: the drug-safety screen blocked {screened_name}. " + " ".join(severe)
         raise HandoffBlocked(reason.strip(), _safety_summary(e.safety)) from e
     except Exception as e:
         # The gate itself could not run. Fail CLOSED: nothing is charted, and the
         # card says so rather than reading as sent.
         logger.error("BLOCKED agentic order '%s' for %s: safety gate unavailable: %s",
-                     target_med, patient_id, e)
+                     screened_name, patient_id, e)
         raise HandoffBlocked(
-            f"Not charted: the drug-safety screen could not run, so {target_med} "
+            f"Not charted: the drug-safety screen could not run, so {screened_name} "
             "was not checked. Order it through pharmacist verification.",
             _safety_summary({"blocking": True, "screen_failed": True}),
         ) from e
+    if binding is None:
+        return screens[0]
+    out = _ScreenedOrder(_merge_screens(screens, names))
+    out.binding = binding
+    return out
 
 
 def _write_helix(db, action: dict, actor_id: str, screened, *,
@@ -499,22 +589,32 @@ def _write_helix_through_store(db, action: dict, actor_id: str, safety: dict,
                                handoff_id: Optional[str]) -> tuple:
     """The Sage lane with the medication-order store on (medorders-8): the
     chart row, the order and its supply row in ONE write on ``db``
-    (services/medorders/ai_lanes.write_sage_order_in_txn). The product is
-    found by the same name match as before (helix_service.resolve_by_name_in_txn),
-    so the drug sent to pharmacy is unchanged; no match is still
-    'charted-only', with the same note. Unlike the store-off lane, nothing
-    here is best-effort: a failure after the chart row raises, the handoff's
-    savepoint rolls every row back, and the card reads 'failed'. Never
-    commits."""
+    (services/medorders/ai_lanes.write_sage_order_in_txn). In record mode the
+    product is found by the same name match as before
+    (helix_service.resolve_by_name_in_txn), so the drug sent to pharmacy is
+    unchanged; no match is still 'charted-only', with the same note. With the
+    lifecycle on it is the exact binding the screen ran for (medorders-20,
+    _screen_helix). Unlike the store-off lane, nothing here is best-effort: a
+    failure after the chart row raises, the handoff's savepoint rolls every
+    row back, and the card reads 'failed'. Never commits."""
     from services.medorders import ai_lanes
 
     patient_id = action.get("patient_id")
     target_med = action.get("target", "Unknown Medication")
     dose, route, frequency = _helix_order_fields(action)
+    # medorders-20: with the lifecycle on, the product is the one the screen
+    # was run for, carried on the screen itself; a screen made anywhere else
+    # carries none, and then no product is bound (fail closed).
+    binding = None
+    if ai_lanes.exact_binding_on():
+        binding = getattr(safety, "binding", None) or ai_lanes.unbound(
+            (target_med or "").strip(), ai_lanes.NOT_BOUND_NOT_SCREENED,
+            f"the product for {target_med} was not checked against this patient's "
+            "allergies and medicines")
     written = ai_lanes.write_sage_order_in_txn(
         db, patient_id=patient_id, drug_name=target_med, dose=dose, route=route,
         frequency=frequency, actor_id=actor_id, safety=safety,
-        sage_action_id=action.get("id"), sage_handoff_id=handoff_id)
+        sage_action_id=action.get("id"), sage_handoff_id=handoff_id, binding=binding)
     if written.supply is None:
         logger.warning("charted '%s' but Helix order failed: %s", target_med, written.not_sent)
         note = (f"Charted for review, but not sent to pharmacy: {written.not_sent}. "

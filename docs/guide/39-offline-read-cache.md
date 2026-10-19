@@ -67,7 +67,7 @@ graph TD
 
 ![Nurse shift board](../screenshots/nurse-01-mypatients-dark.png)
 
-*The shift board with a live connection. `OfflineBanner` sits directly under the view tabs (`src/pages/panels/nurse/NursePanel.tsx:275`) and renders **nothing** while the view is live, which is why it is not in this screenshot. A banner that is always present is a banner nobody reads (`OfflineBanner.tsx:22-23`).*
+*The shift board with a live connection. `OfflineBanner` sits directly under the view tabs (`src/pages/panels/nurse/NursePanel.tsx:293`) and renders **nothing** while the view is live, which is why it is not in this screenshot. A banner that is always present is a banner nobody reads (`OfflineBanner.tsx:22-23`).*
 
 ---
 
@@ -99,17 +99,17 @@ graph TD
 
 | Surface | What it does | Line |
 |---|---|---|
-| `VigilPanel` ward board | `useOfflineSnapshot('vigil:patients', …)` | `VigilPanel.tsx:83`, banner `:295` |
-| `VigilPanel` patient chart | `useOfflineSnapshot('vigil:patient:{id}', …)` | `VigilPanel.tsx:442`, banner `:1166` |
+| `VigilPanel` ward board | `useOfflineSnapshot('vigil:patients', …)` | `VigilPanel.tsx:85`, banner `:295` |
+| `VigilPanel` patient chart | `useOfflineSnapshot('vigil:patient:{id}', …)` | `VigilPanel.tsx:444`, banner `:1166` |
 | `NursePanel` shift board | `useOfflineSnapshot('nurse:board', …)` | `NursePanel.tsx:137`, banner `:274` |
-| `MedRoundSheet` drug chart | receives the board snapshot as a prop | `MedRoundSheet.tsx:39`, banner `:116` |
+| `MedRoundSheet` drug chart | receives the board snapshot as a prop | `MedRoundSheet.tsx:40`, banner `:116` |
 | `ObsEntrySheet` | receives the board snapshot as a prop | `ObsEntrySheet.tsx:67`, banner `:351` |
-| `AdministerModal`, chart a dose | `assertOnlineForWrite('chart this dose')` | `AdministerModal.tsx:85` |
+| `AdministerModal`, chart a dose | `assertOnlineForWrite('chart this dose')` | `AdministerModal.tsx:86` |
 | `ObsEntrySheet`, record obs | `assertOnlineForWrite('record these observations')` | `ObsEntrySheet.tsx:281` |
 | `HandoverSheet`, save handover | `assertOnlineForWrite('save this handover')` | `HandoverSheet.tsx:91` |
 | `RoundPanel`, save plan | `assertOnlineForWrite('save this plan')` | `RoundPanel.tsx:301` |
 | `RelayPanel`, send message | `assertOnlineForWrite('send this message')` | `RelayPanel.tsx:292` |
-| `VigilPanel`, save note | `assertOnlineForWrite('save this note')` | `VigilPanel.tsx:705` |
+| `VigilPanel`, save note | `assertOnlineForWrite('save this note')` | `VigilPanel.tsx:707` |
 
 ---
 
@@ -118,7 +118,7 @@ graph TD
 ### Flow 1: a live render, and the mirror
 
 1. The panel fetches as it always did and holds the result in its own state (`livePatients`, `liveBoard`, `liveData`).
-2. It passes that state to `useOfflineSnapshot` and renders **the snapshot**, never the raw state (`NursePanel.tsx:137-141`, `VigilPanel.tsx:83-87`).
+2. It passes that state to `useOfflineSnapshot` and renders **the snapshot**, never the raw state (`NursePanel.tsx:282-286`, `VigilPanel.tsx:85-89`).
 3. `trustLive` is `online && !liveFailed && live != null` (`useOfflineSnapshot.ts:85`). When it flips true with a new value, the hook stamps `liveAtRef` with `Date.now()` (`:86-89`), this is "when the server actually answered".
 4. An effect mirrors that value to localStorage through `writeCache(key, live, userId)` (`useOfflineSnapshot.ts:94-97`).
 5. The snapshot comes back `source: 'live'`, and `OfflineBanner` renders **null** (`OfflineBanner.tsx:77`).
@@ -141,7 +141,7 @@ graph TD
 ### Flow 4: a write is attempted offline
 
 1. The clinician taps **Given** / **Record** / **Save plan** / **Send**.
-2. The call site calls `assertOnlineForWrite('<action in her words>')` **inside its own `try`**, before any API function is reached (`ObsEntrySheet.tsx:281`, `AdministerModal.tsx:85`).
+2. The call site calls `assertOnlineForWrite('<action in her words>')` **inside its own `try`**, before any API function is reached (`ObsEntrySheet.tsx:281`, `AdministerModal.tsx:86`).
 3. `isOnline()` is false, so `OfflineWriteRefusedError` is thrown (`writeGuard.ts:58`).
 4. The catch block lands it in the same error line every other failure uses, so it needs no special rendering (`ObsEntrySheet.tsx:293-297`).
 5. She reads: *"Cannot record these observations, this device is offline. Your entry has not been saved. Reconnect and enter it again."* (`writeGuard.ts:44-47`).
@@ -276,7 +276,7 @@ sequenceDiagram
 #### `OfflineWriteRefusedError`: `writeGuard.ts:17`
 **Signature:** `class OfflineWriteRefusedError extends Error`; fields `isOfflineWriteRefused = true`, `action`
 **Does:** The refusal, as a throwable.
-**On screen:** its `.message` is what the clinician reads, in whichever error line the calling panel already uses, the red strip on the obs sheet, the modal's `role="alert"` error (`AdministerModal.tsx:129`), Relay's `sendError`, the round panel's per-patient save error.
+**On screen:** its `.message` is what the clinician reads, in whichever error line the calling panel already uses, the red strip on the obs sheet, the modal's `role="alert"` error (`AdministerModal.tsx:130`), Relay's `sendError`, the round panel's per-patient save error.
 **Why the boolean discriminator exists (`:18-20`):** `instanceof` quietly stops working across bundle boundaries and realms. A branded field survives both. `Object.setPrototypeOf` in the constructor (`:29`) restores the chain when this compiles down to ES5, where extending a built-in otherwise breaks `instanceof` too, belt and braces, because the cost of misclassifying this error is showing the clinician the wrong sentence.
 **Breaks if you change it:** drop `isOfflineWriteRefused` and `isOfflineWriteRefused()` starts returning `false` for real refusals wherever bundling has split the class, the refusal renders as a generic "something went wrong", which is the one message that does *not* tell her to write it down.
 
@@ -338,7 +338,7 @@ sequenceDiagram
 #### `useOnReconnect`: `useOfflineStatus.ts:76`
 **Signature:** `(callback: (() => void) | undefined) -> void`
 **Does:** Runs a callback the moment the `online` event fires.
-**On screen:** the board and chart refetching by themselves when the nurse walks back into signal, which is what makes the banner *disappear* without her touching anything (`VigilPanel.tsx:85`, `:443`; `NursePanel.tsx:139`).
+**On screen:** the board and chart refetching by themselves when the nurse walks back into signal, which is what makes the banner *disappear* without her touching anything (`VigilPanel.tsx:87`, `:445`; `NursePanel.tsx:157`).
 **Why it is separate from the status hook, and why the ref (`:69-74`):** the thing a panel wants on reconnect is a *side effect*, and it must not depend on the identity of the closure the caller happens to pass this render. A fresh closure per render would tear the listener down and re-attach it constantly, **and could miss the event in between.**
 **Breaks if you change it:** put `callback` in the effect's dependency array and you reintroduce exactly that race, on the one event the whole recovery path depends on. `useOfflineSnapshot.test.tsx:131-140` pins that the callback fires exactly once on reconnect.
 
@@ -431,7 +431,7 @@ sequenceDiagram
 - Optional **Try again** button (`:124-131`), *"worth offering when the connection may already be back but nothing has re-fetched yet"* (`:32-34`).
 **Why `role="alert"` (`:18-20`):** it is not ambient status. It **changes what the reader is allowed to conclude from everything below it.**
 **Why `what` is in the clinician's vocabulary:** it reads as "Showing the shift board saved at 14:32" (`:29-31`). Compare the five real values: "patient board", "patient chart", "shift board", "drug chart", "patient details".
-**Breaks if you change it:** drop `role="alert"` and a screen-reader user gets no announcement that the chart under it is a copy. Render it always (even live) and it becomes furniture. Delete the "never held back to send later" sentence and the screen stops carrying the one thing that stops a nurse walking away from an unrecorded dose. Move it *below* the content and it stops qualifying what she has already read, Vigil's chart has an explicit comment about placing it above for exactly this reason (`VigilPanel.tsx:1183-1184`).
+**Breaks if you change it:** drop `role="alert"` and a screen-reader user gets no announcement that the chart under it is a copy. Render it always (even live) and it becomes furniture. Delete the "never held back to send later" sentence and the screen stops carrying the one thing that stops a nurse walking away from an unrecorded dose. Move it *below* the content and it stops qualifying what she has already read, Vigil's chart has an explicit comment about placing it above for exactly this reason (`VigilPanel.tsx:1191-1192`).
 **Gotchas:** the no-copy line calls `newestCachedAt(getUser()?.id ?? '')` **directly** (`:87`), reading the signed-in user from `api/client` rather than the `userId` the snapshot was built with. For every real surface those are the same value; for a caller that passed an explicit `userId` they are not, and the device-newest sentence would then describe a different user's cache. Passing `''` when nobody is signed in is safe, `newestCachedAt` refuses an empty id (`phiCache.ts:208`).
 
 ---
@@ -444,13 +444,13 @@ This is not part of the read cache, but `useOfflineSession` imports two function
 **Signature:** `() -> number`
 **Does:** Drops every queued write.
 **Called from:** `App.logout` (`src/AppRoot.tsx:108`) and `useOfflineSession` on switch/sign-out (`useOfflineSession.ts:80`).
-**On screen:** the pending-count chip in the shell (`src/pages/ClinicianShell.tsx:463`, `:469`) drops to zero on its next two-second poll (`:342`).
+**On screen:** the pending-count chip in the shell (`src/pages/ClinicianShell.tsx:493`, `:499`) drops to zero on its next two-second poll (`:342`).
 
 #### `clearForeignOfflineQueue`: `src/api/client.ts:566`
 **Signature:** `(userId: string | null) -> OfflineRequest[]`
 **Does:** Drops queued writes that do **not** belong to `userId`; `null` drops all. Returns them, so the caller decides whether anyone needs telling.
 **Why:** a replay is sent on the **current** session's cookie, so a write queued by the last nurse would be filed against this one, *her name on another clinician's note or dose, with nothing on screen to reveal it* (`src/api/client.ts:631-635`). Same rule `phiCache` applies to reads: **a queued write is replayed for its author or not at all.**
-**On screen:** when called from `processOfflineQueue` (`:650`) it dispatches `orb:offline-sync-failed` (`:654`), which the shell renders as a `role="alert"` badge, "N queued action(s) failed to sync. Please re-enter" (`src/pages/ClinicianShell.tsx:445-449`). When called from `useOfflineSession` on a boot it is silent, deliberately.
+**On screen:** when called from `processOfflineQueue` (`:650`) it dispatches `orb:offline-sync-failed` (`:654`), which the shell renders as a `role="alert"` badge, "N queued action(s) failed to sync. Please re-enter" (`src/pages/ClinicianShell.tsx:475-479`). When called from `useOfflineSession` on a boot it is silent, deliberately.
 
 #### `offlineMutate`: `src/api/client.ts:611`
 **Signature:** `(path, body, offlineResult, method, key?) -> Promise<T>`
@@ -464,12 +464,12 @@ This is not part of the read cache, but `useOfflineSession` imports two function
 
 | Contract | Producer | Consumer | Breaks how |
 |---|---|---|---|
-| `OfflineSnapshot` shape | `useOfflineSnapshot.ts:45` | `OfflineBanner.tsx:65`, `MedRoundSheet.tsx:39`, `ObsEntrySheet.tsx:67` | a renamed `source` value silently stops the banner rendering; the cached view then looks live |
+| `OfflineSnapshot` shape | `useOfflineSnapshot.ts:45` | `OfflineBanner.tsx:65`, `MedRoundSheet.tsx:40`, `ObsEntrySheet.tsx:67` | a renamed `source` value silently stops the banner rendering; the cached view then looks live |
 | `orb:offline:` key prefix | `phiCache.ts:25` | `clearOfflineCache` (`:184`), and every other localStorage user in Orb | widen it and sign-out deletes the nurse's in-progress obs draft |
 | Envelope `userId` stamp | `writeCache` (`phiCache.ts:106`) | `readCache` (`phiCache.ts:162`), `newestCachedAt` (`phiCache.ts:213`), `useOfflineSession.ts:59` | stop stamping and all three ownership checks fail open at once |
 | `getUser()?.id` | `src/api/client.ts:159` | `useOfflineSnapshot.ts:74`, `OfflineBanner.tsx:87`, `src/AppRoot.tsx:125` | a user object without a stable `id` makes every entry unreadable on the next mount |
-| `orb_offline_queue` + `userId` per entry | `queueRequest` (`src/api/client.ts:552`) | `clearForeignOfflineQueue` (`:543`), `useOfflineSession.ts:68`, `readOfflineQueueCount` (`src/pages/ClinicianShell.tsx:40`) | an unstamped entry is dropped rather than misattributed |
-| `orb:offline-sync-failed` event | `src/api/client.ts:654`, `:719` | `src/pages/ClinicianShell.tsx:339` | rename it and a permanently-failed replay stops being reported to anyone |
+| `orb_offline_queue` + `userId` per entry | `queueRequest` (`src/api/client.ts:552`) | `clearForeignOfflineQueue` (`:543`), `useOfflineSession.ts:68`, `readOfflineQueueCount` (`src/pages/ClinicianShell.tsx:41`) | an unstamped entry is dropped rather than misattributed |
+| `orb:offline-sync-failed` event | `src/api/client.ts:654`, `:719` | `src/pages/ClinicianShell.tsx:366` | rename it and a permanently-failed replay stops being reported to anyone |
 | `navigator.onLine` semantics | the browser | `writeGuard.ts:80`, `useOfflineStatus.ts:32`, `src/api/client.ts:596` | three independent readers; a change in interpretation must land in all three |
 | `SHARED_DEVICE_IDLE_MS` sign-out | `src/AppRoot.tsx:40`, `:113-120` (guide 33) | the whole queue-lifetime argument | lengthen it and "the queue dies before the wi-fi returns" stops being true, but the refusals are still correct |
 
@@ -494,7 +494,7 @@ This is not part of the read cache, but `useOfflineSession` imports two function
 
 ## Discrepancies and open questions
 
-1. **`api/client.ts` still documents the opposite policy, in two places.** `sendMessage` (`src/api/client.ts:1069-1072`) and `addClinicalNote` (`:1547-1548`) each carry a comment saying the write is safe to queue offline and syncs on reconnect. `administerMedication` no longer does: its comment (`:1739-1762`) now says the online guard is load-bearing, because the allergy interlock and the dose guard run on that endpoint and a queued dose could never show a nurse their refusal. Every UI call site of the three refuses first (`src/pages/panels/RelayPanel.tsx:490`, `src/pages/panels/RoundPanel.tsx:381`, `src/pages/panels/VigilPanel.tsx:1246`, `src/components/vigil/AdministerModal.tsx:269`), so the two queue-friendly comments describe a path that is no longer reachable from the app, but a new surface calling `addClinicalNote` and reading its comment would get the queued behaviour and believe it was intended. **The read-only rule is enforced at the call sites, not structurally.** The obvious hardening is to move `assertOnlineForWrite` inside `offlineMutate` (or delete the offline branch), which would make the guarantee impossible to bypass by omission.
+1. **`api/client.ts` still documents the opposite policy, in two places.** `sendMessage` (`src/api/client.ts:1069-1072`) and `addClinicalNote` (`:1547-1548`) each carry a comment saying the write is safe to queue offline and syncs on reconnect. `administerMedication` no longer does: its comment (`:1739-1762`) now says the online guard is load-bearing, because the allergy interlock and the dose guard run on that endpoint and a queued dose could never show a nurse their refusal. Every UI call site of the three refuses first (`src/pages/panels/RelayPanel.tsx:490`, `src/pages/panels/RoundPanel.tsx:381`, `src/pages/panels/VigilPanel.tsx:1254`, `src/components/vigil/AdministerModal.tsx:275`), so the two queue-friendly comments describe a path that is no longer reachable from the app, but a new surface calling `addClinicalNote` and reading its comment would get the queued behaviour and believe it was intended. **The read-only rule is enforced at the call sites, not structurally.** The obvious hardening is to move `assertOnlineForWrite` inside `offlineMutate` (or delete the offline branch), which would make the guarantee impossible to bypass by omission.
 
 2. **`writeCache` returning `false` is invisible.** The docstring is explicit that a caller should treat `false` as "offline reading will not work for this" (`phiCache.ts:91-94`), and `useOfflineSnapshot.ts:96` ignores the return value entirely. A quota failure on a large ward board therefore produces a device that silently has no copy, discovered only in the dead zone, as "no saved copy of the shift board".
 

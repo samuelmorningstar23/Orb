@@ -69,8 +69,8 @@ graph LR
 
 ### Core flow 1: the queue loads
 
-1. A pharmacist logs in. The frontend shell reads which tabs the role may see from `shellConfig`; `pharmacist` gets `helix`, `pharmacy-verify` and `sage` (`src/shellConfig.tsx:886`).
-2. Clicking the **Verify Queue** tab lazy-loads and mounts `<PharmacyVerifyQueue/>` (`src/pages/ClinicianShell.tsx:123`, rendered at `:541-543`).
+1. A pharmacist logs in. The frontend shell reads which tabs the role may see from `shellConfig`; `pharmacist` gets `helix`, `pharmacy-verify` and `sage` (`src/shellConfig.tsx:894`).
+2. Clicking the **Verify Queue** tab lazy-loads and mounts `<PharmacyVerifyQueue/>` (`src/pages/ClinicianShell.tsx:124`, rendered at `:541-543`).
 3. On mount the component calls `load()` (`src/components/helix/PharmacyVerifyQueue.tsx:197`), which calls `getPendingVerifications()` → `GET /api/pharmacy/pending`.
 4. The route handler calls `pharmacy.list_pending_verification()`, which SQL-selects every still-active med with `source IN ('llm_extracted','agentic') AND verified_by IS NULL` on the chart of an admitted patient, joins the patient (name, ward, bed) and the prescriber's name, and for each row **re-runs the drug-safety screen** so allergy/interaction alerts and screening gaps render inline.
 5. The component seeds an editable field-set per row, blanking any `REVIEW REQUIRED` placeholder so the pharmacist types a real value into an empty box.
@@ -155,7 +155,7 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 **Signature:** `(patient_id: str, drug_name: str, med_id: int | None = None) -> dict`
 **Does:** Runs the order-time drug-safety screen for one drug on one patient and returns the full safety dict plus a flattened `alerts` list. It never raises, but when the screen fails it reports that failure loudly rather than returning silence.
 **How it works:**
-1. Calls `check_medication_safety(patient_id, drug_name, exclude_med_id=med_id)` (`:79`; the shared drug-safety service, `server/services/drug_safety_service.py:691`). `med_id` is the row under review: unverified AI meds are charted `active`, so without excluding it the drug is screened against itself and every anticoagulant raises a false severe duplicate-therapy alert.
+1. Calls `check_medication_safety(patient_id, drug_name, exclude_med_id=med_id)` (`:79`; the shared drug-safety service, `server/services/drug_safety_service.py:723`). `med_id` is the row under review: unverified AI meds are charted `active`, so without excluding it the drug is screened against itself and every anticoagulant raises a false severe duplicate-therapy alert.
 2. If that raises for *any* reason, it logs a warning and returns a **fail-CLOSED** shape (`server/services/pharmacy_verification_service.py:82-86`) instead of propagating: `screen_failed: true`, `max_severity: "unknown"`, `blocking: true`, `safe: false`, and a `coverage_note` reading "Drug-safety screening unavailable: verify manually.".
 3. On success it adds a convenience key `alerts` = `allergy_alerts + interaction_alerts` concatenated (`:87`), and stamps `screen_failed: false` (`:88`), so callers have one flat list to render.
 **Why it exists:** Two reasons. (a) **Uniform shape**, callers want one `alerts` array, but the underlying screen returns allergy and interaction alerts in separate keys. (b) **Never blank the queue, never fake a clean bill of health.** An exception must not stop the pharmacist *seeing* the queue, so the function does not propagate; but the row it returns is marked `screen_failed: true` with `max_severity: "unknown"` and `blocking: true`. The docstring states the rule: "an unscreened med must never look identical to a clean one" (`server/services/pharmacy_verification_service.py:66-77`).
@@ -276,11 +276,11 @@ Router declared with `prefix="/api/pharmacy"` and tag `"Pharmacy Verification"` 
 #### `get_pending`: `server/routes/pharmacy_routes.py:43`
 **Signature:** `GET /api/pharmacy/pending`, dep `require_permission("helix.read")` → `{ "pending": [...] }`
 **Does:** Returns the verification queue.
-**How it works:** The `Depends(require_permission("helix.read"))` runs first: it resolves the JWT to a user, checks the user's role grants `helix.read`, and 403s otherwise (`server/permissions.py:819-827`). On success it returns the authenticated `user` dict, and the handler returns `{"pending": pharmacy.list_pending_verification()}`.
+**How it works:** The `Depends(require_permission("helix.read"))` runs first: it resolves the JWT to a user, checks the user's role grants `helix.read`, and 403s otherwise (`server/permissions.py:828-836`). On success it returns the authenticated `user` dict, and the handler returns `{"pending": pharmacy.list_pending_verification()}`.
 **Why it exists:** The read endpoint behind the queue. Uses `helix.read` (not a dedicated `pharmacy.read`) because pharmacy verification is scoped as part of the Helix pharmacist permission family.
 **Data in/out:** none → `{"pending": PendingMedication[]}`.
 **Talks to:** Calls `list_pending_verification`. Called by `getPendingVerifications` (`src/api/pharmacy.ts:99`).
-**Change guide:** To let admins read the queue, they already have `HELIX_READ` (`server/permissions.py:297`) so no change needed server-side; the *UI* tab is what hides it from them, `pharmacy-verify` appears only in the pharmacist's tab list, not the admin's (`src/shellConfig.tsx:886`).
+**Change guide:** To let admins read the queue, they already have `HELIX_READ` (`server/permissions.py:306`) so no change needed server-side; the *UI* tab is what hides it from them, `pharmacy-verify` appears only in the pharmacist's tab list, not the admin's (`src/shellConfig.tsx:894`).
 **Gotchas:** Read-only route does **not** write an audit event (only verify/reject do). If you need "who looked at the queue" auditing, add a `log_audit_event` here. A sibling read, `GET /api/pharmacy/interaction-coverage` (`server/routes/pharmacy_routes.py:43`), returns which formulary items the interaction knowledge base can screen.
 
 ---
@@ -357,7 +357,7 @@ Nested functions:
 
 **Why it exists:** The single pharmacist-facing surface. The optimistic row removal + local `edits` state make it feel instant without a full reload after each action.
 **Data in/out:** consumes `PendingMedication[]`; sends `{dosage,route,frequency}` (+ `ack_reason`) / `{reason}`.
-**Talks to:** `getPendingVerifications`, `verifyMedication`, `rejectMedication` (`src/api/pharmacy.ts`). Mounted lazily by `ClinicianShell` (`src/pages/ClinicianShell.tsx:123`, `:541-543`) inside a `PanelErrorBoundary`.
+**Talks to:** `getPendingVerifications`, `verifyMedication`, `rejectMedication` (`src/api/pharmacy.ts`). Mounted lazily by `ClinicianShell` (`src/pages/ClinicianShell.tsx:124`, `:571-573`) inside a `PanelErrorBoundary`.
 **Change guide (worked example):** *"Refresh the queue automatically every 30s."* Add a second `useEffect` with `setInterval(load, 30000)` and clear it on unmount. Watch out: `load` sets `loading=true` each time, which would swap the table for the loading state; guard with a "silent reload" flag so background refreshes don't blank the list, and do not reseed `edits` over a pharmacist's half-typed correction.
 **Gotchas:** (1) The placeholder test is a substring match on the *uppercased* value, so a legitimate value literally containing "review" would be treated as blank; the server applies the same rule, so the two agree. (2) Optimistic removal means if the server call *actually* succeeds but the network response is lost, the row vanishes locally while remaining pending server-side until a Refresh, mildly confusing but self-healing.
 
@@ -478,7 +478,7 @@ One Playwright test, **"pharmacist opens the Verify Queue and it renders"** (`:1
 **Prerequisites (must already exist):**
 1. The `medications` table **with the migration columns** `source`, `verified_by`, `verified_at` (guide 04-database-schema; `server/database.py:233` + migration `:1859-1869`).
 2. `db_session()` (transactional sqlite context manager, `server/database.py:1099`).
-3. The drug-safety service exposing `check_medication_safety(patient_id, drug_name, exclude_med_id=...)` and the dose guard in `medication_safety_gate` (guide 14-helix; `server/services/drug_safety_service.py:691`).
+3. The drug-safety service exposing `check_medication_safety(patient_id, drug_name, exclude_med_id=...)` and the dose guard in `medication_safety_gate` (guide 14-helix; `server/services/drug_safety_service.py:723`).
 4. Auth + RBAC: `require_permission`, `get_current_user`, `create_token`, and a `permissions.py` where `pharmacist` is granted `helix.read`/`helix.write` (guide 03-auth-rbac).
 5. The audit chain's `log_audit_event` (guide 05).
 6. Frontend: `apiFetch` (guide 02) and a shell that maps roles to tabs (`ClinicianShell`).
@@ -498,7 +498,7 @@ One Playwright test, **"pharmacist opens the Verify Queue and it renders"** (`:1
 
 1. **"Realtime queue updates" do not exist in this subsystem.** Despite the queue being a shared, multi-pharmacist surface, there is **no socket.io emission** on verify/reject and the component subscribes to no socket events (confirmed by grep across `pharmacy_verification_service.py` and `pharmacy_routes.py`). Freshness relies on the mount-time fetch, the manual **Refresh** button, and optimistic local removal. If two pharmacists have the queue open, one verifying a med does **not** live-update the other's screen; the second only discovers it on their next Refresh (where the med is gone from the server result), or gets a 400 "Another pharmacist has already checked this medication. Refresh the queue." if they act on the stale row. A live-refresh design (emit to a `pharmacy` room from the verify/reject handlers) is the obvious future improvement.
 
-2. **The "pharmacist role gate" is really a `helix.write` permission gate, and `admin` also holds it.** `verify`/`reject` require `helix.write`, which `admin` is granted (`server/permissions.py:297`). So an admin's JWT can verify/reject meds via the API even though the UI never shows admins the `pharmacy-verify` tab (`src/shellConfig.tsx:886`). Not necessarily a bug, but "only pharmacists can verify" is enforced by UI convention, not by the API, for admins.
+2. **The "pharmacist role gate" is really a `helix.write` permission gate, and `admin` also holds it.** `verify`/`reject` require `helix.write`, which `admin` is granted (`server/permissions.py:306`). So an admin's JWT can verify/reject meds via the API even though the UI never shows admins the `pharmacy-verify` tab (`src/shellConfig.tsx:894`). Not necessarily a bug, but "only pharmacists can verify" is enforced by UI convention, not by the API, for admins.
 
 3. **TOCTOU nuance in verify/reject.** The UPDATE carries `AND verified_by IS NULL` (`server/services/pharmacy_verification_service.py:368`, `:419`) to stop a double-write across concurrent requests, good, and verify re-runs its guards inside the write session first (`:346-362`). But neither function checks the UPDATE's affected-row count; each re-reads with `_fetch_med` and returns its status regardless. In a genuine race (two connections both pass the in-session guard before either commits), the loser's UPDATE matches 0 rows, yet the loser still returns a payload showing the *winner's* `verified_by`. Low-severity (SQLite serialises writers and the common path is the read-time guard at `:243`), but worth a rowcount check for correctness.
 

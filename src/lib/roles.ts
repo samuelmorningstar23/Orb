@@ -67,6 +67,12 @@ export const VITALS_WRITE = 'vitals.write' as const
 /** Copying an observation set from the paper sheet: the ward clerk only. Her
  *  entry sheet asks for the time written on the sheet and shows no score. */
 export const VITALS_TRANSCRIBE = 'vitals.transcribe' as const
+/** Recording (and withdrawing) a patient's consent. The doctor's on the server.
+ *  Mirrored so the registration step offers the privacy notice and consent
+ *  questions only to an account whose request will not 403 (opd-19). Ruling
+ *  OPD-N3: the receptionist gets it once counsel agrees, never before; that day
+ *  it is one line here and one in server/permissions.py. */
+export const CONSENT_RECORD = 'consent.record' as const
 
 /* ── The HIS permissions (build plan of 3 October 2026, wave 1) ─────────────
  *
@@ -146,6 +152,7 @@ export type Permission =
   | typeof DISCHARGE_PUBLISH
   | typeof VITALS_WRITE
   | typeof VITALS_TRANSCRIBE
+  | typeof CONSENT_RECORD
   | HisPermission
 
 /**
@@ -204,8 +211,10 @@ const ROLE_PERMISSIONS: Record<string, readonly Permission[]> = {
   // HIS: the doctor registers and consults outpatients (OPD-N3), reads the bed
   // board (moves and transfers go through the patient.write arm on the
   // server), and collects specimens and acknowledges lab criticals (LIS-R12).
+  // The doctor also records consent (opd-19 offers it on the walk-in).
   doctor: [PATIENT_READ_ALL, PATIENT_WRITE, OUTCOME_RECORD, RELAY_EXECUTE_ACTION,
            MEDICATION_PRESCRIBE, DISCHARGE_GENERATE, DISCHARGE_PUBLISH, VITALS_WRITE,
+           CONSENT_RECORD,
            REGISTRATION_READ, REGISTRATION_WRITE, OPD_CONSULT,
            ADT_READ, LAB_COLLECT, LAB_CRITICAL_ACK],
   // Governance + read-only clinical. Holds OUTCOME_RECORD for backfill, but
@@ -231,7 +240,8 @@ const ROLE_PERMISSIONS: Record<string, readonly Permission[]> = {
   // The cash counter: payments only, none of the mirrored set.
   cashier: [],
   // The HIS roles. Each exists only while its feature is on (ROLE_FEATURE).
-  // The receptionist registers and books; no chart, no money (OPD-N3).
+  // The receptionist registers and books; no chart, no money (OPD-N3), and
+  // no CONSENT_RECORD until counsel agrees (OPD-N3).
   receptionist: [REGISTRATION_READ, REGISTRATION_WRITE],
   // The ward clerk reads the board and moves a patient between beds of the
   // same department: no transfer (ADT-S8), no leave or absconded (ADT-S7).

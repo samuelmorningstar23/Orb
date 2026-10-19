@@ -6,6 +6,7 @@ import {
   type AdministrationRecord,
   type DoseCheckSummary,
 } from '../../api/client'
+import { isHeldRefusal } from '../../api/medorders'
 import { assertOnlineForWrite } from '../../lib/offline/writeGuard'
 import { hasPermission, MEDICATION_PRESCRIBE } from '../../lib/roles'
 import {
@@ -183,6 +184,11 @@ export default function AdministerModal({
      (whether anyone at the bedside may type one is ruling R011), so the next
      step is the prescriber or Not given, and Given stays off. */
   const [doseRefusal, setDoseRefusal] = useState<DoseCheckSummary | null>(null)
+  /* The ORDER is on hold (medorders-10). The bedside refuses a given dose of
+     a held medication order with a flat sentence (services/medorders/core.py
+     _HELD_WORDS); this keeps it on screen as what it is, turns Given off, and
+     offers the one record that is always allowed: not given (held). */
+  const [heldRefusal, setHeldRefusal] = useState<string | null>(null)
 
   const close = useCallback(() => {
     if (recordedWithWarnings) onRecorded(recordedWithWarnings)
@@ -315,7 +321,13 @@ export default function AdministerModal({
         setConfirmText('')
       }
       const message = e instanceof Error ? e.message : 'Failed to record administration'
-      if (doseRefused) {
+      const held = status === 'given' && !refusal && !doseRefused && isHeldRefusal(message)
+      if (held) {
+        // The order is on hold: said by the held panel, with Given off.
+        setHeldRefusal(message)
+        setConfirmText('')
+        setError('')
+      } else if (doseRefused) {
         // Stated in full by the dose panel. It is not a refusal of the written
         // allergy reason either, so the override panel stays quiet about it.
         setError('')
@@ -539,6 +551,38 @@ export default function AdministerModal({
               </section>
             )}
 
+            {/* The order is on hold: the prescriber has paused this medicine.
+                No override exists for a hold; the next step is the prescriber,
+                or recording the dose as not given (held), offered here in one
+                press with the reason filled in. */}
+            {heldRefusal && (
+              <section className="administer-modal__allergy administer-modal__allergy--danger" role="alert">
+                <h3 className="administer-modal__allergy-title">This medicine is on hold</h3>
+                <p className="administer-modal__allergy-note">{heldRefusal}</p>
+                <p className="administer-modal__allergy-note">
+                  <strong>Nothing was recorded.</strong> Ask the prescriber if it should be
+                  resumed. If the dose is not given now, record it as not given (held) so the
+                  omission is on the chart.
+                </p>
+                {!showNotGiven && (
+                  <div className="administer-modal__actions">
+                    <button
+                      type="button"
+                      className="administer-btn administer-btn--secondary"
+                      onClick={() => {
+                        setShowNotGiven(true)
+                        setReason('Held (clinical decision)')
+                        setReasonDetail('The order is on hold')
+                      }}
+                      disabled={busy}
+                    >
+                      Record as not given (held)
+                    </button>
+                  </div>
+                )}
+              </section>
+            )}
+
             {/* ── THE OVERRIDE ──
                    A separate, heavier panel below the refusal, and reachable only
                    after the server has spoken. It restates the hazard AT THE
@@ -727,9 +771,9 @@ export default function AdministerModal({
                 type="button"
                 className={`administer-btn ${overrideOffered ? 'administer-btn--danger' : 'administer-btn--primary'}`}
                 onClick={() => submit('given')}
-                disabled={busy || !confirmed || !overrideReady || doseRefusal !== null}
+                disabled={busy || !confirmed || !overrideReady || doseRefusal !== null || heldRefusal !== null}
                 title={
-                  doseRefusal
+                  doseRefusal || heldRefusal
                     ? 'Orb refused this dose. Contact the prescriber, or record it as Not given.'
                     : confirmed && overrideReady
                     ? undefined

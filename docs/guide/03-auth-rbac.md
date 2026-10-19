@@ -1,6 +1,6 @@
 # Authentication and RBAC: login, JWT, permissions, MFA
 
-This guide covers how Orb decides *who you are* (authentication) and *what you may do* (authorization). The server issues signed JSON Web Tokens (JWTs) at `POST /api/auth/login` (`server/routes/auth_routes.py:425`), verifies them on every protected request through a FastAPI dependency called `get_current_user` (`server/auth.py:457`), and gates each route by a central role-based access control (RBAC) map of 51 permissions across 6 roles, `doctor`, `nurse`, `admin`, `pharmacist`, `patient`, `cashier` (`server/permissions.py:222`), with `clinician` aliased to `doctor` (`server/permissions.py:343`). On top of that sit three hardening layers: bcrypt password hashing with automatic upgrade of legacy hashes (`server/auth.py:155`), instant everywhere-at-once token revocation via a per-user `token_version` counter stamped into the token as the `tv` claim (`server/auth.py:396`) and re-checked on every request (`:522-529`), and optional time-based one-time-password (TOTP) multi-factor authentication implemented from the Python standard library alone (`server/services/mfa_service.py`). Every denial and every login outcome is written to a tamper-evident audit log.
+This guide covers how Orb decides *who you are* (authentication) and *what you may do* (authorization). The server issues signed JSON Web Tokens (JWTs) at `POST /api/auth/login` (`server/routes/auth_routes.py:425`), verifies them on every protected request through a FastAPI dependency called `get_current_user` (`server/auth.py:457`), and gates each route by a central role-based access control (RBAC) map of 51 permissions across 6 roles, `doctor`, `nurse`, `admin`, `pharmacist`, `patient`, `cashier` (`server/permissions.py:222`), with `clinician` aliased to `doctor` (`server/permissions.py:352`). On top of that sit three hardening layers: bcrypt password hashing with automatic upgrade of legacy hashes (`server/auth.py:155`), instant everywhere-at-once token revocation via a per-user `token_version` counter stamped into the token as the `tv` claim (`server/auth.py:396`) and re-checked on every request (`:522-529`), and optional time-based one-time-password (TOTP) multi-factor authentication implemented from the Python standard library alone (`server/services/mfa_service.py`). Every denial and every login outcome is written to a tamper-evident audit log.
 
 ## Purpose and neighbors
 
@@ -88,7 +88,7 @@ sequenceDiagram
 3. `HTTPBearer` (a FastAPI "security scheme" object, `server/auth.py:14`) extracts the token from the header; if the header is missing or not `Bearer`, it aborts with 403 before any Orb code runs (this is why the tests accept 401 *or* 403 for unauthenticated requests, `server/tests/test_rbac.py:265-274`).
 4. `decode_token` verifies signature and expiry, 401 on failure (`server/auth.py:371-377`).
 5. `get_current_user` re-reads the **authoritative** `users` row by the token's `sub` claim, then rejects the token with 401 if its embedded `tv` no longer equals `users.token_version` (revocation, see Flow 4) (`server/auth.py:522-529`).
-6. `require_permission`'s checker looks up `ROLE_PERMISSIONS[user.role]` and computes the missing permissions. Any miss → audit-log a `permission_denied` event and raise a structured 403 (`server/permissions.py:406-433`). Otherwise the user dict flows into the handler as its `user` argument.
+6. `require_permission`'s checker looks up `ROLE_PERMISSIONS[user.role]` and computes the missing permissions. Any miss → audit-log a `permission_denied` event and raise a structured 403 (`server/permissions.py:415-442`). Otherwise the user dict flows into the handler as its `user` argument.
 
 The crucial design point: the JWT carries a `role` claim, but **authorization never trusts it**, both `get_current_user` and `require_permission` use the role from the freshly read DB row, so promoting/demoting a user takes effect on their very next request even with an old token (`server/auth.py:44-46`, `server/permissions.py:181`).
 
@@ -235,13 +235,13 @@ silently reopens the hole cookies were given the check for. Knock-on: the Socket
 **Change guide:** *worked example, add an export permission:* add `REPORT_EXPORT = "report.export"` beside `:212`, grant it in `ROLE_PERMISSIONS["admin"]`, then guard the new route with `user=Depends(require_permission("report.export"))`. Knock-on: the Trust Center RBAC matrix picks it up automatically; add a `test_rbac.py` case pinning that doctors get 403.
 **Gotchas:** routes pass string literals, not the constants, so a typo in a route (`"patient.readall"`) fails *closed* (nobody has it), safe but confusing to debug.
 
-### `ROLE_PERMISSIONS`: `server/permissions.py:298`
+### `ROLE_PERMISSIONS`: `server/permissions.py:307`
 **Signature:** `dict[str, set[str]]`.
 **Does:** the entire authorization policy of Orb, as data.
 **How it works:** six role keys (`doctor` `:222`, `nurse` `:241`, `pharmacist` `:271`, `admin` `:288`, `patient` `:326`, `cashier` `:336`) map to permission sets; `"clinician"` is aliased to the doctor set at `:342` (same object, so a change to one is a change to both).
 **Why it exists:** policy-as-data means changing who-can-do-what is a one-line diff with no control-flow risk, and the map can be exported verbatim to the admin Trust Center.
 
-The full matrix (source: `server/permissions.py:222-343`, regenerated from `ROLE_PERMISSIONS` on 2026-10-03; ✓ = granted; the `clinician` column is omitted, it is identical to `doctor` by the alias at `:342`):
+The full matrix (source: `server/permissions.py:307-498`, regenerated from `ROLE_PERMISSIONS` on 2026-10-03; ✓ = granted; the `clinician` column is omitted, it is identical to `doctor` by the alias at `:342`):
 
 | Permission (line) | doctor | nurse | pharmacist | admin | patient | cashier |
 |---|---|---|---|---|---|---|
@@ -297,24 +297,24 @@ The full matrix (source: `server/permissions.py:222-343`, regenerated from `ROLE
 | `ingest.monitor` (:211) | | | | ✓ | | |
 | `admin.overview` (:212) | | | | ✓ | | |
 
-The policy's shape: doctors are the only role that can *sign* (notes, discharges), prescribe, record consent or execute Relay action cards; nurses share the day-to-day clinical write set but not sign-off, and are the only role that takes delivery of a dispensed drug (`helix.receive`, deliberately not given to the pharmacist who dispenses it); pharmacists see Helix, procurement and Sage; admins are governance + broad *read* plus the payer, billing, payments, front-desk and procurement desks (and `surgery.write` and Helix write, despite the `# Governance + read-only clinical` comment at `server/permissions.py:290`); a cashier holds the payment counter and nothing else; patients touch nothing but their own Bridge portal.
+The policy's shape: doctors are the only role that can *sign* (notes, discharges), prescribe, record consent or execute Relay action cards; nurses share the day-to-day clinical write set but not sign-off, and are the only role that takes delivery of a dispensed drug (`helix.receive`, deliberately not given to the pharmacist who dispenses it); pharmacists see Helix, procurement and Sage; admins are governance + broad *read* plus the payer, billing, payments, front-desk and procurement desks (and `surgery.write` and Helix write, despite the `# Governance + read-only clinical` comment at `server/permissions.py:299`); a cashier holds the payment counter and nothing else; patients touch nothing but their own Bridge portal.
 
 **Data in/out:** role string → set of permission strings.
-**Talks to:** read by all helpers below, by the WebSocket relay-send check (`server/ws/realtime.py:685`), and by the compliance report (`server/services/compliance_service.py:185-198`).
+**Talks to:** read by all helpers below, by the WebSocket relay-send check (`server/ws/realtime.py:752`), and by the compliance report (`server/services/compliance_service.py:185-198`).
 **Change guide:** *worked example, add a `lab_tech` role:* add `"lab_tech": {VITALS_READ, ORDER_READ}` beside `cashier` (`:336`); also add the string to `STORABLE_ROLES` in `server/roles.py`, the single authority the `users.role` CHECK constraint is rendered from (`server/database.py:42`, `:874`), and add a users-rebuild migration, since SQLite cannot alter CHECK constraints, and add `'lab_tech'` to the frontend `UserRole` union (`src/App.tsx:11`). Footgun: forgetting the CHECK change makes user creation fail at INSERT, not at login.
 **Gotchas:** an unknown role gets `set()` from every lookup, unknown roles fail closed. The `clinician` alias shares the *same set object* as `doctor`; mutate one and you mutate both.
 
-### `has_permission` / `has_all_permissions` / `get_permissions_for_role`: `server/permissions.py:499,503,509`
+### `has_permission` / `has_all_permissions` / `get_permissions_for_role`: `server/permissions.py:508,512,518`
 **Signature:** `(role, permission) → bool` / `(role, *permissions) → bool` / `(role) → set[str]` (a defensive `.copy()`).
 **Does:** pure lookup helpers over `ROLE_PERMISSIONS` for non-HTTP contexts.
 **How it works:** set membership with `.get(role, set())` so unknown roles are empty.
 **Why it exists:** WebSocket events and services cannot use FastAPI `Depends`, so they need a plain-function form of the same policy.
 **Data in/out:** strings in → bool/set out.
-**Talks to:** `has_permission` is called by the Socket.IO relay message guard (`server/ws/realtime.py:685`), the vitals-room and presence joins (`:283`, `:509`) and pinned by Scribe permission tests (`server/tests/test_scribe_pipeline.py:833-864`); `get_permissions_for_role` has no in-repo callers (dead but harmless convenience API).
+**Talks to:** `has_permission` is called by the Socket.IO relay message guard (`server/ws/realtime.py:752`), the vitals-room and presence joins (`:283`, `:509`) and pinned by Scribe permission tests (`server/tests/test_scribe_pipeline.py:833-864`); `get_permissions_for_role` has no in-repo callers (dead but harmless convenience API).
 **Change guide:** none usually, change the map, not the helpers.
 **Gotchas:** none noteworthy.
 
-### `require_permission`: `server/permissions.py:1108`
+### `require_permission`: `server/permissions.py:1117`
 **Signature:** `(*permissions: str) → async dependency (request, user) → dict`
 **Does:** the canonical route guard: requires the user to hold **all** listed permissions, audit-logging any denial.
 **How it works:** 1. The factory captures `permissions` in a closure and returns `_checker` (`:176`). 2. `_checker` declares two dependencies of its own, the raw `Request` (for path/method/IP/user-agent in the audit record) and `get_current_user`, demonstrating that FastAPI dependencies chain (`:176-179`). 3. Compute `missing = [p for p in permissions if p not in ROLE_PERMISSIONS.get(role, set())]` (`:180-182`). 4. If anything is missing, write a `permission_denied` audit event with category `authorization`, outcome `denied`, a fresh correlation UUID, and metadata listing required/missing permissions (`:186-203`), then raise 403 with the structured body `{"error":"permission_denied","message":...,"required":[...],"missing":[...]}` (`:205-213`). 5. Otherwise return the user dict, which becomes the handler's `user` argument.
@@ -324,7 +324,7 @@ The policy's shape: doctors are the only role that can *sign* (notes, discharges
 **Change guide:** *worked example, protect a new endpoint:* `@router.get("/reports") async def reports(user=Depends(require_permission("audit.read", "forecast.read"))): ...`, note ALL listed permissions are required (AND, not OR); to express OR you would add a new combined permission to the map instead. Watch out: calling `require_permission("x")` *evaluates the factory at import time*; the checker runs per-request.
 **Gotchas:** the interpolated f-string at `:209` has no placeholders (harmless lint noise). Denials cost an audit INSERT per hit, a scanning attacker writes a lot of audit rows, which is arguably the point.
 
-### `require_patient_self`: `server/permissions.py:1592`
+### `require_patient_self`: `server/permissions.py:1601`
 **Signature:** `() → async dependency (request, user) → dict`
 **Does:** restricts an endpoint to users whose role is `patient`, for the Bridge portal's self-scoped routes.
 **How it works:** 1. Returns `_checker` depending on `Request` + `get_current_user` (`:233-236`). 2. If `role != "patient"`, audit-log a denial with reason `patient_role_required` and raise 403 (`:239-259`). 3. Otherwise return the user dict; the *route* then scopes its queries by `user["id"]`, ownership is enforced by the caller using the returned identity, not by this dependency.
@@ -332,7 +332,7 @@ The policy's shape: doctors are the only role that can *sign* (notes, discharges
 **Data in/out:** none in → patient user dict out, or 403.
 **Talks to:** used by Bridge routes (`server/routes/bridge_routes.py`, see the Bridge guide); pinned by `server/tests/test_rbac.py:246-258`.
 **Change guide:** to let a guardian/proxy account access a patient's Bridge, this is the choke point, extend the check to consult a `patient_proxies` table before rejecting non-patients.
-**Gotchas:** the docstring (`:225-231`) claims it "combines permission checking (bridge.read_own) with ownership validation," but the code checks neither the permission nor ownership, it checks only the role (see Discrepancies).
+**Gotchas:** the docstring (`:1602-1609`) claims it "combines permission checking (bridge.read_own) with ownership validation," but the code checks neither the permission nor ownership, it checks only the role (see Discrepancies).
 
 ### server/routes/auth_routes.py
 
@@ -600,7 +600,7 @@ Exported functions other subsystems import:
 
 - `auth.get_current_user`, the identity dependency, used by `main.py`'s `/api/auth/me` and `/uploads/{filename}` (`server/main.py:376,444`) and wrapped by every guard.
 - `permissions.require_permission` / `require_patient_self`, the guards on ~28 route files.
-- `permissions.has_permission`, the non-HTTP policy check, used by the Socket.IO relay-send guard (`server/ws/realtime.py:685`).
+- `permissions.has_permission`, the non-HTTP policy check, used by the Socket.IO relay-send guard (`server/ws/realtime.py:752`).
 - `auth.decode_token`, reused by the Socket.IO handshake (`server/ws/realtime.py:145`, guide 06-realtime) and audit middleware (`server/services/audit_middleware.py:38`).
 - `auth.hash_password` / `verify_password`, patient provisioning (`server/routes/vigil_routes.py:530-540`, `server/services/admission_service.py:23-38`) and test fixtures.
 - `permissions.ROLE_PERMISSIONS`, exported verbatim into the Trust Center compliance report (`server/services/compliance_service.py:149-162`).
@@ -634,7 +634,7 @@ Client-side contract (owned by guides 01/02, summarized): `Login.tsx` calls `log
 2. *(resolved since: `logout` (`src/AppRoot.tsx:81`) now calls `logoutSession()` first, which POSTs `/api/auth/logout` with a bounded timeout, `src/api/client.ts:108`. The rest of this entry records how it was.)* **The frontend never called `POST /api/auth/logout`.** `App.tsx`'s `logout` cleared React state, the cached user, and the socket, and wipes nurse drafts and the offline cache so a shared ward tablet cannot leak the previous nurse's bay, but it does not hit the endpoint, and no `src/` code references it. So the server-side `token_version` bump that `POST /api/auth/logout` exists to perform never happens from the UI. Combined with the 24-hour expiry (`server/config.py:58`), a token "logged out" in the UI remains server-valid for up to a day.
 3. *(resolved, was: "No frontend MFA flow exists".)* `Login.tsx` now drives the full second factor: `handleLogin` attaches an optional `totp_code` to the `/auth/login` body (`src/pages/Login.tsx:162`), a `mfa_required` error reveals the 6-digit field and stashes the verified credentials in `mfaCreds` rather than re-reading the form (`:170`, comment at `:54-56`), and the next submit replays the *same* credentials plus the code (`:232-238`). There is also an enrolment modal (`MfaEnrollmentModal`) alongside the read-only Trust Center adoption panel.
 4. *(resolved, was: "The WebSocket handshake skips the revocation check".)* `_authenticate` now compares the token's `tv` claim to `users.token_version` and refuses the handshake on a mismatch (`server/ws/realtime.py:221-225`). The comment at `:209-216` records the subtlety that made the first attempt unsound: an earlier `token_tv is not None and row_tv is not None` guard *skipped* the check for a validly-signed token carrying no `tv` claim. Absent is now read as 0, which rejects nothing legitimate because `auth.create_token` always stamps `tv` (`server/auth.py:355`), and a malformed `tv` fails closed.
-5. **`require_patient_self`'s docstring overstates what it does.** It claims to combine a `bridge.read_own` permission check with ownership validation (`server/permissions.py:525-532`), but the code checks only `role == "patient"` (`:538`), no permission lookup, and ownership scoping is delegated to the calling route. Equivalent today only because the patient role happens to hold that permission.
+5. **`require_patient_self`'s docstring overstates what it does.** It claims to combine a `bridge.read_own` permission check with ownership validation (`server/permissions.py:534-541`), but the code checks only `role == "patient"` (`:538`), no permission lookup, and ownership scoping is delegated to the calling route. Equivalent today only because the patient role happens to hold that permission.
 6. **`consume_totp` has a race window.** The SELECT of `totp_last_step` and the UPDATE are separate statements on one connection with no locking transaction (`server/routes/auth_routes.py:292-296`); two concurrent logins presenting the same code could both pass the replay check. Low practical risk single-process, but `BEGIN IMMEDIATE` or a guarded `UPDATE ... WHERE totp_last_step < ?` would close it.
 7. **Comment/code mismatch on revocation triggers.** `server/auth.py:333-334` says bumping `users.token_version` revokes all outstanding sessions, but neither `mfa_enroll_confirm`, `mfa_disable`, nor the legacy-hash upgrade does, only `logout` bumps it (`server/routes/auth_routes.py:883`).
 8. **Legacy weak hashes persist by design.** Unsalted single-round SHA-256 password hashes are still accepted (constant-time, `server/auth.py:27-31`) until each user's next login upgrades them (`server/routes/auth_routes.py:562-572`). *(The related `pin_hash` complaint is resolved.* Schema v5 removed the universal default: `init_db` no longer seeds `sha256("1234")` for every clinician, it **revokes** that hash once, ledger-gated on `schema_version >= 5` (`server/database.py:1498-1520`). A NULL `pin_hash` now means agentic co-sign is unavailable for that user, fail closed, and Relay co-sign verifies through `pin_security.verify_pin` (`server/services/pin_security.py:62`), which also upgrades legacy unsalted hashes, rather than comparing strings.)

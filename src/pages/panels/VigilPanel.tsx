@@ -33,7 +33,9 @@ import OfflineBanner from '../../components/OfflineBanner'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
 import { observedAt, observedBefore, vitalTemperature, vitalWhole } from '../../lib/vitals'
 import VoidObservationButton from '../../components/vitals/VoidObservationButton'
-import { currentModuleFlags, subscribeModuleFlags, useClinicalSwitches } from '../../shellConfig'
+import { currentModuleFlags, subscribeModuleFlags, useClinicalSwitches, useFeatureFlags } from '../../shellConfig'
+// The chart's medication orders while the order store is on (medorders-10).
+import MedOrderList from '../../components/medorders/MedOrderList'
 import EndStayDrawer from '../../components/adt/EndStayDrawer'
 import ChartLabReports from '../../components/lab/ChartLabReports'
 import NotOnWardChip from '../../components/adt/NotOnWardChip'
@@ -1043,6 +1045,12 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
      which drafts no summary. With the module off none of this is drawn and
      the discharge posts exactly what it always did. */
   const adtOn = useSyncExternalStore(subscribeModuleFlags, currentModuleFlags).adt === true
+  /* The medication order store (ORB_MED_ORDER_STORE, off by default;
+     medorders-10). With it on the Medications window lists the patient's
+     orders (status, supply, last dose, the prescriber's steps); with it off
+     the window is the table it always was. The Add form is the same either
+     way and keeps posting to this chart's route (ruling R010, held). */
+  const medOrderStoreOn = useFeatureFlags().med_order_store === true
   const [endType, setEndType] = useState<EndType>('routine')
   const [damaMrn, setDamaMrn] = useState('')
   const [damaReason, setDamaReason] = useState('')
@@ -2783,7 +2791,16 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
             </h2>
             <div className="modal__body" style={{ maxHeight: '72vh', overflowY: 'auto' }}>
               <div className="detail__meds-list" style={{ marginTop: 8 }}>
-                {!medications?.length ? (
+                {medOrderStoreOn ? (
+                  <MedOrderList
+                    patientId={patientId}
+                    chartRows={medications || []}
+                    administrations={administrations}
+                    canAdminister={!wardRecord}
+                    onAdminister={row => setAdministerTarget(row)}
+                    onChanged={() => { void loadPatientData() }}
+                  />
+                ) : !medications?.length ? (
                   <div className="detail__no-data">No medications prescribed</div>
                 ) : (
                   <table className="detail__meds-table">

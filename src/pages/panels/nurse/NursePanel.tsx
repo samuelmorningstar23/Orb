@@ -137,6 +137,24 @@ function medicationRoundOn(board: ShiftBoard | null, wardRecord: boolean): boole
   return !wardRecord && board?.medication_round !== false
 }
 
+/** adt-11 (ruling ADT-S4 (a)): the server pauses the obs and dose clocks of a
+ *  patient recorded on leave or absconded and says why in `paused.reason`.
+ *  Null for a patient on the ward, and always null while Beds and admissions
+ *  is off (the card then carries no `paused` key at all). */
+function pausedOf(p: NursePatientCard): { reason: string } | null {
+  const raw = (p as { paused?: unknown }).paused
+  if (!raw || typeof raw !== 'object') return null
+  const reason = (raw as { reason?: unknown }).reason
+  return { reason: typeof reason === 'string' && reason.trim() ? reason : 'Observations are paused while the patient is off the ward.' }
+}
+
+/** How many patients on the board are off the ward, or null while Beds and
+ *  admissions is off (the totals then carry no such count). */
+function notOnWardCount(board: ShiftBoard | null): number | null {
+  const n = (board?.totals as { not_on_ward?: unknown } | undefined)?.not_on_ward
+  return typeof n === 'number' ? n : null
+}
+
 function buildTasks(board: ShiftBoard | null, medRound = true): Task[] {
   if (!board) return []
   const tasks: Task[] = []
@@ -356,9 +374,10 @@ export default function NursePanel() {
     // to distrust both. The trailing `›` is aria-hidden, so the destination is
     // named here or nowhere (§9.4).
     const simulated = task.patient.vitals_source === 'simulated'
-    // adt-10, display only: the card carries presence only while Beds and
-    // admissions is on. The task, its due time and its place in the queue
-    // are unchanged (pausing them is adt-11).
+    // adt-10: the card carries presence only while Beds and admissions is on.
+    // Since adt-11 the server pauses the clocks of a patient off the ward, so
+    // their tasks are neither overdue nor due and do not reach this queue;
+    // they are listed under "Not on the ward" instead (renderPausedSection).
     const away = notOnWardWords(task.patient)
     const label = [
       task.patient.name,
@@ -432,6 +451,46 @@ export default function NursePanel() {
       </h2>
       <ul className="orb-list orb-list--cards" aria-labelledby={`nurse-h-${id}`}>
         {items.map(renderTaskRow)}
+      </ul>
+    </div>
+  )
+
+  // ─── Not on the ward (adt-11, ruling ADT-S4 (a)) ───
+  // A patient recorded on leave or absconded owes nothing at a time, so the
+  // server pauses their obs and dose clocks and none of their tasks is in the
+  // queue above. They are listed here, never dropped: a patient who silently
+  // vanished from the round is the failure the ruling exists to prevent. No
+  // tint and nothing to tap: there is nothing at their bedside to do. Empty
+  // (and so never drawn) while Beds and admissions is off.
+  const pausedPatients = board ? board.patients.filter(p => pausedOf(p) !== null) : []
+  const renderPausedSection = () => (
+    <div className="nurse-block">
+      <h2 className="orb-section-header__label" id="nurse-h-paused">
+        Not on the ward
+        <span className="orb-count-chip">
+          {pausedPatients.length}
+          <span className="sr-only"> {pausedPatients.length === 1 ? 'patient' : 'patients'}</span>
+        </span>
+      </h2>
+      <ul className="orb-list orb-list--cards" aria-labelledby="nurse-h-paused">
+        {pausedPatients.map(p => {
+          const away = notOnWardWords(p)
+          return (
+            <li key={`paused:${p.patient_id}`}>
+              <div className="orb-row" data-testid="paused-row">
+                <span className="orb-row__body">
+                  <span className="orb-row__primary">{p.bed ? `${p.bed} · ` : ''}{p.name}</span>
+                  <span className="orb-row__secondary">{pausedOf(p)?.reason}</span>
+                </span>
+                {away ? (
+                  <span className="orb-row__trailing">
+                    <span className="orb-row__note">{away}</span>
+                  </span>
+                ) : null}
+              </div>
+            </li>
+          )
+        })}
       </ul>
     </div>
   )
@@ -626,6 +685,14 @@ export default function NursePanel() {
               <span className="nurse-total__label">blocked by allergy</span>
             </span>
           )}
+          {/* adt-11: patients on leave or absconded, their clocks paused. Only
+              when there is one, and never tinted: it is a fact, not a debt. */}
+          {(notOnWardCount(board) ?? 0) > 0 && (
+            <span className="orb-count-chip">
+              <span className="nurse-total__value">{notOnWardCount(board)}</span>
+              <span className="nurse-total__label">not on ward</span>
+            </span>
+          )}
         </div>
       )}
 
@@ -739,6 +806,7 @@ export default function NursePanel() {
           {overdueTasks.length > 0 && renderTaskSection('overdue', 'Overdue', overdueTasks, 'danger')}
           {soonTasks.length > 0
             && renderTaskSection('soon', 'Due within 30 minutes', soonTasks, 'warn')}
+          {pausedPatients.length > 0 && renderPausedSection()}
           <p className="nurse-footnote">
             {board?.scoring_enabled === false
               ? "Observation due times follow the ward's fixed interval, set in Admin. "
@@ -769,8 +837,9 @@ export default function NursePanel() {
                         .filter(Boolean)
                         .join(' · ')}
                     </span>
-                    {/* adt-10, display only: present only while Beds and
-                        admissions is on. */}
+                    {/* adt-10: present only while Beds and admissions is on.
+                        The card stays on the board while the patient is away
+                        (adt-11); its clocks are paused, said below. */}
                     <NotOnWardChip row={p} />
                   </div>
                 </div>
@@ -803,6 +872,8 @@ export default function NursePanel() {
                   )}
                   {/* Scoring off and the ward has no interval: say what to do. */}
                   {p.obs_due_note && <li className="patient-card__due-note">{p.obs_due_note}</li>}
+                  {/* adt-11: off the ward, the clocks are paused; say why. */}
+                  {pausedOf(p) && <li className="patient-card__due-note">{pausedOf(p)?.reason}</li>}
                   <li className={p.obs_overdue ? 'is-late' : ''}>
                     {obsLabel(p.last_obs_at, p.obs_minutes_until_due)}
                     {/* Orb Ward Record: a wrong set is struck out with a reason,
@@ -831,7 +902,9 @@ export default function NursePanel() {
                     <li className={p.meds_overdue ? 'is-late' : ''}>
                       {p.medications.length === 0
                         ? 'No medications charted'
-                        : `Doses: ${p.medications.length} charted · ${p.meds_overdue ?? 0} overdue · ${p.meds_due_soon ?? 0} due soon`}
+                        : pausedOf(p)
+                          ? `Doses: ${p.medications.length} charted · paused while off the ward`
+                          : `Doses: ${p.medications.length} charted · ${p.meds_overdue ?? 0} overdue · ${p.meds_due_soon ?? 0} due soon`}
                     </li>
                   )}
                   {medRound && (p.meds_allergy_blocked ?? 0) > 0 && (

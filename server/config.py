@@ -1458,6 +1458,13 @@ LAB_COLLECTION_BACKDATE_MINUTES = _int_setting("ORB_LAB_COLLECTION_BACKDATE_MINU
 #: dose waits for the check.
 MED_ORDER_FIRST_DOSE_BEFORE_CHECK = _choice_setting(
     "ORB_MED_ORDER_FIRST_DOSE_BEFORE_CHECK", ("none", "stat_urgent"), "none")
+#: What the order screen does with a second live order for the same ingredient
+#: while ORB_MED_ORDER_LIFECYCLE is on (ruling MO-R6, held for Samuel;
+#: services/medorders/screening.py). 'block', the default, is the strictest
+#: option named: the order is refused and no reason clears it. 'acknowledge'
+#: is the architect's recommendation: a 428 that clears with a written reason.
+MED_ORDER_DUPLICATE_RULE = _choice_setting(
+    "ORB_MED_ORDER_DUPLICATE_RULE", ("block", "acknowledge"), "block")
 
 #: The longest delay ORB_LAB_PORTAL_DELAY_HOURS accepts: a year.
 LAB_PORTAL_DELAY_MAX_HOURS = 8760

@@ -1037,6 +1037,12 @@ def plan(content: bytes | str, mapping: dict[str, str], *,
         _plan_admission(pr, row, open_admissions.get(row["id"]), default_department)
         _plan_allergies(pr, row, charted)
 
+    # adt-16 (ORB_ADT_STRICT_LOCATIONS, ruling F104): with strict locations on,
+    # a place bed setup does not hold is rejected here, in the dry run, so the
+    # admin sees every reject before Apply (which re-plans, so it rejects the
+    # same rows). Off: nothing here runs and the plan is exactly as before.
+    location_rejects = _reject_unlisted_places(planned) if _strict_locations() else None
+
     counts = {a: sum(1 for p in planned if p.action == a)
               for a in ("create", "update", "unchanged", "skip")}
     counts["total_rows"] = len(planned)
@@ -1056,7 +1062,7 @@ def plan(content: bytes | str, mapping: dict[str, str], *,
     counts["dates_left_blank"] = sum(1 for p in planned if p.action != "skip"
                                      for i in p.issues if i.code in _DATE_BLANKED_CODES)
 
-    return {
+    out = {
         "delimiter": delimiter,
         "mapping": mapping,
         "date_order": date_order,
@@ -1068,6 +1074,93 @@ def plan(content: bytes | str, mapping: dict[str, str], *,
         "file_issues": [i.to_dict() for i in issues],
         "absent_from_roster": _absent_from_roster(planned, mrns_in_file),
     }
+    if location_rejects is not None:
+        # Present only with strict locations on: every row whose place bed
+        # setup does not hold, with the words, so the dry run lists them.
+        counts["location_rejects"] = len(location_rejects)
+        out["location_rejects"] = location_rejects
+    return out
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  Strict locations (adt-16, ORB_ADT_STRICT_LOCATIONS, ruling F104)
+# ══════════════════════════════════════════════════════════════════════════
+
+def _strict_locations() -> bool:
+    """True while ORB_ADT and ORB_ADT_STRICT_LOCATIONS are both on."""
+    from services.adt.core import strict_locations_on
+
+    return adt_on() and strict_locations_on()
+
+
+def _reject_unlisted_places(planned: list[PlannedRow]) -> list[dict]:
+    """Reject, in the plan, every place this file names that bed setup does
+    not hold, by the rule every other lane follows
+    (services/adt/core.strict_place_refusal):
+
+      * a NEW admission (the row opens one) is written straight to the
+        admissions table, so a refused place rejects the WHOLE row (action
+        'skip', an 'error' issue): a patient imported with no admission would
+        be on no ward board, which this module never does;
+      * a MOVE of an open admission (a ward or bed change) is refused on its
+        own: the admission stays where it was and is reported as
+        'update_refused' with the words (a 'warning' issue), and the rest of
+        the row's changes still apply, as for any move the ADT writer refuses
+        at Apply.
+
+    Returns one {line, mrn, admission_id, code, message, ward, bed} per
+    rejected row, for the dry run. Reads only."""
+    from services.adt.core import match_location_on, strict_place_refusal
+
+    rows = [p for p in planned if p.action != "skip"
+            and p.admission.get("action") in ("create", "update")]
+    rejects: list[dict] = []
+    if not rows:
+        return rejects
+    with db_session() as db:
+        for pr in rows:
+            adm = pr.admission
+            if adm["action"] == "create":
+                ward_text, bed_text, recorded = adm.get("ward"), adm.get("bed"), None
+            else:
+                changes = adm.get("changes") or {}
+                if "ward" not in changes and "bed" not in changes:
+                    continue
+                current = db.execute(
+                    "SELECT ward, bed, ward_id, bed_id FROM admissions WHERE id = ?",
+                    (adm.get("admission_id"),)).fetchone()
+                recorded = dict(current) if current is not None else {}
+                # The same place roster_move_on resolves: the new value, else
+                # the one recorded.
+                ward_text = (changes.get("ward") or {}).get("to") or recorded.get("ward")
+                bed_text = (changes.get("bed") or {}).get("to") or recorded.get("bed")
+            place = match_location_on(db, ward_text, bed_text)
+            refusal = strict_place_refusal(
+                {"ward": place["ward"], "bed": place["bed"],
+                 "ward_text": place["ward_text"], "bed_text": place["bed_text"]},
+                recorded=recorded)
+            if refusal is None:
+                continue
+            where = "ward" if refusal.code == "ward_not_in_setup" else "bed"
+            value = place["ward_text"] if where == "ward" else place["bed_text"]
+            if adm["action"] == "create":
+                pr.action = "skip"
+                pr.reason = refusal.code
+                pr.issues.append(Issue(pr.line, refusal.code, "error",
+                                       f"{refusal} The row was not imported.", where, value))
+                pr.admission = {"action": "rejected",
+                                "refusal": {"code": refusal.code, "message": str(refusal)}}
+            else:
+                pr.issues.append(Issue(pr.line, refusal.code, "warning",
+                                       f"{refusal} The patient stays where they were recorded.",
+                                       where, value))
+                pr.admission = {**adm, "action": "update_refused",
+                                "refusal": {"code": refusal.code, "message": str(refusal)}}
+            rejects.append({"line": pr.line, "mrn": pr.mrn,
+                            "admission_id": pr.admission.get("admission_id"),
+                            "code": refusal.code, "message": str(refusal),
+                            "ward": place["ward_text"], "bed": place["bed_text"]})
+    return rejects
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1518,6 +1611,11 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
     cleaning reason, name an authoriser or acknowledge a boarder, so a move
     that needs one is left as it was and reported under
     admissions.update_refused with the writer's words, never half-written.
+
+    ORB_ADT_STRICT_LOCATIONS ON (adt-16): the plan rejects a new admission to
+    a ward or bed bed setup does not hold (the whole row is skipped with an
+    error) and refuses a move to one (update_refused, the rest of the row
+    applies); the dry run lists both under location_rejects. Off: unchanged.
     """
     adt = adt_on()
     result = plan(content, mapping, date_order=date_order,
@@ -1577,7 +1675,8 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
                 created_ids.append(patient_id)
             elif row["action"] == "update":
                 changed = [c for c in _WRITABLE if c in row["changes"]]
-                if (adt and (row.get("admission") or {}).get("action") in ("update", "unchanged")
+                if (adt and (row.get("admission") or {}).get("action")
+                        in ("update", "unchanged", "update_refused")
                         and (row.get("admission") or {}).get("admission_id")):
                     # The patient has an open admission: its ward and bed
                     # mirror is written by the ADT writer alone (below), so a
@@ -1670,6 +1769,11 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
                 db.execute("RELEASE SAVEPOINT roster_move")
                 adm["movement_id"] = moved["movement_id"]
                 admissions_updated.append(adm["admission_id"])
+
+            elif adm.get("action") == "update_refused" and adt:
+                # adt-16: the plan refused this move (a place bed setup does
+                # not hold, strict locations on); nothing is written for it.
+                update_refused.append(adm["admission_id"])
 
             elif adm.get("action") == "update":
                 changed = [c for c in ("ward", "bed", "department") if c in adm.get("changes", {})]

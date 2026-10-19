@@ -327,7 +327,7 @@ One default-exported component plus one module helper. It imports `useAuth` from
 
 ### `src/pages/panels/AppointmentsPanel.tsx`
 
-> Important: **this is a clinician panel, not part of Bridge.** It is lazy-loaded and rendered inside `ClinicianShell` (`src/pages/ClinicianShell.tsx:209,503`), and it reads `GET /api/forecast/appointments` guarded by `require_permission("forecast.read")` (`server/routes/forecast_routes.py:84-91`), a permission a *patient* does not hold. It shares the word "appointments" with Bridge's mock scheduler but is a completely separate data path (the forecast service, guide 13). It is included here only because it was in scope.
+> Important: **this is a clinician panel, not part of Bridge.** It is lazy-loaded and rendered inside `ClinicianShell` (`src/pages/ClinicianShell.tsx:236,533`), and it reads `GET /api/forecast/appointments` guarded by `require_permission("forecast.read")` (`server/routes/forecast_routes.py:84-91`), a permission a *patient* does not hold. It shares the word "appointments" with Bridge's mock scheduler but is a completely separate data path (the forecast service, guide 13). It is included here only because it was in scope.
 
 #### getToken / apiFetch (local): `AppointmentsPanel.tsx:5` and `:9`
 **Does:** this file has its *own* `getToken` (reads `localStorage.orb_token`) and `apiFetch` (bare `fetch` with a Bearer header) instead of importing the shared api client.
@@ -395,7 +395,7 @@ This is the liquid-glass stylesheet for the portal. It is presentational; the lo
 | GET | `/api/bridge/documents` | 30 latest clinical documents | `getBridgeDocuments` export exists, uncalled |
 
 **Consumed from other subsystems:**
-- `require_patient_self`, `server/permissions.py:225` (guide 03).
+- `require_patient_self`, `server/permissions.py:234` (guide 03).
 - Auth login + JWT, `POST /api/auth/login`, `create_token` (guide 03).
 - `services.event_bus` topic `bridge.emergency.flag` (published), guide 06-realtime.
 - `services.llm_queue_service.llm_queue` + Ollama `/api/chat`, LLM queue / guide 09.
@@ -410,7 +410,7 @@ This is the liquid-glass stylesheet for the portal. It is presentational; the lo
 ## Rebuild notes
 
 **Prerequisites (must exist first):**
-1. Auth + RBAC (guide 03): `get_current_user`, the `patient` role in `ROLE_PERMISSIONS` (holding `bridge.read_own` + `bridge.ask`, `permissions.py:131-133`), and `require_patient_self` (`permissions.py:225`).
+1. Auth + RBAC (guide 03): `get_current_user`, the `patient` role in `ROLE_PERMISSIONS` (holding `bridge.read_own` + `bridge.ask`, `permissions.py:131-133`), and `require_patient_self` (`permissions.py:234`).
 2. The login endpoint that issues a JWT keyed on the patient's `id` (`auth_routes.py:97`), and a `users` row per patient whose `id` matches a `patients.user_id`.
 3. The DB schema/tables listed above (guide 04-database-schema).
 4. The event bus (guide 06) and the LLM queue + Ollama (guide 09) for the chatbot; the app shell + auth context + api client (guides 01, 02).
@@ -441,7 +441,7 @@ This is the liquid-glass stylesheet for the portal. It is presentational; the lo
 
 6. **Discharge timeline is unreachable from the portal.** Only `/api/bridge/discharge` parses and returns `timeline_json`; the aggregate `/reports` (which the portal actually uses) selects only `summary, discharged_at`. So the portal's discharge modal can never show a timeline unless it starts calling the (currently dead) `/discharge` endpoint.
 
-7. **`require_patient_self` docstring overstates its check.** It claims to combine a `bridge.read_own` permission check with ownership validation (`permissions.py:226-232`), but the code only checks `role != "patient"` (`:239`); it does no permission lookup, and ownership is delegated to each route's `_resolve_patient_id`/`user["id"]` scoping. Equivalent today only because the patient role happens to hold `bridge.read_own`. (Also noted in guide 03-auth-rbac.)
+7. **`require_patient_self` docstring overstates its check.** It claims to combine a `bridge.read_own` permission check with ownership validation (`permissions.py:235-241`), but the code only checks `role != "patient"` (`:239`); it does no permission lookup, and ownership is delegated to each route's `_resolve_patient_id`/`user["id"]` scoping. Equivalent today only because the patient role happens to hold `bridge.read_own`. (Also noted in guide 03-auth-rbac.)
 
 8. **`AppointmentsPanel` bypasses the shared api client.** It defines its own `getToken`/`apiFetch` (`AppointmentsPanel.tsx:5-15`), so it skips the shared client's 401 auto-logout and structured-403 handling; expired sessions surface only as a generic error.
 

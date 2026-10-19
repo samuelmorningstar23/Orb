@@ -439,7 +439,7 @@ The router: `APIRouter(prefix="/api/flight-recorder", tags=["flight-recorder"])`
 7. Render: header controls, transport with a native `<input type="range">` scrubber, the timeline list (each row a button showing colored source marker, action, target, ⚠/✓ chain flag, timestamp), and the detail pane with a `<dl>` key-value grid plus pretty-printed raw JSON (`FlightRecorder.tsx:132-243`).
 **Why it exists:** Turns forensic data into an explorable "black box recording", the tamper badge gives at-a-glance assurance and the scrubber replays cause and effect in order.
 **Data in/out:** consumes `TimelineEvent`/`VerifyResult` (`FlightRecorder.tsx:20-37`), matching the service's normalized shape.
-**Talks to:** mounted as the `flight` tab of `AdminPanel` (`src/pages/panels/AdminPanel.tsx:11,96`); calls the three flight-recorder endpoints.
+**Talks to:** mounted as the `flight` tab of `AdminPanel` (`src/pages/panels/AdminPanel.tsx:11,104`); calls the three flight-recorder endpoints.
 **Change guide:** Worked example, *adjustable playback speed*: replace the constant `900` (`FlightRecorder.tsx:107`) with a `speed` state fed from a select; include `speed` in the play effect's dependency array or the interval keeps the stale value (a classic *stale closure*, the effect's callback captured the old variable).
 **Gotchas:** (a) `load` depends on `patientId`, and the input's `onChange` updates `patientId` per keystroke, so every keystroke re-fetches timeline + verify; the Enter handler and Reload button are effectively redundant (see Discrepancies). (b) The detail effect's dependency array uses `selected?.source, selected?.id` rather than the object, deliberate, since `events` is replaced wholesale on reload.
 
@@ -471,7 +471,7 @@ The router: `APIRouter(prefix="/api/flight-recorder", tags=["flight-recorder"])`
 5. Render: filter bar (two text inputs, three selects, search button, count + pager), then loading/error/empty states from the shared `Admin*State` components, else the table, timestamp, truncated correlation ID as a trace-link button + copy button, category chip, action, `OutcomeBadge`, actor, patient, summary (`AuditLogTable.tsx:67-178`).
 **Why it exists:** The compliance officer's day-to-day view: "show me every denied action this week," then pivot to the full trace.
 **Data in/out:** `AuditFilters` → `AuditLogsResponse {logs, total, limit, offset}` (`src/api/client.ts:1791-1827`).
-**Talks to:** mounted as the `audit` tab (`src/pages/panels/AdminPanel.tsx:112`, tab declared at `:32`); `onTraceClick` is `handleTraceClick`, which sets the shared correlation state and switches to the `trace` tab (`src/pages/panels/AdminPanel.tsx:86`); badges/empty-states come from `./AdminBadges` and `./AdminEmptyState`; styling from `src/pages/panels/admin/Admin.css:288` (there is no `AdminPanel.css`, admin styles live in `Admin.css`).
+**Talks to:** mounted as the `audit` tab (`src/pages/panels/AdminPanel.tsx:176`, tab declared at `:36`); `onTraceClick` is `handleTraceClick`, which sets the shared correlation state and switches to the `trace` tab (`src/pages/panels/AdminPanel.tsx:120`); badges/empty-states come from `./AdminBadges` and `./AdminEmptyState`; styling from `src/pages/panels/admin/Admin.css:288` (there is no `AdminPanel.css`, admin styles live in `Admin.css`).
 **Change guide:** To change the page size, change the two `|| 25` fallbacks *and* the initial `limit: 25` (`AuditLogTable.tsx:33,55-56`) together, or the pager math desynchronizes from the fetch.
 **Gotchas:** Same per-keystroke refetch pattern as `FlightRecorder`, `fetchLogs` depends on the search strings, and the effect fires on every identity change (`AuditLogTable.tsx:37-49`); harmless at admin traffic levels but each keystroke is an API round-trip.
 
@@ -490,7 +490,7 @@ The router: `APIRouter(prefix="/api/flight-recorder", tags=["flight-recorder"])`
 4. Render: search bar; empty/error states; else one node per event, connector line (red when that step failed), colored dot, action title, `OutcomeBadge`, time, summary, and patient/target/actor meta, with a staggered 60 ms animation delay per node (`CorrelationTrace.tsx:52-132`).
 **Why it exists:** A correlation ID is only useful if you can *see* the causal story; this is the "what happened after that HL7 message arrived" view.
 **Data in/out:** `AuditLog[]` from `GET /api/audit/logs?correlation_id=...`.
-**Talks to:** mounted as the `trace` tab, fed by `AuditLogTable.onTraceClick` (`AdminPanel.tsx:89, 63-66`).
+**Talks to:** mounted as the `trace` tab, fed by `AuditLogTable.onTraceClick` (`AdminPanel.tsx:97, 64-67`).
 **Change guide:** To trace beyond audit rows (event bus entries share `correlation_id`, `database.py:566`), fetch `/api/flight-recorder/timeline` filtered client-side by correlation, the timeline shape already includes `correlation_id`.
 **Gotchas:** `fetchTrace` is used inside the effect but not memoized and not in the dependency array (`CorrelationTrace.tsx:29-35`), works because it only reads state setters and the passed id.
 

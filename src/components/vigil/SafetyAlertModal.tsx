@@ -24,7 +24,43 @@ import './SafetyAlertModal.css'
  *
  * A severe ALLERGY alert is the same: the server refuses anyone without
  * medication.prescribe, so the screen offers them no reason box either.
+ *
+ * The same medicine already ordered rides on `safety.duplicate_check` when the
+ * server's duplicate rule is 'acknowledge' (ruling MO-R6, medication-order
+ * lifecycle on): listed in its own group, cleared with a written reason.
  */
+
+/** The server's same-ingredient finding (services/medorders/screening.py). */
+interface DuplicateCheck {
+  decision?: string
+  message?: string
+  findings?: { description?: string; drug_name?: string; message?: string }[]
+}
+
+function duplicateFindings(safety: MedicationSafety): string[] {
+  const check = (safety as MedicationSafety & { duplicate_check?: DuplicateCheck | null })
+    .duplicate_check
+  return (check?.findings ?? [])
+    .map(f => f?.description || f?.drug_name || '')
+    .filter(text => text.trim().length > 0)
+}
+
+function DuplicateGroup({ items }: { items: string[] }) {
+  if (!items.length) return null
+  return (
+    <div className="safety-modal__group">
+      <h3 className="safety-modal__group-title">Already ordered</h3>
+      <ul className="safety-modal__list">
+        {items.map((text, i) => (
+          <li key={i} className="safety-modal__alert">
+            <span className="safety-chip safety-chip--warn">Same medicine</span>
+            <span className="safety-modal__alert-message">{text}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
 interface Props {
   safety: MedicationSafety
   mode: 'blocking' | 'info'
@@ -113,6 +149,9 @@ export default function SafetyAlertModal({
   const doseFindings = doseCheck?.findings ?? []
   const doseBlocked = doseCheck?.decision === 'block'
   const severeScreen = safety.max_severity === 'severe'
+  const duplicates = duplicateFindings(safety)
+  // Only the same medicine already ordered stops this order.
+  const duplicateOnly = blocking && duplicates.length > 0 && !doseBlocked && !severeScreen
   // A severe allergy alert clears only for a prescriber, as the bedside does.
   const allergyBlocked = blocking && allergyAlerts.some(a => a.severity === 'severe')
   // A dose block names the permission that clears it. Without it there is no
@@ -139,7 +178,8 @@ export default function SafetyAlertModal({
           <h2 className="safety-modal__title" id="safety-modal-title">
             {!blocking ? 'Drug-safety review'
               : doseBlocked && !severeScreen ? 'The dose check stopped this order'
-                : 'Severe drug-safety alerts'}
+                : duplicateOnly ? 'This medicine is already ordered'
+                  : 'Severe drug-safety alerts'}
           </h2>
           <button type="button" className="safety-modal__close" onClick={close} aria-label="Close" disabled={working}>
             &times;
@@ -172,9 +212,10 @@ export default function SafetyAlertModal({
               <span>The dose check could not run. This dose has NOT been checked.</span>
             </div>
           )}
+          <DuplicateGroup items={duplicates} />
           <AlertGroup title="Allergy alerts" alerts={allergyAlerts} />
           <AlertGroup title="Interaction alerts" alerts={interactionAlerts} />
-          {allergyAlerts.length === 0 && interactionAlerts.length === 0 && (
+          {allergyAlerts.length === 0 && interactionAlerts.length === 0 && duplicates.length === 0 && (
             <p className="safety-modal__none">No allergy or interaction alerts were raised.</p>
           )}
 
@@ -224,7 +265,9 @@ export default function SafetyAlertModal({
                 rows={3}
                 placeholder={doseBlocked
                   ? `Why is this dose correct for this patient? (min ${MIN_REASON_LENGTH} characters)`
-                  : `Why is it clinically appropriate to proceed despite these alerts? (min ${MIN_REASON_LENGTH} characters)`}
+                  : duplicateOnly
+                    ? `Why does this patient need a second order for the same medicine? (min ${MIN_REASON_LENGTH} characters)`
+                    : `Why is it clinically appropriate to proceed despite these alerts? (min ${MIN_REASON_LENGTH} characters)`}
                 value={reason}
                 onChange={e => setReason(e.target.value)}
                 disabled={busy}

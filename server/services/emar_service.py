@@ -52,6 +52,13 @@ _UNVERIFIED_SOURCES = ("llm_extracted", "agentic")
 _CONFIRMATION_METHODS = ("typed", "barcode")
 
 
+def _givable_statuses() -> tuple:
+    """Ward row statuses a dose may be recorded against: 'active', and 'prn'
+    too while ORB_MED_ORDER_LIFECYCLE is on (MO-R3 (a), medorders-9)."""
+    from services.medorders import screening
+    return ("active", "prn") if screening.prn_givable() else ("active",)
+
+
 def _fetch_administration(db, admin_id: int):
     return db.execute(
         """SELECT ma.*, m.drug_name, u.name AS administered_by_name
@@ -505,7 +512,8 @@ def record_administration(
     """Record one bedside administration attempt of a charted medication.
 
     Guards (each raises ValueError):
-      * the medication must exist and be an active order,
+      * the medication must exist and be an active order (or a PRN one while
+        ORB_MED_ORDER_LIFECYCLE is on, ruling MO-R3 (a)),
       * an AI/agentic med (source llm_extracted/agentic) with no pharmacist
         verification is not administrable,
       * with ORB_MED_ORDER_VERIFY_BEFORE_DOSE on, a ward row linked to a
@@ -558,7 +566,13 @@ def record_administration(
         med = db.execute("SELECT * FROM medications WHERE id = ?", (med_id,)).fetchone()
         if med is None:
             raise ValueError(f"medication {med_id} not found")
-        if med["status"] != "active":
+        # A drug charted PRN ('as needed') is givable with the lifecycle on
+        # (ruling MO-R3 (a), held for Samuel; services/medorders/screening.py),
+        # through every check below: the order state, the pharmacist checks,
+        # the inpatient guard, the allergy interlock and the dose guard with
+        # its repeat window. With it off, as before: every PRN dose is refused,
+        # which leaves a PRN dose given off the record and past the interlock.
+        if med["status"] not in _givable_statuses():
             raise ValueError(
                 f"medication {med_id} is not an active order (status={med['status']})"
             )

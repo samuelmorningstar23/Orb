@@ -225,7 +225,7 @@ Callers may also **override** the baseline for hermetic testing or manual planni
 **Does:** the one endpoint, permission-gate the request, run the simulation, return the contract.
 **How it works:**
 1. Registered on **both** `@router.post("")` and `@router.post("/")` (`:38-39`), i.e. `POST /api/capacity-sim` and `POST /api/capacity-sim/`, so a trailing slash does not trigger a 307 redirect.
-2. `Depends(require_permission(FORECAST_READ))` runs first: it verifies the JWT (via `get_current_user`), checks the user's role includes `forecast.read`, and on failure logs a `permission_denied` audit event and returns HTTP 403 (`permissions.py:377-439`).
+2. `Depends(require_permission(FORECAST_READ))` runs first: it verifies the JWT (via `get_current_user`), checks the user's role includes `forecast.read`, and on failure logs a `permission_denied` audit event and returns HTTP 403 (`permissions.py:386-448`).
 3. Serializes the request to a scenario dict with `req.model_dump(exclude={"horizon_hours"}, exclude_none=True)`, dropping the horizon (passed separately) and any unset optional fields (`:44`).
 4. Calls `capacity_sim_service.simulate(scenario, horizon_hours=req.horizon_hours)` and returns its dict (`:45`).
 5. Any exception becomes `HTTPException(500, "Simulation error: …")` (`:46-47`).
@@ -252,7 +252,7 @@ Callers may also **override** the baseline for hermetic testing or manual planni
 7. **Render** (`:140-362`): a header with a live **baseline chip** (census / beds / adm-per-day from `result.baseline`), an error banner, then a two-column grid, a controls card (presets, horizon buttons, six `Knob` sliders, reset) and a results column (five `Stat` tiles, the Recharts area chart with a dashed capacity `ReferenceLine`, and a collapsible assumptions footnote rendered from `result.assumptions`).
 **Why it exists:** to make the model tangible, the value is in the *interactivity*, the instant redraw as you explore hypotheticals.
 **Data in/out:** in, user slider events; out, `POST /capacity-sim/` bodies (the `Knobs` object) and rendered UI. Consumes the `SimResult` contract.
-**Talks to:** `apiFetch` (`src/api/client.ts:195`), which attaches the Bearer JWT and handles 401/403. Mounted lazily by `ClinicianShell.tsx:281,752` inside a `PanelErrorBoundary`; the tab is gated by role in `getAccessibleTabs` (`ClinicianShell.tsx:182-205`, doctors and admins get `capacity`; nurses and pharmacists do not).
+**Talks to:** `apiFetch` (`src/api/client.ts:195`), which attaches the Bearer JWT and handles 401/403. Mounted lazily by `ClinicianShell.tsx:308,782` inside a `PanelErrorBoundary`; the tab is gated by role in `getAccessibleTabs` (`ClinicianShell.tsx:209-232`, doctors and admins get `capacity`; nurses and pharmacists do not).
 **Change guide (worked example):** To add a "close whole ICU" preset, push `{ label: '🧊 ICU offline', knobs: { beds_delta: -8 } }` into `PRESETS` (`:69-76`); it works immediately because `applyPreset` merges over `DEFAULT_KNOBS`. To change the debounce feel, edit the `220` at `:117`, lower is snappier but fires more requests. Watch out: the request body is the raw `knobs` object, so any new knob must exist on both the `Knobs` interface (`:49-57`) and the backend `ScenarioRequest`, or it is dropped.
 **Gotchas:**
 - The **stale-response guard** (`reqIdRef`) is load-bearing: without it, a laggy earlier simulation could overwrite a newer one and the chart would disagree with the sliders.
@@ -394,7 +394,7 @@ Prefix verified: router declares `prefix="/api/capacity-sim"` (`capacity_sim_rou
 | `forecast_service.DOW_MULTIPLIERS` | *conceptual* dependency, the `/7` rate derivation relies on these summing to 7.0 | (`forecast_service.py:65`) |
 | `permissions.require_permission`, `FORECAST_READ` | RBAC gate + JWT auth | `capacity_sim_routes.py:14,40` |
 | `src/api/client.ts apiFetch` | Bearer auth, 401/403 handling | `src/components/capacity/CapacitySimulator.tsx:98` |
-| `ClinicianShell.tsx` | mounts the panel as the `capacity` tab | `ClinicianShell.tsx:281,752` |
+| `ClinicianShell.tsx` | mounts the panel as the `capacity` tab | `ClinicianShell.tsx:308,782` |
 
 No socket events. No DB tables of its own, it only reads (transitively, via the forecast) `patients` and `admission_history` (`forecast_service.py:576-578,424-429`).
 

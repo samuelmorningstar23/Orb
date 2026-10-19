@@ -277,7 +277,14 @@ export interface PrintView {
     name_is_configured: boolean
     address: string
     gstin: string
-    notice: string
+    /** The two-digit GST state code, when the issuing facility has one. */
+    state_code?: string | null
+    /** Where the block came from: the snapshot taken when the number was
+     *  assigned, the old block of a bill numbered before snapshots, or the
+     *  facility's identity as it stands (a draft). */
+    source?: 'snapshot' | 'legacy' | 'live'
+    /** Null once the bill carries the hospital's GSTIN and address. */
+    notice: string | null
   }
   number_series_configured: boolean
   number_notice: string | null

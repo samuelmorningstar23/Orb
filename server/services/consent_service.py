@@ -199,6 +199,41 @@ def record_consent(
     `consent_records` has BEFORE UPDATE/DELETE triggers. A typo'd purpose is a
     permanent typo, so a bad purpose is refused rather than stored.
     """
+    with db_session() as db:
+        rec = record_consent_on(
+            db, patient_id=patient_id, purpose=purpose, method=method,
+            recorded_by=recorded_by, recorded_by_role=recorded_by_role,
+            scope_detail=scope_detail, notice_version=notice_version,
+            notice_language=notice_language, granted_at=granted_at,
+            expires_at=expires_at, given_by=given_by, proxy_name=proxy_name,
+            proxy_relationship=proxy_relationship, evidence_ref=evidence_ref,
+        )
+    logger.info("consent %s recorded for %s (%s)", rec["id"], patient_id, purpose)
+    return get_consent(rec["id"])
+
+
+def record_consent_on(
+    db,
+    *,
+    patient_id: str,
+    purpose: str,
+    method: str,
+    recorded_by: str,
+    recorded_by_role: str | None = None,
+    scope_detail: str | None = None,
+    notice_version: str | None = None,
+    notice_language: str | None = None,
+    granted_at: str | None = None,
+    expires_at: str | None = None,
+    given_by: str = "patient",
+    proxy_name: str | None = None,
+    proxy_relationship: str | None = None,
+    evidence_ref: str | None = None,
+) -> dict:
+    """record_consent on the CALLER's connection and inside the caller's
+    transaction (opd-19: the registration desk writes the patient and their
+    consent in one transaction, so either both exist or neither does). The
+    same rules, the same row; never commits. Returns the row, hydrated."""
     _require(patient_id, "patient_id")
     _require(recorded_by, "recorded_by")
     if purpose not in CONSENT_PURPOSES:
@@ -222,21 +257,20 @@ def record_consent(
 
     cid = _new_id("CNS")
     ts = granted_at or _now()
-    with db_session() as db:
-        if not db.execute("SELECT 1 FROM patients WHERE id = ?", (patient_id,)).fetchone():
-            raise ValueError(f"unknown patient {patient_id}")
-        db.execute(
-            """INSERT INTO consent_records
-               (id, patient_id, purpose, scope_detail, notice_version, notice_language,
-                method, granted_at, expires_at, given_by, proxy_name, proxy_relationship,
-                evidence_ref, recorded_by, recorded_by_role)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (cid, patient_id, purpose, scope_detail, notice_version, notice_language,
-             method, ts, expires_at, given_by, proxy_name, proxy_relationship,
-             evidence_ref, recorded_by, recorded_by_role),
-        )
-    logger.info("consent %s recorded for %s (%s)", cid, patient_id, purpose)
-    return get_consent(cid)
+    if not db.execute("SELECT 1 FROM patients WHERE id = ?", (patient_id,)).fetchone():
+        raise ValueError(f"unknown patient {patient_id}")
+    db.execute(
+        """INSERT INTO consent_records
+           (id, patient_id, purpose, scope_detail, notice_version, notice_language,
+            method, granted_at, expires_at, given_by, proxy_name, proxy_relationship,
+            evidence_ref, recorded_by, recorded_by_role)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (cid, patient_id, purpose, scope_detail, notice_version, notice_language,
+         method, ts, expires_at, given_by, proxy_name, proxy_relationship,
+         evidence_ref, recorded_by, recorded_by_role),
+    )
+    row = db.execute("SELECT * FROM consent_records WHERE id = ?", (cid,)).fetchone()
+    return _hydrate_consent(db, dict(row))
 
 
 def withdraw_consent(

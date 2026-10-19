@@ -61,9 +61,23 @@ interface Props {
   /** Existing-patient mode (opd-17a). Without it the form admits a new patient,
    *  exactly as before. */
   existing?: ExistingPatientAdmission;
+  /** The ward clerk's registration-level admission (adt-17b, ruling ADT-S5
+   *  (a), Beds and admissions only): who the patient is, the hospital's own
+   *  number, the place and the attending doctor. No clinical tab: every
+   *  clinical field is stored as not yet assessed and no allergy is recorded,
+   *  so nothing says 'no known allergies'. Sent to /admissions/clerk-admit. */
+  clerk?: boolean;
 }
 
 type Tab = 'identity' | 'admission' | 'clinical' | 'history' | 'vitals' | 'notes' | 'review';
+
+/** The ward clerk's form has no clinical, history, observation or notes tab:
+ *  a doctor records those (ruling ADT-S5 (a)). */
+const CLERK_TABS: readonly Tab[] = ['identity', 'admission', 'review'];
+
+/** The server's refusals for a ward or bed not in bed setup while the site
+ *  has strict locations on (adt-16, server STRICT_LOCATION_CODES). */
+const STRICT_LOCATION_CODES: ReadonlySet<string> = new Set(['ward_not_in_setup', 'bed_not_in_setup']);
 
 /** What the form chooses from (GET /api/admissions/options). No patient data:
  *  department names, doctors, ward and bed labels, and whether a bed is held. */
@@ -143,10 +157,14 @@ function ChipInput({ chips, placeholder, onAdd, onRemove }: ChipInputProps) {
   );
 }
 
-export default function AdmitPatientModal({ onClose, onSuccess, existing }: Props) {
+export default function AdmitPatientModal({ onClose, onSuccess, existing, clerk }: Props) {
   /* On an Orb Ward Record computer the drug chart stays on paper: the form
      asks for no current medicines (the server keeps none either). */
   const { wardRecord } = useClinicalSwitches();
+  // adt-17b: the ward clerk's registration-level admission. Never combined
+  // with an existing patient (that door is the admitting doctor's).
+  const clerkMode = !!clerk && !existing;
+  const [numberIssued, setNumberIssued] = useState(false);
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>('identity');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -191,7 +209,7 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
   const [readmitCandidates, setReadmitCandidates] = useState<ReadmitCandidate[]>([]);
   const [readmitTarget, setReadmitTarget] = useState<ReadmitCandidate | null>(null);
   const [readmitKey, setReadmitKey] = useState(newIdempotencyKey);
-  const readmitting = !existing && readmitTarget !== null;
+  const readmitting = !existing && !clerkMode && readmitTarget !== null;
 
   // Focus-trap for the modal. Escape closes the active surface: on the credential
   // hand-off screen that means finishing (onSuccess), otherwise cancelling. While
@@ -217,7 +235,9 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
     emergency_contact_name: '',
     emergency_contact_phone: '',
     address: '',
-    
+    // The hospital's own number, typed by the ward clerk (clerk mode only).
+    mrn: '',
+
     // Admission
     admission_source: 'er',
     admission_type: 'inpatient',
@@ -271,7 +291,12 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
 
   const loadOptions = useCallback(async () => {
     try {
-      const opts = await apiFetch<AdmissionOptions>('/admissions/options');
+      // The ward clerk's form reads its own lists: the clerk's department, its
+      // doctors and bed setup (adt-17b); it carries no typed ward suggestions.
+      const raw = await apiFetch<AdmissionOptions & { hospital_number_issued?: boolean }>(
+        clerkMode ? '/admissions/clerk-options' : '/admissions/options');
+      const opts: AdmissionOptions = { ...raw, wards: raw.wards ?? [], beds: raw.beds ?? [] };
+      if (clerkMode) setNumberIssued(raw.hospital_number_issued === true);
       setOptions(opts);
       setOptionsError(null);
       // The defaults (the clinician's own department and id) are kept only when
@@ -284,7 +309,7 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
     } catch {
       setOptionsError('Could not load the departments and doctors to choose from.');
     }
-  }, []);
+  }, [clerkMode]);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch trigger: the setState is the option lists arriving from the server, not state derived from props or state.
   useEffect(() => { void loadOptions(); }, [loadOptions]);
@@ -363,7 +388,10 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
     ? !!record && statedIdentity !== null
     : readmitting
       ? statedIdentity !== null
-      : formData.name.trim() !== '' && !nameTooShort && formData.age !== '' && !ageInvalid && formData.sex !== '' && !dobInvalid;
+      : formData.name.trim() !== '' && !nameTooShort && formData.age !== '' && !ageInvalid && formData.sex !== '' && !dobInvalid
+        // The ward clerk types the hospital's own number, unless the site's
+        // registration issues it (adt-17b).
+        && (!clerkMode || numberIssued || formData.mrn.trim() !== '');
   const departmentListed = !!options?.departments.includes(formData.department);
   const attending = options?.doctors.find(d => d.id === formData.attending_doctor_id);
   // With the bed picker the place is valid when the picker has everything the
@@ -381,9 +409,13 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
   // call, and the server admits with the same warning.
   const bedHeld = formData.ward.trim() !== '' && formData.bed.trim() !== ''
     && bedChoices.some(b => b.in_use && sameLabel(b.bed, formData.bed));
-  const isClinicalValid = formData.chief_complaint.trim() !== '';
+  // The ward clerk records nothing clinical: every clinical field is stored as
+  // not yet assessed on the server (ruling ADT-S5 (a)).
+  const isClinicalValid = clerkMode || formData.chief_complaint.trim() !== '';
 
-  const isFormValid = isIdentityValid && isAdmissionValid && isClinicalValid;
+  // The ward clerk admits only through bed setup (Beds and admissions on).
+  const isFormValid = isIdentityValid && isAdmissionValid && isClinicalValid
+    && (!clerkMode || !!master);
 
   // Admission happens ONLY from the Review step's Confirm button. The form's
   // own submit (Enter in a field) is swallowed, so no keypress on an earlier
@@ -398,6 +430,9 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
       // Build API payload
       const payload = {
         ...formData,
+        // The hospital number field is the ward clerk's alone (adt-17b): the
+        // clinician's form sends none, exactly as before.
+        mrn: undefined,
         // parseInt(...) || undefined dropped an age of 0, i.e. every neonate.
         age: Number.isFinite(parseInt(formData.age)) ? parseInt(formData.age) : undefined,
         date_of_birth: formData.date_of_birth || undefined,
@@ -488,6 +523,39 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
           setBedChoice(prev => ({ ...prev, terminalAuthoriserPin: '' }));
         }
         result = await readmitPatient(body, readmitKey);
+      } else if (clerkMode && master) {
+        // The ward clerk's registration-level admission (adt-17b): who the
+        // patient is, the hospital's own number, the place and the attending
+        // doctor. Nothing clinical is sent (the server refuses it), so no
+        // allergy, and never 'no known allergies', can come from this form.
+        setRefusal(null);
+        const body = {
+          name: formData.name,
+          age: Number.isFinite(parseInt(formData.age)) ? parseInt(formData.age) : undefined,
+          date_of_birth: formData.date_of_birth || undefined,
+          sex: formData.sex || undefined,
+          phone: formData.phone || undefined,
+          emergency_contact_name: formData.emergency_contact_name || undefined,
+          emergency_contact_phone: formData.emergency_contact_phone || undefined,
+          address: formData.address || undefined,
+          mrn: numberIssued ? undefined : formData.mrn.trim(),
+          admission_source: formData.admission_source,
+          admission_type: formData.admission_type,
+          department: formData.department,
+          attending_doctor_id: formData.attending_doctor_id,
+          referring_clinician: formData.referring_clinician || undefined,
+          // The ward and bed come from the picker (bed setup).
+          ...bedChoicePayload(master, bedChoice),
+          ...(admittedAt ? { admitted_at: new Date(admittedAt).toISOString() } : {}),
+        };
+        if (bedChoice.terminalAuthoriserPin) {
+          setBedChoice(prev => ({ ...prev, terminalAuthoriserPin: '' }));
+        }
+        result = await apiFetch<AdmissionAnswer>('/admissions/clerk-admit', {
+          method: 'POST',
+          headers: { 'Idempotency-Key': admitKey },
+          body: JSON.stringify(body),
+        });
       } else if (master) {
         // Beds and admissions on: the place from the picker, the admission
         // time when set back, and this form's one Idempotency-Key.
@@ -539,15 +607,18 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
     } catch (err) {
       const message = (err instanceof Error ? err.message : '') || 'Failed to admit patient';
       const code = (err as { detail?: { error?: unknown } } | null)?.detail?.error;
-      if (!existing && !readmitting) {
+      if (!existing && !readmitting && !clerkMode) {
         // The patient index refused a new chart: offer the records the server
         // says may be readmitted (empty while readmission is switched off).
+        // Not to the ward clerk: a readmission is the admitting doctor's.
         setReadmitCandidates(readmitCandidatesOf((err as { detail?: unknown } | null)?.detail));
       }
-      if (master && typeof code === 'string' && BED_REFUSAL_CODES.has(code)) {
+      if (master && typeof code === 'string'
+          && (BED_REFUSAL_CODES.has(code) || STRICT_LOCATION_CODES.has(code))) {
         // The bed changed under the form (taken, retired, a clean raised) or
         // the server wants words the picker did not have: show its words by
-        // the picker and read the beds again.
+        // the picker and read the beds again. With strict locations on
+        // (adt-16) a typed ward or bed not in bed setup is refused the same way.
         setRefusal({ code, message });
         void loadOptions();
       }
@@ -653,8 +724,8 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
         {/* Header */}
         <div className="admit-modal__header">
           <div className="admit-modal__title-group">
-            <h2 className="admit-modal__title" id="admit-modal-title">{existing ? 'Admit from outpatients' : readmitting ? 'Readmit patient' : 'Admit Patient'}</h2>
-            <span className="admit-modal__subtitle">{existing || readmitting ? 'Onto the patient\u2019s own record, which keeps its hospital number' : 'Create clinical admission record across Orb modules'}</span>
+            <h2 className="admit-modal__title" id="admit-modal-title">{existing ? 'Admit from outpatients' : readmitting ? 'Readmit patient' : clerkMode ? 'Admit a patient' : 'Admit Patient'}</h2>
+            <span className="admit-modal__subtitle">{existing || readmitting ? 'Onto the patient\u2019s own record, which keeps its hospital number' : clerkMode ? 'Registration only. A doctor records the clinical details.' : 'Create clinical admission record across Orb modules'}</span>
           </div>
           <button className="admit-modal__close" onClick={onClose} aria-label="Close">&times;</button>
         </div>
@@ -673,7 +744,7 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
                 { id: 'vitals', label: existing || readmitting ? 'Observations' : 'Vitals', valid: true },
                 { id: 'notes', label: 'Notes', valid: true },
                 { id: 'review', label: 'Review', valid: isFormValid }
-              ].map(tab => (
+              ].filter(tab => !clerkMode || CLERK_TABS.includes(tab.id as Tab)).map(tab => (
                 <button
                   key={tab.id}
                   type="button"
@@ -763,6 +834,13 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
                         <label>Emergency Contact Phone</label>
                         <input type="tel" className="admit-input" value={formData.emergency_contact_phone} onChange={e => handleChange('emergency_contact_phone', e.target.value)} />
                       </div>
+                      {clerkMode && !numberIssued && (
+                        <div className="admit-form-group">
+                          <label htmlFor="admit-mrn">Hospital number <span>*</span></label>
+                          <input id="admit-mrn" type="text" className="admit-input" autoComplete="off" value={formData.mrn} onChange={e => handleChange('mrn', e.target.value)} required />
+                          <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>From the hospital&apos;s register.</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -796,7 +874,7 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
                       )}
                       <div className="admit-form-group">
                         <label htmlFor="admit-department">Department <span>*</span></label>
-                        <select id="admit-department" className="admit-input" value={formData.department} onChange={e => handleChange('department', e.target.value)} required>
+                        <select id="admit-department" className="admit-input" value={formData.department} onChange={e => handleChange('department', e.target.value)} required disabled={clerkMode}>
                           <option value="">{options ? 'Select...' : 'Loading...'}</option>
                           {(options?.departments ?? []).map(d => <option key={d} value={d}>{d}</option>)}
                         </select>
@@ -810,6 +888,12 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
                           ))}
                         </select>
                       </div>
+                      {clerkMode && options && !master && (
+                        <p role="alert" className="admit-modal__error" style={{ gridColumn: '1 / -1', margin: 0 }}>
+                          Beds and admissions is not on at this site, so the ward clerk cannot admit
+                          a patient here.
+                        </p>
+                      )}
                       {master ? (
                         <>
                           <BedPicker
@@ -1015,7 +1099,7 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
 
                 {activeTab === 'review' && (
                   <div className="admit-modal__section">
-                    {!existing && !readmitting && (
+                    {!existing && !readmitting && !clerkMode && (
                       <ReadmitOffer
                         candidates={readmitCandidates}
                         onChoose={c => {
@@ -1074,6 +1158,22 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
                           <div className="admit-review-item"><span>Attending</span><span>{attending?.name || '-'}</span></div>
                         </div>
                       </div>
+                      {clerkMode ? (
+                        <div className="admit-review-section" style={{ gridColumn: '1 / -1' }}>
+                          <h3>Clinical details</h3>
+                          <p role="note" className="bed-picker__note" style={{ margin: 0 }}>
+                            Not yet assessed. The presenting complaint, allergies and code status are
+                            left for a doctor, and allergies are recorded as not yet asked, never as
+                            none. Until a doctor records them the bed board shows &lsquo;Admission
+                            assessment due&rsquo; on this bed.
+                          </p>
+                          {!numberIssued && (
+                            <div className="admit-review-list">
+                              <div className="admit-review-item"><span>Hospital number</span><span>{formData.mrn.trim() || '-'}</span></div>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
                       <div className="admit-review-section" style={{ gridColumn: '1 / -1' }}>
                         <h3>Clinical Overview</h3>
                         <div className="admit-review-list">
@@ -1086,6 +1186,7 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
                           <div className="admit-review-item"><span>Code Status</span><span>{formData.code_status.replace('_', ' ').toUpperCase()}</span></div>
                         </div>
                       </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1137,10 +1238,17 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
 
             <div className="admit-summary-group">
               <h4>Clinical Focus</h4>
+              {clerkMode ? (
+                <div className="admit-summary-item">
+                  <span className="admit-summary-value">Not yet assessed</span>
+                  <span className="admit-summary-label">A doctor records the clinical details</span>
+                </div>
+              ) : (
               <div className="admit-summary-item">
                 <span className="admit-summary-value">{formData.initial_diagnosis || <span className="admit-summary-value--empty">Pending Dx...</span>}</span>
                 <span className="admit-summary-label">{formData.chief_complaint ? `CC: ${formData.chief_complaint.substring(0, 40)}...` : 'No complaint entered'}</span>
               </div>
+              )}
             </div>
 
             {(formData.allergies.length > 0 || formData.comorbidities.length > 0) && (

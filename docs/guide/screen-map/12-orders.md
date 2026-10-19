@@ -22,7 +22,7 @@ print portal. Styling comes from `src/components/orders/Orders.module.css` (CSS 
 `styles.x`) and `src/components/orders/OrderSets.css` (plain BEM, `order-sets__x`).
 
 **How you get there.** Left nav → **Orders**. The nav entry is defined at
-`src/pages/ClinicianShell.tsx:69` (`id: 'orders', label: 'Orders', pillar: 'Orders'`, with a
+`src/pages/ClinicianShell.tsx:70` (`id: 'orders', label: 'Orders', pillar: 'Orders'`, with a
 document-with-two-rules icon at `:70-74`); the panel is lazily imported at `:278` and mounted at
 `:740-744` inside `<PanelErrorBoundary label="orders">`. The tab exists only for roles whose list
 includes `'orders'`: **doctor** (`:195-196`) and **nurse** (`:200`). Admin (`:201`), pharmacist
@@ -114,8 +114,8 @@ protocols…</div>}>`.
 **Server:** static asset.
 **Change this →** appears for the fraction of a second the first time you press **Order sets** in a
 session, and never again (the chunk is cached). If the chunk 404s after a deploy the
-`PanelErrorBoundary` at `ClinicianShell.tsx:522` takes over and shows the shell's own
-updating/reload affordance (`ClinicianShell.tsx:236-240`) instead of this panel.
+`PanelErrorBoundary` at `ClinicianShell.tsx:552` takes over and shows the shell's own
+updating/reload affordance (`ClinicianShell.tsx:263-267`) instead of this panel.
 
 ---
 
@@ -171,7 +171,7 @@ create-order form card *only if a patient is selected*, the render guard at `:24
 **Where:** full-width row directly under the header.
 **Rendered by:** `OrdersPanel.tsx:230-239`, the whole block is wrapped in `{!patientIdProp && …}`
 at `:230`, so it is present whenever the panel is mounted from the shell (which passes no props,
-`ClinicianShell.tsx:522`) and absent when the panel is embedded in a chart that fixes the patient.
+`ClinicianShell.tsx:552`) and absent when the panel is embedded in a chart that fixes the patient.
 The control itself is `<PatientPicker value={patientId} onChange={setPatientId} label="Patient"
 hint="Pick the patient whose orders you want to see." />` at `:232-237`; its markup is
 `PatientPicker.tsx:88-197`.
@@ -259,8 +259,8 @@ field fires `validateCode` (`:525`), as does the button.
 (`OrdersPanel.tsx:434-436`).
 **Server:** `server/routes/orders_routes.py:211-224` (`validate_terminology`, guarded by
 `require_permission(ORDER_READ)`), which calls
-`server/services/terminology_service.py:32-41` (`validate_code`) and, when valid,
-`:44-53` (`get_display`). Both are single indexed lookups against `terminology` with
+`server/services/terminology_service.py:55-64` (`validate_code`) and, when valid,
+`:67-76` (`get_display`). Both are single indexed lookups against `terminology` with
 `is_active = 1`.
 **Change this →** a **valid** code paints a green **"✓ <display>"**, e.g. `✓ CBC panel - Blood by
 Automated count`, at `:534` (`styles.valid` = `--status-ok-text`, `Orders.module.css:326`), and
@@ -297,7 +297,7 @@ in terminology. Codes must be validated before ordering."** (`orders_service.py:
 **"order_type 'lab' requires a coded concept (code + code_system). Only ['nursing', 'other'] may
 be free-text."** (`:115-119`). A 503 from a broken safety screen shows **"The drug-safety screen
 could not run. Resolve the fault or use the pharmacist verification path."**
-(`server/services/medication_safety_gate.py:133-140`). A 403 shows **"Insufficient permissions"**
+(`server/services/medication_safety_gate.py:141-148`). A 403 shows **"Insufficient permissions"**
 (`client.ts:210-212`).
 **Change this →** it clears on the next submit attempt (`:452`) and disappears when the form
 closes.
@@ -327,12 +327,12 @@ with a grey **DRAFT** chip, `list_orders` orders by `created_at DESC`
 ## B.3 The drug-safety modal (the allergy block, on screen)
 
 Mounted at `OrdersPanel.tsx:563-578`; the component is `SafetyAlertModal`
-(`src/components/vigil/SafetyAlertModal.tsx:55-158`), portaled to `document.body` (`:68`, `:156`)
-so it sits above the whole app, with a focus trap (`:61`) and a click-away backdrop (`:69`).
+(`src/components/vigil/SafetyAlertModal.tsx:134-319`), portaled to `document.body` (`:68`, `:156`)
+so it sits above the whole app, with a focus trap (`:144`) and a click-away backdrop (`:69`).
 
 ### "Severe drug-safety alerts" modal (blocking mode): what an allergy block looks like
 **Where:** centred over a dimmed page.
-**Rendered by:** title at `SafetyAlertModal.tsx:79-81`
+**Rendered by:** title at `SafetyAlertModal.tsx:115-117`
 (`{blocking ? 'Severe drug-safety alerts' : 'Drug-safety review'}`); the card carries the extra
 class `safety-modal--blocking` at `:71`.
 **Data from:** `safetyModal` state in the form (`OrdersPanel.tsx:426`), set to
@@ -342,7 +342,7 @@ class `safety-modal--blocking` at `:71`.
 dedicated branch for it (`client.ts:231-243`) that builds a typed error carrying the whole
 `safety` payload.
 **Server:** `medication_safety_gate.enforce_medication_safety`
-(`server/services/medication_safety_gate.py:96-168`). It calls
+(`server/services/medication_safety_gate.py:304-543`). It calls
 `drug_safety_service.check_medication_safety` (`:114`; the service is at
 `drug_safety_service.py:431-462`), and when `safety["blocking"]` is true, which means
 `max_severity == "severe"` (`drug_safety_service.py:455`), and no valid acknowledgement is
@@ -355,25 +355,25 @@ apparatus below disappears, replaced by a single **Close** button.
 
 ### "Allergy alerts" / "Interaction alerts" groups and their severity chips
 **Where:** stacked in the modal body under the lede.
-**Rendered by:** `SafetyAlertModal.tsx:101-102` (two `<AlertGroup>` calls); the group component is
-`:38-53`, an `<h3>` title at `:41-42` and one `<li>` per alert at `:45-49`, each a severity chip
+**Rendered by:** `SafetyAlertModal.tsx:137-138` (two `<AlertGroup>` calls); the group component is
+`:93-108`, an `<h3>` title at `:97` and one `<li>` per alert at `:100-103`, each a severity chip
 plus the message.
-**Data from:** `safety.allergy_alerts` / `safety.interaction_alerts` (`:63-64`), typed at
+**Data from:** `safety.allergy_alerts` / `safety.interaction_alerts` (`:146-147`), typed at
 `client.ts:1286-1295`.
 **Server:** allergy messages are built at `drug_safety_service.py:348`, 
 **"Patient is allergic to <substance> (documented reaction: <reaction>)."**, plus class-share and
 cross-reactivity variants at `:360` and `:374`. Interaction messages are
 **"<drug> + <existing>: <mechanism>"** at `:425`.
-**Change this →** the chip colour is decided by `severityClass` (`:31-36`): `severe` and
+**Change this →** the chip colour is decided by `severityClass` (`:86-91`): `severe` and
 `contraindicated` render **danger red**; `mild`/`minor`/`low` render **ok green**; **everything
-else, including `moderate` and `unknown`, renders amber**, the comment at `:34` records that this
+else, including `moderate` and `unknown`, renders amber**, the comment at `:89` records that this
 is deliberate, so an unmapped severity never reads as "fine". A group with zero alerts renders
-nothing at all (`:39`), and if both are empty you get the single line **"No allergy or interaction
+nothing at all (`:94`), and if both are empty you get the single line **"No allergy or interaction
 alerts were raised."** (`:103-105`).
 
 ### "Not screened" coverage strip
 **Where:** below the alert groups.
-**Rendered by:** `SafetyAlertModal.tsx:107-115`, an amber chip reading **"Not screened"** beside
+**Rendered by:** `SafetyAlertModal.tsx:143-151`, an amber chip reading **"Not screened"** beside
 the coverage note.
 **Data from:** `safety.interaction_screened === false`, a strict false check, so a missing field
 does not trigger it.
@@ -386,35 +386,35 @@ an unscreened drug returning zero alerts previously looked identical to a clean 
 
 ### "Clinical justification" textarea and the "Acknowledge & Order" button
 **Where:** bottom of the blocking modal.
-**Rendered by:** label at `SafetyAlertModal.tsx:119-121`, textarea at `:122-131` (placeholder
+**Rendered by:** label at `SafetyAlertModal.tsx:158-160`, textarea at `:122-131` (placeholder
 **"Why is it clinically appropriate to proceed despite these alerts? (min 10 characters)"**),
 buttons at `:132-144`, **Cancel** (ghost) and **Acknowledge & Order** (danger red).
-**Data from:** local `reason` state (`:56`); `canAcknowledge` at `:66` requires
-`reason.trim().length >= 10` (`MIN_REASON_LENGTH`, `:29`) **and** `!busy`. `busy` is the form's
+**Data from:** local `reason` state (`:138`); `canAcknowledge` at `:66` requires
+`reason.trim().length >= 10` (`MIN_REASON_LENGTH`, `:84`) **and** `!busy`. `busy` is the form's
 `submitting` (`OrdersPanel.tsx:567`).
 **API:** re-submits `POST /api/orders` with `safety_ack: { acknowledged: true, reason }`
 (`OrdersPanel.tsx:569` → `client.ts:1369`).
 **Server:** the same gate. `enforce_medication_safety` recomputes `acknowledged` from all three of
 `safety_ack`, a non-empty trimmed `reason` and the `acknowledged` flag
-(`medication_safety_gate.py:143-144`); on success it audits a `drug_safety_override` with
+(`medication_safety_gate.py:151-152`); on success it audits a `drug_safety_override` with
 `outcome="partial_success"` (`:160-162`) and returns the safety payload with an `override`
 block naming the actor and reason (`:163`).
 **Change this →** until 10 characters are typed the red button is inert. While the re-submit is in
 flight the label becomes **"Submitting…"** (`:142`) and both the close ✕ (`:82`) and the backdrop
-click (`:58-60`) are disabled, so the modal cannot be dismissed mid-write. Pressing **Cancel**
+click (`:168`) are disabled, so the modal cannot be dismissed mid-write. Pressing **Cancel**
 closes the modal and **leaves the create form up with your values intact** (`OrdersPanel.tsx:570-576`:
 `wasInfo` is false, so `onCreated()` is not called), nothing was ordered.
 
 ### "Drug-safety review" modal (info mode)
 **Where:** same position, no red lede, one **Close** button.
-**Rendered by:** the else branch at `SafetyAlertModal.tsx:146-152`.
+**Rendered by:** the else branch at `SafetyAlertModal.tsx:186-192`.
 **Data from:** `setSafetyModal({ safety, mode: 'info' })` at `OrdersPanel.tsx:468`, reached when the
 create **succeeded** and either `safety.max_severity !== 'none'` or
 `safety.interaction_screened === false` (`:467`), and only when this was not already an
 acknowledged re-submit (`!safetyAck` in the same condition; the comment at `:464-466` explains the
 clinician has just reviewed those alerts).
 **Server:** the sub-severe path, `enforce_medication_safety` audits a `drug_safety_screen`
-success and returns (`medication_safety_gate.py:166-168`); the route attaches it to the response as
+success and returns (`medication_safety_gate.py:174-176`); the route attaches it to the response as
 `safety` (`orders_routes.py:269-270`).
 **Change this →** **the order already exists** by the time this appears. Closing it therefore
 *finishes* the create flow, `onClose` calls `onCreated()` because `wasInfo` is true
@@ -438,7 +438,7 @@ between the two modes.
 **Server:** `orders_routes.py:347-356` (`list_patient_orders`), guarded by
 `require_patient_access(ORDER_READ, audit_action="patient_orders_viewed")`, which is
 permission check + ward-scope check + a fail-closed `phi_access` audit row
-(`permissions.py:445-516`), calling `orders_service.list_orders`
+(`permissions.py:454-525`), calling `orders_service.list_orders`
 (`orders_service.py:237-250`).
 **Change this →** it takes precedence over every other body state (`:264` is the first arm of the
 ternary chain), so a refresh briefly hides even a failed load. It never appears when no patient is
@@ -452,7 +452,7 @@ red wash (`styles.errorState`, `Orders.module.css:95-99`).
 **Data from:** the second ternary arm at `:266`, `loadError && orders.length === 0`. `loadError`
 is set in the catch at `:134-137`.
 **API / Server:** as above. A ward-scope miss returns **404 "Patient not found"**
-(`permissions.py:499`), deliberately not 403, because a 403 would confirm the patient exists.
+(`permissions.py:508`), deliberately not 403, because a 403 would confirm the patient exists.
 **Change this →** the body copy is fixed and load-bearing: **"This is a display failure, not an
 empty chart. Do not read it as 'no orders', check the chart directly if you cannot reload."** The
 comment at `:266-268` and at `Orders.module.css:66-73` records why this card exists at all, one
@@ -817,7 +817,7 @@ every protocol**. Fill the field with a consultant's name in the site file and i
 **API:** `POST /api/orders/sets/{setId}/preview` with `{ patient_id }` (`orderSets.ts:94-103`).
 **Server:** `orders_routes.py:119-148` (`preview_order_set`, `require_permission(ORDER_WRITE)`).
 It calls `enforce_patient_scope(user, req.patient_id)` at `:134`, the body-shaped equivalent of
-the path guard, 404 not 403 (`permissions.py:292-317`), then
+the path guard, 404 not 403 (`permissions.py:301-326`), then
 `order_sets_service.preview_set` (`:800-826`), then writes an `order_set_previewed` PHI-read audit
 row naming the blocked descriptions (`:140-147`).
 **Change this →** `preview_set` runs `get_set` → `require_orderable_patient` → `resolve_items` →
@@ -913,7 +913,7 @@ most-demoed screen in the product a charted anaphylaxis read as boilerplate. **D
 `_dose_screen` (`:642-691`) returns `DOSE_BLOCK` and `block_kind` becomes `"dose_guard_block"`
 (`:788-790`), with `block_reason` joined from the blocking findings (`:791-794`), e.g.
 **"Concentrated potassium chloride must NEVER be given by IV push…"**
-(`drug_safety_service.py:1129`) or a magnitude message like **"<drug> <dose> is at or above <limit>
+(`drug_safety_service.py:1168`) or a magnitude message like **"<drug> <dose> is at or above <limit>
 no adult indication reaches this as a single dose. <basis> Check for a decimal or unit error
 before proceeding."** (`:1259-1265`). **Screen unavailable:** a 503 gives
 `block_kind = "drug_safety_screen_unavailable"` (`:752-753`).
@@ -1033,16 +1033,16 @@ error.
 |---|---|---|---|
 | 1 | **Unvalidated / unknown code** | `orders_service.py:110-114` (also blocked client-side by `canSubmit`, `OrdersPanel.tsx:445-449`) | red **"✗ unknown code"** beside the field; **Create Order** stays disabled; if forced, a red form line quoting the code |
 | 2 | **Coded type with no code** | `orders_service.py:115-119` | red form line: "order_type 'lab' requires a coded concept…" |
-| 3 | **Severe allergy or interaction (single order)** | `medication_safety_gate.py:142-159`, HTTP 428 | the **blocking modal**, red title "Severe drug-safety alerts", the alert with the substance and documented reaction, a mandatory ≥10-char justification, **Acknowledge & Order** |
-| 4 | **Sub-severe alerts, or a drug outside the interaction KB** | `medication_safety_gate.py:166-168`; UI condition `OrdersPanel.tsx:467` | the **info modal** "Drug-safety review", read-only, with an amber **Not screened** strip when applicable, *the order already exists* |
-| 5 | **Drug-safety screen itself failed** | `medication_safety_gate.py:115-140`, HTTP 503 | red form line: "The drug-safety screen could not run. Resolve the fault or use the pharmacist verification path." |
+| 3 | **Severe allergy or interaction (single order)** | `medication_safety_gate.py:150-167`, HTTP 428 | the **blocking modal**, red title "Severe drug-safety alerts", the alert with the substance and documented reaction, a mandatory ≥10-char justification, **Acknowledge & Order** |
+| 4 | **Sub-severe alerts, or a drug outside the interaction KB** | `medication_safety_gate.py:174-176`; UI condition `OrdersPanel.tsx:467` | the **info modal** "Drug-safety review", read-only, with an amber **Not screened** strip when applicable, *the order already exists* |
+| 5 | **Drug-safety screen itself failed** | `medication_safety_gate.py:386-412`, HTTP 503 | red form line: "The drug-safety screen could not run. Resolve the fault or use the pharmacist verification path." |
 | 6 | **Severe allergy on an order-set item** | `order_sets_service.py:746-776` | the item row turns red with a solid **STOPPED** chip and the allergy sentence; **Apply is disabled**; the amber note explains the whole-or-nothing rule |
 | 7 | **Dose-guard block on an order-set item** | `order_sets_service.py:786-794` (`_dose_screen`, `:642-691`) | identical **STOPPED** treatment, reason quoting the dose/route rule; **not acknowledgeable anywhere in the UI** (`OrderSetBlocked.status_code`, `:124-133`) |
 | 8 | **Dose-guard block inside the protocol file** | `order_sets_service.py:294-308` at import | **the server does not start**, "THE DOSE GUARD STOPS THIS ITEM, it must not ship in a protocol." No screen at all |
 | 9 | **Discharged / unknown patient** | `require_orderable_patient`, `order_sets_service.py:615-639` | "Preview failed: Patient <id> is not admitted (status=…), an order set cannot be applied to a discharged patient…" |
 | 10 | **Codes the deployment cannot resolve** | preview `:526-549` (warning) / apply `:864-875` (refusal) | amber note listing the codes; on apply, the generic red error line, "No orders were created." |
-| 11 | **Patient outside your ward** | `enforce_patient_scope` `:134`/`:165`; `require_patient_access` `permissions.py:466-499` | **404 "Patient not found"**, never 403, so the response cannot confirm the patient exists. In the orders list this surfaces as the red "Orders could not be loaded" card |
-| 12 | **Missing permission** | `require_permission`, `permissions.py:376-438` (audits a `permission_denied` row before answering) | "Insufficient permissions", in the form's red line, or as "Preview failed: Insufficient permissions" |
+| 11 | **Patient outside your ward** | `enforce_patient_scope` `:134`/`:165`; `require_patient_access` `permissions.py:475-508` | **404 "Patient not found"**, never 403, so the response cannot confirm the patient exists. In the orders list this surfaces as the red "Orders could not be loaded" card |
+| 12 | **Missing permission** | `require_permission`, `permissions.py:385-447` (audits a `permission_denied` row before answering) | "Insufficient permissions", in the form's red line, or as "Preview failed: Insufficient permissions" |
 | 13 | **Expired session** | `apiFetch`, `client.ts:204-206` | `notifySessionExpired()` fires the shell's global session-expiry handling |
 | 14 | **Illegal state transition** | `orders_service.py:171-183` | a browser **`alert()`** quoting "Illegal transition: X -> Y. Allowed from 'X': [...]" |
 | 15 | **Result on a non-lab/imaging order** | `orders_service.py:208-212` | **+ Result** is not rendered at all (`OrdersPanel.tsx:302`); via API, an `alert()` with "Cannot result order_type '…'" |

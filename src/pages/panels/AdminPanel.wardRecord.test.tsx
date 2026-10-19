@@ -22,6 +22,7 @@ vi.mock('./admin/UsersPanel', () => ({ default: () => <div>Users content</div> }
 vi.mock('./admin/DataPanel', () => ({ default: () => <div>Data content</div> }))
 vi.mock('./admin/RosterImport', () => ({ default: () => <div>Roster content</div> }))
 vi.mock('./admin/ProvenanceReview', () => ({ default: () => <div>Provenance content</div> }))
+vi.mock('./admin/FacilitiesPanel', () => ({ default: () => <div>Facilities content</div> }))
 vi.mock('../../components/FlightRecorder', () => ({ default: () => <div>Flight content</div> }))
 
 import AdminPanel from './AdminPanel'
@@ -42,7 +43,7 @@ describe('Admin under the Ward Record profile', () => {
 
   it('an ordinary site keeps every section and opens on the overview', () => {
     render(<AdminPanel />)
-    expect(sections()).toHaveLength(15)
+    expect(sections()).toHaveLength(16)
     expect(screen.getByText('Overview content')).toBeTruthy()
   })
 })

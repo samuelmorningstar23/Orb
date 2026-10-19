@@ -342,13 +342,25 @@ def test_a_draft_without_a_dose_route_or_frequency_cannot_be_signed(world, lifec
 
 # ── Create ────────────────────────────────────────────────────────────────────
 
-def test_create_as_prescribed_writes_the_ward_row_and_names_a_duplicate(world, lifecycle_on):
+def test_create_as_prescribed_writes_the_ward_row_and_names_a_duplicate(world, lifecycle_on,
+                                                                       monkeypatch):
     pid, doc = world["pa"], world["doctor_a"]
     with db_session() as db:
         db.execute("INSERT INTO medications (patient_id, drug_name, dosage, route, frequency, "
                    "status, source) VALUES (?, 'Paracetamol', '1 g', 'Oral', 'QDS', 'active', "
                    "'clinician')", (pid,))
-    resp = _create(doc, pid, drug="Paracetamol 500 mg", status="prescribed")
+    # Ruling MO-R6 (W9-C): the default rule refuses a second live order for
+    # the same ingredient outright, and nothing is written.
+    refused = _create(doc, pid, drug="Paracetamol 500 mg", status="prescribed")
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"]["error"] == "duplicate_order"
+    assert [r["drug_name"] for r in _ward_rows(pid)] == ["Paracetamol"]
+    # Under the 'acknowledge' rule a written reason clears it; the step reply
+    # still names the duplicate.
+    monkeypatch.setattr(config, "MED_ORDER_DUPLICATE_RULE", "acknowledge")
+    resp = _create(doc, pid, drug="Paracetamol 500 mg", status="prescribed",
+                   ack={"acknowledged": True,
+                        "reason": "Regular dose split while the evening dose is held"})
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["order"]["status"] == "prescribed"

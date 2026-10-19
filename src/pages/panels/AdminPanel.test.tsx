@@ -33,6 +33,7 @@ vi.mock('./admin/UsersPanel', () => ({ default: () => <div>Users content</div> }
 vi.mock('./admin/DataPanel', () => ({ default: () => <div>Data content</div> }))
 vi.mock('./admin/RosterImport', () => ({ default: () => <div>Roster content</div> }))
 vi.mock('./admin/ProvenanceReview', () => ({ default: () => <div>Provenance content</div> }))
+vi.mock('./admin/FacilitiesPanel', () => ({ default: () => <div>Facilities content</div> }))
 vi.mock('../../components/FlightRecorder', () => ({ default: () => <div>Flight content</div> }))
 
 import AdminPanel from './AdminPanel'
@@ -43,7 +44,7 @@ const tabs = () => within(tablist()).getAllByRole('tab')
 describe('admin sub-tab semantics', () => {
   it('announces itself as a tab list of tabs, not a row of buttons', () => {
     render(<AdminPanel />)
-    expect(tabs()).toHaveLength(15)
+    expect(tabs()).toHaveLength(16)
     // Nothing in the strip is left as a bare button.
     expect(within(tablist()).queryAllByRole('button')).toHaveLength(0)
   })
@@ -115,6 +116,14 @@ describe('admin sub-tab semantics', () => {
     fireEvent.keyDown(list, { key: 'End' })
     expect(all[all.length - 1]).toHaveAttribute('aria-selected', 'true')
     expect(all[all.length - 1]).toHaveFocus()
+  })
+
+  it('opens the facility identity screen from its own tab, next to Data', () => {
+    render(<AdminPanel />)
+    const names = tabs().map(t => t.textContent)
+    expect(names.indexOf('Facilities')).toBe(names.indexOf('Data & Backups') - 1)
+    fireEvent.click(screen.getByRole('tab', { name: 'Facilities' }))
+    expect(screen.getByText('Facilities content')).toBeInTheDocument()
   })
 
   it('leaves keys it does not own to the browser', () => {

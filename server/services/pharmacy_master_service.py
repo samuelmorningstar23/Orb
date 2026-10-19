@@ -33,7 +33,9 @@ same transaction (pharmacy_stock_service.adopt_legacy_lots). A store that
 still holds stock is never deactivated: its lots would silently stop being
 dispensable. Ward and crash-cart stores are refused while
 ORB_PHARMACY_WARD_STOCK is off (ruling GRN-RS5), and a department is always
-canonicalised by admission_service.resolve_admission_department.
+canonicalised by admission_service.resolve_admission_department. A crash
+cart's par levels are its approved list (grn-23): a drug no ward store may hold
+is refused a place on it, and the list is frozen while ward stock is off.
 
 EVERY WRITE runs in one db_session(immediate=True) and writes its 'security'
 audit row with db=conn in that transaction (fail-closed): the change and its
@@ -1378,11 +1380,38 @@ def list_par_levels(*, store_id: Optional[int] = None) -> list[dict]:
         return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
 
+def _check_crash_cart_par(drug: Mapping, par: int, is_active: bool, store_name: str) -> None:
+    """A crash cart's list holds only drugs a ward store may hold (GRN-RS5,
+    grn-23). Read inside the caller's write transaction."""
+    import config
+    from services import pharmacy_transfer_service as transfers
+
+    if not config.feature_enabled("pharmacy_ward_stock"):
+        raise MasterError("ward and crash-cart drug stores are switched off on this site, so a "
+                          "crash cart's list is not changed. Nothing was changed.",
+                          code="ward_stock_off")
+    if par <= 0 or not is_active:
+        return
+    problem = transfers.ward_drug_problem(drug)
+    if problem:
+        raise MasterError(f"{problem['message']} It cannot be on the list for {store_name}. "
+                          "Nothing was changed.", code=problem["code"],
+                          detail={"drug_id": drug["id"]})
+
+
 def upsert_par_level(*, store_id: int, helix_medication_id: str, par_units: int,
                      actor: Mapping, reorder_level_units: Optional[int] = None,
                      max_units: Optional[int] = None, is_active: bool = True,
                      audit_ctx: Optional[Mapping] = None) -> dict:
-    """Set one drug's stock levels in one pharmacy store (the write tier)."""
+    """Set one drug's stock levels in one pharmacy store (the write tier).
+
+    A crash cart's par rows ARE its approved list (ruling GRN-RS5 (b), grn-23):
+    while ward stock is switched off nothing on a crash cart's list changes,
+    and a drug that no ward store may hold (unclassified, narcotic or
+    psychotropic, a barred high-alert drug or concentrated electrolyte,
+    inactive or not confirmed: pharmacy_transfer_service.ward_drug_problem)
+    is refused a par level above 0. With ward stock on, taking a drug off the
+    list (0, or inactive) is always allowed."""
     par = _int_field(0, nullable=False)(par_units, "par level")
     reorder = _int_field(0)(reorder_level_units, "reorder level")
     ceiling = _int_field(0)(max_units, "maximum")
@@ -1398,8 +1427,11 @@ def upsert_par_level(*, store_id: int, helix_medication_id: str, par_units: int,
                                  (store_id,)).fetchone()
         if store_row is None or store_row["pharmacy_kind"] is None:
             raise MasterError(f"no pharmacy store {store_id}", code="not_found")
-        if _drug_row(conn, helix_medication_id) is None:
+        drug_row = _drug_row(conn, helix_medication_id)
+        if drug_row is None:
             raise MasterError(f"no drug {helix_medication_id}", code="not_found")
+        if store_row["pharmacy_kind"] == "crash_cart":
+            _check_crash_cart_par(drug_row, par, is_active, store_row["name"])
         before = conn.execute("SELECT * FROM pharmacy_par_levels WHERE store_id = ? "
                               "AND helix_medication_id = ?",
                               (store_id, helix_medication_id)).fetchone()

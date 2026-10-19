@@ -13,6 +13,15 @@ export type UserRole =
   | 'receptionist' | 'ward_clerk' | 'lab_technician' | 'pathologist' | 'phlebotomist'
   | null
 
+/** The facility an account works at (server UserOut.facility, multisite-5a).
+ *  A label only: what the account may see is decided on the server. `name`
+ *  is the display name; facility 1 may carry none (the site name stands in). */
+export interface UserFacility {
+  id: number
+  code: string | null
+  name: string | null
+}
+
 export interface User {
   id: string
   name: string
@@ -21,6 +30,9 @@ export interface User {
   registrationNumber?: string
   /** 'pin' = signed in with a PIN on a shared, enrolled ward tablet. */
   authMethod?: 'password' | 'pin'
+  /** multisite-6: shown beside the role only while more than one facility is
+   *  on record (ClinicianShell reads /api/auth/me for a fresh one). */
+  facility?: UserFacility | null
 }
 
 interface AuthContextType {

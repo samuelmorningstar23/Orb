@@ -1283,6 +1283,11 @@ def quick_admit(data: dict, user: dict = Depends(require_permission("patient.wri
                   "attending_doctor_id": attending,
                   "allergies_charted": len(payload["allergies"])},
     )
+    if result.get("movement_id") and not result.get("replayed"):
+        # Only with ORB_ADT on (adt-19): the admission was placed through the
+        # bed master and has committed, so the bed boards refetch.
+        from services.adt.live import notify_adt_changed
+        notify_adt_changed(answer=result, departments=[department])
     return result
 
 

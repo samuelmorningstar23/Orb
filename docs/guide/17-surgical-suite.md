@@ -92,7 +92,7 @@ sequenceDiagram
     Panel->>Esc: acknowledgeEmergency → status=emergency_acknowledged
 ```
 
-Key subtlety: **`surgery_escalation_service.generate_surgical_prep_package_async` never emits a socket event.** The only code that emits `surgery:emergency_intake` is `sage_handoff_service` (`server/services/sage_handoff_service.py:737`, `:767`). So a case created purely through the escalation service's confirm path becomes ready silently, and the panel only discovers it via its 10-second fallback poll or the Tier-3 hydration poll, not push. The two "emergency package generators" (`generate_surgical_prep_package_async` here, and `generate_transfer_surgery_package_async` in Sage) now write the same honest template (`PREP_PACKAGE`, `server/services/surgery_escalation_service.py:187`) but still differ in notification behavior. Path 1 itself has had no production caller since `POST /api/relay/actions/{message_id}/execute` was removed on 2026-10-03 (`server/routes/relay_routes.py:949-954`); only tests call `confirm_surgery_prep` now. See Discrepancies.
+Key subtlety: **`surgery_escalation_service.generate_surgical_prep_package_async` never emits a socket event.** The only code that emits `surgery:emergency_intake` is `sage_handoff_service` (`server/services/sage_handoff_service.py:837`, `:867`). So a case created purely through the escalation service's confirm path becomes ready silently, and the panel only discovers it via its 10-second fallback poll or the Tier-3 hydration poll, not push. The two "emergency package generators" (`generate_surgical_prep_package_async` here, and `generate_transfer_surgery_package_async` in Sage) now write the same honest template (`PREP_PACKAGE`, `server/services/surgery_escalation_service.py:187`) but still differ in notification behavior. Path 1 itself has had no production caller since `POST /api/relay/actions/{message_id}/execute` was removed on 2026-10-03 (`server/routes/relay_routes.py:949-954`); only tests call `confirm_surgery_prep` now. See Discrepancies.
 
 ### Flow C: Active Cases: alert → confirm → start → complete
 
@@ -415,7 +415,7 @@ Two module-level constants set the state machine at the edge: `_STARTABLE_STATUS
 
 ### File: `src/pages/panels/SurgicalSuitePanel.tsx`
 
-This one file is the entire client. It is lazy-loaded and error-boundaried in the clinician shell (`src/pages/ClinicianShell.tsx:290`, rendered at `:792`).
+This one file is the entire client. It is lazy-loaded and error-boundaried in the clinician shell (`src/pages/ClinicianShell.tsx:317`, rendered at `:792`).
 
 **Pure helpers (module scope):** `formatTime` (`:69`, 24h→12h AM/PM), `formatDuration` (`:76`, mins→"1h 30m"), `riskColor` (`:82`, maps `critical`/`elevated`/else to danger/warn/ok CSS vars), `formatDate` (`:88`, `en-IN` month-short + day, e.g. "7 Jul"). None noteworthy except `formatDate` parses `dateStr + 'T00:00:00'` as **local** time to avoid the UTC-midnight-rolls-back-a-day trap.
 
@@ -508,7 +508,7 @@ row is inserted by hand. See Discrepancies.
 | GET | `/api/surgery/{surgery_id}/risk` | surgery.read | SSE MedGemma risk stream |
 
 ### Socket events (guide 06-realtime)
-- **Consumes** `surgery:emergency_intake` `{surgery_id}` (global), the panel's only push trigger; emitted by `server/services/sage_handoff_service.py:737` and `:767`, **not** by this subsystem's services.
+- **Consumes** `surgery:emergency_intake` `{surgery_id}` (global), the panel's only push trigger; emitted by `server/services/sage_handoff_service.py:837` and `:867`, **not** by this subsystem's services.
 - **Produces** `message:new` to the case-room channel and `user:{target_user_id}` rooms from `alert-team` (`server/routes/surgery_routes.py:398`, `:400`) and from `team-response` (surgical_alert messages).
 
 ### DB tables (guide 04-database-schema)
@@ -553,7 +553,7 @@ row is inserted by hand. See Discrepancies.
 
 2. **Resolved 2026-10-02: the prep package no longer passes as AI output.** `_do_generation` (`server/services/surgery_escalation_service.py:285`) used to sleep and write a hardcoded Hartmann's package finalised as `ai_package_status="generated"`, which the UI badged "AI Generated". It now writes the shared `PREP_PACKAGE` template as `"template"` (`:291`), and the panel badges both values "Standard template".
 
-3. **Two emergency package generators, only one notifies the UI.** This service's generator emits no socket event; the near-duplicate `generate_transfer_surgery_package_async` in `server/services/sage_handoff_service.py:727` does emit `surgery:emergency_intake` (at `:700` and `:730`). Cases created via the escalation-confirm path therefore reach `emergency_ready` silently and only surface through the panel's polls.
+3. **Two emergency package generators, only one notifies the UI.** This service's generator emits no socket event; the near-duplicate `generate_transfer_surgery_package_async` in `server/services/sage_handoff_service.py:827` does emit `surgery:emergency_intake` (at `:700` and `:730`). Cases created via the escalation-confirm path therefore reach `emergency_ready` silently and only surface through the panel's polls.
 
 4. **Two disagreeing emergency-queue definitions.** The route (`server/routes/surgery_routes.py:268`) filters `status IN ('emergency_pending','emergency_ready','emergency_context_generating')` (`:278`); the service `get_emergency_queue` (`server/services/surgery_escalation_service.py:302`) uses `LIKE 'emergency_%'` (`:309`), which also matches `emergency_acknowledged`/`emergency_staged`. The service function appears unused; the disagreement matters if it ever is.
 

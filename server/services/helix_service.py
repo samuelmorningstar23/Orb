@@ -837,6 +837,12 @@ def orders_awaiting_receipt(department: str | None) -> list[dict]:
     set one (the same precedence `_atomic_dispense` uses), with the prescribed
     drug alongside as `original_medication_name`. Naming the prescribed drug had
     the nurse sign for something other than what was in the tray.
+
+    A supply row LINKED to a medication order also carries `linked_order`
+    (_with_linked_orders: the order's id, status, version and who verified
+    it), so the ward can see which order the tray belongs to and whether it is
+    still live (medorders-10, W9-D). An unlinked row, and every row on a
+    database that never used the order store, is returned exactly as before.
     """
     with db_session() as conn:
         params: list = []
@@ -847,7 +853,7 @@ def orders_awaiting_receipt(department: str | None) -> list[dict]:
 
         rows = conn.execute(
             f"""SELECT o.id, o.patient_id, o.dosage, o.route, o.frequency,
-                       o.status, o.pharmacist_notes, o.created_at,
+                       o.status, o.pharmacist_notes, o.created_at, o.med_order_id,
                        p.name AS patient_name, p.bed, p.ward,
                        m.name AS medication_name, m.strength, m.form,
                        CASE WHEN o.substitute_medication_id IS NOT NULL
@@ -869,7 +875,12 @@ def orders_awaiting_receipt(department: str | None) -> list[dict]:
                  ORDER BY t.created_at ASC NULLS LAST, o.created_at ASC""",
             tuple(params),
         ).fetchall()
-        return [_with_utc_offsets(dict(r), ("created_at", "dispensed_at")) for r in rows]
+        out = _with_linked_orders(
+            conn, [_with_utc_offsets(dict(r), ("created_at", "dispensed_at")) for r in rows])
+        for row in out:
+            if not row.get("med_order_id"):
+                row.pop("med_order_id", None)
+        return out
 
 
 def _with_utc_offsets(row: dict, columns: tuple[str, ...]) -> dict:

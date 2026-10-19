@@ -23,10 +23,15 @@
  *                                                // means every status
  *   export const actionNeedsOccupant = 1         // 1: only on a tile whose occupant the
  *                                                // caller may see
+ *   export const actionMarker = 'Admission assessment due'
+ *                                                // only on a tile whose markers include
+ *                                                // these exact words (adt-17b)
  *
  * `actionPermission` HIDES an action; it never grants one. The server refuses
  * every write the role cannot make. A permission the client mirror does not
- * know reads as NOT held, so an action gated on it stays hidden.
+ * know reads as NOT held, so an action gated on it stays hidden. The Beds
+ * panel's check also answers 'role:<role>' from the signed-in role (adt-17b:
+ * the ward clerk's own lanes); anything else asking it reads it as not held.
  *
  * A tile whose occupant is outside the caller's department carries no
  * patient field, so an action that needs one must say actionNeedsOccupant = 1
@@ -55,6 +60,7 @@ export interface TileActionModule {
   actionPermission?: unknown
   actionStatuses?: unknown
   actionNeedsOccupant?: unknown
+  actionMarker?: unknown
 }
 
 /** One installed action. */
@@ -66,6 +72,9 @@ export interface TileActionEntry {
   /** The tile statuses it applies to, or null for every status. */
   statuses: readonly string[] | null
   needsOccupant: boolean
+  /** Only on a tile whose markers include these words (adt-17b); absent or
+   *  null for every tile. */
+  marker?: string | null
   Component: ComponentType<TileActionProps>
   source: string
 }
@@ -135,6 +144,7 @@ export function discoverTileActions(modules: Readonly<Record<string, unknown>>):
       permission: cleanText(mod.actionPermission),
       statuses: statusList(mod.actionStatuses),
       needsOccupant: mod.actionNeedsOccupant === 1 || mod.actionNeedsOccupant === true,
+      marker: cleanText(mod.actionMarker),
       Component: mod.default,
       source,
     })
@@ -153,7 +163,8 @@ export function actionsForTile(
   return entries.filter(entry =>
     (entry.permission === null || holds(entry.permission))
     && (entry.statuses === null || entry.statuses.includes(tile.status))
-    && (!entry.needsOccupant || tile.occupant !== null))
+    && (!entry.needsOccupant || tile.occupant !== null)
+    && (!entry.marker || (tile.markers ?? []).includes(entry.marker)))
 }
 
 /** Every action installed in this build, read once (the glob is compile-time). */

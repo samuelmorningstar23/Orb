@@ -25,7 +25,7 @@ from database import db_session, run_db
 from config import CORS_ORIGINS, DEPLOYMENT_PROFILE
 from auth import authenticate_session_token, SESSION_COOKIE
 from permissions import (
-    department_scope, has_permission, PATIENT_READ_ALL, REGISTRATION_READ, VITALS_READ,
+    ADT_READ, department_scope, has_permission, PATIENT_READ_ALL, REGISTRATION_READ, VITALS_READ,
 )
 from services.relay_service import get_channels_for_user
 
@@ -282,6 +282,69 @@ def receives_queue_nudges(role: str) -> bool:
     return has_permission(role, REGISTRATION_READ) and opd_desk_nudges_on()
 
 
+# ── The live bed board (adt-19) ──────────────────────────────────────────────
+# While Beds and admissions (ORB_ADT) is on, every adt.read holder (the bed
+# board's own permission) joins 'adt:<their department>', or 'adt:__all__'
+# with no department: the same department_scope derivation as the vitals and
+# opd rooms and the board's REST read, never a value the client names. After
+# an ADT write commits, services/adt/live.notify_adt_changed schedules ONE
+# content-free 'adt:changed' {ward_id} per ward touched, emitted to the
+# __all__ room and the rooms of the departments involved as one list, so a
+# socket in two of them hears it once. It carries no patient field: the board
+# refetches over its scoped, audited REST read. Module off: nobody joins a
+# room and nothing is emitted.
+ADT_CHANGED_EVENT = "adt:changed"
+ADT_ROOM_PREFIX = "adt:"
+ADT_ALL_ROOM = "adt:__all__"
+
+
+def adt_live_on() -> bool:
+    """Is Beds and admissions on right now? Read at call time."""
+    try:
+        return config.module_state("adt") == "on"
+    except Exception:  # noqa: BLE001 - a switch read must never break a handshake
+        return False
+
+
+def adt_board_room(department: str | None) -> str:
+    """The bed board room for a caller scoped to `department`."""
+    return f"{ADT_ROOM_PREFIX}{department}" if department else ADT_ALL_ROOM
+
+
+def adt_change_rooms(departments) -> list[str]:
+    """Every room one ADT change goes to: the all-wards room and the room of
+    each department involved, in a stable order."""
+    rooms = [ADT_ALL_ROOM]
+    for dept in sorted({str(d).strip() for d in (departments or ()) if d and str(d).strip()}):
+        rooms.append(adt_board_room(dept))
+    return rooms
+
+
+def adt_changed_payload(ward_id) -> dict:
+    """The whole 'adt:changed' body: the ward, and nothing about anybody."""
+    return {"ward_id": ward_id or None}
+
+
+async def emit_adt_changed(ward_ids, departments) -> None:
+    """One 'adt:changed' per ward (one {"ward_id": None} when no ward is
+    involved), each emitted once to the rooms of adt_change_rooms."""
+    rooms = adt_change_rooms(departments)
+    wards = sorted({str(w) for w in (ward_ids or ()) if w}) or [None]
+    for ward in wards:
+        await sio.emit(ADT_CHANGED_EVENT, adt_changed_payload(ward), room=rooms)
+
+
+def schedule_adt_changed(ward_ids, departments) -> bool:
+    """emit_adt_changed from a sync route, after its write committed. Never
+    raises; nothing is pushed while the module is off."""
+    if not adt_live_on():
+        return False
+    wards = list(ward_ids or ())
+    depts = list(departments or ())
+    return schedule_on_loop(lambda: emit_adt_changed(wards, depts),
+                            f"{ADT_CHANGED_EVENT} for {len(wards) or 1} ward(s)")
+
+
 def _self_patient_id(user_id: str) -> str | None:
     """Patient record owned by this login, or None when the account has none.
 
@@ -352,6 +415,10 @@ async def connect(sid, environ, auth=None):
     # vitals room: registration.read opens the queue, not the census.
     if has_permission(role, REGISTRATION_READ) and opd_desk_nudges_on():
         await sio.enter_room(sid, opd_desk_room(dept))
+    # adt-19: the bed board's live room (see adt_board_room). adt.read opens
+    # the board, nothing more: the event names a ward and never a patient.
+    if has_permission(role, ADT_READ) and adt_live_on():
+        await sio.enter_room(sid, adt_board_room(dept))
     logger.info("WS connected: %s (user=%s role=%s dept=%s)", sid, user["id"], role, dept or "-")
     return True
 

@@ -19,6 +19,11 @@ WHAT REGISTERING A PATIENT WRITES, in ONE immediate transaction
   * the registration fee, once, only while the site has a registration-fee
     charge rule (opd_charges_service.raise_registration_fee_on), priced on
     that payer's tariff and unpriced rather than free when nobody set a rate;
+  * the patient's consent to treatment, with the privacy notice they were
+    given (version and language), only when the desk sends the consent step
+    and the account holds consent.record (opd-19; ruling OPD-N3 keeps it from
+    the receptionist until counsel agrees): one consent_records row through
+    consent_service.record_consent_on;
   * the patient_identity audit rows (fail-closed): if one cannot be written the
     whole registration rolls back and the desk gets 503.
 Either all of it exists or none of it does.
@@ -125,6 +130,8 @@ __all__ = [
     "get_registration_on", "change_history", "uhid_card", "correct_demographics",
     "evaluate_identity_on", "check_identity", "list_duplicates",
     "resolve_duplicate", "sweep_duplicates",
+    "NOTICE_LANGUAGES", "REGISTRATION_CONSENT_PURPOSE", "REGISTRATION_RETENTION_TEXT",
+    "registration_consent_options",
 ]
 
 UHID_SERIES = "UHID"
@@ -184,6 +191,59 @@ OPD_ARM_HIDDEN = frozenset(OPD_ARM_HIDDEN_FIELDS + OPD_ARM_HIDDEN_DEMOGRAPHICS)
 
 NO_DOB_HINT = ("No date of birth on file, so a secure discharge link cannot be "
                "issued for this patient.")
+
+# ── Notice and consent at the desk (opd-19, W9-G, 10 October 2026) ───────────
+# An optional step of POST /patients. When the desk sends it, ONE consent row
+# (purpose 'treatment') is written through consent_service.record_consent_on in
+# the registration's own transaction, so the patient and the consent exist
+# together or not at all. The row carries the notice the patient was given
+# (version and language): DPDP s.5 makes the notice part of the consent, which
+# is why consent_records has those two columns (migration 14). It is withdrawn
+# like any other consent, as a new row (consent_service.withdraw_consent, POST
+# /api/consent/{patient_id}/{consent_id}/withdraw).
+#
+# WHO MAY RECORD IT: a holder of consent.record only. Ruling OPD-N3 grants it
+# to the receptionist only once counsel agrees, so until then a receptionist
+# who sends the step is refused with 403 before anything is written, and the
+# desk screen does not offer it. The doctor's walk-in (the Outpatients tab)
+# records it today.
+
+#: DPDP Act 2023 s.5(3): the notice is offered in English or a language of the
+#: Eighth Schedule to the Constitution. The consent row names which one.
+NOTICE_LANGUAGES = (
+    "English", "Assamese", "Bengali", "Bodo", "Dogri", "Gujarati", "Hindi", "Kannada",
+    "Kashmiri", "Konkani", "Maithili", "Malayalam", "Manipuri", "Marathi", "Nepali",
+    "Odia", "Punjabi", "Sanskrit", "Santali", "Sindhi", "Tamil", "Telugu", "Urdu",
+)
+NOTICE_VERSION_MAX = 40
+CONSENT_EVIDENCE_MAX = 120
+#: The purpose a registration consent records (consent_service.CONSENT_PURPOSES).
+REGISTRATION_CONSENT_PURPOSE = "treatment"
+#: How a desk may take it: every consent method except the patient portal,
+#: which is a tap in the Bridge app, never something the desk records.
+REGISTRATION_CONSENT_EXCLUDED_METHODS = frozenset({"digital_portal"})
+#: Methods that say a guardian or someone acting for the patient gave the
+#: consent. A row with one of these must name that person (given_by guardian
+#: or proxy, with their name and relationship), never given_by patient.
+REGISTRATION_CONSENT_GUARDIAN_METHODS = frozenset({"proxy_guardian"})
+#: DPDP Act 2023 s.2(f) and s.9: a person under 18 is a child, and a child's
+#: consent is given by a parent or lawful guardian. A patient registered as
+#: younger than this (date of birth or stated age) cannot consent for
+#: themselves at the desk.
+CONSENT_ADULT_AGE = 18
+#: What the desk tells the patient about their registration details, shown on
+#: the screen and stored with the consent as its scope. Registration details
+#: are retained as part of the medical record (consent_service._RETENTION_SOURCES
+#: files patient_demographics under clinical_record).
+REGISTRATION_RETENTION_TEXT = (
+    "Registration details (name, age, contact details and address) are part of the "
+    "medical record. The hospital keeps them with the record for as long as the law "
+    "requires the record to be kept, so they are not erased on request during that time."
+)
+REGISTRATION_CONSENT_SCOPE = (
+    "Care and treatment at this hospital, given at registration. "
+    + REGISTRATION_RETENTION_TEXT
+)
 
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _PIN = re.compile(r"^\d{6}$")
@@ -343,6 +403,30 @@ def registration_config() -> dict:
         "thresholds": {"probable": pm.PROBABLE_THRESHOLD, "possible": pm.POSSIBLE_THRESHOLD},
         "id_document_types": list(ID_DOCUMENT_TYPES),
         "allergies_at_desk": False,
+        # opd-19: the notice and consent step. Who may send it is the caller's
+        # consent.record grant, which this site-wide answer does not decide.
+        "consent": registration_consent_options(),
+    }
+
+
+def registration_consent_options() -> dict:
+    """The closed sets the desk's consent step offers, in the server's words
+    (consent_service vocabularies). No patient data."""
+    from services.consent_service import CONSENT_METHODS, CONSENT_PURPOSES, GIVEN_BY
+    return {
+        "purpose": REGISTRATION_CONSENT_PURPOSE,
+        "purpose_label": CONSENT_PURPOSES[REGISTRATION_CONSENT_PURPOSE],
+        "methods": [{"value": k, "label": v} for k, v in CONSENT_METHODS.items()
+                    if k not in REGISTRATION_CONSENT_EXCLUDED_METHODS],
+        "given_by": list(GIVEN_BY),
+        # The two rules the desk mirrors before sending (_consent_values
+        # refuses both): these methods need a named guardian or proxy, and a
+        # patient younger than adult_age cannot consent for themselves.
+        "guardian_methods": sorted(REGISTRATION_CONSENT_GUARDIAN_METHODS),
+        "adult_age": CONSENT_ADULT_AGE,
+        "notice_languages": list(NOTICE_LANGUAGES),
+        "notice_version_max": NOTICE_VERSION_MAX,
+        "retention_text": REGISTRATION_RETENTION_TEXT,
     }
 
 
@@ -634,6 +718,170 @@ def _payer_values(payer: Any) -> Optional[dict]:
     }
 
 
+def _notice_language(value: Any) -> Optional[str]:
+    """The notice language in its listed spelling, or None when the text is
+    not English or an Eighth Schedule language (case and spaces ignored)."""
+    text = _clean(value)
+    if text is None:
+        return None
+    wanted = " ".join(text.split()).casefold()
+    for language in NOTICE_LANGUAGES:
+        if language.casefold() == wanted:
+            return language
+    return None
+
+
+def _younger_than(years: int, date_of_birth: Optional[str],
+                  age_years: Optional[int]) -> bool:
+    """Is a patient with this validated date of birth (YYYY-MM-DD) or stated
+    age younger than `years` today?
+
+    The stated age is taken as given. A date of birth is counted to the
+    earlier of the appliance's local date and the UTC date, so a birthday the
+    two clocks disagree about counts the patient as the younger age. A
+    patient with neither (never reaches here: the registration refuses that
+    first) counts as younger, the side that asks for a guardian."""
+    if age_years is not None:
+        return age_years < years
+    if not date_of_birth:
+        return True
+    try:
+        born = date.fromisoformat(date_of_birth)
+    except ValueError:
+        return True
+    today = min(date.today(), datetime.now(timezone.utc).date())
+    age = today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+    return age < years
+
+
+def _consent_values(raw: Any, *, preferred_language: Optional[str],
+                    date_of_birth: Optional[str],
+                    age_years: Optional[int]) -> Optional[dict]:
+    """The desk's notice and consent step (opd-19), checked before anything
+    is written. None when the desk did not send one (the registration then
+    writes no consent, exactly as before).
+
+    Both facts must be stated as true: the patient was given the notice (in a
+    named version and language) and agrees to treatment. A desk whose patient
+    does not agree leaves the step out; a doctor records consent later. The
+    notice language defaults to the patient's preferred language when that is
+    one the notice may be given in.
+
+    Who gave it must agree with how and with the patient's age (DPDP s.9; a
+    consent row is immutable, so a contradiction is refused, never stored): a
+    guardian method (REGISTRATION_CONSENT_GUARDIAN_METHODS) needs a guardian
+    or proxy, and a patient under CONSENT_ADULT_AGE by the validated date of
+    birth or stated age cannot give it themselves. Either way the guardian or
+    proxy is named, with their relationship."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise RegistrationError("bad_consent", "The consent step is not readable.")
+    if raw.get("notice_acknowledged") is not True:
+        raise RegistrationError(
+            "consent_notice_required",
+            "Give the patient the privacy notice and record that they have it before "
+            "recording their consent.")
+    if raw.get("treatment_consent") is not True:
+        raise RegistrationError(
+            "consent_treatment_required",
+            "Record consent only when the patient agrees to treatment. Otherwise leave "
+            "the consent step out; a doctor records it later.")
+    version = _clean(raw.get("notice_version"), limit=NOTICE_VERSION_MAX)
+    if not version:
+        raise RegistrationError(
+            "notice_version_required",
+            "Record the version printed on the notice the patient was given.")
+    language_text = _clean(raw.get("notice_language"))
+    language = _notice_language(language_text if language_text else preferred_language)
+    if language is None:
+        raise RegistrationError(
+            "bad_notice_language",
+            "The notice is given in English or a language of the Eighth Schedule. Choose "
+            "the language the patient was given it in.")
+    from services.consent_service import CONSENT_METHODS, GIVEN_BY
+    method = _clean(raw.get("method"), limit=40)
+    if method not in CONSENT_METHODS or method in REGISTRATION_CONSENT_EXCLUDED_METHODS:
+        raise RegistrationError("bad_consent_method",
+                                "Choose how the consent was given from the list.")
+    given_by = _clean(raw.get("given_by"), limit=20) or "patient"
+    if given_by not in GIVEN_BY:
+        raise RegistrationError("bad_consent_given_by",
+                                "Say whether the patient, a guardian or a proxy gave consent.")
+    proxy_name = _clean(raw.get("proxy_name"))
+    proxy_relationship = _clean(raw.get("proxy_relationship"), limit=80)
+    if given_by == "patient" and method in REGISTRATION_CONSENT_GUARDIAN_METHODS:
+        # A row saying "given by a guardian" and "given by the patient" at
+        # once can never be corrected (consent rows are immutable), and it
+        # would carry no guardian's name.
+        raise RegistrationError(
+            "consent_given_by_mismatch",
+            "This consent was given by a guardian. Under who gave consent, choose a guardian "
+            "or someone acting for the patient, and record their name and relationship.")
+    if given_by == "patient" and _younger_than(CONSENT_ADULT_AGE, date_of_birth, age_years):
+        raise RegistrationError(
+            "consent_guardian_required",
+            f"This patient is under {CONSENT_ADULT_AGE}, so a parent or guardian gives "
+            "consent for them. Record who gave it, with their name and relationship.")
+    if given_by != "patient" and not (proxy_name and proxy_relationship):
+        raise RegistrationError(
+            "consent_proxy_required",
+            "A guardian's or proxy's consent needs their name and their relationship "
+            "to the patient.")
+    if given_by == "patient":
+        proxy_name = proxy_relationship = None
+    return {
+        "notice_version": version,
+        "notice_language": language,
+        "method": method,
+        "given_by": given_by,
+        "proxy_name": proxy_name,
+        "proxy_relationship": proxy_relationship,
+        "evidence_ref": _clean(raw.get("evidence_ref"), limit=CONSENT_EVIDENCE_MAX),
+    }
+
+
+def _may_record_consent(user: Optional[dict]) -> bool:
+    from permissions import CONSENT_RECORD, has_permission
+    return has_permission(str((user or {}).get("role") or ""), CONSENT_RECORD)
+
+
+def _refuse_consent_without_grant(user: dict, request_meta: Optional[dict]) -> None:
+    """The consent step sent by an account without consent.record (ruling
+    OPD-N3: the receptionist, until counsel agrees). Audited like any other
+    permission refusal, then 403 before anything is written."""
+    from permissions import CONSENT_RECORD
+    meta = dict(request_meta or {})
+    log_audit_event(
+        correlation_id=str(uuid.uuid4()),
+        event_category="authorization",
+        action_type="permission_denied",
+        outcome="denied",
+        summary_message=f"Missing permissions: {CONSENT_RECORD} (consent at registration)",
+        actor_user_id=user.get("id"),
+        actor_role=user.get("role"),
+        request_path=meta.get("request_path"),
+        http_method=meta.get("http_method"),
+        ip_address=meta.get("ip_address"),
+        user_agent=meta.get("user_agent"),
+        metadata={"required_permissions": [CONSENT_RECORD],
+                  "missing_permissions": [CONSENT_RECORD],
+                  "user_role": user.get("role"), "lane": "registration_consent"},
+    )
+    raise RegistrationForbidden(
+        "consent_permission_required",
+        "This account does not record consent. Register the patient without the consent "
+        "step; a doctor records it.",
+        missing=[CONSENT_RECORD])
+
+
+def _consent_view(row: dict) -> dict:
+    """The consent a registration recorded, as the desk's answer shows it."""
+    keys = ("id", "purpose", "purpose_label", "notice_version", "notice_language",
+            "method", "method_label", "given_by", "granted_at", "effective_status")
+    return {k: row.get(k) for k in keys}
+
+
 def _validate_registration(data: dict) -> dict:
     data = dict(data or {})
     try:
@@ -669,6 +917,10 @@ def _validate_registration(data: dict) -> dict:
                                 "Say which identity document the last 4 characters belong to.")
     clean["abha_number"], clean["abha_address"], clean["abha_source"] = _abha_values(data)
     clean["payer"] = _payer_values(data.get("payer"))
+    # opd-19: the notice and consent step, when the desk sent one.
+    clean["consent"] = _consent_values(data.get("consent"),
+                                       preferred_language=clean["preferred_language"],
+                                       date_of_birth=dob, age_years=age)
     review = data.get("duplicate_review")
     if review is not None:
         if not isinstance(review, dict):
@@ -915,8 +1167,15 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
 
     Raises RegistrationError (422), RegistrationConflict (409, with
     'candidates' when the refusal is about other records),
+    RegistrationForbidden (403 consent_permission_required: the consent step
+    sent by an account without consent.record; nothing is written),
     AuditWriteError (the caller answers 503; nothing was written).
+
+    With the notice and consent step (opd-19) the answer adds "consents": the
+    one consent row written in the same transaction.
     """
+    if (data or {}).get("consent") is not None and not _may_record_consent(user):
+        _refuse_consent_without_grant(user, request_meta)
     clean = _validate_registration(data)
     key = _clean(idempotency_key, limit=200)
     pid = _patient_id_for(user["id"], key)
@@ -1132,6 +1391,36 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
                 db, patient_id=pid, charged_by=user["id"],
                 service_day=_today(today).isoformat())
             correlation = f"registration-{pid}"
+            # opd-19: the notice and consent step, in this transaction and
+            # through consent_service, so the patient and the consent exist
+            # together or not at all. Audited fail-closed with the
+            # registration.
+            consent_row = None
+            if clean["consent"] is not None:
+                from services.consent_service import record_consent_on
+                taken = clean["consent"]
+                try:
+                    consent_row = record_consent_on(
+                        db, patient_id=pid, purpose=REGISTRATION_CONSENT_PURPOSE,
+                        method=taken["method"], recorded_by=user["id"],
+                        recorded_by_role=user.get("role"),
+                        scope_detail=REGISTRATION_CONSENT_SCOPE,
+                        notice_version=taken["notice_version"],
+                        notice_language=taken["notice_language"], granted_at=now,
+                        given_by=taken["given_by"], proxy_name=taken["proxy_name"],
+                        proxy_relationship=taken["proxy_relationship"],
+                        evidence_ref=taken["evidence_ref"])
+                except ValueError as exc:
+                    raise RegistrationError("bad_consent", str(exc)) from exc
+                _audit(db, action="consent_recorded", user=user, patient_id=pid,
+                       target_type="consent_record", target_id=consent_row["id"],
+                       summary=f"Consent to treatment recorded at registration for {pid}",
+                       metadata={"lane": "registration", "purpose": REGISTRATION_CONSENT_PURPOSE,
+                                 "method": taken["method"], "given_by": taken["given_by"],
+                                 "notice_acknowledged": True,
+                                 "notice_version": taken["notice_version"],
+                                 "notice_language": taken["notice_language"]},
+                       request_meta=request_meta, correlation_id=correlation)
             _audit(db, action="patient_registered", user=user, patient_id=pid,
                    summary=f"Patient {pid} registered at the desk",
                    metadata={"replay": False, "registration_source": "desk",
@@ -1145,7 +1434,8 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
                                  "payer_policy_id": payer_recorded["policy_id"]}
                                 if payer_recorded else {}),
                              **({"registration_fee_charge_id": registration_fee.charge_id}
-                                if registration_fee else {})},
+                                if registration_fee else {}),
+                             **({"consent_id": consent_row["id"]} if consent_row else {})},
                    request_meta=request_meta, correlation_id=correlation)
             if review_used:
                 summary = (f"Registered {pid} past {len(reviewed)} possible duplicate(s)"
@@ -1185,6 +1475,9 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
                            ("policy_id", "payer_code", "payer_name", "payer_type", "verified")}
     if registration_fee:
         result["registration_fee"] = registration_fee.as_dict()
+    # opd-19: present only when the desk recorded the consent step.
+    if consent_row:
+        result["consents"] = [_consent_view(consent_row)]
     return result
 
 

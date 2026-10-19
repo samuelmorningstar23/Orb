@@ -94,6 +94,9 @@ export interface AdmissionMaster {
   self_authoriser?: BedAuthoriser | null
   /** How far back an admission time may be entered (ruling ADT-P3). */
   backtime_hours: number
+  /** adt-16 (ORB_ADT_STRICT_LOCATIONS): the server refuses a ward or bed not
+   *  in bed setup, so the picker offers no typed place. Absent means off. */
+  strict_locations?: boolean
 }
 
 /** `BedChoice.wardId` for a ward that is not in bed setup, typed instead. */

@@ -94,12 +94,12 @@ and correct for the same reason, no ingestion, so no ingestion-driven alerts.
 ## How you get here
 
 The **Admin** item in the left sidebar of the clinician shell. It is a role-gated
-tab: `getAccessibleTabs()` in `src/pages/ClinicianShell.tsx:201` returns
+tab: `getAccessibleTabs()` in `src/pages/ClinicianShell.tsx:228` returns
 `'admin'` **only** for `case 'admin'`. A doctor, nurse or pharmacist has no
 Admin item in the sidebar at all, it is not greyed out, it does not exist.
 
-The panel itself is lazy-loaded (`src/pages/ClinicianShell.tsx:291`) and mounted
-inside a per-panel error boundary at `src/pages/ClinicianShell.tsx:575-579`. If
+The panel itself is lazy-loaded (`src/pages/ClinicianShell.tsx:318`) and mounted
+inside a per-panel error boundary at `src/pages/ClinicianShell.tsx:605-609`. If
 `AdminPanel` throws during render, the boundary labelled `"admin"` replaces the
 whole screen rather than blanking the app.
 
@@ -109,7 +109,7 @@ Server-side, almost everything on this screen is gated on the single permission
 (`server/permissions.py:92`), also admin-only. A denied call is written to the
 audit log as `event_category='authorization'`, `action_type='permission_denied'`,
 `outcome='denied'` **before** the 403 is raised
-(`server/permissions.py:406-424`, then the 403 at `:426-434`), which is why
+(`server/permissions.py:415-433`, then the 403 at `:426-434`), which is why
 permission denials show up on this screen's own Security tab.
 
 ---
@@ -120,31 +120,31 @@ permission denials show up on this screen's own Security tab.
 **Where:** the very top of the Admin screen, a single horizontal row of rounded
 pill buttons that wraps onto a second line on narrow windows and scrolls
 horizontally otherwise (`.admin-tabs`, `src/pages/panels/admin/Admin.css:26-34`).
-**Rendered by:** `src/pages/panels/AdminPanel.tsx:94-106`, `<nav className="admin-tabs">`
+**Rendered by:** `src/pages/panels/AdminPanel.tsx:102-114`, `<nav className="admin-tabs">`
 mapping `ADMIN_TABS`.
 **Data from:** the module constant `ADMIN_TABS`
-(`src/pages/panels/AdminPanel.tsx:20-80`). Fourteen entries, in this on-screen
+(`src/pages/panels/AdminPanel.tsx:24-98`). Fourteen entries, in this on-screen
 order: Overview, Pilot Scorecard, Audit Logs, Trace, Ingestion, Security,
 Alerts, Model Governance, Impact, Trust Center, Flight Recorder, Users, Roster
 Import, Data & Backups. Each carries an inline SVG icon rendered to the left of
-its label (`src/pages/panels/AdminPanel.tsx:102`).
+its label (`src/pages/panels/AdminPanel.tsx:161`).
 **API:** none. The bar is static.
 **Server:** none.
 **Change this →** Reordering `ADMIN_TABS` reorders the pills left-to-right and
 changes nothing else; the landing tab is fixed separately by
-`useState<AdminTab>('overview')` at `src/pages/panels/AdminPanel.tsx:83`. Delete
+`useState<AdminTab>('overview')` at `src/pages/panels/AdminPanel.tsx:114`. Delete
 an entry from the array and the pill disappears but the panel is still
 reachable in code, the `activeTab === '<id>'` guards at
-`src/pages/panels/AdminPanel.tsx:110-123` are separate. Delete the guard instead
+`src/pages/panels/AdminPanel.tsx:174-189` are separate. Delete the guard instead
 and clicking the pill shows an empty content area.
 
 ### Active-tab highlight
 **Where:** exactly one pill in the row.
-**Rendered by:** `src/pages/panels/AdminPanel.tsx:98`, `admin-tab--active` is
+**Rendered by:** `src/pages/panels/AdminPanel.tsx:157`, `admin-tab--active` is
 appended when `activeTab === tab.id`.
-**Data from:** `activeTab` state, `src/pages/panels/AdminPanel.tsx:83`; set by
-the pill's own `onClick` (`:99`) and also programmatically by `handleTraceClick`
-(`:86-89`).
+**Data from:** `activeTab` state, `src/pages/panels/AdminPanel.tsx:114`; set by
+the pill's own `onClick` (`:158`) and also programmatically by `handleTraceClick`
+(`:120-123`).
 **Change this →** The active pill is filled solid with `--accent-deep` and its
 label flips to `--btn-primary-text` (`Admin.css:64-68`); inactive pills are
 glass with `--text-secondary`. Remove `admin-tab--active` and every pill looks
@@ -152,7 +152,7 @@ identical, you lose all indication of where you are.
 
 ### Each sub-panel body
 **Where:** everything below the pill row.
-**Rendered by:** `src/pages/panels/AdminPanel.tsx:109-124`, a column flex
+**Rendered by:** `src/pages/panels/AdminPanel.tsx:117-132`, a column flex
 container `.admin-content`.
 **Change this →** Only one panel is mounted at a time (these are `&&` guards,
 not CSS hiding), so switching tabs **remounts** the panel and re-runs its
@@ -613,7 +613,7 @@ characters plus "…" (`:150`) and is a real `<button>` titled "View full trace"
 Next to it, a clipboard icon button titled "Copy correlation ID" calls
 `copyCorrelation` (`:62-64`).
 **Change this →** Clicking the link calls `onTraceClick` → `handleTraceClick` in
-`src/pages/panels/AdminPanel.tsx:86-89`, which stores the id **and switches the
+`src/pages/panels/AdminPanel.tsx:120-123`, which stores the id **and switches the
 active tab to Trace**. You leave this tab. The copy button gives no visual
 confirmation, a failed clipboard write is swallowed (`:63`).
 
@@ -689,8 +689,8 @@ Cells at `:80-87`; Role, IP and Path each print ", " when null.
 `ip_address` and `request_path`. Those three come straight from the audit row
 (`src/api/client.ts:1811,1818-1819`) and are written by
 `log_audit_event(...)` at the call sites, e.g. the denial writer at
-`server/permissions.py:406-424` and the user-management writer at
-`server/routes/admin_users_routes.py:94-109`.
+`server/permissions.py:415-433` and the user-management writer at
+`server/routes/admin_users_routes.py:134-149`.
 
 ### Failed-row tint
 **Rendered by:** `SecurityActivity.tsx:79`, `admin-tr--failure` when
@@ -713,14 +713,14 @@ There is **no lockout or unlock control on this screen.** Nothing in
 `src/pages/panels/admin/` posts to a lockout endpoint. The nearest things that
 exist are:
 - **Session revocation**, which happens implicitly: Deactivate and both password
-  resets bump `token_version` (`server/routes/admin_users_routes.py:269-275`,
-  `:316-322`, `:476-483`), killing every outstanding JWT immediately.
+  resets bump `token_version` (`server/routes/admin_users_routes.py:904-910`,
+  `:955-961`, `:1385-1391`), killing every outstanding JWT immediately.
 - **Signing-PIN lockout state**, cleared server-side when a new PIN is
   provisioned, `pin_security.clear_pin_failures(user_id)`
-  (`server/routes/admin_users_routes.py:378`). The `POST
-  /api/admin/users/{id}/pin` endpoint (`:334-399`) has **no UI on this screen**.
+  (`server/routes/admin_users_routes.py:1020`). The `POST
+  /api/admin/users/{id}/pin` endpoint (`:973-1041`) has **no UI on this screen**.
 - **Failed-login counts per user**, computed by the list endpoint as
-  `failed_logins_24h` (`server/routes/admin_users_routes.py:165-176`), sent to
+  `failed_logins_24h` (`server/routes/admin_users_routes.py:205-216`), sent to
   the browser and then **not rendered**; see the Users table note below.
 
 ---
@@ -729,148 +729,148 @@ exist are:
 
 `src/pages/panels/admin/UsersPanel.tsx`. Fetch on mount:
 `apiFetch<{users}>('/admin/users')` (`:330`) → `GET /api/admin/users` →
-`server/routes/admin_users_routes.py:130-194` (`list_users`, permission
+`server/routes/admin_users_routes.py:170-234` (`list_users`, permission
 `admin.overview`). Hashes, PINs and TOTP secrets are never returned (`:134`).
 
 ### "User Management" heading and user count
 **Where:** left of the top bar of the tab.
-**Rendered by:** `UsersPanel.tsx:359-360`, the title, then "N user(s)" with
+**Rendered by:** `UsersPanel.tsx:487-488`, the title, then "N user(s)" with
 correct singular/plural.
 **Data from:** `users.length` (client-side, not a server total, there is no
 pagination on this endpoint).
 
 ### "Create user" button
 **Where:** right of the same bar, with a plus icon.
-**Rendered by:** `UsersPanel.tsx:362-365`. Sets `showCreate`.
+**Rendered by:** `UsersPanel.tsx:748-751`. Sets `showCreate`.
 
 ### Users table columns
-**Rendered by:** `UsersPanel.tsx:378-386`. Seven columns:
+**Rendered by:** `UsersPanel.tsx:764-773`. Seven columns:
 **Name · ID · Role · Department · MFA · Status · Actions** (Actions
 right-aligned).
 **Server ordering:** `ORDER BY role, name`
-(`server/routes/admin_users_routes.py:145`), so the list is grouped by role
+(`server/routes/admin_users_routes.py:185`), so the list is grouped by role
 alphabetically (admin, doctor, nurse, patient, pharmacist), not by recency.
 
 ### Name and ID cells
-**Rendered by:** `UsersPanel.tsx:391-392`. Name is `--text-primary` at weight
+**Rendered by:** `UsersPanel.tsx:778-779`. Name is `--text-primary` at weight
 500; ID is mono and small.
 
 ### Role chip
-**Rendered by:** `UsersPanel.tsx:393` → `RoleChip` (`:28-35`). Colour map at
-`:20-26`: doctor = accent, nurse = cyan, admin = amber, pharmacist = green,
+**Rendered by:** `UsersPanel.tsx:780` → `RoleChip` (`:178-185`). Colour map at
+`:161-176`: doctor = accent, nurse = cyan, admin = amber, pharmacist = green,
 patient = grey, and **any unrecognised role falls back to the grey patient
-style** (`:29`) while still printing its own text.
+style** (`:179`) while still printing its own text.
 **Change this →** The five roles here (`ROLES`, `:18`) are mirrored server-side
-by `ALLOWED_ROLES` (`server/routes/admin_users_routes.py:49`), which itself
+by `ALLOWED_ROLES` (`server/routes/admin_users_routes.py:70`), which itself
 mirrors the `users.role` CHECK constraint. Adding a role in one place only gives
-you either a 400 ("Invalid role 'x'. Allowed: …", `:112-117`) or a grey chip.
+you either a 400 ("Invalid role 'x'. Allowed: …", `:163-167`) or a grey chip.
 
 ### Department cell
-**Rendered by:** `UsersPanel.tsx:394`, the department, or a grey em-dash when
+**Rendered by:** `UsersPanel.tsx:781`, the department, or a grey em-dash when
 null.
 
 ### MFA chip (On / Off)
-**Rendered by:** `UsersPanel.tsx:395` → `MfaChip` (`:52-67`).
+**Rendered by:** `UsersPanel.tsx:790` → `MfaChip` (`:278-293`).
 **Data from:** `totp_enabled`, read as `COALESCE(totp_enabled, 0)`
-(`server/routes/admin_users_routes.py:142`).
+(`server/routes/admin_users_routes.py:182`).
 **Change this →** **On** is a green chip. **Off** is deliberately *not* muted
-grey: the comment at `UsersPanel.tsx:59-61` records that `--text-muted` measured
+grey: the comment at `UsersPanel.tsx:135-137` records that `--text-muted` measured
 1.56:1 on the amber-tinted failure rows, so Off uses `--text-primary` on
 `--bg-glass` to stay readable on every row tint. There is **no enrol/reset-MFA
 control here**, this column is read-only. Aggregate MFA adoption by role lives
 on the Trust Center tab.
 
 ### Status chip (Active / Disabled)
-**Rendered by:** `UsersPanel.tsx:396` → `StatusChip` (`:37-50`): green "Active",
+**Rendered by:** `UsersPanel.tsx:791` → `StatusChip` (`:263-276`): green "Active",
 red "Disabled".
-**Data from:** `is_active` (`server/routes/admin_users_routes.py:141`).
+**Data from:** `is_active` (`server/routes/admin_users_routes.py:181`).
 
 ### Deactivated-row tint
-**Rendered by:** `UsersPanel.tsx:390`, `admin-tr--failure` on any row where
+**Rendered by:** `UsersPanel.tsx:777`, `admin-tr--failure` on any row where
 `is_active` is false, the same 6 % red wash as a failed audit row.
 **Change this →** Deactivate a user and their whole row goes pink immediately
 after the list refetches; the row does not move position.
 
 ### Row actions: "Role", "Reset password", "Deactivate"/"Activate"
-**Rendered by:** `UsersPanel.tsx:397-407`. The third button is conditional
-(`:401-405`): active users get a **red** "Deactivate"; disabled users get a
+**Rendered by:** `UsersPanel.tsx:792-819`. The third button is conditional
+(`:813-817`): active users get a **red** "Deactivate"; disabled users get a
 ghost "Activate".
 
 ### Create User modal
 **Where:** centred over a dimmed overlay; focus-trapped
 (`useFocusTrap`, `:108`), Escape closes unless submitting.
-**Rendered by:** `UsersPanel.tsx:104-179`. Fields: **User ID** (autofocused,
+**Rendered by:** `UsersPanel.tsx:333-421`. Fields: **User ID** (autofocused,
 placeholder "e.g. DR-0142"), **Full name**, **Role** select, **Department
 (optional)**, **Temporary password** (plain text input, `minLength 8`).
 **API:** `POST /api/admin/users` (`:118-127`) →
-`server/routes/admin_users_routes.py:200-246` (`create_user`), 201 on success.
+`server/routes/admin_users_routes.py:803-879` (`create_user`), 201 on success.
 **Change this →** The password is validated twice: client-side at `:115`
 ("Password must be at least 8 characters." appears in red above the buttons)
-and by Pydantic at `server/routes/admin_users_routes.py:64`. A duplicate id
+and by Pydantic at `server/routes/admin_users_routes.py:87`. A duplicate id
 returns **409** and the modal shows "A user with this id already exists"
 (`:224`, `:232`). On success the modal closes, the toast reads "User created",
-and the table refetches (`UsersPanel.tsx:420`). Every create writes an audit row
+and the table refetches (`UsersPanel.tsx:668`). Every create writes an audit row
 `user_created` (`:234-238`), visible on the Audit Logs tab under category
 `user_management`.
 
 ### Reset Password modal
-**Rendered by:** `UsersPanel.tsx:189-245`. Body text names the target and warns
-"This revokes all of their active sessions." (`:217-219`). Inline row: the
+**Rendered by:** `UsersPanel.tsx:431-487`. Body text names the target and warns
+"This revokes all of their active sessions." (`:459-461`). Inline row: the
 password input, a **Generate** button and a **Copy** button.
 **Data from:** `generatePassword()` (`:182-187`), 16 characters from a
 confusables-free alphabet via `crypto.getRandomValues`.
 **API:** `POST /api/admin/users/{id}/reset-password` (`:202-205`) →
-`server/routes/admin_users_routes.py:305-328`.
+`server/routes/admin_users_routes.py:942-967`.
 **Change this →** **Copy** is disabled until there is a password, and its label
-flips to **"Copied"** on success (`:230`); typing or re-generating resets it to
-"Copy" (`:225`, `:227`). Submit turns the button into "Saving…". Server-side the
+flips to **"Copied"** on success (`:471-472`); typing or re-generating resets it to
+"Copy" (`:467`, `:469`). Submit turns the button into "Saving…". Server-side the
 reset bumps `token_version`, so the target user is signed out everywhere on
 their next request.
 
 ### Change role & department modal
-**Rendered by:** `UsersPanel.tsx:248-299`. Two fields: **Role** (select,
+**Rendered by:** `UsersPanel.tsx:490-545`. Two fields: **Role** (select,
 autofocused, same five roles) and **Department** (free text).
-**API:** `PATCH /api/admin/users/{id}` (`:260-263`) →
-`server/routes/admin_users_routes.py:405-449` (`patch_user`).
+**API:** `PATCH /api/admin/users/{id}` (`:509-512`) →
+`server/routes/admin_users_routes.py:1047-1126` (`patch_user`).
 **Change this →** This is the only role-editing surface in the product. On save,
 the toast reads "User updated", the table refetches and the row's Role chip
 changes colour. The department is trimmed and an empty string becomes NULL
-server-side (`:426`), so clearing the box turns the Department cell into a grey
+server-side (`:1072`), so clearing the box turns the Department cell into a grey
 em-dash. Note the ordering side-effect: because the server sorts by role, a
 promoted user **jumps to a different part of the list**.
 
 ### Deactivate / Activate confirmation dialog
-**Rendered by:** `UsersPanel.tsx:70-101` (`ConfirmDialog`), wired at `:437-451`.
+**Rendered by:** `UsersPanel.tsx:296-330` (`ConfirmDialog`), wired at `:869-882`.
 Title is "Deactivate user?" or "Activate user?"; the body spells out the
 consequence, for deactivation, "…will be blocked from logging in and all their
-active sessions will be revoked." (`:442`). The confirm button is red for
-deactivation (`:91`) and reads "Working…" while busy (`:95`).
+active sessions will be revoked." (`:873`). The confirm button is red for
+deactivation (`:320`) and reads "Working…" while busy (`:324`).
 **API:** `POST /api/admin/users/{id}/deactivate|activate`, built at
-`UsersPanel.tsx:342` → `server/routes/admin_users_routes.py:252-299`.
+`UsersPanel.tsx:470` → `server/routes/admin_users_routes.py:885-936`.
 **Change this →** Deactivating **yourself** is refused server-side with a 400,
 "You cannot deactivate your own account"
-(`server/routes/admin_users_routes.py:262-263`), the UI does not hide the
+(`server/routes/admin_users_routes.py:895-896`), the UI does not hide the
 button, so the message arrives as a toast. Note the security caveat recorded in
-that file's docstring (`:23-27`): `auth_routes` does not currently reject
+that file's docstring (`:48-52`): `auth_routes` does not currently reject
 `is_active=0` at login, so deactivation kills existing tokens but a fresh login
 may still succeed.
 
 ### Toast
 **Where:** floating, `role="status"`.
-**Rendered by:** `UsersPanel.tsx:415`; driven by `flash()` (`:319-323`) with a
+**Rendered by:** `UsersPanel.tsx:663`; driven by `flash()` (`:319-323`) with a
 **3.5 s** auto-dismiss; the timer is cleared on unmount (`:325`).
 **Change this →** Every failed action also surfaces here (`:349`), a failed
 deactivation shows the server's message as a toast, not as an inline error.
 
 ### Users empty / loading / error states
-**Rendered by:** `UsersPanel.tsx:368-373`. Loading: "Loading users…". Error:
+**Rendered by:** `UsersPanel.tsx:754-759`. Loading: "Loading users…". Error:
 `AdminErrorState` with Retry. Empty: "No users" / "Create the first user to get
 started.", a state that in practice only appears if the seed never ran.
 
 ### Fields fetched but not shown
 `registration_number`, `created_at`, `last_login` and `failed_logins_24h` are
-all returned by `list_users` (`server/routes/admin_users_routes.py:184-190`)
-and none of them is rendered, `AdminUser` in `UsersPanel.tsx:8-16` does not
+all returned by `list_users` (`server/routes/admin_users_routes.py:224-230`)
+and none of them is rendered, `AdminUser` in `UsersPanel.tsx:23-40` does not
 declare `last_login` or `failed_logins_24h` at all. The brute-force column the
 server query at `:165-176` was written for **does not exist on screen yet**.
 
@@ -1014,7 +1014,7 @@ different one.
 dry run is stale; label becomes "Applying…".
 **API:** `POST /api/admin/roster-import/commit` →
 `server/routes/roster_import_routes.py:199-255` → `roster_import.apply_import`
-(`server/services/roster_import.py:1386`). One transaction; writes the admission
+(`server/services/roster_import.py:1479`). One transaction; writes the admission
 alongside the patient.
 **Change this →** A DB constraint violation returns **409** with "Import
 rejected by a database constraint and NOTHING was written: …"
@@ -1034,7 +1034,7 @@ Rows · Note**. The Rows cell is the compact form `{c}c · {u}u · {n}= · {s}s`
 **Data from:** `listRosterRuns(20)` (`:90`) → `GET
 /api/admin/roster-import/runs?limit=20` →
 `server/routes/roster_import_routes.py:260-266` → `roster_import.list_runs`
-(`server/services/roster_import.py:1538`).
+(`server/services/roster_import.py:1636`).
 **Change this →** Empty state: "No imports yet" / "Applied imports appear here.
 Dry runs are not recorded." A failure to load the history is **swallowed
 silently** (`RosterImport.tsx:91-94`) so it can never block an import, the
@@ -1189,9 +1189,9 @@ checklist, the Data & Backups tab's backup list, and the Scorecard's
 | Error (Models, Trust) | Raw message in `role="alert"`, **no retry** | `ModelGovernance.tsx:36`, `TrustCenter.tsx:102` |
 | Error (Roster catalogue) | Whole tab replaced by `AdminErrorState`, no retry | `RosterImport.tsx:204` |
 | Empty | Optional icon, a title, an optional message | `AdminEmptyState.tsx:1-9` |
-| No permission | Arrives as a 403 → the error state's message slot shows the server's "Insufficient permissions" text (`server/permissions.py:430`) | `src/api/client.ts:210-225`, `server/permissions.py:396-434` |
+| No permission | Arrives as a 403 → the error state's message slot shows the server's "Insufficient permissions" text (`server/permissions.py:439`) | `src/api/client.ts:210-225`, `server/permissions.py:405-443` |
 | Session expired | A 401 fires `notifySessionExpired()` globally rather than rendering here | `src/api/client.ts:204-206` |
-| Panel crash | The `"admin"` error boundary replaces the screen | `src/pages/ClinicianShell.tsx:576-578` |
+| Panel crash | The `"admin"` error boundary replaces the screen | `src/pages/ClinicianShell.tsx:606-608` |
 
 ---
 

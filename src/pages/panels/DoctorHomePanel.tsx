@@ -5,14 +5,16 @@ import {
 import { createPortal } from 'react-dom'
 import { getShiftBoard, type NursePatientCard, type ShiftBoard } from '../../api/nurse'
 import { getAlerts, getScribeNotes, getUnseenCounts, getUser } from '../../api/client'
+import { fetchToSignQueue, subscribeMedOrderUpdates, type ToSignQueue } from '../../api/medorders'
 import { getShiftStatus, type ShiftStatus, type ShiftWindow } from '../../api/shadowOutcome'
 import News2Badge from '../../components/News2Badge'
 import OfflineBanner from '../../components/OfflineBanner'
 import CriticalLabCard from '../../components/lab/CriticalLabCard'
 import { news2Description } from '../../lib/news2'
 import { askSage, gotoTab, openPatient } from '../../lib/orbBus'
-import { hasPermission, OUTCOME_RECORD } from '../../lib/roles'
-import { formatClinicalDayShort, formatClinicalTime, formatUTCTime, parseUTC } from '../../lib/datetime'
+import { hasPermission, MEDICATION_PRESCRIBE, OUTCOME_RECORD } from '../../lib/roles'
+import { useFeatureFlags } from '../../shellConfig'
+import { formatClinicalDateTime, formatClinicalDayShort, formatClinicalTime, formatUTCTime, parseUTC } from '../../lib/datetime'
 import {
   loadRoundState, mergeRoster, progressOf, reconcileStatuses, todayKey,
 } from '../../components/round/roundQueue'
@@ -74,6 +76,11 @@ const REFRESH_MS = 60_000
 const DETERIORATING_LIMIT = 5
 /** Skeleton rows before this panel has ever seen data (spec §6.1). */
 const DEFAULT_SKELETON_ROWS = 3
+/** How long a burst of 'medorders:update' pushes waits before the to-sign
+ *  queue is read again (medorders-10). */
+const TO_SIGN_REFRESH_MS = 5_000
+/** Nurse-charted medicines listed on the home; the rest are in Orders. */
+const NURSE_ENTERED_LIMIT = 5
 
 /* ── Small pure helpers ───────────────────────────────────────────────────── */
 
@@ -298,6 +305,7 @@ interface RoundSummary { seen: number; total: number; remaining: number; skipped
 export default function DoctorHomePanel() {
   const user = getUser()
   const canRecordOutcome = hasPermission(OUTCOME_RECORD, user?.role ?? null)
+  const mayPrescribe = hasPermission(MEDICATION_PRESCRIBE, user?.role ?? null)
 
   /* The ward board is the clinical signal and carries NEWS2, which is what the
      Deteriorating block is FOR. /vigil/patients — the roster the doctor's own
@@ -315,6 +323,16 @@ export default function DoctorHomePanel() {
 
   const [drafts, setDrafts] = useState<number | null>(null)
   const [draftsError, setDraftsError] = useState('')
+
+  /* Medication orders waiting for this prescriber (medorders-10). Only while
+     the server's order store is on and this account may prescribe: with
+     either missing, nothing is asked and the screen is what it always was.
+     The queue read is audited on the server, so it runs with the other
+     on-demand reads, never on the live poll. */
+  const features = useFeatureFlags()
+  const showToSign = features.med_order_store === true && mayPrescribe
+  const [toSign, setToSign] = useState<ToSignQueue | null>(null)
+  const [toSignError, setToSignError] = useState('')
 
   const [unseen, setUnseen] = useState<Record<string, number> | null>(null)
   const [unseenError, setUnseenError] = useState('')
@@ -415,6 +433,17 @@ export default function DoctorHomePanel() {
     }
   }, [])
 
+  const loadToSign = useCallback(async (): Promise<void> => {
+    if (!showToSign) return
+    try {
+      setToSign(await fetchToSignQueue())
+      setToSignError('')
+    } catch (e) {
+      setToSign(null)
+      setToSignError(messageOf(e, 'Medication orders to sign could not be read.'))
+    }
+  }, [showToSign])
+
   const ward = user?.department ?? ''
   const loadShift = useCallback(async (): Promise<void> => {
     if (!canRecordOutcome || !ward) return
@@ -436,11 +465,25 @@ export default function DoctorHomePanel() {
         settled(() => loadLive(opts)),
         settled(() => loadOnDemand()),
         settled(() => loadShift()),
+        settled(() => loadToSign()),
       ])
     } finally {
       setRefreshing(false)
     }
-  }, [loadLive, loadOnDemand, loadShift])
+  }, [loadLive, loadOnDemand, loadShift, loadToSign])
+
+  /* A signature, a new draft or a nurse-charted medicine on this ward pushes
+     'medorders:update' (ids only). The queue read is audited, so a burst of
+     pushes is folded into one read a few seconds later. */
+  useEffect(() => {
+    if (!showToSign) return
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const off = subscribeMedOrderUpdates(() => {
+      if (timer) return
+      timer = setTimeout(() => { timer = null; void loadToSign() }, TO_SIGN_REFRESH_MS)
+    })
+    return () => { off(); if (timer) clearTimeout(timer) }
+  }, [showToSign, loadToSign])
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
   useEffect(() => { void refreshAll() }, [refreshAll])
@@ -463,12 +506,14 @@ export default function DoctorHomePanel() {
     let visible = true
     const io = new IntersectionObserver(entries => {
       const now = entries.some(e => e.isIntersecting)
-      if (now && !visible) { void loadOnDemand(); void loadShift(); void loadLive({ quiet: true }) }
+      if (now && !visible) {
+        void loadOnDemand(); void loadShift(); void loadToSign(); void loadLive({ quiet: true })
+      }
       visible = now
     })
     io.observe(el)
     return () => io.disconnect()
-  }, [loadLive, loadOnDemand, loadShift])
+  }, [loadLive, loadOnDemand, loadShift, loadToSign])
 
   /* The board is passed THROUGH the snapshot, never around it, so a cached copy
      can never render without the banner that dates it. */
@@ -521,12 +566,15 @@ export default function DoctorHomePanel() {
     return shift.shifts.filter(w => w.wards.some(x => x.status === 'outstanding'))
   }, [shift])
 
-  const pendingCount = (drafts ?? 0) + (alerts ?? 0) + (round ? 1 : 0)
+  const medsToSign = showToSign ? (toSign?.counts.drafts ?? 0) : 0
+  const pendingCount = (drafts ?? 0) + (alerts ?? 0) + (round ? 1 : 0) + medsToSign
   const pendingFailures = [
     draftsError && 'notes to sign',
     alertsError && 'safety alerts',
     !round && boardError && 'the ward round',
+    showToSign && toSignError && 'medication orders to sign',
   ].filter(Boolean) as string[]
+  const nurseEntered = showToSign ? (toSign?.entered_by_a_nurse ?? []) : []
 
   /* Announce ONLY an adverse increase, at most once per load. A summary read
      out every poll is not a change announcement — it is noise that teaches the
@@ -695,6 +743,31 @@ export default function DoctorHomePanel() {
         </li>,
       )
     }
+    if (medsToSign && toSign) {
+      const stale = toSign.counts.waiting_over_24h
+      rows.push(
+        <li key="sign-meds">
+          <button type="button" className="orb-row orb-row--link"
+            onClick={() => gotoTab('orders')}
+            aria-label={`${medsToSign} medication ${plural(medsToSign, 'order')} awaiting a prescriber's signature: open Orders`}>
+            <span className="orb-row__body">
+              <span className="orb-row__primary">
+                <span className="orb-tag orb-tag--sign">Sign</span>
+                {medsToSign} medication {plural(medsToSign, 'order')} awaiting signature
+              </span>
+              <span className="orb-row__secondary">
+                {stale
+                  ? `${stale} waiting over ${toSign.draft_wait_hours} hours. Nothing reaches the ward until it is signed.`
+                  : 'Unsigned on your ward. Nothing reaches the ward until it is signed.'}
+              </span>
+            </span>
+            <span className="orb-row__trailing">
+              <span className="orb-row__go" aria-hidden="true">›</span>
+            </span>
+          </button>
+        </li>,
+      )
+    }
     if (alerts) {
       rows.push(
         <li key="ack">
@@ -753,9 +826,10 @@ export default function DoctorHomePanel() {
       <ErrorState
         key="error"
         title={`Couldn't check ${pendingFailures.join(' or ')}`}
-        detail={[draftsError, alertsError, !round && boardError ? boardError : '']
+        detail={[draftsError, alertsError, !round && boardError ? boardError : '',
+          showToSign ? toSignError : '']
           .filter(Boolean).join(' · ')}
-        onRetry={() => { void loadOnDemand(); void loadLive() }}
+        onRetry={() => { void loadOnDemand(); void loadLive(); void loadToSign() }}
       />
     ) : null
 
@@ -767,7 +841,7 @@ export default function DoctorHomePanel() {
               title="Nothing is waiting on you."
               /* Naming the three things that were checked and found empty is
                  what makes the emptiness a statement rather than a shrug. */
-              detail={`0 notes to sign · 0 unresolved safety alerts · ${
+              detail={`0 notes to sign · ${showToSign && toSign ? '0 medication orders to sign · ' : ''}0 unresolved safety alerts · ${
                 round === null && !boardError ? 'no ward round in progress' : 'ward round status unavailable'
               }.`}
             />
@@ -955,6 +1029,55 @@ export default function DoctorHomePanel() {
               count={pendingCount} tone="warn" />
             {pendingBody()}
           </Section>
+
+          {/* Medicines a nurse charted on the chart lane (medorders-10). For
+              visibility only: the chart lane does not wait for a prescriber's
+              signature (ruling R010, held). Drawn only with the order store
+              on, for a prescriber, and only when there is something to list. */}
+          {nurseEntered.length > 0 && (
+            <Section>
+              <SectionHeader id="today-nurse-entered" label="Entered by a nurse"
+                unit={plural(nurseEntered.length, 'medicine')} count={nurseEntered.length} />
+              <ul className="orb-list orb-list--rows" aria-labelledby="today-nurse-entered">
+                {nurseEntered.slice(0, NURSE_ENTERED_LIMIT).map(o => (
+                  <li key={o.id}>
+                    <button type="button" className="orb-row orb-row--link"
+                      onClick={() => openPatient(o.patient_id, o.patient_name ?? undefined)}
+                      aria-label={`${o.drug_name} for ${o.patient_name ?? 'a patient'}, entered by ${o.entered_by_name ?? 'a nurse'}. Open patient`}>
+                      <span className="orb-row__body">
+                        <span className="orb-row__primary">
+                          {o.patient_bed ? `${o.patient_bed} · ` : ''}{o.patient_name ?? 'Patient'}: {o.drug_name}
+                        </span>
+                        <span className="orb-row__secondary">
+                          Entered by {o.entered_by_name ?? 'a nurse'}
+                          {o.created_at ? `, ${formatClinicalDateTime(o.created_at)}` : ''}
+                        </span>
+                      </span>
+                      <span className="orb-row__trailing">
+                        <span className="orb-row__go" aria-hidden="true">›</span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+                {nurseEntered.length > NURSE_ENTERED_LIMIT && (
+                  <li>
+                    <button type="button" className="orb-row orb-row--link today-more"
+                      onClick={() => gotoTab('orders')}
+                      aria-label={`See all ${nurseEntered.length} medicines entered by a nurse. Open Orders`}>
+                      <span className="orb-row__body">
+                        <span className="orb-row__primary today-more__label">
+                          See all {nurseEntered.length}
+                        </span>
+                      </span>
+                      <span className="orb-row__trailing">
+                        <span className="orb-row__go" aria-hidden="true">›</span>
+                      </span>
+                    </button>
+                  </li>
+                )}
+              </ul>
+            </Section>
+          )}
         </div>
 
         <div className="today-aside">

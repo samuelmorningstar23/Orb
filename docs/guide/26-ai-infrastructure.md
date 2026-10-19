@@ -261,7 +261,7 @@ Lazy-init the `asyncio.Lock`, `asyncio.PriorityQueue` and `asyncio.BoundedSemaph
 **Signature:** `async acquire(priority: int = PRIORITY_SCRIBE, timeout: float = 120.0)`
 **How it works:** `_bind_loop()`, then a two-way split (`:262`): `priority <= PRIORITY_SAGE` → `_acquire_interactive`, everything else → `_acquire_background`.
 **Data in/out:** in, priority int, timeout; out, `True` on success (the caller then streams from Ollama), or raises `asyncio.TimeoutError`. On **any** failure path neither a lane slot nor a gate reference is leaked.
-**Talks to:** called by `sage_service.py:1349` (P1), `scribe_service.py:413/445` (P2) and `:571` (P3), `lens_service.py:84` (P2), `bridge_service.py:211` (P2), `discharge_service.py:284` (P2), `surgery_service.py:191` (P2), `vigil_service.py:731` (P2) and `:820` (P3), `timeline_service.py:233` (P3), `sage_narrator_service.py:220` (P3), `nervous_system_triggers.py:263/522` (P3), `batch_coordinator.py:100/146` (caller-supplied), `main.py:378/411` (P5 warmup).
+**Talks to:** called by `sage_service.py:1349` (P1), `scribe_service.py:413/445` (P2) and `:571` (P3), `lens_service.py:84` (P2), `bridge_service.py:211` (P2), `discharge_service.py:694` (P2), `surgery_service.py:191` (P2), `vigil_service.py:731` (P2) and `:820` (P3), `timeline_service.py:233` (P3), `sage_narrator_service.py:220` (P3), `nervous_system_triggers.py:263/522` (P3), `batch_coordinator.py:100/146` (caller-supplied), `main.py:378/411` (P5 warmup).
 
 ##### PriorityLLMQueue._acquire_interactive: `:266`
 Bumps `_interactive_waiting` **synchronously before the first await** (`:269`) so `preempt_requested` is live the instant a clinician's turn exists, not after it is granted. Then: `wait_for(sem.acquire())` → `_gate_ref_acquire(deadline)` → `_install_ticket(LANE_INTERACTIVE)` → `_interactive_active += 1` → `granted = True`, with **no await** between the ticket install and `granted` so no observer can see the acquisition counted twice. The `finally` decrements `_interactive_waiting` on every path and, when not granted, unwinds gate then slot **fully synchronously**, a second cancellation cannot interrupt it, so nothing leaks.
@@ -464,7 +464,7 @@ This subsystem exposes **no REST routes and no DB tables**. Its contract surface
 | Scribe MLX (in-process) | `umsq.acquire` | PRIORITY_SCRIBE | `scribe_providers.py:316` |
 | Lens vision | `llm_queue.acquire` | 2 | `lens_service.py:84` |
 | Bridge (patient portal) | `llm_queue.acquire` | 2 | `bridge_service.py:211` |
-| Discharge | `llm_queue.acquire` | 2 | `discharge_service.py:281` |
+| Discharge | `llm_queue.acquire` | 2 | `discharge_service.py:694` |
 | Surgery | `llm_queue.acquire` | 2 | `surgery_service.py:169` |
 | Vigil narrative | `llm_queue.acquire` | 2 and 3 | `vigil_service.py:615,663` |
 | Vigil CfC scoring (torch/MPS) | `vram_guard` **only** | n/a | `vigil_service.py:200` |

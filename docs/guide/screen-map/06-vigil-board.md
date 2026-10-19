@@ -6,14 +6,14 @@ go to the file:line it names. Every citation in this file was opened and checked
 
 **Scope.** This file covers the board only: `src/pages/panels/VigilPanel.tsx` lines **65–412**
 (the `VigilPanel` component plus the `PatientRow` component it renders). The moment you click a
-row, `VigilPanel` returns `PatientDetailView` instead (`VigilPanel.tsx:213-229`) and everything
+row, `VigilPanel` returns `PatientDetailView` instead (`VigilPanel.tsx:215-231`) and everything
 below line 430 takes over, that is the patient chart, a different screen, a different file.
 
 **How to get to this screen.** Left nav → **Patients**. The nav entry is declared at
-`src/pages/ClinicianShell.tsx:51`, `id: 'vigil', label: 'Patients', pillar: 'Vigil'` with a
+`src/pages/ClinicianShell.tsx:52`, `id: 'vigil', label: 'Patients', pillar: 'Vigil'` with a
 heartbeat-trace SVG at `:53-57`. Note the label a user sees is **"Patients"**, not "Vigil".
-The panel is lazily imported at `src/pages/ClinicianShell.tsx:283` and mounted inside a tab panel
-at `src/pages/ClinicianShell.tsx:510-514`:
+The panel is lazily imported at `src/pages/ClinicianShell.tsx:310` and mounted inside a tab panel
+at `src/pages/ClinicianShell.tsx:540-544`:
 
 ```
 {shouldRenderPanel('vigil') && (
@@ -24,15 +24,15 @@ at `src/pages/ClinicianShell.tsx:510-514`:
 The `role` prop passed there is the **only** prop this panel takes, and it controls exactly one
 thing on screen, the fourth metric tile (see §1.4).
 
-**Who sees the tab.** Per-role tab lists at `src/pages/ClinicianShell.tsx:182-203`. `vigil` is
+**Who sees the tab.** Per-role tab lists at `src/pages/ClinicianShell.tsx:209-230`. `vigil` is
 first in the list for `surgeon` (:189), `doctor` (:195-196), `admin` (:201) and the `default`
 fallback (:203), and second for `nurse` (:200, behind `shift`). Because the shell opens
-`accessibleTabs[0]` (`ClinicianShell.tsx:312`), **this board is the landing screen for doctors,
+`accessibleTabs[0]` (`ClinicianShell.tsx:339`), **this board is the landing screen for doctors,
 surgeons and admins.** A pharmacist never sees it at all (`:202` gives them helix /
 pharmacy-verify / sage).
 
 **Layout in one sentence.** Top to bottom in a single column (`.orb-panel`, root element at
-`VigilPanel.tsx:242`): a row of 3–4 metric tiles, then the Sage ward-brief card, then the Sage
+`VigilPanel.tsx:244`): a row of 3–4 metric tiles, then the Sage ward-brief card, then the Sage
 insights feed, then the "ACTIVE PATIENTS" section, its header with two sort chips on the right,
 a staleness banner when degraded, the list of patient rows, and a "Load more" button underneath.
 
@@ -67,23 +67,23 @@ Recent) live in the ACTIVE PATIENTS section header, not the page header.
 # 1. The count summary: the metric tiles
 
 The strip of tiles across the top. Container is `<div className="orb-panel-grid">` at
-`VigilPanel.tsx:243`, styled at `src/pages/ClinicianShell.css:567-571`, an auto-fit grid of
+`VigilPanel.tsx:245`, styled at `src/pages/ClinicianShell.css:567-571`, an auto-fit grid of
 `minmax(160px, 1fr)` columns with a 16px gap, so on a narrow tablet the tiles wrap rather than
 shrink. Each tile is `.orb-metric-card.glass-card` (`ClinicianShell.css:573-578` for the padding
 and stacking; `src/index.css:379-388` for the flat opaque surface and hairline border).
 
-The numbers are computed in three lines at `VigilPanel.tsx:233-235`, immediately before the
+The numbers are computed in three lines at `VigilPanel.tsx:235-237`, immediately before the
 return.
 
 ### "Admitted · My Dept": the big number
 **Where:** first tile, top-left of the screen.
-**Rendered by:** `src/pages/panels/VigilPanel.tsx:245`, 
+**Rendered by:** `src/pages/panels/VigilPanel.tsx:247`, 
 `<span className="orb-metric-value metric-mono">{metric(admitted)}</span>`.
-**Data from:** `const admitted = total || patients.length` (`VigilPanel.tsx:233`). `total` is
+**Data from:** `const admitted = total || patients.length` (`VigilPanel.tsx:235`). `total` is
 state set from the `X-Total-Count` response header in `loadPatients` (`:149`) and in `loadMore`
 (`:178`); the fallback to `patients.length` covers a server that omitted the header (see
 `fetchPatientsPage`, `:53-54`, which substitutes `items.length` when the header will not parse).
-**API:** `GET /api/vigil/patients?limit=100&offset=0`, built at `VigilPanel.tsx:45`.
+**API:** `GET /api/vigil/patients?limit=100&offset=0`, built at `VigilPanel.tsx:47`.
 **Server:** `server/routes/vigil_routes.py:262-389` `list_patients`. The count itself is the
 `SELECT COUNT(*)` at `:292-299` (department-scoped) or `:319-324` (unscoped), written to the
 header at `:343`.
@@ -99,7 +99,7 @@ breaks; the value is used nowhere except here and in the Bed Occupancy tile belo
 
 ### "Admitted · My Dept": the label and its tooltip
 **Where:** small grey caption directly under the big number in the first tile.
-**Rendered by:** `VigilPanel.tsx:246`, `<span className="orb-metric-label" title="Patients
+**Rendered by:** `VigilPanel.tsx:248`, `<span className="orb-metric-label" title="Patients
 admitted under your department">Admitted · My Dept</span>`.
 **Data from:** nothing; both the label and the `title` are literals.
 **API / Server:** none.
@@ -111,10 +111,10 @@ disagree and each one says why.
 
 ### "Elevated Risk" tile
 **Where:** second tile.
-**Rendered by:** `VigilPanel.tsx:249` for the value (`orb-metric-value--warn`) and `:250` for the
+**Rendered by:** `VigilPanel.tsx:251` for the value (`orb-metric-value--warn`) and `:250` for the
 label.
 **Data from:** `const elevated = patients.filter(p => p.risk_level === 'elevated').length`
-(`VigilPanel.tsx:234`), a tally over the **loaded rows only**, not over the ward.
+(`VigilPanel.tsx:236`), a tally over the **loaded rows only**, not over the ward.
 **API:** the same `GET /api/vigil/patients` page. `risk_level` is the `rs.level` column selected
 at `vigil_routes.py:302` / `:327` and mapped into the response at `:357`.
 **Server:** `server/services/vigil_service.py:334-339` decides the word `elevated`, see §7.
@@ -122,26 +122,26 @@ at `vigil_routes.py:302` / `:327` and mapped into the response at `:357`.
 `#ffc043` night, `src/index.css:79`, `:603`, `:693`) via `ClinicianShell.css:588-590`. Because
 it counts loaded rows, **pressing "Load more" can make this number go up** even though no
 patient deteriorated. That asymmetry against the "Admitted" tile beside it is deliberate and
-commented at `VigilPanel.tsx:232`. Change `'elevated'` at `:234` to any other string and the tile
+commented at `VigilPanel.tsx:234`. Change `'elevated'` at `:234` to any other string and the tile
 reads 0 forever.
 
 ### "Critical" tile
 **Where:** third tile.
-**Rendered by:** `VigilPanel.tsx:253` (`orb-metric-value--danger`) and `:254`.
+**Rendered by:** `VigilPanel.tsx:255` (`orb-metric-value--danger`) and `:254`.
 **Data from:** `const critical = patients.filter(p => p.risk_level === 'critical').length`
-(`VigilPanel.tsx:235`).
+(`VigilPanel.tsx:237`).
 **API / Server:** as above.
 **Change this →** red via `ClinicianShell.css:592-594` → `--status-danger-text` (`#ee9c94` /
 `#ad1b1b` / `#ff6060`). The same `'critical'` string is the one thing that turns a row solid red
-and floats it to the top of the list (`isEmergency`, `VigilPanel.tsx:364`; float sort at
+and floats it to the top of the list (`isEmergency`, `VigilPanel.tsx:366`; float sort at
 `:203-209`), so this tile and the red rows are always consistent by construction. If it says 3,
 there are exactly 3 red rows *among the loaded rows*.
 
 ### "Bed Occupancy" tile: admin only
 **Where:** fourth tile. **Absent for every non-admin.**
-**Rendered by:** `VigilPanel.tsx:256-261`, guarded by `{role === 'admin' && (…)}` at `:256`.
-**Data from:** the `role` prop, supplied by the shell at `src/pages/ClinicianShell.tsx:512` as
-`role={user?.role}`. The value is `Math.round((admitted / 35) * 100)` (`VigilPanel.tsx:258`).
+**Rendered by:** `VigilPanel.tsx:258-263`, guarded by `{role === 'admin' && (…)}` at `:256`.
+**Data from:** the `role` prop, supplied by the shell at `src/pages/ClinicianShell.tsx:542` as
+`role={user?.role}`. The value is `Math.round((admitted / 35) * 100)` (`VigilPanel.tsx:260`).
 **API / Server:** none of its own, it is arithmetic on the `admitted` number above.
 **Change this →** **The 35 is a hardcoded literal, not a bed count from the site config.** A
 hospital with 120 beds and 60 admitted patients sees "171%". Change the `35` at `:258` and the
@@ -150,13 +150,13 @@ for that role entirely (there is no other guard, a doctor never renders this DOM
 
 ### The ": " that replaces every tile number
 **Where:** in place of all three (or four) big numbers.
-**Rendered by:** the `metric()` helper at `VigilPanel.tsx:239`, 
+**Rendered by:** the `metric()` helper at `VigilPanel.tsx:241`, 
 `const metric = (n: number | string) => (boardUnavailable ? ', ' : n)`, applied at `:245`, `:249`,
 `:253` and `:258`.
 **Data from:** `const boardUnavailable = !!loadError && patients.length === 0`
-(`VigilPanel.tsx:238`). `loadError` is set in the `catch` of `loadPatients` (`:162`).
+(`VigilPanel.tsx:240`). `loadError` is set in the `catch` of `loadPatients` (`:162`).
 **API / Server:** whichever failure produced `loadError`, a non-2xx from
-`GET /api/vigil/patients` throws at `VigilPanel.tsx:50`.
+`GET /api/vigil/patients` throws at `VigilPanel.tsx:52`.
 **Change this →** every tile shows an em-dash instead of a digit. This exists because the
 alternative, "0 Critical", is a *lie shaped like reassurance*; the comment at `:236-237` says
 so. The tiles only fall back when the board is **both** failing and empty: a refresh that fails
@@ -172,7 +172,7 @@ here so the screen inventory is complete; do not re-document them from this file
 
 ### Ward Brief card
 **Where:** full-width card between the metric tiles and the insights feed.
-**Rendered by:** `<WardBriefCard />` at `VigilPanel.tsx:264`; component at
+**Rendered by:** `<WardBriefCard />` at `VigilPanel.tsx:266`; component at
 `src/components/sage/WardBrief.tsx` (root `.ward-brief.glass-card` at `:56`, failure variant at
 `:37-49`, watchlist at `:100-118`).
 **Change this →** it renders **nothing at all** on first load until a response arrives
@@ -188,11 +188,11 @@ with no vitals is neither listed nor counted. The snapshot is rebuilt every 30 s
 poll, `SNAPSHOT_REFRESH_SECONDS`); the LLM narrative keeps its old cadence, and the card refetches
 only when a name, bed or band changes. Pinned by `server/tests/test_ward_brief_latest_vitals.py`.
 Clicking a watchlist name fires the same `orb:open-patient` bus event this panel listens for at
-`VigilPanel.tsx:120-125`, which is why opening a chart from there works.
+`VigilPanel.tsx:122-127`, which is why opening a chart from there works.
 
 ### Sage insights feed
 **Where:** directly below the ward brief.
-**Rendered by:** `<SageInsightsFeed />` at `VigilPanel.tsx:266`; component at
+**Rendered by:** `<SageInsightsFeed />` at `VigilPanel.tsx:268`; component at
 `src/components/sage/SageInsightsFeed.tsx` (root `.sage-insights.glass-card` at `:111`).
 **Change this →** it returns `null` when there is nothing to say (`SageInsightsFeed.tsx:106`), so
 on a quiet ward this strip is simply not there. It polls on its own 20-second timer
@@ -202,13 +202,13 @@ on a quiet ward this strip is simply not there. It polls on its own 20-second ti
 
 # 3. The section header and the sort controls
 
-Container `<div className="orb-section">` at `VigilPanel.tsx:268`; header row
+Container `<div className="orb-section">` at `VigilPanel.tsx:270`; header row
 `<div className="orb-section-header">` at `:269`, styled `ClinicianShell.css:616-621`
 (flex, `space-between`) so the title sits left and the chips right.
 
 ### "ACTIVE PATIENTS" title
 **Where:** small uppercase grey label above the list, on the left.
-**Rendered by:** `VigilPanel.tsx:270`, `<h2 className="orb-section-title">Active Patients</h2>`.
+**Rendered by:** `VigilPanel.tsx:272`, `<h2 className="orb-section-title">Active Patients</h2>`.
 **Data from:** literal.
 **API / Server:** none.
 **Change this →** the text renders uppercase because of `text-transform: uppercase` at
@@ -217,18 +217,18 @@ nothing visible. It is an `<h2>`, so it is also the landmark a screen-reader use
 
 ### "Stability" sort chip
 **Where:** first of two chips at the right end of the ACTIVE PATIENTS header row.
-**Rendered by:** `VigilPanel.tsx:272-279`, a `<button className={`sort-btn ${sortBy ===
+**Rendered by:** `VigilPanel.tsx:274-281`, a `<button className={`sort-btn ${sortBy ===
 'stability' ? 'sort-btn--active' : ''}`}>` with a warning-triangle SVG at `:277` (a `<path>` plus
 two `<line>` elements) and the text `Stability`. Its `title` is `"Sort by Risk Stability"`
 (`:275`).
 **Data from:** `sortBy` state, `useState<'stability' | 'recent'>('stability')` at
-`VigilPanel.tsx:75`, **stability is the default**. Set by the `onClick` at `:274`.
+`VigilPanel.tsx:77`, **stability is the default**. Set by the `onClick` at `:274`.
 **API:** none. The sort runs client-side over already-fetched rows.
 **Server:** `vigil_service.board_order` (`vigil_service.py:808`) sorts every patient in scope with
 the SAME key inside `scored_admitted_patients` (`:823`, sort at `:878`), and `list_patients` pages
 only after that (`vigil_routes.py:361`), so page one is exactly the top of this sort.
-**Change this →** clicking it re-runs the `useMemo` at `VigilPanel.tsx:553` and the rows
-reorder in place. The comparator is `boardOrder` (`VigilPanel.tsx:845`), the client twin of
+**Change this →** clicking it re-runs the `useMemo` at `VigilPanel.tsx:555` and the rows
+reorder in place. The comparator is `boardOrder` (`VigilPanel.tsx:847`), the client twin of
 `vigil_service.board_order`: critical first, then NEWS2 high to low, then at an equal NEWS2 'elevated' (a
 single parameter scoring 3) above 'stable', then patients with nothing recorded, then id. It
 used to compare `risk_score`, the 0-1 index, which tied a single-parameter-3 patient with a
@@ -242,15 +242,15 @@ stops matching the order of the numbers shown (pinned on both sides:
 
 ### "Recent" sort chip
 **Where:** second chip, immediately right of Stability.
-**Rendered by:** `VigilPanel.tsx:280-287`, same button shape, a clock SVG at `:285` (a
+**Rendered by:** `VigilPanel.tsx:282-289`, same button shape, a clock SVG at `:285` (a
 `<circle>` plus a `<polyline>` hand), text `Recent`, `title="Sort by Recently Added"` (`:283`).
 **Data from:** the same `sortBy` state; `onClick` at `:282`.
 **API / Server:** the field it sorts on, `admission_date`, comes from `vigil_routes.py:352`.
-**Change this →** the comparator at `VigilPanel.tsx:195-197` sorts by
+**Change this →** the comparator at `VigilPanel.tsx:197-199` sorts by
 `new Date(b.admission_date || 0)` descending, newest admission first. A patient with a missing
 or unparseable `admission_date` falls back to epoch 0 and sinks to the bottom.
 **Both sorts are then overridden for critical patients**: the second `.sort()` at
-`VigilPanel.tsx:203-209` floats every `risk_level === 'critical'` row to the top regardless of
+`VigilPanel.tsx:205-211` floats every `risk_level === 'critical'` row to the top regardless of
 which chip is lit. So switching to Recent does *not* move a critical patient off the top of the
 board, that is the point, and the comment at `:200-202` records that this replaced a build which
 pinned the demo patient `PAT007` there permanently.
@@ -267,12 +267,12 @@ over which rows you see is "Load more".
 **Where:** a full-width bordered strip between the ACTIVE PATIENTS header and the first patient
 row. **Invisible whenever the board is live.**
 **Rendered by:** `<OfflineBanner snapshot={boardOffline} what="patient board"
-onRetry={loadPatients} />` at `VigilPanel.tsx:295`; the component is
+onRetry={loadPatients} />` at `VigilPanel.tsx:297`; the component is
 `src/components/OfflineBanner.tsx` (root `.offline-banner` with `role="alert"` at `:90`, the
 status dot at `:91`, the heading at `:93`).
 **Data from:** `boardOffline`, the snapshot returned by
 `useOfflineSnapshot('vigil:patients', loading || loadError ? null : livePatients, {...})` at
-`VigilPanel.tsx:82-85`. The hook is `src/hooks/useOfflineSnapshot.ts:66-127`; the browser
+`VigilPanel.tsx:84-87`. The hook is `src/hooks/useOfflineSnapshot.ts:66-127`; the browser
 online/offline signal comes from `src/hooks/useOfflineStatus.ts:37-65`.
 **API / Server:** none of its own. It reports on the *board's* fetch, and reads the device cache
 via `lib/offline/phiCache`.
@@ -286,11 +286,11 @@ via `lib/offline/phiCache`.
 - **"Can't reach Orb, not live"**, the tablet has wi-fi but the appliance did not answer.
   Same line, `unreachable` branch. `unreachable` is `online && liveFailed`
   (`useOfflineSnapshot.ts:100`), and `liveFailed` is wired straight to this panel's `loadError`
-  at `VigilPanel.tsx:83`. Different sentence because it is a different fix, walk to the station
+  at `VigilPanel.tsx:85`. Different sentence because it is a different fix, walk to the station
   vs. call IT.
 - **The dated line.** `"Showing the patient board saved at 14:32, 11 minutes old."`
   (`OfflineBanner.tsx:104-107`; `what="patient board"` is the string passed at
-  `VigilPanel.tsx:295`). If the copy cannot be dated it degrades to "when it was saved is
+  `VigilPanel.tsx:297`). If the copy cannot be dated it degrades to "when it was saved is
   **unknown**" (`:97-102`). If there is no copy at all it becomes "There is **no saved copy** of
   the patient board on this device" (`:111-117`).
 
@@ -299,7 +299,7 @@ true while someone stands looking at it. The third paragraph, "Nothing can be re
 reconnect" (`:120-124`), is unconditional whenever the banner shows. The **"Try again"** button
 (`:127-129`) calls this panel's `loadPatients` directly.
 
-One deliberate subtlety worth knowing when you edit `VigilPanel.tsx:82`: the live value passed
+One deliberate subtlety worth knowing when you edit `VigilPanel.tsx:84`: the live value passed
 to the hook is `loading || loadError ? null : livePatients`. Feeding the empty initial array
 through a failed first load would overwrite a good cached ward with an empty one, and because
 `patients` (`:86`) reads from the *snapshot*, not from `livePatients`, **there is no way to render
@@ -310,10 +310,10 @@ a cached board without this banner above it.**
 # 5. The patient row: every cell
 
 One row per patient. The list container is `<div className="vigil-patients-list">` at
-`VigilPanel.tsx:296`, a vertical flex column with an 8px gap (`src/pages/Vigil.css:12-16`). Rows
-come from `sortedPatients.map(...)` at `VigilPanel.tsx:313-318`.
+`VigilPanel.tsx:298`, a vertical flex column with an 8px gap (`src/pages/Vigil.css:12-16`). Rows
+come from `sortedPatients.map(...)` at `VigilPanel.tsx:315-320`.
 
-The row component is `PatientRow`, `VigilPanel.tsx:370-412`, wrapped in `memo()`. It takes three
+The row component is `PatientRow`, `VigilPanel.tsx:372-414`, wrapped in `memo()`. It takes three
 props: `patient`, `onSelect` (the stable `handleSelectPatient` callback from `:92-95`) and
 `newSinceReview` (`unseen[p.id] ?? 0`, passed at `:317`).
 
@@ -325,14 +325,14 @@ name and the score stays pinned right.
 
 ### The row itself (the tap target)
 **Where:** each card in the list.
-**Rendered by:** `VigilPanel.tsx:381-385`, it is a real `<button>`, not a div, with
+**Rendered by:** `VigilPanel.tsx:383-387`, it is a real `<button>`, not a div, with
 `style={{ width: '100%', textAlign: 'left', cursor: 'pointer' }}` at `:384`.
 **Data from:** one `Patient` object (type at `src/api/client.ts:597-612`).
 **API:** `GET /api/vigil/patients` → the row dict built at `server/routes/vigil_routes.py:344-362`.
 **Server:** `list_patients`, `vigil_routes.py:262-389`.
 **Change this →** clicking (or pressing Enter/Space, because it is a button) calls
 `onSelect(p.id)` at `:383` → `handleSelectPatient` (`:92-95`) → `setSelectedPatientId`, and the
-**entire board is replaced by the patient chart**, `VigilPanel.tsx:213-229` returns early, so
+**entire board is replaced by the patient chart**, `VigilPanel.tsx:215-231` returns early, so
 the tiles, the ward brief and the list all disappear in one frame. The same handler fires
 `prefetchSageContext(id)` (`:94`) with the error swallowed, so a failed prefetch never blocks the
 chart from opening. Hover is a background + border shift only (`Vigil.css:32-35`), and it is
@@ -341,10 +341,10 @@ does not lighten under the cursor.
 
 ### The emergency row treatment (solid red card)
 **Where:** replaces the ordinary card surface on the sickest rows.
-**Rendered by:** the conditional class at `VigilPanel.tsx:382`, 
+**Rendered by:** the conditional class at `VigilPanel.tsx:384`, 
 `` `patient-row glass-card ${isEmergencySurgery ? 'patient-row--emergency' : ''}` ``, where
 `isEmergencySurgery = isEmergency(p)` (`:378`) and `isEmergency` is
-`p.risk_level === 'critical'` (`VigilPanel.tsx:364`).
+`p.risk_level === 'critical'` (`VigilPanel.tsx:366`).
 **Data from:** `risk_level` on the patient row.
 **API / Server:** `rs.level` → `vigil_routes.py:357`; computed at
 `server/services/vigil_service.py:334-339`.
@@ -354,13 +354,13 @@ in the row, name, bed, diagnosis, score, is forced to literal `#FFFFFF`
 (`Vigil.css:716-721`). **Do not add an `opacity` or alpha colour to any of those four fields:**
 the comment at `Vigil.css:709-715` records that an `0.88` override on bed and diagnosis dropped
 the highest-acuity row in the product to 4.17:1 contrast. On a status fill, hierarchy here comes
-from weight and size only. Flip the one string `'critical'` at `VigilPanel.tsx:364` and the red
+from weight and size only. Flip the one string `'critical'` at `VigilPanel.tsx:366` and the red
 disappears from the board entirely, along with the top-of-list float, which reads the same field
 at `:204-205`.
 
 ### The risk dot
 **Where:** far left of the row, an 8px circle, vertically centred.
-**Rendered by:** `VigilPanel.tsx:386`, 
+**Rendered by:** `VigilPanel.tsx:388`, 
 `` <div className={`patient-row__risk patient-row__risk--${p.risk_level}`} /> ``.
 **Data from:** `p.risk_level`, a raw string interpolated into the class name.
 **API:** `GET /api/vigil/patients`, field `risk_level` (`vigil_routes.py:403`), which is
@@ -377,7 +377,7 @@ distinguish from "not yet painted".
 
 ### The patient name
 **Where:** the large text in the second column, top line.
-**Rendered by:** `VigilPanel.tsx:388-389`, `<span className="patient-row__name">{p.name}</span>`.
+**Rendered by:** `VigilPanel.tsx:390-391`, `<span className="patient-row__name">{p.name}</span>`.
 **Data from:** `p.name`.
 **API:** `vigil_routes.py:347`.
 **Server:** the `patients.name` column, `SELECT p.*` at `vigil_routes.py:301` / `:326`.
@@ -388,7 +388,7 @@ wrap rather than clip. On an emergency row it becomes white (`Vigil.css:716`).
 
 ### The "EMERGENCY" badge
 **Where:** a small red pill immediately to the right of the name, on red rows only.
-**Rendered by:** `VigilPanel.tsx:390`, 
+**Rendered by:** `VigilPanel.tsx:392`, 
 `{isEmergencySurgery && <span className="emergency-badge">EMERGENCY</span>}`.
 **Data from:** the same `isEmergency(p)` test, `risk_level === 'critical'`.
 **API / Server:** as the risk dot.
@@ -400,11 +400,11 @@ key, this string is **not** in the i18n bundle.
 
 ### The "N NEW" badge
 **Where:** an amber pill after the name (and after the EMERGENCY badge, when both are present).
-**Rendered by:** `VigilPanel.tsx:391-398`, guarded by `newSinceReview > 0`. The label is
+**Rendered by:** `VigilPanel.tsx:393-400`, guarded by `newSinceReview > 0`. The label is
 `{newSinceReview} NEW` at `:396`; the `title` at `:394` reads
 `"N chart events since you last marked this chart reviewed"` (singular/plural handled inline).
 **Data from:** the `unseen` record, `useState<Record<string, number>>({})` at
-`VigilPanel.tsx:107`, indexed per row at `:317` with `unseen[p.id] ?? 0`. Loaded by `loadUnseen`
+`VigilPanel.tsx:109`, indexed per row at `:317` with `unseen[p.id] ?? 0`. Loaded by `loadUnseen`
 (`:108-110`), called on mount (`:111`) and again every time a chart is closed, the effect at
 `:112` fires when `selectedPatientId` goes back to `null`.
 **API:** `getUnseenCounts()` → `src/api/client.ts:1527-1530` → `GET /api/chart/unseen`.
@@ -421,12 +421,12 @@ badge is gone by the time you are back on the board; (2) the endpoint fails, the
 error; (3) you have never opened that chart on this account, such patients are *absent* from the
 server's map entirely, not zero (`patient_timeline_routes.py:107-108`), because a badge on every
 bed on day one is a badge nobody reads by day two. Note the counts are deliberately **not** on
-the 30-second vitals poll (`VigilPanel.tsx:99-106`): the endpoint writes an audited PHI-read row
+the 30-second vitals poll (`VigilPanel.tsx:101-108`): the endpoint writes an audited PHI-read row
 per call, and a per-tick encrypted-SQLite write is the exact shape behind the July loop stalls.
 
 ### The bed label
 **Where:** the small grey line directly under the patient name.
-**Rendered by:** `VigilPanel.tsx:400`, `<span className="patient-row__bed">{p.bed}</span>`.
+**Rendered by:** `VigilPanel.tsx:402`, `<span className="patient-row__bed">{p.bed}</span>`.
 **Data from:** `p.bed`.
 **API:** `vigil_routes.py:349`.
 **Server:** the `patients.bed` column.
@@ -437,7 +437,7 @@ a null bed renders an **empty line** that still occupies its 2px-gap slot in the
 
 ### The diagnosis
 **Where:** third column, single line, middle of the row.
-**Rendered by:** `VigilPanel.tsx:402-404`, 
+**Rendered by:** `VigilPanel.tsx:404-406`, 
 `<div className="patient-row__meta"><span className="patient-row__diagnosis">{p.diagnosis}</span></div>`.
 **Data from:** `p.diagnosis`.
 **API:** `vigil_routes.py:353`.
@@ -450,7 +450,7 @@ different heights. On phones it moves to its own grid row under the name (`Vigil
 
 ### The NEWS2 badge
 **Where:** far right of the row, right-aligned.
-**Rendered by:** `VigilPanel.tsx:899`, `<News2Badge news2={p.news2 ?? null} labelled={false} />`,
+**Rendered by:** `VigilPanel.tsx:901`, `<News2Badge news2={p.news2 ?? null} labelled={false} />`,
 the same shared badge the nurse board and the doctor home use (`src/components/News2Badge.tsx`,
 styles in `ClinicianShell.css` under `.news2`).
 **Data from:** `p.news2`, the NEWS2 of the patient's latest vitals row.
@@ -486,9 +486,9 @@ patient picker, derived from the same `news2`; no surface may print `risk_score`
 
 ### "Loading patients…"
 **Where:** in place of the entire list, in the same slot the rows occupy.
-**Rendered by:** `VigilPanel.tsx:297-298`, 
+**Rendered by:** `VigilPanel.tsx:299-300`, 
 `<div className="orb-panel-loading">Loading patients…</div>`.
-**Data from:** `loading`, `useState(true)` at `VigilPanel.tsx:69`, cleared in the `finally` of
+**Data from:** `loading`, `useState(true)` at `VigilPanel.tsx:71`, cleared in the `finally` of
 `loadPatients` (`:164`), so it clears on failure too, handing off to the error state below.
 **API / Server:** the in-flight `GET /api/vigil/patients`.
 **Change this →** the metric tiles and both Sage cards are already on screen while this shows, 
@@ -500,7 +500,7 @@ text. It is used as a hook by tests (e.g.
 
 ### The board-failure block
 **Where:** replaces the whole list.
-**Rendered by:** `VigilPanel.tsx:299-311`, a `<div className="orb-panel-loading" role="alert">`
+**Rendered by:** `VigilPanel.tsx:301-313`, a `<div className="orb-panel-loading" role="alert">`
 containing three children:
 - `:301`, **"The patient board could not be loaded."** in `--status-danger`, weight 600.
 - `:302-304`, **"This is a load failure, not an empty ward, patient risk is unknown until it
@@ -509,7 +509,7 @@ containing three children:
   label, `--border-glass` hairline) whose `onClick` is `loadPatients`.
 **Data from:** `boardUnavailable` (`:238`), `loadError` set **and** zero rows.
 **API:** the failed `GET /api/vigil/patients`. `fetchPatientsPage` throws
-`Failed to load patients: <status>` at `VigilPanel.tsx:50`.
+`Failed to load patients: <status>` at `VigilPanel.tsx:52`.
 **Server:** `vigil_routes.py:262`. Note the `phi_access` write at `:369-387` is fail-closed, if
 the audit row cannot be persisted, **no board is returned**, and this is the state you see.
 **Change this →** it appears together with the four em-dashes in the tiles (§1, same
@@ -520,7 +520,7 @@ moving focus.
 
 ### 401: the session expired
 **Where:** not on this screen, the app leaves it.
-**Rendered by:** the dispatch at `VigilPanel.tsx:49`, 
+**Rendered by:** the dispatch at `VigilPanel.tsx:51`, 
 `if (res.status === 401) window.dispatchEvent(new CustomEvent('orb:session-expired'))`. The
 contract is documented at `src/api/client.ts:117-123`.
 **Change this →** the board never renders a 401; the listener takes the user to login. Remove
@@ -530,17 +530,17 @@ that line and an expired session would instead surface as the generic failure bl
 ### 403: no permission
 **Where:** would surface as the failure block above.
 **Server:** `require_permission("patient.read_all")` at `vigil_routes.py:270`; the dependency is
-`server/permissions.py:376-…`, which audits a `permission_denied` event **off the event loop**
+`server/permissions.py:385-…`, which audits a `permission_denied` event **off the event loop**
 (`:406`) and only then raises 403. Roles holding `PATIENT_READ_ALL` are `doctor`
 (`permissions.py:106`), `nurse` (`:121`) and `admin` (`:142`); `pharmacist` (`:135`) and
 `patient` (`:158`) do not.
 **Change this →** in practice unreachable from the UI, because the shell never renders the tab
-for a role that lacks it (`ClinicianShell.tsx:202`). A role added to the tab list but not to
+for a role that lacks it (`ClinicianShell.tsx:229`). A role added to the tab list but not to
 `ROLE_PERMISSIONS` would land on the red "could not be loaded" block with a 403 in the message.
 
 ### The empty ward
 **Where:** the list slot.
-**Rendered by:** nothing. `sortedPatients.map(...)` at `VigilPanel.tsx:313-318` over an empty
+**Rendered by:** nothing. `sortedPatients.map(...)` at `VigilPanel.tsx:315-320` over an empty
 array produces zero nodes, and there is no `length === 0` branch.
 **Change this →** **a genuinely empty ward renders a blank gap** under the ACTIVE PATIENTS
 header, no "no patients" message. The tiles above read `0 / 0 / 0` (not `, `, because
@@ -550,13 +550,13 @@ as this one.
 
 ### "Load more (N of M)" / "Loading…"
 **Where:** a full-width secondary button directly under the last row.
-**Rendered by:** `VigilPanel.tsx:321-329`, guarded by `!loading && patients.length < total`
+**Rendered by:** `VigilPanel.tsx:323-331`, guarded by `!loading && patients.length < total`
 (`:321`). Label at `:327`: `loadingMore ? 'Loading…' : \`Load more (${patients.length} of
 ${total})\``.
 **Data from:** `patients.length` (loaded rows) vs `total` (the `X-Total-Count` header);
-`loadingMore` state at `VigilPanel.tsx:68`.
+`loadingMore` state at `VigilPanel.tsx:70`.
 **API:** `GET /api/vigil/patients?limit=100&offset=<patients.length>`, `loadMore` at
-`VigilPanel.tsx:173-188`, request built at `:177`.
+`VigilPanel.tsx:175-190`, request built at `:177`.
 **Server:** the same `list_patients`; `limit` is capped at 500 and `offset` floored at 0 by the
 `Query` validators at `vigil_routes.py:268-269`.
 **Change this →** the button **does not exist** when everything is loaded, `patients.length <
@@ -565,19 +565,19 @@ is in flight the label becomes `Loading…` and the button goes `disabled` (`:32
 `Vigil.css:909-913` dims the label to `--text-muted` and swaps the border to
 `--btn-disabled-border` while keeping a **normal cursor**, disabled here means "busy", never
 "forbidden" (comment at `Vigil.css:906-908`). Page size is `VIGIL_PAGE_SIZE = 100`
-(`VigilPanel.tsx:38`); raise it and both the button's arithmetic and the first page grow
+(`VigilPanel.tsx:40`); raise it and both the button's arithmetic and the first page grow
 together. New rows are deduped by id (`:180-181`) so a double-click cannot double a patient.
 Base style `Vigil.css:884-898`, hover `:900-904`.
 
 ### What the 30-second poll does and does not disturb
-`useVisiblePolling(loadPatients, 30000)` at `VigilPanel.tsx:171`; hook at
+`useVisiblePolling(loadPatients, 30000)` at `VigilPanel.tsx:173`; hook at
 `src/hooks/useVisiblePolling.ts:18-61`. It **pauses entirely while the browser tab is hidden**
 and fires once immediately on return (`useVisiblePolling.ts:44-47`). The merge at
-`VigilPanel.tsx:150-158` refreshes **page one only** and preserves any extra pages you loaded, so
+`VigilPanel.tsx:152-160` refreshes **page one only** and preserves any extra pages you loaded, so
 a poll never silently throws away rows you pressed "Load more" for.
 
 ### The live vitals tick (why a row changes colour without a reload)
-`socket.on('vitals:update', …)` at `VigilPanel.tsx:502`, handler from `:469`. Ticks are batched
+`socket.on('vitals:update', …)` at `VigilPanel.tsx:504`, handler from `:469`. Ticks are batched
 **per patient**: each patient's latest tick waits in a map, and the whole batch lands in one
 render at most every `BOARD_TICK_MS` (2 s, `:815`). `applyBoardTick` (`:821`) copies the tick's
 whole `risk` onto the row as `news2`, plus `risk_level`, `risk_score` and `risk_drivers`, using
@@ -603,11 +603,11 @@ only bails because `onSelect` is a stable `useCallback`.
 # 7. Where the risk number comes from: and what moves if you change it
 
 **The function is `compute_news2`, `server/services/vigil_service.py:234-399`.** It is the single
-implementation of the RCP NEWS2 table in the product; `escalation_service.py:28-31` states that a
+implementation of the RCP NEWS2 table in the product; `escalation_service.py:34-37` states that a
 second scorer is how two screens come to disagree about the same patient, and
 `nurse_shift_service.py:669` says the same. It is called by `bot_service.py:200`,
 `ingestion_service.py` (via `_persist_risk_score`, `:264-272`), `nurse_shift_service.py:374`,
-`downtime_service.py:186`, `escalation_service.py:1269`, `command_center_service.py:177` and
+`downtime_service.py:186`, `escalation_service.py:1655`, `command_center_service.py:177` and
 `sage_service.py:1696`, so a threshold edit lands on the board, the nurse shift board, the
 downtime pack, escalation and Sage's answers simultaneously.
 
@@ -630,9 +630,9 @@ else:                             level = "stable"
 `critical`. On screen, per patient: the left dot turns from amber to red (`Vigil.css:44-46`); the
 NEWS2 badge's fill changes from `--status-warn` to `--status-danger` (`.news2--critical`,
 `ClinicianShell.css`); **the whole card fills solid red and all four text fields turn white**
-(`Vigil.css:704-721`); an **EMERGENCY** pill appears beside the name (`VigilPanel.tsx:390`); and
+(`Vigil.css:704-721`); an **EMERGENCY** pill appears beside the name (`VigilPanel.tsx:392`); and
 the row **jumps to the top of the board** regardless of which sort chip is lit
-(`VigilPanel.tsx:203-209`). At the top of the screen, the "Critical" tile counts up and the
+(`VigilPanel.tsx:205-211`). At the top of the screen, the "Critical" tile counts up and the
 "Elevated Risk" tile counts down by the same amount. Lower the `7` and the board turns red;
 raise it and red rows go amber and sink back into NEWS2 order.
 
@@ -674,7 +674,7 @@ missing: an incomplete set says "minimum" but not what was skipped. Those live i
 # 8. Things people look for on this board that are not there
 
 Recording these so nobody hunts for the code that renders them. All were checked by reading
-`PatientRow` (`VigilPanel.tsx:370-412`) top to bottom.
+`PatientRow` (`VigilPanel.tsx:372-414`) top to bottom.
 
 - **Age and sex.** `age` and `sex` are on the `Patient` type (`src/api/client.ts:605-606`) and
   the route returns them (`vigil_routes.py:354-355`), but no board cell reads them. `sexLabel`

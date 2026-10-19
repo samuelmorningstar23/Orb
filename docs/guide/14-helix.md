@@ -109,7 +109,7 @@ When Sage (the LLM assistant, guide 09) proposes a medication in a Relay case ro
 
 ### Flow 3: the safety gate (allergies + interactions)
 
-Triggered from three places: the order-time pre-check endpoint `GET /api/patients/{id}/medication-safety?drug=...` (`server/routes/clinical_records_routes.py:105-112`), every pharmacist verify/reject in the verification queue (`server/services/pharmacy_verification_service.py:36`, guide 15), and the Sage handoff path (`server/services/sage_handoff_service.py:147-148`).
+Triggered from three places: the order-time pre-check endpoint `GET /api/patients/{id}/medication-safety?drug=...` (`server/routes/clinical_records_routes.py:105-112`), every pharmacist verify/reject in the verification queue (`server/services/pharmacy_verification_service.py:36`, guide 15), and the Sage handoff path (`server/services/sage_handoff_service.py:193-194`).
 
 1. `check_medication_safety(patient_id, drug)` fans out to `check_allergies` and `check_interactions` (`server/services/drug_safety_service.py:442-443`).
 2. `classify_drug` maps the drug name to zero or more of the 12 drug classes in `_DRUG_CLASS_PATTERNS`, lowercased substring match first, then anchored token-prefix rules (`server/services/drug_safety_service.py:159-180`).
@@ -253,7 +253,7 @@ Startup order in `main.py`'s lifespan: `init_db()` → `init_helix_db()` → `se
 **How it works:** 1) `SELECT ... WHERE name LIKE ? OR generic_name LIKE ?` with `%name%` wildcards, taking the **first** match (`:113-116`). 2) Raises `ValueError` if nothing matches (`:117-118`). 3) Inserts with a fresh UUID, status `'pending'` (`:120-124`). 4) Returns the inserted row.
 **Why it exists:** Single entry point for order creation from any pathway (Sage confirm, handoff adapters, `/orders/approve`).
 **Data in/out:** free-text name in; full order row dict out.
-**Talks to:** Called by `helix_routes.approve_helix_order` (`server/routes/helix_routes.py:230`), `relay_routes.confirm_agentic_action` (`server/routes/relay_routes.py:1586-1594`), `sage_handoff_service` (`server/services/sage_handoff_service.py:322`). All SQL is **parameterized** (values passed as `?` placeholders so user input can never rewrite the SQL, the defense against SQL injection).
+**Talks to:** Called by `helix_routes.approve_helix_order` (`server/routes/helix_routes.py:230`), `relay_routes.confirm_agentic_action` (`server/routes/relay_routes.py:1586-1594`), `sage_handoff_service` (`server/services/sage_handoff_service.py:368`). All SQL is **parameterized** (values passed as `?` placeholders so user input can never rewrite the SQL, the defense against SQL injection).
 **Change guide:** To make resolution deterministic, add `ORDER BY length(name) ASC` or route callers through `reconcile_medication` first (the Relay path already does, it passes an exact catalog `name` back in, so the LIKE is effectively exact there).
 **Gotchas:** `LIKE '%amox%'` matches both "Amoxicillin 500mg" and "Amoxicillin 250mg" with no ordering guarantee, which strength you get is up to SQLite row order. FK enforcement is ON (`server/database.py:1002`), so a bad `patient_id` raises `sqlite3.IntegrityError`, **not** `ValueError`, callers that only catch `ValueError` (the route at `server/routes/helix_routes.py:184-185`) turn that into an HTTP 500.
 
@@ -277,7 +277,7 @@ Startup order in `main.py`'s lifespan: `init_db()` → `init_helix_db()` → `se
 **Change guide:** To dispense N units per order, replace the constant `-1`/`new_qty` logic and loop lots until N is satisfied; watch out: quantity is read then written as two statements, safe only because SQLite serializes writers and this runs inside one transaction; a port to Postgres would need `UPDATE ... SET quantity = quantity - 1 WHERE quantity > 0 RETURNING`.
 **Gotchas:** `actor_id` is accepted but never stored on the movement row, the audit trail attributes the movement to the order, not the person.
 
-### pre_flight_inventory_check: `server/services/helix_service.py:944`
+### pre_flight_inventory_check: `server/services/helix_service.py:955`
 **Signature:** `(medication_id) → {"medication_id", "in_stock": bool, "total_quantity": int}`
 **Does:** Sums the in-date lot quantities for one medication.
 **How it works:** `_in_date_stock` (`:711`) sums `quantity` over lots that pass the same in-date filter `_atomic_dispense` applies, with a NULL-safe fallback to 0, so a pre-flight never promises stock the dispense would then refuse.
@@ -286,7 +286,7 @@ Startup order in `main.py`'s lifespan: `init_db()` → `init_helix_db()` → `se
 **Data in/out:** id in, dict out.
 **Change guide / Gotchas:** none noteworthy; change the in-date rule in one place (`_IN_DATE_LOT_SQL`) so the pre-flight and the dispense keep agreeing.
 
-### pre_flight_alternative_suggestion: `server/services/helix_service.py:965`
+### pre_flight_alternative_suggestion: `server/services/helix_service.py:976`
 **Signature:** `(medication_id) → Optional[dict]`
 **Does:** Finds an in-stock **equivalent** of a stocked-out drug: the same molecule, strength and form under another brand or pack, nothing else.
 **How it works:** 1) Load the drug's `generic_name`, `strength` and `form`; with any of the three missing there is no basis to call anything equivalent, so it returns None. 2) Walk every other catalog row in name order and return the first whose normalised (lower-case, whitespace-free) molecule, strength and form all match and which has in-date stock, with `stock_status` and `equivalence: "Same molecule, strength and form"` attached. 3) Otherwise None.
@@ -294,7 +294,7 @@ Startup order in `main.py`'s lifespan: `init_db()` → `init_helix_db()` → `se
 **Data in/out:** id in → catalog row + `{"stock_status": {"in_stock": True, "total_quantity": n}, "equivalence": ...}` or None.
 **Talks to:** Both Relay endpoints above.
 **Change guide:** A hospital-approved interchange list (a different molecule) is a pharmacy and therapeutics committee decision, not code; the docstring says so. If a site wants one, it needs its own reviewed data source and must still only suggest.
-**Gotchas:** It used to fall back to a hard-coded class map that offered warfarin for heparin and sodium chloride for potassium, and the confirm route switched the order to it silently (docstring at `:809-814`). The old body still sits **after** the final `return None` (`:843`) and references a `SOP_SUBSTITUTIONS` map that no longer exists; it is unreachable dead code.
+**Gotchas:** It used to fall back to a hard-coded class map that offered warfarin for heparin and sodium chloride for potassium, and the confirm route switched the order to it silently (docstring at `:1243-1248`). The old body still sits **after** the final `return None` (`:1280`) and references a `SOP_SUBSTITUTIONS` map that no longer exists; it is unreachable dead code.
 
 ### server/services/interaction_db.py
 
@@ -392,7 +392,7 @@ Startup order in `main.py`'s lifespan: `init_db()` → `init_helix_db()` → `se
 **Signature:** `(patient_id, drug_name) → dict`
 **Does:** The full order-time screen: runs both checks, computes the max severity via `_SEVERITY_RANK` (`server/services/drug_safety_service.py:156`), flags `blocking` iff `severe`, and, critically, reports whether the interaction check could run at all.
 **Data in/out:** → `{drug, allergy_alerts, interaction_alerts, max_severity, blocking, safe, interaction_screened, coverage_note}` (`server/services/drug_safety_service.py:450-462`). `interaction_screened` is `False` when `classify_drug` returned nothing, the interaction check then had nothing to compare, which is **not** the same as "screened and clean", and `coverage_note` carries the sentence a caller should show the clinician. Allergy matching still runs either way, because a direct name match needs no class.
-**Talks to:** `GET /api/patients/{id}/medication-safety` (`server/routes/clinical_records_routes.py:105-112`, permission `medication.write`), `pharmacy_verification_service._safety_alerts` (`server/services/pharmacy_verification_service.py:36`, guide 15), `sage_handoff_service` (`server/services/sage_handoff_service.py:147-148`).
+**Talks to:** `GET /api/patients/{id}/medication-safety` (`server/routes/clinical_records_routes.py:105-112`, permission `medication.write`), `pharmacy_verification_service._safety_alerts` (`server/services/pharmacy_verification_service.py:36`, guide 15), `sage_handoff_service` (`server/services/sage_handoff_service.py:193-194`).
 **Why it exists:** One canonical verdict shape so every consumer (human UI, agentic gate) interprets severity identically.
 **Change guide:** `blocking` policy is a single comparison at `server/services/drug_safety_service.py:455`; to block on `moderate` for specific contexts, do it in the *caller*, this function should stay policy-light.
 **Gotchas:** `safe: not all_alerts` is independent of blocking, an order can be `safe: false, blocking: false` (moderate alerts warn but pass, asserted at `server/tests/test_interaction_db.py:128-134`). And `safe: true` with `interaction_screened: false` means "no allergy hit, interactions never checked", a caller that renders only `safe` shows a green tick for a drug nobody screened.
@@ -469,24 +469,24 @@ Startup order in `main.py`'s lifespan: `init_db()` → `init_helix_db()` → `se
 
 ### server/services/terminology_service.py
 
-### validate_code: `server/services/terminology_service.py:32`
+### validate_code: `server/services/terminology_service.py:55`
 **Signature:** `(code_system, code) → bool`
-**Does:** True iff the pair exists in `terminology` with `is_active=1`; code system is uppercased so `"loinc"` works (`:39-41`, asserted at `server/tests/test_orders_service.py:46`).
+**Does:** True iff the pair exists in `terminology` with `is_active=1`; code system is uppercased so `"loinc"` works (`:62-64`, asserted at `server/tests/test_orders_service.py:46`).
 **Why it exists:** CPOE orders must not accept invented codes; unknown codes are *rejected*, not silently stored (`server/services/orders_service.py:109`).
 **Talks to:** `orders_service`, `coding_service` (`server/services/coding_service.py:298`), route `GET /api/orders/validate-code` (`server/routes/orders_routes.py:211`), all owned by other guides.
 **Change guide / Gotchas:** none noteworthy.
 
-### get_display: `server/services/terminology_service.py:44`
+### get_display: `server/services/terminology_service.py:67`
 **Signature:** `(code_system, code) → str | None`
 **Does:** Returns the human-readable display for an active code. Mirror of `validate_code`; none noteworthy.
 
-### _LOINC_SEED / _SNOMED_SEED / _ICD10_SEED / STARTER_TERMINOLOGY: `server/services/terminology_service.py:61`, `:97`, `:121`, `:146`
+### _LOINC_SEED / _SNOMED_SEED / _ICD10_SEED / STARTER_TERMINOLOGY: `server/services/terminology_service.py:84`, `:120`, `:144`, `:169`
 **Signature:** lists of `(code_system, code, display)`; 33 + 21 + 22 = 76 rows.
 **Does:** Real codes with real displays (CBC panels, troponin, common findings, common ICD-10 diagnoses) so validation works out of the box.
 **Why it exists:** The header warning (`:7-18`) is the design statement: curated seed now, bulk-load full releases later into the *same* table so `validate_code` transparently scales to millions of codes.
 **Gotchas:** none noteworthy.
 
-### seed_terminology: `server/services/terminology_service.py:149`
+### seed_terminology: `server/services/terminology_service.py:172`
 **Signature:** `() → {"seeded": int, "counts": {system: n}, "timestamp": iso}`
 **Does:** `INSERT OR IGNORE` the 76 starter rows against `UNIQUE(code_system, code)` (`server/database.py:835`), then returns per-system counts.
 **Why it exists:** Idempotent boot seeding (`server/main.py:265-266`) and a standalone `python -m services.terminology_service` entry (`:175-187`).
@@ -495,7 +495,7 @@ Startup order in `main.py`'s lifespan: `init_db()` → `init_helix_db()` → `se
 
 ### server/routes/helix_routes.py
 
-FastAPI concepts used on every handler here, defined once: an **APIRouter** is a mountable group of routes sharing a prefix, this one is `APIRouter(prefix="/api/helix", tags=["Helix Pharmacy"])` (`server/routes/helix_routes.py:10`), mounted without extra prefix at `server/main.py:695`, so paths below are complete. `Depends(require_permission("helix.read"))` is **dependency injection**, FastAPI runs the permission check (which decodes the **JWT**, a signed JSON Web Token carried in the `Authorization: Bearer` header, guide 03) before the handler and passes the authenticated user in; failures return 403 and write an audit event (`server/permissions.py:377-439`). A **Pydantic model** (`BaseModel` subclass) declares and validates the JSON request body shape.
+FastAPI concepts used on every handler here, defined once: an **APIRouter** is a mountable group of routes sharing a prefix, this one is `APIRouter(prefix="/api/helix", tags=["Helix Pharmacy"])` (`server/routes/helix_routes.py:10`), mounted without extra prefix at `server/main.py:695`, so paths below are complete. `Depends(require_permission("helix.read"))` is **dependency injection**, FastAPI runs the permission check (which decodes the **JWT**, a signed JSON Web Token carried in the `Authorization: Bearer` header, guide 03) before the handler and passes the authenticated user in; failures return 403 and write an audit event (`server/permissions.py:386-448`). A **Pydantic model** (`BaseModel` subclass) declares and validates the JSON request body shape.
 
 ### Read endpoints (six GET handlers): `server/routes/helix_routes.py:16-44`
 **Signature:** each `(user=Depends(require_permission("helix.read"))) → dict`; the transitions route also takes `order_id: str` from the path.
@@ -615,7 +615,7 @@ argparse CLI with `--file` and `--source`. none noteworthy.
 **Signature:** `() → JSX` (default export; no props)
 **Does:** The pharmacy panel shell: header + three tab buttons, tab-body switch, and the review-modal mount.
 **How it works:** 1) State: `activeView` (`'dashboard'|'patients'|'formulary'`), `loading`, `orders`, `inventory`, `catalog`, `selectedOrder` (`:12-17`), React **state** via the `useState` hook (a **hook** is a function starting with `use` that lets a function component hold state or side effects). 2) `loadData` is a `useCallback`-memoized async that fires the three GETs in parallel with `Promise.all` (`:19-34`); `apiFetch` is the shared JWT-attaching fetch wrapper (guide 02). 3) A `useEffect` runs it once on mount (`:36-38`). 4) `handleTransitionComplete` closes the modal and refetches (`:40-43`), the panel's only "realtime" mechanism is refetch-on-action; there is no socket subscription. 5) Renders the active tab component with the fetched arrays as props; renders `HelixOrderReviewModal` only while `selectedOrder` is set (`:91-98`).
-**Why it exists:** One data-owner component so all three tabs share the same snapshot and one reload path. It is **lazy-loaded** (code-split so its JS downloads only when the tab opens) in the shell: `const HelixPanel = lazy(...)` (`src/pages/ClinicianShell.tsx:277`), and the `pharmacist` role's tab set is exactly `['helix', 'pharmacy-verify', 'sage']` (`src/pages/ClinicianShell.tsx:202`).
+**Why it exists:** One data-owner component so all three tabs share the same snapshot and one reload path. It is **lazy-loaded** (code-split so its JS downloads only when the tab opens) in the shell: `const HelixPanel = lazy(...)` (`src/pages/ClinicianShell.tsx:304`), and the `pharmacist` role's tab set is exactly `['helix', 'pharmacy-verify', 'sage']` (`src/pages/ClinicianShell.tsx:229`).
 **Data in/out:** consumes the three GET response shapes; passes arrays down untyped (`any[]`, see Gotchas).
 **Talks to:** `apiFetch` (guide 02), the four child components.
 **Change guide:** To make the queue live-update when doctors create orders, subscribe to a socket event in a `useEffect` and call `loadData()`, but note the server currently emits no Helix socket events, so the server side must be built first (see Cross-subsystem contracts).
@@ -719,9 +719,9 @@ argparse CLI with `--file` and `--source`. none noteworthy.
 
 | Function | Consumers |
 |---|---|
-| `helix_service.create_order` | `server/routes/relay_routes.py:1587` (imported `:1480`), `server/services/sage_handoff_service.py:322` (imported `:15`), `server/routes/helix_routes.py:230` |
+| `helix_service.create_order` | `server/routes/relay_routes.py:1587` (imported `:1480`), `server/services/sage_handoff_service.py:368` (imported `:15`), `server/routes/helix_routes.py:230` |
 | `helix_service.pre_flight_inventory_check` / `pre_flight_alternative_suggestion` | `server/routes/relay_routes.py:1134,1138,1481,1494` |
-| `drug_safety_service.check_medication_safety` | `server/routes/clinical_records_routes.py:12`, `server/services/pharmacy_verification_service.py:24` (guide 15), `server/services/sage_handoff_service.py:147` |
+| `drug_safety_service.check_medication_safety` | `server/routes/clinical_records_routes.py:12`, `server/services/pharmacy_verification_service.py:24` (guide 15), `server/services/sage_handoff_service.py:193` |
 | `drug_safety_service.classify_drug` | `server/services/clinical_records_service.py:14` |
 | `rxnorm_reconciler.reconcile_medication` | `server/routes/relay_routes.py:1121,1464` |
 | `rxnorm_corrector.RxNormCorrector` / `metaphone_key` / `levenshtein` | `server/services/scribe_service.py:230`, `server/ws/scribe_stream.py:108`, benchmark scripts, `server/scripts/add_indian_drugs.py:11` |
@@ -733,7 +733,7 @@ argparse CLI with `--file` and `--source`. none noteworthy.
 
 **Socket events:** none. Helix neither emits nor subscribes to socket.io events; its only realtime-adjacent behavior is the system message written into the Relay `messages` table on `verified` (`server/services/helix_service.py:261-266`), which surfaces when Relay next loads that channel (guides 06/08). The UI is refetch-on-action only.
 
-**Frontend contract:** `src/api/client.ts:1884-1914` (`approveHelixOrder`, `getHelixOrders`, `transitionHelixOrder`, `getHelixStockMovements`, `getHelixOrderTransitions`) and the pharmacist tab set in `src/pages/ClinicianShell.tsx:202`. The **PharmacyVerifyQueue** (`src/components/helix/PharmacyVerifyQueue.tsx`, `/api/pharmacy/*` routes, `pharmacy_verification_service.py`) reuses Helix's `helix.read`/`helix.write` permissions and the safety gate but is a separate workflow over the `medications` table, see guide 15.
+**Frontend contract:** `src/api/client.ts:1884-1914` (`approveHelixOrder`, `getHelixOrders`, `transitionHelixOrder`, `getHelixStockMovements`, `getHelixOrderTransitions`) and the pharmacist tab set in `src/pages/ClinicianShell.tsx:229`. The **PharmacyVerifyQueue** (`src/components/helix/PharmacyVerifyQueue.tsx`, `/api/pharmacy/*` routes, `pharmacy_verification_service.py`) reuses Helix's `helix.read`/`helix.write` permissions and the safety gate but is a separate workflow over the `medications` table, see guide 15.
 
 ## Rebuild notes
 

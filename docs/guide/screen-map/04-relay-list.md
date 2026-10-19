@@ -7,10 +7,10 @@ message thread (documented separately), the list and the thread are two branches
 ternary, so nothing on this page survives into the thread.
 
 **How to reach it.** Sidebar → **Messages** (nav id `relay`, label "Messages", pillar "Relay",
-`src/pages/ClinicianShell.tsx:77`). The shell mounts the panel inside
-`<div id="panel-relay" role="tabpanel">` at `src/pages/ClinicianShell.tsx:541-543`, wrapped in
+`src/pages/ClinicianShell.tsx:78`). The shell mounts the panel inside
+`<div id="panel-relay" role="tabpanel">` at `src/pages/ClinicianShell.tsx:571-573`, wrapped in
 `<PanelErrorBoundary label="relay">`. The panel is lazy-loaded
-(`src/pages/ClinicianShell.tsx:284`) and, once mounted, is **never unmounted**, the shell
+(`src/pages/ClinicianShell.tsx:311`) and, once mounted, is **never unmounted**, the shell
 hides inactive tabs with `display: none`, which is why this panel polls rather than refetching
 on mount.
 
@@ -250,7 +250,7 @@ everything down. Every remount (i.e. every change to `alertsKey`) replays that p
 `AlertsSection.tsx:25-27` (which also logs `[Relay] Failed to load alerts:`).
 **API:** Any non-2xx from `GET /api/relay/alerts`.
 **Server:** A 403 here means the caller lacks `relay.read`
-(`server/routes/relay_routes.py:85`, `server/permissions.py:376+`); the denial is written to
+(`server/routes/relay_routes.py:85`, `server/permissions.py:385+`); the denial is written to
 the audit chain before the 403 is raised.
 **Change this →** The clinician sees one muted sentence and an underlined **Retry** link
 (`AlertsSection.tsx:39-44`, inline-styled as a borderless button with
@@ -616,9 +616,9 @@ of Relay message content authorises by asking whether the channel appears in thi
   `server/services/relay_service.py:244-254` is defined *in terms of* the list, it is the
   named single-channel form, deliberately not a second SELECT. Used at
   `relay_routes.py:96-97` (messages), `:107-108` (mark read), `:1125-1126` (alert resolve).
-- **Websocket:** `_user_can_access_channel` at `server/ws/realtime.py:459-473` calls the same
+- **Websocket:** `_user_can_access_channel` at `server/ws/realtime.py:526-540` calls the same
   function through `run_db`, so socket room membership matches HTTP visibility
-  (`realtime.py:485-490` denies `join_channel`).
+  (`realtime.py:552-557` denies `join_channel`).
 - **The second door:** `get_user_alerts` at `server/services/relay_service.py:510-581` is a
   message-read path that does **not** go through the list, it scans every alert row in the
   hospital. It re-applies the DM membership rule itself (`relay_service.py:538-540`) so a
@@ -642,7 +642,7 @@ Case rooms are additionally dropped when the patient is `discharged`
 (`relay_routes.py:1204`). `relay.read` + `relay.send` are granted to `doctor` (and its alias
 `clinician`), `nurse` and `admin`, and **not** to `pharmacist` or `patient`
 (`server/permissions.py:110`, `:125`, `:146`, `:158-165`). The tab is also hidden for those
-roles client-side (`src/pages/ClinicianShell.tsx:200-203`, pharmacist gets
+roles client-side (`src/pages/ClinicianShell.tsx:227-230`, pharmacist gets
 `['helix','pharmacy-verify','sage']`), so a pharmacist never sees a Messages tab; the 403 is
 the backstop, not the UX.
 

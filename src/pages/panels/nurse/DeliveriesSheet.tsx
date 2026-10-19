@@ -4,8 +4,32 @@ import {
   receiveHelixOrder,
   type AwaitingReceiptOrder,
 } from '../../../api/client'
+import {
+  medOrderChip,
+  subscribeMedOrderUpdates,
+  type HelixLinkedOrder,
+} from '../../../api/medorders'
+import { useFeatureFlags } from '../../../shellConfig'
 import { clockTime } from './time'
+import WardReturnsSection from './WardReturnsSection'
 import WardStockSection from './WardStockSection'
+
+/** A delivery the server tied to its medication order (medorders-10): only a
+ *  supply row linked to an order carries `linked_order`. */
+type Delivery = AwaitingReceiptOrder & { linked_order?: HelixLinkedOrder | null }
+
+/** What the ward should know about the order behind a tray, or null when the
+ *  order is live and nothing needs saying beyond its status. */
+function orderWarning(order: HelixLinkedOrder): string | null {
+  if (order.status === 'held') {
+    return 'The prescriber has put this medicine on hold. Sign for what arrived, and do not ' +
+      'give it until the order is resumed.'
+  }
+  if (['stopped', 'completed', 'cancelled', 'rejected'].includes(order.status)) {
+    return 'This order has ended. Sign for what arrived, then send it back to the pharmacy.'
+  }
+  return null
+}
 
 /* ═══════════════════════════════════════════════════
    DELIVERIES — the ward end of a pharmacy dispense
@@ -40,7 +64,7 @@ import WardStockSection from './WardStockSection'
    ═══════════════════════════════════════════════════ */
 
 export default function DeliveriesSheet() {
-  const [orders, setOrders] = useState<AwaitingReceiptOrder[] | null>(null)
+  const [orders, setOrders] = useState<Delivery[] | null>(null)
   const [failed, setFailed] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [flash, setFlash] = useState<string | null>(null)
@@ -67,6 +91,15 @@ export default function DeliveriesSheet() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch trigger, not derived state.
     void load()
   }, [load])
+
+  /* With the order store on (medorders-10), a pharmacy step on a linked order
+     pushes 'medorders:update' to the ward: a fresh dispense appears here
+     without waiting for the nurse to come back to the tab. */
+  const storeOn = useFeatureFlags().med_order_store === true
+  useEffect(() => {
+    if (!storeOn) return
+    return subscribeMedOrderUpdates(() => { void load() })
+  }, [storeOn, load])
 
   const receive = async (order: AwaitingReceiptOrder) => {
     setBusyId(order.id)
@@ -152,6 +185,19 @@ export default function DeliveriesSheet() {
                 {o.original_medication_name && o.pharmacist_notes && (
                   <span className="nurse-delivery__regimen">Pharmacist note: {o.pharmacist_notes}</span>
                 )}
+                {/* The medication order this tray belongs to (medorders-10),
+                    named by its status in words, and what to do when it is no
+                    longer live. Only a tray linked to an order carries one. */}
+                {o.linked_order && (
+                  <span className="nurse-delivery__regimen">
+                    For the medication order: {medOrderChip(o.linked_order).label.toLowerCase()}
+                  </span>
+                )}
+                {o.linked_order && orderWarning(o.linked_order) && (
+                  <span className="ward-stock__problem" role="note">
+                    {orderWarning(o.linked_order)}
+                  </span>
+                )}
                 <span className="nurse-delivery__patient">
                   {[o.patient_name, o.bed && `Bed ${o.bed}`, o.ward].filter(Boolean).join(' · ')}
                 </span>
@@ -189,6 +235,11 @@ export default function DeliveriesSheet() {
           holds ward_stock.read, so with either switch off this tab is
           unchanged. */}
       <WardStockSection />
+
+      {/* Medicines going back to the pharmacy (grn-15). Renders nothing
+          unless the pharmacy store is switched on and this account holds
+          ward_return.record. */}
+      <WardReturnsSection />
     </div>
   )
 }

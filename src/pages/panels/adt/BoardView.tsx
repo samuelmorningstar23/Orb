@@ -15,6 +15,8 @@
  *
  * Polls every 30 seconds. A failed refresh keeps the last board on screen and
  * says when it was read, rather than blanking a board somebody is using.
+ * Between polls it re-reads as soon as the server says a ward changed (the
+ * content-free 'adt:changed' event, adt-19); the poll is the fallback.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
@@ -26,6 +28,7 @@ import {
   type TileActionEntry,
 } from '../../../components/adt/actions'
 import BoardTileNotes from '../../../components/adt/BoardTileNotes'
+import { useAdtBoardLive } from '../../../hooks/useAdtBoardLive'
 import { formatClinicalDateTime, formatClinicalTime } from '../../../lib/datetime'
 import type { AdtViewProps } from './viewRegistry'
 
@@ -134,6 +137,11 @@ export default function BoardView({ onModuleOff, holds }: AdtViewProps) {
     setAction(null)
     refresh(wardId)
   }, [refresh, wardId])
+
+  // adt-19: re-read when the server says a ward changed; the poll above stays
+  // as the fallback (src/hooks/useAdtBoardLive.ts).
+  const refreshShown = useCallback(() => refresh(wardId), [refresh, wardId])
+  useAdtBoardLive(refreshShown, wardId)
 
   if (load.state === 'loading') {
     return <p className="bb-status" role="status">Loading the bed board</p>

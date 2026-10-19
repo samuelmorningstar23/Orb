@@ -23,19 +23,19 @@ the two buttons that open these sheets and the success flash they write back to.
 **How you get to these surfaces.** Left nav → **My Shift** (`src/pages/ClinicianShell.tsx:27`,
 `id: 'shift', label: 'My Shift', pillar: 'Nurse Mode'`; panel lazily imported at `:275`, mounted
 at `:715-717`). For a nurse this is the **landing screen**, the per-role tab list at
-`ClinicianShell.tsx:200` puts `'shift'` first and the shell opens `accessibleTabs[0]`. From
+`ClinicianShell.tsx:227` puts `'shift'` first and the shell opens `accessibleTabs[0]`. From
 there, four different taps open the two sheets:
 
-- a task row whose kind is `obs` → `setObsFor(task.patient)` (`NursePanel.tsx:156`);
-- a task row whose kind is `med` → `setRoundFor({patient, medId})` (`NursePanel.tsx:157`), which
+- a task row whose kind is `obs` → `setObsFor(task.patient)` (`NursePanel.tsx:174`);
+- a task row whose kind is `med` → `setRoundFor({patient, medId})` (`NursePanel.tsx:175`), which
   **opens the round sheet with that one drug's confirmation modal already up** (see §B.0);
-- **Record obs** on a patient card (`NursePanel.tsx:356-358`);
-- **Med round** on a patient card (`NursePanel.tsx:359-366`), disabled when the patient has no
+- **Record obs** on a patient card (`NursePanel.tsx:919-921`);
+- **Med round** on a patient card (`NursePanel.tsx:923-930`), disabled when the patient has no
   charted medications.
 
 Both sheets render through `createPortal(…, document.body)` (`ObsEntrySheet.tsx:316`/`552`,
-`MedRoundSheet.tsx:88`/`228`), so they sit **above the whole app**, not inside the panel. The
-`AdministerModal` portals a second time (`AdministerModal.tsx:108`/`246`), which is why it appears
+`MedRoundSheet.tsx:95`/`228`), so they sit **above the whole app**, not inside the panel. The
+`AdministerModal` portals a second time (`AdministerModal.tsx:109`/`246`), which is why it appears
 over the round sheet rather than inside it.
 
 **Layout in one sentence, each.** The obs sheet is a centred card (max ~560px) with a fixed
@@ -103,7 +103,7 @@ Root: `<div className="nurse-sheet-backdrop">` at `ObsEntrySheet.tsx:317`, conta
 **Rendered by:** `ObsEntrySheet.tsx:317`, `<div className="nurse-sheet-backdrop" onClick={requestClose}>`.
 Styled at `src/pages/panels/nurse/NursePanel.css:531-542`: fixed, full-viewport,
 `background: rgba(0, 0, 0, 0.55)`, centred flex.
-**Data from:** nothing, it exists whenever `obsFor` is non-null in `NursePanel` (`NursePanel.tsx:380`).
+**Data from:** nothing, it exists whenever `obsFor` is non-null in `NursePanel` (`NursePanel.tsx:399`).
 **API / Server:** none.
 **Change this →** clicking the scrim runs `requestClose` (`:245-249`): with **any** value typed it
 opens the discard confirmation (§A.8) instead of closing; with a pristine form it closes the sheet
@@ -124,7 +124,7 @@ It is the dialog's accessible name via `aria-labelledby="obs-sheet-title"` (`:32
 `· Bed {patient.bed}` only when `patient.bed` is truthy (`:331`), then `· {patient.mrn}` only when
 `patient.mrn` is truthy (`:332`).
 **Data from:** the `patient` prop, a `NursePatientCard` handed down from `NursePanel` state
-(`NursePanel.tsx:381-382`), which came from the shift board.
+(`NursePanel.tsx:400-401`), which came from the shift board.
 **API:** `GET /api/nurse/board` (`src/api/nurse.ts:142-144`).
 **Server:** `server/routes/nurse_routes.py:51-109` `get_board` → `nurse_shift_service.build_board`
 (`server/services/nurse_shift_service.py:501-617`); the three fields are set at `:560-562`.
@@ -153,7 +153,7 @@ These appear in a fixed order and any combination of them can be on screen at on
 **Rendered by:** `ObsEntrySheet.tsx:351`, `{offline && <OfflineBanner snapshot={offline} what="patient details" />}`.
 Component: `src/components/OfflineBanner.tsx`.
 **Data from:** the `offline` prop, which is the **shift board's** snapshot passed straight through
-(`NursePanel.tsx:383`, from `useOfflineSnapshot('nurse:board', liveBoard, …)` at `NursePanel.tsx:136-139`).
+(`NursePanel.tsx:402`, from `useOfflineSnapshot('nurse:board', liveBoard, …)` at `NursePanel.tsx:282-285`).
 **Change this →** when the tablet has no network the banner reads **"Offline, not live"**; when the
 network is up but the appliance did not answer it reads **"Can't reach Orb, not live"**
 (`OfflineBanner.tsx`, `heading` assignment). Under it: *"Showing the patient details saved at
@@ -454,12 +454,12 @@ with a range error (`:509`).
 (`src/api/nurse.ts:186-195`), routed through `apiFetch`, **not** through `offlineMutate`, so it can
 never be optimistically queued.
 **Server:** `server/routes/nurse_routes.py:147-200` `record_observations` →
-`nurse_shift_service.record_observation` (`server/services/nurse_shift_service.py:827-996`).
+`nurse_shift_service.record_observation` (`server/services/nurse_shift_service.py:1418-1445`).
 **Change this →** on success the sheet **closes immediately** (`onRecorded`, `:292` →
-`NursePanel.tsx:385-392`) and a green flash appears on the board underneath reading
+`NursePanel.tsx:404-411`) and a green flash appears on the board underneath reading
 *"Observations recorded for Asha Rao, NEWS2 7 (critical). Continuous monitoring. Emergency
-assessment by a critical-care-competent team."* (`NursePanel.tsx:388-390`), auto-clearing after
-6 seconds (`NursePanel.tsx:160-163`). The board then silently refreshes (`:391`). On failure the red
+assessment by a critical-care-competent team."* (`NursePanel.tsx:407-409`), auto-clearing after
+6 seconds (`NursePanel.tsx:178-181`). The board then silently refreshes (`:391`). On failure the red
 error line appears (§A.1) and the button becomes tappable again (`:295-296`).
 
 ## A.7 What the save does that is not visible here
@@ -467,7 +467,7 @@ error line appears (§A.1) and the button becomes tappable again (`:295-296`).
 Worth knowing because it changes **other** screens:
 
 - One `vitals` row with `source='nurse_manual'` plus one `risk_scores` row, in a single transaction
-  with a fail-closed audit entry (`nurse_shift_service.py:912-962`). The `risk_scores` row is what
+  with a fail-closed audit entry (`nurse_shift_service.py:961-1011`). The `risk_scores` row is what
   repaints the Vigil board's risk dot.
 - **A Vigil alert into the patient's Relay case room** whenever the level is not `stable`
   (`dispatch_observation_alert`, `nurse_shift_service.py:710-824`), a message beginning
@@ -477,7 +477,7 @@ Worth knowing because it changes **other** screens:
   server dedupes on (patient, source, taken_at) **plus identical values** (`_same_reading`,
   `:686-707`). A second tap with the same numbers returns the existing reading; the same timestamp
   with *different* numbers is charted as a correction and the superseded row id is returned
-  (`:895-904`, `:994-995`). The in-flight latch is also a ref (`:265`) because two taps 6 ms apart
+  (`:1567-1576`, `:1810-1811`). The in-flight latch is also a ref (`:265`) because two taps 6 ms apart
   both read the same render's `saving === false`.
 
 ## A.8 The "Discard these observations?" confirmation
@@ -505,13 +505,13 @@ half-typed set of obs. Note the draft is also removed automatically when the for
 
 # B. The medication round sheet: "Medication round"
 
-Root: `MedRoundSheet.tsx:89` backdrop → `:91-97` the wide dialog.
+Root: `MedRoundSheet.tsx:96` backdrop → `:91-97` the wide dialog.
 
 ## B.0 The frame
 
 ### The scrim and the wide sheet
 **Where:** same full-viewport scrim as the obs sheet; the card is wider (760px).
-**Rendered by:** `MedRoundSheet.tsx:89` and `:91` (`nurse-sheet nurse-sheet--wide glass-strong`).
+**Rendered by:** `MedRoundSheet.tsx:96` and `:98` (`nurse-sheet nurse-sheet--wide glass-strong`).
 **Change this →** the scrim's `onClick={close}` and the ×'s `onClick={close}` both run `close`
 (`:59`), which is `if (!administering) onClose()`, so **while the five-rights modal is open the
 round sheet cannot be dismissed by clicking outside it or pressing Escape**. That is the intended
@@ -519,27 +519,27 @@ behaviour: the confirmation modal owns the interaction until it is finished or c
 
 ### "Medication round" title and the patient identity line
 **Where:** header, left.
-**Rendered by:** `MedRoundSheet.tsx:100` (title, `id="med-round-title"`, the dialog's accessible
+**Rendered by:** `MedRoundSheet.tsx:107` (title, `id="med-round-title"`, the dialog's accessible
 name via `:95`) and `:101-105` (name · Bed · MRN, same conditional pattern as the obs sheet).
 
 ### The × close button
 **Where:** header, right.
-**Rendered by:** `MedRoundSheet.tsx:107-109`, `aria-label="Close medication round"`.
+**Rendered by:** `MedRoundSheet.tsx:114-116`, `aria-label="Close medication round"`.
 **Change this →** unlike the obs sheet's ×, this one is never `disabled`, it is neutralised by
 `close`'s own guard instead.
 
 ### Opening straight onto one drug
-`MedRoundSheet.tsx:52-54`: `administering` is **initialised** from
+`MedRoundSheet.tsx:53-55`: `administering` is **initialised** from
 `patient.medications.find(m => m.medication_id === focusMedicationId)`. So tapping a *med* task row
 on the board opens the round sheet **with the five-rights modal already on top of it**. Opening the
-round from the patient card passes `medId: null` (`NursePanel.tsx:362`) and the nurse sees the list
+round from the patient card passes `medId: null` (`NursePanel.tsx:381`) and the nurse sees the list
 first.
 
 ## B.1 The staleness banner
 
 **Where:** first thing in the body, above the allergies.
-**Rendered by:** `MedRoundSheet.tsx:116`, `<OfflineBanner snapshot={offline} what="drug chart" />`.
-**Data from:** the shift board's snapshot, passed in rather than re-derived (`NursePanel.tsx:400`).
+**Rendered by:** `MedRoundSheet.tsx:123`, `<OfflineBanner snapshot={offline} what="drug chart" />`.
+**Data from:** the shift board's snapshot, passed in rather than re-derived (`NursePanel.tsx:419`).
 **Change this →** it reads *"Showing the drug chart saved at 14:32, 9 minutes old. Anything that
 changed since then is not here."* This is placed **above** the allergy strip on purpose (comment at
 `:113-115`): allergies say what must not be given, this says whether anything on the screen can be
@@ -550,12 +550,12 @@ twice.
 
 ### "Allergies: Penicillin (rash) · Sulfa: severe"
 **Where:** directly under the banner, a full-width tinted strip.
-**Rendered by:** `MedRoundSheet.tsx:118-127`. The class and the ARIA role both switch on whether any
+**Rendered by:** `MedRoundSheet.tsx:198-207`. The class and the ARIA role both switch on whether any
 allergy is severe: `nurse-note--danger` + `role="alert"` when `severeAllergies.length`, otherwise
-`nurse-note--warn` + `role="note"` (`:120-121`). Each entry is composed at `:125` as
+`nurse-note--warn` + `role="note"` (`:200-201`). Each entry is composed at `:205` as
 `substance` + ` (reaction)` when a reaction is recorded + `, severe` when severity is severe.
 **Data from:** `patient.allergies` (`NurseAllergy[]`, `src/api/nurse.ts:35-39`);
-`severeAllergies` at `:86`.
+`severeAllergies` at `:166`.
 **Server:** `nurse_shift_service._load_board_rows` → card field at
 `server/services/nurse_shift_service.py:571`.
 **Change this →** red-and-alert vs amber-and-note is decided **only** by the recorded `severity`
@@ -565,63 +565,63 @@ promotes anaphylaxis-shaped reaction text and fails safe on unknown severity), t
 
 ### "No allergies recorded (NKDA). Confirm with the patient before administering."
 **Where:** replaces the strip above when the list is empty.
-**Rendered by:** `MedRoundSheet.tsx:128-132`, `.nurse-note.nurse-note--muted`, `role="note"`.
+**Rendered by:** `MedRoundSheet.tsx:208-212`, `.nurse-note.nurse-note--muted`, `role="note"`.
 **Change this →** this is a coverage-honesty line, not a clearance: a patient with no allergy row may
 be NKDA or may never have been asked, and Orb cannot tell those apart (same statement
 `allergies_on_file` makes server-side, `allergy_interlock.py:319-324`).
 
 ## B.3 The drug groups
 
-Built by the `groups` memo at `MedRoundSheet.tsx:62-84`, always in this order, and **a group with no
-drugs is not rendered at all** (`.filter(g => g.meds.length > 0)`, `:83`).
+Built by the `groups` memo at `MedRoundSheet.tsx:129-164`, always in this order, and **a group with no
+drugs is not rendered at all** (`.filter(g => g.meds.length > 0)`, `:163`).
 
 | Group title | Hint under it | Which meds land here |
 |---|---|---|
-| **Overdue** | "Past the derived due time by more than 15 minutes" | `overdue` true (`:72`) |
-| **Due now** | "Due within the next 30 minutes" | `due_soon` true (`:73`) |
-| **Later this shift** | *(no hint)* | everything else scheduled (`:74`) |
-| **As required (PRN)** | "Available when indicated, never due, never late" | `schedule_kind === 'prn'` (`:69`) |
-| **Continuous** | "Running infusions and feeds, check, do not chart on a clock" | `schedule_kind === 'continuous'` (`:70`) |
+| **Overdue** | "Past the derived due time by more than 15 minutes" | `overdue` true (`:142`) |
+| **Due now** | "Due within the next 30 minutes" | `due_soon` true (`:143`) |
+| **Later this shift** | *(no hint)* | everything else scheduled (`:144`) |
+| **As required (PRN)** | "Available when indicated, never due, never late" | `schedule_kind === 'prn'` (`:140`) |
+| **Continuous** | "Running infusions and feeds, check, do not chart on a clock" | `schedule_kind === 'continuous'` (`:141`) |
 
 ### A group heading and its count chip
 **Where:** a small uppercase-ish heading with a rounded count pill beside it.
-**Rendered by:** `MedRoundSheet.tsx:140-143`, `<h3 className="med-group__title">{group.title}<span className="med-group__count">{group.meds.length}</span></h3>`.
+**Rendered by:** `MedRoundSheet.tsx:220-223`, `<h3 className="med-group__title">{group.title}<span className="med-group__count">{group.meds.length}</span></h3>`.
 **Change this →** the count is the length of that group only. Within Overdue / Due now / Later, rows
-are sorted by `minutes_until_due` ascending with nulls last (`byDue`, `:75-76`); PRN and Continuous
+are sorted by `minutes_until_due` ascending with nulls last (`byDue`, `:146-147`); PRN and Continuous
 keep the order the server sent.
 
 ### A group hint line
-**Rendered by:** `MedRoundSheet.tsx:144`, rendered only when `group.hint` is non-empty, so **Later
+**Rendered by:** `MedRoundSheet.tsx:224`, rendered only when `group.hint` is non-empty, so **Later
 this shift shows no hint**.
 
 ## B.4 A single drug row
 
-`<li className="med-row …">` at `MedRoundSheet.tsx:149-152`. Two modifier classes:
+`<li className="med-row …">` at `MedRoundSheet.tsx:236-239`. Two modifier classes:
 `med-row--overdue` → a **red left edge** (`NursePanel.css:917`), `med-row--done` → a **green left
 edge** (`:918`).
 
 ### The drug name
-**Rendered by:** `MedRoundSheet.tsx:154`, `<span className="med-row__name">{med.drug_name}</span>`.
+**Rendered by:** `MedRoundSheet.tsx:167`, `<span className="med-row__name">{med.drug_name}</span>`.
 **Server:** `medications.drug_name`, copied into the task at
 `server/services/nurse_shift_service.py:472`.
 **Change this →** this exact string is what the nurse must retype in the confirmation modal (§C.3), 
-they are the same value, `med.drug_name`, handed across at `MedRoundSheet.tsx:212`.
+they are the same value, `med.drug_name`, handed across at `MedRoundSheet.tsx:225`.
 
 ### The dose · route · frequency line
-**Rendered by:** `MedRoundSheet.tsx:155-157`, `[med.dosage, med.route, med.frequency].filter(Boolean).join(' · ')`.
+**Rendered by:** `MedRoundSheet.tsx:168-170`, `[med.dosage, med.route, med.frequency].filter(Boolean).join(' · ')`.
 **Server:** `nurse_shift_service.py:473-475`.
 **Change this →** a med with no route charted simply loses that segment; there is no ", " placeholder
 here (unlike the modal's Dose/Route rows, which do show a dash).
 
 ### The timing line
 **Where:** the small grey third line of the row.
-**Rendered by:** `MedRoundSheet.tsx:158-166`, composed from up to three pieces:
+**Rendered by:** `MedRoundSheet.tsx:245-261`, composed from up to three pieces:
 1. `dueLabel(med)` (`src/pages/panels/nurse/time.ts:35-49`), **"As required"** for PRN,
    **"Continuous"**, **"Stat, give now"** or **"Stat dose given"** depending on `due_basis`,
    **"No fixed schedule"** when unparseable or when `due_at` is null, otherwise
    **"Due 14:00 · 40m late"** / **"Due 18:00 · in 2h 10m"** (`relativeMinutes`, `time.ts:12-20`).
-2. `· last given 14:03, 09 Aug` when `med.last_given_at` is set (`:160-162`).
-3. `· 2 earlier doses not charted` when `med.missed_slots > 0` (`:163-165`), in amber
+2. `· last given 14:03, 09 Aug` when `med.last_given_at` is set (`:255`).
+3. `· 2 earlier doses not charted` when `med.missed_slots > 0` (`:258-260`), in amber
    (`.med-row__missed`, `NursePanel.css:434-439`), correctly singular/plural.
 **Server:** all three derive from `_build_med_task`
 (`server/services/nurse_shift_service.py:414-498`): `due_at` is rolled forward to the *current*
@@ -636,7 +636,7 @@ more aggressive turns "No fixed schedule" rows into red overdue rows across the 
 
 ### "AI-extracted order: a pharmacist must verify it before it can be given."
 **Where:** an amber inline strip inside the row, under the timing line.
-**Rendered by:** `MedRoundSheet.tsx:167-171`, `.med-row__blocked` (`NursePanel.css:926-934`).
+**Rendered by:** `MedRoundSheet.tsx:180-184`, `.med-row__blocked` (`NursePanel.css:926-934`).
 **Data from:** `med.unverified`.
 **Server:** `_build_med_task` sets it at `server/services/nurse_shift_service.py:466-468`, 
 `source in ('llm_extracted','agentic') AND verified_by IS NULL`.
@@ -647,7 +647,7 @@ on the next board load, the amber strip disappears and the button lights up.
 
 ### The "Administer" button
 **Where:** right-hand end of the row.
-**Rendered by:** `MedRoundSheet.tsx:179-187`, secondary + compact
+**Rendered by:** `MedRoundSheet.tsx:192-200`, secondary + compact
 (`NursePanel.css:228-233`, `:219`).
 **Change this →** `disabled={med.unverified}` (`:183`) is the only client-side gate; every other
 guard lives on the server and fires **after** the nurse has confirmed the dose. Tapping it sets
@@ -656,27 +656,27 @@ guard lives on the server and fires **after** the nurse has confirmed the dose. 
 ### The "Given" / "Not given" result chip
 **Where:** replaces the Administer button in the same slot, once the dose has been charted **in this
 sitting**.
-**Rendered by:** `MedRoundSheet.tsx:174-177`, `.med-row__result--given` (green tint, green text,
+**Rendered by:** `MedRoundSheet.tsx:187-190`, `.med-row__result--given` (green tint, green text,
 `NursePanel.css:946-949`) or `.med-row__result--not_given` (amber, `:951-954`).
 **Data from:** the `justGiven` map (`:57`), written in `onRecorded` (`:221`).
 **Change this →** it is **session-local**: it only reflects doses charted while this sheet has been
 open, so the nurse can work down the list without a full board refresh. Closing the sheet clears it
 (the component unmounts), after that, the same information comes back as `last_given_at` on the
-timing line once the board reloads (`NursePanel.tsx:401`). The row also gains its green left edge at
+timing line once the board reloads (`NursePanel.tsx:420`). The row also gains its green left edge at
 the same moment (`med-row--done`, `:150`).
 
 ## B.5 Round-sheet states
 
 ### "No active medications charted for this patient."
 **Where:** centred dashed-border box where the groups would be.
-**Rendered by:** `MedRoundSheet.tsx:134-136`, `.nurse-empty` (`NursePanel.css:154-163`).
+**Rendered by:** `MedRoundSheet.tsx:146-148`, `.nurse-empty` (`NursePanel.css:154-163`).
 **Change this →** shown when `groups.length === 0`, i.e. the patient has zero medications. From the
 patient card this state is normally unreachable because the **Med round** button is disabled at
-`NursePanel.tsx:363` when `p.medications.length === 0`.
+`NursePanel.tsx:382` when `p.medications.length === 0`.
 
 ### The derived-schedule footnote
 **Where:** grey small print at the bottom of the body.
-**Rendered by:** `MedRoundSheet.tsx:197-200`, "Due times are derived from each order's frequency and
+**Rendered by:** `MedRoundSheet.tsx:210-213`, "Due times are derived from each order's frequency and
 the last charted dose, Orb holds no prescriber-authored administration schedule. Treat them as a
 working list, not a prescription."
 **Change this →** it is the honest caveat for everything in §B.4's timing line. Removing it would
@@ -684,8 +684,8 @@ leave the round looking like an authoritative MAR schedule, which it is not.
 
 ### "Done"
 **Where:** the single footer button, bottom-left.
-**Rendered by:** `MedRoundSheet.tsx:204`, ghost style, `onClick={close}`.
-**Change this →** closing runs `NursePanel.tsx:401`, which clears `roundFor` **and** triggers a quiet
+**Rendered by:** `MedRoundSheet.tsx:217`, ghost style, `onClick={close}`.
+**Change this →** closing runs `NursePanel.tsx:420`, which clears `roundFor` **and** triggers a quiet
 board reload, so the board's overdue counts and the patient card's "N charted · N overdue" line
 update on return.
 
@@ -707,14 +707,14 @@ name and pressing **Given** (§C.6). The plumbing to grey the row out in advance
 
 `src/components/vigil/AdministerModal.tsx`, portalled to `document.body` (`:108`, `:246`), so it
 paints **over** the round sheet. Shared with the Vigil patient chart, the same component, the same
-guards, deliberately not duplicated for nurses (`MedRoundSheet.tsx:11-24`).
+guards, deliberately not duplicated for nurses (`MedRoundSheet.tsx:11-25`).
 
 ## C.1 The frame
 
 ### The scrim, the card, the title, the ×
 **Where:** full-viewport scrim (`rgba(0,0,0,0.55)`, `AdministerModal.css:23`) with a narrow card
 centred on it.
-**Rendered by:** `AdministerModal.tsx:109` (backdrop, `onClick={close}`), `:111-117` (dialog),
+**Rendered by:** `AdministerModal.tsx:110` (backdrop, `onClick={close}`), `:111-117` (dialog),
 `:119-121` (`<h2>Administer medication</h2>`, the accessible name via `:115`), `:122-124` (× with
 `aria-label="Close"`).
 **Change this →** `close` is `if (!busy) onClose()` (`:45-47`), so **once "Recording…" is showing,
@@ -723,14 +723,14 @@ modal and restores focus to the Administer button on unmount.
 
 ## C.2 The five-rights list
 
-`<dl className="administer-modal__rights">` at `AdministerModal.tsx:135-159`, five stacked rows,
+`<dl className="administer-modal__rights">` at `AdministerModal.tsx:136-160`, five stacked rows,
 each a grey uppercase label over a value, hairline-separated (`AdministerModal.css:96-131`).
 
 | Row | Value shown | Line | Source |
 |---|---|---|---|
-| **Patient** | `{patientName}` + ` · Bed 4` when a bed is known | `:136-142` | `MedRoundSheet.tsx:217-218` passes `patient.name` / `patient.bed` |
+| **Patient** | `{patientName}` + ` · Bed 4` when a bed is known | `:136-142` | `MedRoundSheet.tsx:230-231` passes `patient.name` / `patient.bed` |
 | **Drug** | `{med.drug_name}`, rendered in the emphasised `.administer-modal__drug-name` style (`AdministerModal.css:133-137`) | `:143-146` | `MedTask.drug_name` |
-| **Dose** | `{med.dosage}` or **", "** | `:147-150` | `MedTask.dosage ?? ''` (`MedRoundSheet.tsx:213`) |
+| **Dose** | `{med.dosage}` or **", "** | `:147-150` | `MedTask.dosage ?? ''` (`MedRoundSheet.tsx:226`) |
 | **Route** | `{med.route}` or **", "** | `:151-154` | `MedTask.route ?? ''` (`:214`) |
 | **Time** | `09 Aug, 14:32 (now)` | `:155-158` | `new Date()` evaluated at render |
 
@@ -745,7 +745,7 @@ be charted from the nurse round.
 
 ### "Confirm drug name" label + the input
 **Where:** under the five-rights list.
-**Rendered by:** `AdministerModal.tsx:161-163` (label) and `:164-175` (input, `autoFocus` at `:174`).
+**Rendered by:** `AdministerModal.tsx:162-164` (label) and `:164-175` (input, `autoFocus` at `:174`).
 Placeholder is literally `Type "Amoxicillin" to confirm` (`:170`).
 **Data from:** `confirmText` state; the match test is
 `confirmText.trim().toLowerCase() === med.drug_name.trim().toLowerCase()` (`:50`).
@@ -755,14 +755,14 @@ enabled (`:237`). Until then Given is greyed with the tooltip *"Type the drug na
 recording"* (`:238`). Case and surrounding whitespace do not matter; spelling does.
 
 ### The hint under it
-**Rendered by:** `AdministerModal.tsx:176-178`, "Barcode-style check: type the drug name exactly as
+**Rendered by:** `AdministerModal.tsx:177-179`, "Barcode-style check: type the drug name exactly as
 charted (case-insensitive) to enable "Given"."
 
 ## C.4 The "Not given" path
 
 ### The "Not given" button (first press)
 **Where:** middle of the three action buttons.
-**Rendered by:** `AdministerModal.tsx:223-232`, `.administer-btn--secondary`, amber text and amber
+**Rendered by:** `AdministerModal.tsx:229-238`, `.administer-btn--secondary`, amber text and amber
 border (`AdministerModal.css:254-257`).
 **Change this →** pressing it does **not** submit anything. It sets `showNotGiven` (`:227`), which
 (a) reveals the amber reason block described next and (b) **replaces this button itself** with the
@@ -771,15 +771,15 @@ the modal.
 
 ### "Reason not given": the select
 **Where:** an amber-tinted block that appears between the hint and the buttons.
-**Rendered by:** `AdministerModal.tsx:180-208`; block styling at `AdministerModal.css:196-204`.
-The `<select>` (`:185-198`) is seeded with "Select a reason…" and the five options from
-`NOT_GIVEN_REASONS` (`:35`): **Refused**, **Held, clinical decision**, **NPO**, **Unavailable**,
+**Rendered by:** `AdministerModal.tsx:712-740`; block styling at `AdministerModal.css:196-204`.
+The `<select>` (`:717-730`) is seeded with "Select a reason…" and the five options from
+`NOT_GIVEN_REASONS` (`:80`): **Refused**, **Held, clinical decision**, **NPO**, **Unavailable**,
 **Other**.
 **Change this →** the option list is a frontend constant; the server accepts any non-empty string
-(`server/services/emar_service.py:548-550`). Adding an option here needs no server change.
+(`server/services/emar_service.py:556-558`). Adding an option here needs no server change.
 
 ### The free-text detail input
-**Rendered by:** `AdministerModal.tsx:199-206`. Its placeholder **changes with the selection**
+**Rendered by:** `AdministerModal.tsx:205-212`. Its placeholder **changes with the selection**
 (`:202`): *"Describe the reason (required)"* when Other is selected, *"Additional detail
 (optional)"* otherwise.
 **Change this →** `notGivenValid` (`:51`) requires a selected reason, and additionally requires
@@ -789,33 +789,33 @@ the option label, with the detail carried separately as `notes`.
 
 ### "Record not given" / "Recording…"
 **Where:** replaces the "Not given" button once the reason block is open.
-**Rendered by:** `AdministerModal.tsx:214-222`, `.administer-btn--danger`, a **dark red fill with
+**Rendered by:** `AdministerModal.tsx:220-228`, `.administer-btn--danger`, a **dark red fill with
 white text** (`AdministerModal.css:272-276`).
 **Change this →** `disabled={busy || !notGivenValid}` (`:219`). On success the round row's chip reads
-**"Not given"** in amber (`MedRoundSheet.tsx:176`) and the board flash reads *"Paracetamol charted as
-not given."* (`NursePanel.tsx:402-408`). A `not_given` record **skips every safety interlock**: the
+**"Not given"** in amber (`MedRoundSheet.tsx:189`) and the board flash reads *"Paracetamol charted as
+not given."* (`NursePanel.tsx:421-427`). A `not_given` record **skips every safety interlock**: the
 allergy screen, the dose guard and the discharged-patient guard are all gated on `status == "given"`
-(`server/services/emar_service.py:604`, `:623`, `:645`), withholding a dose must always be easy.
+(`server/services/emar_service.py:618`, `:637`, `:659`), withholding a dose must always be easy.
 
 ## C.5 "Cancel" and "Given"
 
 ### "Cancel"
-**Rendered by:** `AdministerModal.tsx:211-213`, ghost, disabled while busy. Returns to the round
+**Rendered by:** `AdministerModal.tsx:217-219`, ghost, disabled while busy. Returns to the round
 sheet with nothing charted.
 
 ### "Given" / "Recording…"
 **Where:** rightmost, the primary dark-accent button.
-**Rendered by:** `AdministerModal.tsx:233-241`.
+**Rendered by:** `AdministerModal.tsx:239-247`.
 **Data from:** `disabled={busy || !confirmed}` (`:237`).
 **API:** `POST /api/emar/medications/{id}/administer` via
 `src/api/client.ts:1411-1446` `administerMedication`, which routes through `offlineMutate`
 (`:1422-1445`) with a **stable idempotency key minted once per (modal, action)**
-(`AdministerModal.tsx:67-69`), so a retry after a lost response cannot chart a second dose.
+(`AdministerModal.tsx:68-70`), so a retry after a lost response cannot chart a second dose.
 **Server:** `server/routes/emar_routes.py:51-113` `administer_medication` →
-`emar_service.record_administration` (`server/services/emar_service.py:489-…`).
+`emar_service.record_administration` (`server/services/emar_service.py:496-…`).
 **Change this →** on success the modal closes, the row's chip flips to green **Given**, and the board
 flash reads *"Amoxicillin charted as given."* Note `assertOnlineForWrite('chart this dose')` at
-`:85` runs **before** `offlineMutate` can queue anything (`AdministerModal.tsx:75-84` explains why:
+`:85` runs **before** `offlineMutate` can queue anything (`AdministerModal.tsx:76-85` explains why:
 the optimistic `queued_offline` record renders as "Given" and the nurse walks away from a dose that
 may never be charted).
 
@@ -823,7 +823,7 @@ may never be charted).
 
 ### The red error banner
 **Where:** the very top of the modal body, above the five rights.
-**Rendered by:** `AdministerModal.tsx:128-132`, `.administer-modal__error`, `role="alert"`, red text
+**Rendered by:** `AdministerModal.tsx:129-133`, `.administer-modal__error`, `role="alert"`, red text
 on a 12% red wash with a red hairline (`AdministerModal.css:85-93`).
 **Data from:** `error` state, set only at `:103` from `e.message`.
 **Change this →** **this single line is the entire user interface for every server-side safety
@@ -833,13 +833,13 @@ reads depends on which guard fired:
 | What happened | HTTP | What the nurse sees in the red strip |
 |---|---|---|
 | Offline | n/a | "Cannot chart this dose, this device is offline. Your entry has not been saved. Reconnect and enter it again." |
-| Order not active | 422 | "medication 41 is not an active order (status=discontinued)" (`emar_service.py:556-559`) |
-| Unverified AI order | 422 | "unverified medication, pharmacist verification required" (`emar_service.py:560-561`) |
-| Patient discharged | 422 | "patient P001 is not admitted (status=discharged), a dose cannot be administered to a discharged patient; record it as 'not_given' with a reason, or re-admit the patient first" (`emar_service.py:604-614`) |
+| Order not active | 422 | "medication 41 is not an active order (status=discontinued)" (`emar_service.py:575-578`) |
+| Unverified AI order | 422 | "unverified medication, pharmacist verification required" (`emar_service.py:579-580`) |
+| Patient discharged | 422 | "patient P001 is not admitted (status=discharged), a dose cannot be administered to a discharged patient; record it as 'not_given' with a reason, or re-admit the patient first" (`emar_service.py:626-636`) |
 | **Allergy interlock BLOCK** | **428** | "allergy interlock: Amoxicillin conflicts with a documented allergy (Penicillin), a typed reason is required to administer" (`allergy_interlock.py:494-499`) |
 | **Allergy screen unreadable** | **428** | "allergy screening is unavailable, this dose has not been checked against the patient's allergies; a typed reason is required to proceed" (`allergy_interlock.py:488-493`) |
-| **Dose guard BLOCK** | **428** | the joined block findings, e.g. "Insulin 100 units is at or above 100 units, no adult indication reaches this as a single dose. … Check for a decimal or unit error before proceeding." (`drug_safety_service.py:1259-1265`, joined at `emar_service.py:383-386`) |
-| **Never-correct route** | **428** | "Concentrated potassium chloride must NEVER be given by IV push or bolus, it causes immediate fatal cardiac arrest. It must be diluted and infused." (`drug_safety_service.py:1129-1131`) |
+| **Dose guard BLOCK** | **428** | the joined block findings, e.g. "Insulin 100 units is at or above 100 units, no adult indication reaches this as a single dose. … Check for a decimal or unit error before proceeding." (`drug_safety_service.py:1298-1304`, joined at `emar_service.py:390-393`) |
+| **Never-correct route** | **428** | "Concentrated potassium chloride must NEVER be given by IV push or bolus, it causes immediate fatal cardiac arrest. It must be diluted and infused." (`drug_safety_service.py:1168-1170`) |
 
 The 428 message reaches the strip because `apiFetch` (`src/api/client.ts:247-263`) unwraps a
 structured `detail` object to `detail.message` and re-throws it with `status` and the full `detail`
@@ -855,7 +855,7 @@ This is the part to be precise about.
 **Blocked before she starts (the only pre-emptive block).** An AI-extracted order with no pharmacist
 verification: the row shows an amber strip *"AI-extracted order, a pharmacist must verify it before
 it can be given."* and the **Administer button is greyed out** with the tooltip *"Blocked: awaiting
-pharmacist verification"* (`MedRoundSheet.tsx:167-171`, `:183-184`). She cannot open the modal at
+pharmacist verification"* (`MedRoundSheet.tsx:180-184`, `:196-197`). She cannot open the modal at
 all.
 
 **Blocked at the moment of charting (allergy, dose, route, discharge, inactive order).** The
@@ -864,7 +864,7 @@ sequence a nurse actually experiences:
 2. She opens the modal, reads the five rights, types the drug name, the border turns green.
 3. She presses **Given**. The buttons say **"Recording…"** and the modal locks (scrim, ×, Escape and
    Cancel all inert while `busy`).
-4. The request 428s. `busy` goes back to false (`AdministerModal.tsx:104`) and **a red strip appears
+4. The request 428s. `busy` goes back to false (`AdministerModal.tsx:105`) and **a red strip appears
    at the top of the modal** with the sentence from the table above. Nothing else on screen changes:
    the five rights, the confirm field (still filled and green) and the buttons are all exactly as
    they were.
@@ -882,13 +882,13 @@ character (`allergy_interlock.validate_override_reason:424-446`;
 `drug_safety_service.validate_dose_override_reason:1492-1513`), and, if it passes, the dose is
 charted **and** an override row is written to `medication_allergy_overrides` /
 `medication_dose_overrides` in the **same transaction** as the dose
-(`allergy_interlock.record_override:502-536`, `emar_service.py:684-703`). A bad reason comes back as
+(`allergy_interlock.record_override:502-536`, `emar_service.py:698-717`). A bad reason comes back as
 another 428 with the validator's own sentence, e.g. *"an allergy override requires a clinical reason
 (e.g. 'allergy de-labelled by immunology 12/06, challenge tolerated')"*. The frontend
 `AdministerPayload` (`src/api/client.ts:1393-1400`) has neither field, so none of this is reachable
 from the nurse round today.
 **Both guards can be armed at once.** The allergy interlock runs first and owns the 428
-(`emar_service.py:616-651`); the nurse would clear it and then see a **second** 428 for the dose
+(`emar_service.py:630-665`); the nurse would clear it and then see a **second** 428 for the dose
 guard, two prompts, in severity order (`emar_routes.py:72-75`).
 
 **A carried-forward override is invisible and silent.** If an earlier dose of the *same order*
@@ -897,20 +897,20 @@ against the *same allergy picture* was already justified, `find_carried_override
 indication that an interlock fired**. It re-arms automatically if the fingerprint changes, a new
 allergy, an escalated severity, an edited reaction (`_fingerprint`, `:252-271`). For the dose guard
 the carry-forward only applies when the dose **matches the order** exactly; a bedside deviation is
-never carried and must be justified afresh every time (`emar_service.py:365-378`).
+never carried and must be justified afresh every time (`emar_service.py:372-385`).
 
 **Merely warned: the nurse sees nothing.** A `warn` decision never stops the write and **never
 reaches the screen**:
 - a mild/moderate allergy match (`allergy_interlock.decide:235-249`, only *severe* blocks),
-- a high-but-plausible dose (`warn_above`, e.g. insulin >50 units, `drug_safety_service.py:1272-1291`),
+- a high-but-plausible dose (`warn_above`, e.g. insulin >50 units, `drug_safety_service.py:1311-1330`),
 - a suspected duplicate, *"Paracetamol was already given to this patient 47 minutes ago. The order's
-  schedule makes a repeat inside 3h implausible…"* (`drug_safety_service.py:1441-1462`),
+  schedule makes a repeat inside 3h implausible…"* (`drug_safety_service.py:1480-1501`),
 - a check that could not run, `unavailable` is forced to at least WARN so it is never silent
-  server-side (`emar_service.py:344-352`).
+  server-side (`emar_service.py:351-359`).
 
 All of these are computed, summarised (`allergy_interlock.summarize:539-566`,
 `drug_safety_service.summarize_dose_check:1548-1579`), **persisted onto the administration row** in
-`allergy_check_json` / `dose_check_json` (`emar_service.py:658-667`) and written to the audit chain, 
+`allergy_check_json` / `dose_check_json` (`emar_service.py:672-681`) and written to the audit chain, 
 and then the response comes back `200 {status: 'success', administration: …}`. `AdministerModal`
 reads only `res.administration` (`:101`), so the modal closes, the chip goes green, and the warning
 exists only in the database. **A nurse giving a second paracetamol 47 minutes after the first sees a
@@ -923,12 +923,12 @@ green "Given" chip and nothing else.**
 | State | Obs entry sheet | Med round sheet | Administer modal |
 |---|---|---|---|
 | **Loading** | no spinner, the sheet opens instantly from board data already in memory; only the score block shows "Scoring…" (`ObsEntrySheet.tsx:491`) | none, renders from `patient.medications` | none |
-| **Empty** | "Enter observations to see the NEWS2 they produce." (`:494`); save disabled with tooltip "Enter at least one reading" (`:509`) | "No active medications charted for this patient." (`MedRoundSheet.tsx:135`) | Dose/Route show ", " (`:149`, `:153`) |
+| **Empty** | "Enter observations to see the NEWS2 they produce." (`:494`); save disabled with tooltip "Enter at least one reading" (`:509`) | "No active medications charted for this patient." (`MedRoundSheet.tsx:147`) | Dose/Route show ", " (`:149`, `:153`) |
 | **Invalid** | red field border + "2–80 /min" + "Fix the highlighted readings to see the NEWS2." | n/a | Given disabled until the name matches; Record not given disabled until a reason is chosen |
 | **Request failed** | red note above the fields (§A.1); the button re-enables | n/a (read-only surface) | red strip at the top of the modal (§C.6); buttons re-enable |
 | **Offline** | OfflineBanner at the top **and** a hard refusal on save (`:281`) | OfflineBanner reading "Showing the drug chart saved at …" | hard refusal before the queue is reachable (`:85`) |
 | **No permission** | nurse and doctor hold `vitals.write` (`server/permissions.py:106`, `:121`); an admin does **not** (`:142`) → 403 from `require_patient_access`, surfaced in the red note | board itself needs `patient.read_all` + `vitals.read` (`nurse_routes.py:56`) | needs `medication.write` (`emar_routes.py:55`), nurse and doctor hold it, pharmacist and admin do not |
-| **Wrong ward** | 404 (never 403, a 403 would confirm the patient exists), `require_patient_access` (`server/permissions.py:453`) | n/a, the board never returns out-of-ward patients | n/a |
+| **Wrong ward** | 404 (never 403, a 403 would confirm the patient exists), `require_patient_access` (`server/permissions.py:462`) | n/a, the board never returns out-of-ward patients | n/a |
 
 **Visible elements documented: 62.**
 

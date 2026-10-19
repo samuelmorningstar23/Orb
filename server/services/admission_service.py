@@ -307,8 +307,13 @@ def _master_choices(user: dict | None = None) -> dict:
                 "FROM users WHERE id = ?", (me,)).fetchone()
             self_authoriser = {"id": row["id"], "name": row["name"], "role": row["role"],
                                "department": row["department"] or None}
+    from services.adt.core import strict_locations_on
+
     return {"wards": wards, "authorisers": authorisers, "self_authoriser": self_authoriser,
-            "backtime_hours": int(getattr(config, "ADT_BACKTIME_HOURS", 72))}
+            "backtime_hours": int(getattr(config, "ADT_BACKTIME_HOURS", 72)),
+            # adt-16: with strict locations on the server refuses a ward or bed
+            # not in bed setup, so the picker offers no typed place.
+            "strict_locations": strict_locations_on()}
 
 
 def _plain(value) -> str | None:
@@ -410,6 +415,9 @@ def _adt_replay_on(db, plan: dict, user: dict, name: str) -> dict | None:
             "extra_bed": ((prior.get("detail") or {}).get("extra_bed") or {}).get("label"),
         },
         "location_warning": None,
+        # adt-17b: a replayed ward clerk's admission says so again.
+        **({"clerk_admission": True, "clinical_fields": "Not yet assessed"}
+           if (prior.get("detail") or {}).get("clerk_admission") else {}),
     }
 
 
@@ -875,7 +883,8 @@ def _post_system_line_on(db, *, channel_id: str, content: str, now: str) -> None
 
 
 def admit_patient(data: dict, user: dict, *, idempotency_key: str | None = None,
-                  request_meta: dict | None = None, door: str = DOOR_ADMISSION_FORM) -> dict:
+                  request_meta: dict | None = None, door: str = DOOR_ADMISSION_FORM,
+                  clerk_entry: bool = False) -> dict:
     """Admit a patient through one of the admission doors (`door`: the
     admission form or Scribe's quick admission). The transaction is _admit's.
 
@@ -886,12 +895,15 @@ def admit_patient(data: dict, user: dict, *, idempotency_key: str | None = None,
     index refusal (section 'The admission doors join the patient index') has
     its disclosure audited on a write of its own before it is raised; if that
     row cannot be written the caller gets AuditWriteError (503) and nobody is
-    shown."""
+    shown.
+
+    `clerk_entry` (adt-17b, ORB_ADT on only) is the ward clerk's
+    registration-level admission: see 'The ward clerk's admission' below."""
     from db_backend import DBIntegrityError
 
     try:
         return _admit(data, user, idempotency_key=idempotency_key,
-                      request_meta=request_meta, door=door)
+                      request_meta=request_meta, door=door, clerk_entry=clerk_entry)
     except _DoorRefusal as refusal:
         _audit_door_refusal(refusal, user, request_meta)
         raise refusal.refused from None
@@ -902,7 +914,8 @@ def admit_patient(data: dict, user: dict, *, idempotency_key: str | None = None,
 
 
 def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
-           request_meta: dict | None = None, door: str = DOOR_ADMISSION_FORM) -> dict:
+           request_meta: dict | None = None, door: str = DOOR_ADMISSION_FORM,
+           clerk_entry: bool = False) -> dict:
     """
     Transactional admission orchestrator.
     Creates records in patients, admissions, patient_profiles, channels, messages, and sage_room_memory.
@@ -935,6 +948,18 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
     # or print it; with the module off it is dropped unread.
     data = dict(data)
     authoriser_pin = data.pop("terminal_clean_authoriser_pin", None)
+
+    # The ward clerk's registration-level admission (adt-17b, ruling ADT-S5
+    # (a)): every clinical field is overwritten here as not yet assessed,
+    # whatever the caller sent, so no lane can store a clerk-typed allergy,
+    # a 'no known allergies' or a code status. Only with ORB_ADT on.
+    if clerk_entry:
+        if not _adt_admitting():
+            from services.adt.core import AdtError
+
+            raise AdtError("The ward clerk admits through Beds and admissions, which is switched "
+                           "off on this site.", code="module_disabled")
+        data.update(_clerk_admission_fields())
 
     # The patient index (opd-5b, ORB_REGISTRATION): {'on': False} while it is
     # off. Checked first, so a hospital number the site's rule refuses is said
@@ -1242,18 +1267,30 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
             summary_lines.append(f"Allergies: {', '.join(data.get('allergies'))}")
         if data.get('comorbidities'):
             summary_lines.append(f"Comorbidities: {', '.join(data.get('comorbidities'))}")
-            
+        if clerk_entry:
+            # adt-17b: said in the room the treating team reads first. Never
+            # 'no known allergies': nobody has asked yet.
+            summary_lines = summary_lines[:3] + _clerk_admission_lines()
+
         initial_msg = "\n".join(summary_lines)
-        
+
         _post_system_line_on(db, channel_id=channel_id, content=initial_msg, now=now)
 
         # 6. Initialize Sage Room Memory
         sage_patient_summary = f"{data.get('name')}, {data.get('age', '?')}y {data.get('sex', '?')} admitted to {sage_ward} for {data.get('initial_diagnosis')}."
+        if clerk_entry:
+            sage_patient_summary = (
+                f"{data.get('name')}, {data.get('age', '?')}y {data.get('sex', '?')} admitted to "
+                f"{sage_ward} by the ward clerk. The presenting complaint, allergies and every "
+                "other clinical detail are not yet assessed: allergies are unknown, not none.")
         if data.get('comorbidities'):
             sage_patient_summary += f" PMH: {', '.join(data.get('comorbidities'))}."
             
         sage_discussion_summary = f"Patient admitted via {data.get('admission_source')}. {data.get('admitting_notes', '')}"
-        
+        if clerk_entry:
+            sage_discussion_summary = (f"Patient admitted via {data.get('admission_source')} by the "
+                                       "ward clerk. Admission assessment due.")
+
         # Initialize risk flags for Sage based on triage and infection/fall risks
         risk_flags = []
         if data.get('triage_severity') and int(data.get('triage_severity')) <= 2:
@@ -1289,16 +1326,30 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
         if adt_plan is not None:
             from services.adt.core import place_admission_on
 
+            if clerk_entry:
+                # adt-17b: the marker the bed board reads to flag 'Admission
+                # assessment due', on the admission movement itself.
+                adt_prepared["detail"][_CLERK_ADMISSION_KEY] = {
+                    "clinical_fields": "not_yet_assessed",
+                    "entered_by_role": user.get("role"),
+                }
             # Last, so the case room exists for a boarder line and every row
             # above commits with the movement and its fail-closed audit, or
             # none of them does.
             placed = place_admission_on(
                 db, admission_id=admission_id, actor=user, movement_type="admission",
-                reason="Patient admitted", prepared=adt_prepared,
+                reason=("Patient admitted by the ward clerk (registration only)"
+                        if clerk_entry else "Patient admitted"), prepared=adt_prepared,
                 boarder_acknowledged=adt_plan["boarder_acknowledged"],
                 moved_at=adt_plan["admitted_iso"], idempotency_key=adt_plan["key"],
                 request_meta=request_meta,
             )
+            if clerk_entry:
+                _audit_clerk_admission_on(db, user=user, patient_id=patient_id,
+                                          admission_id=admission_id,
+                                          movement_id=placed["movement"]["id"],
+                                          department=data.get("department"),
+                                          request_meta=request_meta)
 
     adt_answer = {}
     if placed is not None:
@@ -1347,7 +1398,135 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
                 "check_incomplete": door_facts["scan"]["check_incomplete"],
             } if door_facts["review_used"] else None),
         }} if door_facts is not None else {}),
+        # adt-17b: only on the ward clerk's admission.
+        **({"clerk_admission": True, "assessment_due": True,
+            "clinical_fields": _NOT_YET_ASSESSED} if clerk_entry else {}),
     }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  The ward clerk's admission (adt-17b, HIS wave 9, W9-A; ORB_ADT, default off)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Ruling ADT-S5 (a), applied as a build default (the full statement is in
+# services/adt/clerk.py): a ward clerk makes a REGISTRATION-LEVEL admission.
+# admit_patient(..., clerk_entry=True) runs the same one transaction as the
+# admission form, with the module on only, and:
+#   * overwrites every clinical field before anything is read from it
+#     (_clerk_admission_fields): the presenting complaint is 'Not yet
+#     assessed'; no diagnosis, triage, history, current medicine, observation,
+#     note, isolation precaution or code status is stored (code_status is
+#     NULL, which every reader prints as 'Not recorded'); NO allergy is
+#     charted and no allergy review is written, so the interlocks see what
+#     they see for any patient with nothing charted: unknown, never 'no known
+#     allergies';
+#   * marks the admission movement (detail 'clerk_admission'), which the bed
+#     board reads to flag 'Admission assessment due' until a doctor records
+#     the admission assessment (services/adt/clerk.record_admission_assessment);
+#   * says so in the case room and in Sage's room memory;
+#   * writes a fail-closed clinical_access 'clerk_admission_recorded' row in
+#     the same transaction.
+# The route (POST /api/admissions/clerk-admit) also refuses every clinical
+# field in the body (extra fields are 422), forces the clerk's own department
+# and an attending doctor of that department, and needs the hospital's own
+# number unless the site's registration issues it.
+
+_NOT_YET_ASSESSED = "Not yet assessed"
+_CLERK_ADMISSION_KEY = "clerk_admission"
+
+
+def _clerk_admission_fields() -> dict:
+    """The clinical fields of a ward clerk's admission: not yet assessed."""
+    return {
+        "chief_complaint": _NOT_YET_ASSESSED,
+        "initial_diagnosis": None,
+        "triage_severity": None,
+        "comorbidities": [],
+        "past_medical_history": None,
+        "past_surgical_history": None,
+        "allergies": [],
+        "current_medications": [],
+        "family_history": None,
+        "social_history": None,
+        "vitals": None,
+        "admitting_notes": None,
+        "nursing_notes": None,
+        "isolation_precautions": [],
+        "code_status": None,
+    }
+
+
+def _clerk_admission_lines() -> list[str]:
+    """The case room's admission lines for a ward clerk's admission."""
+    return [
+        f"Presenting complaint: {_NOT_YET_ASSESSED}",
+        f"Diagnosis: {_NOT_YET_ASSESSED}",
+        (f"Allergies: {_NOT_YET_ASSESSED}. Nobody has asked yet, so this is not 'no known "
+         "allergies'."),
+        "Admitted by the ward clerk (registration only). Admission assessment due: a doctor "
+        "records the allergies, the presenting complaint and the code status.",
+    ]
+
+
+def _audit_clerk_admission_on(db, *, user: dict, patient_id: str, admission_id: str,
+                              movement_id: str, department, request_meta) -> None:
+    """clinical_access 'clerk_admission_recorded', fail-closed, in the
+    admission's own transaction."""
+    from services.adt.core import audit_on
+
+    audit_on(
+        db, category="clinical_access", action="clerk_admission_recorded",
+        summary=(f"Admission {admission_id} entered by the ward clerk at registration level; "
+                 "clinical fields not yet assessed"),
+        actor=user, patient_id=patient_id, target_type="admission", target_id=admission_id,
+        request_meta=request_meta,
+        metadata={"movement_id": movement_id, "department": department,
+                  "clinical_fields": "not_yet_assessed", "allergies_recorded": False,
+                  "assessment_due": True})
+
+
+def clerk_admission_choices(user: dict) -> dict:
+    """What the ward clerk's admission form chooses from: the clerk's own
+    department (the only one it admits to), the attending doctors of that
+    department, and bed setup's wards and beds (the admission form's
+    'master' block). No patient data. Only with ORB_ADT on; the department
+    is None when the clerk's department has no clinical cover."""
+    from permissions import department_scope
+    from services.frontdesk_service import list_covering_departments
+
+    own = department_scope(user)
+    covering = list_covering_departments()
+    department = next((d for d in covering if own and d.casefold() == own.casefold()), None)
+    doctors = [d for d in attending_doctors()
+               if department is not None and d.get("department")
+               and d["department"].casefold() == department.casefold()]
+    import config
+
+    return {
+        "department": department,
+        "departments": [department] if department else [],
+        "default_department": department,
+        "doctors": doctors,
+        "master": _master_choices(user),
+        "clinical_fields": _NOT_YET_ASSESSED,
+        # True when this site's registration issues the hospital number
+        # (ORB_REGISTRATION with ORB_UHID_SOURCE 'orb'): the form then asks for
+        # none, and a typed one is refused. Otherwise the clerk types it.
+        "hospital_number_issued": bool(config.feature_enabled("registration"))
+        and config.UHID_SOURCE == "orb",
+    }
+
+
+def clerk_attending(doctor_id, department: str) -> str:
+    """The attending id for a ward clerk's admission: an active doctor on the
+    list who works in the admitting department. AdmissionInputError otherwise."""
+    wanted = require_listed_attending(doctor_id)
+    doctor = next((d for d in attending_doctors() if d["id"] == wanted), None)
+    if (doctor is None or not doctor.get("department")
+            or doctor["department"].casefold() != (department or "").casefold()):
+        raise AdmissionInputError(
+            f"Choose an attending doctor who works in {department}.")
+    return wanted
 
 
 # ═════════════════════════════════════════════════════════════════════════════

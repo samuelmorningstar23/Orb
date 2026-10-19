@@ -515,7 +515,7 @@ holding an older printout of a screen file still needs the translation.
 |---|---|---|---|
 | `06-vigil-board.md` | `src/pages/ClinicianShell.tsx::navItems` | **`TABS`** | `ClinicianShell.tsx:25`, `const TABS: { id: Tab; label: string; pillar: string; icon: ReactNode }[] = [` |
 | `12-orders.md` | `src/pages/ClinicianShell.tsx::NAV_ITEMS` | **`TABS`** | same line; there is no `NAV_ITEMS` anywhere in the file |
-| `12-orders.md` | `src/pages/ClinicianShell.tsx::accessibleTabsFor` | **`getAccessibleTabs`** | `ClinicianShell.tsx:182`, `function getAccessibleTabs(role, department): Tab[]`, called at `:308` |
+| `12-orders.md` | `src/pages/ClinicianShell.tsx::accessibleTabsFor` | **`getAccessibleTabs`** | `ClinicianShell.tsx:209`, `function getAccessibleTabs(role, department): Tab[]`, called at `:308` |
 | `15-…-bridge.md` | `server/ws/scribe_stream.py::start_session` | **`handle_start_session`** | `scribe_stream.py:168-169`, `@sio.on("scribe:start_session")` then `async def handle_start_session(sid, data=None)`. The screen file named the socket **event**, not the handler |
 | `15-…-bridge.md` | `server/ws/scribe_stream.py::audio_chunk` | **`handle_audio_chunk`** | `scribe_stream.py:195-196`, event `scribe:audio_chunk` |
 | `15-…-bridge.md` | `server/ws/scribe_stream.py::end_utterance` | **`handle_end_utterance`** | `scribe_stream.py:209-210`, event `scribe:end_utterance` |
@@ -529,7 +529,7 @@ two screen files described the same function differently, they were describing w
 **Confirmed dead-on-arrival citations** (each checked: defined exactly once, called
 nowhere), these are correctly documented as dead, not mis-cited:
 
-- `src/pages/panels/VigilPanel.tsx::VitalCard`, defined at `VigilPanel.tsx:2083`, zero usages in `src/`.
+- `src/pages/panels/VigilPanel.tsx::VitalCard`, defined at `VigilPanel.tsx:2091`, zero usages in `src/`.
 - `server/services/surgery_service.py::get_weekly_schedule`, defined at `:10`, zero callers in `server/`. It is the only producer of `is_today` in the tree, which is why the Surgical Suite's Today badge never renders.
 - `src/api/ipass.ts::getRecentHandoffs`, defined at `:114`, zero callers in `src/`. Its route (`server/routes/ipass_routes.py::recent_handoffs`, `:75-83`) is live and unreached.
 

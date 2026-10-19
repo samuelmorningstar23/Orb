@@ -1080,6 +1080,7 @@ _WARD_PACK_CSS = """
                   border-bottom: 1px solid #000; padding-bottom: 3px; margin-bottom: 5px; }
   .wp-note-body { white-space: pre-wrap; }
   .wp-unavailable { border: 4px double #000; padding: 14px; font-weight: 700; }
+  .wp-away { border: 4px double #000; padding: 8px 12px; margin: 0 0 10px; }
   .wp-meta { font-size: 11px; margin-top: 6px; }
   .wp-missing { border: 4px double #000; }
   .wp-footer { border-top: 1px solid #000; margin-top: 16px; padding-top: 6px;
@@ -1090,6 +1091,33 @@ _WARD_PACK_CSS = """
 # medications.source values written by AI extraction (Scribe and the agentic
 # lane). Same set the downtime screen and the I-PASS sheet flag.
 _AI_MED_SOURCES = ("llm_extracted", "agentic")
+
+
+def _away_words(away: dict) -> str:
+    """'on leave' or 'absconded' (adt-11): the one helper's words."""
+    from services.adt.clinical_pause import AWAY_WORDS
+    return AWAY_WORDS.get(away.get("presence_status") or "", "off the ward")
+
+
+def _away_html(item: dict) -> str:
+    """The NOT ON WARD box for a patient recorded on leave or absconded, or ''
+    for a patient on the ward and for every patient while ORB_ADT is off (the
+    item then has no 'away' key). The time is the ward's clock (_when). The
+    page is kept: a patient missing from a downtime pack is the failure this
+    pack exists to prevent, and the bed is still theirs."""
+    away = item.get("away")
+    if not away:
+        return ""
+    from services.adt.clinical_pause import pause_reason
+    words = _away_words(away)
+    since = _when(away.get("presence_since"))
+    when = f" since {_e(since)}" if since else ""
+    reason = pause_reason(away, medication_round=drug_chart_enabled()) or ""
+    return (
+        '<div class="wp-away">'
+        f"<b>NOT ON WARD: {_e(words)}{when}.</b> The bed is held for them. "
+        f"{_e(reason)}</div>"
+    )
 
 
 def _med_verification_html(m: dict) -> str:
@@ -1227,11 +1255,13 @@ def _render_patient_page(item: dict, index: int, total: int,
     # Marks whose page this is, so a pack served from disk can be checked for
     # admitted patients it does not cover (_pack_patient_marker).
     section = f'<section class="wp-page">{_pack_patient_marker(item.get("id"))}'
+    away_html = _away_html(item)
 
     if env is None or not env.get("snapshot"):
         return (
             f"{section}"
             f"<h2>{name} · MRN {_e(item.get('mrn'))} · Bed {_e(item.get('bed'))}</h2>"
+            f"{away_html}"
             '<p class="wp-unavailable">SNAPSHOT UNAVAILABLE for this patient. '
             "Use the paper chart and the bedside record. This pack carries no "
             "clinical data for them.</p>"
@@ -1323,6 +1353,7 @@ def _render_patient_page(item: dict, index: int, total: int,
         f"<span><b>Attending</b>{_e(demo.get('attending_doctor_name'))}</span>"
         f"<span><b>Admitted</b>{_e(demo.get('admission_date'))}</span>"
         "</div></div>"
+        f"{away_html}"
         f'<div class="wp-allergies"><h3>Allergies</h3>{allergy_html}</div>'
         '<div class="wp-status-line">'
         f"<b>Code status:</b> {_e(_code_status_text(item.get('code_status')))}"
@@ -1412,8 +1443,11 @@ def _render_ward_pack(ward: str, items: list[dict], generated_at: str,
             band += _SCALE_2_BAND
         if news2.get("raw_news2") is not None:
             band += _band_qualifiers_html(news2)
+        # adt-11: off the ward, said beside the name (only while ORB_ADT is on).
+        away = item.get("away")
+        away_note = f" <b>(NOT ON WARD: {_e(_away_words(away))})</b>" if away else ""
         index_rows += (
-            f"<tr><td>{_e(item.get('bed'))}</td><td>{_e(item.get('name'))}</td>"
+            f"<tr><td>{_e(item.get('bed'))}</td><td>{_e(item.get('name'))}{away_note}</td>"
             f"<td>{_e(item.get('mrn'))}</td>"
             + (f"<td>{band}</td>" if scoring else "")
             + 
@@ -1549,6 +1583,15 @@ def _admitted_for_packs(ward: str | None = None) -> tuple[list[dict], dict]:
     sql += " ORDER BY p.ward, p.bed, p.id"
     with db_session() as db:
         rows = [_row_to_dict(r) for r in db.execute(sql, params).fetchall()]
+        # adt-11 (ruling ADT-S4 (a)): a patient recorded on leave or absconded
+        # keeps their page and is marked NOT ON WARD on it and in the census.
+        # Only while ORB_ADT is on: with it off no row gains the key and the
+        # pack is exactly as before.
+        from services.adt.clinical_pause import away_by_patient
+        away = away_by_patient([r["id"] for r in rows], db=db)
+        if away is not None:
+            for r in rows:
+                r["away"] = away.get(r["id"])
         escalations = {
             r["patient_id"]: _row_to_dict(r)
             for r in db.execute(

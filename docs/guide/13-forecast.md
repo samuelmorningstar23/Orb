@@ -32,7 +32,7 @@ graph LR
 - **Auth/RBAC** (see guide 03-auth-rbac): every endpoint is gated on the `forecast.read` permission via FastAPI dependency injection.
 - **Database** (see guide 04-database-schema): reads `patients`, `vitals`, `risk_scores`, `medications`, `admission_history`, `discharge_summaries`; reads/writes `forecast_predictions`.
 - **Pulse** (the seasonal calendar, guide 18): since 6 October 2026 (ruling R030 in `docs/RULINGS_NEEDED_2026-10.md`) Forecast applies no weather or seasonal adjustment. It shows the current season as one line of context, for example "Season: South-west monsoon (peak), Dengue season", and no number depends on it. Before that, Forecast read Pulse's in-memory caches of internet weather, AQI and flu data and multiplied admissions by hand-picked factors.
-- **Bot/simulation loop** (covered with the realtime/simulation guides): the vitals bot calls `refresh_all_predictions()` roughly every 10 minutes (`server/services/bot_service.py:327-330`).
+- **Bot/simulation loop** (covered with the realtime/simulation guides): the vitals bot calls `refresh_all_predictions()` roughly every 10 minutes (`server/services/bot_service.py:338-341`).
 - **Command Center and Capacity Simulator** (their own guides): both import Forecast's ward-capacity constants and call `predict_hospital_flow()` so the whole platform reports one consistent census (`server/services/command_center_service.py:31-35`, `server/services/capacity_sim_service.py:41`).
 - **Model governance**: the panel's `ProvenanceChip` displays the `forecast_lstm` registry entry ("synthetic-v1" or "untrained", never "validated") from `server/services/model_governance_service.py:64-74`.
 
@@ -52,9 +52,9 @@ graph LR
 
 ### Flow 1: panel load (the main request path)
 
-1. A clinician with the `forecast` tab (doctors, nurses, admins, `src/shellConfig.tsx:828-884`) opens Forecast; `ClinicianShell` lazy-loads the panel (`src/pages/ClinicianShell.tsx:128`) and mounts it inside an error boundary (`src/pages/ClinicianShell.tsx:562`).
+1. A clinician with the `forecast` tab (doctors, nurses, admins, `src/shellConfig.tsx:836-892`) opens Forecast; `ClinicianShell` lazy-loads the panel (`src/pages/ClinicianShell.tsx:129`) and mounts it inside an error boundary (`src/pages/ClinicianShell.tsx:592`).
 2. On mount, `fetchAll` fires four API calls in parallel with `Promise.all` (`src/pages/panels/ForecastPanel.tsx:142-159`): `/api/forecast/hospital`, `/discharge-board`, `/capacity`, `/admission-patterns`. Each request carries the JWT (JSON Web Token, the signed credential issued at login, see guide 03-auth-rbac) read from `localStorage` as a `Bearer` header (`src/pages/panels/ForecastPanel.tsx:24-32`).
-3. Each route handler's `Depends(require_permission("forecast.read"))` verifies the token and the role's permission set before the handler body runs (`server/routes/forecast_routes.py:29`, `server/permissions.py:377`). This is FastAPI **dependency injection**: instead of the handler fetching the user itself, it declares "I need a user who passed this check" and the framework supplies it (or returns 403 first).
+3. Each route handler's `Depends(require_permission("forecast.read"))` verifies the token and the role's permission set before the handler body runs (`server/routes/forecast_routes.py:29`, `server/permissions.py:386`). This is FastAPI **dependency injection**: instead of the handler fetching the user itself, it declares "I need a user who passed this check" and the framework supplies it (or returns 403 first).
 4. The handlers call the corresponding service functions. `/hospital` hits an in-process cache with a 1-hour TTL (`server/services/forecast_service.py:37`, `390-391`); on a miss, `predict_hospital_flow()` recomputes the full 7-day projection.
 5. The panel stores the four JSON payloads in React state (state variables that trigger re-render when set, see guide 01-app-shell for React hooks) and renders whichever of the four sections is active. A `setInterval` re-fetches every 5 minutes (`src/pages/panels/ForecastPanel.tsx:163`).
 
@@ -101,7 +101,7 @@ For each of the next `days_ahead` days (`server/services/forecast_service.py:625
 
 ### Flow 4: background refresh
 
-The vitals simulation bot runs every 5 seconds (`server/config.py:342`, `server/main.py:197-204`); every 120th cycle (~10 minutes) it calls `refresh_all_predictions()` (`server/services/bot_service.py:327-330`), which re-predicts every admitted patient and prunes `forecast_predictions` to the latest 5 rows per patient (`server/services/forecast_service.py:908-940`). This keeps `_get_cached_or_predict()` fast for the aggregate endpoints.
+The vitals simulation bot runs every 5 seconds (`server/config.py:342`, `server/main.py:197-204`); every 120th cycle (~10 minutes) it calls `refresh_all_predictions()` (`server/services/bot_service.py:410-413`), which re-predicts every admitted patient and prunes `forecast_predictions` to the latest 5 rows per patient (`server/services/forecast_service.py:908-940`). This keeps `_get_cached_or_predict()` fast for the aggregate endpoints.
 
 ### Flow 5: training (overview)
 
@@ -313,8 +313,8 @@ Both train only three of the four heads (LoS, discharge, acuity); neither suppli
 **Does:** Recomputes predictions for every admitted patient and prunes the cache table to 5 rows per patient.
 **How it works:** loops `predict_patient_los` over admitted patients, logging per-patient failures without stopping (`server/services/forecast_service.py:914-925`); prunes with a `ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY created_at DESC)` window function keeping `rn <= 5` (`server/services/forecast_service.py:928-937`); the outer try/except means a refresh failure can never crash the bot loop.
 **Why it exists:** Keeps `_get_cached_or_predict` warm so the aggregate endpoints answer fast, and stops the cache table from growing without bound.
-**Talks to:** called by the vitals bot every 120th 5-second cycle ≈ every 10 minutes (`server/services/bot_service.py:327-330`).
-**Change guide:** To change refresh cadence, edit the `% 120` cycle check in `server/services/bot_service.py:327` (each unit = `VITALS_INTERVAL_SECONDS` = 5 s, `server/config.py:342`); footgun: the module docstring's "refreshed by bot every 60s" (`server/services/forecast_service.py:10`) is already stale, update it too.
+**Talks to:** called by the vitals bot every 120th 5-second cycle ≈ every 10 minutes (`server/services/bot_service.py:338-341`).
+**Change guide:** To change refresh cadence, edit the `% 120` cycle check in `server/services/bot_service.py:410` (each unit = `VITALS_INTERVAL_SECONDS` = 5 s, `server/config.py:342`); footgun: the module docstring's "refreshed by bot every 60s" (`server/services/forecast_service.py:10`) is already stale, update it too.
 **Gotchas:** the window-function prune requires SQLite ≥ 3.25.
 
 ### _normalize_ward: `server/services/forecast_service.py:1012`
@@ -347,7 +347,7 @@ Both train only three of the four heads (LoS, discharge, acuity); neither suppli
 
 All six handlers require the `forecast.read` permission (see guide 03-auth-rbac, RBAC = role-based access control, where permissions attach to roles like doctor/nurse/admin, `server/permissions.py:105-165`), and four of the six are still the original thin shape: `Depends(require_permission("forecast.read"))`, a one-line delegation to the service, and a try/except that turns any exception into HTTP 500 with the error text. **Two are no longer thin, and the difference is the point:**
 
-- `patient_forecast` guards with `require_patient_access("forecast.read", audit_action="patient_forecast_viewed")` (`server/routes/forecast_routes.py:48-50`), which adds a ward-scope check on the path's `patient_id` and writes a `phi_access` audit row. Out-of-scope patients get **404, not 403**, a 403 would confirm the patient exists (`server/permissions.py:454-456`).
+- `patient_forecast` guards with `require_patient_access("forecast.read", audit_action="patient_forecast_viewed")` (`server/routes/forecast_routes.py:48-50`), which adds a ward-scope check on the path's `patient_id` and writes a `phi_access` audit row. Out-of-scope patients get **404, not 403**, a 403 would confirm the patient exists (`server/permissions.py:463-465`).
 - `discharge_board` filters the service's output down to the caller's own department and logs a PHI read (`server/routes/forecast_routes.py:98-118`).
 
 The router is created with `prefix="/api/forecast"` (`server/routes/forecast_routes.py:30`) and registered in `server/main.py:689`.
@@ -361,7 +361,7 @@ The router is created with `prefix="/api/forecast"` (`server/routes/forecast_rou
 ### patient_forecast: `server/routes/forecast_routes.py:46`
 **Signature:** `GET /api/forecast/patient/{patient_id} → per-patient prediction JSON`
 **Does:** Returns `predict_patient_los(patient_id)` verbatim, behind `require_patient_access` (`server/routes/forecast_routes.py:48-50`) rather than the plain permission guard the other five use, so the patient must be on the caller's ward, and a `phi_access` row is written on every successful read.
-**Gotchas:** for a caller with **no** department on record (`department_scope` returns `None`, `server/permissions.py:193`) the scope check is skipped entirely and an unknown patient still returns 200, the heuristic's "unknown patient" branch produces a generic 3-day prediction (`server/services/forecast_service.py:496-503`). A *scoped* caller asking for an unknown id gets 404, the same answer they get for a real patient on another ward; that ambiguity is deliberate (`server/permissions.py:454-456`).
+**Gotchas:** for a caller with **no** department on record (`department_scope` returns `None`, `server/permissions.py:193`) the scope check is skipped entirely and an unknown patient still returns 200, the heuristic's "unknown patient" branch produces a generic 3-day prediction (`server/services/forecast_service.py:496-503`). A *scoped* caller asking for an unknown id gets 404, the same answer they get for a real patient on another ward; that ambiguity is deliberate (`server/permissions.py:463-465`).
 
 ### capacity_forecast: `server/routes/forecast_routes.py:61`
 **Signature:** `GET /api/forecast/capacity → CapacityData JSON`
@@ -504,7 +504,7 @@ The router is created with `prefix="/api/forecast"` (`server/routes/forecast_rou
 12. **Footer** (`663-668`): a permanent disclaimer, figures are rule-based planning projections, not validated neural predictions, mirroring the backend's fail-closed stance in UI copy.
 **Why it exists:** Turns four JSON payloads into an operations dashboard; the sections match the four operational questions (how full? which ward? who leaves? what is normal?).
 **Data in/out:** consumes the four endpoint payloads typed above; renders only.
-**Talks to:** mounted by `ClinicianShell` (`src/pages/ClinicianShell.tsx:562`) for roles whose tab list includes `forecast` (`src/shellConfig.tsx:828-884`); `ProvenanceChip` fetches `/admin/models/provenance` once, process-wide (`src/components/ProvenanceChip.tsx:32-49`).
+**Talks to:** mounted by `ClinicianShell` (`src/pages/ClinicianShell.tsx:592`) for roles whose tab list includes `forecast` (`src/shellConfig.tsx:836-892`); `ProvenanceChip` fetches `/admin/models/provenance` once, process-wide (`src/components/ProvenanceChip.tsx:32-49`).
 **Change guide:** the season line (6 October 2026) is context only. Do not turn it into a number on the chart or the table.
 **Gotchas:** (1) The chart's x mapping divides by `forecasts.length - 1` (`170,352,372,386`), a single-day forecast (possible if the cache was populated with `days_ahead=1`) divides by zero, producing `NaN` coordinates and a blank chart. (2) The panel styles live partly in `src/index.css` (a comment there notes ForecastPanel has no dedicated stylesheet, `src/index.css:250`). (3) Several colors are hardcoded hex (`#eab308`, `#10b981`) rather than theme tokens, so theme changes will not reach them.
 
@@ -544,14 +544,14 @@ The router is created with `prefix="/api/forecast"` (`server/routes/forecast_rou
 **Python exports other subsystems import:**
 - `WARD_CAPACITY`, `TOTAL_CAPACITY`, `_normalize_ward` → `command_center_service` (`server/services/command_center_service.py:31-35`) and tests (`server/tests/test_command_center.py:13`).
 - `predict_hospital_flow()` → `command_center_service._forecast()` (`server/services/command_center_service.py:218`) and `capacity_sim_service` (`server/services/capacity_sim_service.py:108`); `DOW_MULTIPLIERS` and the heuristic's ward base-LoS are also cited as the simulator's assumption sources (`server/services/capacity_sim_service.py:17,50`).
-- `refresh_all_predictions()` → vitals bot (`server/services/bot_service.py:329-330`).
+- `refresh_all_predictions()` → vitals bot (`server/services/bot_service.py:340-341`).
 - `OrbForecastLSTM`, `load_model`, `INPUT_DIM`, `HIDDEN_DIM`, `NUM_LAYERS` → service + both trainers + the CoreML converter (`server/scripts/convert_to_coreml.py:102`).
 
 **DB tables:** reads `patients`, `vitals`, `risk_scores`, `medications`, `admission_history`, `discharge_summaries`; reads/writes `forecast_predictions` (`server/database.py:261-270`); `train_forecast.py` writes `admission_history` (`server/database.py:285-298`). `hospital_forecasts` (`server/database.py:273-282`) is defined but unused (see below).
 
 **Model artifacts:** default checkpoint path `server/models/forecast_checkpoint.pt` (`server/models/forecast_lstm.py:48`); versioned synth checkpoint `server/models/checkpoints/forecast_lstm_synth_v1.pt`; both paths are what the governance registry probes to decide `checkpoint_present` (`server/services/model_governance_service.py:35-38`).
 
-**Frontend consumers:** `ForecastPanel` (tab `forecast`, `src/pages/ClinicianShell.tsx:560-562`) and `AppointmentsPanel` (`src/pages/panels/AppointmentsPanel.tsx:62`).
+**Frontend consumers:** `ForecastPanel` (tab `forecast`, `src/pages/ClinicianShell.tsx:590-592`) and `AppointmentsPanel` (`src/pages/panels/AppointmentsPanel.tsx:62`).
 
 ## Rebuild notes
 
@@ -577,7 +577,7 @@ The router is created with `prefix="/api/forecast"` (`server/routes/forecast_rou
 
 1. **The panel does not use recharts.** Despite `recharts` being a project dependency (`package.json:31`) used by `src/pages/panels/VigilPanel.tsx:19` and `src/components/capacity/CapacitySimulator.tsx:15`, `ForecastPanel.tsx` draws its census chart entirely with hand-written inline SVG (`src/pages/panels/ForecastPanel.tsx:302-405`). Any documentation describing "the recharts visualization in ForecastPanel" is inaccurate as of this reading.
 2. **`predict_hospital_flow`'s cache ignores `days_ahead`** (`server/services/forecast_service.py:566-570`). The Command Center calls it with `days_ahead=1` (`server/services/command_center_service.py:218`) and the panel/simulator with 7. Whoever populates the 1-hour cache first wins: if the Command Center board is opened first, `/api/forecast/hospital` returns a **1-day** forecast for up to an hour, `daily_forecasts` has one entry, `beds_available_in_48h` becomes 0 (the `len > 1` guard at `server/services/forecast_service.py:696`), and the panel's chart divides by `forecasts.length - 1 = 0`, yielding NaN coordinates (`src/pages/panels/ForecastPanel.tsx:177`). The `days` query parameter is likewise ineffective within the TTL.
-3. **Stale docstring on refresh cadence.** `server/services/forecast_service.py:10` says predictions are "refreshed by bot every 60s"; the actual cadence is every 120 cycles × 5 s ≈ 10 minutes (`server/services/bot_service.py:327-330`, `server/config.py:342`).
+3. **Stale docstring on refresh cadence.** `server/services/forecast_service.py:10` says predictions are "refreshed by bot every 60s"; the actual cadence is every 120 cycles × 5 s ≈ 10 minutes (`server/services/bot_service.py:338-341`, `server/config.py:342`).
 4. **Chart capacity line is on a different y-scale than the occupancy line.** `capacityLine` normalizes by `capacity + 5` (`src/pages/panels/ForecastPanel.tsx:186`) while occupancy points normalize by `max(capacity + 2, …)` (`167-171`). With capacity 32, the dashed "capacity" line sits at 32/37 of the plot while an occupancy of exactly 32 plots at 32/34, visually *above* the capacity line. The chart can therefore show the census "breaching capacity" before it actually does.
 5. **Two inconsistent ward normalizers.** `predict_hospital_flow` inlines its own mapping where unrecognized wards become `"GENERAL"` and match no capacity bucket (they vanish from `ward_breakdown`) (`server/services/forecast_service.py:582-593`), while `_normalize_ward` buckets unknowns into `"W1"` (`server/services/forecast_service.py:947-958`). The same patient can count toward W1 in `/capacity` but toward no ward in `/hospital`.
 6. **`get_admission_patterns` mislabels its window.** The docstring promises "7×24 heatmap data" that is never produced (`server/services/forecast_service.py:816-817`), the query reads *all* history (no 30-day filter, `server/services/forecast_service.py:820-825`), yet the result names the total `total_30d` and computes `avg_daily = len(history)/30` (`server/services/forecast_service.py:895-897`), wrong whenever the table spans more or less than 30 days.

@@ -71,7 +71,7 @@ from typing import Any, Optional, Sequence
 
 import config
 from database import db_session
-from services import billing_masters
+from services import billing_masters, facility_identity
 from services.audit_service import log_audit_event
 from services.hospital_time import hospital_now, hospital_timezone, hospital_today
 from services.money import (
@@ -1677,15 +1677,22 @@ def issue_invoice(invoice_id: int, *, actor: Optional[str] = None) -> dict:
             return get_invoice(invoice_id)
         _assert_transition(row["status"], "issued", invoice_id)
         patient_id = row["patient_id"]
+        admission_id = row["admission_id"]
 
     allocation = billing_masters.next_document_number("INV")
 
     with db_session() as db:
+        # The supplier block is fixed in the SAME statement that assigns the
+        # number (multisite-2, migration 72): a reprint after the hospital's
+        # details change still shows what the invoice was issued with.
+        snapshot = facility_identity.supplier_snapshot(
+            db, patient_id=patient_id, admission_id=admission_id)
         updated = db.execute(
             "UPDATE invoices SET status = 'issued', invoice_number = ?, "
-            "issued_at = ?, issued_by = ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE id = ? AND status = 'draft'",
-            (allocation["number"], _now_iso(), actor, int(invoice_id)),
+            "issued_at = ?, issued_by = ?, updated_at = CURRENT_TIMESTAMP, "
+            + ", ".join(f"{c} = ?" for c in facility_identity.SNAPSHOT_COLUMNS)
+            + " WHERE id = ? AND status = 'draft'",
+            (allocation["number"], _now_iso(), actor, *snapshot, int(invoice_id)),
         ).rowcount
         if updated != 1:
             logger.error(
@@ -1937,6 +1944,10 @@ def create_credit_note(
                     "burned_number": allocation["number"],
                 },
             )
+        # A credit note is numbered here, so its supplier block is fixed here
+        # too (multisite-2, migration 72), from the identity on record now.
+        snapshot = facility_identity.supplier_snapshot(
+            db, patient_id=source["patient_id"], admission_id=source["admission_id"])
         cur = db.execute(
             """INSERT INTO invoices
                  (invoice_number, patient_id, admission_id, encounter_type, payer_id,
@@ -1945,8 +1956,9 @@ def create_credit_note(
                   sgst_paise, igst_paise, tax_paise, total_paise,
                   rounding_adjustment_paise, payable_paise, amount_paid_paise,
                   balance_paise, supersedes_invoice_id, issued_at, issued_by,
-                  notes, created_by)
-               VALUES (?,?,?,?,?,?,'credit_note','issued',?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?)""",
+                  notes, created_by, """ + facility_identity.SNAPSHOT_COLUMNS_SQL + """)
+               VALUES (?,?,?,?,?,?,'credit_note','issued',?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,"""
+            + facility_identity.SNAPSHOT_PLACEHOLDERS + ")",
             (
                 allocation["number"], source["patient_id"], source["admission_id"],
                 source["encounter_type"], source["payer_id"], source["tariff_plan_id"],
@@ -1958,6 +1970,7 @@ def create_credit_note(
                 cn_payable, int(invoice_id), _now_iso(), actor,
                 f"Credit note against invoice {source['invoice_number'] or invoice_id}: {cleaned}",
                 actor,
+                *snapshot,
             ),
         )
         note_id = int(cur.lastrowid)
@@ -2077,17 +2090,6 @@ def refresh_invoice_payment_state(invoice_id: int) -> dict:
     return _decorate_invoice(_row(fresh))
 
 
-def _site_name() -> Optional[str]:
-    """The configured hospital name, or None. Site config is optional and a
-    missing one must not break a bill."""
-    try:
-        from services.site_config_service import current_site_config
-        return current_site_config().site_name or None
-    except Exception:  # pragma: no cover - defensive
-        logger.debug("site config unavailable for an invoice", exc_info=True)
-        return None
-
-
 def get_invoice(invoice_id: int) -> dict:
     """One invoice, its lines, its patient and what has been paid against it."""
     header = refresh_invoice_payment_state(invoice_id)
@@ -2139,7 +2141,11 @@ def get_invoice(invoice_id: int) -> dict:
     header["payments"] = payments
     # The hospital's name heads the bill on screen as well as in print. None
     # when the site has not configured one: the screen says so, never invents.
-    header["supplier_name"] = _site_name()
+    # A numbered bill names the supplier it was issued by (its snapshot, or
+    # the site name for one issued before migration 72); a draft names the
+    # facility's identity as it stands (multisite-2).
+    supplier = facility_identity.supplier_block(header, number_field="invoice_number")
+    header["supplier_name"] = supplier["name"] if supplier["name_is_configured"] else None
     header["credit_notes"] = credit_notes
     header["allowed_transitions"] = sorted(_LEGAL_TRANSITIONS.get(header["status"], frozenset()))
     return header
@@ -2240,20 +2246,21 @@ def invoice_print_view(invoice_id: int) -> dict:
     """Everything a printed / exported invoice needs, and nothing it must invent.
 
     THE SUPPLIER BLOCK IS HONEST ABOUT WHAT IT DOES NOT HAVE. A GST tax invoice
-    must carry the supplier's legal name, address and GSTIN. Orb's site config
-    holds a hospital NAME and nothing else, so this view returns the name it has
-    and marks address/GSTIN as NOT CONFIGURED. A printed document that shows a
-    blank where a GSTIN belongs is a document somebody notices; one that shows a
+    must carry the supplier's legal name, address and GSTIN. Whatever of these
+    is not configured prints as NOT CONFIGURED, and the notice says the document
+    is a bill, not a GST tax invoice. A printed document that shows a blank
+    where a GSTIN belongs is a document somebody notices; one that shows a
     plausible placeholder is one they file.
+
+    AN ISSUED INVOICE NEVER CHANGES (multisite-2). The block comes from
+    facility_identity.supplier_block: a numbered invoice prints the snapshot
+    taken when its number was assigned (migration 72), one numbered before
+    that migration prints the old block (site name, address and GSTIN not
+    configured) exactly as it always did, and only a draft prints the
+    facility's identity as it stands now.
     """
     invoice = get_invoice(invoice_id)
-
-    site_name = None
-    try:  # site config is optional; a missing one must not break a bill
-        from services.site_config_service import current_site_config
-        site_name = current_site_config().site_name
-    except Exception:  # pragma: no cover - defensive
-        logger.debug("site config unavailable for invoice print view", exc_info=True)
+    supplier = facility_identity.supplier_block(invoice, number_field="invoice_number")
 
     with db_session() as db:
         series = db.execute(
@@ -2266,18 +2273,12 @@ def invoice_print_view(invoice_id: int) -> dict:
 
     return {
         "invoice": invoice,
-        "supplier": {
-            "name": site_name or "Not configured",
-            "name_is_configured": bool(site_name),
-            "address": "Not configured",
-            "gstin": "Not configured",
-            # Said in words on the document itself, not buried in a tooltip: a
-            # tax invoice without a GSTIN is not a tax invoice.
-            "notice": (
-                "This hospital's GSTIN and registered address are not configured in "
-                "Orb, so this document is a BILL, not a GST tax invoice."
-            ),
-        },
+        # name, name_is_configured, address, gstin, state_code, facility_id,
+        # source ('snapshot', 'legacy' or 'live'), snapshot_at, and notice:
+        # said in words on the document itself, not buried in a tooltip, while
+        # the GSTIN or address is missing (a tax invoice without a GSTIN is not
+        # a tax invoice); None once both are on the document.
+        "supplier": supplier,
         "number_series_configured": series_configured,
         "number_notice": (
             None if series_configured else

@@ -1,0 +1,306 @@
+/* MedOrderList.css: the chart's medication orders and one order's history
+ * (medorders-10), Orb "Quiet Clinical" (flat).
+ *
+ *  - No `opacity` for any state; a disabled control swaps to the flat
+ *    --btn-disabled-* pair, quiet text is a quieter token.
+ *  - A status is always a word; the chip adds a status-coloured border and
+ *    --status-x-text for its small label, never a tinted fill behind it.
+ *  - Tap targets are at least 24px, 44px under `pointer: coarse`.
+ *  - Nothing scrolls the page sideways: rows and buttons wrap.
+ */
+
+.medorder-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.medorder-list__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.medorder-list__heading {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.medorder-list__items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.medorder-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-glass);
+  min-width: 0;
+}
+
+.medorder-row__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+
+.medorder-row__drug {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.medorder-row__name {
+  font-weight: 700;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.medorder-row__regimen,
+.medorder-row__line {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.medorder-row__line--warn {
+  color: var(--status-warn-text);
+}
+
+.medorder-row__line--danger {
+  color: var(--status-danger-text);
+}
+
+.medorder-chip {
+  display: inline-block;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-glass);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.medorder-chip--ok { border-color: var(--status-ok); color: var(--status-ok-text); }
+.medorder-chip--warn { border-color: var(--status-warn); color: var(--status-warn-text); }
+.medorder-chip--danger { border-color: var(--status-danger); color: var(--status-danger-text); }
+
+/* A dose given across a charted allergy (AcrossAllergyMark): on the order
+   row and in its history. Danger text, the chip's danger border, no fill. */
+.medorder-allergy-mark {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--status-danger-text);
+  overflow-wrap: anywhere;
+}
+
+/* In a history step (a wrapping row) the mark takes its own line. */
+.medorder-timeline__step .medorder-allergy-mark {
+  flex: 1 1 100%;
+}
+
+.medorder-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.medorder-btn {
+  min-height: 28px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.medorder-btn:hover:not(:disabled) {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-focus);
+}
+
+.medorder-btn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.medorder-btn--primary {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+  color: var(--btn-primary-text);
+}
+
+.medorder-btn--primary:hover:not(:disabled) {
+  background: var(--btn-gradient-hover);
+  border-color: var(--btn-gradient-hover);
+}
+
+.medorder-btn--quiet {
+  background: transparent;
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.medorder-btn--quiet:hover:not(:disabled) {
+  background: var(--bg-glass);
+  color: var(--text-primary);
+}
+
+.medorder-btn:disabled {
+  background: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-border);
+  color: var(--btn-disabled-text);
+  cursor: not-allowed;
+}
+
+.medorder-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  min-width: 0;
+}
+
+.medorder-form label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.medorder-form textarea {
+  width: 100%;
+  max-width: 100%;
+  min-height: 56px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  resize: vertical;
+}
+
+.medorder-form textarea:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.medorder-note {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.medorder-error {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--status-danger-text);
+}
+
+.medorder-ok {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--status-ok-text);
+}
+
+.medorder-failed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--status-danger);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+/* ── One order's history ──────────────────────────────────────────────── */
+
+.medorder-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+  min-width: 0;
+}
+
+.medorder-timeline__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0 0 0 var(--space-4);
+}
+
+.medorder-timeline__step {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.medorder-timeline__what {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.medorder-timeline__why {
+  flex: 1 1 100%;
+  color: var(--text-secondary);
+}
+
+.medorder-timeline__note {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.medorder-timeline__failed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.medorder-timeline__failed p {
+  margin: 0;
+}
+
+@media (pointer: coarse) {
+  .medorder-btn { min-height: var(--tap-min); }
+}

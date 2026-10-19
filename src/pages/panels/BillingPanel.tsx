@@ -404,7 +404,10 @@ function InvoiceDetail({ invoiceId, onClose, onChanged }: {
       {print && (
         <div className="bill-print" data-testid="print-view">
           <h3 className="bill-subhead bill-print__subhead">Printable document</h3>
-          <p className="bill-notice bill-notice--warn">{print.supplier.notice}</p>
+          {/* Null once the bill carries the hospital's GSTIN and address. */}
+          {print.supplier.notice && (
+            <p className="bill-notice bill-notice--warn">{print.supplier.notice}</p>
+          )}
           {print.number_notice && (
             <p className="bill-notice bill-notice--warn">{print.number_notice}</p>
           )}

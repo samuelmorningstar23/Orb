@@ -79,11 +79,13 @@ def _audit(
     ack_reason: Optional[str] = None,
     exclude_med_id: Optional[int] = None,
     prescriber: Optional[dict] = None,
+    exclude_order_id: Optional[str] = None,
 ) -> None:
     """Audit the screen/override on the hash chain. Clinical-safety events are
     fail-open for auditing (the audit middleware still records the mutation) —
     a logging failure must not block care — but we log loudly if it happens."""
     dose_check = safety.get("dose_check")
+    duplicate = safety.get("duplicate_check")
     try:
         log_audit_event(
             correlation_id=str(uuid.uuid4()),
@@ -95,6 +97,7 @@ def _audit(
                 f"alerts={len(safety.get('allergy_alerts', [])) + len(safety.get('interaction_alerts', []))}, "
                 f"interaction_screened={safety.get('interaction_screened')}, entry={entry_point}"
                 + (f", dose_check={dose_check.get('decision')}" if dose_check else "")
+                + (f", duplicate={duplicate.get('decision')}" if duplicate else "")
                 + (f", override_reason={ack_reason}" if ack_reason else "")
             ),
             actor_user_id=actor_id,
@@ -115,6 +118,11 @@ def _audit(
                 # the interaction screen, so every other row reads as before.
                 **({"excluded_medication_id": exclude_med_id}
                    if exclude_med_id is not None else {}),
+                **({"excluded_med_order_id": exclude_order_id}
+                   if exclude_order_id is not None else {}),
+                # Only when the same-ingredient rule found something (MO-R6,
+                # medorders-9), so every other row reads as before.
+                **({"duplicate_check": duplicate} if duplicate else {}),
                 # Only on an override: who cleared it, by id and by name. For an
                 # allergy or dose block this is always a prescriber.
                 **({"override_by": prescriber} if prescriber else {}),
@@ -306,6 +314,8 @@ def enforce_medication_safety(
     actor_role: Optional[str] = None,
     exclude_med_id: Optional[int] = None,
     order_prescriber_id: Optional[str] = None,
+    exclude_order_id: Optional[str] = None,
+    opd_visit_id: Optional[str] = None,
 ) -> dict:
     """Screen ``drug_name`` for ``patient_id`` and enforce the gate.
 
@@ -331,13 +341,48 @@ def enforce_medication_safety(
     non-prescriber only when that prescriber's own override of the same
     allergies is already on the audit chain (``_prescriber_override_on_file``):
     the pharmacist then confirms a prescriber's decision rather than making one.
+
+    ``exclude_order_id`` is a medication order being screened (medorders-9):
+    like ``exclude_med_id``, it narrows only the interaction screen and the
+    duplicate rule, leaving out the order and its ward row.
+
+    THE SAME-INGREDIENT DUPLICATE (medorders-9, ruling MO-R6, held for
+    Samuel; only with ORB_MED_ORDER_LIFECYCLE on, and only at an order-time
+    entry point, services/medorders/screening.DUPLICATE_SCREENED_ENTRY_POINTS).
+    A drug naming the same ingredient as a live order, or a live ward row with
+    no order behind it, rides on ``safety.duplicate_check`` and makes the
+    order blocking. Under ORB_MED_ORDER_DUPLICATE_RULE 'block' (the default,
+    the strictest option) nothing clears it: 409 duplicate_order, or
+    MedicationSafetyBlocked on a non-interactive path. Under 'acknowledge' it
+    is a 428 like a severe alert, and the same acknowledgement clears it only
+    with a reason screening.validate_duplicate_reason accepts.
+
+    ``opd_visit_id`` is the visit the outpatient lane prescribes on (entry
+    point 'opd_prescription'). Its duplicate set holds inpatient rows only
+    while the patient is admitted, and an outpatient line on any OTHER visit
+    clears with a written reason under either rule (a refill of a continuing
+    medicine): only a line the prescriber can cancel on this visit keeps the
+    'block' (screening.rule_for_findings). Unnamed, a line on any open visit
+    dated today or later is read as this visit's.
     """
+    duplicates: list = []
+    dup_rule = None
     try:
-        if exclude_med_id is None:
-            safety = check_medication_safety(patient_id, drug_name)
-        else:
-            safety = check_medication_safety(patient_id, drug_name,
-                                             exclude_med_id=exclude_med_id)
+        screen_kwargs: dict[str, Any] = {}
+        if exclude_med_id is not None:
+            screen_kwargs["exclude_med_id"] = exclude_med_id
+        if exclude_order_id is not None:
+            screen_kwargs["exclude_order_id"] = exclude_order_id
+        safety = check_medication_safety(patient_id, drug_name, **screen_kwargs)
+        dup_rule = _duplicate_rule_for(entry_point)
+        if dup_rule:
+            duplicates = _find_duplicates(patient_id, drug_name, entry_point=entry_point,
+                                          exclude_med_id=exclude_med_id,
+                                          exclude_order_id=exclude_order_id,
+                                          opd_visit_id=opd_visit_id)
+            if duplicates:
+                from services.medorders import screening
+                dup_rule = screening.rule_for_findings(duplicates, dup_rule)
     except Exception as e:
         logger.error("[SafetyGate] screen failed for %s/%s at %s: %s",
                      patient_id, drug_name, entry_point, e)
@@ -354,7 +399,7 @@ def enforce_medication_safety(
         }
         _audit(outcome="failure", action_type="drug_safety_screen", patient_id=patient_id,
                drug_name=drug_name, actor_id=actor_id, entry_point=entry_point, safety=failed,
-               exclude_med_id=exclude_med_id)
+               exclude_med_id=exclude_med_id, exclude_order_id=exclude_order_id)
         if not interactive:
             raise MedicationSafetyBlocked(failed, "drug-safety screen unavailable")
         raise HTTPException(
@@ -377,11 +422,23 @@ def enforce_medication_safety(
         safety = {**safety, "dose_check": summary}
     if dose_blocked:
         safety = {**safety, "blocking": True, "safe": False}
+    # The same-ingredient duplicate (MO-R6), beside the screen and the dose
+    # guard and never instead of them.
+    dup_blocked = bool(duplicates)
+    if dup_blocked:
+        from services.medorders import screening
+        safety = {**safety, "blocking": True, "safe": False,
+                  "duplicate_check": screening.duplicate_check(duplicates, drug_name,
+                                                               rule=dup_rule)}
     # Which audit verb: a block the dose guard alone raised is a dose-guard
     # event; anything the allergy/interaction screen raised keeps its own name.
     dose_only = dose_blocked and safety.get("max_severity") != "severe"
     block_verb = "dose_guard_block" if dose_only else "drug_safety_block"
     override_verb = "dose_guard_override" if dose_only else "drug_safety_override"
+    # A block the duplicate rule alone raised is a duplicate-order event.
+    dup_only = dup_blocked and not dose_blocked and safety.get("max_severity") != "severe"
+    if dup_only:
+        block_verb, override_verb = "duplicate_order_block", "duplicate_order_override"
 
     if safety["blocking"]:
         ack_reason = str((safety_ack or {}).get("reason") or "").strip()
@@ -392,6 +449,20 @@ def enforce_medication_safety(
             # Named by the SERVER, as the dose block names it, so no screen
             # hard-codes who may clear an allergy block.
             safety = {**safety, "override_requires_permission": MEDICATION_PRESCRIBE}
+        if dup_blocked and dup_rule != "acknowledge":
+            # The strictest rule: nothing clears a second live order for the
+            # same medicine, whoever asks and whatever they write.
+            _audit(outcome="denied", action_type=block_verb, patient_id=patient_id,
+                   drug_name=drug_name, actor_id=actor_id, entry_point=entry_point, safety=safety,
+                   exclude_med_id=exclude_med_id, exclude_order_id=exclude_order_id)
+            message = safety["duplicate_check"]["message"]
+            if not interactive:
+                raise MedicationSafetyBlocked(safety, message)
+            from services.medorders.screening import DUPLICATE_ERROR
+            raise HTTPException(
+                status_code=409,
+                detail={"error": DUPLICATE_ERROR, "message": message, "safety": safety},
+            )
         confirms = None
         if acknowledged and allergy_blocked:
             # A severe allergy clears only for a prescriber, in every lane.
@@ -413,17 +484,27 @@ def enforce_medication_safety(
             if ack_refused:
                 acknowledged = False
                 safety = {**safety, "ack_refused": ack_refused}
+        if acknowledged and dup_blocked:
+            # A second order for the same medicine needs a reason that says
+            # why (MO-R6 (b)), not a reflex "ok".
+            from services.medorders.screening import validate_duplicate_reason
+            try:
+                validate_duplicate_reason(ack_reason)
+            except ValueError as e:
+                acknowledged = False
+                safety = {**safety, "ack_refused": str(e)}
         if not interactive:
             _audit(outcome="denied", action_type=block_verb, patient_id=patient_id,
                    drug_name=drug_name, actor_id=actor_id, entry_point=entry_point, safety=safety,
-                   exclude_med_id=exclude_med_id)
+                   exclude_med_id=exclude_med_id, exclude_order_id=exclude_order_id)
             raise MedicationSafetyBlocked(
                 safety, "dose guard block on a non-interactive path" if dose_only
+                else safety["duplicate_check"]["message"] if dup_only
                 else "severe drug-safety alert on a non-interactive path")
         if not acknowledged:
             _audit(outcome="denied", action_type=block_verb, patient_id=patient_id,
                    drug_name=drug_name, actor_id=actor_id, entry_point=entry_point, safety=safety,
-                   exclude_med_id=exclude_med_id)
+                   exclude_med_id=exclude_med_id, exclude_order_id=exclude_order_id)
             raise HTTPException(
                 status_code=428,
                 detail={
@@ -434,6 +515,7 @@ def enforce_medication_safety(
                         # A refused allergy acknowledgement says why, so the
                         # screen does not ask again for a reason it will refuse.
                         safety["ack_refused"] if safety.get("ack_refused") else
+                        safety["duplicate_check"]["message"] if dup_only else
                         "Severe drug-safety alerts must be acknowledged with a reason before this order proceeds."
                     ),
                     "safety": safety,
@@ -444,14 +526,39 @@ def enforce_medication_safety(
             prescriber["confirms_prescriber_override"] = confirms
         _audit(outcome="partial_success", action_type=override_verb, patient_id=patient_id,
                drug_name=drug_name, actor_id=actor_id, entry_point=entry_point, safety=safety,
-               ack_reason=ack_reason, exclude_med_id=exclude_med_id, prescriber=prescriber)
+               ack_reason=ack_reason, exclude_med_id=exclude_med_id, prescriber=prescriber,
+               exclude_order_id=exclude_order_id)
         override = {"by": actor_id, "by_name": prescriber["display_name"], "reason": ack_reason}
         safety = {**safety, "override": override}
         if dose_blocked:
             safety["dose_check"] = {**safety["dose_check"], "override": override}
+        if dup_blocked:
+            safety["duplicate_check"] = {**safety["duplicate_check"], "decision": "acknowledged",
+                                         "override": override}
         return safety
 
     _audit(outcome="success", action_type="drug_safety_screen", patient_id=patient_id,
            drug_name=drug_name, actor_id=actor_id, entry_point=entry_point, safety=safety,
-           exclude_med_id=exclude_med_id)
+           exclude_med_id=exclude_med_id, exclude_order_id=exclude_order_id)
     return safety
+
+
+def _duplicate_rule_for(entry_point: str) -> Optional[str]:
+    """The duplicate rule for this entry point, or None (medorders-9)."""
+    from services.medorders import screening
+    return screening.duplicate_rule_for(entry_point)
+
+
+def _find_duplicates(patient_id: str, drug_name: str, *, entry_point: str,
+                     exclude_med_id: Optional[int], exclude_order_id: Optional[str],
+                     opd_visit_id: Optional[str] = None) -> list:
+    """The live same-ingredient drugs, read in a session of their own (the
+    gate runs outside any write transaction). Raises on a failed read: the
+    caller then reports the whole screen as unavailable."""
+    from services.medorders import screening
+    with db_session() as db:
+        return screening.find_duplicates(
+            db, patient_id, drug_name, exclude_med_id=exclude_med_id,
+            exclude_order_id=exclude_order_id,
+            include_outpatient=entry_point == screening.ENTRY_OPD,
+            opd_visit_id=opd_visit_id if entry_point == screening.ENTRY_OPD else None)

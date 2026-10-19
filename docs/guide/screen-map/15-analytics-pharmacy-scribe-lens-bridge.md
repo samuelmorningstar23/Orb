@@ -10,18 +10,18 @@ section:
 
 | Screen | Tab id | Sidebar label | Mounted at |
 |---|---|---|---|
-| Forecast | `forecast` | "Forecast" (`shellConfig.tsx:454`) | `ClinicianShell.tsx:562` |
-| Command Center | `command` | "Command" (`shellConfig.tsx:463`) | `ClinicianShell.tsx:527` |
-| Pulse |, (header icon, not a tab) | heartbeat-line button in the top bar | `ClinicianShell.tsx:541` |
-| Helix / Pharmacy | `helix` | "Pharmacy" (`shellConfig.tsx:374`) | `ClinicianShell.tsx:502` |
-| Pharmacist Verify Queue | `pharmacy-verify` | "Verify Queue" (`shellConfig.tsx:382`) | `ClinicianShell.tsx:507` |
-| Scribe | `scribe` | "Scribe" (`shellConfig.tsx:433`) | `ClinicianShell.tsx:552` |
-| Lens | `lens` | "Lens" (`shellConfig.tsx:444`) | `ClinicianShell.tsx:557` |
+| Forecast | `forecast` | "Forecast" (`shellConfig.tsx:454`) | `ClinicianShell.tsx:592` |
+| Command Center | `command` | "Command" (`shellConfig.tsx:463`) | `ClinicianShell.tsx:557` |
+| Pulse |, (header icon, not a tab) | heartbeat-line button in the top bar | `ClinicianShell.tsx:571` |
+| Helix / Pharmacy | `helix` | "Pharmacy" (`shellConfig.tsx:374`) | `ClinicianShell.tsx:532` |
+| Pharmacist Verify Queue | `pharmacy-verify` | "Verify Queue" (`shellConfig.tsx:382`) | `ClinicianShell.tsx:537` |
+| Scribe | `scribe` | "Scribe" (`shellConfig.tsx:433`) | `ClinicianShell.tsx:582` |
+| Lens | `lens` | "Lens" (`shellConfig.tsx:444`) | `ClinicianShell.tsx:587` |
 | Patient Bridge | n/a | separate app shell for `role === 'patient'` | `src/pages/PatientShell.tsx:105` |
 
 Every panel is lazy-loaded and wrapped in `PanelErrorBoundary`, so a crash inside one panel
 shows that boundary's fallback instead of blanking the app. While the chunk is still
-downloading you see the plain text **"Loading panel..."** (`ClinicianShell.tsx:485`).
+downloading you see the plain text **"Loading panel..."** (`ClinicianShell.tsx:515`).
 
 ---
 
@@ -480,7 +480,7 @@ rebuilt file was still settling when this was written.
 ### Trigger button (heartbeat line)
 **Where:** the top bar of the clinician shell, next to the alert permission button.
 **Rendered by:** `PulseWidget` (`id="btn-pulse"`, tooltip "Pulse: season and conditions");
-mounted at `ClinicianShell.tsx:541`.
+mounted at `ClinicianShell.tsx:571`.
 **Change this →** clicking toggles the panel. There is no badge: nothing in Pulse is an alert.
 
 ### Panel header: "Pulse" / "Season and conditions"

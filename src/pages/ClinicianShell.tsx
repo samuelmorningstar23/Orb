@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useSyncExternalStore, lazy, Suspense, Component, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useAuth } from '../App'
-import { getVitalsFeed } from '../api/client'
+import { useAuth, type UserFacility } from '../App'
+import { apiFetch, getVitalsFeed } from '../api/client'
 import { canSeeWardList } from '../lib/roles'
 import AdmitPatientModal from '../components/AdmitPatientModal'
 import OrbLogo from '../components/OrbLogo'
@@ -30,6 +30,7 @@ import {
   subscribeModuleFlags,
   switchedOffTab,
   useClinicalSwitches,
+  usePlatformFlags,
   FEATURE_TAB_IDS,
   HOSPITAL_MODULE_IDS,
   type Tab,
@@ -160,6 +161,32 @@ const AppointmentsPanel = lazy(() => import('./panels/AppointmentsPanel'))
 const SurgicalSuitePanel = lazy(() => import('./panels/SurgicalSuitePanel'))
 const AdminPanel = lazy(() => import('./panels/AdminPanel'))
 const WardObservationsPanel = lazy(() => import('./panels/WardObservationsPanel'))
+
+/** The facility shown beside the role in the user chip (multisite-6). Only
+ *  while more than one facility is on record, so on a single-site install
+ *  (every site today) the chip reads exactly as before and nothing is
+ *  fetched. The label is read fresh from /api/auth/me, so a move between
+ *  facilities shows on the next shell load rather than the next sign-in. It
+ *  is a label only: the server decides what the account may see. */
+function useFacilityLabel(
+  userId: string | undefined,
+  known: UserFacility | null | undefined,
+  multiFacilityData: boolean,
+): string | null {
+  const [fetched, setFetched] = useState<{ userId: string, facility: UserFacility | null } | null>(null)
+  useEffect(() => {
+    if (!multiFacilityData || !userId) return
+    let cancelled = false
+    apiFetch<{ facility?: UserFacility | null }>('/auth/me')
+      .then(me => { if (!cancelled) setFetched({ userId, facility: me?.facility ?? null }) })
+      .catch(() => { /* no label; the server still keeps facilities apart */ })
+    return () => { cancelled = true }
+  }, [userId, multiFacilityData])
+  if (!multiFacilityData) return null
+  const facility = fetched && fetched.userId === userId ? fetched.facility : known
+  if (!facility) return null
+  return facility.name || facility.code || null
+}
 
 /** Publishes the shell's active tab into ActiveViewContext so every Sage
  *  surface knows what screen the clinician is on, and clears any stale panel
@@ -354,8 +381,11 @@ function ClinicianShellBody() {
     : 'staff'
   const roleLabel = t(`role.${roleKey}`)
   // A hospital-wide account has no department: the chip read "Administrator ·"
-  // and its tooltip "Administrator · null".
-  const roleLine = [roleLabel, user?.department].filter(Boolean).join(' · ')
+  // and its tooltip "Administrator · null". With more than one facility on
+  // record the facility follows (multisite-6); with one, nothing changes.
+  const { multiFacilityData } = usePlatformFlags()
+  const facilityLabel = useFacilityLabel(user?.id, user?.facility, multiFacilityData)
+  const roleLine = [roleLabel, user?.department, facilityLabel].filter(Boolean).join(' · ')
 
   const toggleLanguage = () => {
     i18n.changeLanguage(i18n.language === 'hi' ? 'en' : 'hi')

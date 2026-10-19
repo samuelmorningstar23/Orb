@@ -3,7 +3,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List, Dict, Any
 from auth import get_current_user
 from permissions import department_scope, log_phi_read, require_permission
-from routes.opt_in_gates import feature_gate, require_opd_feature
+from routes.adt.end_stay import _scoped_admission, require_ward_clerk
+from routes.opt_in_gates import feature_gate, require_adt_module, require_opd_feature
 from services import registration_service
 from services.admission_service import (
     CONVERSION_PREVIEW_AUDIT_ACTION,
@@ -12,12 +13,16 @@ from services.admission_service import (
     admission_choices,
     admit_existing_patient,
     admit_patient,
+    clerk_admission_choices,
+    clerk_attending,
     conversion_preview,
     readmit_patient,
     require_listed_attending,
     resolve_admission_department,
 )
+from services.adt import clerk as adt_clerk
 from services.adt.core import AdtError, http_detail
+from services.adt.live import notify_adt_changed
 from services.audit_service import AuditWriteError
 from services.patient_name_rule import PatientNameError
 
@@ -166,6 +171,8 @@ def process_admission(
         if "movement_id" in result and not result.get("replayed"):
             # Only with ORB_ADT on: a new admission placed through the master.
             response.status_code = 201
+            # adt-19: it has committed, so the bed boards refetch.
+            notify_adt_changed(answer=result, departments=[data["department"]])
         return result
     except PatientNameError as e:
         # The registration name rule: the clinician typed something that is
@@ -378,6 +385,8 @@ def admit_existing(
             # ORB_ADT on: the admission movement reaches housekeeping now
             # (best-effort, never fails the admission), as a move's does.
             adt_transfer.sync_housekeeping_after_commit()
+            # adt-19: and the bed boards refetch.
+            notify_adt_changed(answer=result, admission_ids=[result.get("admission_id")])
     return result
 
 
@@ -494,4 +503,200 @@ def readmit(
         # ORB_ADT on: the admission movement reaches housekeeping now
         # (best-effort, never fails the readmission), as a move's does.
         adt_transfer.sync_housekeeping_after_commit()
+        # adt-19: and the bed boards refetch.
+        notify_adt_changed(answer=result, admission_ids=[result.get("admission_id")])
+    return result
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  The ward clerk's admission (adt-17b, W9-A; ORB_ADT, default off)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+#   GET  /api/admissions/clerk-options                  what the clerk's form offers
+#   POST /api/admissions/clerk-admit                    a registration-level admission
+#   POST /api/admissions/{admission_id}/assessment      a doctor's admission assessment
+#
+# Ruling ADT-S5 (a), applied as a build default (services/adt/clerk.py states
+# it in full): the ward clerk admits at registration level. Every clinical
+# field is stored as not yet assessed, no allergy and no 'no known allergies'
+# is ever recorded by the clerk, the interlocks treat the patient as unknown,
+# and the bed board flags 'Admission assessment due' until a doctor records
+# the admission assessment. Behind the module switch (404 while ORB_ADT is
+# off) and the clerk's own lane (require_ward_clerk: the ward clerk, holding
+# adt.bed, with a department; 403 for anyone else, audited).
+
+
+class ClerkAdmissionRequest(BaseModel):
+    """The ward clerk's admission: who the patient is, the hospital's own
+    number, where they lie and who attends. NOTHING CLINICAL: a presenting
+    complaint, diagnosis, triage, allergy, history, medicine, observation,
+    note, isolation precaution or code status in the body is a 422 (extra
+    fields are refused), so a clerk can never type an allergy, or 'none'."""
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., max_length=200)
+    age: Optional[int] = Field(None, ge=0, le=130)
+    date_of_birth: Optional[str] = Field(None, max_length=40)
+    sex: Optional[str] = Field(None, max_length=10)
+    phone: Optional[str] = Field(None, max_length=40)
+    emergency_contact_name: Optional[str] = Field(None, max_length=200)
+    emergency_contact_phone: Optional[str] = Field(None, max_length=40)
+    address: Optional[str] = Field(None, max_length=500)
+    #: The hospital's own number, typed from its register. Required unless
+    #: the site's registration issues the number (ORB_UHID_SOURCE 'orb').
+    mrn: Optional[str] = Field(None, max_length=80)
+
+    admission_source: str = Field(..., max_length=40)
+    admission_type: str = Field("inpatient", max_length=40)
+    #: Optional; when sent it must be the clerk's own department.
+    department: Optional[str] = Field(None, max_length=120)
+    ward: str = Field("", max_length=120)
+    bed: str = Field("", max_length=120)
+    attending_doctor_id: str = Field(..., max_length=80)
+    referring_clinician: Optional[str] = Field(None, max_length=200)
+
+    # The ADT placement fields, as on /admit.
+    ward_id: Optional[str] = None
+    bed_id: Optional[str] = None
+    awaiting_bed: Optional[bool] = None
+    admitted_at: Optional[str] = None
+    out_of_service_reason: Optional[str] = None
+    boarder_acknowledged: Optional[bool] = None
+    extra_bed: Optional[bool] = None
+    not_clean_reason: Optional[str] = None
+    terminal_clean_authorised_by: Optional[str] = None
+    terminal_clean_reason: Optional[str] = None
+    terminal_clean_authoriser_pin: Optional[str] = None
+
+    #: The patient index (opd-5b), read only while ORB_REGISTRATION is on.
+    duplicate_review: Optional[Dict[str, Any]] = None
+
+
+def _site_issues_the_number() -> bool:
+    """True when this site's registration issues the hospital number itself
+    (ORB_REGISTRATION on with ORB_UHID_SOURCE 'orb'): a typed one is refused."""
+    import config
+
+    return bool(config.feature_enabled("registration")) and config.UHID_SOURCE == "orb"
+
+
+@router.get("/clerk-options")
+def clerk_admission_options(
+    _adt: None = Depends(require_adt_module),
+    user: dict = Depends(require_ward_clerk),
+):
+    """What the ward clerk's admission form chooses from: the clerk's own
+    department, its attending doctors, and bed setup's wards and beds with
+    their status. No patient data, so no PHI read is logged."""
+    return clerk_admission_choices(user)
+
+
+@router.post("/clerk-admit")
+def clerk_admit(
+    payload: ClerkAdmissionRequest,
+    request: Request,
+    response: Response,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    _adt: None = Depends(require_adt_module),
+    user: dict = Depends(require_ward_clerk),
+):
+    """The ward clerk's registration-level admission: 201 for a new
+    admission, 200 for a replay of the same Idempotency-Key (required). Into
+    the clerk's own department only (403 department_not_own otherwise), with
+    an attending doctor of that department (400), the hospital's own number
+    (422 hospital_number_required unless the site issues it) and a place from
+    the bed master under the same rules as every admission. Every clinical
+    field is stored as not yet assessed; the answer says so
+    (clerk_admission, assessment_due). Refusals answer {error, message, ...}
+    with nothing written."""
+    if not (idempotency_key or "").strip():
+        raise HTTPException(status_code=422, detail={
+            "error": "idempotency_key_required",
+            "message": "This admission needs an Idempotency-Key header, so a retried request "
+                       "never admits the patient twice.",
+        })
+    own = department_scope(user)
+    try:
+        department = resolve_admission_department(own or "")
+        if payload.department and payload.department.strip().casefold() != department.casefold():
+            raise HTTPException(status_code=403, detail={
+                "error": "department_not_own",
+                "message": f"A ward clerk admits only to their own department, {department}.",
+            })
+        attending = clerk_attending(payload.attending_doctor_id, department)
+        mrn = (payload.mrn or "").strip()
+        if not mrn and not _site_issues_the_number():
+            raise HTTPException(status_code=422, detail={
+                "error": "hospital_number_required",
+                "message": "Type the patient's hospital number from the hospital's register.",
+            })
+        data = payload.model_dump()
+        data.update(department=department, attending_doctor_id=attending,
+                    ward=payload.ward.strip(), bed=payload.bed.strip(), mrn=mrn or None)
+        result = admit_patient(data, user, idempotency_key=idempotency_key,
+                               request_meta=_request_meta(request), clerk_entry=True)
+    except PatientNameError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except AdmissionInputError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except AdmissionRefused as e:
+        raise HTTPException(status_code=e.status, detail=e.detail())
+    except AdtError as e:
+        raise HTTPException(status_code=e.http_status, detail=http_detail(e))
+    except AuditWriteError:
+        raise _audit_unavailable("admission")
+    response.status_code = 200 if result.get("replayed") else 201
+    if not result.get("replayed") and result.get("movement_id"):
+        from services.adt import transfer as adt_transfer
+
+        adt_transfer.sync_housekeeping_after_commit()
+        notify_adt_changed(answer=result, departments=[department])
+    return result
+
+
+class AdmissionAssessmentIn(BaseModel):
+    """A doctor's admission assessment of a ward clerk's admission."""
+    model_config = ConfigDict(extra="forbid")
+
+    #: allergies_recorded, none_known or unable_to_obtain.
+    allergy_status: str = Field(..., max_length=40)
+    #: The allergies the patient named (allergies_recorded only).
+    allergies: Optional[List[str]] = None
+    #: Why the allergies could not be obtained (unable_to_obtain only).
+    reason: Optional[str] = Field(None, max_length=500)
+    chief_complaint: str = Field(..., max_length=500)
+    initial_diagnosis: Optional[str] = Field(None, max_length=500)
+    #: full_code, dnr, dni or comfort.
+    code_status: str = Field(..., max_length=20)
+    note: Optional[str] = Field(None, max_length=1000)
+
+
+@router.post("/{admission_id}/assessment")
+def record_admission_assessment(
+    admission_id: str,
+    body: AdmissionAssessmentIn,
+    request: Request,
+    _adt: None = Depends(require_adt_module),
+    user: dict = Depends(require_permission("patient.write")),
+):
+    """A doctor completes a ward clerk's admission: the allergy review (what
+    the patient said, or why they could not be asked), the presenting
+    complaint, the diagnosis and the code status, in one transaction with a
+    fail-closed clinical_access row. The bed board's 'Admission assessment
+    due' then clears. The patient must be in the doctor's department (404
+    otherwise, audited). 409 for an admission a clerk did not enter, one
+    already assessed, or one that has ended."""
+    _scoped_admission(admission_id, user, request)
+    try:
+        result = adt_clerk.record_admission_assessment(
+            admission_id, actor=user, allergy_status=body.allergy_status,
+            allergies=body.allergies, reason=body.reason,
+            chief_complaint=body.chief_complaint, initial_diagnosis=body.initial_diagnosis,
+            code_status=body.code_status, note=body.note, request_meta=_request_meta(request))
+    except AdtError as e:
+        raise HTTPException(status_code=e.http_status, detail=http_detail(e))
+    except AuditWriteError:
+        raise _audit_unavailable("assessment")
+    # adt-19: the board's 'Admission assessment due' marker cleared.
+    notify_adt_changed(admission_ids=[admission_id])
     return result

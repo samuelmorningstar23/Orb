@@ -17,16 +17,16 @@ citation in this file was opened and read at that line.
 
 **How you get there.** Left nav → **Surgical Suite** or **Appointments**.
 
-- The **Appointments** nav entry is `src/pages/ClinicianShell.tsx:148` (`id: 'appointments',
+- The **Appointments** nav entry is `src/pages/ClinicianShell.tsx:149` (`id: 'appointments',
   label: 'Appointments', pillar: 'Appointments'`, calendar-with-dots icon at `:150-156`). The panel
   is lazily imported at `:289` and mounted at `:785-789` inside
   `<PanelErrorBoundary label="appointments">`.
-- The **Surgical Suite** nav entry is `src/pages/ClinicianShell.tsx:160` (`id: 'surgical-suite',
+- The **Surgical Suite** nav entry is `src/pages/ClinicianShell.tsx:161` (`id: 'surgical-suite',
   label: 'Surgical Suite', pillar: 'Surgical Suite'`, scalpel icon at `:162-169`). The panel is
   lazily imported at `:290` and mounted at `:790-794` inside
   `<PanelErrorBoundary label="surgical-suite">`.
 
-**Who sees which one.** `getAccessibleTabs` (`src/pages/ClinicianShell.tsx:182-205`) makes these two
+**Who sees which one.** `getAccessibleTabs` (`src/pages/ClinicianShell.tsx:209-232`) makes these two
 tabs mutually exclusive for doctors, keyed on department:
 
 | Role | Surgical Suite | Appointments | Line |
@@ -46,7 +46,7 @@ panel is mounted until its tab has been clicked once, so first paint always star
 (`server/permissions.py:66`) for reads and `surgery.write` (`:68`) for the four mutations; both are
 granted to `doctor` (`:111`), `nurse` (`:126`) and `admin` (`:147`), and to nobody else. Appointments
 is behind `forecast.read` (`:65`), granted to the same three roles. `require_permission`
-(`server/permissions.py:376-438`) audits every denial off the event loop and returns a structured
+(`server/permissions.py:385-447`) audits every denial off the event loop and returns a structured
 403 (`:426-434`).
 
 **Layout in one sentence, each.** *Surgical Suite Tier 1* is a horizontally-scrolling strip of tall
@@ -116,7 +116,7 @@ last. Change `Array(7)` and you change how many placeholder cards appear; change
 **API:** `GET /api/surgery/schedule?days=14`, `src/api/client.ts:1691-1693`.
 **Server:** `server/routes/surgery_routes.py:67-115` (`get_surgery_schedule`). A 403 from
 `require_permission("surgery.read")` surfaces here as "Insufficient permissions"
-(`server/permissions.py:430`); a network failure surfaces as the browser's fetch message.
+(`server/permissions.py:439`); a network failure surfaces as the browser's fetch message.
 **Change this →** the banner is danger-coloured text on a card (`SurgicalSuitePanel.css:40-47`) with
 a clay-filled Retry chip (`:49-62`). Clicking Retry re-runs the same fetch and the skeleton returns.
 **The `&& !schedule.length` half of the guard matters:** once the schedule has loaded, this banner
@@ -326,7 +326,7 @@ posts a "SAGE SUGGESTION" message. Press this button after that, and a new amber
 **Refresh:** two paths, both wired in the mount effect (`:160-184`), a Socket.IO listener on
 `surgery:emergency_intake` (`:172`) which re-fetches immediately, and a 10-second fallback poll
 (`:175-178`) for missed events after a reconnect or tab switch. The socket event is emitted by
-`server/services/sage_handoff_service.py:552` and `:602`.
+`server/services/sage_handoff_service.py:652` and `:702`.
 **Change this →** border and background are inline 28 %- and 10 %-danger mixes (`:616-617`); the CSS
 class only supplies the radius (`SurgicalSuitePanel.css:302-304`). The dot animates on the shared
 `pulse` keyframe. The whole banner DISAPPEARS when the queue is empty (`:614`).
@@ -492,7 +492,7 @@ the text. The word is printed lowercase exactly as stored.
 **Rendered by:** `:782-784`.
 **Data from:** `surgeries.success_probability`, a REAL column (`server/database.py:314`), written by
 the escalation packagers, 72.5 at `server/services/surgery_escalation_service.py:280` and 78.5 at
-`server/services/sage_handoff_service.py:569`.
+`server/services/sage_handoff_service.py:669`.
 **Change this →** three colour bands, all inline at `:782`: ≥95 green, ≥85 amber, below that red.
 The value is printed with no rounding and no unit conversion, so a row storing `0.85` renders
 "0.85% success" in red.
@@ -594,7 +594,7 @@ inside typographic quotes at `:923`).
 **Change this →** **this card never appears in the running application.** A repo-wide grep finds
 exactly two writers of `surgeries.notes`, `server/services/surgery_escalation_service.py::_finalize_surgery`
 (`:209-211`, writing `ai_package_status` / `reason` / `finalized_at`) and
-`server/services/sage_handoff_service.py:591-594` (writing `ai_package_status` / `finalized_at`).
+`server/services/sage_handoff_service.py:691-694` (writing `ai_package_status` / `finalized_at`).
 Neither ever writes an `imported_context` key, so the guard at `:888` is always false. The only place
 this shape exists is the visual-test fixture at `tests/visual/fixtures.cjs:753-758`. Note that
 `server/services/surgery_service.py::get_surgery_detail` **does** build a real
@@ -618,7 +618,7 @@ nothing otherwise (`:946`).
 **Data from:** `getAiPackageStatus` (`:130-136`), which JSON-parses `selectedSurgery.notes` and reads
 `.ai_package_status`, returning null on any parse failure.
 **Server:** only two values are ever written, `"generated"`
-(`server/services/surgery_escalation_service.py:320`, `server/services/sage_handoff_service.py:592`)
+(`server/services/surgery_escalation_service.py:320`, `server/services/sage_handoff_service.py:692`)
 and `"failed"` (`server/services/surgery_escalation_service.py:328`, the 60-second timeout path at
 `:325`). `"fallback"` and `"timeout"` are dead branches.
 **Change this →** green pill vs amber pill (`SurgicalSuitePanel.css:844-855`). The amber badge is
@@ -729,7 +729,7 @@ the Active Cases chips have statuses and no names.
 `{role, name}` object, a shape the server tolerates elsewhere via
 `server/services/surgery_service.py::_staff_display_names` (`:235-252`). A string roster here would
 be caught by `PanelErrorBoundary` and show "This panel hit an error and couldn't be shown."
-(`src/pages/ClinicianShell.tsx:263-264`).
+(`src/pages/ClinicianShell.tsx:290-291`).
 
 ### "Surgical Checklist (12)" heading with a count
 **Where:** Top of the right column.
@@ -778,7 +778,7 @@ hydrated by looking the surgery up in the already-loaded emergency queue (`:1152
 "Incoming Emergency" / "Loading..." / "Escalated from Relay" (`:1156-1158`) for the race where the
 socket event beats the queue refetch.
 **API / Server:** raised by `sio.emit("surgery:emergency_intake", ...)` from
-`server/services/sage_handoff_service.py:552` (when generation starts) and `:602` (when the package
+`server/services/sage_handoff_service.py:652` (when generation starts) and `:602` (when the package
 is finished), so the same case fires this popup twice.
 **Change this →** "Acknowledge" (`EmergencyIntakePopup.tsx:54-60`, label at `:59`, showing
 "Acknowledging..." while in flight) calls `POST /api/surgery/emergency/{id}/acknowledge`
@@ -993,7 +993,7 @@ them.
 
 ### Panel-level crash state
 **Where:** Replaces either panel entirely.
-**Rendered by:** `PanelErrorBoundary` (`src/pages/ClinicianShell.tsx:236-273`), "This panel hit an
+**Rendered by:** `PanelErrorBoundary` (`src/pages/ClinicianShell.tsx:263-300`), "This panel hit an
 error and couldn't be shown." with a "Reload panel" button (`:263-267`), or the quieter "Updating to
 the latest version..." (`:259`) when the throw was a stale-chunk error and a one-shot reload is in
 flight (`:250-253`).

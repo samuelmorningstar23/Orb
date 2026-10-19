@@ -34,7 +34,10 @@ share or roll back with the step), reading the screen fingerprint first; then
 one db_session(immediate=True) re-reads the fingerprint and answers
 screen_stale when an allergy or a drug was charted in between, and writes the
 order, its event, its ward row and its audit together. Same-ingredient
-duplicates come back as a notice (ruling MO-R6 is built in a later increment).
+duplicates come back as a notice on the reply; the gate itself applies ruling
+MO-R6 at create, sign and the chart add while the lifecycle is on
+(services/medorders/screening.py, W9-C), and a replay is screened with its
+own first write left out.
 """
 from __future__ import annotations
 
@@ -154,6 +157,29 @@ def _project_new_order_in_txn(conn, order: Mapping, *, prescribed_by: Optional[s
 
 # ── The chart add (vigil.med_add) ─────────────────────────────────────────────
 
+def _replay_exclusion(idempotency_key: Optional[str]) -> dict:
+    """{'exclude_med_id': the ward row an earlier request with this key
+    wrote} with the lifecycle on, so a replay is screened as its first
+    request was (medorders-9); {} otherwise, so the gate call is unchanged."""
+    if not idempotency_key or not core.lifecycle_on():
+        return {}
+    with db_session() as conn:
+        row = conn.execute("SELECT id FROM medications WHERE idempotency_key = ?",
+                           (idempotency_key,)).fetchone()
+    return {"exclude_med_id": row["id"]} if row is not None else {}
+
+
+def _order_replay_exclusion(idempotency_key: Optional[str]) -> dict:
+    """The same for the store's own create: {'exclude_order_id': the order an
+    earlier request with this key made}, or {}."""
+    if not idempotency_key:
+        return {}
+    with db_session() as conn:
+        row = conn.execute("SELECT id FROM med_orders WHERE idempotency_key = ?",
+                           (idempotency_key,)).fetchone()
+    return {"exclude_order_id": row["id"]} if row is not None else {}
+
+
 def create_chart_order(patient_id: str, drug_name: str, dosage: str, route: Optional[str],
                        frequency: str, status: str, *, actor_id: str,
                        actor_role: Optional[str] = None,
@@ -166,7 +192,12 @@ def create_chart_order(patient_id: str, drug_name: str, dosage: str, route: Opti
     pre-check, so a replay screens identically), and outside any write
     transaction; it raises the route's 428 or 503 itself. Then one immediate
     transaction writes the ward row and its order. Returns {id, med_order_id,
-    replayed, safety}; `id` is the ward row, as the route has always answered."""
+    replayed, safety}; `id` is the ward row, as the route has always answered.
+
+    With the lifecycle on (medorders-9, W9-C) a replay is screened with the
+    row its first request wrote left out (exclude_med_id): otherwise the
+    same-ingredient rule (MO-R6) would refuse a replay as a duplicate of
+    itself, and the offline client treats that 4xx as a lost dose."""
     safety = medication_safety_gate.enforce_medication_safety(
         patient_id,
         drug_name,
@@ -176,6 +207,7 @@ def create_chart_order(patient_id: str, drug_name: str, dosage: str, route: Opti
         dose=dosage,
         route=route,
         actor_role=actor_role,
+        **_replay_exclusion(idempotency_key),
     )
     with db_session(immediate=True) as conn:
         out = write_chart_order_in_txn(
@@ -408,8 +440,10 @@ def _require_ward_fields(dose: Optional[str], route: Optional[str], frequency: O
 
 def _screen(patient_id: str, drug_name: str, *, actor_id: str, actor_role: Optional[str],
             entry_point: str, safety_ack: Optional[dict], dose: Optional[str],
-            route: Optional[str], exclude_med_id: Optional[int] = None) -> tuple[str, dict]:
-    """The fingerprint, then the gate, both outside any write transaction."""
+            route: Optional[str], exclude_med_id: Optional[int] = None,
+            exclude_order_id: Optional[str] = None) -> tuple[str, dict]:
+    """The fingerprint, then the gate, both outside any write transaction.
+    `exclude_order_id` is passed only for a create replay (medorders-9)."""
     with db_session() as conn:
         before = core.screen_fingerprint_in_txn(conn, patient_id)
     safety = medication_safety_gate.enforce_medication_safety(
@@ -422,6 +456,7 @@ def _screen(patient_id: str, drug_name: str, *, actor_id: str, actor_role: Optio
         route=route,
         actor_role=actor_role,
         exclude_med_id=exclude_med_id,
+        **({"exclude_order_id": exclude_order_id} if exclude_order_id else {}),
     )
     return before, safety
 
@@ -457,9 +492,13 @@ def create_order(*, patient_id: str, drug_name: str, status: str, actor_id: str,
     before = safety = None
     if signing:
         _require_ward_fields(dose, route, frequency)
+        # A replay is screened as its first request was: the order that
+        # request made is left out (medorders-9), so the same-ingredient rule
+        # never refuses a replay as a duplicate of itself.
         before, safety = _screen(patient_id, drug_name, actor_id=actor_id,
                                  actor_role=actor_role, entry_point=ENTRY_CREATE,
-                                 safety_ack=safety_ack, dose=dose, route=route)
+                                 safety_ack=safety_ack, dose=dose, route=route,
+                                 **_order_replay_exclusion(idempotency_key))
     fields = dict(
         patient_id=patient_id, drug_name=drug_name, source="cpoe", status=status,
         entered_by=actor_id, entered_by_role=actor_role, actor_id=actor_id,

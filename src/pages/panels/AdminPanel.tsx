@@ -15,10 +15,11 @@ import FlightRecorder from '../../components/FlightRecorder'
 import UsersPanel from './admin/UsersPanel'
 import DataPanel from './admin/DataPanel'
 import RosterImport from './admin/RosterImport'
+import FacilitiesPanel from './admin/FacilitiesPanel'
 import ProvenanceReview from './admin/ProvenanceReview'
 import { useClinicalSwitches } from '../../shellConfig'
 
-type AdminTab = 'overview' | 'scorecard' | 'audit' | 'trace' | 'provenance' | 'ingestion' | 'security' | 'alerts' | 'models' | 'impact' | 'trust' | 'flight' | 'users' | 'roster' | 'data'
+type AdminTab = 'overview' | 'scorecard' | 'audit' | 'trace' | 'provenance' | 'ingestion' | 'security' | 'alerts' | 'models' | 'impact' | 'trust' | 'flight' | 'users' | 'roster' | 'facilities' | 'data'
 
 const ADMIN_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -82,6 +83,13 @@ const ADMIN_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
     // Sits next to Users: both answer "who is in this building today".
     id: 'roster', label: 'Roster Import',
     icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
+  },
+  {
+    // Who the hospital is on its bills, receipts and printed records: legal
+    // name, address, GSTIN and registration numbers (multisite-2). Shown on
+    // every site, whatever the multi-site switch says.
+    id: 'facilities', label: 'Facilities',
+    icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M10 21v-5h4v5"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="10" y1="10" x2="14" y2="10"/></svg>,
   },
   {
     id: 'data', label: 'Data & Backups',
@@ -177,6 +185,7 @@ export default function AdminPanel() {
         {activeTab === 'flight' && <FlightRecorder />}
         {activeTab === 'users' && <UsersPanel />}
         {activeTab === 'roster' && <RosterImport />}
+        {activeTab === 'facilities' && <FacilitiesPanel />}
         {activeTab === 'data' && <DataPanel />}
       </div>
     </div>

@@ -2092,10 +2092,18 @@ def _board_on(db, *, wards: list[dict], dept: Optional[str], identity: bool,
             db, [a["id"] for who in occupants.values() for a in who
                  if a.get("presence_status") == "absconded"])
     names: dict[str, dict] = {}
+    assessment_due: set = set()
     if in_scope:
         marks, ids = _in(in_scope)
         names = {r["id"]: dict(r) for r in db.execute(
             f"SELECT id, name, mrn FROM patients WHERE id IN ({marks})", ids).fetchall()}
+        # adt-17b (ruling ADT-S5 (a)): a ward clerk's admission whose admission
+        # assessment no doctor has recorded yet, flagged on its bed inside the
+        # caller's scope only (services/adt/clerk.py).
+        from services.adt.clerk import assessment_due_ids_on
+        assessment_due = assessment_due_ids_on(
+            db, [a["id"] for who in occupants.values() for a in who
+                 if a["patient_id"] in in_scope])
 
     by_ward = {w["id"]: w for w in wards}
     tiles_by_ward: dict[str, list[dict]] = {w["id"]: [] for w in wards}
@@ -2139,6 +2147,9 @@ def _board_on(db, *, wards: list[dict], dept: Optional[str], identity: bool,
                                           now=now)
                 if prompt:
                     markers.append(prompt)
+                if holder["id"] in assessment_due:
+                    from services.adt.clerk import ASSESSMENT_DUE_MARKER
+                    markers.append(ASSESSMENT_DUE_MARKER)
             else:
                 hidden = True
                 # Nothing about a patient outside the caller's scope: not the

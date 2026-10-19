@@ -605,12 +605,15 @@ def end_stay_on(
     reason: Any = None, notes: Any = None, admission_status: str = "discharged",
     door: str = "end_of_stay", idempotency_key: Optional[str] = None,
     request_meta: Optional[dict] = None, enforce_backtime: bool = True,
+    allow_unstated_type: bool = False,
 ) -> dict:
     """End one active admission on the caller's connection (the caller holds
     the outermost immediate session). Every check runs before the first write.
 
     `end_type` None is accepted only together with require_read_back False
-    (the roster close of a file that says only 'discharged')."""
+    (the roster close of a file that says only 'discharged'), or with
+    `allow_unstated_type` (the ward clerk's 'left the ward', adt-17b, which
+    keeps the read-back but states no end type: none is guessed)."""
     adm = db.execute("SELECT * FROM admissions WHERE id = ?", (admission_id,)).fetchone()
     if adm is None:
         raise AdtNotFound("No admission with that id", code="admission_not_found")
@@ -619,7 +622,7 @@ def end_stay_on(
         raise AdtConflict("That stay has already ended", code="admission_not_active",
                           status=admission.get("status"))
     if end_type is None:
-        if require_read_back:
+        if require_read_back and not allow_unstated_type:
             raise AdtError("Say how the stay ended", code="end_type_required")
     elif end_type not in END_TYPES:
         words = ", ".join(TYPE_WORDS[t] for t in END_TYPES)

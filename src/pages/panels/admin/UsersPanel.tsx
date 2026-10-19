@@ -7,11 +7,19 @@ import {
   currentFeatureFlags,
   currentModuleFlags,
   subscribeModuleFlags,
+  usePlatformFlags,
 } from '../../../shellConfig'
 import { useFocusTrap } from '../../../hooks/useFocusTrap'
 import { AdminLoadingState, AdminErrorState, AdminEmptyState } from './AdminEmptyState'
 
 /* ── Types ── */
+/** A facility as the server labels it (facility_service.facility_identity). */
+interface FacilityLabel {
+  id: number
+  code: string | null
+  name: string | null
+}
+
 interface AdminUser {
   id: string
   name: string
@@ -22,12 +30,80 @@ interface AdminUser {
   created_at?: string | null
   /** The signed-in admin's own row: no Deactivate (the server refuses it). */
   is_self?: boolean
+  /** multisite-6: where the account works. Sent only while the multi-site
+   *  switch is on or more than one facility is on record; null for a
+   *  department no facility owns. */
+  facility?: FacilityLabel | null
+  /** Sent only to an administrator who holds group-wide access. */
+  enterprise_access?: boolean
+  enterprise_grant_id?: number | null
 }
 
 interface UsersResponse {
   users: AdminUser[]
   /** Departments patients are admitted under: what a ward scope can match. */
   departments?: string[]
+  /* multisite-6, present only with the facility keys above. */
+  /** Open facilities this administrator may place staff at. */
+  facilities?: FacilityLabel[]
+  /** Departments master: department name to the facility that owns it. */
+  department_facilities?: Record<string, number>
+  /** Where the signed-in administrator works. */
+  own_facility_id?: number | null
+  /** The signed-in administrator holds group-wide access, so may give or
+   *  revoke it (ruling MS-R6 (a)). */
+  grants_manageable?: boolean
+}
+
+/** What the panel knows about facilities (multisite-6). On a single-site
+ *  install with the multi-site switch off (every site today) `show` is false
+ *  and the panel is exactly as before. */
+interface FacilityContext {
+  /** Show where each account works: the switch is on, or more than one
+   *  facility is on record. */
+  show: boolean
+  /** The switch is on: staff may be placed at and moved between facilities. */
+  canPlace: boolean
+  facilities: FacilityLabel[]
+  departmentFacilities: Record<string, number>
+  ownFacilityId: number | null
+  grantsManageable: boolean
+}
+
+const MAIN_FACILITY_ID = 1
+
+const NO_FACILITY: FacilityContext = {
+  show: false, canPlace: false, facilities: [], departmentFacilities: {},
+  ownFacilityId: null, grantsManageable: false,
+}
+
+const facilityName = (f: FacilityLabel | null | undefined) =>
+  (f && (f.name || f.code)) || 'Not set'
+
+/** The departments to offer at one facility: the known departments and the
+ *  departments master, each where the master says it belongs (a name the
+ *  master does not list counts as facility 1's, the facility every account
+ *  had before multi-site). */
+function departmentsAt(facilityId: number, departments: string[], owners: Record<string, number>): string[] {
+  const ownerByKey = new Map(Object.entries(owners).map(([name, fid]) => [name.trim().toLowerCase(), fid]))
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const name of [...departments, ...Object.keys(owners)]) {
+    const key = name.trim().toLowerCase()
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    if ((ownerByKey.get(key) ?? MAIN_FACILITY_ID) === facilityId) out.push(name)
+  }
+  return out.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
+}
+
+/** The facility to preselect: the administrator's own, when they may place
+ *  staff there, else the first one they may. */
+function defaultFacilityId(fc: FacilityContext, prefer?: number | null): number {
+  const ids = fc.facilities.map(f => f.id)
+  if (prefer != null && ids.includes(prefer)) return prefer
+  if (fc.ownFacilityId != null && ids.includes(fc.ownFacilityId)) return fc.ownFacilityId
+  return ids[0] ?? MAIN_FACILITY_ID
 }
 
 // Staff roles, from server/roles.py STORABLE_ROLES (the users.role CHECK
@@ -146,6 +222,44 @@ function DepartmentField({
   )
 }
 
+/** Facility picker (multisite-6). For staff without a department it is their
+ *  home facility; for staff with one it narrows the department list, because
+ *  a department belongs to one facility. The hint says which. */
+function FacilitySelect({
+  id, value, facilities, hint, onChange, autoFocus,
+}: {
+  id: string
+  value: number
+  facilities: FacilityLabel[]
+  hint?: string
+  onChange: (v: number) => void
+  autoFocus?: boolean
+}) {
+  const hintId = `${id}-hint`
+  return (
+    <div className="admin-field">
+      <label className="admin-field__label" htmlFor={id}>Facility</label>
+      <select id={id} className="admin-filter-select" value={value} autoFocus={autoFocus}
+        aria-describedby={hint ? hintId : undefined}
+        onChange={(e) => onChange(Number(e.target.value))}>
+        {facilities.map((f) => <option key={f.id} value={f.id}>{facilityName(f)}</option>)}
+      </select>
+      {hint && <span id={hintId} className="admin-field__opt">{hint}</span>}
+    </div>
+  )
+}
+
+/** Marks an administrator who holds group-wide access. Neutral tokens only,
+ *  so no new colour pair enters the contrast gate. */
+function GroupAccessChip() {
+  return (
+    <span className="admin-badge"
+      style={{ background: 'var(--bg-glass)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', marginLeft: 6 }}>
+      All facilities
+    </span>
+  )
+}
+
 function StatusChip({ active }: { active: boolean }) {
   return (
     <span
@@ -216,12 +330,18 @@ function ConfirmDialog({
 }
 
 /* ── Create user modal ── */
-function CreateUserModal({ departments, onClose, onCreated }: { departments: string[]; onClose: () => void; onCreated: () => void }) {
+function CreateUserModal({ departments, fc = NO_FACILITY, onClose, onCreated }: { departments: string[]; fc?: FacilityContext; onClose: () => void; onCreated: () => void }) {
   const [form, setForm] = useState({ id: '', name: '', role: 'doctor' as string, department: '', password: '' })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const ref = useFocusTrap<HTMLDivElement>(submitting ? undefined : onClose)
   const offeredRoles = useOfferedRoles()
+  // multisite-6: with the multi-site switch on, a facility is chosen. It is
+  // sent as the home facility only for staff without a department; a
+  // department's own facility is the only source for everyone else.
+  const placing = fc.canPlace && fc.facilities.length > 0
+  const [facilityId, setFacilityId] = useState(() => defaultFacilityId(fc))
+  const deptOptions = placing ? departmentsAt(facilityId, departments, fc.departmentFacilities) : departments
 
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }))
 
@@ -240,6 +360,7 @@ function CreateUserModal({ departments, onClose, onCreated }: { departments: str
           role: form.role,
           department: form.department.trim() || undefined,
           password: form.password,
+          facility_id: placing && !form.department.trim() ? facilityId : undefined,
         }),
       })
       onCreated()
@@ -272,8 +393,15 @@ function CreateUserModal({ departments, onClose, onCreated }: { departments: str
               </select>
             </label>
             <DepartmentField id="admin-create-dept" role={form.role} value={form.department}
-              departments={departments} onChange={(v) => set('department', v)} />
+              departments={deptOptions} onChange={(v) => set('department', v)} />
           </div>
+          {placing && (
+            <FacilitySelect id="admin-create-facility" value={facilityId} facilities={fc.facilities}
+              onChange={setFacilityId}
+              hint={form.department.trim()
+                ? "Staff with a department work at that department's facility."
+                : 'Staff without a department work at this facility.'} />
+          )}
           <label className="admin-field">
             <span className="admin-field__label">Temporary password</span>
             <input className="admin-filter-input" type="text" required minLength={8} value={form.password}
@@ -359,13 +487,18 @@ function ResetPasswordModal({ target, onClose, onDone }: { target: AdminUser; on
 }
 
 /* ── Change role modal ── */
-function ChangeRoleModal({ target, departments, onClose, onDone }: { target: AdminUser; departments: string[]; onClose: () => void; onDone: () => void }) {
+function ChangeRoleModal({ target, departments, fc = NO_FACILITY, onClose, onDone }: { target: AdminUser; departments: string[]; fc?: FacilityContext; onClose: () => void; onDone: () => void }) {
   const [role, setRole] = useState(target.role)
   const [department, setDepartment] = useState(target.department || '')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const ref = useFocusTrap<HTMLDivElement>(submitting ? undefined : onClose)
   const offeredRoles = useOfferedRoles(target.role)
+  // multisite-6: offer the departments of the facility the account works at.
+  // A department of another facility can still be typed; the server decides.
+  const deptOptions = fc.canPlace && fc.facilities.length > 0
+    ? departmentsAt(target.facility?.id ?? defaultFacilityId(fc), departments, fc.departmentFacilities)
+    : departments
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -397,12 +530,127 @@ function ChangeRoleModal({ target, departments, onClose, onDone }: { target: Adm
             </select>
           </label>
           <DepartmentField id="admin-role-dept" role={role} value={department}
-            departments={departments} onChange={setDepartment} />
+            departments={deptOptions} onChange={setDepartment} />
           {error && <p className="admin-form__error" role="alert">{error}</p>}
           <div className="admin-modal__actions">
             <button type="button" className="admin-btn-ghost" onClick={onClose} disabled={submitting}>Cancel</button>
             <button type="submit" className="admin-filter-btn" disabled={submitting}>
               {submitting ? 'Saving…' : 'Save changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+/* ── Move facility modal (multisite-6) ── */
+function MoveFacilityModal({ target, fc, onClose, onDone }: { target: AdminUser; fc: FacilityContext; onClose: () => void; onDone: () => void }) {
+  const [facilityId, setFacilityId] = useState(() => defaultFacilityId(fc, target.facility?.id))
+  const [reason, setReason] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const ref = useFocusTrap<HTMLDivElement>(submitting ? undefined : onClose)
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    setSubmitting(true)
+    try {
+      await apiFetch(`/admin/users/${encodeURIComponent(target.id)}/facility`, {
+        method: 'POST',
+        body: JSON.stringify({ facility_id: facilityId, reason: reason.trim() || undefined }),
+      })
+      onDone()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to change the facility')
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="admin-modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && !submitting) onClose() }}>
+      <div ref={ref} className="admin-modal admin-modal--sm" role="dialog" aria-modal="true" aria-labelledby="admin-facility-title">
+        <h3 id="admin-facility-title" className="admin-modal__title">Change facility</h3>
+        <p className="admin-modal__text">
+          <strong>{target.name}</strong> ({target.id}) works at {facilityName(target.facility)}. Their
+          patients and screens follow the facility you choose.
+        </p>
+        <form className="admin-form" onSubmit={submit}>
+          <FacilitySelect id="admin-move-facility" value={facilityId} facilities={fc.facilities}
+            onChange={setFacilityId} autoFocus />
+          <label className="admin-field">
+            <span className="admin-field__label">Reason <span className="admin-field__opt">(optional)</span></span>
+            <input className="admin-filter-input" value={reason} maxLength={500}
+              onChange={(e) => setReason(e.target.value)} placeholder="Joined the satellite pharmacy" />
+          </label>
+          {error && <p className="admin-form__error" role="alert">{error}</p>}
+          <div className="admin-modal__actions">
+            <button type="button" className="admin-btn-ghost" onClick={onClose} disabled={submitting}>Cancel</button>
+            <button type="submit" className="admin-filter-btn" disabled={submitting}>
+              {submitting ? 'Saving…' : 'Change facility'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+/* ── Group-wide access modal (multisite-6, ruling MS-R6 (a)) ── */
+function GroupAccessModal({ target, onClose, onDone }: { target: AdminUser; onClose: () => void; onDone: (granted: boolean) => void }) {
+  const revoking = !!target.enterprise_access
+  const [reason, setReason] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const ref = useFocusTrap<HTMLDivElement>(submitting ? undefined : onClose)
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    if (reason.trim().length < 3) { setError('Give a reason of at least 3 characters.'); return }
+    setSubmitting(true)
+    try {
+      if (revoking) {
+        await apiFetch(`/admin/users/enterprise-grants/${encodeURIComponent(String(target.enterprise_grant_id))}/revoke`, {
+          method: 'POST',
+          body: JSON.stringify({ reason: reason.trim() }),
+        })
+      } else {
+        await apiFetch('/admin/users/enterprise-grants', {
+          method: 'POST',
+          body: JSON.stringify({ user_id: target.id, reason: reason.trim() }),
+        })
+      }
+      onDone(!revoking)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to change access')
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="admin-modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && !submitting) onClose() }}>
+      <div ref={ref} className="admin-modal admin-modal--sm" role="dialog" aria-modal="true" aria-labelledby="admin-group-title">
+        <h3 id="admin-group-title" className="admin-modal__title">
+          {revoking ? 'Remove access to all facilities' : 'Give access to all facilities'}
+        </h3>
+        <p className="admin-modal__text">
+          {revoking
+            ? <><strong>{target.name}</strong> ({target.id}) will see only their own facility from now on.</>
+            : <><strong>{target.name}</strong> ({target.id}) will see every facility&apos;s patients and staff, and can give or remove this access for other administrators. Every change is recorded.</>}
+        </p>
+        <form className="admin-form" onSubmit={submit}>
+          <label className="admin-field">
+            <span className="admin-field__label">Reason</span>
+            <input className="admin-filter-input" required value={reason} maxLength={500} autoFocus
+              onChange={(e) => setReason(e.target.value)} placeholder="Group IT lead" />
+          </label>
+          {error && <p className="admin-form__error" role="alert">{error}</p>}
+          <div className="admin-modal__actions">
+            <button type="button" className="admin-btn-ghost" onClick={onClose} disabled={submitting}>Cancel</button>
+            <button type="submit" className={revoking ? 'admin-btn-danger' : 'admin-filter-btn'} disabled={submitting}>
+              {submitting ? 'Saving…' : revoking ? 'Remove access' : 'Give access'}
             </button>
           </div>
         </form>
@@ -431,6 +679,22 @@ export default function UsersPanel() {
   const [confirmError, setConfirmError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // multisite-6: what the server said about facilities, the platform flags
+  // from /api/health, and the two facility dialogs.
+  const [facilityInfo, setFacilityInfo] = useState<UsersResponse | null>(null)
+  const [moveTarget, setMoveTarget] = useState<AdminUser | null>(null)
+  const [groupTarget, setGroupTarget] = useState<AdminUser | null>(null)
+  const platform = usePlatformFlags()
+  const fc: FacilityContext = (platform.multiSite || platform.multiFacilityData)
+    ? {
+        show: true,
+        canPlace: platform.multiSite,
+        facilities: facilityInfo?.facilities ?? [],
+        departmentFacilities: facilityInfo?.department_facilities ?? {},
+        ownFacilityId: facilityInfo?.own_facility_id ?? null,
+        grantsManageable: !!facilityInfo?.grants_manageable,
+      }
+    : NO_FACILITY
 
   const flash = useCallback((msg: string) => {
     setToast(msg)
@@ -444,7 +708,7 @@ export default function UsersPanel() {
     setLoading(true)
     setError(null)
     apiFetch<UsersResponse>(showPatients ? '/admin/users?include_patients=true' : '/admin/users')
-      .then((res) => { setUsers(res.users); setDepartments(res.departments || []) })
+      .then((res) => { setUsers(res.users); setDepartments(res.departments || []); setFacilityInfo(res) })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load users'))
       .finally(() => setLoading(false))
   }, [showPatients])
@@ -502,6 +766,7 @@ export default function UsersPanel() {
                 <th>ID</th>
                 <th>Role</th>
                 <th>Department</th>
+                {fc.show && <th>Facility</th>}
                 <th>MFA</th>
                 <th>Status</th>
                 <th style={{ textAlign: 'right' }}>Actions</th>
@@ -514,6 +779,14 @@ export default function UsersPanel() {
                   <td className="admin-td--mono admin-td--small">{u.id}</td>
                   <td><RoleChip role={u.role} /></td>
                   <td>{u.department || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
+                  {fc.show && (
+                    <td>
+                      {u.facility
+                        ? facilityName(u.facility)
+                        : <span style={{ color: 'var(--text-muted)' }}>Not set</span>}
+                      {u.enterprise_access && <GroupAccessChip />}
+                    </td>
+                  )}
                   <td><MfaChip on={u.totp_enabled} /></td>
                   <td><StatusChip active={u.is_active} /></td>
                   <td>
@@ -523,6 +796,19 @@ export default function UsersPanel() {
                       {u.role !== 'patient' && (
                         <button className="admin-btn-ghost admin-btn-ghost--sm" aria-label={`Change role for ${u.name}`} onClick={() => setRoleTarget(u)}>Role</button>
                       )}
+                      {/* multisite-6: only staff without a department have a
+                          home facility; a department's facility is its own. */}
+                      {fc.canPlace && fc.facilities.length > 0 && u.role !== 'patient' && !u.department && (
+                        <button className="admin-btn-ghost admin-btn-ghost--sm" aria-label={`Change facility for ${u.name}`} onClick={() => setMoveTarget(u)}>Facility</button>
+                      )}
+                      {/* Group-wide access: shown only to an administrator who
+                          holds it. Giving needs the multi-site switch; removing
+                          never does. */}
+                      {fc.grantsManageable && u.role === 'admin' && (u.enterprise_access
+                        ? <button className="admin-btn-ghost admin-btn-ghost--sm" aria-label={`Remove access to all facilities for ${u.name}`} onClick={() => setGroupTarget(u)}>Remove group access</button>
+                        : (fc.canPlace && u.is_active && (
+                          <button className="admin-btn-ghost admin-btn-ghost--sm" aria-label={`Give access to all facilities to ${u.name}`} onClick={() => setGroupTarget(u)}>Group access</button>
+                        )))}
                       <button className="admin-btn-ghost admin-btn-ghost--sm" aria-label={`Reset password for ${u.name}`} onClick={() => setResetTarget(u)}>Reset password</button>
                       {u.is_self ? null : u.is_active ? (
                         <button className="admin-btn-danger admin-btn-danger--sm" onClick={() => { setConfirmError(null); setConfirm({ kind: 'deactivate', user: u }) }}>Deactivate</button>
@@ -543,8 +829,24 @@ export default function UsersPanel() {
       {showCreate && (
         <CreateUserModal
           departments={departments}
+          fc={fc}
           onClose={() => setShowCreate(false)}
           onCreated={() => { setShowCreate(false); flash('User created'); fetchUsers() }}
+        />
+      )}
+      {moveTarget && (
+        <MoveFacilityModal
+          target={moveTarget}
+          fc={fc}
+          onClose={() => setMoveTarget(null)}
+          onDone={() => { setMoveTarget(null); flash('Facility changed'); fetchUsers() }}
+        />
+      )}
+      {groupTarget && (
+        <GroupAccessModal
+          target={groupTarget}
+          onClose={() => setGroupTarget(null)}
+          onDone={(granted) => { setGroupTarget(null); flash(granted ? 'Access to all facilities given' : 'Access to all facilities removed'); fetchUsers() }}
         />
       )}
       {resetTarget && (
@@ -558,6 +860,7 @@ export default function UsersPanel() {
         <ChangeRoleModal
           target={roleTarget}
           departments={departments}
+          fc={fc}
           onClose={() => setRoleTarget(null)}
           onDone={() => { setRoleTarget(null); flash('User updated'); fetchUsers() }}
         />

@@ -81,13 +81,91 @@ def serialize_event(row: Mapping) -> dict:
     return out
 
 
+#: The ledger events behind an order's supply line (medorders-10, W9-D).
+SUPPLY_EVENT_KINDS = ("supply_requested", "supply_reviewing", "supply_verified",
+                      "supply_rejected", "dispensed", "received")
+#: The bedside events behind an order's last dose.
+DOSE_EVENT_KINDS = ("administered", "not_given")
+
+
+def _user_names(conn, ids) -> dict:
+    wanted = sorted({str(i) for i in ids if i})
+    if not wanted:
+        return {}
+    marks = ", ".join("?" for _ in wanted)
+    return {r["id"]: r["name"] for r in conn.execute(
+        f"SELECT id, name FROM users WHERE id IN ({marks})", tuple(wanted)).fetchall()}
+
+
+def _ledger_lines(conn, patient_id: str) -> dict:
+    """{order id: {supply, last_dose}} from the patient's ledger in one read
+    (medorders-10, W9-D): the chart's supply line (the latest supply row's
+    state, who dispensed it and who received it on the ward) and the last
+    bedside record. An order with no supply event has supply None, which the
+    chart says as 'supply not linked'."""
+    kinds = SUPPLY_EVENT_KINDS + DOSE_EVENT_KINDS
+    marks = ", ".join("?" for _ in kinds)
+    rows = [dict(r) for r in conn.execute(
+        f"SELECT med_order_id, kind, actor_id, actor_role, reason, ref_type, ref_id, "
+        f"created_at FROM med_order_events WHERE patient_id = ? AND kind IN ({marks}) "
+        f"ORDER BY created_at, id",
+        (patient_id, *kinds),
+    ).fetchall()]
+    names = _user_names(conn, (r["actor_id"] for r in rows))
+    out: dict = {}
+    for r in rows:
+        line = out.setdefault(r["med_order_id"], {"supply": None, "last_dose": None})
+        who = {"by": r["actor_id"], "by_name": names.get(r["actor_id"]),
+               "by_role": r["actor_role"], "at": r["created_at"]}
+        if r["kind"] in DOSE_EVENT_KINDS:
+            # ref_type/ref_id name the medication_administrations row (the
+            # eMAR writes them, emar_check.record_bedside_event_in_txn), so the
+            # chart can join this dose to its administration record and mark
+            # a dose given across a charted allergy, as the old table did.
+            line["last_dose"] = {"kind": r["kind"], "reason": r["reason"],
+                                 "ref_type": r["ref_type"], "ref_id": r["ref_id"], **who}
+            continue
+        supply_id = r["ref_id"] if r["ref_type"] == "helix_order" else None
+        current = line["supply"]
+        if current is None or (supply_id and current.get("helix_order_id") != supply_id):
+            current = line["supply"] = {"helix_order_id": supply_id, "state": None,
+                                        "at": None, "requested_at": None,
+                                        "dispensed": None, "received": None}
+        current["state"] = r["kind"]
+        current["at"] = r["created_at"]
+        if r["kind"] == "supply_requested":
+            current["requested_at"] = r["created_at"]
+        elif r["kind"] in ("dispensed", "received"):
+            current[r["kind"]] = who
+    return out
+
+
 def list_for_patient(conn, patient_id: str) -> dict:
     """The patient's medication orders, newest first, plus every chart row the
-    store has not adopted, shown as the order it would become (read-only)."""
+    store has not adopted, shown as the order it would become (read-only).
+
+    Each order also carries (medorders-10, W9-D) the names of the people on it
+    (prescriber_name, verified_by_name, entered_by_name,
+    status_changed_by_name), its supply line ('supply': the latest supply row's
+    state with who dispensed and received it, or None for 'supply not linked')
+    and 'last_dose' (the last bedside record on the order's ledger, or None,
+    with the ref_type and ref_id of the administration record it points at)."""
     orders = [serialize_order(r) for r in conn.execute(
         "SELECT * FROM med_orders WHERE patient_id = ? ORDER BY created_at DESC, id DESC",
         (patient_id,),
     ).fetchall()]
+    if orders:
+        names = _user_names(conn, (o.get(c) for o in orders for c in (
+            "prescriber_id", "verified_by", "entered_by", "status_changed_by")))
+        lines = _ledger_lines(conn, patient_id)
+        for o in orders:
+            o["prescriber_name"] = names.get(o.get("prescriber_id"))
+            o["verified_by_name"] = names.get(o.get("verified_by"))
+            o["entered_by_name"] = names.get(o.get("entered_by"))
+            o["status_changed_by_name"] = names.get(o.get("status_changed_by"))
+            line = lines.get(o["id"]) or {}
+            o["supply"] = line.get("supply")
+            o["last_dose"] = line.get("last_dose")
     legacy = []
     for r in conn.execute(
         "SELECT id, drug_name, dosage, route, frequency, status, source, verified_by, "

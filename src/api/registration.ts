@@ -54,6 +54,55 @@ export interface RegistrationConfig {
   thresholds: { probable: number; possible: number }
   id_document_types: string[]
   allergies_at_desk: false
+  /** The notice and consent step (opd-19), in the server's words. Absent from
+   *  a server that predates it, and then the step is not offered. */
+  consent?: RegistrationConsentOptions
+}
+
+/** What the consent step may record (registration_service.
+ *  registration_consent_options). Who may send it is the account's
+ *  consent.record grant (src/lib/roles.ts CONSENT_RECORD). */
+export interface RegistrationConsentOptions {
+  purpose: string
+  purpose_label: string
+  methods: { value: string; label: string }[]
+  given_by: string[]
+  /** Methods that mean a guardian or proxy gave consent: never given_by patient. */
+  guardian_methods: string[]
+  /** Younger than this (DPDP Act s.2(f): 18), a guardian or proxy gives consent. */
+  adult_age: number
+  /** English or a language of the Eighth Schedule (DPDP Act s.5(3)). */
+  notice_languages: string[]
+  notice_version_max: number
+  /** Registration details are part of the medical record and kept with it. */
+  retention_text: string
+}
+
+/** The step as sent with a registration. Both facts must be true. */
+export interface RegistrationConsentInput {
+  notice_acknowledged: true
+  treatment_consent: true
+  notice_version: string
+  notice_language: string
+  method: string
+  given_by: string
+  proxy_name?: string
+  proxy_relationship?: string
+  evidence_ref?: string
+}
+
+/** A consent the registration recorded. */
+export interface RegisteredConsent {
+  id: string
+  purpose: string
+  purpose_label: string
+  notice_version: string
+  notice_language: string
+  method: string
+  method_label: string
+  given_by: string
+  granted_at: string
+  effective_status: 'active' | 'withdrawn' | 'expired'
 }
 
 export function fetchRegistrationConfig(): Promise<RegistrationConfig> {
@@ -157,6 +206,10 @@ export interface NewPatientInput {
   abha_number?: string
   abha_address?: string
   duplicate_review?: DuplicateReview
+  /** opd-19: the language the patient prefers (free text, as the desk types it). */
+  preferred_language?: string
+  /** opd-19: the notice and consent step; consent.record holders only. */
+  consent?: RegistrationConsentInput
 }
 
 export interface RegisteredPatient {
@@ -166,6 +219,8 @@ export interface RegisteredPatient {
     date_of_birth_hint?: string | null; discharge_link_possible?: boolean }
   replayed: boolean
   duplicate_review: { reason: string; candidate_ids: string[]; check_incomplete: boolean } | null
+  /** Present only when the consent step was recorded (opd-19). */
+  consents?: RegisteredConsent[]
 }
 
 export function registerNewPatient(input: NewPatientInput, idempotencyKey: string): Promise<RegisteredPatient> {
@@ -177,6 +232,8 @@ export function registerNewPatient(input: NewPatientInput, idempotencyKey: strin
   if (input.abha_number) body.abha_number = input.abha_number.trim()
   if (input.abha_address) body.abha_address = input.abha_address.trim()
   if (input.duplicate_review) body.duplicate_review = input.duplicate_review
+  if (input.preferred_language?.trim()) body.preferred_language = input.preferred_language.trim()
+  if (input.consent) body.consent = input.consent
   return apiFetch<RegisteredPatient>('/registration/patients', {
     method: 'POST',
     headers: { 'Idempotency-Key': idempotencyKey },

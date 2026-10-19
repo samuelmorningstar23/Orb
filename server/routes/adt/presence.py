@@ -22,7 +22,9 @@ Display only (adt-10): no obs timer, medication list, escalation, sepsis
 auto-start or simulator reads presence until adt-11 (ruling ADT-S4).
 
 Every handler is a plain def (FastAPI threadpools it); the work runs in one
-immediate session in services/adt/presence.py.
+immediate session in services/adt/presence.py. After a change commits the bed
+boards hear a content-free 'adt:changed' {ward_id} (adt-19,
+services/adt/live.py); a refusal or a replay pushes nothing.
 """
 from __future__ import annotations
 
@@ -35,6 +37,7 @@ from permissions import ADT_PRESENCE, PATIENT_WRITE, require_any_permission
 from routes.adt.end_stay import _meta, _scoped_admission
 from services.adt import core as adt_core
 from services.adt import presence as adt_presence
+from services.adt.live import notify_adt_changed
 from services.audit_service import AuditWriteError
 
 router = APIRouter()
@@ -70,13 +73,18 @@ def _run(fn, admission_id: str, body: PresenceIn, request: Request, user: dict,
          idempotency_key: Optional[str], **extra):
     _scoped_admission(admission_id, user, request)
     try:
-        return fn(admission_id, actor=user, reason=body.reason, occurred_at=body.occurred_at,
-                  notes=body.notes, idempotency_key=idempotency_key,
-                  request_meta=_meta(request), **extra)
+        answer = fn(admission_id, actor=user, reason=body.reason, occurred_at=body.occurred_at,
+                    notes=body.notes, idempotency_key=idempotency_key,
+                    request_meta=_meta(request), **extra)
     except adt_core.AdtError as err:
         raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
     except AuditWriteError:
         raise _audit_unavailable()
+    if isinstance(answer, dict) and not answer.get("replayed"):
+        # adt-19: after the commit, the bed boards refetch (the tile's
+        # 'Not on ward' status changed).
+        notify_adt_changed(answer=answer, admission_ids=[admission_id])
+    return answer
 
 
 @router.post("/admissions/{admission_id}/leave")

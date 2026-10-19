@@ -843,30 +843,34 @@ def build_board(department: str | None) -> dict:
         })
 
     # adt-10: whether each patient is on the ward, for the 'Not on ward since'
-    # chip. Only while ORB_ADT is on (presence_by_patient is None otherwise),
-    # so the board's payload with the module off is unchanged. DISPLAY ONLY:
-    # the obs and medication due times above, the order below and every
-    # count are worked out exactly as before; pausing them for a patient off
-    # the ward is adt-11 (ruling ADT-S4).
-    from services.adt.presence import presence_by_patient
+    # chip, and adt-11 (ruling ADT-S4 (a)): a patient recorded on leave or
+    # absconded has their obs and dose clocks paused, with the reason. Only
+    # while ORB_ADT is on (away_by_patient is None otherwise), so with the
+    # module off the board's payload, order and counts are unchanged.
+    from services.adt.clinical_pause import away_by_patient
 
-    presence = presence_by_patient([c["patient_id"] for c in cards])
-    if presence is not None:
+    away = away_by_patient([c["patient_id"] for c in cards])
+    if away is not None:
         for card in cards:
-            here = presence.get(card["patient_id"]) or {}
-            card["presence_status"] = here.get("presence_status")
-            card["presence_since"] = here.get("presence_since")
+            here = away.get(card["patient_id"])
+            card["presence_status"] = (here or {}).get("presence_status")
+            card["presence_since"] = (here or {}).get("presence_since")
+            _pause_card(card, here, med_round)
 
     _LEVEL_RANK = {"critical": 0, "elevated": 1, "stable": 2}
 
     def _priority(card: dict):
         """Sickest first, then latest-running, then soonest due, then bed order.
-        With scoring off nobody is "sickest": late rounds first, then due."""
+        With scoring off nobody is "sickest": late rounds first, then due.
+        A patient off the ward (adt-11) sorts after everyone on it: there is
+        nothing at their bedside to go to. The key is 0 for every card while
+        ORB_ADT is off, so the order is then exactly as before."""
         level = (card["news2"] or {}).get("level", "stable") if scoring else "stable"
         # A patient with no obs at all has no due time; sort them with the most
         # overdue rather than at the "nothing due" end.
         minutes = card["obs_minutes_until_due"]
         return (
+            1 if card.get("paused") else 0,
             _LEVEL_RANK.get(level, 3),
             0 if card["obs_overdue"] else 1,
             -(card["meds_overdue"] or 0),
@@ -876,6 +880,24 @@ def build_board(department: str | None) -> dict:
 
     cards.sort(key=_priority)
 
+    totals = {
+        "patients": len(cards),
+        # Band counts are a score: None, not 0, while scoring is off.
+        "critical": (sum(1 for c in cards if (c["news2"] or {}).get("level") == "critical")
+                     if scoring else None),
+        "elevated": (sum(1 for c in cards if (c["news2"] or {}).get("level") == "elevated")
+                     if scoring else None),
+        "obs_overdue": sum(1 for c in cards if c["obs_overdue"]),
+        # Dose counts: None, not 0, while there is no medication round.
+        "meds_overdue": sum(c["meds_overdue"] for c in cards) if med_round else None,
+        "meds_allergy_blocked": (sum(c["meds_allergy_blocked"] for c in cards)
+                                 if med_round else None),
+    }
+    if away is not None:
+        # adt-11: how many patients are off the ward with their clocks paused.
+        # Only while ORB_ADT is on, like the presence keys on each card.
+        totals["not_on_ward"] = sum(1 for c in cards if c.get("paused"))
+
     return {
         "generated_at": _iso(now),
         "department": department,
@@ -883,20 +905,47 @@ def build_board(department: str | None) -> dict:
         # False on an Orb Ward Record computer: no medication round.
         "medication_round": med_round,
         "patients": cards,
-        "totals": {
-            "patients": len(cards),
-            # Band counts are a score: None, not 0, while scoring is off.
-            "critical": (sum(1 for c in cards if (c["news2"] or {}).get("level") == "critical")
-                         if scoring else None),
-            "elevated": (sum(1 for c in cards if (c["news2"] or {}).get("level") == "elevated")
-                         if scoring else None),
-            "obs_overdue": sum(1 for c in cards if c["obs_overdue"]),
-            # Dose counts: None, not 0, while there is no medication round.
-            "meds_overdue": sum(c["meds_overdue"] for c in cards) if med_round else None,
-            "meds_allergy_blocked": (sum(c["meds_allergy_blocked"] for c in cards)
-                                     if med_round else None),
-        },
+        "totals": totals,
     }
+
+
+def _pause_card(card: dict, away: dict | None, med_round: bool) -> None:
+    """adt-11 (ruling ADT-S4 (a)): pause one card's clocks while the patient is
+    recorded off the ward, in place. Called only while ORB_ADT is on.
+
+    On the ward (`away` None): the card gains paused None and each dose task
+    paused False; nothing else changes. Off the ward: nothing is overdue or
+    due soon and no due time is given, for observations or doses, and the
+    card says why (`paused`: presence, since and the reason sentence). The
+    allergy block lines stay: they describe a dose, not a clock. The patient
+    stays on the board. Back on the ward, the clocks run again from the last
+    set a person took and the last dose given, so what was missed while away
+    reads overdue at once."""
+    from services.adt.clinical_pause import pause_reason
+
+    if not away:
+        card["paused"] = None
+        for task in card["medications"]:
+            task["paused"] = False
+        return
+    card["paused"] = {
+        "presence_status": away.get("presence_status"),
+        "presence_since": away.get("presence_since"),
+        "reason": pause_reason(away, medication_round=med_round),
+    }
+    card["obs_due_at"] = None
+    card["obs_minutes_until_due"] = None
+    card["obs_overdue"] = False
+    card["obs_due_soon"] = False
+    for task in card["medications"]:
+        task["paused"] = True
+        task["overdue"] = False
+        task["due_soon"] = False
+        task["due_at"] = None
+        task["minutes_until_due"] = None
+    if med_round:
+        card["meds_overdue"] = 0
+        card["meds_due_soon"] = 0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1674,10 +1723,12 @@ def _record_observation_txn(
 
     # Post-commit, non-raising: opening a sepsis bundle at NEWS2>=7 is documented
     # in sepsis_bundle_service as safe to call from any risk path, and a
-    # nurse-taken set is exactly such a path.
+    # nurse-taken set is exactly such a path. The observation time goes with
+    # it (adt-11): a set taken after a patient recorded on leave left the ward
+    # was taken at the bedside, so it still opens the bundle.
     try:
         from services.sepsis_bundle_service import maybe_autostart
-        maybe_autostart(patient_id, news2)
+        maybe_autostart(patient_id, news2, observed_at=stored_at)
     except Exception as e:  # never let a bundle failure lose a recorded reading
         logger.warning("sepsis bundle autostart after nurse obs failed for %s: %s", patient_id, e)
 

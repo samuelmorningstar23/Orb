@@ -1,0 +1,65 @@
+/* RegistrationConsentFields.css: the privacy notice and consent step of a new
+ * registration (opd-19). Orb "Quiet Clinical" (flat), beside
+ * RegisterPatientView.css, whose rpv- field, choice and hint classes it reuses.
+ *
+ *  * No `opacity` for state; disabled checkboxes keep the browser's own
+ *    disabled rendering through accent-color only.
+ *  * Tap targets 24px minimum, 44px (--tap-min) under a coarse pointer.
+ *  * Long lines wrap; nothing scrolls sideways.
+ */
+
+.rcf {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+}
+
+.rcf__legend {
+  padding: 0 var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.rcf-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-height: 28px;
+  padding: var(--space-1) 0;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--text-primary);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.rcf-check input[type='checkbox'] {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: var(--accent-deep);
+}
+
+.rcf-check input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .rcf-check {
+    min-height: var(--tap-min);
+    align-items: center;
+  }
+
+  .rcf-check input[type='checkbox'] {
+    margin-top: 0;
+  }
+}

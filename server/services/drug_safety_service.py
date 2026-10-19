@@ -623,7 +623,8 @@ def check_allergies(patient_id: str, drug_name: str) -> list[dict]:
 
 
 def _screen_interactions(patient_id: str, drug_name: str,
-                         exclude_med_id: int | None = None) -> tuple[list[dict], list[str]]:
+                         exclude_med_id: int | None = None,
+                         exclude_order_id: str | None = None) -> tuple[list[dict], list[str]]:
     """Interaction alerts for ``drug_name`` against the patient's active meds,
     plus the active meds the knowledge base does not know (not screened).
 
@@ -632,20 +633,46 @@ def _screen_interactions(patient_id: str, drug_name: str,
     warfarin/aspirin row) the worst severity leads and every distinct mechanism
     is kept in the message, so nothing is lost and the pair is not listed three
     times.
+
+    WHAT "ACTIVE MEDS" MEANS (medorders-9, ruling MO-R3 (a), held for Samuel).
+    With ORB_MED_ORDER_LIFECYCLE on, the comparison set is read from the
+    medication-order store (services/medorders/screening.comparison_rows):
+    live orders, PRN and held included, drafts and ended orders excluded, plus
+    live ward rows with no order behind them, less the screened order's own
+    rows (``exclude_med_id`` and ``exclude_order_id``). An alert against a held
+    or as-needed drug says so. With the lifecycle off: the patient's 'active'
+    ward rows, exactly as before.
     """
     interaction_db.ensure_seeded()
     new_terms = interaction_terms(drug_name)
-    sql = "SELECT drug_name FROM medications WHERE patient_id = ? AND status = 'active'"
-    params: list = [patient_id]
-    if exclude_med_id is not None:
-        sql += " AND id != ?"
-        params.append(exclude_med_id)
-    with db_session() as db:
-        rows = db.execute(sql, params).fetchall()
+    from services.medorders import screening
+    labels: list[Optional[str]]
+    if screening.store_screen_on():
+        with db_session() as db:
+            store_rows = screening.comparison_rows(db, patient_id, exclude_med_id=exclude_med_id,
+                                                   exclude_order_id=exclude_order_id)
+        rows = [{"drug_name": r["drug_name"]} for r in store_rows]
+        labels = [screening.row_label(r) for r in store_rows]
+    else:
+        sql = "SELECT drug_name FROM medications WHERE patient_id = ? AND status = 'active'"
+        params: list = [patient_id]
+        if exclude_med_id is not None:
+            sql += " AND id != ?"
+            params.append(exclude_med_id)
+        with db_session() as db:
+            if exclude_order_id:
+                # The order's own ward row, when it has one.
+                own = db.execute("SELECT legacy_medication_id FROM med_orders WHERE id = ?",
+                                 (exclude_order_id,)).fetchone()
+                if own is not None and own["legacy_medication_id"] is not None:
+                    sql += " AND id != ?"
+                    params.append(own["legacy_medication_id"])
+            rows = db.execute(sql, params).fetchall()
+        labels = [None] * len(rows)
 
     alerts: list[dict] = []
     unscreened: list[str] = []
-    for r in rows:
+    for r, label in zip(rows, labels):
         existing = r["drug_name"]
         existing_terms = interaction_terms(existing)
         if not interaction_recognised(existing, existing_terms):
@@ -662,13 +689,18 @@ def _screen_interactions(patient_id: str, drug_name: str,
             m = (h["mechanism"] or "").strip()
             if m and m not in mechanisms:
                 mechanisms.append(m)
-        alerts.append({
+        alert = {
             "type": "interaction",
             "severity": hits[0]["severity"],
             "with": existing,
-            "message": f"{drug_name} + {existing}: {' '.join(mechanisms)}",
+            "message": (f"{drug_name} + {existing}"
+                        + (f" ({label})" if label else "")
+                        + f": {' '.join(mechanisms)}"),
             "classes": sorted({t for h in hits for t in (h["term_a"], h["term_b"])}),
-        })
+        }
+        if label:
+            alert["with_status"] = label
+        alerts.append(alert)
     return alerts, unscreened
 
 
@@ -689,7 +721,8 @@ def check_interactions(patient_id: str, drug_name: str,
 
 
 def check_medication_safety(patient_id: str, drug_name: str,
-                            exclude_med_id: int | None = None) -> dict:
+                            exclude_med_id: int | None = None,
+                            exclude_order_id: str | None = None) -> dict:
     """Full order-time safety screen. Returns allergy + interaction alerts and the
     single worst severity, plus a `blocking` flag (severe alerts block auto-orders).
 
@@ -703,10 +736,16 @@ def check_medication_safety(patient_id: str, drug_name: str,
 
     ``exclude_med_id`` is passed through to :func:`check_interactions` when the
     drug being screened is itself a charted row (pharmacist verification).
+    ``exclude_order_id`` does the same for a medication order (medorders-9):
+    the order and its ward row are left out of the comparison.
     """
     allergy_alerts = check_allergies(patient_id, drug_name)
-    interaction_alerts, unscreened_with = _screen_interactions(patient_id, drug_name,
-                                                               exclude_med_id)
+    if exclude_order_id is None:
+        interaction_alerts, unscreened_with = _screen_interactions(patient_id, drug_name,
+                                                                   exclude_med_id)
+    else:
+        interaction_alerts, unscreened_with = _screen_interactions(
+            patient_id, drug_name, exclude_med_id, exclude_order_id)
     all_alerts = allergy_alerts + interaction_alerts
     max_sev = "none"
     for a in all_alerts:
@@ -1803,6 +1842,9 @@ _JUNK_DOSE_REASONS = {
     "correct", "confirmed", "checked", "double checked", "as charted",
     "as prescribed", "-", ".", "..", "...",
 }
+#: The same reflex clear-throughs refused for any written override at order
+#: time (services/medorders/screening.validate_duplicate_reason reads it).
+JUNK_OVERRIDE_REASONS = frozenset(_JUNK_DOSE_REASONS)
 
 
 def validate_dose_override_reason(reason: Optional[str]) -> str:

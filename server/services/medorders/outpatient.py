@@ -534,7 +534,8 @@ def _audit_screen(*, outcome: str, action_type: str, patient_id: str, drug_name:
 
 
 def _screen(patient_id: str, line: Mapping, *, actor_id: str, actor_role: Optional[str],
-            safety_ack: Optional[Mapping]) -> tuple[str, dict, Optional[dict]]:
+            safety_ack: Optional[Mapping],
+            visit_id: Optional[str] = None) -> tuple[str, dict, Optional[dict]]:
     """The fingerprint, the outpatient interaction screen and the gate, all
     outside any write transaction. Returns (fingerprint, merged screen,
     outpatient override or None); raises the gate's 428 or 503, or this
@@ -566,6 +567,9 @@ def _screen(patient_id: str, line: Mapping, *, actor_id: str, actor_role: Option
             dose=line["dose"],
             route=line["route"],
             actor_role=actor_role,
+            # The visit, so the same-medicine rule tells this visit's lines
+            # from an earlier visit's (services/medorders/screening.py).
+            opd_visit_id=visit_id,
         )
     except HTTPException as exc:
         detail = exc.detail if isinstance(exc.detail, dict) else None
@@ -661,7 +665,8 @@ def write_prescription(visit_id: str, raw: Mapping[str, Any], *, actor_id: str,
         _require_allergy_review(conn, patient_id, visit_id)
 
     before, safety, op_override = _screen(patient_id, line, actor_id=actor_id,
-                                          actor_role=actor_role, safety_ack=safety_ack)
+                                          actor_role=actor_role, safety_ack=safety_ack,
+                                          visit_id=visit_id)
 
     with db_session(immediate=True) as conn:
         visit = _visit_row(conn, visit_id)

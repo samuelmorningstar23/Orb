@@ -22,12 +22,14 @@ What this file defends:
      nothing; a key reused for another change is 409. Times up to the
      back-time window, never in the future, never before the last leave or
      return.
-  5. DISPLAY ONLY. /api/vigil/patients rows and the nurse board's cards carry
+  5. THE ROWS. /api/vigil/patients rows and the nurse board's cards carry
      presence_status and presence_since only while ORB_ADT is on; with the
-     module off their payloads are unchanged. With and without a leave the
-     nurse board's obs and medication due fields, its order and its counts,
-     and the escalation chain a critical set opens, are identical (adt-11 is
-     where they change).
+     module off their payloads are unchanged. A critical set charted while the
+     patient is recorded on leave opens the identical escalation chain. The
+     pins that said nothing else changed were amended by adt-11 (W9-B, ruling
+     ADT-S4 (a)): obs and dose clocks now pause for a patient off the ward,
+     and every clinical lane reads presence through services/adt/
+     clinical_pause.py (tests/test_adt_presence_lanes.py has the detail).
   6. THE BOARD. The occupant carries presence_since, and a patient absconded
      longer than ORB_ADT_ABSCONDED_CLOSE_HOURS (or on leave longer than
      ORB_ADT_LEAVE_PROMPT_HOURS) gets an advisory line; nothing closes.
@@ -491,8 +493,12 @@ def _without_presence(board: dict) -> dict:
     return out
 
 
-def test_obs_due_and_the_board_order_are_identical_with_and_without_a_leave(
+def test_obs_due_pauses_off_the_ward_and_returns_unchanged_on_return(
         adt_on, site, monkeypatch):
+    """Amended by adt-11 (ruling ADT-S4 (a)). This pin used to say the board
+    was identical with and without a leave; now the clocks of a patient off
+    the ward are paused with the reason, and after the return the board is
+    what it was before the leave."""
     p = _admit(site, "1")
     q = _admit(site, "2")
     now = datetime.now(timezone.utc)
@@ -507,12 +513,17 @@ def test_obs_due_and_the_board_order_are_identical_with_and_without_a_leave(
     assert _post(site["doctor"], f"{p['aid']}/leave", {"reason": "Day leave"}).status_code == 200
     assert _post(site["doctor"], f"{q['aid']}/absconded", {"reason": "Missing"}).status_code == 200
     during = nurse_shift_service.build_board(site["dept"])
-    assert _without_presence(during) == _without_presence(before)
     card = next(c for c in during["patients"] if c["patient_id"] == p["pid"])
     assert card["presence_status"] == "on_leave"
-    # Overdue obs still read overdue: pausing them is adt-11, not this.
     absent = next(c for c in during["patients"] if c["patient_id"] == q["pid"])
-    assert absent["obs_overdue"] is True
+    # No set at all reads overdue on the ward; off the ward it is paused.
+    assert absent["obs_overdue"] is False and absent["obs_due_at"] is None
+    assert "absconded" in absent["paused"]["reason"]
+    assert during["totals"]["obs_overdue"] == 0 and during["totals"]["not_on_ward"] == 2
+    assert _post(site["doctor"], f"{p['aid']}/leave-end", {}).status_code == 200
+    assert _post(site["doctor"], f"{q['aid']}/returned", {}).status_code == 200
+    after = nurse_shift_service.build_board(site["dept"])
+    assert _without_presence(after) == _without_presence(before)
 
 
 def _chain_shape(chain: dict) -> dict:
@@ -538,17 +549,20 @@ def test_the_escalation_a_critical_set_opens_is_identical_on_leave(adt_on, site)
     assert _chain_shape(first) == _chain_shape(second)
 
 
-def test_no_clinical_lane_reads_presence_yet():
-    """adt-11 (ruling ADT-S4) is where obs, medication, escalation, sepsis and
-    the simulator learn about presence. Until then none of them reads it."""
-    for name in ("escalation_service.py", "sepsis_bundle_service.py", "bot_service.py",
-                 "downtime_service.py"):
+def test_every_clinical_lane_reads_presence_through_the_one_helper():
+    """Amended by adt-11 (ruling ADT-S4 (a)). This pin used to say no clinical
+    lane read presence; now each of them does, and only through
+    services/adt/clinical_pause.py: none imports services.adt.presence or
+    queries the presence column itself."""
+    for name in ("nurse_shift_service.py", "escalation_service.py",
+                 "sepsis_bundle_service.py", "bot_service.py", "downtime_service.py"):
         source = (SERVER / "services" / name).read_text()
         tree = ast.parse(source)
         imported = {getattr(n, "module", None) for n in ast.walk(tree)
                     if isinstance(n, ast.ImportFrom)}
+        assert "services.adt.clinical_pause" in imported, name
         assert "services.adt.presence" not in imported, name
-        assert "presence_status" not in source, name
+        assert "a.presence_status" not in source and "SELECT presence_status" not in source, name
 
 
 # ═════════════════════════════════════════════════════════════════════════════

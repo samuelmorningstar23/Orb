@@ -521,12 +521,10 @@ def get_verified_discharge_summary(token: str, access_grant: str, ip_address: st
             ).fetchone()
             reviewer_name = reviewer["name"] if reviewer else None
 
-        site_name = None
-        try:
-            from services.site_config_service import current_site_config
-            site_name = current_site_config().site_name
-        except Exception:
-            site_name = None
+        # The hospital name on the patient's discharge page: their facility's
+        # configured name (multisite-2, services/facility_identity), else None.
+        from services import facility_identity
+        site_name = facility_identity.print_site_name(patient_id, db=db)
 
         now = datetime.now(timezone.utc).isoformat()
         db.execute("UPDATE discharge_access_tokens SET last_accessed_at = ? WHERE token_hash = ?", (now, token_id))

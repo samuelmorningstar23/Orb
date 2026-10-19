@@ -358,6 +358,38 @@ async def read_receipt(
     return receipt
 
 
+@router.get("/receipts/{payment_id}/print", dependencies=[Depends(require_module)])
+async def print_receipt(
+    payment_id: int,
+    request: Request,
+    user: dict = Depends(_COUNTER_READ),
+):
+    """The printable receipt (multisite-2): the receipt, the supplier block it
+    was issued with (never re-read from today's hospital details), the
+    placeholder-series notice and the amount in words. A receipt names its
+    patient, so the caller's patient scope applies: 404, never 403.
+
+    A print is a disclosure (its notes carry a refund's reason), so it is
+    audited like billing_routes.print_invoice: one phi_access row, which is
+    fail-closed, so the receipt is not returned if the row cannot be written."""
+    view = await _run(payments.receipt_print_view, payment_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    patient_id = view["receipt"]["patient_id"]
+    await run_db(enforce_patient_scope, user, patient_id)
+    await run_db(
+        log_phi_read,
+        request=request,
+        user=user,
+        action_type="payments_receipt_printed",
+        summary_message=f"Receipt {payment_id} rendered for print",
+        patient_id=patient_id,
+        target_type="payment",
+        target_id=str(payment_id),
+    )
+    return view
+
+
 @router.patch("/receipts/{payment_id}", dependencies=[Depends(require_module)])
 async def refuse_receipt_edit(
     payment_id: int,

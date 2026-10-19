@@ -492,6 +492,14 @@ export function currentFeatureFlags(): Readonly<Record<FeatureFlagId, boolean>> 
   return featureFlags
 }
 
+/** The feature flags as React state, re-rendering when the probe answers (or
+ *  a test sets them). The one way a screen reads a feature (medorders-10:
+ *  the chart's order list, the round, the deliveries and the doctor's home
+ *  all switch on 'med_order_store' and 'med_order_lifecycle' through this). */
+export function useFeatureFlags(): Readonly<Record<FeatureFlagId, boolean>> {
+  return useSyncExternalStore(subscribeModuleFlags, currentFeatureFlags)
+}
+
 /** Apply a partial update (from /api/health, or from a test) and notify. Only
  *  a strict boolean counts; anything else leaves the flag as it was. */
 export function setFeatureFlags(next: Partial<Record<FeatureFlagId, boolean>>): void {

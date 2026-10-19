@@ -69,9 +69,16 @@ def _now_iso() -> str:
 
 def start_bundle(patient_id: str, *, bundle_type: str = "sepsis6",
                  triggered_by: str | None = None, trigger_reason: str | None = None,
-                 source: str = "clinician") -> dict:
+                 source: str = "clinician", observed_at=None) -> dict | None:
     """Open a bundle for a patient. If an active bundle already exists, return it
-    (idempotent — we don't stack concurrent bundles of the same type)."""
+    (idempotent: we don't stack concurrent bundles of the same type).
+
+    An AUTOMATIC start (source 'vigil_auto') for a patient recorded off the
+    ward opens nothing and returns None (adt-11, ruling ADT-S4 (a)), unless
+    `observed_at` says the set behind it was taken after the patient left
+    (see _auto_start_paused). A clinician's own start is never refused."""
+    if source in _AUTO_STARTERS and _auto_start_paused(patient_id, observed_at):
+        return None
     with db_session() as db:
         existing = db.execute(
             "SELECT * FROM care_bundles WHERE patient_id = ? AND bundle_type = ? AND status = 'active' "
@@ -311,12 +318,18 @@ def autostart_enabled() -> bool:
     return bool(getattr(config, "SEPSIS_AUTOSTART", True))
 
 
-def maybe_autostart(patient_id: str, news2: dict) -> dict | None:
+def maybe_autostart(patient_id: str, news2: dict, *, observed_at=None) -> dict | None:
     """Open a sepsis bundle automatically when NEWS2 indicates high risk
     (aggregate >= 7, the RCP 'urgent clinical review' threshold). Idempotent and
     non-raising, so it is safe to call from the monitoring path.
 
-    Returns None and starts nothing while ORB_SEPSIS_AUTOSTART is off."""
+    Returns None and starts nothing while ORB_SEPSIS_AUTOSTART is off.
+
+    adt-11 (ruling ADT-S4 (a)): returns None and starts nothing for a patient
+    recorded on leave or absconded while ORB_ADT is on. `observed_at` is the
+    observation time of the set behind the score, when the caller knows it
+    (the bedside lane passes it): a set taken after the patient left the ward
+    was taken with the patient in front of somebody, so it still starts one."""
     if not autostart_enabled():
         return None
     try:
@@ -325,7 +338,30 @@ def maybe_autostart(patient_id: str, news2: dict) -> dict | None:
             return start_bundle(
                 patient_id, triggered_by="vigil_auto",
                 trigger_reason=f"NEWS2 {raw} (>=7)", source="vigil_auto",
+                observed_at=observed_at,
             )
     except Exception as e:
         logger.warning("sepsis bundle auto-start failed for %s: %s", patient_id, e)
     return None
+
+
+def _auto_start_paused(patient_id: str, observed_at=None) -> bool:
+    """True when an automatic start must open nothing (adt-11, ruling ADT-S4
+    (a)): ORB_ADT is on, the patient is recorded on leave or absconded, and no
+    set taken after they left is behind this start. Always False with the
+    module off, so auto-start is then exactly as before.
+
+    A presence that cannot be read does not stop a start: the bundle is the
+    strict direction, and a clinician can cancel it with a reason."""
+    try:
+        from services.adt.clinical_pause import away_for, observed_after_leaving
+        away = away_for(patient_id)
+    except Exception as e:
+        logger.warning("sepsis auto-start: presence unreadable for %s (%s); starting as before",
+                       patient_id, e)
+        return False
+    if not away or observed_after_leaving(away, observed_at):
+        return False
+    logger.info("sepsis auto-start: %s is recorded %s, no bundle opened (ruling ADT-S4)",
+                patient_id, away.get("presence_status"))
+    return True

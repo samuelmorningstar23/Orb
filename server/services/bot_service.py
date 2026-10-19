@@ -292,6 +292,17 @@ def _generate_vitals(now_ts, cycle_counter):
             "SELECT id, on_scale_2 FROM patients WHERE status = 'admitted'"
         ).fetchall()
 
+        # adt-11 (ruling ADT-S4 (a)): no simulated reading for a patient
+        # recorded on leave or absconded. There is nobody in the bed to
+        # simulate, and a reading would score, page and anchor a trend for a
+        # patient nobody can see. Only while ORB_ADT is on (away_by_patient is
+        # None otherwise, and every admitted patient ticks as before); the
+        # first tick after the return is recorded writes for them again.
+        from services.adt.clinical_pause import away_by_patient
+        away = away_by_patient([p["id"] for p in patients], db=db)
+        if away:
+            patients = [p for p in patients if p["id"] not in away]
+
         if not patients:
             return
 

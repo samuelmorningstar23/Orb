@@ -665,12 +665,12 @@ async def get_patient(
     patient_out["comorbidities"] = parse_comorbidities(profile["comorbidities"] if profile else None)
     patient_out["admission_id"] = admission["id"] if admission else None
 
-    site_name = None
-    try:  # optional site setting; a printed record says nothing rather than invent one
-        from services.site_config_service import current_site_config
-        site_name = current_site_config().site_name
-    except Exception:
-        site_name = None
+    # The name the printed discharge record carries: the patient's facility's
+    # configured name (facility 1: its stored name, else the site settings
+    # file's [site] name), else None, so a printed record says nothing rather
+    # than invent one (multisite-2, services/facility_identity).
+    from services import facility_identity
+    site_name = await run_db(facility_identity.print_site_name, patient_id)
 
     return {
         "patient": patient_out,

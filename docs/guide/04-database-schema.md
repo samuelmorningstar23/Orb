@@ -505,7 +505,7 @@ Each of these tables is documented in the guide that owns the feature, escalatio
 17. Seed the `system` user (`:1211-1215`), record `schema_version` (`:1217-1227`), re-harden permissions (`:1229-1231`).
 **Why it exists:** One idempotent function means "create" and "upgrade" can never drift apart, and the app can self-migrate on every boot with zero operator action.
 **Data in/out:** none → mutated `orb.db`.
-**Talks to:** called by `main.py:134` (boot), `migrate.py:133`, `seed_clinical_data.py:10`, `tests/conftest.py:74`, `dev_tools/time_pipeline.py:6`, `services/terminology_service.py:179`, and `python server/database.py` directly (`:1284-1285`).
+**Talks to:** called by `main.py:134` (boot), `migrate.py:133`, `seed_clinical_data.py:10`, `tests/conftest.py:74`, `dev_tools/time_pipeline.py:6`, `services/terminology_service.py:202`, and `python server/database.py` directly (`:1284-1285`).
 **Change guide:** *Worked example, allow a new `voice_note` message_type:* add the token to the CHECK in the SCHEMA `messages` block (`server/database.py:134`) **and** to the rebuilt `messages_new` definition (`:957`) **and** to `_messages_type_check_missing("ambient_action", "surgical_alert", "voice_note")` (`:925`) so legacy DBs rebuild once; bump `SCHEMA_VERSION`. Miss the third edit and old DBs will reject the new type forever; miss the second and the rebuild reintroduces the old CHECK.
 **Gotchas:** Everything runs inside one `db_session()`, i.e. one connection, but `executescript` issues an implicit COMMIT before running, so the rebuild blocks are not fully covered by the session's transaction; the "build new before dropping old" ordering is what makes them crash-safe, not transactional rollback. The whole function must stay safe to run concurrently-ish (two processes booting), `IF NOT EXISTS` and column-existence guards give that, but the table rebuilds are not concurrency-safe; don't run two migrating processes against one fresh legacy DB simultaneously.
 
@@ -729,7 +729,7 @@ certifying a schema-v4 backup. See `stale-backups/README.md`.
 |---|---|---|
 | `database.get_db()` | ~15 modules (`auth_routes.py:9`, `vigil_routes.py:8`, `sage_service.py:13`, `relay_service.py:4`, `bot_service.py:10`, `bridge_service.py:3`, `metrics_service.py:123`, `conftest.py:41`…) | Fresh connection, `Row` factory, WAL + FK ON + 30 s busy timeout; caller closes |
 | `database.db_session()` | ~70 modules, every route file and most services/tests | Context manager: commit on success, rollback+re-raise on exception, always closed |
-| `database.init_db()` | `main.py:134`, `migrate.py:133`, `seed_clinical_data.py:10`, `terminology_service.py:179`, `conftest.py:74`, dev tools | Idempotent create+migrate; safe to call repeatedly |
+| `database.init_db()` | `main.py:134`, `migrate.py:133`, `seed_clinical_data.py:10`, `terminology_service.py:202`, `conftest.py:74`, dev tools | Idempotent create+migrate; safe to call repeatedly |
 | `database.SCHEMA_VERSION` | `migrate.py:41` | Target version for the ledger |
 | `database.verify_audit_chain()` | none found (see Discrepancies) | Returns `{ok, rows_total, rows_checked, rows_skipped_legacy, broken_row_ids}` |
 | `models.message.MessageCreate` | `relay_routes.py:6` | Body of `POST /api/relay/channels/{channel_id}/messages` |

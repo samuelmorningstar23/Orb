@@ -30,10 +30,11 @@ leave began, and 'Not on ward since' must not say a later time). It is
 cleared, with presence_status, when they are back: a leave out and back
 leaves both NULL.
 
-DISPLAY ONLY (adt-10). The boards say 'Not on ward since HH:MM'; no obs-due
-timer, medication-due list, escalation, sepsis auto-start or simulator reads
-presence yet. That is adt-11 (wave 9, ruling ADT-S4), which reads
-presence_by_patient below.
+THE BOARDS AND THE CLINICAL LANES. The boards say 'Not on ward since HH:MM'
+(adt-10). The obs-due and medication-due clocks, the escalation ladder, sepsis
+auto-start, the vitals simulator and the downtime ward pack honour presence
+through ONE helper, services/adt/clinical_pause.py (adt-11, ruling ADT-S4 (a)),
+which reads presence_by_patient below.
 
 WHO (ruling ADT-S7 held, strictest option): the routes need adt.presence or
 patient.write, which today is the administrator and the doctors. Nurses and

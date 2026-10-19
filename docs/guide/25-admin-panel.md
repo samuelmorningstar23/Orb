@@ -533,18 +533,18 @@ The Impact tab is the only tab that sends user input back to the server (as quer
 
 ### `src/pages/panels/AdminPanel.tsx`
 
-#### AdminPanel: `src/pages/panels/AdminPanel.tsx:82`
+#### AdminPanel: `src/pages/panels/AdminPanel.tsx:109`
 **Signature:** `() -> JSX` (default export)
 **Does:** The panel shell, renders the fourteen-tab sub-nav and the active tab's component.
 **How it works:**
-1. `ADMIN_TABS` (`:20`) is a static array of `{id, label, icon}` for fourteen tabs: `overview, scorecard, audit, trace, ingestion, security, alerts, models, impact, trust, flight, users, roster, data` (`:18`). Icons are inline SVGs.
-2. `useState<AdminTab>('overview')` holds the active tab; clicking a chip calls `setActiveTab` (`:99`).
-3. `traceCorrelationId` state + `handleTraceClick` let the Audit Logs tab deep-link into the Trace tab: it stores a correlation id and switches to `trace` (`:86`).
-4. The content region conditionally renders exactly one tab component (`:110`). Six are owned by this guide; `AuditLogTable`/`CorrelationTrace`/`FlightRecorder` are guide 05 (only their tab wiring lives here). Four more, `ScorecardView`, `UsersPanel`, `RosterImport`, `DataPanel`, were added after this chapter was written and are not documented here yet.
+1. `ADMIN_TABS` (`:24`) is a static array of `{id, label, icon}` for fourteen tabs: `overview, scorecard, audit, trace, ingestion, security, alerts, models, impact, trust, flight, users, roster, data` (`:22`). Icons are inline SVGs.
+2. `useState<AdminTab>('overview')` holds the active tab; clicking a chip calls `setActiveTab` (`:158`).
+3. `traceCorrelationId` state + `handleTraceClick` let the Audit Logs tab deep-link into the Trace tab: it stores a correlation id and switches to `trace` (`:120`).
+4. The content region conditionally renders exactly one tab component (`:174-189`). Six are owned by this guide; `AuditLogTable`/`CorrelationTrace`/`FlightRecorder` are guide 05 (only their tab wiring lives here). Four more, `ScorecardView`, `UsersPanel`, `RosterImport`, `DataPanel`, were added after this chapter was written and are not documented here yet.
 **Why it exists:** One lazy-loaded governance console with cheap client-side tab switching (no routing, no refetch on tab change except the tab's own mount effect).
 **Data in/out:** No props. Internal state only.
-**Talks to:** Imports all fourteen tab components; mounted by `ClinicianShell.tsx:577` inside a `PanelErrorBoundary` and lazy-loaded (`ClinicianShell.tsx:131`). The shell decides who sees the Admin nav (app-shell guide).
-**Change guide:** To add a tab, add an entry to `ADMIN_TABS`, extend the `AdminTab` union at `:18`, and add a `{activeTab === 'x' && <X />}` line in the content region at `:110`. Worked example: adding a "Metrics" tab that iframes `/metrics` needs all three edits. Footgun: the union type and the render switch are *not* generated from `ADMIN_TABS`, forget one and TypeScript won't catch a new string id used only in the array.
+**Talks to:** Imports all fourteen tab components; mounted by `ClinicianShell.tsx:607` inside a `PanelErrorBoundary` and lazy-loaded (`ClinicianShell.tsx:132`). The shell decides who sees the Admin nav (app-shell guide).
+**Change guide:** To add a tab, add an entry to `ADMIN_TABS`, extend the `AdminTab` union at `:22`, and add a `{activeTab === 'x' && <X />}` line in the content region at `:174-189`. Worked example: adding a "Metrics" tab that iframes `/metrics` needs all three edits. Footgun: the union type and the render switch are *not* generated from `ADMIN_TABS`, forget one and TypeScript won't catch a new string id used only in the array.
 **Gotchas:** Switching tabs unmounts the previous tab, so each revisit refetches (state is not cached across tab switches).
 
 #### AdminPanel.css: `src/pages/panels/AdminPanel.css`

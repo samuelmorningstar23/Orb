@@ -134,6 +134,11 @@ active pharmacist with a signing PIN, never the nurse and never the person who
 sent it, 403 witness_sent_it), whatever NDPS_WITNESS_ALWAYS says. The witness
 goes on the receipt's audit row and on the NDPS register entry. The units are
 then counted, held and visible, and the indent closes as for any receipt.
+A crash cart (grn-23) is a ward store in every rule above: it is filled by
+issue indents for drugs on its list, received on the ward and never dispensed
+by Helix. Its list is also refused at the par level for a drug no ward store
+may hold (pharmacy_master_service), and its seal-and-check record, its top-up
+after use and its expiry are in services/pharmacy_crash_cart_service.
 A ward receipt never sticks on the ward's own lot of the same batch either: a
 ward has no screen to hold or release a lot, so where the ward store already
 holds that drug, batch and expiry under another status, both end under the
@@ -182,9 +187,18 @@ NUMBER_KIND = "pharmacy_transfer"
 TRANSFER_STORE_KINDS: tuple[str, ...] = (
     stock.DISPENSING_STORE_KIND, "sub_store", stock.NDPS_VAULT_KIND)
 
-#: Ward store kinds an issue indent fills (grn-21). Crash carts are grn-23, a
-#: later wave, so they are not filled here yet.
-WARD_STORE_KINDS: tuple[str, ...] = ("ward_imprest",)
+#: The crash-cart store kind (grn-23). A crash cart is a ward store: it is
+#: filled by issue indents, received on the ward and never dispensed by Helix,
+#: like ward imprest stock; its seal-and-check record and its top-up after use
+#: are in services/pharmacy_crash_cart_service.
+CRASH_CART_KIND = "crash_cart"
+
+#: Ward store kinds an issue indent fills: ward imprest stores (grn-21) and
+#: crash carts (grn-23), both behind ORB_PHARMACY_WARD_STOCK.
+WARD_STORE_KINDS: tuple[str, ...] = ("ward_imprest", CRASH_CART_KIND)
+
+#: A ward store's kind in the words a screen shows.
+WARD_STORE_KIND_LABELS = {"ward_imprest": "Ward stock", CRASH_CART_KIND: "Crash cart"}
 
 
 def ward_stock_on() -> bool:
@@ -1712,8 +1726,27 @@ def ward_route_problem(conn, drug: Mapping, store: Mapping) -> Optional[dict]:
     """Why this drug may not go to this ward store, as {code, message, why}
     (why is a short clause for a hold reason); None when it may. Read at
     every step: raise, decide, plan, dispatch and receipt."""
+    problem = ward_drug_problem(drug)
+    if problem:
+        return problem
     name = _drug_name(drug)
     store_name = _store_name(store)
+    par = _par_row(conn, int(store["id"]), drug["id"])
+    if par is None or int(par["par_units"] or 0) <= 0:
+        return {"code": "not_on_imprest_list",
+                "message": f"{name} is not on the stock list for {store_name}. The pharmacy "
+                           "sets the list (par levels) before a ward can hold a drug.",
+                "why": f"the drug is not on the stock list for {store_name}"}
+    return None
+
+
+def ward_drug_problem(drug: Mapping) -> Optional[dict]:
+    """Why this drug may never be held in ANY ward store or crash cart,
+    whatever a store's list says, as {code, message, why}; None when it may
+    be listed. The store's own list (its par rows) is ward_route_problem's
+    last check; pharmacy_master_service refuses a crash-cart par level for a
+    drug this names (grn-23)."""
+    name = _drug_name(drug)
     if drug["drug_schedule"] is None or drug["ndps_category"] is None:
         return {"code": "drug_unclassified",
                 "message": f"{name} is not classified. The pharmacy records its schedule and "
@@ -1738,12 +1771,6 @@ def ward_route_problem(conn, drug: Mapping, store: Mapping) -> Optional[dict]:
         return {"code": "drug_not_confirmed",
                 "message": f"{name} is a {drug['identity_status']} drug, not confirmed for use.",
                 "why": "the drug is not confirmed for use"}
-    par = _par_row(conn, int(store["id"]), drug["id"])
-    if par is None or int(par["par_units"] or 0) <= 0:
-        return {"code": "not_on_imprest_list",
-                "message": f"{name} is not on the stock list for {store_name}. The pharmacy "
-                           "sets the list (par levels) before a ward can hold a drug.",
-                "why": f"the drug is not on the stock list for {store_name}"}
     return None
 
 
@@ -2116,16 +2143,26 @@ def _store_stock(conn, store: Mapping, today: str) -> dict:
     full = {r["id"]: r for r in conn.execute(
         "SELECT * FROM helix_medication_master WHERE id IN (" + ",".join(
             "?" for _ in drugs) + ")", tuple(drugs)).fetchall()} if drugs else {}
+    # A crash cart's check may have found units missing that the pharmacy has
+    # not yet confirmed off the books (grn-23): the top-up asks for them now,
+    # so the cart is not left short while the confirmation waits.
+    found_short: dict[str, int] = {}
+    if store["pharmacy_kind"] == CRASH_CART_KIND:
+        from services import pharmacy_crash_cart_service as carts
+
+        found_short = carts.pending_shortfall_by_drug(conn, sid, today)
     for drug_id, item in drugs.items():
         master = full.get(drug_id)
         problem = (ward_route_problem(conn, master, store) if master is not None
                    else {"code": "drug_not_found", "message": "Not in the drug master."})
         item["problem"] = ({"code": problem["code"], "message": problem["message"]}
                            if problem else None)
+        item["found_short_units"] = min(found_short.get(drug_id, 0), item["on_hand_units"])
+        usable = item["on_hand_units"] - item["found_short_units"]
         if item["listed"]:
-            short = item["par_units"] - item["on_hand_units"] - item["in_transit_units"] \
+            short = item["par_units"] - usable - item["in_transit_units"] \
                 - item["requested_units"]
-            item["below_par"] = item["on_hand_units"] < item["par_units"]
+            item["below_par"] = usable < item["par_units"]
             item["top_up_units"] = max(short, 0) if problem is None else 0
         else:
             item["below_par"] = False
@@ -2133,7 +2170,10 @@ def _store_stock(conn, store: Mapping, today: str) -> dict:
     lines = sorted(drugs.values(), key=lambda d: (not d["listed"], str(d["drug_name"]).lower()))
     return {"store": {"id": sid, "code": store["code"], "name": _store_name(store),
                       "department": store["department"], "ward": store["ward"],
-                      "is_active": bool(store["is_active"])},
+                      "is_active": bool(store["is_active"]),
+                      "pharmacy_kind": store["pharmacy_kind"],
+                      "kind_label": WARD_STORE_KIND_LABELS.get(store["pharmacy_kind"],
+                                                               store["pharmacy_kind"])},
             "drugs": lines}
 
 

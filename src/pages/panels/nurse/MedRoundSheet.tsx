@@ -9,6 +9,7 @@ import type { OfflineSnapshot } from '../../../hooks/useOfflineSnapshot'
 import { useFocusTrap } from '../../../hooks/useFocusTrap'
 import { formatClinicalDateTime } from '../../../lib/datetime'
 import { dueLabel, missedSlotsCount } from './time'
+import { useFeatureFlags } from '../../../shellConfig'
 
 /**
  * The drug round for one patient.
@@ -67,6 +68,12 @@ const waitingForPharmacist = (m: MedTask) =>
 const firstDoseBeforeCheck = (m: MedTask) =>
   m.pharmacist_check?.state === 'first_dose_before_check'
 
+/* medorders-10: every dose the bedside will refuse until a pharmacist checks
+   the order, whichever rule says so (an AI-charted drug, or ruling MO-R1's
+   check before the first dose). With the order store on these get their own
+   group, so a nurse walking the round does not stop at each one. */
+const awaitingPharmacist = (m: MedTask) => m.unverified || waitingForPharmacist(m)
+
 /** The record of a dose the server marked as given before the pharmacist's
  *  check (medorders-11). The key is absent on every other record. */
 type MarkedRecord = AdministrationRecord & { given_before_pharmacist_check?: boolean }
@@ -115,16 +122,21 @@ export default function MedRoundSheet({ patient, focusMedicationId, offline, onC
 
   const close = useCallback(() => { if (!administering) onClose() }, [administering, onClose])
   const modalRef = useFocusTrap<HTMLDivElement>(close)
+  /* The 'Awaiting pharmacist' group is drawn only while the server's order
+     store is on (medorders-10); with it off the round is grouped as before. */
+  const storeOn = useFeatureFlags().med_order_store === true
 
   const groups: Group[] = useMemo(() => {
     const overdue: MedTask[] = []
     const soon: MedTask[] = []
     const later: MedTask[] = []
+    const pharmacist: MedTask[] = []
     const prn: MedTask[] = []
     const continuous: MedTask[] = []
     const given: MedTask[] = []
     for (const m of patient.medications) {
       if (isStatGiven(m)) given.push(m)
+      else if (storeOn && awaitingPharmacist(m)) pharmacist.push(m)
       else if (m.schedule_kind === 'prn') prn.push(m)
       else if (m.schedule_kind === 'continuous') continuous.push(m)
       else if (m.overdue) overdue.push(m)
@@ -142,13 +154,14 @@ export default function MedRoundSheet({ patient, focusMedicationId, offline, onC
       { id: 'overdue', title: 'Overdue', hint: overdueHint, meds: overdue.sort(byDue) },
       { id: 'soon', title: 'Due now', hint: 'Due within the next 30 minutes', meds: soon.sort(byDue) },
       { id: 'later', title: 'Later this shift', hint: '', meds: later.sort(byDue) },
+      { id: 'pharmacist', title: 'Awaiting pharmacist', hint: 'A pharmacist must check these orders before a dose can be given.', meds: pharmacist.sort(byDue) },
       { id: 'prn', title: 'As required (PRN)', hint: 'Available when indicated, never due, never late', meds: prn },
       // The hint used to say "do not chart" above a row that offers Administer.
       // What it meant is that these carry no due time, so it now says that.
       { id: 'continuous', title: 'Continuous', hint: 'Running infusions and feeds. No due time, so never shown as late.', meds: continuous },
       { id: 'given', title: 'Already given', hint: 'Stat doses already charted. Nothing more is due on these orders.', meds: given },
     ].filter(g => g.meds.length > 0)
-  }, [patient.medications])
+  }, [patient.medications, storeOn])
 
   const severeAllergies = patient.allergies.filter(a => a.severity === 'severe')
 

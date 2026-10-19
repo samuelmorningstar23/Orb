@@ -5,9 +5,9 @@ puts it there. Read an entry, then go to the file:line it names. Every citation 
 opened and checked at that line.
 
 **How to get to this screen.** Left nav → **Sage** (nav id `sage`, label `Sage`, pillar `Sage`,
-declared at `src/pages/ClinicianShell.tsx:85`). The panel is mounted lazily at
-`src/pages/ClinicianShell.tsx:285` (`const SagePanel = lazy(...)`) and rendered inside a tab panel
-at `src/pages/ClinicianShell.tsx:545-548`:
+declared at `src/pages/ClinicianShell.tsx:86`). The panel is mounted lazily at
+`src/pages/ClinicianShell.tsx:312` (`const SagePanel = lazy(...)`) and rendered inside a tab panel
+at `src/pages/ClinicianShell.tsx:575-578`:
 
 ```
 {shouldRenderPanel('sage') && (
@@ -16,7 +16,7 @@ at `src/pages/ClinicianShell.tsx:545-548`:
 ```
 
 The tab is visible to **doctor, clinician, nurse, admin and pharmacist**, see the per-role tab
-lists at `src/pages/ClinicianShell.tsx:189-202`. Note `case 'pharmacist': return ['helix',
+lists at `src/pages/ClinicianShell.tsx:216-229`. Note `case 'pharmacist': return ['helix',
 'pharmacy-verify', 'sage']` at line 202: for a pharmacist, Sage is one of only three screens.
 
 **Layout in one sentence.** A fixed 264px history sidebar on the left
@@ -194,7 +194,7 @@ Rendered by `src/components/sage/SageEmptyState.tsx`, mounted at
 `new Date().getHours()`, `<12` → "Good morning", `<17` → "Good afternoon", else "Good evening".
 `displayName` at `:17` is `userName ? \`Dr. ${userName.split(' ').pop()}\` : 'Doctor'`, i.e. the
 **last word** of the name, so "Aarav Mehta" renders as "Dr. Mehta". `userName` comes down as a
-prop from `ClinicianShell.tsx:547` (`user?.name`).
+prop from `ClinicianShell.tsx:577` (`user?.name`).
 **API:** none, no request is made to build this.
 **Change this →** change the hour thresholds at `SageEmptyState.tsx:19-22` and the greeting flips
 at a different time of day; the panel does not re-render on the hour, so the greeting is fixed at

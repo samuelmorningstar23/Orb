@@ -79,6 +79,7 @@ from datetime import date, datetime, timezone
 from typing import Any, Optional, Sequence
 
 from database import db_session
+from services import facility_identity
 from services.billing_masters import next_document_number
 from services.hospital_time import hospital_stamp, hospital_today, local_day_bounds_utc
 from services.money import (
@@ -106,6 +107,7 @@ __all__ = [
     "IMMUTABLE_PAYMENT_FIELDS",
     "record_payment",
     "get_payment",
+    "receipt_print_view",
     "list_payments",
     "amend_payment",
     "reverse_payment",
@@ -223,6 +225,9 @@ IMMUTABLE_PAYMENT_FIELDS: frozenset[str] = frozenset({
     "direction", "amount_paise", "method", "reference_no", "bank_name",
     "instrument_date", "purpose", "counter_session_id", "received_by",
     "received_at", "idempotency_key", "notes",
+    # Who issued it, fixed when the number was assigned (migration 72, whose
+    # trigger refuses any later change).
+    *facility_identity.SNAPSHOT_COLUMNS,
 })
 
 _MAX_TEXT = 2000
@@ -1023,11 +1028,15 @@ def record_payment(
             "INSERT INTO payments (receipt_number, patient_id, admission_id, invoice_id, "
             "payer_id, direction, amount_paise, method, reference_no, bank_name, "
             "instrument_date, purpose, status, counter_session_id, received_by, "
-            "received_at, idempotency_key, notes) "
-            "VALUES (?,?,?,?,?,'in',?,?,?,?,?,?,'received',?,?,?,?,?)",
+            "received_at, idempotency_key, notes, "
+            + facility_identity.SNAPSHOT_COLUMNS_SQL + ") "
+            "VALUES (?,?,?,?,?,'in',?,?,?,?,?,?,'received',?,?,?,?,?,"
+            + facility_identity.SNAPSHOT_PLACEHOLDERS + ")",
             (doc["number"], patient_id, admission_id, invoice_id, payer_id, amount,
              method, reference_no, bank_name, instrument_date, purpose,
-             counter_session_id, received_by, now, idempotency_key, notes),
+             counter_session_id, received_by, now, idempotency_key, notes,
+             *facility_identity.supplier_snapshot(
+                 db, patient_id=patient_id, admission_id=admission_id)),
         )
         payment_id = int(cur.lastrowid)
 
@@ -1135,6 +1144,40 @@ def get_payment(payment_id: int) -> Optional[dict]:
         view["allocations"] = allocations
         view["receipt_series_is_configured"] = _receipt_series_is_configured(db)
     return view
+
+
+def receipt_print_view(payment_id: int) -> Optional[dict]:
+    """Everything a printed receipt needs, and nothing it must invent
+    (multisite-2). None when no receipt has that id.
+
+    The supplier block is the one the receipt was issued with: every receipt
+    is numbered when it is written, so it carries the snapshot taken then
+    (migration 72), and one written before that migration prints the old block
+    (site name, address and GSTIN not configured) exactly as before. Changing
+    the hospital's details afterwards never changes a receipt already handed
+    over. A placeholder receipt series is said in words, as on the invoice."""
+    from services.billing_service import amount_in_words
+
+    receipt = get_payment(payment_id)
+    if receipt is None:
+        return None
+    with db_session() as db:
+        row = _row(db.execute("SELECT * FROM payments WHERE id = ?",
+                              (int(payment_id),)).fetchone())
+    supplier = facility_identity.supplier_block(row, number_field="receipt_number")
+    configured = bool(receipt.get("receipt_series_is_configured"))
+    return {
+        "receipt": receipt,
+        "supplier": supplier,
+        "number_series_configured": configured,
+        "number_notice": (
+            None if configured else
+            "Receipt numbers come from a placeholder series. Set the hospital's real "
+            "receipt series before treating these numbers as final."
+        ),
+        "amount_in_words": amount_in_words(int(receipt["amount_paise"])),
+        "printed_at": _utc_now_str(),
+    }
 
 
 def list_payments(
@@ -1259,13 +1302,17 @@ def reverse_payment(payment_id: int, *, reason: str, reversed_by: str) -> dict:
             "INSERT INTO payments (receipt_number, patient_id, admission_id, invoice_id, "
             "payer_id, direction, amount_paise, method, reference_no, bank_name, "
             "instrument_date, purpose, status, counter_session_id, "
-            "reversal_of_payment_id, received_by, received_at, notes) "
-            "VALUES (?,?,?,?,?,'out',?,?,?,?,?,?,'received',?,?,?,?,?)",
+            "reversal_of_payment_id, received_by, received_at, notes, "
+            + facility_identity.SNAPSHOT_COLUMNS_SQL + ") "
+            "VALUES (?,?,?,?,?,'out',?,?,?,?,?,?,'received',?,?,?,?,?,"
+            + facility_identity.SNAPSHOT_PLACEHOLDERS + ")",
             (doc["number"], current["patient_id"], current["admission_id"],
              current["invoice_id"], current["payer_id"], amount, current["method"],
              current["reference_no"], current["bank_name"], current["instrument_date"],
              current["purpose"], current["counter_session_id"], int(payment_id),
-             reversed_by, now, f"Reversal of receipt {current['receipt_number']}: {reason}"),
+             reversed_by, now, f"Reversal of receipt {current['receipt_number']}: {reason}",
+             *facility_identity.supplier_snapshot(
+                 db, patient_id=current["patient_id"], admission_id=current["admission_id"])),
         )
         reversal_id = int(cur.lastrowid)
 
@@ -1399,10 +1446,14 @@ def apply_deposit_to_invoice(
 
         cur = db.execute(
             "INSERT INTO payments (receipt_number, patient_id, admission_id, invoice_id, "
-            "direction, amount_paise, method, purpose, status, received_by, received_at, notes) "
-            "VALUES (?,?,?,?,'in',?,'adjustment','settlement','received',?,?,?)",
+            "direction, amount_paise, method, purpose, status, received_by, received_at, notes, "
+            + facility_identity.SNAPSHOT_COLUMNS_SQL + ") "
+            "VALUES (?,?,?,?,'in',?,'adjustment','settlement','received',?,?,?,"
+            + facility_identity.SNAPSHOT_PLACEHOLDERS + ")",
             (doc["number"], patient_id, admission_id, int(invoice_id), amount,
-             applied_by, now, notes or "advance applied to invoice"),
+             applied_by, now, notes or "advance applied to invoice",
+             *facility_identity.supplier_snapshot(
+                 db, patient_id=patient_id, admission_id=admission_id)),
         )
         payment_id = int(cur.lastrowid)
         db.execute(
@@ -1809,12 +1860,16 @@ def pay_refund(refund_id: int, *, method: str, paid_by: str,
         cur = db.execute(
             "INSERT INTO payments (receipt_number, patient_id, admission_id, invoice_id, "
             "direction, amount_paise, method, reference_no, purpose, status, "
-            "counter_session_id, refund_id, received_by, received_at, notes) "
-            "VALUES (?,?,?,?,'out',?,?,?,'refund','received',?,?,?,?,?)",
+            "counter_session_id, refund_id, received_by, received_at, notes, "
+            + facility_identity.SNAPSHOT_COLUMNS_SQL + ") "
+            "VALUES (?,?,?,?,'out',?,?,?,'refund','received',?,?,?,?,?,"
+            + facility_identity.SNAPSHOT_PLACEHOLDERS + ")",
             (doc["number"], current["patient_id"], current["admission_id"],
              current["invoice_id"], amount, method, reference_no, counter_session_id,
              int(refund_id), paid_by, now,
-             f"Refund {current['refund_number']}: {current['reason']}"),
+             f"Refund {current['refund_number']}: {current['reason']}",
+             *facility_identity.supplier_snapshot(
+                 db, patient_id=current["patient_id"], admission_id=current["admission_id"])),
         )
         payment_id = int(cur.lastrowid)
 

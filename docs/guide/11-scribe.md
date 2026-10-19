@@ -422,7 +422,7 @@ Socket.IO is a real-time bidirectional messaging layer over WebSocket. Scribe's 
 #### _require_authenticated: `server/ws/scribe_stream.py:34`
 **Signature:** `async (sid) -> bool`
 **Does:** Returns `True` iff the Socket.IO session for this `sid` has a `user_id`, i.e. the client passed the authenticated handshake in `ws/realtime.py:connect`.
-**Why it exists:** Scribe streams carry patient audio (PHI); an unauthenticated socket must be rejected. `connect` (`realtime.py:295`) already refuses unauthenticated clients and stores the user, so an empty session ⇒ no valid JWT.
+**Why it exists:** Scribe streams carry patient audio (PHI); an unauthenticated socket must be rejected. `connect` (`realtime.py:358`) already refuses unauthenticated clients and stores the user, so an empty session ⇒ no valid JWT.
 **Gotchas:** Only `handle_start_session` calls this, the per-chunk handlers rely on the session dict existing (which only start_session creates), so an unauthenticated client never gets a session and its chunks are dropped.
 
 #### _create_session / _get_session / _destroy_session: `server/ws/scribe_stream.py:53` / `:48` / `:68`

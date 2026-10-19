@@ -13,18 +13,18 @@ that line.
 [06-vigil-board.md](06-vigil-board.md) and covers lines 65–412.
 
 **How to get to this screen.** Left nav → **Patients** → click any patient row, which runs
-`handleSelectPatient` (`VigilPanel.tsx:92-95`). The board's `selectedPatientId` state flips and
-`VigilPanel` returns `PatientDetailView` instead of the board (`VigilPanel.tsx:213-229`).
+`handleSelectPatient` (`VigilPanel.tsx:94-97`). The board's `selectedPatientId` state flips and
+`VigilPanel` returns `PatientDetailView` instead of the board (`VigilPanel.tsx:215-231`).
 There is exactly one other entry point, and it reuses the same state path: the `orb:open-patient`
-navigation-bus event (`VigilPanel.tsx:120-125`), which any surface can fire, Sage's ward-brief
+navigation-bus event (`VigilPanel.tsx:122-127`), which any surface can fire, Sage's ward-brief
 watchlist, the command palette, a deep link. Both paths also call `prefetchSageContext`
 (`:94`, `:123`) so the clinician's first Sage question streams faster, and because the detail view
 fetches by id, a patient outside the loaded board page still opens. Closing the chart
-(`selectedPatientId === null`) re-runs `loadUnseen` (`VigilPanel.tsx:112`), which is what refreshes
+(`selectedPatientId === null`) re-runs `loadUnseen` (`VigilPanel.tsx:114`), which is what refreshes
 the ward board's `N NEW` badges.
 
 > **The `key` matters.** `PatientDetailView` is mounted **keyed by patient id**
-> (`VigilPanel.tsx:223-227`). Without the key, switching patients swapped the prop under a live
+> (`VigilPanel.tsx:225-229`). Without the key, switching patients swapped the prop under a live
 > component and every piece of state carried over, the previous patient's in-flight chart and
 > eMAR responses landed in the new patient's view, and a modal left open (Add Medication,
 > Discharge) stayed open and then acted on the *new* patient. If you ever remove that key you
@@ -70,7 +70,7 @@ and tables; the only controls are Reload, Re-capture now and Print.
 
 ### 0.1 The chart container
 **Where:** the whole scrollable area, right of the sidebar.
-**Rendered by:** `VigilPanel.tsx:1163`, `<div className="orb-panel animate-fade-in detail">`.
+**Rendered by:** `VigilPanel.tsx:1171`, `<div className="orb-panel animate-fade-in detail">`.
 The `detail` class is what distinguishes this from the board's `orb-panel`.
 **Data from:** nothing; it is the static shell.
 **API:** none.
@@ -81,7 +81,7 @@ The `detail` class is what distinguishes this from the board's `orb-panel`.
 
 ### 0.2 The single fetch that fills the chart
 Almost everything on this screen comes from **one** response. `loadPatientData`
-(`VigilPanel.tsx:619-635`) calls `getPatientDetail(patientId)` → `src/api/client.ts:618` →
+(`VigilPanel.tsx:621-637`) calls `getPatientDetail(patientId)` → `src/api/client.ts:618` →
 `GET /api/vigil/patients/{patient_id}` → `server/routes/vigil_routes.py:499` `get_patient` →
 `server/routes/vigil_routes.py:35` `_load_patient_bundle` (the raw SQL) plus
 `server/services/vigil_service.py:407` `get_patient_risk` and
@@ -104,10 +104,10 @@ built from them:
 
 **Sequence-stamped.** `loadPatientData` is called on mount, on Retry, after a note is added and
 after a med is added. Two overlapping calls used to let the *loser* win because it wrote last.
-`detailSeqRef` (`VigilPanel.tsx:616`, checked at :624 and :630) lets only the newest write.
+`detailSeqRef` (`VigilPanel.tsx:618`, checked at :624 and :630) lets only the newest write.
 
 ### 0.3 The offline snapshot wrapper
-Every read below goes through `chartOffline` (`VigilPanel.tsx:435-438`), not through `liveData`
+Every read below goes through `chartOffline` (`VigilPanel.tsx:437-440`), not through `liveData`
 directly. `useOfflineSnapshot('vigil:patient:' + patientId, liveData, …)`
 (`src/hooks/useOfflineSnapshot.ts:68`) hands back `data` that may be a cached copy.
 **Change this →** if you ever read `liveData` instead of `data` in a render path, that value
@@ -116,9 +116,9 @@ hook: a cached NEWS2 read as current is worse than a blank screen.
 
 ### 0.4 Side effects the chart has on *other* screens
 Opening this chart writes two contexts:
-- `setActivePatient(patientId, name)`, `VigilPanel.tsx:447`, from
+- `setActivePatient(patientId, name)`, `VigilPanel.tsx:449`, from
   `src/contexts/ActivePatientContext`.
-- `setViewSelection({ kind: 'patient_chart', id, label, patientId })`, `VigilPanel.tsx:450-455`.
+- `setViewSelection({ kind: 'patient_chart', id, label, patientId })`, `VigilPanel.tsx:452-457`.
   The label is `"<name> (bed <bed>)"` when a bed exists, else the name or the id.
 
 **Change this →** these are why Sage on any other tab scopes itself to this patient without the
@@ -131,10 +131,10 @@ to ward scope.
 
 ### 1.1 "Offline: not live" / "Can't reach Orb: not live" banner
 **Where:** full width, above the command bar, the first thing on the screen when it renders.
-**Rendered by:** `VigilPanel.tsx:1166`, 
+**Rendered by:** `VigilPanel.tsx:1174`, 
 `<OfflineBanner snapshot={chartOffline} what="patient chart" onRetry={loadPatientData} />`.
 The component is `src/components/OfflineBanner.tsx:64`.
-**Data from:** `chartOffline` (`VigilPanel.tsx:435`). The heading picks between two strings at
+**Data from:** `chartOffline` (`VigilPanel.tsx:437`). The heading picks between two strings at
 `OfflineBanner.tsx:83`: `unreachable` → "Can't reach Orb, not live", otherwise "Offline, not
 live".
 **API:** none of its own, it reports on the chart fetch.
@@ -150,33 +150,33 @@ is interpolated straight into "Showing the **patient chart** saved at 14:32".
 
 > Note: `PatientDetailView` does **not** pass `liveFailed` to `useOfflineSnapshot`, so
 > `unreachable` never becomes true on this screen, the chart shows "Offline, not live" only.
-> The board (`VigilPanel.tsx:295`) is the one that can say "Can't reach Orb".
+> The board (`VigilPanel.tsx:297`) is the one that can say "Can't reach Orb".
 
 ---
 
 ## 2. The command bar (the sticky header)
 
-The whole header is one flex row: `VigilPanel.tsx:1168-1260`, styled by
+The whole header is one flex row: `VigilPanel.tsx:1176-1268`, styled by
 `src/pages/Vigil.css:121-127`, `position: sticky; top: 0; z-index: 100`, opaque
 `--bg-primary` background and a hairline bottom border. It stays pinned while the chart scrolls.
 
 ### 2.1 Back arrow
 **Where:** far left of the command bar, a 36×36 rounded square.
-**Rendered by:** `VigilPanel.tsx:1169-1171`, `<button className="command-bar__back">` with an
+**Rendered by:** `VigilPanel.tsx:1177-1179`, `<button className="command-bar__back">` with an
 inline left-arrow SVG. Styled `Vigil.css:128-134`.
 **Data from:** the `onBack` prop.
 **API:** none directly.
 **Server:** none.
 **Change this →** clicking runs `() => { setSelectedPatientId(null); loadPatients() }`
-(`VigilPanel.tsx:226`), you return to the ward board **and the board refetches**, so a patient
+(`VigilPanel.tsx:228`), you return to the ward board **and the board refetches**, so a patient
 you just discharged disappears from the list. Remove the `loadPatients()` and the board shows a
 stale row for the patient you just changed.
 
 ### 2.2 Patient name
 **Where:** immediately right of the back arrow, the largest text in the bar (1.2rem, bold).
-**Rendered by:** `VigilPanel.tsx:1175`, `<h2 className="command-bar__name">{patient.name}</h2>`.
+**Rendered by:** `VigilPanel.tsx:1183`, `<h2 className="command-bar__name">{patient.name}</h2>`.
 Styled `Vigil.css:136`.
-**Data from:** `patient` destructured at `VigilPanel.tsx:1104` from `data`, which is the chart
+**Data from:** `patient` destructured at `VigilPanel.tsx:1112` from `data`, which is the chart
 snapshot.
 **API:** `GET /api/vigil/patients/{patient_id}`.
 **Server:** `vigil_routes.py:499` `get_patient` → `vigil_routes.py:37-44` (`SELECT p.*` on
@@ -190,7 +190,7 @@ looks broken; there is no fallback here.
 
 ### 2.3 The MRN · age · sex line
 **Where:** directly under the name, small monospace grey.
-**Rendered by:** `VigilPanel.tsx:1176-1178`, 
+**Rendered by:** `VigilPanel.tsx:1184-1186`, 
 `MRN: {patient.mrn} · {patient.age}Y · {sexLabel(patient.sex)}`. Styled `Vigil.css:137`.
 **Data from:** `patients.mrn`, `patients.age`, `patients.sex` in the same bundle.
 **API:** `GET /api/vigil/patients/{patient_id}`.
@@ -207,27 +207,27 @@ says "67-year-old male" about the same person. Age has no fallback: a null age r
 ### 2.4 Presence chips: "…also viewing"
 **Where:** a third line under the MRN line, only when someone else has this chart open. A green
 dot, up to four overlapping initial-circles, then a sentence.
-**Rendered by:** `VigilPanel.tsx:1179`, `<PresenceChips viewers={viewers} selfId={currentUser?.id} />`.
-The component is `VigilPanel.tsx:2083-2105`; circles at :2093-2098, sentence at :2100-2102.
-**Data from:** `viewers` state (`VigilPanel.tsx:488`), set only by the `presence:update` socket
-handler at `VigilPanel.tsx:570-572`, and only when `data.patient_id === patientId`.
+**Rendered by:** `VigilPanel.tsx:1187`, `<PresenceChips viewers={viewers} selfId={currentUser?.id} />`.
+The component is `VigilPanel.tsx:2091-2113`; circles at :2093-2098, sentence at :2100-2102.
+**Data from:** `viewers` state (`VigilPanel.tsx:490`), set only by the `presence:update` socket
+handler at `VigilPanel.tsx:572-574`, and only when `data.patient_id === patientId`.
 `currentUser` is `getUser()` at `:489`.
 **API:** none, this is WebSocket, not REST. The client emits `enter_patient` on mount and on
-reconnect (`VigilPanel.tsx:569`:573:575) and `leave_patient` on unmount (`:579`).
-**Server:** `server/ws/realtime.py:406` `enter_patient` joins the room
-`patient-presence:{patient_id}` and calls `_broadcast_presence` (`realtime.py:397-403`), which
-emits `presence:update` with the deduped roster from `_roster` (`realtime.py:384`).
+reconnect (`VigilPanel.tsx:571`:573:575) and `leave_patient` on unmount (`:579`).
+**Server:** `server/ws/realtime.py:473` `enter_patient` joins the room
+`patient-presence:{patient_id}` and calls `_broadcast_presence` (`realtime.py:464-470`), which
+emits `presence:update` with the deduped roster from `_roster` (`realtime.py:451`).
 **Change this →** it renders **nothing** when you are the only viewer (`:2084-2085` filters out
 `selfId` and returns null on an empty list), deliberately silent in the common case. With one
 other viewer the text reads "*Priya Nair* also viewing"; with more it reads "*3* others viewing"
 (`:2101`). The hover title lists every name and role (`:2090`). Only the first four initials
 render (`:2093`, `.slice(0, 4)`); a fifth viewer is counted in the sentence but has no circle.
-Note the server gates room entry on `PATIENT_READ_ALL` (`realtime.py:417-422`), a pharmacist or
+Note the server gates room entry on `PATIENT_READ_ALL` (`realtime.py:484-489`), a pharmacist or
 patient socket silently never joins, so they never appear in anyone's roster.
 
 ### 2.5 Bed + risk badge
 **Where:** the pill immediately right of the identity block, "BED 12" over "NEWS2 7 · CRITICAL".
-**Rendered by:** `VigilPanel.tsx:1183-1188`. The wrapper class is
+**Rendered by:** `VigilPanel.tsx:1191-1196`. The wrapper class is
 `` `command-bar__bed-badge command-bar__bed-badge--${risk.level}` `` (:1183), the bed label at
 :1184, the score text at :1185-1187.
 **Data from:** `patient.bed` and `risk` (destructured at `:1104`).
@@ -249,7 +249,7 @@ further (`vigil_service.py:447-475`) but never lower it. The hover title is the 
 
 ### 2.6 Diagnosis block
 **Where:** the widest section in the middle of the bar, separated by a hairline left border.
-**Rendered by:** `VigilPanel.tsx:1191-1199`. Label at :1192, value at :1193.
+**Rendered by:** `VigilPanel.tsx:1199-1207`. Label at :1192, value at :1193.
 Styled `Vigil.css:151-153`.
 **Data from:** `patient.diagnosis`.
 **API / Server:** the same chart bundle; column `patients.diagnosis`.
@@ -257,13 +257,13 @@ Styled `Vigil.css:151-153`.
 COMORBIDITIES` when the patient has at least one recorded comorbidity, and plain `DIAGNOSIS`
 otherwise (`:1192`). The diagnosis string also drives the *synthetic* lab panel selection
 (§6.3), change a patient's diagnosis to contain "sepsis"/"perforated"/"peritonitis" and the
-estimated Lab Trends switch to the septic panel (`VigilPanel.tsx:1018`).
+estimated Lab Trends switch to the septic panel (`VigilPanel.tsx:1020`).
 
 ### 2.7 Comorbidity tags
 **Where:** small grey chips wrapping under the diagnosis text.
-**Rendered by:** `VigilPanel.tsx:1194-1198`, one `<span className="command-bar__comorbidity-tag">`
+**Rendered by:** `VigilPanel.tsx:1202-1206`, one `<span className="command-bar__comorbidity-tag">`
 per entry. Styled `Vigil.css:154-155`.
-**Data from:** `patientC`, `VigilPanel.tsx:856-858`, which accepts `pData.comorbidities` **only
+**Data from:** `patientC`, `VigilPanel.tsx:858-860`, which accepts `pData.comorbidities` **only
 when it is an array of non-empty strings**.
 **API / Server:** the same chart bundle.
 **Change this →** the whole block **disappears** when `patientC.length === 0` (`:1194`), and the
@@ -275,16 +275,16 @@ hazard.
 ### 2.8 The five vital cells (HR, BP, SPO2, TEMP, RR)
 **Where:** a row of five stacked label/value/unit cells, right of the diagnosis block behind
 another hairline.
-**Rendered by:** `VigilPanel.tsx:1202-1233`, one `<div className="command-bar__vital">` each:
+**Rendered by:** `VigilPanel.tsx:1210-1241`, one `<div className="command-bar__vital">` each:
 HR :1203-1208, BP :1209-1214, SPO2 :1215-1220, TEMP :1221-1226, RR :1227-1232.
 Styled `Vigil.css:156-162`.
-**Data from:** `latest`, `VigilPanel.tsx:1105`, which is `latestVital || vitals[0] || {}`.
+**Data from:** `latest`, `VigilPanel.tsx:1113`, which is `latestVital || vitals[0] || {}`.
 `latestVital` is set in two places: from the fetch (`:626`) and from the live
 `vitals:update` socket handler (`:587`).
 **API:** initial values via `GET /api/vigil/patients/{patient_id}`; updates via the
 `vitals:update` socket event.
-**Server:** `server/services/bot_service.py:347` emits `vitals:update` each simulator tick via
-`server/ws/realtime.py:367` `emit_patient_vitals`, which scopes the emit to the patient's
+**Server:** `server/services/bot_service.py:358` emits `vitals:update` each simulator tick via
+`server/ws/realtime.py:546` `emit_patient_vitals`, which scopes the emit to the patient's
 department room plus `dept:__all__`, so a clinician on another ward never receives it. The
 payload shape is built by `bot_service.py:132` `_next_reading` (the emit dict at
 `bot_service.py:203-219`) and includes a full `risk` object from `compute_news2`
@@ -306,10 +306,10 @@ payload shape is built by `bot_service.py:132` `_next_reading` (the emit dict at
 
 ### 2.9 Vital hover sparkline tooltips ("HR TREND (6H)")
 **Where:** a small floating card 10px below whichever vital cell you hover.
-**Rendered by:** `renderSparkline(label, dataKey)`, `VigilPanel.tsx:1108-1160`, called five times
+**Rendered by:** `renderSparkline(label, dataKey)`, `VigilPanel.tsx:1116-1168`, called five times
 at :1207:1213:1219:1225:1231. Note the BP cell's tooltip is labelled **SYS BP** and plots
 `systolic_bp` only (`:1213`); diastolic is never plotted.
-**Data from:** the `vitals` array (`VigilPanel.tsx:740`), reversed to oldest-first and clipped to
+**Data from:** the `vitals` array (`VigilPanel.tsx:742`), reversed to oldest-first and clipped to
 the last **40** points (`:1110`:1114).
 **API / Server:** the chart bundle's `vitals` (max 288 rows, `vigil_routes.py:47-51`) plus live
 socket points.
@@ -332,7 +332,7 @@ socket points.
 ### 2.10 Action bar buttons
 **Where:** the right-hand end of the command bar, behind a hairline, wrapping to a second row on
 narrow windows (`Vigil.css:173`, `flex-wrap: wrap`).
-**Rendered by:** `VigilPanel.tsx:1236-1259`. Styled `Vigil.css:174-188`.
+**Rendered by:** `VigilPanel.tsx:1244-1267`. Styled `Vigil.css:174-188`.
 
 | Button | Line | What it does | Server reached |
 |---|---|---|---|
@@ -366,7 +366,7 @@ DISCHARGE additionally carry an inline `background: var(--accent-glow)` on two o
 ## 3. Care bundle card (Sepsis Six)
 
 **Where:** full-width card immediately below the command bar.
-**Rendered by:** `VigilPanel.tsx:1261`, `<CareBundleTimer patientId={patientId} />`. The
+**Rendered by:** `VigilPanel.tsx:1269`, `<CareBundleTimer patientId={patientId} />`. The
 component is `src/components/vigil/CareBundleTimer.tsx:122`; its card style is inline at
 `CareBundleTimer.tsx:408-416` (it carries no stylesheet).
 **Data from:** `bundle` state (`CareBundleTimer.tsx:123`), loaded by `refetch`
@@ -374,8 +374,8 @@ component is `src/components/vigil/CareBundleTimer.tsx:122`; its card style is i
 **API:** `GET /api/bundles/patient/{patient_id}?active_only=true` via
 `src/api/bundles.ts:70` `getPatientBundles`.
 **Server:** `server/routes/bundle_routes.py:21` `patient_bundles` →
-`server/services/sepsis_bundle_service.py:103` `get_bundles_for_patient` →
-`sepsis_bundle_service.py:122` `_decorate`, which computes `elements[].state`,
+`server/services/sepsis_bundle_service.py:110` `get_bundles_for_patient` →
+`sepsis_bundle_service.py:129` `_decorate`, which computes `elements[].state`,
 `completed_count`, `total_count`, `completion_pct`, `compliance_pct` and `on_track`.
 
 ### 3.1 The live elapsed stopwatch
@@ -392,8 +392,8 @@ a reading anyone can use. Under it sits `since <timestamp> · 60m target` (`:264
 **Where:** immediately right of the stopwatch.
 **Rendered by:** `CareBundleTimer.tsx:267-290`; the text is at `:288-289`.
 **Data from:** `bundle.completed_count`, `bundle.total_count`, `bundle.on_track`, all from
-`_decorate` (`sepsis_bundle_service.py:150-162`). `on_track` is true only when **zero** elements
-are breached (`sepsis_bundle_service.py:162`).
+`_decorate` (`sepsis_bundle_service.py:157-169`). `on_track` is true only when **zero** elements
+are breached (`sepsis_bundle_service.py:169`).
 **Change this →** it is green when on track, amber otherwise (`:240`). The wording is deliberate:
 it reads "**2 of 6 done · on track**" or "**0 of 6 done · past the 60-minute target**". It used to
 read "0% at risk", which every reviewer read as "no risk" while sitting 200px from a NEWS2 16
@@ -405,7 +405,7 @@ that misreading.
 **Rendered by:** `CareBundleTimer.tsx:293-305`, `Trigger: {bundle.trigger_reason}`.
 **Change this →** it **disappears** entirely when `trigger_reason` is empty (`:293`). A manually
 started bundle carries "Manual start (Sepsis Six)" (`:179`); an auto-started one carries the NEWS2
-reason written by `sepsis_bundle_service.py:167` `maybe_autostart` (aggregate ≥ 7).
+reason written by `sepsis_bundle_service.py:174` `maybe_autostart` (aggregate ≥ 7).
 
 ### 3.4 The six-element checklist
 **Where:** a grid that reflows into columns at ≥300px per column (`:309`).
@@ -413,11 +413,11 @@ reason written by `sepsis_bundle_service.py:167` `maybe_autostart` (aggregate �
 (`:342`), a `within Nm` target (`:345`), a state pill (`:360`) and a **Mark done** button
 (`:363-370`).
 **Data from:** `bundle.elements[]`, each carrying `key`, `label`, `target_min`, `completed_at`
-and `state` from `sepsis_bundle_service.py:145-148`.
+and `state` from `sepsis_bundle_service.py:152-155`.
 **Change this →** the state pill's word and colour come from `STATE_META`
 (`CareBundleTimer.tsx:76-84`): Pending (grey), **Overdue (red)**, On time (green), Late (amber).
 "Overdue" appears the moment elapsed passes that element's own target, before anyone touches it
-(`sepsis_bundle_service.py:141-144`). A completed element gets a strike-through label at 0.75
+(`sepsis_bundle_service.py:148-151`). A completed element gets a strike-through label at 0.75
 opacity (`:338-339`) and **loses its Mark done button** (`:362`). Clicking Mark done calls
 `POST /api/bundles/{bundle_id}/complete/{element}`
 (`src/api/bundles.ts:106` → `bundle_routes.py:49`) then refetches, so the row flips to "On time"
@@ -428,7 +428,7 @@ or "Late" without a page change.
 **Rendered by:** `CareBundleTimer.tsx:377-401`; percent at `:391`, Cancel at `:394-400`.
 **Change this →** the left slot shows `NN% complete` **unless** an action failed, in which case the
 error string replaces it in red (`:387-388`). `completion_pct` is elements-done-regardless-of-
-timing, deliberately distinct from `compliance_pct` (`sepsis_bundle_service.py:156-161`), the
+timing, deliberately distinct from `compliance_pct` (`sepsis_bundle_service.py:163-168`), the
 card never claims 100% compliance for a bundle that breached the hour. Cancel pops a native
 `window.confirm` (`:183`) then `POST /api/bundles/{id}/cancel` (`bundle_routes.py:67`); on success
 the whole card collapses to the empty state below.
@@ -448,11 +448,11 @@ While any action is in flight the button reads "Starting…" and is disabled (`:
 ## 4. Clinical Course timeline
 
 **Where:** full-width card below the care bundle.
-**Rendered by:** `VigilPanel.tsx:1266`, 
+**Rendered by:** `VigilPanel.tsx:1274`, 
 `<ClinicalCourseTimeline projection={projection} failed={projectionFailed} onRetry={loadProjection} />`.
 The component is `src/components/ClinicalCourseTimeline.tsx:26`. Styled `Vigil.css:388-504`.
-**Data from:** `projection` / `projectionFailed` state (`VigilPanel.tsx:503-504`), set by
-`loadProjection` (`VigilPanel.tsx:550-556`).
+**Data from:** `projection` / `projectionFailed` state (`VigilPanel.tsx:505-506`), set by
+`loadProjection` (`VigilPanel.tsx:552-558`).
 **API:** `GET /api/vigil/patients/{patient_id}/timeline-projection` via
 `src/api/client.ts:623`.
 **Server:** `vigil_routes.py:925` `get_patient_timeline_projection` → reads the patient's latest
@@ -501,7 +501,7 @@ the expected course…"; failure `:42-61`, "Clinical course unavailable, this is
 failure, not a statement about this patient's course." plus a **Retry** button.
 **Data from:** `projection === null` is loading; `failed && !projection` is failure.
 **Change this →** these two states used to be one. The caller swallowed the rejection
-(`VigilPanel.tsx:545-549` documents it), leaving `projection` null forever, so a failed
+(`VigilPanel.tsx:547-551` documents it), leaving `projection` null forever, so a failed
 projection pulsed the loading line indefinitely. `loadProjection` now sets `projectionFailed`
 explicitly (`:555`), and Retry re-runs it (`:54`). If you go back to `.catch(() => {})` you
 restore the infinite pulse.
@@ -511,17 +511,17 @@ restore the infinite pulse.
 ## 5. Left card: "Orb Risk Assessment"
 
 **Where:** left half of the two-column row below the timeline. The row is
-`VigilPanel.tsx:1269` `<div className="detail__row">`, a 1fr/1fr grid (`Vigil.css:368`).
-The card itself is `VigilPanel.tsx:1270`.
+`VigilPanel.tsx:1277` `<div className="detail__row">`, a 1fr/1fr grid (`Vigil.css:368`).
+The card itself is `VigilPanel.tsx:1278`.
 
 ### 5.1 Section title
-**Rendered by:** `VigilPanel.tsx:1271`, `<h3 className="detail__section-title">Orb Risk
+**Rendered by:** `VigilPanel.tsx:1279`, `<h3 className="detail__section-title">Orb Risk
 Assessment</h3>`. Styled `Vigil.css:369` (uppercase, letter-spaced, 0.8rem).
 
 ### 5.2 The risk gauge ring
 **Where:** an 80×80 ring at the top-left of the card.
-**Rendered by:** `VigilPanel.tsx:1274`, `<RiskGauge score={risk.score} level={risk.level}
-rawNews2={risk.raw_news2} />`. The component is `VigilPanel.tsx:2169-2198`; the ring at
+**Rendered by:** `VigilPanel.tsx:1282`, `<RiskGauge score={risk.score} level={risk.level}
+rawNews2={risk.raw_news2} />`. The component is `VigilPanel.tsx:2177-2206`; the ring at
 :2180-2191, the centre label at :2192-2195. Styled `Vigil.css:546-550`.
 **Data from:** `risk` from the chart bundle.
 **Server:** `vigil_service.py:407` `get_patient_risk` → `compute_news2` (`vigil_service.py:234`).
@@ -539,7 +539,7 @@ rawNews2={risk.raw_news2} />`. The component is `VigilPanel.tsx:2169-2198`; the 
 
 ### 5.3 Risk drivers list
 **Where:** right of the gauge, a stack of short sentences with a left rule each.
-**Rendered by:** `VigilPanel.tsx:1277-1279`, one `<div className="detail__driver">` per string.
+**Rendered by:** `VigilPanel.tsx:1285-1287`, one `<div className="detail__driver">` per string.
 Styled `Vigil.css:381`.
 **Data from:** `risk.drivers`.
 **Server:** built inside `compute_news2` by the `add()` helper (`vigil_service.py:256-269`), one
@@ -556,7 +556,7 @@ escalation prepends its own driver, pushing a NEWS2 driver off the end of the th
 
 ### 5.4 Trend line
 **Where:** a full-width tinted bar under the gauge row.
-**Rendered by:** `VigilPanel.tsx:1282-1284`, class
+**Rendered by:** `VigilPanel.tsx:1290-1292`, class
 `` `detail__trend detail__trend--${trend.trend}` ``.
 **Data from:** `trend` from the chart bundle.
 **Server:** `vigil_service.py:481` `get_vitals_trend`, comparing the mean of the last 6 hours
@@ -573,9 +573,9 @@ documents the twin bug it already fixed on the I-PASS side.
 
 ### 5.5 "Why NEWS2 n?: per-parameter contribution" disclosure
 **Where:** a small collapsible row under the trend bar, above the AI assessment.
-**Rendered by:** `VigilPanel.tsx:1288`, `<News2Attribution breakdown={risk.breakdown}
+**Rendered by:** `VigilPanel.tsx:1296`, `<News2Attribution breakdown={risk.breakdown}
 rawNews2={risk.raw_news2} singleParam3={risk.single_param_3} />`. The component is
-`VigilPanel.tsx:2117-2167`; the toggle at :2125-2134, the table at :2137-2153.
+`VigilPanel.tsx:2125-2175`; the toggle at :2125-2134, the table at :2137-2153.
 **Data from:** `risk.breakdown`, an array of `{parameter, value, points, note}`.
 **Server:** assembled per-parameter inside `compute_news2`'s `add()` (`vigil_service.py:263-269`)
 and returned **sorted worst-first** at `vigil_service.py:396`.
@@ -596,8 +596,8 @@ and returned **sorted worst-first** at `vigil_service.py:396`.
 
 ### 5.6 The AI assessment card ("✦ MedGemma AI Assessment")
 **Where:** the bottom third of the risk card, above a hairline.
-**Rendered by:** `VigilPanel.tsx:1290`, `<AiNarrative patientId={patientId}
-onNarrativeReady={setAiNarrative} />`. The component is `VigilPanel.tsx:2203-2334`; the heading at
+**Rendered by:** `VigilPanel.tsx:1298`, `<AiNarrative patientId={patientId}
+onNarrativeReady={setAiNarrative} />`. The component is `VigilPanel.tsx:2211-2342`; the heading at
 :2249-2251, the text block at :2282-2310.
 **Data from:** `narrative` state (`:2204`), filled **incrementally** by the streaming callback at
 `:2220-2225`.
@@ -633,7 +633,7 @@ assembles a deterministic English brief from the record, identity sentence
   scrollbar existed but every wheel gesture scrolled the chart behind it.
 - **Expand to Glass Window** button (`:2315-2325`) opens §5.7.
 - **It also feeds three other surfaces.** `onNarrativeReady` writes `aiNarrative`
-  (`VigilPanel.tsx:1290` → `:491`), which becomes the AI assessment *and* the hospital course in
+  (`VigilPanel.tsx:1298` → `:491`), which becomes the AI assessment *and* the hospital course in
   the discharge preview (`:1416-1417`), the discharge print view (`:2033-2034`) and the handoff
   print view (`:2025`). Break the stream and all three print blank.
 - **Server-side dedup.** Two tabs on the same patient do not fire two LLM calls: an in-flight lock
@@ -643,7 +643,7 @@ assembles a deterministic English brief from the record, identity sentence
 
 ### 5.7 The Glass Window (full-screen AI assessment)
 **Where:** a centred dialog over a dimmed page, up to 768px wide and 85vh tall.
-**Rendered by:** `VigilPanel.tsx:2329` → the component at `:2342-2460`, portalled to
+**Rendered by:** `VigilPanel.tsx:2337` → the component at `:2342-2460`, portalled to
 `document.body` (`:2458`).
 **Data from:** the same `narrative` string.
 **Change this →** visible parts are a 2px gold gradient hairline across the top (`:2393-2396`),
@@ -659,17 +659,17 @@ lock a chart modal underneath was still holding.
 
 ## 6. Right card: "Lab Trends"
 
-**Where:** right half of the `detail__row` grid. The card is `VigilPanel.tsx:1294`, styled
+**Where:** right half of the `detail__row` grid. The card is `VigilPanel.tsx:1302`, styled
 `Vigil.css:506-514`, note `overflow: visible !important` and `z-index: 15` (bumped to 30 on
 hover, `:513`), which exist so the tile tooltips can escape the card.
 
 ### 6.1 Section title
-**Rendered by:** `VigilPanel.tsx:1296-1301`, a flask SVG plus the words "Lab Trends".
+**Rendered by:** `VigilPanel.tsx:1304-1309`, a flask SVG plus the words "Lab Trends".
 
 ### 6.2 The "ESTIMATED" badge
 **Where:** top-right of the Lab Trends card header.
-**Rendered by:** `VigilPanel.tsx:1302-1309`.
-**Data from:** `labsAreEstimated`, `VigilPanel.tsx:1058`, which is simply
+**Rendered by:** `VigilPanel.tsx:1310-1317`.
+**Data from:** `labsAreEstimated`, `VigilPanel.tsx:1066`, which is simply
 `realLabTrendData == null`.
 **Change this →** it appears **only when the patient has no parseable lab documents at all**. Its
 hover title says so: "No lab results on file for this patient, values are model-estimated from
@@ -678,15 +678,15 @@ stroke at 0.85 opacity (`:1364`), so the distinction is visible without reading 
 delete the badge you must not delete the dashing, they are two halves of one honesty signal.
 
 ### 6.3 Where the lab numbers come from (two sources, one shape)
-`labTrendData` (`VigilPanel.tsx:1057`) is `realLabTrendData ?? syntheticLabTrendData`.
+`labTrendData` (`VigilPanel.tsx:1065`) is `realLabTrendData ?? syntheticLabTrendData`.
 
-- **Real**, `realLabTrendData`, `VigilPanel.tsx:866-927`. Filters `data.notes` to
+- **Real**, `realLabTrendData`, `VigilPanel.tsx:868-929`. Filters `data.notes` to
   `doc_type === 'lab_result'`, sorts oldest-first, and parses each line with the regex at
-  `VigilPanel.tsx:877` against text like `"  WBC: 12.5 10³/µL  HIGH  (ref: 4.0-11.0)"`. It captures
+  `VigilPanel.tsx:879` against text like `"  WBC: 12.5 10³/µL  HIGH  (ref: 4.0-11.0)"`. It captures
   analyte, value, unit and both reference bounds, and **deliberately ignores the HIGH/LOW flag**, 
   status is recomputed from value vs range (`:905-910`). Returns `null` when no doc parses, which
   is what triggers the fallback.
-- **Synthetic**, `syntheticLabTrendData`, `VigilPanel.tsx:930-1054`. Picks one of three
+- **Synthetic**, `syntheticLabTrendData`, `VigilPanel.tsx:932-1062`. Picks one of three
   hardcoded 20-analyte panels by diagnosis keyword (`:1016-1023`: sepsis/perforated/peritonitis →
   septic panel; mi/stemi/nstemi/infarct → cardiac panel; everything else → default), then walks
   each analyte forward one point per day of admission using an **MRN-seeded** pseudo-random
@@ -700,7 +700,7 @@ documents.
 
 ### 6.4 Lab tiles
 **Where:** an auto-filling grid of small tiles, min 130px wide (`Vigil.css:515`).
-**Rendered by:** `VigilPanel.tsx:1312-1378`, one `<button className="lab-trend-block">` per
+**Rendered by:** `VigilPanel.tsx:1320-1386`, one `<button className="lab-trend-block">` per
 analyte. Per tile: name (`:1344`), current value + unit (`:1346`), a trend arrow (`:1347`) and the
 reference range (`:1349`).
 **Data from:** each entry of `labTrendData`.
@@ -720,7 +720,7 @@ reference range (`:1349`).
 
 ### 6.5 Lab tile hover sparkline
 **Where:** a 200px card floating above the hovered tile.
-**Rendered by:** `VigilPanel.tsx:1352-1375`. Header with analyte + unit (`:1353-1356`), a 180×70
+**Rendered by:** `VigilPanel.tsx:1360-1383`. Header with analyte + unit (`:1353-1356`), a 180×70
 SVG (`:1357-1370`), footer with the current value and the reference range (`:1371-1374`).
 **Change this →** the green band inside the SVG is the reference range drawn as a `<rect>`
 (`:1358`) with dashed bounds (`:1359-1360`); the line is `statusColor` and **dashed when
@@ -730,7 +730,7 @@ estimated** (`:1364`); every point gets a dot, with the last one larger and stat
 
 ### 6.6 Full lab trend modal ("WBC Trend")
 **Where:** a 700px centred dialog, opened by clicking any lab tile.
-**Rendered by:** `VigilPanel.tsx:1876-1931`, gated on `selectedLabForGraph`
+**Rendered by:** `VigilPanel.tsx:1884-1939`, gated on `selectedLabForGraph`
 (set at `:1340`, state at `:539`).
 **Data from:** the clicked lab object.
 **API / Server:** none, the modal replots data already in memory.
@@ -752,7 +752,7 @@ and for real labs is a guess. Closes via **Close Tracker** (`:1927`), backdrop c
 
 ## 7. Modals opened from this screen
 
-Every modal here is portalled to `document.body` by `ModalOverlay` (`VigilPanel.tsx:350-362`).
+Every modal here is portalled to `document.body` by `ModalOverlay` (`VigilPanel.tsx:352-364`).
 That component owns the shared dialog contract for the whole panel: `useFocusTrap` keeps Tab
 inside the dialog, closes on **Escape**, restores focus to the trigger on unmount and locks body
 scroll (`:351`); backdrop click closes (`:358`). Passing `onClose` as undefined, which several
@@ -762,7 +762,7 @@ scrim dimmed only part of the chrome (`:338-342`).
 
 ### 7.1 Diagnostic Reports modal
 **Where:** a 900px dialog. Opened by **Diag. Reports**.
-**Rendered by:** `VigilPanel.tsx:1617-1678`.
+**Rendered by:** `VigilPanel.tsx:1625-1686`.
 **Data from:** `filteredDiagReports` (`:817-830`) over `allDiagnosticReports` (`:786-790`), which
 filters `data.lens_analyses` to entries whose `image_type` contains one of
 `xray, x-ray, ct, mri, ultrasound, ecg, echo` (`IMAGING_TYPES`, `:783`), newest first.
@@ -783,7 +783,7 @@ here** rather than to the chart (`:1514`).
 
 ### 7.2 Lab Reports modal
 **Where:** a 900px dialog. Opened by **Lab. Reports**.
-**Rendered by:** `VigilPanel.tsx:1681-1743`.
+**Rendered by:** `VigilPanel.tsx:1689-1751`.
 **Data from:** `filteredLabReports` (`:833-846`) over `allLabReports` (`:793-814`), which merges
 two sources: non-imaging `lens_analyses`, and `notes` rows with `doc_type === 'lab_result'`
 remapped into the same shape (`:798-804`). Duplicates are dropped on a
@@ -796,15 +796,15 @@ a structured flag, a report that merely mentions the word is flagged.
 
 ### 7.3 Medications modal
 **Where:** an 800px dialog. Opened by **💊 Medications**.
-**Rendered by:** `VigilPanel.tsx:1779-1872`.
+**Rendered by:** `VigilPanel.tsx:1787-1880`.
 **Data from:** `medications` destructured at `:1104` from the chart bundle, plus `administrations`
 (`:485`) for the Given chips.
 **API:** medications arrive with the chart; administrations come from
 `GET /api/emar/patients/{patient_id}/administrations` via `src/api/client.ts:1449`
-`getAdministrations`, called by `loadAdministrations` (`VigilPanel.tsx:639-648`).
+`getAdministrations`, called by `loadAdministrations` (`VigilPanel.tsx:641-650`).
 **Server:** meds, `vigil_routes.py:79-84` plus the `unverified` decoration at
 `vigil_routes.py:547-556`. Administrations, `server/routes/emar_routes.py:116`
-`get_patient_administrations` → `server/services/emar_service.py:856` `list_administrations`.
+`get_patient_administrations` → `server/services/emar_service.py:988` `list_administrations`.
 **Change this →**
 - **Header count.** "**N total**" from `medications?.length || 0` (`:1785`), plus a `+` button
   that opens Add Medication (`:1786-1788`).
@@ -832,7 +832,7 @@ a structured flag, a report that merely mentions the word is flagged.
 
 ### 7.4 Clinical Notes History modal
 **Where:** an 840px dialog. Opened by **📝 Notes**.
-**Rendered by:** `VigilPanel.tsx:1522-1567`.
+**Rendered by:** `VigilPanel.tsx:1530-1575`.
 **Data from:** `filteredHistoryNotes` (`:743-752`), `data.notes` and `data.scribe_notes`
 concatenated and sorted newest-first, then filtered by content, formatted date, or doc type.
 **API / Server:** both arrays come with the chart bundle (`vigil_routes.py:53-64`).
@@ -847,7 +847,7 @@ which reads as "this patient has no imaging".
 
 ### 7.5 Patient Story
 **Where:** a full dialog. Opened by **🧬 Story**.
-**Rendered by:** `VigilPanel.tsx:2013-2015` → `src/components/vigil/PatientStory.tsx:85`.
+**Rendered by:** `VigilPanel.tsx:2021-2023` → `src/components/vigil/PatientStory.tsx:85`.
 **Data from:** its own fetch, `getPatientStoryFeed(patientId)` (`PatientStory.tsx:102`), refreshed
 live on the `patient:timeline_updated` socket event (`PatientStory.tsx:112`).
 **API:** `GET /api/vigil/patients/{patient_id}/story`.
@@ -862,7 +862,7 @@ board. A `StoryType` missing from `TYPE_META` is a crash, not a missing chip
 
 ### 7.6 Discharge modal
 **Where:** a centred dialog. Opened by **DISCHARGE**.
-**Rendered by:** `VigilPanel.tsx:1384-1460`, two distinct bodies.
+**Rendered by:** `VigilPanel.tsx:1392-1468`, two distinct bodies.
 **Data from:** `dischargeModal` / `discharging` / `dischargeSummary` (`:467-469`).
 **API:** `POST /api/vigil/patients/{patient_id}/discharge` via `src/api/client.ts:1577`.
 **Server:** `vigil_routes.py:713` `discharge_patient_route`. It requires the permission
@@ -870,7 +870,7 @@ board. A `StoryType` missing from `TYPE_META` is a crash, not a missing chip
 (`server/services/discharge_service.py:23` `build_patient_timeline`), generates the summary
 (`discharge_service.py:183` `generate_discharge_summary`, with a hardcoded plain-text fallback at
 `vigil_routes.py:742-763` if the LLM is unavailable) and commits via
-`discharge_service.py:327` `discharge_patient`.
+`discharge_service.py:806` `discharge_patient`.
 **Change this →**
 - **Before confirming** you see the title "Discharge <name>" (`:1387`), an explanatory paragraph
   (`:1390-1393`), and a four-line summary box: Diagnosis, Ward · Bed, Admitted date, and
@@ -885,7 +885,7 @@ board. A `StoryType` missing from `TYPE_META` is a crash, not a missing chip
 - **The QR image.** It cannot be a plain `<img src>`: the endpoint requires a JWT because the QR
   embeds the discharge access token, and a bare `<img>` sends no Authorization header. So
   `getDischargeQrObjectUrl` (`src/api/client.ts:1593`) fetches it as a blob and the effect at
-  `VigilPanel.tsx:663-680` hands back an object URL, revoking it on cleanup. While that is in
+  `VigilPanel.tsx:665-682` hands back an object URL, revoking it on cleanup. While that is in
   flight the slot shows a faint "Loading QR…" box (`:1446`). Server:
   `vigil_routes.py:831` `get_qr_code`, which is gated on `discharge.read`, it previously had **no
   auth dependency at all**, making the discharge bearer secret publicly recoverable from a patient
@@ -895,14 +895,14 @@ board. A `StoryType` missing from `TYPE_META` is a crash, not a missing chip
 
 ### 7.7 Note detail modal
 **Where:** a 640px dialog, opened by clicking a row in Notes History.
-**Rendered by:** `VigilPanel.tsx:1463-1481`.
+**Rendered by:** `VigilPanel.tsx:1471-1489`.
 **Data from:** `selectedNote` (`:471`), set at `:1550`.
 **Change this →** shows "Clinical Note" plus a type badge (`:1468-1470`), the full timestamp
 (`:1473`) and the body with `white-space: pre-wrap` (`:1474`) in a 60vh scroll area.
 
 ### 7.8 Report detail modal
 **Where:** 700px for labs, 840px for imaging (`:1488`).
-**Rendered by:** `VigilPanel.tsx:1484-1519`.
+**Rendered by:** `VigilPanel.tsx:1492-1527`.
 **Data from:** `selectedReport` (`:472`) and `reportOpenedFrom` (`:543`).
 **Change this →** the whole shape is decided by `isLabReport` at `:1485`, true when there is no
 `image_path` or the type is `lab`. That flips the title between **🔬 Lab Report** and
@@ -914,7 +914,7 @@ you to whichever list modal you came from (`:1487`:1514).
 ### 7.9 Add Clinical Note modal
 **Where:** a 640px dialog, opened only from the `+` inside… nothing on this screen. It is reachable
 via `addNoteModalOpen` (`:475`) which no visible control on the current chart sets, see §10.3.
-**Rendered by:** `VigilPanel.tsx:1746-1775`.
+**Rendered by:** `VigilPanel.tsx:1754-1783`.
 **API:** `POST /api/vigil/patients/{patient_id}/notes` via `src/api/client.ts:1319`
 `addClinicalNote`.
 **Server:** `vigil_routes.py:598` `add_patient_note` (requires `patient.write` **and** ward scope)
@@ -929,7 +929,7 @@ author has read it back on screen.
 
 ### 7.10 Add Medication modal
 **Where:** a 640px dialog, opened by the `+` in the Medications modal header (`:1786`).
-**Rendered by:** `VigilPanel.tsx:1934-1988`.
+**Rendered by:** `VigilPanel.tsx:1942-1996`.
 **API:** `POST /api/vigil/patients/{patient_id}/medications` via `src/api/client.ts:1332`
 `addMedication`.
 **Server:** `vigil_routes.py:790` `add_patient_medication`, requires `medication.write` plus ward
@@ -947,8 +947,8 @@ server may reject.
 
 ### 7.11 Drug-safety modal
 **Where:** its own full-screen layer above the med modal.
-**Rendered by:** `VigilPanel.tsx:1991-2000` → `src/components/vigil/SafetyAlertModal.tsx`
-(title at `SafetyAlertModal.tsx:79`).
+**Rendered by:** `VigilPanel.tsx:1999-2008` → `src/components/vigil/SafetyAlertModal.tsx`
+(title at `SafetyAlertModal.tsx:115`).
 **Data from:** `medSafety` (`:482`), which carries a `mode`.
 **Change this →** two different screens from one component. **`blocking`** is set when the POST
 returns 428 (`:721-723`), severe alerts the clinician must acknowledge with a typed reason before
@@ -956,13 +956,13 @@ the order proceeds; acknowledging re-submits via `submitMedication({acknowledged
 (`:1997`). **`info`** is set *after* a successful order when sub-severe alerts were raised or the
 drug was never screened (`:715-718`), surfaced once, informationally, and skipped on an
 acknowledged re-submit because the clinician just reviewed them. The modal shows Allergy alerts
-and interaction alerts as separate groups (`SafetyAlertModal.tsx:101`), and says explicitly "No
+and interaction alerts as separate groups (`SafetyAlertModal.tsx:137`), and says explicitly "No
 allergy or interaction alerts were raised." when both are empty (`:104`).
 
 ### 7.12 Administer modal (eMAR)
 **Where:** its own layer, opened by an **Administer** button in the Medications table.
-**Rendered by:** `VigilPanel.tsx:2003-2011` → `src/components/vigil/AdministerModal.tsx` (title at
-`AdministerModal.tsx:119`).
+**Rendered by:** `VigilPanel.tsx:2011-2019` → `src/components/vigil/AdministerModal.tsx` (title at
+`AdministerModal.tsx:120`).
 **Data from:** `administerTarget` (`:486`), set at `:1852`. It also receives `patient.name` and
 `patient.bed` (`:2006-2007`) so the five-rights check names the bed.
 **Change this →** on success `onRecorded` (`:2009`) clears the target **and refetches the
@@ -975,20 +975,20 @@ after the refresh, fixed by `adminSeqRef` (`:617`, checked at `:643`).
 ## 8. Print views (invisible until triggered)
 
 All three are portalled to `document.body` so they escape any `display: none` on parent UI blocks.
-The print itself fires from the effect at `VigilPanel.tsx:512-523`, which waits two animation
+The print itself fires from the effect at `VigilPanel.tsx:514-525`, which waits two animation
 frames so the portal content is painted before `window.print()`, then clears `printType`.
 `'meds'` is excluded from that effect because `MedListPrintView` owns its own print lifecycle and
 resets the state through `onAfterPrint`, otherwise you get two print dialogs.
 
 ### 8.1 Handoff print view
-**Rendered by:** `VigilPanel.tsx:2018-2028` → `src/components/HandoffPrintView.tsx`.
+**Rendered by:** `VigilPanel.tsx:2026-2036` → `src/components/HandoffPrintView.tsx`.
 **Data from:** `patient`, `risk`, `latest` vitals, `notes`, `medications`, `aiNarrative`.
 **Change this →** nothing on the current chart sets `printType='handoff'`, the HANDOFF button
 opens `/handoff/{patientId}` in a new tab instead (`:1254`). This branch is currently unreachable
 from this screen.
 
 ### 8.2 Discharge print view
-**Rendered by:** `VigilPanel.tsx:2029-2038` → `src/components/DischargePrintView.tsx`.
+**Rendered by:** `VigilPanel.tsx:2037-2046` → `src/components/DischargePrintView.tsx`.
 **Triggered by:** **PRINT RECORD** (`:1256`), and from inside the discharge success body by
 **Print Summary Only** (`:1452`) and **Print with Timeline** (`:1453`).
 **Change this →** the timeline section is passed **only** for `'discharge-timeline'` (`:2035`), so
@@ -997,7 +997,7 @@ both the AI assessment and the hospital course, a chart whose AI stream failed p
 sections blank.
 
 ### 8.3 Medication administration record print
-**Rendered by:** `VigilPanel.tsx:2039-2057` → `src/components/print/MedListPrintView.tsx`,
+**Rendered by:** `VigilPanel.tsx:2047-2065` → `src/components/print/MedListPrintView.tsx`,
 lazy-loaded at `VigilPanel.tsx:30` so the print-only bundle is not pulled into the main Vigil
 chunk until someone actually prints meds.
 **Triggered by:** **PRINT MEDS** (`:1257`).
@@ -1011,7 +1011,7 @@ here too; the full medication object is not passed.
 
 ### 9.1 Loading
 **Where:** replaces the entire screen.
-**Rendered by:** `VigilPanel.tsx:1060`, 
+**Rendered by:** `VigilPanel.tsx:1068`, 
 `<div className="orb-panel animate-fade-in"><div className="orb-panel-loading">Loading patient data…</div></div>`.
 **Change this →** this early return sits **above** every hook-free render path but below all the
 hooks, so it is safe. It shows on first mount and on every Retry. It does **not** show on a
@@ -1021,7 +1021,7 @@ this line. If you want a quieter refresh, gate `setLoading` on `!data`.
 
 ### 9.2 Patient not found (404)
 **Where:** replaces the entire screen but **keeps a command bar**.
-**Rendered by:** `VigilPanel.tsx:1066-1101`. The condition is `!data` with
+**Rendered by:** `VigilPanel.tsx:1074-1109`. The condition is `!data` with
 `loadError?.status === 404` (`:1065`).
 **Change this →** you get a back arrow, the heading "**Patient not found**" (`:1073`), the raw
 `patientId` where the MRN line normally sits (`:1074`), the sentence "This record may have been
@@ -1047,10 +1047,10 @@ the client-side guard in `addMedication` (`src/api/client.ts:1338`).
 **There is no permission-denied UI on this screen.** Every guard is server-side, and the client
 surfaces each failure differently:
 - **Opening a chart outside your department** returns **404, not 403**, deliberately, because a
-  403 confirms the patient exists (`server/permissions.py:453-455`). So a cross-ward chart open
+  403 confirms the patient exists (`server/permissions.py:462-464`). So a cross-ward chart open
   renders the "Patient not found" screen of §9.2, indistinguishable from a deleted patient. The
   attempt is audited as `patient_scope_denied` before the 404 is raised
-  (`permissions.py:478-490`).
+  (`permissions.py:487-499`).
 - **Discharge without `discharge.generate`** → a browser `alert` (`:656`).
 - **Adding a med without `medication.write`** → the red `medError` box in the Add Medication modal
   (`:1939`).
@@ -1058,7 +1058,7 @@ surfaces each failure differently:
 - **Care bundle actions without `alert.read`** → the red error line in the bundle card footer
   (`CareBundleTimer.tsx:388`).
 - **Presence** silently never joins for a role without `PATIENT_READ_ALL`
-  (`server/ws/realtime.py:417-422`), so the chips just never appear.
+  (`server/ws/realtime.py:484-489`), so the chips just never appear.
 
 ### 9.6 What gets audited when you open this chart
 Opening the chart writes a `phi_access` row via the `audit_action` on the route dependency:
@@ -1076,19 +1076,19 @@ poll is the shape blamed for the 2026-07-30 loop stalls; the scope check is the 
 ### 10.1 There is no allergy display on this chart
 Grepped the panel, `src/components/vigil/` and `Vigil.css`: the only allergy surfaces reachable
 from this screen are the **Allergy alerts** group inside the drug-safety modal
-(`src/components/vigil/SafetyAlertModal.tsx:101`) and the **Allergies** filter chip in Patient
+(`src/components/vigil/SafetyAlertModal.tsx:137`) and the **Allergies** filter chip in Patient
 Story (`src/components/vigil/PatientStory.tsx:65`). The command bar shows name, MRN, age, sex, bed,
 diagnosis and comorbidities, **no allergy band**. On a screen whose header is otherwise the
 patient-identification banner, that is a gap worth naming rather than a documentation omission.
 
 ### 10.2 `forecast` is fetched and never rendered
 `getPatientForecast(patientId).then(setForecast)` runs on every chart open
-(`VigilPanel.tsx:562`), hitting `GET /api/forecast/patient/{id}` (`src/api/client.ts:638`). The
+(`VigilPanel.tsx:564`), hitting `GET /api/forecast/patient/{id}` (`src/api/client.ts:638`). The
 `forecast` state (`:502`) appears nowhere in the JSX, grep returns only the declaration and the
 setter. It is a live request per chart open with no visible consequence.
 
 ### 10.3 `VitalCard` and the Add Note trigger are orphaned
-`VitalCard` (`VigilPanel.tsx:2064-2073`) is defined and never rendered, the command bar's vital
+`VitalCard` (`VigilPanel.tsx:2072-2081`) is defined and never rendered, the command bar's vital
 cells are hand-written inline instead. `addNoteModalOpen` (`:475`) is set to `true` by no control
 in the current render tree, so §7.9's modal is unreachable from the chart UI even though the
 handler, the offline guard and the endpoint all work.

@@ -443,6 +443,29 @@ describe('an issued invoice', () => {
     expect(printBtn.closest('.bill-actions')).not.toBeNull()
   })
 
+  it('prints no "not a tax invoice" notice once the bill carries a GSTIN and address', async () => {
+    setup({
+      '/billing/invoices/7/print': {
+        invoice: INVOICE,
+        supplier: {
+          name: 'Orb Hospitals Pvt Ltd', name_is_configured: true,
+          address: '12 MG Road, Pune, Maharashtra 411001', gstin: '27AAPFU0939F1ZV',
+          state_code: '27', source: 'snapshot', notice: null,
+        },
+        number_series_configured: true, number_notice: null,
+        amount_in_words: 'Rupees One Thousand Five Hundred Only', has_tax: false,
+        gst_note: 'Healthcare services are exempt.', printed_at: '2026-08-12T10:05:00+05:30',
+      },
+    })
+    click(await screen.findByText('INV-2026-27-000004'))
+    click(await screen.findByRole('button', { name: 'Print view' }))
+    const supplier = await screen.findByTestId('bill-supplier')
+    expect(within(supplier).getByText('27AAPFU0939F1ZV')).toBeInTheDocument()
+    const printView = screen.getByTestId('print-view')
+    expect(printView.querySelectorAll('.bill-notice--warn')).toHaveLength(0)
+    expect(printView.textContent).not.toMatch(/not a GST tax invoice/)
+  })
+
   it('shows an exempt line as GST-exempt healthcare, not as 0% tax', async () => {
     setup()
     click(await screen.findByText('INV-2026-27-000004'))

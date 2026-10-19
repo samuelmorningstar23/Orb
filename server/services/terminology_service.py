@@ -18,7 +18,30 @@ releases into the SAME `terminology` table via `scripts/load_terminology.py`:
 
 `validate_code` / `get_display` read whatever is in the table, so once the full
 releases are loaded they transparently validate against millions of codes.
+
+THE RELEASE LOADER (opd-20, W9-G, 10 October 2026). scripts/load_terminology.py
+now exists and loads an ICD-10 release (code_system ICD10, the only system in
+LOADABLE_CODE_SYSTEMS) through load_release below:
+  * NO RELEASE IS LOADED UNTIL COUNSEL CONFIRMS ITS LICENCE (ruling OPD-N11).
+    A load writes nothing without a licence reference (counsel's confirmation)
+    and is otherwise a dry run that reports what it would do.
+  * Idempotent: the same file twice changes nothing the second time and
+    leaves the same row count. Codes are never deleted; a code the release
+    marks inactive (or, with retire_missing, leaves out) is set inactive and
+    no longer validates.
+  * One version row per code system records the release loaded: code_system
+    RELEASE_CODE_SYSTEM ('RELEASE'), code the code system, display a JSON
+    description, is_active 0 ALWAYS, so no validator, picker or order check
+    ever reads it as a code (every reader asks for is_active = 1 and a named
+    code system).
+  * Each load is audited fail-closed (clinical_config) in its own transaction.
+  * Stored 'unvalidated' diagnoses are re-checked only on request
+    (revalidate_draft_diagnoses), on UNSIGNED outpatient notes only. A signed
+    note is never rewritten (a trigger refuses it too); it is only counted.
+Nothing here downloads anything: the release is a file the hospital brings.
 """
+import json
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -374,8 +397,10 @@ def seed_terminology() -> dict:
         )
 
     with db_session() as conn:
+        # The release loader's version rows (opd-20) are not codes.
         rows = conn.execute(
-            "SELECT code_system, COUNT(*) AS n FROM terminology GROUP BY code_system"
+            "SELECT code_system, COUNT(*) AS n FROM terminology WHERE code_system != ? "
+            "GROUP BY code_system", (RELEASE_CODE_SYSTEM,)
         ).fetchall()
     counts = {r["code_system"]: r["n"] for r in rows}
     return {
@@ -409,6 +434,404 @@ def register_codes(conn, rows) -> int:
         )
         added += max(cur.rowcount or 0, 0)
     return added
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  RELEASE LOADER (opd-20, W9-G, 10 October 2026)
+# ══════════════════════════════════════════════════════════════════════════
+# scripts/load_terminology.py reads the hospital's release file and calls
+# load_release; the rules live here so nothing else can load past them. See
+# the module docstring for the licence gate (ruling OPD-N11), the version row
+# and what is never rewritten.
+
+#: The code_system of the version rows: one per loaded code system, code = the
+#: code system, display = a JSON description of the release, is_active 0.
+RELEASE_CODE_SYSTEM = "RELEASE"
+#: What the loader may load. ICD-10 only (opd-20); LOINC and SNOMED CT each
+#: need their own licence answer and their own rules for codes the laboratory
+#: catalogue and the order screens already use, so they are refused for now.
+LOADABLE_CODE_SYSTEMS = ("ICD10",)
+#: The longest display text kept from a release.
+MAX_RELEASE_DISPLAY = 1000
+#: Samples of skipped rows shown in a report.
+_SAMPLE_LIMIT = 10
+#: ICD-10 and ICD-10-CM codes, dotted after the third character: a letter, a
+#: digit, a digit or letter, then up to four characters (S72.001A).
+_ICD10_CODE = re.compile(r"^[A-Z][0-9][0-9A-Z](\.[0-9A-Z]{1,4})?$")
+#: Marks some releases print after a code (the WHO dagger and asterisk).
+_CODE_MARKS = "*†+"
+
+
+class TerminologyLoadError(ValueError):
+    """A release the loader will not load. `code` is the machine word."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def normalise_release_code(code_system: str, raw) -> str | None:
+    """A release's code as `terminology` stores it, or None when the text is
+    not a code (a block range such as A00-A09, a chapter heading, a blank).
+
+    ICD-10: upper case, marks after the code removed, and the dot put after
+    the third character when the release prints codes without it (E119 is
+    E11.9), the spelling the starter set and the pickers use."""
+    text = "".join(str(raw or "").split()).upper().rstrip(_CODE_MARKS)
+    if not text:
+        return None
+    if code_system == "ICD10":
+        if "." not in text and len(text) > 3:
+            text = f"{text[:3]}.{text[3:]}"
+        if text.endswith("."):
+            text = text[:-1]
+        return text if _ICD10_CODE.match(text) else None
+    return text
+
+
+def release_info(code_system: str, conn=None) -> dict | None:
+    """The release last loaded for `code_system` (its version row), or None
+    when no release was ever loaded (only the starter set is there)."""
+    system = (code_system or "").strip().upper()
+
+    def _read(c):
+        row = c.execute(
+            "SELECT display FROM terminology WHERE code_system = ? AND code = ?",
+            (RELEASE_CODE_SYSTEM, system),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            info = json.loads(row["display"])
+        except (TypeError, ValueError):
+            return {"code_system": system, "unreadable": True}
+        return info if isinstance(info, dict) else {"code_system": system, "unreadable": True}
+
+    if conn is not None:
+        return _read(conn)
+    with db_session() as c:
+        return _read(c)
+
+
+def _clean_entries(code_system: str, entries) -> tuple[dict, dict]:
+    """(release codes {code: (display, active)}, skipped facts). Refuses a
+    release with a code but no wording, or one code with two wordings."""
+    codes: dict[str, tuple[str, bool]] = {}
+    rows_read = 0
+    skipped: list[str] = []
+    no_display: list[str] = []
+    conflicts: list[str] = []
+    for entry in entries:
+        rows_read += 1
+        raw_code, raw_display, active = entry
+        code = normalise_release_code(code_system, raw_code)
+        if code is None:
+            skipped.append(str(raw_code or "").strip())
+            continue
+        display = " ".join(str(raw_display or "").split())[:MAX_RELEASE_DISPLAY]
+        if not display:
+            no_display.append(code)
+            continue
+        active = bool(active)
+        seen = codes.get(code)
+        if seen is not None and seen != (display, active):
+            conflicts.append(code)
+            continue
+        codes[code] = (display, active)
+    if no_display:
+        raise TerminologyLoadError(
+            "release_row_without_display",
+            f"{len(no_display)} code(s) in the release have no wording, for example "
+            f"{', '.join(no_display[:_SAMPLE_LIMIT])}. Nothing was loaded.")
+    if conflicts:
+        raise TerminologyLoadError(
+            "release_code_twice",
+            f"{len(set(conflicts))} code(s) appear twice with different wording or status, "
+            f"for example {', '.join(sorted(set(conflicts))[:_SAMPLE_LIMIT])}. Nothing was loaded.")
+    if not codes:
+        raise TerminologyLoadError(
+            "release_empty", "The release holds no codes Orb can read. Nothing was loaded.")
+    return codes, {"rows_read": rows_read, "skipped_not_a_code": len(skipped),
+                   "skipped_samples": [s for s in skipped if s][:_SAMPLE_LIMIT]}
+
+
+def _release_identity(info: dict | None) -> tuple | None:
+    if not info:
+        return None
+    return (info.get("release"), info.get("version"), info.get("source_sha256"))
+
+
+def load_release(entries, *, code_system: str, release: str, version: str,
+                 source_sha256: str, source_name: str | None = None,
+                 licence_ref: str | None = None, operator: str | None = None,
+                 retire_missing: bool = False, dry_run: bool = False) -> dict:
+    """Load one release of `code_system` into `terminology`.
+
+    `entries` are (code, display, active) as the release file states them.
+    Every code in the release is inserted or brought in line (wording and
+    active flag); a code the table holds and the release leaves out is set
+    inactive only with `retire_missing`. Nothing is ever deleted.
+
+    Writes nothing when `dry_run`, or when the table already matches the
+    release and its version row already names it (a second run of the same
+    file), and answers the same report either way. A write needs
+    `licence_ref` (ruling OPD-N11): without one the call is refused before
+    anything is read.
+
+    Raises TerminologyLoadError (and AuditWriteError when the audit row
+    cannot be written; nothing is then kept)."""
+    system = (code_system or "").strip().upper()
+    if system not in LOADABLE_CODE_SYSTEMS:
+        raise TerminologyLoadError(
+            "code_system_not_loadable",
+            f"This loader loads {', '.join(LOADABLE_CODE_SYSTEMS)} only, not {system or 'nothing'}.")
+    release = " ".join(str(release or "").split())
+    version = " ".join(str(version or "").split())
+    if not release or not version:
+        raise TerminologyLoadError("release_unnamed",
+                                   "Name the release and its version, as the publisher prints them.")
+    licence = " ".join(str(licence_ref or "").split()) or None
+    if not dry_run and not licence:
+        raise TerminologyLoadError(
+            "licence_required",
+            "No release is loaded until counsel confirms its licence (ruling OPD-N11). Give "
+            "counsel's confirmation reference to load it, or run a dry run.")
+    sha = str(source_sha256 or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", sha):
+        raise TerminologyLoadError("source_unidentified",
+                                   "The release file's SHA-256 is needed to record what was loaded.")
+
+    codes, facts = _clean_entries(system, entries)
+
+    with db_session(immediate=not dry_run) as conn:
+        existing = {r["code"]: (r["display"], bool(r["is_active"])) for r in conn.execute(
+            "SELECT code, display, is_active FROM terminology WHERE code_system = ?",
+            (system,)).fetchall()}
+        previous = release_info(system, conn)
+
+        inserts, updates = [], []
+        counts = {"inserted": 0, "inserted_inactive": 0, "display_updated": 0,
+                  "reactivated": 0, "deactivated": 0, "retired_missing": 0, "unchanged": 0}
+        for code, (display, active) in codes.items():
+            had = existing.get(code)
+            if had is None:
+                inserts.append((system, code, display, 1 if active else 0))
+                counts["inserted" if active else "inserted_inactive"] += 1
+                continue
+            old_display, old_active = had
+            if (old_display, old_active) == (display, active):
+                counts["unchanged"] += 1
+                continue
+            if old_display != display:
+                counts["display_updated"] += 1
+            if old_active != active:
+                counts["reactivated" if active else "deactivated"] += 1
+            updates.append((display, 1 if active else 0, system, code))
+        retirements = []
+        if retire_missing:
+            for code, (_display, old_active) in existing.items():
+                if code not in codes and old_active:
+                    retirements.append((system, code))
+            counts["retired_missing"] = len(retirements)
+
+        active_before = sum(1 for _d, a in existing.values() if a)
+        active_after = (active_before
+                        + counts["inserted"] + counts["reactivated"]
+                        - counts["deactivated"] - counts["retired_missing"])
+        changes = bool(inserts or updates or retirements)
+        identity = (release, version, sha)
+        already_loaded = (not changes) and _release_identity(previous) == identity
+        report = {
+            "code_system": system, "release": release, "version": version,
+            "source_sha256": sha, "source_name": source_name, "licence_ref": licence,
+            "retire_missing": bool(retire_missing), "dry_run": bool(dry_run),
+            "already_loaded": already_loaded, "applied": False,
+            **facts, "codes_in_release": len(codes),
+            "active_in_release": sum(1 for _d, a in codes.values() if a),
+            **counts,
+            "total_before": len(existing), "total_after": len(existing) + len(inserts),
+            "active_before": active_before, "active_after": active_after,
+            "previous_release": previous,
+        }
+        if dry_run or already_loaded:
+            return report
+
+        loaded_at = datetime.now(timezone.utc).isoformat()
+        if inserts:
+            conn.executemany(
+                "INSERT INTO terminology (code_system, code, display, is_active) "
+                "VALUES (?, ?, ?, ?)", inserts)
+        if updates:
+            conn.executemany(
+                "UPDATE terminology SET display = ?, is_active = ? "
+                "WHERE code_system = ? AND code = ?", updates)
+        if retirements:
+            conn.executemany(
+                "UPDATE terminology SET is_active = 0 WHERE code_system = ? AND code = ?",
+                retirements)
+        info = {
+            "code_system": system, "release": release, "version": version,
+            "source_sha256": sha, "source_name": source_name, "licence_ref": licence,
+            "codes_in_release": len(codes), "active_in_release": report["active_in_release"],
+            "retire_missing": bool(retire_missing), "loaded_at": loaded_at,
+            "loaded_by": operator,
+        }
+        conn.execute(
+            "INSERT INTO terminology (code_system, code, display, is_active) VALUES (?, ?, ?, 0) "
+            "ON CONFLICT(code_system, code) DO UPDATE SET display = excluded.display, is_active = 0",
+            (RELEASE_CODE_SYSTEM, system, json.dumps(info, sort_keys=True)))
+        from services.audit_service import log_audit_event
+        log_audit_event(
+            correlation_id=f"terminology-release-{system}-{uuid.uuid4().hex[:8]}",
+            event_category="clinical_config",
+            action_type="terminology_release_loaded",
+            outcome="success",
+            db=conn,
+            summary_message=(f"{release} {version} loaded into {system}: "
+                             f"{counts['inserted']} new, {counts['display_updated']} reworded, "
+                             f"{counts['deactivated'] + counts['retired_missing']} no longer valid"),
+            actor_user_id=None, actor_role="console", source_type="console",
+            target_type="terminology_release", target_id=system,
+            metadata={**{k: v for k, v in report.items() if k != "previous_release"},
+                      "previous_release": _release_identity(previous) and {
+                          "release": previous.get("release"), "version": previous.get("version"),
+                          "source_sha256": previous.get("source_sha256")},
+                      "operator": operator, "script": "load_terminology.py"},
+        )
+        report["applied"] = True
+        report["loaded_at"] = loaded_at
+    return report
+
+
+def _diagnosis_list(text) -> list | None:
+    try:
+        value = json.loads(text) if text else []
+    except (TypeError, ValueError):
+        return None
+    return value if isinstance(value, list) else None
+
+
+def revalidate_draft_diagnoses(*, operator: str | None = None, dry_run: bool = False) -> dict:
+    """Re-check the coded diagnoses on UNSIGNED outpatient notes against the
+    codes `terminology` holds now, on request only (opd-20).
+
+    A coded diagnosis on a draft becomes 'validated' when its code is active
+    now and 'unvalidated' when it is not, by the same exact lookup the note
+    used when it was saved (validate_code). The doctor's text and code are
+    never changed, a diagnosis is never newly ticked for the problem list,
+    and one that is no longer valid loses its tick. The draft's row_version
+    is not bumped (the doctor's next save checks every code again anyway, so
+    an open editor is never pushed into a conflict).
+
+    A SIGNED note is never rewritten: the UPDATE names status 'draft' and the
+    table's trigger refuses any change to a signed row. Signed notes that hold
+    an unvalidated code which would validate now are only counted.
+
+    Each changed draft is audited (clinical_record, in the transaction) and
+    the run once (clinical_config, fail-closed)."""
+    report = {"dry_run": bool(dry_run), "applied": False, "drafts_checked": 0,
+              "drafts_changed": 0, "diagnoses_validated": 0, "diagnoses_unvalidated": 0,
+              "unreadable_drafts": 0, "signed_with_codes_now_valid": 0,
+              "signed_untouched": True}
+    with db_session(immediate=not dry_run) as conn:
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                        "AND name = 'opd_consultations'").fetchone() is None:
+            report["table_absent"] = True
+            return report
+
+        def active(system: str, code: str) -> bool:
+            return conn.execute(
+                "SELECT 1 FROM terminology WHERE code_system = ? AND code = ? AND is_active = 1 "
+                "LIMIT 1", (system, code)).fetchone() is not None
+
+        changed: list[tuple[dict, list, list, list]] = []
+        for row in conn.execute(
+                "SELECT id, visit_id, patient_id, diagnoses_json FROM opd_consultations "
+                "WHERE status = 'draft' AND diagnoses_json IS NOT NULL ORDER BY id").fetchall():
+            report["drafts_checked"] += 1
+            items = _diagnosis_list(row["diagnoses_json"])
+            if items is None:
+                report["unreadable_drafts"] += 1
+                continue
+            now_valid, now_invalid, out = [], [], []
+            for item in items:
+                if not isinstance(item, dict):
+                    out.append(item)
+                    continue
+                item = dict(item)
+                system = str(item.get("code_system") or "").upper()
+                code = item.get("code")
+                status = item.get("code_status")
+                if code and system in DIAGNOSIS_CODE_SYSTEMS and status in ("validated", "unvalidated"):
+                    fresh = "validated" if active(system, str(code)) else "unvalidated"
+                    if fresh != status:
+                        item["code_status"] = fresh
+                        (now_valid if fresh == "validated" else now_invalid).append(code)
+                    if fresh != "validated":
+                        item["add_to_problems"] = False
+                out.append(item)
+            if now_valid or now_invalid:
+                changed.append((dict(row), out, now_valid, now_invalid))
+                report["diagnoses_validated"] += len(now_valid)
+                report["diagnoses_unvalidated"] += len(now_invalid)
+        report["drafts_changed"] = len(changed)
+
+        for row in conn.execute(
+                "SELECT diagnoses_json FROM opd_consultations WHERE status = 'signed' "
+                "AND diagnoses_json LIKE '%unvalidated%'").fetchall():
+            for item in _diagnosis_list(row["diagnoses_json"]) or []:
+                if (isinstance(item, dict) and item.get("code_status") == "unvalidated"
+                        and item.get("code")
+                        and str(item.get("code_system") or "").upper() in DIAGNOSIS_CODE_SYSTEMS
+                        and active(str(item.get("code_system")).upper(), str(item["code"]))):
+                    report["signed_with_codes_now_valid"] += 1
+                    break
+
+        if dry_run or not changed:
+            return report
+
+        from services.audit_service import log_audit_event
+        correlation = f"terminology-revalidate-{uuid.uuid4().hex[:8]}"
+        for row, items, now_valid, now_invalid in changed:
+            cur = conn.execute(
+                "UPDATE opd_consultations SET diagnoses_json = ? WHERE id = ? AND status = 'draft'",
+                (json.dumps(items), row["id"]))
+            if (cur.rowcount or 0) != 1:
+                # Signed (or gone) since it was read: left exactly as it is.
+                report["drafts_changed"] -= 1
+                report["diagnoses_validated"] -= len(now_valid)
+                report["diagnoses_unvalidated"] -= len(now_invalid)
+                continue
+            log_audit_event(
+                correlation_id=correlation,
+                event_category="clinical_record",
+                action_type="opd_diagnosis_codes_revalidated",
+                outcome="success",
+                db=conn,
+                summary_message=(f"Diagnosis codes on draft {row['id']} checked again: "
+                                 f"{len(now_valid)} now valid, {len(now_invalid)} no longer valid"),
+                actor_user_id=None, actor_role="console", source_type="console",
+                patient_id=row["patient_id"], target_type="opd_consultation",
+                target_id=str(row["id"]),
+                metadata={"visit_id": row["visit_id"], "now_valid": now_valid,
+                          "no_longer_valid": now_invalid, "operator": operator,
+                          "script": "load_terminology.py", "written": "in_transaction"},
+            )
+        log_audit_event(
+            correlation_id=correlation,
+            event_category="clinical_config",
+            action_type="terminology_drafts_revalidated",
+            outcome="success",
+            db=conn,
+            summary_message=(f"Diagnosis codes on {report['drafts_changed']} draft outpatient "
+                             "note(s) checked again; signed notes untouched"),
+            actor_user_id=None, actor_role="console", source_type="console",
+            target_type="terminology_release", target_id="drafts",
+            metadata={**report, "operator": operator, "script": "load_terminology.py"},
+        )
+        report["applied"] = True
+    return report
 
 
 if __name__ == "__main__":

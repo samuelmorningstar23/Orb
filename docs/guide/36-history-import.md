@@ -444,7 +444,7 @@ Copying the tolerance in either direction produces a bug: give `_detect_encoding
 **Does:** Decides `create` / `update` / `unchanged` / `fail` for one normalised child row.
 **On screen:** the per-row `action` in the dry run, and the created/updated counts.
 **How an update is bounded (`:1928-1930`):** the existing-row lookup is on `(import_source_system, import_external_id)`, so an update here **can only ever touch a row this source system previously wrote**. It can never modify Orb-native clinical data. That single fact is what makes the update path safe enough to have at all.
-**How the diff works:** for each column in `_WRITABLE`, compare the current value with `_same` (`roster_import.py:1225`); collect the differences into `changes`; `update` if there are any, `unchanged` otherwise.
+**How the diff works:** for each column in `_WRITABLE`, compare the current value with `_same` (`roster_import.py:1318`); collect the differences into `changes`; `update` if there are any, `unchanged` otherwise.
 **Breaks if you change it:** looking the existing row up by anything other than the provenance pair, by MRN, by name, by a natural key, makes a re-import capable of overwriting rows Orb wrote itself.
 
 #### `_classify_patient`: `history_import_service.py:1958`

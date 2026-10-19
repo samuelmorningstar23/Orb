@@ -23,6 +23,12 @@ WHAT AN ESCALATION IS HERE
     resolved. Nothing in this module retires a chain on the clock. A silently
     dropped deterioration alert is the failure mode this exists to end, so time
     can only ever make an escalation louder, never quieter.
+  * ONE EXCEPTION, AND IT IS NOT A CLOSE (adt-11, ruling ADT-S4 (a), held for
+    Samuel, only while ORB_ADT is on): while the patient is recorded on leave
+    or absconded the ladder's clock is PAUSED, the chain stays open and on
+    every board, and it resumes with the minutes it had left on return. An
+    absconded patient's open chain names the treating doctor in the case room.
+    See "A patient off the ward" below.
 
 THE SCORE IS NOT OURS
 ``services.vigil_service.compute_news2`` is the single implementation of the RCP
@@ -916,6 +922,367 @@ def _emit_message_new(msg_data: dict, channel_id: str | None) -> bool:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  A patient off the ward (adt-11, ruling ADT-S4 (a), held for Samuel)
+# ═════════════════════════════════════════════════════════════════════════════
+# A patient recorded on leave or absconded (services/adt/presence.py) is not in
+# the bed, so a ladder that climbs to the registrar and the consultant about
+# them pages people to an empty bed and teaches the ward to ignore the ladder.
+# Ruling ADT-S4 (a): the escalation is PAUSED, NEVER CLOSED, and resumes on
+# return. Run at the start of every advance_due, so the background sweep and
+# every board read apply it before any tier moves.
+#
+#   PAUSE   an OPEN chain whose patient is away, with no scored step (raised,
+#           reopened or a further observation) since the patient left the
+#           ward. tier_due_at is set NULL so nothing climbs; a 'paused' event
+#           keeps the minutes that were left on the tier. The chain stays open
+#           and on every board. Not done while a tier timeout that ran out
+#           BEFORE the patient left is still owed: that climb happens first.
+#   RESUME  a paused chain whose patient is back on the ward, whose stay has
+#           ended (end-of-stay handling of an open chain is unchanged and
+#           stays with held ruling R009), on which a scored step was recorded
+#           after the patient left (a set taken with the patient in front of
+#           somebody is live), or when ORB_ADT is no longer on. The tier gets
+#           back exactly the minutes it had left (0 when unreadable: due now,
+#           the strict direction), unless a newer step already set a due time.
+#   NOTICE  an unresolved chain whose patient is absconded names the treating
+#           doctor (the consultant tier's resolver: the attending, else a ward
+#           doctor) in the case room, once per absconding.
+#
+# Every pause, resume and notice is an escalation_events row plus a fail-closed
+# clinical_access audit row in the same transaction, and a case-room line after
+# the commit. Each is claimed with a compare-and-set on updated_at, so the
+# sweep and a board read racing for the same chain record it once. With ORB_ADT
+# off this reads which chains are paused (none, unless the module was switched
+# off while one was) and does nothing else.
+
+_PAUSE_EVENT = "paused"
+_RESUME_EVENT = "resumed"
+_ABSCONDED_EVENT = "absconded_notice"
+_PRESENCE_EVENT_TYPES = (_PAUSE_EVENT, _RESUME_EVENT, _ABSCONDED_EVENT)
+
+#: Why a paused chain resumed, as the event detail and the case room say it.
+_RESUME_WORDS = {
+    "returned": "The patient is back on the ward",
+    "observed": ("A set of observations was charted after the patient left the ward, so the "
+                 "patient is being seen and the escalation is live again"),
+    "stay_ended": "The patient's stay has ended, so the escalation is no longer paused",
+    "module_off": ("Beds and admissions is switched off, so Orb no longer knows who is off "
+                   "the ward and the escalation is live again"),
+}
+
+
+def _away_words(away: dict | None) -> str:
+    from services.adt.clinical_pause import AWAY_WORDS
+    return AWAY_WORDS.get((away or {}).get("presence_status") or "", "off the ward")
+
+
+def _presence_event_rows(db, chain_ids: list[str]) -> dict[str, list[dict]]:
+    """Chain id -> its pause, resume and absconded-notice events, oldest first."""
+    out: dict[str, list[dict]] = {}
+    for start in range(0, len(chain_ids), 500):
+        chunk = chain_ids[start:start + 500]
+        marks = ",".join("?" for _ in chunk)
+        for r in db.execute(
+                f"""SELECT escalation_id, seq, event_type, occurred_at, metadata_json
+                      FROM escalation_events
+                     WHERE escalation_id IN ({marks}) AND event_type IN (?, ?, ?)
+                     ORDER BY escalation_id, seq""",
+                (*chunk, *_PRESENCE_EVENT_TYPES)).fetchall():
+            row = dict(r)
+            try:
+                row["metadata"] = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+            except (ValueError, TypeError):
+                row["metadata"] = {}
+            out.setdefault(row["escalation_id"], []).append(row)
+    return out
+
+
+def _open_pause(events: list[dict]) -> dict | None:
+    """The 'paused' event still in force on a chain (its latest pause or
+    resume is a pause), or None."""
+    latest = None
+    for ev in events:
+        if ev["event_type"] in (_PAUSE_EVENT, _RESUME_EVENT):
+            latest = ev
+    return latest if latest and latest["event_type"] == _PAUSE_EVENT else None
+
+
+def _last_scored_at(db, chain_ids: list[str]) -> dict[str, datetime]:
+    """Chain id -> when its newest scored step (raised, reopened or a further
+    observation) happened. Compared as instants, never as text."""
+    out: dict[str, datetime] = {}
+    for start in range(0, len(chain_ids), 500):
+        chunk = chain_ids[start:start + 500]
+        marks = ",".join("?" for _ in chunk)
+        for r in db.execute(
+                f"""SELECT escalation_id, occurred_at FROM escalation_events
+                     WHERE escalation_id IN ({marks}) AND event_type IN (?, ?, ?)""",
+                (*chunk, *sorted(_SCORED_EVENT_TYPES))).fetchall():
+            when = _parse_ts(r["occurred_at"])
+            if when is not None and (r["escalation_id"] not in out
+                                     or when > out[r["escalation_id"]]):
+                out[r["escalation_id"]] = when
+    return out
+
+
+def _claim(db, chain: dict, stamp, ts: datetime, *, set_due: bool = False,
+           due: str | None = None) -> bool:
+    """Compare-and-set on the chain row: true only if nobody changed it since
+    it was read (its updated_at is still `stamp`). Optionally sets tier_due_at."""
+    if set_due:
+        cur = db.execute(
+            "UPDATE clinical_escalations SET tier_due_at = ?, updated_at = ? "
+            "WHERE id = ? AND status = ? AND current_tier = ? AND updated_at IS ?",
+            (due, ts.isoformat(), chain["id"], chain["status"], chain["current_tier"], stamp))
+    else:
+        cur = db.execute(
+            "UPDATE clinical_escalations SET updated_at = ? "
+            "WHERE id = ? AND status = ? AND current_tier = ? AND updated_at IS ?",
+            (ts.isoformat(), chain["id"], chain["status"], chain["current_tier"], stamp))
+    return getattr(cur, "rowcount", 1) == 1
+
+
+def _honour_presence(ts: datetime) -> list[dict]:
+    """Apply ruling ADT-S4 (a) to every unresolved chain (see the section
+    comment). Returns the case-room lines to post after the commit."""
+    from services.adt.clinical_pause import away_by_patient, left_ward_at, observed_after_leaving
+
+    posts: list[dict] = []
+    with db_session() as db:
+        chains = [dict(r) for r in db.execute(
+            "SELECT * FROM clinical_escalations WHERE status IN ('open', 'acknowledged')"
+        ).fetchall()]
+        if not chains:
+            return posts
+        ids = [c["id"] for c in chains]
+        events = _presence_event_rows(db, ids)
+        try:
+            away = away_by_patient(sorted({c["patient_id"] for c in chains}), db=db)
+        except Exception as e:
+            # Unreadable presence is read as "module off": nothing is paused
+            # and every paused chain resumes, the direction that keeps alerting.
+            logger.error("escalation: presence unreadable (%s); no chain is paused this tick", e)
+            away = None
+        if away is None and not events:
+            return posts            # ORB_ADT off and nothing ever paused: as before
+        if away == {} and not any(_open_pause(evs) for evs in events.values()):
+            return posts            # nobody away and nothing paused
+        scored = _last_scored_at(db, [c["id"] for c in chains
+                                      if away and c["patient_id"] in away])
+
+        for chain in chains:
+            eid, pid = chain["id"], chain["patient_id"]
+            evs = events.get(eid, [])
+            pause = _open_pause(evs)
+            here = away.get(pid) if away else None
+            stamp = chain["updated_at"]
+            seen = here is not None and observed_after_leaving(here, scored.get(eid))
+            post: dict = {"escalation_id": eid, "patient_id": pid,
+                          "tier": chain["current_tier"],
+                          "tier_label": chain["tier_label"] or chain["tier_role"],
+                          "status": chain["status"], "paused": False, "resumed": None,
+                          "absconded_target": None, "away": here, "at": ts}
+
+            if pause is not None:
+                why = None
+                if away is None:
+                    why = "module_off"
+                elif here is None:
+                    ctx = _patient_context(db, pid)
+                    why = "returned" if ctx.get("status") == "admitted" else "stay_ended"
+                elif seen:
+                    why = "observed"
+                if why is not None:
+                    meta = pause.get("metadata") or {}
+                    new_due = chain["tier_due_at"]
+                    if chain["status"] == "open" and chain["tier_due_at"] is None \
+                            and meta.get("had_clock"):
+                        try:
+                            left = max(0.0, float(meta.get("remaining_seconds") or 0))
+                        except (TypeError, ValueError):
+                            left = 0.0
+                        new_due = (ts + timedelta(seconds=left)).isoformat()
+                    if not _claim(db, chain, stamp, ts, set_due=True, due=new_due):
+                        continue
+                    stamp = ts.isoformat()
+                    _record_event(
+                        db, eid, _RESUME_EVENT, ts, tier=chain["current_tier"],
+                        tier_role=chain["tier_role"],
+                        detail=f"{_RESUME_WORDS[why]}. The escalation is no longer paused.",
+                        metadata={"reason": why, "paused_seq": pause["seq"],
+                                  "tier_due_at": new_due, "status": chain["status"]})
+                    _audit(db, "escalation_resumed",
+                           f"Escalation {eid} for {pid} resumed ({why})", eid, pid,
+                           metadata={"reason": why, "tier": chain["current_tier"],
+                                     "tier_due_at": new_due})
+                    post["resumed"] = why
+                    post["tier_due_at"] = new_due
+            elif here is not None and chain["status"] == "open" and not seen:
+                due = _parse_ts(chain["tier_due_at"])
+                left_at = left_ward_at(here)
+                owed = due is not None and left_at is not None and due <= left_at
+                if not owed:
+                    remaining = (max(0.0, (due - ts).total_seconds())
+                                 if due is not None else None)
+                    if not _claim(db, chain, stamp, ts, set_due=True, due=None):
+                        continue
+                    stamp = ts.isoformat()
+                    words = _away_words(here)
+                    _record_event(
+                        db, eid, _PAUSE_EVENT, ts, tier=chain["current_tier"],
+                        tier_role=chain["tier_role"],
+                        detail=(f"The patient is recorded {words}. The escalation stays open "
+                                "and does not move to the next tier until the return to the "
+                                "ward is recorded."),
+                        metadata={"presence_status": here.get("presence_status"),
+                                  "presence_since": here.get("presence_since"),
+                                  "had_clock": due is not None,
+                                  "remaining_seconds": remaining,
+                                  "tier_due_at_was": chain["tier_due_at"]})
+                    _audit(db, "escalation_paused",
+                           f"Escalation {eid} for {pid} paused: patient recorded {words}",
+                           eid, pid,
+                           metadata={"presence_status": here.get("presence_status"),
+                                     "presence_since": here.get("presence_since"),
+                                     "tier": chain["current_tier"],
+                                     "remaining_seconds": remaining})
+                    post["paused"] = True
+
+            # An absconded patient with an open escalation: name the treating
+            # doctor in the case room, once per absconding.
+            if here is not None and here.get("presence_status") == "absconded":
+                since = here.get("presence_since")
+                told = any(ev["event_type"] == _ABSCONDED_EVENT
+                           and (ev.get("metadata") or {}).get("presence_since") == since
+                           for ev in evs)
+                if not told and _claim(db, chain, stamp, ts):
+                    stamp = ts.isoformat()
+                    ctx = _patient_context(db, pid)
+                    target_id, target_desc = _derive_target(
+                        db, ctx, "consultant", "Treating doctor", None)
+                    _record_event(
+                        db, eid, _ABSCONDED_EVENT, ts, tier=chain["current_tier"],
+                        tier_role=chain["tier_role"], target_user_id=target_id,
+                        target_description=target_desc,
+                        detail=("The patient is recorded absconded with this escalation open. "
+                                "The treating doctor is named in the case room."),
+                        metadata={"presence_status": "absconded", "presence_since": since})
+                    _audit(db, "escalation_absconded_notice",
+                           f"Escalation {eid} for {pid}: patient absconded, treating doctor "
+                           f"named ({target_desc})", eid, pid,
+                           metadata={"target_user_id": target_id, "presence_since": since})
+                    name = None
+                    if target_id:
+                        found = db.execute("SELECT name FROM users WHERE id = ?",
+                                           (target_id,)).fetchone()
+                        name = found["name"] if found else None
+                    post["absconded_target"] = (f"{name} ({target_desc})" if name
+                                                else target_desc)
+
+            if post["paused"] or post["resumed"] or post["absconded_target"]:
+                # Whether the clock is stopped once this tick is done.
+                post["clock_paused"] = bool(post["paused"]
+                                            or (pause is not None and not post["resumed"]))
+                posts.append(post)
+    return posts
+
+
+def _presence_line(post: dict) -> str:
+    """The case-room line for one pause, resume or absconded notice."""
+    head = f"[TIER {post['tier']}: {post['tier_label']}]"
+    ref = f"Reference {post['escalation_id']}"
+    if post["absconded_target"]:
+        paused = (", paused until the patient is back on the ward"
+                  if post.get("clock_paused") else "")
+        return (
+            f"PATIENT ABSCONDED WITH AN OPEN ESCALATION {head}\n"
+            f"Addressed to: {post['absconded_target']}\n"
+            f"The escalation stays open{paused}. Orb does not page or phone anyone. If you "
+            "are the treating doctor, review now: an absconded patient with an open "
+            "escalation may be unwell. If you are not, phone them.\n"
+            f"{ref}"
+        )
+    if post["paused"]:
+        return (
+            f"ESCALATION PAUSED {head}: the patient is recorded {_away_words(post['away'])}.\n"
+            "The escalation stays open. It does not move to the next tier while the patient "
+            "is off the ward, and it restarts where it stopped when the return is recorded.\n"
+            f"{ref}"
+        )
+    due = _parse_ts(post.get("tier_due_at"))
+    if post["status"] != "open":
+        clock = "It is acknowledged, so it does not move on. It stays open until resolved."
+    elif due is None:
+        clock = "It is at the last tier, so it does not move on. It stays open."
+    else:
+        minutes = max(0, int(round((due - _now(post.get("at"))).total_seconds() / 60)))
+        clock = ("It moves to the next tier now unless someone acknowledges it." if minutes == 0
+                 else f"It moves to the next tier in {minutes} minutes unless someone "
+                      "acknowledges it.")
+    return (f"ESCALATION RESUMED {head}: {_RESUME_WORDS[post['resumed']]}.\n"
+            f"{clock}\n{ref}")
+
+
+def _post_presence_line(post: dict, ts: datetime) -> bool:
+    """Post one presence line to the patient's case room after the commit and
+    record whether it arrived, the way _notify does. Never raises."""
+    logged = False
+    msg_id = channel_id = msg_data = None
+    try:
+        from services.ingestion_service import _persist_relay_alert
+        logged, msg_id, channel_id, msg_data, _n = _persist_relay_alert(
+            post["patient_id"], _presence_line(post))
+    except Exception as e:
+        logger.error("escalation %s: Relay delivery FAILED for %s: %s",
+                     post["escalation_id"], post["patient_id"], e)
+    if logged and msg_data:
+        _emit_message_new(msg_data, channel_id)
+    try:
+        with db_session() as db:
+            _record_event(
+                db, post["escalation_id"], "notified" if logged else "notify_failed", ts,
+                tier=post["tier"],
+                detail=(f"Posted to the patient's case room ({channel_id})" if logged
+                        else "No case room for this patient. The escalation is on the "
+                             "Vigil board only"),
+                metadata={"channel_id": channel_id, "message_id": msg_id,
+                          "about": ("absconded" if post["absconded_target"]
+                                    else "paused" if post["paused"] else "resumed")},
+            )
+    except Exception as e:  # pragma: no cover (bookkeeping must not raise)
+        logger.warning("escalation %s: could not record delivery outcome: %s",
+                       post["escalation_id"], e)
+    return logged
+
+
+def _pause_views(db, chain_ids: list[str]) -> dict[str, dict]:
+    """Chain id -> {presence_status, presence_since, paused_at} for the chains
+    paused right now, for the readers below."""
+    out: dict[str, dict] = {}
+    for eid, evs in _presence_event_rows(db, chain_ids).items():
+        pause = _open_pause(evs)
+        if pause is not None:
+            meta = pause.get("metadata") or {}
+            out[eid] = {"presence_status": meta.get("presence_status"),
+                        "presence_since": meta.get("presence_since"),
+                        "paused_at": pause["occurred_at"]}
+    return out
+
+
+def _add_pause_views(chains: list[dict]) -> None:
+    """adt-11: each chain gains 'paused' (None, or why its clock is stopped)
+    while ORB_ADT is on. With the module off no key is added and nothing is
+    read."""
+    from services.adt.clinical_pause import away_by_patient
+    if not chains or away_by_patient([]) is None:
+        return
+    with db_session() as db:
+        views = _pause_views(db, [c["id"] for c in chains])
+    for c in chains:
+        c["paused"] = views.get(c["id"])
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  The clock: unacknowledged → next tier
 # ═════════════════════════════════════════════════════════════════════════════
 def advance_due(*, now: datetime | None = None, limit: int = 500) -> list[dict]:
@@ -936,10 +1303,28 @@ def advance_due(*, now: datetime | None = None, limit: int = 500) -> list[dict]:
     moves and nothing is posted. A chain opened before the switch stays where
     it is, on the record, rather than paging a registrar with a score this
     computer no longer works out.
+
+    A PATIENT OFF THE WARD (adt-11, ruling ADT-S4 (a)): before any tier moves,
+    a chain whose patient is recorded on leave or absconded is paused (its due
+    time held back, never closed) and a paused chain whose patient is back is
+    resumed with the minutes it had left; see _honour_presence. A paused chain
+    has no due time, so the query below does not see it. With ORB_ADT off
+    nothing is paused.
     """
     if not _scoring_enabled():
         return []
     ts = _now(now)
+    try:
+        presence_posts = _honour_presence(ts)
+    except Exception:
+        # Never let presence stop the ladder: nothing was paused this tick
+        # (the transaction rolled back), so every chain climbs as before.
+        logger.error("escalation: presence pass failed; the ladder runs without it",
+                     exc_info=True)
+        presence_posts = []
+    if presence_posts and _relay_notify_enabled():
+        for post in presence_posts:
+            _post_presence_line(post, ts)
     moved: list[dict] = []
     with db_session() as db:
         due = db.execute(
@@ -1258,6 +1643,7 @@ def list_escalations(*, department: str | None = None, patient_id: str | None = 
             "acknowledged_by_name": r["acknowledged_by_name"],
         })
         out.append(d)
+    _add_pause_views(out)
     return out
 
 
@@ -1296,6 +1682,7 @@ def get_escalation(escalation_id: str, *, include_events: bool = True,
                 (escalation_id,),
             ).fetchall()
             out["events"] = [_event_dict(e) for e in evs]
+    _add_pause_views([out])
     return out
 
 

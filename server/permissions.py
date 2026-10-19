@@ -221,6 +221,15 @@ OUTCOME_RECORD = "outcome.record"
 # set that held PATIENT_WRITE, so nobody gains anything today. Whether the
 # registration desk (an admin account at present) should take consent is a
 # product decision; when it is made, it is one line in the table below.
+#
+# Ruling OPD-N3 (3 October 2026): the receptionist gets it ONCE COUNSEL AGREES,
+# and not before. The registration desk's notice and consent step (opd-19,
+# registration_service._consent_values) checks this permission, so today it is
+# the doctor's walk-in that records consent at registration, and a receptionist
+# who sends the step gets 403 consent_permission_required with nothing written.
+# When counsel agrees, add CONSENT_RECORD to "receptionist" below and to the
+# receptionist row in src/lib/roles.ts; tests/test_role_batch.py and
+# tests/test_registration_consent.py pin the current answer and change with it.
 CONSENT_RECORD = "consent.record"
 
 # ── The whole-hospital-system build (3 October 2026) ─────────────────────────

@@ -273,8 +273,23 @@ def build_medication_reconciliation(patient_id: str) -> dict:
     Empty on an Orb Ward Record computer, whose drug chart stays on paper
     (services/drug_chart): nothing is read, and the stored summary then
     carries no reconciliation block (med_rec_section).
+
+    READS THE ORDER STORE with ORB_MED_ORDER_LIFECYCLE on (medorders-9): for a
+    ward row linked to a medication order, the ORDER's status decides
+    continued or stopped, a stopped one says how it ended and why (stopped,
+    completed, cancelled, or rejected by the pharmacist, with the reason the
+    store recorded), and an order still waiting for the pharmacist it needs
+    (an AI-charted order, or any order while ORB_MED_ORDER_VERIFY_BEFORE_DOSE
+    is on) is called out as unverified. A link naming a missing order keeps
+    the ward row's reading and is flagged for checking. Orders never signed
+    (drafts, which never reached the patient) are listed apart, so the
+    prescriber sees what was written and never started. With the lifecycle off,
+    exactly as before.
     """
     from services.drug_chart import drug_chart_enabled
+    store = _reconciliation_reads_store()
+    orders: dict = {}
+    drafts: list = []
     if not drug_chart_enabled():
         rows = []
     else:
@@ -282,14 +297,23 @@ def build_medication_reconciliation(patient_id: str) -> dict:
         try:
             rows = db.execute(
                 """SELECT drug_name, dosage, route, frequency, status, source, verified_by,
+                          held_at, hold_reason, med_order_id
+                   FROM medications WHERE patient_id = ? ORDER BY drug_name COLLATE NOCASE"""
+                if store else
+                """SELECT drug_name, dosage, route, frequency, status, source, verified_by,
                           held_at, hold_reason
                    FROM medications WHERE patient_id = ? ORDER BY drug_name COLLATE NOCASE""",
                 (patient_id,),
             ).fetchall()
+            if store:
+                orders, drafts = _store_orders(db, patient_id)
         finally:
             db.close()
 
     from services.medorders import held as held_labels
+    # With ORB_MED_ORDER_VERIFY_BEFORE_DOSE on, every linked order waits for a
+    # pharmacist (ruling MO-R1), so an unchecked one is called out too.
+    every_order_checked = store and _every_order_needs_a_pharmacist()
 
     continued, stopped, unverified, on_hold = [], [], [], []
     for r in rows:
@@ -301,19 +325,37 @@ def build_medication_reconciliation(patient_id: str) -> dict:
             "frequency": m.get("frequency"),
             "source": m.get("source") or "clinician",
         }
+        order = None
+        if store and m.get("med_order_id"):
+            order = orders.get(m["med_order_id"])
+            if order is None:
+                # A link naming no order: the ward row's own reading stands,
+                # flagged so the prescriber checks it before the script.
+                entry["order_record_missing"] = True
+            else:
+                entry["order_status"] = order["status"]
+                m["status"] = _ward_status_for(order, m.get("status"))
         # AI-extracted / agentic meds not yet pharmacist-verified are called out
         # explicitly rather than presented as a clean discharge medication.
-        if (m.get("source") in ("llm_extracted", "agentic")) and not m.get("verified_by"):
+        if ((m.get("source") in ("llm_extracted", "agentic")) and not m.get("verified_by")) or (
+                order is not None and order["status"] in ("prescribed", "held")
+                and not order["verified_by"]
+                and (order["needs_verification"] or every_order_checked)):
             entry["needs_verification"] = True
             unverified.append(entry)
         # A held order keeps its row active, so it stays in `continued` (a held
         # drug must not vanish from the reconciliation) and is called out, like
         # an unverified one: the prescriber decides whether it restarts or
         # stops before the discharge script (medorders-6b).
-        if held_labels.is_held(m) and m.get("status") in ("active", "prn"):
+        held = held_labels.is_held(m) or (order is not None and order["status"] == "held")
+        if held and m.get("status") in ("active", "prn"):
             entry["on_hold"] = True
-            entry["hold_label"] = held_labels.hold_phrase(m)
+            entry["hold_label"] = held_labels.hold_phrase(m) or "on hold"
             on_hold.append(entry)
+        if order is not None and m.get("status") == "discontinued":
+            entry["ended_as"] = order["status"]
+            if order.get("status_reason"):
+                entry["stop_reason"] = order["status_reason"]
         status = m.get("status")
         if status == "active":
             continued.append(entry)
@@ -340,7 +382,71 @@ def build_medication_reconciliation(patient_id: str) -> dict:
     if on_hold:
         rec["on_hold"] = on_hold
         rec["counts"]["on_hold"] = len(on_hold)
+    # Only with the store read and something unsigned (medorders-9).
+    if drafts:
+        rec["unsigned"] = drafts
+        rec["counts"]["unsigned"] = len(drafts)
     return rec
+
+
+def _every_order_needs_a_pharmacist() -> bool:
+    """True while ORB_MED_ORDER_VERIFY_BEFORE_DOSE is on (MO-R1, W8-I)."""
+    from services.medorders import emar_check
+    return emar_check.verify_before_dose_rule() is not None
+
+
+def _reconciliation_reads_store() -> bool:
+    """True while ORB_MED_ORDER_LIFECYCLE is on: the order is the authority."""
+    from services.medorders import core as medorder_core
+    return medorder_core.lifecycle_on()
+
+
+def _store_orders(db, patient_id: str) -> tuple:
+    """({order id: order} for the patient's inpatient orders, [unsigned draft
+    entries]). Outpatient lines are not inpatient medicines (OPD-S4) and have
+    no ward row, so they are left out of both."""
+    orders = {}
+    drafts = []
+    # Unsigned drafts of THIS stay (the active admission, else the latest):
+    # drafts are never cancelled by the system (MO-R10), so an earlier stay's
+    # would otherwise be listed at every discharge after it. A draft that names
+    # no admission is kept (it cannot be placed, so it is shown).
+    stay = db.execute(
+        "SELECT id FROM admissions WHERE patient_id = ? "
+        "ORDER BY (status = 'active') DESC, created_at DESC, rowid DESC LIMIT 1",
+        (patient_id,),
+    ).fetchone()
+    stay_id = str(stay["id"]) if stay is not None and stay["id"] is not None else None
+    for r in db.execute(
+        "SELECT id, drug_name, dose, route, frequency, status, status_reason, needs_verification, "
+        "verified_by, is_prn, projection_status, source, admission_id, created_at FROM med_orders "
+        "WHERE patient_id = ? "
+        "AND COALESCE(encounter_type, 'ip') != 'op' ORDER BY drug_name COLLATE NOCASE, created_at, id",
+        (patient_id,),
+    ).fetchall():
+        o = dict(r)
+        orders[o["id"]] = o
+        if o["status"] == "draft" and (stay_id is None or o["admission_id"] in (None, stay_id)):
+            drafts.append({
+                "name": o["drug_name"], "dosage": o["dose"], "route": o["route"],
+                "frequency": o["frequency"], "source": o["source"], "order_status": "draft",
+                "unsigned": True,
+            })
+    return orders, drafts
+
+
+def _ward_status_for(order: dict, ward_status: Optional[str]) -> Optional[str]:
+    """The ward status the ORDER says the drug has: a live order is 'prn' or
+    'active', an ended one 'discontinued'. A state this reconciliation does not
+    know keeps the ward row's own reading."""
+    from services.medorders import core as medorder_core
+    status = order.get("status")
+    if status in medorder_core.LIVE_STATUSES:
+        return "prn" if (order.get("is_prn") or order.get("projection_status") == "prn") \
+            else "active"
+    if status in medorder_core.TERMINAL_STATUSES:
+        return "discontinued"
+    return ward_status
 
 
 def med_rec_section(rec: dict) -> str:
@@ -365,6 +471,14 @@ def _render_med_rec_text(rec: dict) -> str:
         if e.get("on_hold"):
             label = e.get("hold_label") or "on hold"
             parts.append(f"[{label[:1].upper()}{label[1:]}]")
+        # From the order store (medorders-9): how a stopped order ended, and
+        # why, in the words the store recorded.
+        if e.get("ended_as"):
+            ended = _ENDED_WORDS.get(e["ended_as"], e["ended_as"])
+            parts.append(f"[{ended}: {e['stop_reason']}]" if e.get("stop_reason")
+                         else f"[{ended}]")
+        if e.get("order_record_missing"):
+            parts.append("[ORDER RECORD MISSING: check this medicine before the discharge script]")
         return " ".join(parts)
 
     lines = ["MEDICATION RECONCILIATION (authoritative, from the medication record):"]
@@ -380,7 +494,20 @@ def _render_med_rec_text(rec: dict) -> str:
         lines.append("WARNING: medications ON HOLD at discharge (the prescriber decides "
                      "whether each restarts or stops before the discharge script):")
         lines += [f"  - {_fmt(e)}" for e in rec["on_hold"]]
+    if rec.get("unsigned"):
+        lines.append("NOT SIGNED: written during admission but never signed, so never given "
+                     "(not discharge medications unless the prescriber prescribes them):")
+        lines += [f"  - {_fmt(e)}" for e in rec["unsigned"]]
     return "\n".join(lines)
+
+
+#: How a stopped medication order ended, as the reconciliation says it.
+_ENDED_WORDS = {
+    "stopped": "Stopped",
+    "completed": "Course completed",
+    "cancelled": "Cancelled",
+    "rejected": "Rejected by the pharmacist",
+}
 
 
 def _draft_inputs(patient_id: str) -> Optional[dict]:

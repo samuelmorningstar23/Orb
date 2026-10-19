@@ -36,6 +36,29 @@ Endpoints (docs/his_design/grn.json, section E; services/pharmacy_transfer_servi
          narcotic or psychotropic after it was sent) also needs witness_id and
          witness_pin: a pharmacy_store.ndps holder who did not send it
 
+Crash carts (grn-23, services/pharmacy_crash_cart_service). A crash cart is a
+ward store: the indent, issue and receipt routes above fill it. Its own:
+  read   ward_stock.read (own department) or pharmacy_store.read
+    GET  /ward/crash-carts                 each cart: seal, checks due, expired,
+                                           expiring and held lots, top-up
+    GET  /ward/crash-carts/checks          the check record; ?store_code ?status
+    GET  /ward/crash-carts/checks/{check_id}
+  check  ward_stock.receive (own department) or pharmacy_store.write
+    POST /ward/crash-carts/{store_code}/checks
+         a seal check, or a full check counting every batch in the cart and
+         applying a new seal
+  decide pharmacy_store.write or pharmacy_store.approve, never the person who
+         counted
+    POST /ward/crash-carts/checks/{check_id}/decision
+         confirm (units found short leave the cart's lots) or refuse with a
+         reason (count again)
+  top-up ward_indent.raise (own department) or pharmacy_store.write
+    POST /ward/crash-carts/{store_code}/top-up
+         one ward indent for what the cart's list is short of
+  recall pharmacy_store.read
+    GET  /ward/crash-carts/batch?drug_id=&batch_no=
+         every crash cart a batch was sent to, patients not recorded
+
 helix.receive (the ward's receipt of a patient's dispensed order) reaches none
 of these. No patient data is read or returned.
 
@@ -63,6 +86,7 @@ from permissions import (
     require_permission,
 )
 from routes.opt_in_gates import feature_gate
+from services import pharmacy_crash_cart_service as carts
 from services import pharmacy_transfer_service as transfers
 from services.audit_service import AuditWriteError
 
@@ -76,6 +100,7 @@ _DECIDE = require_any_permission(PHARMACY_STORE_WRITE, PHARMACY_STORE_APPROVE)
 _PS_READ = require_permission(PHARMACY_STORE_READ)
 _PS_WRITE = require_permission(PHARMACY_STORE_READ, PHARMACY_STORE_WRITE)
 _RECEIVE = require_permission(WARD_STOCK_RECEIVE)
+_CART_CHECK = require_any_permission(WARD_STOCK_RECEIVE, PHARMACY_STORE_WRITE)
 
 _STATUS = {
     "not_found": 404,
@@ -99,6 +124,8 @@ _STATUS = {
     "transfer_open": 409,
     "already_requested": 409,
     "no_dispensing_store": 409,
+    "check_pending": 409,
+    "check_stale": 409,
 }
 
 
@@ -287,6 +314,129 @@ def receive_ward_transfer(transfer_id: int, body: WardReceiptIn, request: Reques
         return transfers.receive_ward_transfer(
             transfer_id, lines=[line.model_dump() for line in body.lines], actor=user,
             witness_id=body.witness_id, witness_pin=body.witness_pin, audit_ctx=_ctx(request))
+    except transfers.TransferError as exc:
+        raise _fail(exc)
+    except AuditWriteError:
+        raise _audit_unavailable()
+
+
+# ── Crash carts (grn-23) ──────────────────────────────────────────────────────
+
+@router.get("/ward/crash-carts")
+def crash_carts(store_code: Optional[str] = Query(None, max_length=40),
+                user: dict = Depends(_WARD_READ)):
+    """Each crash cart the caller sees against its list: its seal, its last
+    checks, which check is due and why, expired, expiring and held lots, and
+    the top-up a request would ask for."""
+    try:
+        return carts.crash_carts(actor=user, store_code=store_code)
+    except transfers.TransferError as exc:
+        raise _fail(exc)
+
+
+@router.get("/ward/crash-carts/checks")
+def list_crash_cart_checks(store_code: Optional[str] = Query(None, max_length=40),
+                           status: Optional[str] = Query(None, max_length=20),
+                           limit: int = Query(50, ge=1, le=carts.MAX_HISTORY),
+                           user: dict = Depends(_WARD_READ)):
+    try:
+        return {"checks": carts.list_checks(actor=user, store_code=store_code, status=status,
+                                            limit=limit)}
+    except transfers.TransferError as exc:
+        raise _fail(exc)
+
+
+@router.get("/ward/crash-carts/checks/{check_id}")
+def get_crash_cart_check(check_id: int, user: dict = Depends(_WARD_READ)):
+    try:
+        return {"check": carts.get_check(check_id, actor=user)}
+    except transfers.TransferError as exc:
+        raise _fail(exc)
+
+
+@router.get("/ward/crash-carts/batch")
+def crash_cart_batch(drug_id: str = Query(..., min_length=1, max_length=80),
+                     batch_no: str = Query(..., min_length=1, max_length=80),
+                     user: dict = Depends(_PS_READ)):
+    """Every crash cart a batch was sent to, with what is still in the cart
+    and what left it with no patient recorded."""
+    try:
+        return carts.batch_in_carts(drug_id, batch_no)
+    except transfers.TransferError as exc:
+        raise _fail(exc)
+
+
+class CartCountIn(BaseModel):
+    lot_id: Any = None
+    counted_units: Any = None
+
+
+class CartExtraIn(BaseModel):
+    drug_id: Any = None
+    units: Any = None
+    batch_no: Optional[str] = Field(None, max_length=80)
+    expiry_date: Optional[str] = Field(None, max_length=20)
+
+
+class CartCheckIn(BaseModel):
+    kind: str = Field(..., max_length=10)
+    seal_found: Optional[str] = Field(None, max_length=carts.MAX_SEAL)
+    seal_intact: Any = None
+    seal_applied: Optional[str] = Field(None, max_length=carts.MAX_SEAL)
+    lines: Optional[List[CartCountIn]] = Field(None, max_length=carts.MAX_CHECK_LINES)
+    extra: Optional[List[CartExtraIn]] = Field(None, max_length=carts.MAX_EXTRA_LINES)
+    note: Optional[str] = Field(None, max_length=transfers.MAX_TEXT)
+    idempotency_key: Optional[str] = Field(None, max_length=120)
+
+
+@router.post("/ward/crash-carts/{store_code}/checks")
+def record_crash_cart_check(store_code: str, body: CartCheckIn, request: Request,
+                            user: dict = Depends(_CART_CHECK)):
+    """A seal check, or a full check of every batch in the cart with a new seal."""
+    try:
+        return carts.record_check(
+            store_code, actor=user, kind=body.kind, seal_found=body.seal_found,
+            seal_intact=body.seal_intact, seal_applied=body.seal_applied,
+            lines=[line.model_dump() for line in body.lines] if body.lines is not None else None,
+            extra=[item.model_dump() for item in body.extra] if body.extra is not None else None,
+            note=body.note, idempotency_key=body.idempotency_key, audit_ctx=_ctx(request))
+    except transfers.TransferError as exc:
+        raise _fail(exc)
+    except AuditWriteError:
+        raise _audit_unavailable()
+
+
+class CartDecisionIn(BaseModel):
+    confirm: Any = None
+    reason: Optional[str] = Field(None, max_length=transfers.MAX_TEXT)
+
+
+@router.post("/ward/crash-carts/checks/{check_id}/decision")
+def decide_crash_cart_check(check_id: int, body: CartDecisionIn, request: Request,
+                            user: dict = Depends(_DECIDE)):
+    """Confirm a check that found a difference (units found short leave the
+    cart's lots), or refuse it with a reason (count again)."""
+    try:
+        return carts.decide_check(check_id, actor=user, confirm=body.confirm,
+                                  reason=body.reason, audit_ctx=_ctx(request))
+    except transfers.TransferError as exc:
+        raise _fail(exc)
+    except AuditWriteError:
+        raise _audit_unavailable()
+
+
+class CartTopUpIn(BaseModel):
+    priority: Optional[str] = Field(None, max_length=20)
+    remarks: Optional[str] = Field(None, max_length=transfers.MAX_TEXT)
+
+
+@router.post("/ward/crash-carts/{store_code}/top-up")
+def request_crash_cart_top_up(store_code: str, body: CartTopUpIn, request: Request,
+                              user: dict = Depends(_WARD_RAISE)):
+    """One ward indent for what the cart's list is short of, urgent by default."""
+    try:
+        return carts.request_top_up(store_code, actor=user, priority=body.priority,
+                                    remarks=body.remarks, audit_ctx=_ctx(request))
     except transfers.TransferError as exc:
         raise _fail(exc)
     except AuditWriteError:

@@ -67,10 +67,10 @@ Neighbor guides referenced below: **Auth & RBAC** (the `require_permission` gate
 
 ### Flow 1: Command Center board render (client + server)
 
-1. The clinician opens the **Command** tab. The shell only renders it if the user's role is allowed the tab (`doctor` or `admin`; see role gating below) (`src/shellConfig.tsx:673`, role configs at `src/shellConfig.tsx:828-884`).
+1. The clinician opens the **Command** tab. The shell only renders it if the user's role is allowed the tab (`doctor` or `admin`; see role gating below) (`src/shellConfig.tsx:681`, role configs at `src/shellConfig.tsx:836-892`).
 2. `CommandCenter` mounts, calls `load()` once, then sets a 20-second `setInterval` (`src/components/command/CommandCenter.tsx:80-85`).
 3. `load()` calls `apiFetch<HouseSnapshot>('/command-center/')` (`src/components/command/CommandCenter.tsx:67-69`). `apiFetch` prefixes `/api`, attaches the JWT bearer header, and throws typed errors on non-2xx (`src/api/client.ts:195-260`).
-4. The route handler `get_house_snapshot` runs the `require_permission("forecast.read")` dependency first; if the role lacks it, a 403 is raised and audited *before* any work (`server/routes/command_center_routes.py:27`, `server/permissions.py:377-439`).
+4. The route handler `get_house_snapshot` runs the `require_permission("forecast.read")` dependency first; if the role lacks it, a 403 is raised and audited *before* any work (`server/routes/command_center_routes.py:27`, `server/permissions.py:386-448`).
 5. `house_snapshot()` reads the admitted-patient list once, then builds seven sections, each guarded by its own `try/except`, and returns a plain dict (`server/services/command_center_service.py:323-400`).
 6. The component stores the snapshot, stamps `lastUpdated`, and renders. On a fetch error it keeps the *last* snapshot and shows a small "reconnecting…" note; it only shows the full error screen when there is no snapshot yet (`src/components/command/CommandCenter.tsx:67-86`).
 
@@ -167,7 +167,7 @@ Module constants: `WARD_CAPACITY`, `TOTAL_CAPACITY`, `_normalize_ward` are **imp
 **How it works:** 1) `get_active_bundles()` (sepsis service) returns active bundles, each already decorated with `on_track`; 2) `active = len`; `compliant = count(on_track)`; 3) `compliance_pct = round(100*compliant/active)` or `100` when there are no bundles.
 **Why it exists:** One headline "are we meeting the sepsis 1-hour bundle?" number for the KPI row.
 **Data in/out:** none → `{active, compliant, compliance_pct}`.
-**Talks to:** `sepsis_bundle_service.get_active_bundles` (`server/services/sepsis_bundle_service.py:97`), which reads `care_bundles`. `on_track` there means *zero elements breached their target minutes* (`:162`).
+**Talks to:** `sepsis_bundle_service.get_active_bundles` (`server/services/sepsis_bundle_service.py:104`), which reads `care_bundles`. `on_track` there means *zero elements breached their target minutes* (`:162`).
 **Change guide:** To make compliance stricter, change what `on_track` means in the sepsis service, not here. Worked example: today an empty board reports 100 % compliance (green); if you'd rather show "n/a", special-case `active==0` here at `:196`.
 **Gotchas:** With no active bundles the metric is a *vacuous* 100 %, the frontend `complianceTone` paints that green (`src/components/command/CommandCenter.tsx:30-34`), which can read as "great" when it actually means "nothing happening."
 
@@ -231,7 +231,7 @@ Router prefix `/api/command-center`, tag "Command Center" (`server/routes/comman
 **Why it exists:** Thin HTTP surface over the aggregator; the service already never raises, so no extra error handling is needed here.
 **On screen:** everything on the **Command** tab. One GET fills every tile on that board.
 **Data in/out:** none (auth via the session cookie) → `HouseSnapshot` JSON.
-**Talks to:** `house_snapshot`; `require_permission` (`server/permissions.py:377`) and `FORECAST_READ` (`server/permissions.py:66`). Called from `src/components/command/CommandCenter.tsx`.
+**Talks to:** `house_snapshot`; `require_permission` (`server/permissions.py:386`) and `FORECAST_READ` (`server/permissions.py:66`). Called from `src/components/command/CommandCenter.tsx`.
 **Change guide:** To restrict the board to admins only, swap `FORECAST_READ` for an `ADMIN_OVERVIEW`-style permission here; knock-on: nurses/doctors lose API access even though the frontend tab logic is separate (see Discrepancies).
 **Gotchas:** JWT (JSON Web Token) = the signed bearer token proving who the caller is; `require_permission` maps `user["role"]` → its permission set. There is no per-patient scoping here, the board is house-wide by design.
 
@@ -284,7 +284,7 @@ Interfaces `WardCensus`/`HeatCell`/`Deterioration`/`ORCase`/`HouseSnapshot` (`:6
 **How it works:** 1) state for `snap/error/loading/lastUpdated` and a `timerRef`; 2) `load` (a `useCallback`) fetches `/command-center/`, updates state, and on error *keeps the old snapshot* while setting `error`; 3) a `useEffect` runs `load` once and starts `setInterval(load, 20000)`, clearing it on unmount; 4) loading/error early-returns only when there is no snapshot yet; 5) destructure the snapshot and render the header (LIVE dot, "Updated HH:MM:SS", a "reconnecting…" note when a poll fails but data exists), the KPI row, the acuity heatmap (per-ward gradient + stacked severity bars), the deterioration list, the forecast strip, and the OR table.
 **Why it exists:** A React "hook" (`useState`/`useEffect`/`useCallback`, functions that let a function component hold state and run side effects) driven poller: simple, no socket infrastructure, and resilient because a failed refresh doesn't blank the board.
 **Data in/out:** none → renders `HouseSnapshot`. Fetches via `apiFetch` (`src/api/client.ts:195`).
-**Talks to:** `GET /api/command-center/`. Mounted lazily by the shell inside a `PanelErrorBoundary` only when the `command` tab is accessible (`src/pages/ClinicianShell.tsx:280`, rendered at `:745-747`).
+**Talks to:** `GET /api/command-center/`. Mounted lazily by the shell inside a `PanelErrorBoundary` only when the `command` tab is accessible (`src/pages/ClinicianShell.tsx:307`, rendered at `:745-747`).
 **Change guide:** To change the refresh cadence, edit `REFRESH_MS` at `:22`. Worked example: setting it to `5000` quadruples backend load (each poll rebuilds the whole snapshot with N downtime queries), prefer 20 s unless you add server-side caching. To make Command Center *push* instead of poll, you would subscribe to a socket room (see the Realtime guide) and drop the interval; the server would need to emit on relevant mutations.
 **Gotchas:** **Stale-closure safety**, `load` is wrapped in `useCallback([])` and the interval is created once, so it always calls the stable `load`; no stale state is captured because `load` uses the functional setters. The interval keeps polling even while the panel is hidden (the shell mounts panels in `display:none` divs), so an inactive Command tab still hits the API every 20 s.
 
@@ -341,12 +341,12 @@ The header trigger and panel. It calls `fetchPulseSeason()` and renders the "Thi
 | `WARD_CAPACITY`, `TOTAL_CAPACITY`, `_normalize_ward` | `server/services/forecast_service.py:56,61,760` | Bed capacities + ward canonicalisation. |
 | `predict_hospital_flow(days_ahead)` | `server/services/forecast_service.py:559` | `daily_forecasts[i]` with `predicted_admissions/predicted_occupancy/occupancy_pct`. |
 | `compute_news2(...)` | `server/services/vigil_service.py:236` | Returns `{raw_news2, …}` for a set of vitals. |
-| `get_active_bundles()` | `server/services/sepsis_bundle_service.py:97` | Active bundles decorated with `on_track`. |
+| `get_active_bundles()` | `server/services/sepsis_bundle_service.py:104` | Active bundles decorated with `on_track`. |
 | `get_latest_snapshot(pid)` | `server/services/downtime_service.py:683` | Latest snapshot envelope with `created_at`. |
-| `require_permission(*perms)`, `FORECAST_READ`, `AUDIT_READ` | `server/permissions.py:377,65,92` | RBAC dependency + permission constants. |
+| `require_permission(*perms)`, `FORECAST_READ`, `AUDIT_READ` | `server/permissions.py:386,65,92` | RBAC dependency + permission constants. |
 | `apiFetch<T>(path)` | `src/api/client.ts:195` | Adds `/api` + JWT, throws typed errors. |
 
-**Role gating (who can see it).** Backend: `forecast.read` is granted to `doctor`, `nurse`, `admin` (and `clinician`, aliased to `doctor`); `pharmacist` and `patient` are **not** (`server/permissions.py:105-165`). Frontend: the **Command** tab is only accessible to `doctor` and `admin` (`src/shellConfig.tsx:673`, role configs at `src/shellConfig.tsx:828-884`), nurses have the API permission but no tab. The **Pulse** trigger button renders for everyone (`src/pages/ClinicianShell.tsx:452`), but opening it calls `forecast.read`-gated APIs, so `pharmacist`/`patient` get a 403-driven error inside the panel.
+**Role gating (who can see it).** Backend: `forecast.read` is granted to `doctor`, `nurse`, `admin` (and `clinician`, aliased to `doctor`); `pharmacist` and `patient` are **not** (`server/permissions.py:105-165`). Frontend: the **Command** tab is only accessible to `doctor` and `admin` (`src/shellConfig.tsx:681`, role configs at `src/shellConfig.tsx:836-892`), nurses have the API permission but no tab. The **Pulse** trigger button renders for everyone (`src/pages/ClinicianShell.tsx:482`), but opening it calls `forecast.read`-gated APIs, so `pharmacist`/`patient` get a 403-driven error inside the panel.
 
 ---
 
@@ -381,8 +381,8 @@ The header trigger and panel. It calls `fetchPulseSeason()` and renders the "Thi
 
 1. **Resolved 6 October 2026 (Pulse rebuild): the feeds this item describes are gone.** **Pulse docstring vs. implementation.** The module docstring advertises "NWS / OpenWeatherMap", "AirNow EPA", "NTP-synced timestamps", and "FDA drug recall alerts cross-referenced with patient medications" (the docstring of `server/services/pulse_service.py`, removed with the module on 6 October 2026). In reality: weather and AQI both use **Open-Meteo** (`:178`, `:351`); timestamps are plain `datetime.now(timezone.utc)` with **no NTP sync**; and FDA recalls are **not** cross-referenced with any patient medications, the feed never touches patient data. The docstring is stale/aspirational.
 2. **Resolved 6 October 2026 (Pulse rebuild), the module is gone.** **Dead code in Pulse.** `OPENWEATHERMAP_API_KEY` (`:37`) and `_alerts_cache` (`:59`) are declared but never used.
-3. **Nurse can hit Command Center's API but has no tab.** `nurse` holds `forecast.read` (`server/permissions.py:118-134`) so `GET /api/command-center/` succeeds, yet the `command` tab is absent from a nurse's `getAccessibleTabs` (`src/pages/ClinicianShell.tsx:200`). Not a bug per se, but the backend gate is looser than the frontend intent, if Command Center is meant to be executive-only, the route should use a stricter permission than `forecast.read`.
-4. **Pulse button shows for roles that can't use it.** The trigger renders for every role (`src/pages/ClinicianShell.tsx:452`), but `pharmacist`/`patient` lack `forecast.read`, so opening it yields an error inside the panel rather than the button being hidden.
+3. **Nurse can hit Command Center's API but has no tab.** `nurse` holds `forecast.read` (`server/permissions.py:118-134`) so `GET /api/command-center/` succeeds, yet the `command` tab is absent from a nurse's `getAccessibleTabs` (`src/pages/ClinicianShell.tsx:227`). Not a bug per se, but the backend gate is looser than the frontend intent, if Command Center is meant to be executive-only, the route should use a stricter permission than `forecast.read`.
+4. **Pulse button shows for roles that can't use it.** The trigger renders for every role (`src/pages/ClinicianShell.tsx:482`), but `pharmacist`/`patient` lack `forecast.read`, so opening it yields an error inside the panel rather than the button being hidden.
 5. **Resolved 6 October 2026 (Pulse rebuild): no geocode, no location of any kind.** **Client-side geocode bypasses the "all ingestion logged" story.** `PulseWidget` calls `nominatim.openstreetmap.org` directly from the browser (`src/components/PulseWidget.tsx:83-85`); that outbound request is not captured by the server's `_pulse_log`. Only coordinates are sent (no patient data), so the privacy contract holds, but the audit-log claim of covering *every* external pull has this gap.
 6. **Resolved 6 October 2026 (Pulse rebuild): the stored location is gone.** **Unguarded `JSON.parse` of `localStorage`.** The `location` state initializer parses `orb_pulse_location` with no try/catch (`src/components/PulseWidget.tsx:51-54`); a corrupted value would throw during render.
 7. **Resolved 6 October 2026 (Pulse rebuild): no caches, and the location is the hospital's, from `site.toml`.** **Process-global Pulse caches ignore per-user location.** The weather/AQI caches are module-level singletons keyed by nothing (`:47-51`); once user A caches Mumbai weather, user B requesting London within the TTL receives Mumbai's cached reading until it expires. Fine for a single-site deployment, wrong for multi-location use.
