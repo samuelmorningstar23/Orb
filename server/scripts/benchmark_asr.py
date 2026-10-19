@@ -49,6 +49,7 @@ def benchmark_subprocess(audio_path: str, iterations: int = 3) -> dict:
     """Benchmark the existing subprocess worker."""
     print("\n═══ Benchmark: Subprocess Worker (baseline) ═══")
     
+    from services.asr_worker_protocol import STDIN_HINTS_FLAG, encode_hints
     worker = str(SERVER_DIR / "scripts" / "transcribe_worker.py")
     python = sys.executable
     
@@ -56,7 +57,8 @@ def benchmark_subprocess(audio_path: str, iterations: int = 3) -> dict:
     for i in range(iterations):
         t0 = time.time()
         result = subprocess.run(
-            [python, worker, audio_path, "large-v3", "", "12", ""],
+            [python, worker, audio_path, "large-v3", STDIN_HINTS_FLAG, "12", ""],
+            input=encode_hints(""),
             capture_output=True, text=True, timeout=120,
             cwd=str(SERVER_DIR),
         )

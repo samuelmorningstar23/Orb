@@ -212,11 +212,9 @@ DB_ENCRYPTION_KEY = os.getenv("ORB_DB_ENCRYPTION_KEY")
 UPLOAD_ENCRYPTION_KEY = os.getenv("ORB_UPLOAD_ENCRYPTION_KEY")
 
 
-# Ollama
-# Env-driven so the app can reach an Ollama that is not on localhost, such as a
-# remote GPU box. On the appliance it runs on the same machine. Trailing slash is
-# stripped because every call site interpolates f"{OLLAMA_BASE_URL}/api/...".
-OLLAMA_BASE_URL = os.getenv("ORB_OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+# Ollama is local-only under the standing offline-inference policy.
+from offline_policy import local_model_origin
+OLLAMA_BASE_URL = local_model_origin(os.getenv("ORB_OLLAMA_BASE_URL", "http://localhost:11434"))
 # Single shared MedGemma 1 27B Multimodal instance for all modules (Sage, Lens, Bridge, Scribe).
 # Each service passes its own system prompt and options per-request.
 # This keeps exactly ONE model loaded in VRAM (~17GB) instead of two separate instances.

@@ -1,0 +1,4 @@
+Passed: targeted ESLint on the hook, worklet, lifecycle/worklet tests and browser audio spec.
+Passed: selected frontend TypeScript build and Vite production build.
+Passed: scoped Ruff lint/format and mypy strict typing (three pure utilities).
+PDF: all 10 pages rendered and visually reviewed; updated 20 October 2026.

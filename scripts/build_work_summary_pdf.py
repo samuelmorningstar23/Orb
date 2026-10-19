@@ -40,7 +40,7 @@ add('ORB / ENGINEERING RECAP', 'SmallOrb')
 story.append(Spacer(1,25))
 add('What we built.\n<br/>What we fixed.', 'TitleOrb')
 add('A plain-English summary of the work completed in Orb, including capabilities that were previously missing.', 'SubOrb')
-add('Prepared 19 October 2026  |  Updated with fixes and remaining work as of 19 October 2026', 'SmallOrb')
+add('Prepared 19 October 2026  |  Updated with fixes and remaining work as of 20 October 2026', 'SmallOrb')
 h('The overall result')
 add('We strengthened Orb\'s existing ward-record system, repaired confirmed privacy and reliability defects, added 13 persistent local hospital workflows, improved the testing and release machinery, and made Sage faster in a measured local workload.')
 add('The project has real backend services, database migrations, role-based screens, audit trails and browser-tested workflows. It remains a <b>substantial pre-pilot MVP</b>; implementation and synthetic tests do not establish clinical approval or hospital readiness. [1-6]')
@@ -94,7 +94,7 @@ add('Request limits now count actual streamed bytes, including routes that previ
 add('Bridge and six hospital-domain clients, plus Forecast and Appointments, use the shared cookie/session/CSRF transport. Sage history groups the latest 200 stored messages by original thread and local date; delayed microphone, ASR and speech callbacks cannot submit into a replacement conversation.')
 h('Startup, backups and engineering tools [1, 3, 4]')
 add('Added database-aware readiness, installer failure propagation and shutdown checks that target owned processes. Backup publication now uses unique private destinations, shared locks and integrity receipts before rotation. Restore verification covers 199 tables in 47 groups, including all 45 tables added by migrations 81-86. The later extraction-security finding is now fixed through authenticated staging and archive containment (page 6).')
-add('Browser and speech benchmarks now use owned disposable databases and synthetic data. Removed confirmed unused code and duplicate parsers, updated supported timestamp/model APIs, bounded Vite discovery, added advisory scanning and a candidate packaging workflow. Strict Python quality gates currently cover two utility files, not the full backend.')
+add('Browser and speech benchmarks now use owned disposable databases and synthetic data. Removed confirmed unused code and duplicate parsers, updated supported timestamp/model APIs, bounded Vite discovery, added advisory scanning and a candidate packaging workflow. The earlier strict Python gate covered two utility files. This follow-up adds an independent three-utility gate (page 8); neither covers the full backend.')
 h('ML dependencies and honest answer completion [4]')
 add('Replaced the legacy FlagEmbedding training dependency chain with local-only inference adapters, updated Torch/Transformers, and required safe checkpoint loading. Fresh candidate scans reported zero advisories across 70 installed packages and the 76-package Apple production resolution. Existing appliance environments were not upgraded.')
 add('Sage now requires nonempty content, valid stream framing and explicit successful completion. Engine errors, premature EOF and length-truncated output do not become successful replayable answers. We also repaired an informational prompt being misclassified as a medication command and aligned shared-model context reuse.')
@@ -160,23 +160,38 @@ table(['Check','Recorded result'],[
 h('What these results establish')
 add('The specific defects have regression coverage and the affected user journeys were exercised against disposable synthetic data. Counts overlap and must not be added as unique tests. Broad runs and later focused deltas were separate snapshots; the evidence records those boundaries. No live patient data, appliance environment, backup or model weights were changed, and these results do not establish clinical go-live readiness.')
 
-page(8,'What is still left to do in Orb')
-add('This is the remaining-work summary as of 19 October. Built-but-disabled modules are not counted as missing. Open engineering, owner decisions and site acceptance require different next steps. [1-3, 7, 11-13]')
+page(8,'Independent engineering follow-up')
+add('Completed the confirmed follow-ups that could be repaired using existing product and offline-policy decisions. The eight earlier security defects and four UI findings remain closed. No clinical rules, integrations or feature-enablement decisions were invented. [14]')
+table(['Area','What is now implemented'],[
+('Live Scribe boundaries','Requires Scribe capability and current patient scope before hints or audio, then rechecks access before work/publication. Hints run off the event loop. Caps sessions, utterance bytes, duration, queued work and concurrent native workers; rejects overload visibly. Retired sessions cannot publish into replacements.'),
+('Lens / Scribe completion','Requires successful HTTP status, valid JSON/message/content frames, nonempty output and explicit done:true. Truncated, malformed and failed streams do not become saved successful analyses or drafts. Connections, queue slots and failed uploads are released.'),
+('Private speech transport','Patient-derived hints travel through a bounded stdin pipe, never process arguments. Workers reject the legacy argument form. Failed ASR is a typed failure, including the HTTP chunk route; genuine silence stays valid. Shared private WAV conversion cleans failed/interrupted output.'),
+('Offline inference','Configuration rejects remote, wildcard, credential-bearing and malformed model origins. Only HTTP(S) loopback origins are allowed. The gateway validates again at call time before opening a request.'),
+('Browser dictation','AudioWorklet replaces deprecated main-thread ScriptProcessor capture/VAD. Bounded message credits apply receipt backpressure. Candidate speech is retained, continuous speech splits below the server limit, and stop drains captured PCM. Late permission, chart changes, errors and unmount release resources.'),
+('Vigil performance','A bounded in-memory cache reuses only identical complete feature/time tensors, patient context, model identity/state and normalisation metadata. Fresh inputs are assembled on every call. Corrections, age/history/time or model changes invalidate reuse; NEWS2 behavior is unchanged.'),
+('Engineering quality','An independent CI job checks strict typing, lint/format and 100% statement/branch coverage for the origin validator, stdin protocol and inference cache. Pinned developer tools are separate from the appliance runtime.')
+],[145,354],compact=True)
+h('Fresh verification and boundaries')
+add('The recorded checks cover synthetic authenticated sockets, failed Lens persistence/cleanup, bounded native concurrency, stale-session isolation, private speech hints, model/input cache invalidation, component lifecycles and real Chromium audio. 279 selected-commit backend checks and 87 frontend checks passed. Two final browser audio cases passed; the three-utility quality gate measured 100% statement/branch coverage. Source hashes and overlapping selections are recorded in the evidence. [14]', 'SmallOrb')
+add('These are local engineering checks. They do not establish native speech accuracy, approved clinical models, busy-ward GPU capacity, Safari/iPad acceptance, hosted CI success or site deployment. Existing unrelated workspace changes are excluded from the selected commit.', 'SmallOrb')
+
+page(9,'What is still left to do in Orb')
+add('This is the remaining-work summary as of 20 October. Built-but-disabled modules are not counted as missing. Open engineering, owner decisions and site acceptance require different next steps. [1-3, 7, 11-13]')
 table(['Area / status','Remaining work and next step'],[
-('Security / engineering','Source-only concerns still need targeted fixes: live Scribe capability/resource limits; Lens explicit upstream completion checks; patient-derived ASR hints in process arguments; and enforcing the offline model destination at configuration. These are separate from the eight reproduced defects now fixed.'),
+
 ('Session policy / decision + build','Set expiry/renewal policy, cross-tab session coherence and the offline cache revocation contract, including persistent-storage deletion failure. Implement and test the agreed behavior.'),
 ('Medication workflows / held epics','Finish the remaining verbal/read-back/countersign, substitution, stat completion, encounter reconciliation and legacy-writer retirement work where still held. Resolve R001/R002/R009/R010/R011/W111/W099 and dependent epics against current implementation; do not treat the whole medication system as absent.'),
 ('Clinical governance / decisions','Resolve discharge/escalation handling, laboratory critical-result and restricted-record/break-glass rules. Obtain approved local ranges, thresholds, protocols and sign-offs before enabling dependent behavior.'),
 ('Sage bed locator / follow-ups','R026 itself shipped on 19 October (f5a0afb). Four separate items remain: an unrecognised off-ward drug destination, order-notice wording, bare-number matching on coded wards, and relative/unsupported patient references carried in a confirmed reply. These require their own rulings.'),
 ('AI / validation + performance','Measure cold startup, chart preparation and busy-ward concurrency. Complete clinical model validation, train/serve parity, benchmark/promotion gates and licensed-data work. The existing non-sepsis extract adapter is not evidence of a trained or approved model.'),
-('Infrastructure / engineering','Complete a real PostgreSQL port with database-specific acceptance. Extend Python typing/lint/coverage beyond the current two-file gate; reduce large-module coupling and run clean hosted CI/release acceptance.'),
+('Infrastructure / ongoing engineering','The new strict gate covers three inference utilities; full-backend typing, coverage and modularisation remain ongoing work. Hosted CI/release acceptance is unperformed. A PostgreSQL port needs its own database integration and acceptance environment.'),
 ('Recovery / site acceptance','Rebuild/validate the candidate runtime on the intended appliance. Run restore/key-escrow, signed-media recovery, power-loss, backup-under-load and hardware soak/concurrency drills.'),
 ('Hospital adoption / field work','Confirm the pilot site, accountable clinical lead, workflows, training, acceptance criteria and approved feature enablement. The 13 local modules remain default-off until deliberately accepted.'),
 ('External integration / scope decision','ABDM, claims/insurers, payment gateways, PACS/DICOM, analysers/devices and external reporting remain unconnected. Reconcile any proposed transport with the strict offline policy before implementation.'),
 ('Product expansion / backlog','Inter-facility transfer and unswept multi-site surfaces remain gated. Later Pulse stages (authored warnings/LAN sensors, local disease trends and recall/stock workflows) remain future work; existing local records do not complete every HIS epic.')
 ],[154,345], compact=True)
 
-page(9,'Source record and status boundaries')
+page(10,'Source record and status boundaries')
 h('How to use the remaining-work list')
 add('Engineering items can move through implementation and focused acceptance. Held behavior needs the owner or clinical authority to decide first. Site/hardware evidence requires a real controlled exercise. External integrations require both an explicit product decision and compatible permissions/transport. Earlier foundation logs are historical: later executable behavior and current rulings take precedence.')
 h('Sources used')
@@ -195,9 +210,10 @@ sources=[
 ('11','Latest bed-locator shipment and four follow-ups','docs/SAGE_BED_LOCATOR_FINDINGS_2026-10-03.md'),
 ('12','Owner decisions and clinical policy holds','docs/RULINGS_NEEDED_2026-10.md'),
 ('13','HIS epic plan and held follow-ons','docs/HIS_BUILD_PLAN_2026-10.md'),
+('14','Independent engineering fixes and fresh verification','docs/ORB_AUTONOMOUS_FIXES_2026-10-19.md; docs/audit-2026-10/autonomous-fixes-20261019/verification.json'),
 ]
 for n,label,path in sources: add(f'<b>[{n}] {label}</b><br/>{path}','SmallOrb')
-add('Repository reviewed through ffeac66, including bed-locator shipment f5a0afb and the local security/UI remediation. Existing concurrent changes remain separate from this work. Updated 19 October 2026; this document records implementation and evidence, not deployment or clinical approval.', 'SmallOrb')
+add('Repository reviewed through e0427fb, including bed-locator shipment f5a0afb, the security/UI remediation and this independent-engineering follow-up. Existing concurrent changes remain separate from this work. Updated 20 October 2026; this document records implementation and evidence, not deployment or clinical approval.', 'SmallOrb')
 
 def footer(c, doc):
     w,hh=A4
@@ -205,7 +221,7 @@ def footer(c, doc):
     c.setStrokeColor(colors.HexColor('#DCE6E9')); c.line(48,43,w-48,43)
     c.setFont('Helvetica',8);c.setFillColor(MUTED)
     c.drawString(48,29,'ORB  /  Work completed and remaining gaps')
-    c.drawRightString(w-48,29,f'19 OCT 2026   |   {doc.page}')
+    c.drawRightString(w-48,29,f'20 OCT 2026   |   {doc.page}')
 
 doc=SimpleDocTemplate(str(OUT),pagesize=A4,rightMargin=48,leftMargin=48,topMargin=40,bottomMargin=57,title='Orb - Work Summary',author='Orb',subject='Completed implementation, fixes, verification and remaining gaps')
 doc.build(story,onFirstPage=footer,onLaterPages=footer)

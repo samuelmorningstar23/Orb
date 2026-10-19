@@ -1,5 +1,9 @@
 # Orb security and browser assessment — 12 October 2026
 
+## Independent follow-up - 19-20 October 2026
+
+The four remaining source-only engineering findings are now repaired: live Scribe capability/patient scope and resource bounds, explicit Lens completion, private ASR hint transport, and loopback-only model destination validation. The browser uses AudioWorklet capture with bounded receipt backpressure and stop/drain cleanup. Scribe completion/error handling and provenance-safe Vigil prediction reuse are also implemented. See [the implementation and verification record](ORB_AUTONOMOUS_FIXES_2026-10-19.md). The source findings table below is the historical 12 October assessment, not current open status.
+
 ## Remediation update - 19 October 2026
 
 All eight reproduced security defects and four UI findings below are now fixed in the local working tree. The original 12 October assessment is retained below as the historical reproduction record. This is not a production deployment or closure of every separately listed source-only concern.
@@ -22,7 +26,7 @@ Verification: **185 passed / 1 intentional real-backup skip** in the focused sec
 
 **Recovery compatibility:** existing media backups without the signed set manifest are now refused before any installation. Create a fresh backup set on a trusted primary, or authenticate only independently trusted historical artifacts using the helper's `seal` operation; do not sign an untrusted share merely to bypass validation. Legacy database-only backups retain their explicit missing-media warning. No existing appliance backup was changed. Real-site restore/key-escrow and power-loss drills remain site acceptance work.
 
-Related repairs also close the source-only Scribe structure-scope, patient-presence scope and overwritten-disconnect findings. The other source-only concerns below remain separately tracked; they are not covered by the statement that the 12 reproduced findings are fixed.
+Related repairs also close the source-only Scribe structure-scope, patient-presence scope and overwritten-disconnect findings. The other source-only concerns were separately tracked at that point and are closed by the independent follow-up above.
 
 ---
 

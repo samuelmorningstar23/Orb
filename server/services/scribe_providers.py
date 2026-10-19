@@ -6,15 +6,19 @@ in this pass; the interface is designed so OpenAI-compatible, vLLM,
 or local-transformers providers can be added later.
 """
 import json
+import logging
 import time
 from typing import Optional, AsyncGenerator
 from abc import ABC, abstractmethod
 
 import httpx
 from config import OLLAMA_BASE_URL
+from offline_policy import local_model_origin
 # ORB_MODELS_ENABLED off (or the Orb Ward Record): every provider refuses
 # before it loads or asks a model (services/model_switch.py).
 from services.model_switch import refuse_when_models_off
+
+logger = logging.getLogger("orb.scribe.providers")
 
 
 class LLMProvider(ABC):
@@ -67,7 +71,7 @@ class OllamaProvider(LLMProvider):
     """Ollama-backed LLM provider (current default for all Scribe stages)."""
 
     def __init__(self, base_url: str = OLLAMA_BASE_URL):
-        self.base_url = base_url
+        self.base_url = local_model_origin(base_url)
 
     def generate(
         self,
@@ -89,7 +93,7 @@ class OllamaProvider(LLMProvider):
         try:
             with httpx.Client(timeout=120.0, trust_env=False) as client:
                 response = client.post(
-                    f"{self.base_url}/api/chat",
+                    f"{local_model_origin(self.base_url)}/api/chat",
                     json={
                         "model": model,
                         "messages": messages,
@@ -127,7 +131,7 @@ class OllamaProvider(LLMProvider):
         try:
             async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
                 response = await client.post(
-                    f"{self.base_url}/api/chat",
+                    f"{local_model_origin(self.base_url)}/api/chat",
                     json={
                         "model": model,
                         "messages": messages,
@@ -165,7 +169,7 @@ class OllamaProvider(LLMProvider):
         async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
             async with client.stream(
                 "POST",
-                f"{self.base_url}/api/chat",
+                f"{local_model_origin(self.base_url)}/api/chat",
                 json={
                     "model": model,
                     "messages": messages,
@@ -177,21 +181,37 @@ class OllamaProvider(LLMProvider):
                     },
                 },
             ) as response:
+                completed, produced = False, False
                 try:
+                    response.raise_for_status()
                     async for line in response.aiter_lines():
                         if not line.strip():
                             continue
                         try:
                             data = json.loads(line)
-                            content = data.get("message", {}).get("content", "")
-                            if content:
-                                yield content
-                        except json.JSONDecodeError:
-                            continue
-                except GeneratorExit:
-                    print("  [ScribeProvider/Ollama] Stream cancelled")
+                        except json.JSONDecodeError as exc:
+                            raise RuntimeError("Invalid Scribe stream frame") from exc
+                        if not isinstance(data, dict) or data.get("error"):
+                            raise RuntimeError("Scribe model stream reported a failure")
+                        message = data.get("message", {})
+                        if not isinstance(message, dict) or not isinstance(message.get("content", ""), str):
+                            raise RuntimeError("Invalid Scribe stream message")
+                        if "done" in data and not isinstance(data["done"], bool):
+                            raise RuntimeError("Invalid Scribe completion marker")
+                        if data.get("done_reason") == "length":
+                            raise RuntimeError("Scribe model output was truncated")
+                        content = message.get("content", "")
+                        if content:
+                            produced = produced or bool(content.strip())
+                            yield content
+                        if data.get("done") is True:
+                            completed = True
+                            break
+                    if not completed or not produced:
+                        raise RuntimeError("Scribe stream ended without a complete draft")
                 finally:
                     await response.aclose()
+
 
 
 # ── Provider Registry ──
@@ -293,8 +313,7 @@ class MLXProvider(LLMProvider):
             agent = get_voice_agent()
             agent.load()
             if not agent._loaded:
-                yield "MLX model not loaded."
-                return
+                raise RuntimeError("Scribe model is unavailable")
             
             import asyncio
             import queue
@@ -341,12 +360,11 @@ class MLXProvider(LLMProvider):
                     if item is None:
                         break
                     if isinstance(item, Exception):
-                        print(f"[ScribeProvider/MLX] Stream error: {item}")
-                        break
+                        raise RuntimeError("Scribe model stream failed") from item
                     yield item
-        except Exception as e:
-            print(f"[ScribeProvider/MLX] agenerate_stream error: {e}")
-            yield ""
+        except Exception:
+            logger.exception("Scribe model stream failed", extra={"event": "scribe_provider_stream_failed"})
+            raise
 
 
 _PROVIDERS: dict[str, type[LLMProvider]] = {

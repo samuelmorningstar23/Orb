@@ -1,9 +1,4 @@
-/**
- * useStreamingTranscription — Real-time voice transcription via Socket.IO
- *
- * Handles: mic access, PCM16 audio capture, energy-based VAD,
- * Socket.IO streaming to server, and transcript accumulation.
- */
+/** Private local dictation: bounded PCM/VAD capture on the audio thread. */
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { socket } from '../api/client';
 
@@ -19,7 +14,6 @@ interface StreamingTranscriptionOptions {
   silenceMs?: number;
   minSpeechMs?: number;
 }
-
 interface StreamingTranscriptionState {
   isStreaming: boolean;
   isProcessing: boolean;
@@ -29,269 +23,216 @@ interface StreamingTranscriptionState {
   utteranceCount: number;
   audioLevel: number;
 }
+interface CaptureMessage {
+  audio?: ArrayBuffer;
+  end?: boolean;
+  speaking?: boolean;
+  level?: number;
+  error?: string;
+  finished?: boolean;
+}
+const initialState: StreamingTranscriptionState = {
+  isStreaming: false, isProcessing: false, isSpeaking: false,
+  currentTranscript: '', fullTranscript: '', utteranceCount: 0, audioLevel: 0,
+};
 
 export function useStreamingTranscription(options: StreamingTranscriptionOptions = {}) {
-  const {
-    patientId,
-    hints,
-    language,
-    onFinalTranscript,
-    onError,
-    onStatusChange,
-    vadThreshold = 0.015,
-    silenceMs = 500,
-    minSpeechMs = 200,
-  } = options;
-
-  const [state, setState] = useState<StreamingTranscriptionState>({
-    isStreaming: false,
-    isProcessing: false,
-    isSpeaking: false,
-    currentTranscript: '',
-    fullTranscript: '',
-    utteranceCount: 0,
-    audioLevel: 0,
-  });
-
-  // Refs for mutable state that shouldn't trigger re-renders
-  const audioContextRef = useRef<AudioContext | null>(null);
+  const [state, setState] = useState(initialState);
+  const optionsRef = useRef(options);
+  useEffect(() => { optionsRef.current = options; }, [options]);
+  const generationRef = useRef(0);
+  const activeIdRef = useRef('');
+  const startingRef = useRef(false);
+  const mountedRef = useRef(true);
+  const contextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const processorRef = useRef<AudioWorkletNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const isSpeakingRef = useRef(false);
-  const speechStartRef = useRef(0);
-  const silenceStartRef = useRef(0);
-  const audioBufferRef = useRef<Int16Array[]>([]);
-  const isStreamingRef = useRef(false);
-  const utteranceCountRef = useRef(0);
-  // Throttle audioLevel state updates: onaudioprocess fires ~4x/sec and a setState
-  // per frame forces a full re-render of the consuming panel that often. We only
-  // push the level into React at most ~10x/sec (cheap on the 8GB Mini demo HW).
-  const lastLevelPushRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const readyRef = useRef(false);
+  const finishingRef = useRef(false);
 
-  // Socket event handlers
-  useEffect(() => {
-    const handleTranscript = (data: { text: string; duration_ms: number; is_final: boolean; utterance_index: number }) => {
-      if (!data.text) return;
-
-      setState(prev => ({
-        ...prev,
-        isProcessing: false,
-        currentTranscript: data.text,
-        fullTranscript: prev.fullTranscript + (prev.fullTranscript ? ' ' : '') + data.text,
-        utteranceCount: data.utterance_index + 1,
-      }));
-
-      onFinalTranscript?.(data.text, data.utterance_index);
-    };
-
-    const handleStatus = (data: { status: string }) => {
-      setState(prev => ({
-        ...prev,
-        isProcessing: data.status === 'processing',
-      }));
-      onStatusChange?.(data.status);
-    };
-
-    const handleError = (data: { error: string }) => {
-      onError?.(data.error);
-      setState(prev => ({ ...prev, isProcessing: false }));
-    };
-
-    socket.on('scribe:transcript', handleTranscript);
-    socket.on('scribe:status', handleStatus);
-    socket.on('scribe:error', handleError);
-
-    return () => {
-      socket.off('scribe:transcript', handleTranscript);
-      socket.off('scribe:status', handleStatus);
-      socket.off('scribe:error', handleError);
-    };
-  }, [onFinalTranscript, onError, onStatusChange]);
-
-  const startStreaming = useCallback(async () => {
-    if (isStreamingRef.current) return;
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
-      });
-
-      streamRef.current = stream;
-
-      // Create audio context at 16kHz
-      const audioCtx = new AudioContext({ sampleRate: 16000 });
-      audioContextRef.current = audioCtx;
-
-      const source = audioCtx.createMediaStreamSource(stream);
-      sourceRef.current = source;
-
-      // ScriptProcessor for raw PCM access (4096 samples per frame = ~256ms at 16kHz)
-      // TODO (deferred — AudioWorklet migration): createScriptProcessor is
-      // deprecated and runs VAD/PCM conversion on the main thread, causing jank
-      // during live dictation. Move audio capture + VAD into an AudioWorkletNode
-      // (off the main thread) and post only level/utterance events back. Deferred
-      // because it requires a separate worklet module + build wiring and changes
-      // the audio plumbing, beyond a minimal in-file fix.
-      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-      processorRef.current = processor;
-
-      // Tell server to start a session
-      socket.emit('scribe:start_session', { patient_id: patientId, hints, language });
-
-      processor.onaudioprocess = (event) => {
-        if (!isStreamingRef.current) return;
-
-        const inputData = event.inputBuffer.getChannelData(0);
-
-        // Calculate RMS energy for VAD
-        let sumSquares = 0;
-        for (let i = 0; i < inputData.length; i++) {
-          sumSquares += inputData[i] * inputData[i];
-        }
-        const rms = Math.sqrt(sumSquares / inputData.length);
-        const normalizedLevel = Math.min(1, rms / 0.15); // Normalize to 0-1
-
-        const now = Date.now();
-
-        // Throttle level updates to ~10x/sec to avoid a React render per frame.
-        if (now - lastLevelPushRef.current >= 100) {
-          lastLevelPushRef.current = now;
-          setState(prev => ({ ...prev, audioLevel: normalizedLevel }));
-        }
-
-        const aboveThreshold = rms > vadThreshold;
-
-        if (aboveThreshold) {
-          // Record speech start only on the silence→speech transition so the
-          // timestamp keeps accumulating across subsequent loud frames.
-          if (!isSpeakingRef.current && speechStartRef.current === 0) {
-            speechStartRef.current = now;
-          }
-          silenceStartRef.current = 0;
-
-          // Mark as speaking after minSpeechMs
-          if (now - speechStartRef.current > minSpeechMs) {
-            if (!isSpeakingRef.current) {
-              isSpeakingRef.current = true;
-              setState(prev => ({ ...prev, isSpeaking: true }));
-            }
-          }
-        } else {
-          if (isSpeakingRef.current) {
-            if (silenceStartRef.current === 0) {
-              silenceStartRef.current = now;
-            }
-
-            // Silence exceeded threshold — end utterance
-            if (now - silenceStartRef.current > silenceMs) {
-              isSpeakingRef.current = false;
-              speechStartRef.current = 0;
-              setState(prev => ({ ...prev, isSpeaking: false, isProcessing: true }));
-
-              // Send end_utterance signal
-              socket.emit('scribe:end_utterance');
-              audioBufferRef.current = [];
-            }
-          } else {
-            // Level dropped before minSpeechMs accumulated — discard candidate start.
-            speechStartRef.current = 0;
-          }
-        }
-
-        // Convert Float32 to Int16 PCM
-        const pcm16 = new Int16Array(inputData.length);
-        for (let i = 0; i < inputData.length; i++) {
-          const s = Math.max(-1, Math.min(1, inputData[i]));
-          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        }
-
-        // Send audio chunk to server (only while speaking or recently speaking).
-        // Reuse the single `now` captured above rather than re-reading the clock.
-        if (isSpeakingRef.current || (silenceStartRef.current > 0 && now - silenceStartRef.current < silenceMs)) {
-          socket.emit('scribe:audio_chunk', pcm16.buffer);
-          audioBufferRef.current.push(pcm16);
-        }
-      };
-
-      source.connect(processor);
-      processor.connect(audioCtx.destination);
-
-      isStreamingRef.current = true;
-      utteranceCountRef.current = 0;
-
-      setState(prev => ({
-        ...prev,
-        isStreaming: true,
-        isProcessing: false,
-        isSpeaking: false,
-        currentTranscript: '',
-        fullTranscript: '',
-        utteranceCount: 0,
-        audioLevel: 0,
-      }));
-    } catch (err) {
-      onError?.((err as Error).message || 'Microphone access denied');
-    }
-  }, [patientId, hints, language, vadThreshold, silenceMs, minSpeechMs, onError]);
-
-  const stopStreaming = useCallback(() => {
-    if (!isStreamingRef.current) return;
-    isStreamingRef.current = false;
-
-    // Stop audio processing
-    if (processorRef.current) {
-      processorRef.current.disconnect();
+  const releaseMicrophone = useCallback(() => {
+    const processor = processorRef.current;
+    if (processor) {
+      processor.port.onmessage = null;
+      processor.onprocessorerror = null;
+      processor.port.postMessage('stop');
+      processor.port.close();
+      processor.disconnect();
       processorRef.current = null;
     }
-    if (sourceRef.current) {
-      sourceRef.current.disconnect();
-      sourceRef.current = null;
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-
-    // Stop mic stream
-    streamRef.current?.getTracks().forEach(t => t.stop());
+    sourceRef.current?.disconnect();
+    sourceRef.current = null;
+    streamRef.current?.getTracks().forEach(track => track.stop());
     streamRef.current = null;
-
-    // Tell server to stop session
-    socket.emit('scribe:stop_session');
-
-    // Reset state
-    isSpeakingRef.current = false;
-    speechStartRef.current = 0;
-    silenceStartRef.current = 0;
-    audioBufferRef.current = [];
-
-    setState(prev => ({
-      ...prev,
-      isStreaming: false,
-      isProcessing: false,
-      isSpeaking: false,
-      audioLevel: 0,
-    }));
+    const context = contextRef.current;
+    contextRef.current = null;
+    if (context && context.state !== 'closed') void context.close().catch(() => {});
   }, []);
 
-  // Cleanup on unmount
+  const abortStreaming = useCallback(() => {
+    generationRef.current += 1;
+    startingRef.current = false;
+    readyRef.current = false;
+    finishingRef.current = false;
+    releaseMicrophone();
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = null;
+    if (activeIdRef.current) socket.emit('scribe:stop_session');
+    activeIdRef.current = '';
+    if (mountedRef.current) setState(prev => ({ ...prev, isStreaming: false, isProcessing: false, isSpeaking: false, audioLevel: 0 }));
+  }, [releaseMicrophone]);
+
+  const fail = useCallback((message: string) => {
+    abortStreaming();
+    if (mountedRef.current) optionsRef.current.onError?.(message);
+  }, [abortStreaming]);
+
+  const stopStreaming = useCallback(() => {
+    generationRef.current += 1; // Cancel any pending permission/module request.
+    if (finishingRef.current) return;
+    const processor = processorRef.current;
+    if (!processor || !readyRef.current) { abortStreaming(); return; }
+    finishingRef.current = true;
+    // Stop the microphone now, then drain already captured PCM before closing
+    // the audio thread or asking the server to flush the final utterance.
+    sourceRef.current?.disconnect();
+    sourceRef.current = null;
+    streamRef.current?.getTracks().forEach(track => track.stop());
+    streamRef.current = null;
+    processor.port.postMessage('finish');
+    timerRef.current = setTimeout(() => fail('Audio delivery did not finish. Please retry the last utterance.'), 10000);
+    setState(prev => ({ ...prev, isStreaming: false, isSpeaking: false, audioLevel: 0 }));
+  }, [abortStreaming, fail]);
+
   useEffect(() => {
-    return () => {
-      if (isStreamingRef.current) {
-        stopStreaming();
+    mountedRef.current = true;
+    const matches = (data: { stream_id?: string }) => Boolean(activeIdRef.current && data.stream_id === activeIdRef.current);
+    const transcript = (data: { stream_id?: string; text: string; utterance_index: number }) => {
+      if (!matches(data) || !data.text) return;
+      setState(prev => ({ ...prev, isProcessing: false, currentTranscript: data.text,
+        fullTranscript: prev.fullTranscript + (prev.fullTranscript ? ' ' : '') + data.text,
+        utteranceCount: data.utterance_index + 1 }));
+      optionsRef.current.onFinalTranscript?.(data.text, data.utterance_index);
+    };
+    const status = (data: { stream_id?: string; status: string }) => {
+      if (!matches(data)) return;
+      if (data.status === 'ready' && startingRef.current) {
+        readyRef.current = true;
+        startingRef.current = false;
+        if (timerRef.current) clearTimeout(timerRef.current);
+        timerRef.current = null;
+        setState(prev => ({ ...prev, isStreaming: true }));
+        void contextRef.current?.resume().catch(() => fail('Audio capture could not start. Please retry.'));
+      }
+      if (data.status === 'stopped') activeIdRef.current = '';
+      setState(prev => ({ ...prev, isProcessing: data.status === 'processing' }));
+      optionsRef.current.onStatusChange?.(data.status);
+    };
+    const error = (data: { stream_id?: string; error: string; retryable?: boolean }) => {
+      // Legacy/global errors may arrive before a server session is established.
+      if (!matches(data) && !(startingRef.current && !data.stream_id)) return;
+      if (!data.retryable) fail(data.error);
+      else {
+        setState(prev => ({ ...prev, isProcessing: false }));
+        optionsRef.current.onError?.(data.error);
       }
     };
-  }, [stopStreaming]);
+    const disconnected = () => { if (activeIdRef.current || startingRef.current) fail('Dictation disconnected. Please reconnect and retry.'); };
+    socket.on('scribe:transcript', transcript);
+    socket.on('scribe:status', status);
+    socket.on('scribe:error', error);
+    socket.on('disconnect', disconnected);
+    return () => {
+      mountedRef.current = false;
+      abortStreaming();
+      socket.off('scribe:transcript', transcript);
+      socket.off('scribe:status', status);
+      socket.off('scribe:error', error);
+      socket.off('disconnect', disconnected);
+    };
+  }, [fail, abortStreaming]);
 
-  return {
-    ...state,
-    startStreaming,
-    stopStreaming,
-  };
+  // A chart/language change cannot route pending speech into the new context.
+  useEffect(() => {
+    return () => {
+      abortStreaming();
+    };
+  }, [options.patientId, options.language, abortStreaming]);
+
+  const startStreaming = useCallback(async () => {
+    if (startingRef.current || contextRef.current) return;
+    if (!socket.connected) { optionsRef.current.onError?.('Dictation is disconnected. Please reconnect first.'); return; }
+    if (activeIdRef.current) {
+      optionsRef.current.onError?.('The last utterance is still finishing. Please wait.');
+      return;
+    }
+    const generation = ++generationRef.current;
+    startingRef.current = true;
+    const cancelled = () => !mountedRef.current || generation !== generationRef.current;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: {
+        sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true,
+      } });
+      if (cancelled()) { stream.getTracks().forEach(track => track.stop()); return; }
+      streamRef.current = stream;
+      const context = new AudioContext({ sampleRate: 16000 });
+      contextRef.current = context;
+      // Suspend until the server authorizes this stream; capture cannot outrun it.
+      await context.suspend();
+      if (cancelled()) return;
+      if (!context.audioWorklet || context.sampleRate !== 16000) throw new Error('16 kHz AudioWorklet capture is unavailable in this browser.');
+      await context.audioWorklet.addModule(new URL('../audio/pcmCapture.worklet.js?no-inline', import.meta.url).href);
+      if (cancelled()) return;
+      const { vadThreshold = 0.015, silenceMs = 500, minSpeechMs = 200, patientId, hints, language } = optionsRef.current;
+      const processor = new AudioWorkletNode(context, 'orb-pcm-capture', {
+        numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
+        processorOptions: { vadThreshold, silenceMs, minSpeechMs },
+      });
+      processorRef.current = processor;
+      processor.onprocessorerror = () => fail('Audio capture failed. Please retry the last utterance.');
+      const source = context.createMediaStreamSource(stream);
+      sourceRef.current = source;
+      processor.port.onmessage = ({ data }: MessageEvent<CaptureMessage>) => {
+        const current = () => mountedRef.current && processorRef.current === processor && Boolean(activeIdRef.current);
+        if (!current() || !readyRef.current) return;
+        if (data.error) { fail(data.error); return; }
+        setState(prev => ({ ...prev, audioLevel: data.level ?? 0, isSpeaking: Boolean(data.speaking),
+          isProcessing: data.end ? true : prev.isProcessing }));
+        const acknowledge = () => {
+          if (!current()) return;
+          if (data.end) socket.emit('scribe:end_utterance');
+          if (data.finished) {
+            readyRef.current = false;
+            finishingRef.current = false;
+            if (timerRef.current) clearTimeout(timerRef.current);
+            timerRef.current = null;
+            releaseMicrophone();
+            socket.emit('scribe:stop_session');
+          } else processor.port.postMessage('ack');
+        };
+        if (data.audio) {
+          // Wait for receipt before granting another worklet message credit.
+          // Socket.IO's offline send buffer must never collect patient audio.
+          if (!socket.connected) { fail('Dictation disconnected. Please retry.'); return; }
+          socket.timeout(5000).emit('scribe:audio_chunk', data.audio, (error: Error | null) => {
+            if (!current()) return;
+            if (error) fail('Audio delivery timed out. Please retry this utterance.');
+            else acknowledge();
+          });
+        } else acknowledge();
+      };
+      source.connect(processor);
+      processor.connect(context.destination); // Worklet writes silence to output.
+      activeIdRef.current = crypto.randomUUID();
+      setState(initialState);
+      timerRef.current = setTimeout(() => fail('Dictation did not become ready. Please retry.'), 10000);
+      socket.emit('scribe:start_session', { patient_id: patientId, hints, language, stream_id: activeIdRef.current });
+    } catch (error) {
+      if (!cancelled()) fail(error instanceof Error ? error.message : 'Microphone access denied');
+    }
+  }, [fail, releaseMicrophone]);
+
+  return { ...state, startStreaming, stopStreaming };
 }

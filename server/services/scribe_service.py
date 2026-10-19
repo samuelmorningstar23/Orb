@@ -15,6 +15,7 @@ import json
 import re
 import subprocess
 import time
+from contextlib import aclosing
 from typing import Optional, AsyncGenerator
 
 from config import SCRIBE, UPLOAD_DIR
@@ -207,18 +208,31 @@ def _transcribe_via_daemon(audio_path: str, hints: str = "", language: str = "en
         return None
 
 
+class TranscriptionError(RuntimeError):
+    """A failed ASR attempt, distinct from a successfully transcribed silence."""
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__("Speech transcription could not be completed. Please retry.")
+
+
+
 def _transcribe_via_subprocess(audio_path: str, hints: str, asr_cfg: dict, language: str = "en") -> str:
-    """Original subprocess-based transcription (fallback path).
-    Refused while the models are switched off, like transcribe_audio."""
+    """Return worker text (including genuine silence), or raise a typed failure.
+
+    Refused while the models are switched off, like transcribe_audio. Worker
+    output and filesystem/model errors stay in server logs, never exception text.
+    """
     from services.model_switch import refuse_when_models_off
     refuse_when_models_off("Whisper transcription (worker)")
     try:
+        from services.asr_worker_protocol import STDIN_HINTS_FLAG, encode_hints
         server_dir = os.path.dirname(os.path.dirname(WORKER_SCRIPT))
         cmd = [
             PYTHON_BIN, WORKER_SCRIPT,
             audio_path,
             asr_cfg["model"],
-            hints or "",
+            STDIN_HINTS_FLAG,
             str(asr_cfg["batch_size"]),
             asr_cfg.get("quant") or "",
             language or "en",
@@ -227,29 +241,38 @@ def _transcribe_via_subprocess(audio_path: str, hints: str, asr_cfg: dict, langu
         result = subprocess.run(
             cmd,
             capture_output=True, text=True, timeout=120,
-            cwd=server_dir,
+            input=encode_hints(hints or ""), cwd=server_dir,
         )
-        if result.returncode == 0:
-            out = result.stdout.strip()
+        if result.returncode != 0:
+            logger.error("Speech worker failed (exit %s)", result.returncode)
+            raise TranscriptionError("asr_worker_failed")
+        out = result.stdout.strip()
+        try:
             try:
-                if "###RESULT###" in out:
-                    json_str = out.split("###RESULT###")[1]
-                    data = json.loads(json_str, strict=False)
-                else:
-                    data = json.loads(out, strict=False)
-                return data.get("text", "")
-            except Exception as parse_e:
-                logger.warning("JSON parse error: %s", parse_e)
-                return ""
-        else:
-            logger.error("Worker error (exit %s): %s", result.returncode, result.stderr[:200])
-            return ""
+                data = json.loads(out, strict=False)
+            except json.JSONDecodeError:
+                # Workers may print library logs before a paired result frame.
+                # First/last delimiters keep literal delimiters in dictated text.
+                marker = "###RESULT###"
+                _, opening, body = out.partition(marker)
+                if not opening:
+                    raise
+                framed, closing, _ = body.rpartition(marker)
+                data = json.loads(framed if closing else body, strict=False)
+            if not isinstance(data, dict) or not isinstance(data.get("text"), str) or data.get("error"):
+                raise ValueError("ASR worker returned an invalid text result")
+            return data["text"]
+        except (ValueError, TypeError):
+            logger.exception("ASR worker returned an invalid result", extra={"event": "asr_worker_protocol_failed"})
+            raise TranscriptionError("asr_worker_protocol_failed") from None
+    except TranscriptionError:
+        raise
     except subprocess.TimeoutExpired:
-        logger.error("Worker timed out")
-        return ""
-    except Exception as e:
-        logger.error("Worker exception: %s", e, exc_info=True)
-        return ""
+        logger.exception("ASR worker timed out", extra={"event": "asr_worker_timeout"})
+        raise TranscriptionError("asr_worker_timeout") from None
+    except Exception:
+        logger.exception("ASR worker could not run", extra={"event": "asr_worker_unavailable"})
+        raise TranscriptionError("asr_worker_unavailable") from None
 
 
 def _apply_rxnorm_correction(text: str) -> str:
@@ -582,7 +605,7 @@ async def structure_transcript_stream(transcript: str, format: str = "soap", *,
     t0 = time.monotonic()
     produced, error = False, None
     try:
-        async for token in provider.agenerate_stream(
+        async with aclosing(provider.agenerate_stream(
             prompt=prompt,
             system=DRAFT_SYSTEM_PROMPT,
             model=cfg["model"],
@@ -590,9 +613,12 @@ async def structure_transcript_stream(transcript: str, format: str = "soap", *,
             max_tokens=cfg["max_tokens"],
             ctx_size=cfg["ctx_size"],
             purpose="scribe_draft",
-        ):
-            produced = produced or bool(token)
-            yield token
+        )) as tokens:
+            async for token in tokens:
+                produced = produced or bool(token.strip())
+                yield token
+        if not produced:
+            raise RuntimeError("Scribe model returned no draft")
     except GeneratorExit:
         # The reader left mid-draft; the model still read the dictation.
         error = None if produced else "stream closed by the reader"

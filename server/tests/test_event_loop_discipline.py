@@ -174,8 +174,6 @@ _KNOWN_INDIRECT = {
     ("routes/admin_routes.py", "history_import_rejects", "_history_audit"),
     ("routes/roster_import_routes.py", "dry_run", "_audit"),
     ("routes/roster_import_routes.py", "commit", "_audit"),
-    # Whisper hint vocabulary read at session start (open, 2026-10-03).
-    ("ws/scribe_stream.py", "handle_start_session", "build_whisper_hints"),
 }
 
 _BLOCKING_DEFS_CACHE: dict = {}

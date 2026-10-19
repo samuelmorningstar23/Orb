@@ -33,6 +33,25 @@ jobs:
       - name: Run tests
         run: pytest -q
 
+  local-inference-quality:
+    name: Local inference utilities (strict checks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install isolated developer tools
+        run: python -m pip install -r tools/local-inference-quality/requirements.txt
+      - name: Lint, format, strict typing and full scoped coverage
+        run: bash tools/local-inference-quality/check.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: local-inference-coverage
+          path: local-inference-coverage.json
+          if-no-files-found: warn
+
   frontend:
     name: Frontend (build + tests)
     runs-on: ubuntu-latest

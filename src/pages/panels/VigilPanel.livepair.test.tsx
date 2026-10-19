@@ -274,7 +274,7 @@ afterEach(() => {
   // goOffline shadows jsdom's navigator.onLine; drop the shadow so the next
   // chart opens online.
   delete (navigator as { onLine?: boolean }).onLine
-  const failed = consoleError.mock.calls.some(c => String(c[0]).includes('Failed to load patient:'))
+  const failed = consoleError.mock.calls.some((c: unknown[]) => String(c[0]).includes('Failed to load patient:'))
   consoleError.mockRestore()
   expect(failed).toBe(loadFailureExpected)
 })

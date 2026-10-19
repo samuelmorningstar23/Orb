@@ -5,7 +5,10 @@
     "useDefineForClassFields": true,
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
-    "types": ["vite/client"],
+    /* This program includes source-adjacent tests which read node:fs/path.
+       Declare their Node globals directly instead of relying on test-runner
+       transitive ambient types. */
+    "types": ["vite/client", "node"],
     "skipLibCheck": true,
 
     /* Bundler mode */

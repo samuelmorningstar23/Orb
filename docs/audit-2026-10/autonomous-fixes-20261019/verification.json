@@ -1,0 +1,117 @@
+{
+  "started_local_date": "2026-10-19",
+  "completed_local_date": "2026-10-20",
+  "timezone": "Asia/Kolkata",
+  "parent_commit": "e0427fbf16916f94e8741a1e8a6593c5c48db63d",
+  "scope": "Decision-free local security, dictation, streaming, inference-cache and scoped quality repairs; no deployment or external integration.",
+  "results": {
+    "selected_backend": {
+      "passed": 279,
+      "log": "selected-backend-tests.log",
+      "scope": "Fresh HEAD source export plus exactly selected code; final idle-session expiry included."
+    },
+    "broader_backend": {
+      "passed": 951,
+      "log": "broader-backend-tests.log",
+      "scope": "Disposable working-copy selection before final Scribe stream-completion refinement; overlaps selected checks."
+    },
+    "scribe_final_delta": {
+      "passed": 173,
+      "log": "scribe-final-delta.log"
+    },
+    "frontend": {
+      "passed": 87,
+      "files": 12,
+      "log": "frontend-tests.log"
+    },
+    "selected_frontend": {
+      "passed": 12,
+      "files": 2,
+      "typecheck": "passed",
+      "production_build": "passed",
+      "log": "selected-frontend-tests-build.log",
+      "scope": "Fresh HEAD frontend plus selected changes and required build/type prerequisites."
+    },
+    "earlier_browser_selection": {
+      "passed": 8,
+      "log": "browser-scribe-responsive.log",
+      "scope": "Scribe UI, six responsive journeys and initial worklet audio check."
+    },
+    "final_browser_audio": {
+      "passed": 2,
+      "log": "browser-final-audio.log",
+      "scope": "Final built worklet: silence completion and explicit stop/drain; synthetic PCM/VAD and zero speaker echo. Overlaps earlier audio case."
+    },
+    "scoped_quality": {
+      "passed": 49,
+      "deselected_integration_cases": 4,
+      "statements": 65,
+      "branches": 20,
+      "statement_coverage_percent": 100,
+      "branch_coverage_percent": 100,
+      "strict_typing": "passed",
+      "lint_format": "passed",
+      "log": "quality-gate.log",
+      "coverage": "coverage.json",
+      "scope": "Three pure utilities, fresh separately installed pinned developer tools."
+    },
+    "pdf": {
+      "pages": 10,
+      "rendered_visual_review": "passed"
+    }
+  },
+  "selected_source_sha256": {
+    ".github/workflows/ci.yml": "abb38c748002fdacb2ee345d9dea06ad4afa92e550f74f0f3ebeb92fea320fc7",
+    "docs/ORB_AUTONOMOUS_FIXES_2026-10-19.md": "1277d0df4291af67437b65b39f3f2e63b3e67af9a3d8530fa85d1698d93617cb",
+    "docs/SECURITY_AND_UX_ASSESSMENT_2026-10.md": "65eeb3924650cc919fb66e11a7cdb2e60338b6e985a1e96d5b736583d51375ef",
+    "e2e/08-live-audio.spec.ts": "33a2403eff69eee3b70ff144f49577cd6e1017117a0361c2165ef80dec7e2d5f",
+    "scripts/build_work_summary_pdf.py": "8ec15172d028cd8a37c970dfeee004d17af29e072279579015cccb371ffbf3f4",
+    "server/config.py": "300a1e8c9daa3eb9dd330809044659d2afd414ed184919b4f51a2e9c2abfe661",
+    "server/offline_policy.py": "6be2ac71eda2aeaff416c13902c93ea8aba5c72e05590091c46365e1f57ca727",
+    "server/routes/scribe_routes.py": "cc54d9bbc4e498c94d9cf77497d2ab3fc863e283190eea47f2957e67863418bb",
+    "server/routes/vigil_routes.py": "f9aa4db0b302eee79ac9ddc131cf2d86693bd9f13a73c2cd636df8dcd192cc34",
+    "server/scripts/benchmark_asr.py": "3127fba02bf33a60a785c35028f4df52ade3e4780a3e09b8e1b184c669b4fc71",
+    "server/scripts/transcribe_worker.py": "7ac49d889e4afeb7a68b478c9d32e703f2aaa90eabbff6e396f68ab11189d03b",
+    "server/services/asr_worker_protocol.py": "797ec186cb52ff1733e1f3af0a281b72f265115a5ea4a5e3242cf2ba45f0cb50",
+    "server/services/audio_conversion.py": "336c111fd3b501f37c852e3bdd9e30c6b3ff8a2baf6c6d7199eb5926d21b2161",
+    "server/services/inference_cache.py": "9e4d5df05cb4b7f2b41f125d2d15b9d8ca71f228481f650509c197f97adc02f0",
+    "server/services/lens_service.py": "157ed0700d24f37a95c775a6e690b81e25b97c7823f3e8667cd669f7f98fdbc0",
+    "server/services/ollama_gateway.py": "23868443fa76fae98cb4ad7ccf5a7028646e8cdec5b078117c407d01553cae50",
+    "server/services/scribe_providers.py": "7e76f96485f2c603fb2cde615171cf04300eca6467cca3ab4cb0e5fe535b6904",
+    "server/services/scribe_service.py": "6594f729a336c08a728bccfc6dc6a3144224246de713a56d516f1602aa447d58",
+    "server/services/vigil_service.py": "e03ecccf6d6f7f727e5e73c3d7fbdf93015e817aeeacc8bd6c1f91f61f1b5b67",
+    "server/services/whisper_daemon.py": "c5ffec96b3bebbc0aae2d8c91e156f7ff835c72af24f3e674dfc2575a6470c3c",
+    "server/tests/test_asr_failure_contracts.py": "f1209578b14225d07afff933f311f45c284c063f4773a864901c1464c9251ab2",
+    "server/tests/test_event_loop_discipline.py": "5c53534d00b01844ddefe1d6eab10957e060dd8169cfbffd2cbeba856423b5d2",
+    "server/tests/test_inference_cache.py": "6216fd93d488a3baa5009fe9218b0b1fb82962ce2d4e492153a7aead5e07af04",
+    "server/tests/test_lens_completion.py": "294c3fb6065f0bbed8ccca5ab33720483897b51a12923294f04fd9404f7fc9e0",
+    "server/tests/test_live_dictation_boundaries.py": "37b7bb49cf084e63e64bf2efe9e97bbda1ac3518535909966d37cbc6ae316419",
+    "server/tests/test_live_dictation_scope_integration.py": "564b20575d9318eff545933eb1e4212c5fb3bdc050f071916cfa12d495d18e4b",
+    "server/tests/test_local_inference_boundaries.py": "a9e27d0106b3641a9839e1eca1e7325d04546f545792dc22db0ec3da53a198f2",
+    "server/tests/test_media_stream_contracts.py": "cb36e982823ba07615a117ee9d65a4ebb25338aab76797e067a6c65986f1fc7e",
+    "server/tests/test_scribe_completion_boundaries.py": "de6ecfa8a4401e13cb5471013fab1bbee40ecd372a67164d14c1def80c95d1ec",
+    "server/tests/test_vigil_prediction_cache.py": "6416fab6731bc314c93c06493a3c0f8c05db4d0b58c9394f1661c797742a0b80",
+    "server/tests/test_whisper_audio_tempfiles.py": "29d093526600336fab91038d30f61e835bd4c27caf4253e6c450428d1b8385ea",
+    "server/ws/scribe_stream.py": "c03a2d3944615d3069c876fa5662fcae35de19e01cd3fbea769dcc2d9600cc2e",
+    "src/audio/pcmCapture.worklet.js": "37981fa402ac4f35e60cff1cbdb7eba25d964351293cfe796d98263c3fddabf5",
+    "src/audio/pcmCapture.worklet.test.ts": "a3dfdf28fdb3cb16e8374fd93065fd787a5d70b3a38d93fcd26bef085ee2bd4e",
+    "src/hooks/useStreamingTranscription.test.tsx": "97b0d94a5039bb9a1d912a3941d3c9292cb3c6af60a82649565f2c414d5c8472",
+    "src/hooks/useStreamingTranscription.ts": "64b7bae3a0ba7b5d7feee3da1372475da71a0de198b87209e34169953a9d4244",
+    "src/pages/panels/VigilPanel.commandbar.test.tsx": "b2128f938f31dc66806a3d7da6030a617575e43b3e4016ab5ef75e67911fd690",
+    "src/pages/panels/VigilPanel.livepair.test.tsx": "0c8a83ca60c1a86ead9e828944e8df8668c443e086eeea53e62c706ce66dddd2",
+    "tools/local-inference-quality/README.md": "e98e32ee220f2f79c37f42535882533b5c42af1cc743384445b50da9ad905f05",
+    "tools/local-inference-quality/check.sh": "fdcee7ef376239152ec77e4a74aaace5f2444e3a53c9e5ac34b5d9662ebe482c",
+    "tools/local-inference-quality/pyproject.toml": "7d004733efcd31e2bb852352819bc01d2ad8d45c76cc534fc5dc214c38346caf",
+    "tools/local-inference-quality/requirements.txt": "83047ba62c876d8f1ad387e997d72a861f1dc6b6f3311885070311be26c38ea9",
+    "tsconfig.app.json": "2afaa38f040b23e4cf3a2c6a1da3d825173963fc488d6973312d3c707fbc3103",
+    "vite.config.ts": "ead4280c8f9fff58b5fdbb20477909e04544966bad1ef4872cb9bc4fb82a51b0"
+  },
+  "pdf_sha256": "2b08c8a6d3a75cc1a16fd2494f6ce46e9398c75a0f0122bfcecff62267fe7bac",
+  "limitations": [
+    "Selections overlap; do not sum counts.",
+    "Synthetic data only; no live database/uploads/keys/weights used.",
+    "No native speech accuracy, clinical model approval, hosted CI, hardware/site recovery or production deployment claim.",
+    "Full-backend quality/modularization remains incremental backlog."
+  ],
+  "log_normalization": "Trailing whitespace and terminal blank lines removed; diagnostic content/order preserved."
+}

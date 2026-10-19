@@ -1,0 +1,1112 @@
+[WebServer] (node:2218) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] vite v8.1.0 building client environment for production...
+[WebServer]
+[WebServer] transforming...[WebServer] ✓ 1221 modules transformed.
+[WebServer] rendering chunks...
+[WebServer] computing gzip size...
+[WebServer] dist/registerSW.js                                                  0.13 kB
+[WebServer] dist/manifest.webmanifest                                           0.43 kB
+[WebServer] dist/index.html                                                     1.53 kB │ gzip:  0.68 kB
+[WebServer] dist/assets/pcmCapture.worklet-DHdzjtv_.js                          4.16 kB
+[WebServer] dist/assets/jetbrains-mono-vietnamese-wght-normal-Bt-aOZkq.woff2    7.50 kB
+[WebServer] dist/assets/jetbrains-mono-greek-wght-normal-Bw9x6K1M.woff2         9.00 kB
+[WebServer] dist/assets/inter-vietnamese-wght-normal-CBcvBZtf.woff2            10.25 kB
+[WebServer] dist/assets/inter-greek-ext-wght-normal-DlzME5K_.woff2             11.23 kB
+[WebServer] dist/assets/fraunces-vietnamese-wght-normal-CnvboYUG.woff2         11.57 kB
+[WebServer] dist/assets/jetbrains-mono-cyrillic-wght-normal-D73BlboJ.woff2     12.10 kB
+[WebServer] dist/assets/jetbrains-mono-latin-ext-wght-normal-DBQx-q_a.woff2    15.19 kB
+[WebServer] dist/assets/inter-cyrillic-wght-normal-DqGufNeO.woff2              18.74 kB
+[WebServer] dist/assets/inter-greek-wght-normal-CkhJZR-_.woff2                 18.99 kB
+[WebServer] dist/assets/inter-cyrillic-ext-wght-normal-BOeWTOD4.woff2          25.96 kB
+[WebServer] dist/assets/fraunces-latin-ext-wght-normal-Ca2vKHc0.woff2          33.58 kB
+[WebServer] dist/assets/fraunces-latin-wght-normal-ukD16Tqj.woff2              36.62 kB
+[WebServer] dist/assets/jetbrains-mono-latin-wght-normal-B9CIFXIH.woff2        40.40 kB
+[WebServer] dist/assets/inter-latin-wght-normal-Dx4kXJAl.woff2                 48.25 kB
+[WebServer] dist/assets/inter-latin-ext-wght-normal-DO1Apj_S.woff2             85.06 kB
+[WebServer] dist/assets/VoidObservationButton-CVPB98t9.css                      0.58 kB │ gzip:  0.29 kB
+[WebServer] dist/assets/NotOnWard-CRyIfoXI.css                                  0.62 kB │ gzip:  0.32 kB
+[WebServer] dist/assets/InvestigationalBanner-BFbk5KYB.css                      0.64 kB │ gzip:  0.33 kB
+[WebServer] dist/assets/ProvenanceChip-SxECQPoQ.css                             1.05 kB │ gzip:  0.45 kB
+[WebServer] dist/assets/RecordGovernancePanel-BJj_iUzK.css                      1.83 kB │ gzip:  0.62 kB
+[WebServer] dist/assets/OfflineClinicalRecordsPanel-CRAaBQiP.css                1.98 kB │ gzip:  0.63 kB
+[WebServer] dist/assets/PatientPicker-f8xQOwTx.css                              2.34 kB │ gzip:  0.76 kB
+[WebServer] dist/assets/NursePanel-Bl94AtSi.css                                 2.58 kB │ gzip:  0.66 kB
+[WebServer] dist/assets/localOperationsUi-0k31of3g.css                          2.94 kB │ gzip:  0.91 kB
+[WebServer] dist/assets/WardObservationsPanel-CjboPFNK.css                      3.07 kB │ gzip:  0.82 kB
+[WebServer] dist/assets/ReportingFinance-DPkLJ1Fw.css                           3.28 kB │ gzip:  1.05 kB
+[WebServer] dist/assets/DoctorHomePanel-2LkwxXLE.css                            3.52 kB │ gzip:  1.14 kB
+[WebServer] dist/assets/SamplesSheet-BaTtaGlX.css                               3.65 kB │ gzip:  0.89 kB
+[WebServer] dist/assets/CriticalLabCard--PQ7RmgN.css                            4.15 kB │ gzip:  0.95 kB
+[WebServer] dist/assets/endStay-Tj5NZiEl.css                                    4.69 kB │ gzip:  1.14 kB
+[WebServer] dist/assets/LensPanel-DZcpnG2g.css                                  5.11 kB │ gzip:  1.28 kB
+[WebServer] dist/assets/SafetyAlertModal-DtXiguG3.css                           5.53 kB │ gzip:  1.23 kB
+[WebServer] dist/assets/QuarantineQueue-UpnwkPGL.css                            5.74 kB │ gzip:  1.33 kB
+[WebServer] dist/assets/CapacitySimulator-D0wvgPhm.css                          6.61 kB │ gzip:  1.59 kB
+[WebServer] dist/assets/RevenueIntegrityPanel-dFCoMiFD.css                      7.49 kB │ gzip:  1.87 kB
+[WebServer] dist/assets/OrderSetsPanel-BgT4uLu3.css                             7.75 kB │ gzip:  1.53 kB
+[WebServer] dist/assets/ScribePanel-BzLgjArN.css                                7.87 kB │ gzip:  1.85 kB
+[WebServer] dist/assets/NotOnWardChip-T3Bm1uTf.css                              8.29 kB │ gzip:  1.50 kB
+[WebServer] dist/assets/OrdersPanel-CbV90qa7.css                                8.48 kB │ gzip:  2.08 kB
+[WebServer] dist/assets/AbdmPanel-DzO_YWxI.css                                  8.79 kB │ gzip:  1.84 kB
+[WebServer] dist/assets/PaymentsPanel-C-icmDMH.css                              9.77 kB │ gzip:  1.98 kB
+[WebServer] dist/assets/HousekeepingPanel-SmEBnpzu.css                          9.98 kB │ gzip:  2.20 kB
+[WebServer] dist/assets/WorkforcePanel-DrUT9XX7.css                            10.65 kB │ gzip:  2.26 kB
+[WebServer] dist/assets/CommandCenter-B3sknoB5.css                             10.92 kB │ gzip:  2.47 kB
+[WebServer] dist/assets/BiomedicalPanel-DBGX5Y4N.css                           11.02 kB │ gzip:  2.27 kB
+[WebServer] dist/assets/ProcurementPanel-B3tDJ_hY.css                          11.39 kB │ gzip:  2.38 kB
+[WebServer] dist/assets/BillingPanel-Zn5JCpiY.css                              11.61 kB │ gzip:  2.12 kB
+[WebServer] dist/assets/DietaryPanel-DgsRkEW7.css                              11.76 kB │ gzip:  2.32 kB
+[WebServer] dist/assets/NabhPanel-BOwKGw3s.css                                 12.23 kB │ gzip:  2.43 kB
+[WebServer] dist/assets/PayerPanel-BKHXIY_F.css                                12.27 kB │ gzip:  2.31 kB
+[WebServer] dist/assets/OpdPanel-DdxiIj4n.css                                  12.81 kB │ gzip:  2.20 kB
+[WebServer] dist/assets/BedBoardPanel-CfNB0zz4.css                             12.99 kB │ gzip:  2.30 kB
+[WebServer] dist/assets/opd-BSo0oQCX.css                                       14.55 kB │ gzip:  2.75 kB
+[WebServer] dist/assets/pharmacy-KgELmnCg.css                                  16.57 kB │ gzip:  3.24 kB
+[WebServer] dist/assets/SagePanel-DAo0HapY.css                                 17.17 kB │ gzip:  3.52 kB
+[WebServer] dist/assets/FrontDeskPanel-LTIaWqdI.css                            17.35 kB │ gzip:  2.92 kB
+[WebServer] dist/assets/PharmacyStorePanel-CX_-lYmH.css                        18.02 kB │ gzip:  2.44 kB
+[WebServer] dist/assets/RoundPanel-DE8nIZNf.css                                18.70 kB │ gzip:  3.01 kB
+[WebServer] dist/assets/LabPanel-B1N43zWB.css                                  18.96 kB │ gzip:  2.72 kB
+[WebServer] dist/assets/RelayPanel-C5uPFPSj.css                                21.31 kB │ gzip:  3.85 kB
+[WebServer] dist/assets/NursePanel-BYIpzHh0.css                                23.73 kB │ gzip:  3.84 kB
+[WebServer] dist/assets/SurgicalSuitePanel-Ci2ESvNi.css                        25.30 kB │ gzip:  4.59 kB
+[WebServer] dist/assets/AdminPanel-Bb8z-1LD.css                                49.82 kB │ gzip:  8.03 kB
+[WebServer] dist/assets/VigilPanel-Y3kc8tPy.css                                62.56 kB │ gzip:  9.02 kB
+[WebServer] dist/assets/index-CWQ1fhu7.css                                    137.78 kB │ gzip: 24.61 kB
+[WebServer] dist/assets/DialysisPanel-SSxVRvmT.js                               0.19 kB │ gzip:  0.17 kB
+[WebServer] dist/assets/EmergencyPanel-BJ-QAB3l.js                              0.19 kB │ gzip:  0.17 kB
+[WebServer] dist/assets/RadiologyPanel-BxjJVXrG.js                              0.19 kB │ gzip:  0.17 kB
+[WebServer] dist/assets/CarePlansPanel-Cp6hXdJO.js                              0.19 kB │ gzip:  0.17 kB
+[WebServer] dist/assets/PerioperativePanel-BuiXNPBN.js                          0.19 kB │ gzip:  0.17 kB
+[WebServer] dist/assets/shadowOutcome-CCRmem6q.js                               0.34 kB │ gzip:  0.21 kB
+[WebServer] dist/assets/InvestigationalBanner-QTTT3mlo.js                       0.42 kB │ gzip:  0.26 kB
+[WebServer] dist/assets/useDataChanged-DJFxKPKv.js                              0.45 kB │ gzip:  0.28 kB
+[WebServer] dist/assets/usePrintOnce-CyJLiV2l.js                                0.48 kB │ gzip:  0.29 kB
+[WebServer] dist/assets/ReportingFinance-CcFrm-eh.js                            0.48 kB │ gzip:  0.35 kB
+[WebServer] dist/assets/writeGuard-BZxghisM.js                                  0.50 kB │ gzip:  0.32 kB
+[WebServer] dist/assets/demographics-p3_gM7kx.js                                0.51 kB │ gzip:  0.30 kB
+[WebServer] dist/assets/insightTime-CGhfOzFQ.js                                 0.52 kB │ gzip:  0.31 kB
+[WebServer] dist/assets/domainTransport-DiBVtnUi.js                             0.57 kB │ gzip:  0.35 kB
+[WebServer] dist/assets/specimens-Dx7ATRWi.js                                   0.62 kB │ gzip:  0.38 kB
+[WebServer] dist/assets/rolldown-runtime-QTnfLwEv.js                            0.69 kB │ gzip:  0.42 kB
+[WebServer] dist/assets/useVisiblePolling-DfZRBOaq.js                           0.86 kB │ gzip:  0.41 kB
+[WebServer] dist/assets/nurse-Bv7teWa4.js                                       0.99 kB │ gzip:  0.49 kB
+[WebServer] dist/assets/master-C6rRv6RA.js                                      1.28 kB │ gzip:  0.40 kB
+[WebServer] dist/assets/ProvenanceChip-NnqnbYti.js                              1.41 kB │ gzip:  0.74 kB
+[WebServer] dist/assets/lab-620zTqS_.js                                         1.57 kB │ gzip:  0.78 kB
+[WebServer] dist/assets/billing-Di4i26x7.js                                     1.60 kB │ gzip:  0.60 kB
+[WebServer] dist/assets/money-hWCKG58I.js                                       1.81 kB │ gzip:  0.96 kB
+[WebServer] dist/assets/VoidObservationButton-CDOdHv7h.js                       1.82 kB │ gzip:  0.88 kB
+[WebServer] dist/assets/OfflinePatientPicker-Dlgq_-1o.js                        1.92 kB │ gzip:  0.95 kB
+[WebServer] dist/assets/medicationRouting-Bwqktjn4.js                           1.94 kB │ gzip:  0.81 kB
+[WebServer] dist/assets/useLocalOperations-CLdgsqWJ.js                          1.95 kB │ gzip:  0.82 kB
+[WebServer] dist/assets/code128-Z8FfcxNT.js                                     2.13 kB │ gzip:  1.06 kB
+[WebServer] dist/assets/housekeeping-BbPEzeKP.js                                2.25 kB │ gzip:  1.10 kB
+[WebServer] dist/assets/localOperationsUi-BS1IZDDo.js                           2.37 kB │ gzip:  0.94 kB
+[WebServer] dist/assets/NotOnWard-3ifCVr49.js                                   2.37 kB │ gzip:  1.06 kB
+[WebServer] dist/assets/OrdersPrintView-CUYs27Cb.js                             2.63 kB │ gzip:  0.89 kB
+[WebServer] dist/assets/datetime-CRgqoLT1.js                                    2.91 kB │ gzip:  1.20 kB
+[WebServer] dist/assets/News2Badge-3IpgWqaB.js                                  3.16 kB │ gzip:  1.43 kB
+[WebServer] dist/assets/roundQueue-BGmhvCE3.js                                  3.31 kB │ gzip:  1.39 kB
+[WebServer] dist/assets/returns-BTRmS-HS.js                                     3.44 kB │ gzip:  1.50 kB
+[WebServer] dist/assets/endStay-COhuzWeE.js                                     3.82 kB │ gzip:  1.62 kB
+[WebServer] dist/assets/payments-BvWwb-xx.js                                    3.96 kB │ gzip:  1.20 kB
+[WebServer] dist/assets/MedListPrintView-0Wtt-DS1.js                            4.03 kB │ gzip:  1.35 kB
+[WebServer] dist/assets/pharmacy-ENSOAKNI.js                                    4.84 kB │ gzip:  1.77 kB
+[WebServer] dist/assets/Icon-jnGdhgmf.js                                        4.86 kB │ gzip:  1.43 kB
+[WebServer] dist/assets/PatientPicker-Bq-JfNzb.js                               5.28 kB │ gzip:  1.98 kB
+[WebServer] dist/assets/FeedbackPanel-DZ7cNo-I.js                               5.40 kB │ gzip:  2.01 kB
+[WebServer] dist/assets/WardObservationsPanel-0gu1Y9jA.js                       5.83 kB │ gzip:  2.15 kB
+[WebServer] dist/assets/medorders-DfRM2Ew4.js                                   6.55 kB │ gzip:  2.37 kB
+[WebServer] dist/assets/RadiationSafetyPanel-CtW4QDfb.js                        6.77 kB │ gzip:  2.14 kB
+[WebServer] dist/assets/LabReportPrintView-BucIA95a.js                          6.99 kB │ gzip:  2.08 kB
+[WebServer] dist/assets/SafetyAlertModal-DfwcBOlJ.js                            6.99 kB │ gzip:  2.14 kB
+[WebServer] dist/assets/MortuaryPanel-CqjIXvMG.js                               7.00 kB │ gzip:  2.39 kB
+[WebServer] dist/assets/RecordGovernancePanel-Bbg33Uce.js                       7.64 kB │ gzip:  2.48 kB
+[WebServer] dist/assets/CriticalLabCard-CDy2QUGX.js                             8.33 kB │ gzip:  2.57 kB
+[WebServer] dist/assets/RevenueIntegrityPanel-DpsxFedy.js                       8.76 kB │ gzip:  2.78 kB
+[WebServer] dist/assets/ReportingPanel-DoU9qHrg.js                              9.83 kB │ gzip:  3.33 kB
+[WebServer] dist/assets/LensPanel-zM1kd4u7.js                                  10.01 kB │ gzip:  3.67 kB
+[WebServer] dist/assets/CommandCenter-CHCEqZL9.js                              11.07 kB │ gzip:  3.01 kB
+[WebServer] dist/assets/AppointmentsPanel-D4iXDxAV.js                          11.46 kB │ gzip:  3.71 kB
+[WebServer] dist/assets/SamplesSheet-DZ3pKKI6.js                               11.82 kB │ gzip:  3.86 kB
+[WebServer] dist/assets/CssdPanel-C_bKIC9V.js                                  11.86 kB │ gzip:  3.61 kB
+[WebServer] dist/assets/OutcomeCaptureSheet-D6pgmQjc.js                        11.99 kB │ gzip:  3.92 kB
+[WebServer] dist/assets/PharmacyVerifyQueue-fhRCdalN.js                        12.52 kB │ gzip:  3.88 kB
+[WebServer] dist/assets/OrderSetsPanel-WByTI8Jb.js                             13.02 kB │ gzip:  4.34 kB
+[WebServer] dist/assets/ObsEntrySheet-6C7pAWEv.js                              13.16 kB │ gzip:  4.58 kB
+[WebServer] dist/assets/QuarantineQueue-BnzzAONg.js                            14.10 kB │ gzip:  4.28 kB
+[WebServer] dist/assets/OfflineClinicalRecordsPanel-Dyjb4eRn.js                17.41 kB │ gzip:  5.44 kB
+[WebServer] dist/assets/EndStayDrawer--iO201JT.js                              18.49 kB │ gzip:  4.91 kB
+[WebServer] dist/assets/NotOnWardChip-BPJh7HoF.js                              18.51 kB │ gzip:  4.73 kB
+[WebServer] dist/assets/MoveDrawer-C_lqcu44.js                                 18.89 kB │ gzip:  5.23 kB
+[WebServer] dist/assets/InfectionSurveillancePanel-CV-bIdVm.js                 19.96 kB │ gzip:  5.52 kB
+[WebServer] dist/assets/AbdmPanel-B7IEgwXy.js                                  23.56 kB │ gzip:  5.79 kB
+[WebServer] dist/assets/FinanceToolsPanel-Dfpmd8zz.js                          23.59 kB │ gzip:  5.79 kB
+[WebServer] dist/assets/DoctorHomePanel-CxWj4XZ3.js                            23.59 kB │ gzip:  6.81 kB
+[WebServer] dist/assets/client-D55Yetjm.js                                     24.81 kB │ gzip:  8.26 kB
+[WebServer] dist/assets/ForecastPanel-Cjb9fbnY.js                              26.70 kB │ gzip:  6.54 kB
+[WebServer] dist/assets/NabhPanel-BPH6P-VQ.js                                  26.90 kB │ gzip:  7.39 kB
+[WebServer] dist/assets/DietaryPanel-CiNzPJQ1.js                               28.13 kB │ gzip:  7.10 kB
+[WebServer] dist/assets/CapacitySimulator-C6dS5HL-.js                          28.15 kB │ gzip:  9.16 kB
+[WebServer] dist/assets/HousekeepingPanel-DIjE4tFD.js                          28.36 kB │ gzip:  7.10 kB
+[WebServer] dist/assets/OrdersPanel-jSqTPjvU.js                                29.64 kB │ gzip:  9.14 kB
+[WebServer] dist/assets/PaymentsPanel-EM3tTXFr.js                              30.11 kB │ gzip:  7.89 kB
+[WebServer] dist/assets/BiomedicalPanel-D_jBqv7_.js                            32.05 kB │ gzip:  8.00 kB
+[WebServer] dist/assets/RoundPanel-OvC4ugej.js                                 32.15 kB │ gzip:  9.44 kB
+[WebServer] dist/assets/PayerPanel-Cyv7-DYm.js                                 36.22 kB │ gzip:  8.40 kB
+[WebServer] dist/assets/WorkforcePanel-DDNKKpTe.js                             37.27 kB │ gzip:  9.02 kB
+[WebServer] dist/assets/HelixPanel-DvcxlpnH.js                                 38.17 kB │ gzip:  9.95 kB
+[WebServer] dist/assets/BillingPanel-CyvsTfPw.js                               38.77 kB │ gzip:  9.04 kB
+[WebServer] dist/assets/SurgicalSuitePanel-BQd-cTkK.js                         40.57 kB │ gzip:  9.42 kB
+[WebServer] dist/assets/RelayPanel-CFV2WQiS.js                                 40.59 kB │ gzip: 11.79 kB
+[WebServer] dist/assets/vendor-socket-CbQsWyoH.js                              41.20 kB │ gzip: 12.87 kB
+[WebServer] dist/assets/SagePanel-uxGbWhDU.js                                  42.47 kB │ gzip: 14.00 kB
+[WebServer] dist/assets/ScribePanel-vYPuLseR.js                                42.66 kB │ gzip: 11.70 kB
+[WebServer] dist/assets/opd-CNxB_vON.js                                        50.60 kB │ gzip: 13.36 kB
+[WebServer] dist/assets/ProcurementPanel-BnFwGC94.js                           53.29 kB │ gzip: 11.14 kB
+[WebServer] dist/assets/vendor-i18n-BTHtdv-r.js                                55.25 kB │ gzip: 18.17 kB
+[WebServer] dist/assets/NursePanel-DXx_XRPx.js                                 61.20 kB │ gzip: 15.44 kB
+[WebServer] dist/assets/OpdPanel-Cf6ETog-.js                                   65.87 kB │ gzip: 16.28 kB
+[WebServer] dist/assets/FrontDeskPanel-OO52KzVF.js                             71.82 kB │ gzip: 16.69 kB
+[WebServer] dist/assets/BedBoardPanel-ByK5dwKx.js                             126.34 kB │ gzip: 28.21 kB
+[WebServer] dist/assets/LabPanel-DXHz9Zcp.js                                  161.94 kB │ gzip: 35.93 kB
+[WebServer] dist/assets/AdminPanel-Ce8P3xro.js                                173.34 kB │ gzip: 40.99 kB
+[WebServer] dist/assets/vendor-markdown-D9xv0GKk.js                           182.48 kB │ gzip: 56.64 kB
+[WebServer] dist/assets/VigilPanel-BGhOQER0.js                                190.13 kB │ gzip: 51.50 kB
+[WebServer] dist/assets/vendor-react-BuRA0kjX.js                              224.66 kB │ gzip: 71.93 kB
+[WebServer] dist/assets/PharmacyStorePanel-Qwjr97aR.js                        227.74 kB │ gzip: 45.14 kB
+[WebServer] dist/assets/index-COhrOhOA.js                                     308.40 kB │ gzip: 79.78 kB
+[WebServer] dist/assets/SizedChart--0E9AL9u.js                                343.62 kB │ gzip: 99.86 kB
+[WebServer]
+[WebServer] ✓ built in 725ms
+[WebServer]
+[WebServer] PWA v1.3.0
+[WebServer] mode      generateSW
+[WebServer] precache  185 entries (4469.19 KiB)
+[WebServer] files generated
+[WebServer]   dist/sw.js
+[WebServer]   dist/workbox-c44686f0.js
+[WebServer]   [DB] Migrating vitals table: adding 'source' column...
+[WebServer]   [DB] Migrating vitals table: adding 'source_event_id' column...
+[WebServer]   [DB] Migrating scribe_notes: adding 'status' column...
+[WebServer]   [DB] Migrating scribe_notes: adding 'version' column...
+[WebServer]   [DB] Migrating scribe_notes: adding 'supersedes_note_id' column...
+[WebServer]   [DB] Migrating scribe_notes: adding 'signed_by' column...
+[WebServer]   [DB] Migrating scribe_notes: adding 'signed_at' column...
+[WebServer]   [DB] Migrating scribe_notes: adding 'finalized_at' column...
+[WebServer]   [DB] Migrating scribe_notes: adding 'rejected_by' column...
+[WebServer]   [DB] Migrating scribe_notes: adding 'rejected_at' column...
+[WebServer]   [DB] Migrating scribe_notes: adding 'rejection_reason' column...
+[WebServer]   [DB] Migrating scribe_notes: adding 'last_edited_by' column...
+[WebServer]   [DB] Migrating scribe_notes: adding 'last_edited_at' column...
+[WebServer]   [DB] Migrating scribe_notes: adding 'ai_generated' column...
+[WebServer] ═══ Connecting to DB: /var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/demo.db ═══
+[WebServer]   Disabling foreign key constraints...
+[WebServer]   Wiping 159 patient-related tables...
+[WebServer]     - Wiped abdm_care_contexts
+[WebServer]     - Wiped abdm_consent_artefacts
+[WebServer]     - Wiped abdm_events
+[WebServer]     - Wiped abha_identities
+[WebServer]     - Wiped abha_verifications
+[WebServer]     - Wiped admission_history
+[WebServer]     - Wiped admissions
+[WebServer]     - Wiped appointments
+[WebServer]     - Wiped bed_reservations
+[WebServer]     - Wiped care_bundles
+[WebServer]     - Wiped care_plans
+[WebServer]     - Wiped care_plans_events
+[WebServer]     - Wiped channel_members
+[WebServer]     - Wiped channels
+[WebServer]     - Wiped claim_events
+[WebServer]     - Wiped claims
+[WebServer]     - Wiped clinical_documents
+[WebServer]     - Wiped clinical_escalations
+[WebServer]     - Table consent_records PRESERVED (append-only / tamper-evident)
+[WebServer]     - Table consent_withdrawals PRESERVED (append-only / tamper-evident)
+[WebServer]     - Wiped cssd_events
+[WebServer]     - Wiped cssd_issues
+[WebServer]     - Wiped dialysis_sessions
+[WebServer]     - Wiped dialysis_sessions_events
+[WebServer]     - Wiped diet_orders
+[WebServer]     - Wiped discharge_access_tokens
+[WebServer]     - Wiped discharge_financial_checks
+[WebServer]     - Wiped discharge_summaries
+[WebServer]     - Wiped discount_approvals
+[WebServer]     - Wiped emergency_visits
+[WebServer]     - Wiped emergency_visits_events
+[WebServer]     - Wiped encounter_charges
+[WebServer]     - Table erasure_decisions PRESERVED (append-only / tamper-evident)
+[WebServer]     - Table erasure_executions PRESERVED (append-only / tamper-evident)
+[WebServer]     - Wiped erasure_requests
+[WebServer]     - Wiped escalation_events
+[WebServer]     - Wiped event_deliveries
+[WebServer]     - Wiped event_log
+[WebServer]     - Wiped feedback_cases
+[WebServer]     - Wiped feedback_events
+[WebServer]     - Wiped finance_journal_export_patients
+[WebServer]     - Wiped finance_payout_lines
+[WebServer]     - Wiped forecast_predictions
+[WebServer]     - Wiped goods_receipt_lines
+[WebServer]     - Wiped goods_receipts
+[WebServer]     - Wiped helix_patient_med_orders
+[WebServer]     - Wiped helix_pharmacy_verifications
+[WebServer]     - Wiped helix_stock_movements
+[WebServer]     - Wiped helix_transitions
+[WebServer]     - Wiped history_import_patient_xref
+[WebServer]     - Wiped history_import_rejects
+[WebServer]     - Wiped hospital_forecasts
+[WebServer]     - Wiped housekeeping_linen_movements
+[WebServer]     - Wiped housekeeping_tasks
+[WebServer]     - Wiped housekeeping_unit_events
+[WebServer]     - Wiped housekeeping_units
+[WebServer]     - Wiped indent_lines
+[WebServer]     - Wiped indents
+[WebServer]     - Wiped infection_cases
+[WebServer]     - Wiped infection_events
+[WebServer]     - Wiped infection_exposure_days
+[WebServer]     - Wiped infection_isolation_records
+[WebServer]     - Wiped infection_requests
+[WebServer]     - Wiped infection_susceptibility
+[WebServer]     - Wiped ingestion_events
+[WebServer]     - Wiped insight_feedback
+[WebServer]     - Wiped invoice_lines
+[WebServer]     - Wiped invoices
+[WebServer]     - Wiped lab_critical_events
+[WebServer]     - Wiped lab_critical_notifications
+[WebServer]     - Wiped lab_exceptions
+[WebServer]     - Wiped lab_order_items
+[WebServer]     - Wiped lab_result_events
+[WebServer]     - Wiped lab_results
+[WebServer]     - Wiped lab_specimen_events
+[WebServer]     - Wiped lab_specimens
+[WebServer]     - Wiped lens_analyses
+[WebServer]     - Wiped med_order_events
+[WebServer]     - Wiped med_order_schedule_times
+[WebServer]     - Wiped med_orders
+[WebServer]     - Wiped medication_administrations
+[WebServer]     - Wiped medication_allergy_overrides
+[WebServer]     - Wiped medication_dose_overrides
+[WebServer]     - Wiped medications
+[WebServer]     - Wiped message_room_fit_flags
+[WebServer]     - Wiped messages
+[WebServer]     - Wiped mortuary_cases
+[WebServer]     - Wiped mortuary_events
+[WebServer]     - Wiped mrd_files
+[WebServer]     - Wiped mrd_release_requests
+[WebServer]     - Wiped nabh_discharge_dispositions
+[WebServer]     - Wiped nabh_incidents
+[WebServer]     - Wiped ndps_register (only where lane = 'non_production'; evidence rows preserved)
+[WebServer]     - Wiped ndps_variances
+[WebServer]     - Wiped observations
+[WebServer]     - Wiped opd_consultation_addenda
+[WebServer]     - Wiped opd_consultations
+[WebServer]     - Wiped opd_visits
+[WebServer]     - Wiped order_events
+[WebServer]     - Wiped order_set_applications
+[WebServer]     - Wiped orders
+[WebServer]     - Wiped patient_allergies
+[WebServer]     - Wiped patient_allergy_assessments
+[WebServer]     - Wiped patient_demographics
+[WebServer]     - Wiped patient_deposits
+[WebServer]     - Wiped patient_duplicate_candidates
+[WebServer]     - Table patient_identity_changes PRESERVED (append-only / tamper-evident)
+[WebServer]     - Wiped patient_match_keys
+[WebServer]     - Wiped patient_movements
+[WebServer]     - Wiped patient_payer_policies
+[WebServer]     - Wiped patient_profiles
+[WebServer]     - Wiped patient_review_marks
+[WebServer]     - Wiped patient_snapshots
+[WebServer]     - Wiped patients
+[WebServer]     - Wiped payment_allocations
+[WebServer]     - Wiped payments
+[WebServer]     - Wiped perioperative_records
+[WebServer]     - Wiped perioperative_records_events
+[WebServer]     - Wiped pharmacy_lot_events
+[WebServer]     - Wiped pharmacy_stock_count_lines
+[WebServer]     - Wiped pharmacy_stock_counts
+[WebServer]     - Wiped pharmacy_transfer_lines
+[WebServer]     - Wiped pharmacy_transfers
+[WebServer]     - Wiped pharmacy_vendor_return_lines
+[WebServer]     - Wiped pharmacy_vendor_returns
+[WebServer]     - Wiped pharmacy_ward_returns
+[WebServer]     - Wiped problem_list
+[WebServer]     - Wiped purchase_order_lines
+[WebServer]     - Wiped purchase_orders
+[WebServer]     - Wiped record_governance_events
+[WebServer]     - Wiped record_legal_holds
+[WebServer]     - Wiped refunds
+[WebServer]     - Wiped result_quarantine
+[WebServer]     - Wiped ris_studies
+[WebServer]     - Wiped ris_studies_events
+[WebServer]     - Wiped risk_scores
+[WebServer]     - Wiped sage_action_events
+[WebServer]     - Wiped sage_actions
+[WebServer]     - Wiped sage_assessment_actions
+[WebServer]     - Wiped sage_assessment_events
+[WebServer]     - Wiped sage_assessments
+[WebServer]     - Wiped sage_conversations
+[WebServer]     - Wiped sage_decision_cache
+[WebServer]     - Wiped sage_handoff_events
+[WebServer]     - Wiped sage_handoffs
+[WebServer]     - Wiped sage_insights
+[WebServer]     - Wiped sage_observations
+[WebServer]     - Wiped sage_provenance_blobs
+[WebServer]     - Wiped sage_provenance_refs
+[WebServer]     - Wiped sage_provenance_turns
+[WebServer]     - Wiped sage_room_memory
+[WebServer]     - Wiped scribe_notes
+[WebServer]     - Wiped shadow_events (only where lane = 'simulator'; evidence rows preserved)
+[WebServer]     - Wiped stock_movements
+[WebServer]     - Wiped surgeries
+[WebServer]     - Wiped surgery_prep_requests
+[WebServer]     - Wiped surgery_team_assignments
+[WebServer]     - Wiped vitals
+[WebServer]     - Wiped world_model_state
+[WebServer]   Re-enabling foreign key constraints...
+[WebServer]   Sweeping logins, price items and import runs the seed did not write...
+[WebServer]     - users: removed 0 row(s) the seed did not write
+[WebServer]     - tariff_rates: removed 0 row(s) the seed did not write
+[WebServer]     - service_items: removed 0 row(s) the seed did not write
+[WebServer]     - roster_import_runs: removed 0 row(s) the seed did not write
+[WebServer] ═══ Wipe Complete! ═══
+[WebServer]
+[WebServer] ═══ Running Clinical Data Seeder ═══
+[WebServer] ═══ Seeding Users ═══
+[WebServer]   + DOC001: Dr. Meera Sharma (doctor, General Medicine)
+[WebServer]   + DOC002: Dr. Arjun Mehta (doctor, Cardiology)
+[WebServer]   + DOC004: Dr. Vikram Rathore (doctor, General Surgery)
+[WebServer]   + anesthetist_1: Dr. Nandini Rao (doctor, Anesthesiology)
+[WebServer]   + anesthetist_2: Dr. Amit Patel (doctor, Anesthesiology)
+[WebServer]   + DOC005: Dr. Sanjay Rao (doctor, Orthopedics)
+[WebServer]   + DOC006: Dr. Anita Desai (doctor, Pulmonology)
+[WebServer]   + DOC007: Dr. Kiran Bhat (doctor, Neurology)
+[WebServer]   + NUR001: Priya Reddy (nurse, General Medicine)
+[WebServer]   + ADM001: Rajesh Kumar (admin, None)
+[WebServer]   + PHA001: Deepa Joshi (pharmacist, None)
+[WebServer]   + P001: Raj Patel (patient, None)
+[WebServer]
+[WebServer] ═══ Admitting 30 Patients ═══
+[WebServer] ═══ Seeding Department Channels ═══
+[WebServer]   + dept-general: General Medicine
+[WebServer]   + dept-cardiology: Cardiology
+[WebServer]   + dept-surgery: General Surgery
+[WebServer]   + dept-ortho: Orthopedics
+[WebServer]   + dept-pulmono: Pulmonology
+[WebServer]   + dept-neuro: Neurology
+[WebServer]   + dept-emergency: Emergency
+[WebServer]   ~ Ananya Kapoor -> PAT-4AE3A4F7 (General Medicine, GM-101)
+[WebServer]   ~ Rajesh Iyer -> PAT-0DF36960 (General Medicine, GM-102)
+[WebServer]   ~ Priya Nair -> PAT-A02BEF08 (General Medicine, GM-103)
+[WebServer]   ! Suresh Reddy -> PAT-7C670F20 (General Medicine, GM-104)
+[WebServer]   ~ Lakshmi Devi -> PAT-3469B5EB (General Medicine, GM-105)
+[WebServer]   ! Vikram Singh -> PAT-F54E7602 (Cardiology, CCU-01)
+[WebServer]   ! Kavitha Menon -> PAT-A4701B4D (Cardiology, CCU-02)
+[WebServer]   ! Deepak Joshi -> PAT-7232D176 (Cardiology, CCU-03)
+[WebServer]   ~ Sunita Agarwal -> PAT-7B331B67 (Cardiology, CCU-04)
+[WebServer]   . Ramesh Gupta -> PAT-D6A8B4D5 (Cardiology, CCU-05)
+[WebServer]   . Fatima Begum -> PAT-47894FEC (General Surgery, SW-101)
+[WebServer]   ~ Mohammed Ali -> PAT-D95A498D (General Surgery, SW-102)
+[WebServer]   ! Arun Krishnan -> PAT-5953A7DE (General Surgery, SW-103)
+[WebServer]   ~ Geeta Sharma -> PAT-3B81F190 (General Surgery, SW-104)
+[WebServer]   ! Harish Patel -> PAT-3C78CBC3 (General Surgery, SW-105)
+[WebServer]   ~ Meena Kumari -> PAT-4E6BD1A6 (Orthopedics, OW-101)
+[WebServer]   ! Ajay Tiwari -> PAT-7C3A31ED (Orthopedics, OW-102)
+[WebServer]   . Radha Venkatesh -> PAT-B4A8975F (Orthopedics, OW-103)
+[WebServer]   ! Siddharth Nair -> PAT-40AAB18D (Orthopedics, OW-104)
+[WebServer]   . Kamala Bai -> PAT-780DE806 (Orthopedics, OW-105)
+[WebServer]   ! Ravi Shankar -> PAT-8A5EA651 (Pulmonology, RCU-01)
+[WebServer]   ! Pooja Malhotra -> PAT-FC185724 (Pulmonology, RCU-02)
+[WebServer]   ~ Ganesh Pillai -> PAT-8CB2C771 (Pulmonology, RCU-03)
+[WebServer]   ! Nandini Das -> PAT-5D67BF89 (Pulmonology, RCU-04)
+[WebServer]   ~ Vinod Kumar -> PAT-F0377773 (Pulmonology, RCU-05)
+[WebServer]   ! Savitha Hegde -> PAT-108615CA (Neurology, NW-101)
+[WebServer]   ! Prakash Shetty -> PAT-3DA07CCD (Neurology, NW-102)
+[WebServer]   ~ Usha Rani -> PAT-8B1AF110 (Neurology, NW-103)
+[WebServer]   ~ Manoj Kulkarni -> PAT-A56BA830 (Neurology, NW-104)
+[WebServer]   ~ Indira Patil -> PAT-8E444B73 (Neurology, NW-105)
+[WebServer]
+[WebServer] ═══ Seeding 24h Vitals History ═══
+[WebServer]   + Ananya Kapoor: 24 records
+[WebServer]   + Rajesh Iyer: 24 records (deteriorating)
+[WebServer]   + Priya Nair: 24 records
+[WebServer]   + Suresh Reddy: 24 records (deteriorating)
+[WebServer]   + Lakshmi Devi: 24 records
+[WebServer]   + Vikram Singh: 24 records
+[WebServer]   + Kavitha Menon: 24 records (deteriorating)
+[WebServer]   + Deepak Joshi: 24 records
+[WebServer]   + Sunita Agarwal: 24 records
+[WebServer]   + Ramesh Gupta: 24 records
+[WebServer]   + Fatima Begum: 24 records
+[WebServer]   + Mohammed Ali: 24 records
+[WebServer]   + Arun Krishnan: 24 records (deteriorating)
+[WebServer]   + Geeta Sharma: 24 records
+[WebServer]   + Harish Patel: 24 records
+[WebServer]   + Meena Kumari: 24 records
+[WebServer]   + Ajay Tiwari: 24 records[WebServer]
+[WebServer]   + Radha Venkatesh: 24 records
+[WebServer]   + Siddharth Nair: 24 records
+[WebServer]   + Kamala Bai: 24 records
+[WebServer]   + Ravi Shankar: 24 records (deteriorating)
+[WebServer]   + Pooja Malhotra: 24 records
+[WebServer]   + Ganesh Pillai: 24 records
+[WebServer]   + Nandini Das: 24 records (deteriorating)
+[WebServer]   + Vinod Kumar: 24 records
+[WebServer]   + Savitha Hegde: 24 records (deteriorating)
+[WebServer]   + Prakash Shetty: 24 records (deteriorating)
+[WebServer]   + Usha Rani: 24 records
+[WebServer]   + Manoj Kulkarni: 24 records
+[WebServer]   + Indira Patil: 24 records
+[WebServer]
+[WebServer] ═══ Computing Risk Scores ═══
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer]   x Ananya Kapoor: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer]   x Rajesh Iyer: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer]   x Priya Nair: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer]   x Suresh Reddy: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer]   x Lakshmi Devi: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer]   x Vikram Singh: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer]   x Kavitha Menon: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer]   x Deepak Joshi: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer]   x Sunita Agarwal: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer]   x Ramesh Gupta: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer]   x Fatima Begum: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer]   x Mohammed Ali: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer]   x Arun Krishnan: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer]   x Geeta Sharma: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer]   x Harish Patel: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer]   x Meena Kumari: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer]   x Ajay Tiwari: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer]   x Radha Venkatesh: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer]   x Siddharth Nair: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer]   x Kamala Bai: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer]   x Ravi Shankar: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer]   x Pooja Malhotra: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer]   x Ganesh Pillai: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer]   x Nandini Das: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer]   x Vinod Kumar: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer]   x Savitha Hegde: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer]   x Prakash Shetty: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer]   x Usha Rani: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer]   x Manoj Kulkarni: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer] risk_for_row was called with scoring switched off; no score was computed. Caller:
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 995, in <module>
+[WebServer]     reset_and_seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/reset_db_and_seed.py", line 376, in reset_and_seed
+[WebServer]     seed()
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/seed_clinical_data.py", line 465, in seed
+[WebServer]     risk = get_patient_risk(pid)
+[WebServer]   File "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/scripts/../services/vigil_service.py", line 1228, in get_patient_risk
+[WebServer]     return risk_for_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
+[WebServer]
+[WebServer]   x Indira Patil: risk_for_row was called with scoring switched off (ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)
+[WebServer]
+[WebServer] ═══ Pricing OPD consultation ═══
+[WebServer]   + OPD-CONSULT: ₹800.00
+[WebServer]
+[WebServer] ═══ Seeding hospital modules ═══
+[WebServer]
+[WebServer] ═══ Billing masters (illustrative prices) ═══
+[WebServer]   + SEED-CONS-FU: ₹500.00 (illustrative)
+[WebServer]   + SEED-BED-DAY: ₹1,500.00 (illustrative)
+[WebServer]   + SEED-NUR-INJ: ₹150.00 (illustrative)
+[WebServer]   + SEED-PROC-DRESS: ₹350.00 (illustrative)
+[WebServer]   + SEED-INV-CBC: ₹300.00 (illustrative)
+[WebServer]   + SEED-INV-RFT: ₹600.00 (illustrative)
+[WebServer]   + SEED-IMG-CXR: ₹450.00 (illustrative)
+[WebServer]   + SEED-OT-MINOR: ₹8,000.00 (illustrative)
+[WebServer]   + SEED-BED-DAY @ CCU: ₹4,500.00 (illustrative)
+[WebServer]   + SEED-BED-DAY @ RCU: ₹4,500.00 (illustrative)
+[WebServer]
+[WebServer] ═══ Payer · TPA, policy, claim mid-lifecycle ═══
+[WebServer]   + payers: SEED-TPA1, SEED-SCHEME
+[WebServer]   + policy #1 for Vikram Singh (₹5,00,000 cover, 10% co-pay)
+[WebServer]   + interim invoice #1 for Vikram Singh: ₹19,850.00
+[WebServer]   + claim #1 for ₹17,865.00: pre-auth approved in part, submitted, payer query open
+[WebServer]
+[WebServer] ═══ Money desks · deposit, discount request, denied claim ═══
+[WebServer]   + deposit of ₹5,000.00 from Vikram Singh
+[WebServer]   + interim invoice #2 for Kavitha Menon: ₹10,900.00
+[WebServer]   + discount of ₹1,000.00 requested for Kavitha Menon
+[WebServer]   + interim invoice #3 for Deepak Joshi: ₹11,050.00
+[WebServer]   + claim #2 for Deepak Joshi: pre-auth denied (waiting period)
+[WebServer]
+[WebServer] ═══ Procurement · vendors, items, PO with partial receipt ═══
+[WebServer]   + vendors: 3
+[WebServer]   + inventory items with reorder points: 8
+[WebServer]   + purchase order #1 → partially_received with a partial receipt
+[WebServer]
+[WebServer] ═══ Housekeeping · bed register for every ward ═══
+[WebServer]   + housekeeping units registered: 72 across 6 ward(s)
+[WebServer]   + cleaning request open on CCU-06 (HKTA8882C1CA523)
+[WebServer]
+[WebServer] ═══ Workforce · shifts, staff, published roster ═══
+[WebServer]   + shift types in use: 3; employees: 8
+[WebServer]   + roster lines: 13 new
+[WebServer]
+[WebServer] ═══ Dietary · diet orders incl. one NPO, meal plan, indent ═══
+[WebServer]   + diet orders: 30 new (one NPO)
+[WebServer]   + meal plan #1 locked for CCU lunch, indent raised
+[WebServer]
+[WebServer] ═══ Biomedical · asset register, one calibration overdue ═══
+[WebServer]   + biomedical assets: 8
+[WebServer]   + schedules: 16 (calibration OVERDUE on SEED-MON-01)
+[WebServer]
+[WebServer] ═══ ABDM · ABHA identity, care context, granted consent ═══
+[WebServer]   + ABHA identity #1 recorded and verified for Vikram Singh
+[WebServer]   + care context SEED-CC-PAT-F54E7602 linked
+[WebServer]   + consent #1 requested and granted
+[WebServer]
+[WebServer] ==================================================
+[WebServer]   Users:    12
+[WebServer]   Patients: 30 new, 0 skipped
+[WebServer]   Channels: 37
+[WebServer]   Meds:     99
+[WebServer]   Vitals:   720
+[WebServer]   Risk:     0
+[WebServer] ==================================================
+[WebServer] ═══ Seeding Complete! ═══
+[WebServer]
+[WebServer] ═══ Seeding Helix Pharmacy Catalog ═══
+[WebServer] ═══ Connecting to DB for Helix Seeding: /var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/demo.db ═══
+[WebServer]   Cleared old Helix inventory and its stock ledger.
+[WebServer]   Upserted 15 drugs into helix_medication_master.
+[WebServer]   Opened 15 lots through the stock ledger.
+[WebServer] ═══ Helix Seeding Complete! ═══
+[WebServer]
+[WebServer] ═══ Helix Seeding Complete! ═══
+[WebServer]
+[WebServer] ═══ Randomizing Admission Dates (rolling: last 3 days) ═══
+[WebServer] ═══ Date Randomization Complete! ═══
+[WebServer] ═══ Clipping vitals at the admission ═══
+[WebServer]   Dropped 170 readings that preceded their admission on 15 of 30 charts
+[WebServer] ═══ Linking patient login P001 → admitted patient ═══
+[WebServer]   Linked patient login P001 → patient PAT-0DF36960 (Rajesh Iyer), account renamed to match
+[WebServer] ═══ Backfilling labs / progress notes / surgeries ═══
+[WebServer]   Backfilled 80 labs, 52 notes, 4 surgeries across 30 patients
+[WebServer] ═══ Seeding patient allergies (the interlock needs something to catch) ═══
+[WebServer]   Seeded 3 patient allergy record(s)
+[WebServer] ═══ Seeding pharmacy orders and the AI medication verify queue ═══
+[WebServer]   Seeded 2 AI medication(s) awaiting verification and 3 ward Helix order(s)
+[WebServer] ═══ Re-sealing audit hash chain ═══
+[WebServer] Rows: 28 | currently broken links: 0
+[WebServer] Re-sealed 28 rows. Chain is now internally consistent.
+[WebServer] E2E demo data: /var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1; serving http://127.0.0.1:18000
+[WebServer] 2026-10-19 23:55:41,356 INFO orb.auth: Password hash posture: no legacy SHA-256 hashes remain.
+[WebServer] 2026-10-19 23:55:43,038 INFO orb.pulse.season: Seasonal calendar loaded from /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/site_config/seasonal_calendar.json: 9 zone(s), 56 entries, status draft
+[WebServer] 2026-10-19 23:55:43,120 INFO orb.order_sets: Order sets: loaded 5 set(s) from /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/site_config/order_sets.json (fingerprint dfa46417263f6c93)
+[WebServer] 2026-10-19 23:55:44,586 INFO orb: Serving built SPA from /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/dist (single-origin deploy)
+[WebServer] 2026-10-19 23:55:44,588 INFO orb.host_gate: Host check: any IP address, and the names localhost, samuels-macbook-pro, samuels-macbook-pro.local. ORB_ALLOWED_HOSTS adds more.
+[WebServer] INFO:     Started server process [2679]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] 2026-10-19 23:55:44,589 INFO orb: ═══ Orb Hospital OS — Starting (profile=dev) ═══
+[WebServer] 2026-10-19 23:55:44,589 INFO orb: Clinical switches: scoring off (ORB_SCORING_ENABLED), sepsis bundle autostart off (ORB_SEPSIS_AUTOSTART), models on (ORB_MODELS_ENABLED)
+[WebServer] 2026-10-19 23:55:44,592 INFO orb.db_backend: Database backend: sqlite (pool=on)
+[WebServer] 2026-10-19 23:55:44,671 INFO orb.forecast: Ward capacity: 6 ward(s) x 12 beds = 72 (CCU, GM-1, NW-1, OW-1, RCU, SW-1)
+[WebServer] 2026-10-19 23:55:44,688 INFO services.event_bus: [EventBus] Registered subscription: on_critical_vigil_alert (services.nervous_system_triggers.on_critical_vigil_alert) for topic 'vigil.alert.critical'
+[WebServer] 2026-10-19 23:55:44,688 INFO services.event_bus: [EventBus] Registered subscription: on_scribe_note_signed (services.nervous_system_triggers.on_scribe_note_signed) for topic 'scribe.note.signed'
+[WebServer] 2026-10-19 23:55:44,688 INFO services.event_bus: [EventBus] Registered subscription: on_relay_voice_prewarm (services.nervous_system_triggers.on_relay_voice_prewarm) for topic 'relay.intent.voice_prewarm'
+[WebServer] 2026-10-19 23:55:44,688 INFO services.nervous_system_triggers: [EventBus] Registered all nervous system triggers successfully.
+[WebServer] 2026-10-19 23:55:44,691 INFO services.event_bus: [EventBus] Registered subscription: on_event (services.sage_narrator_service.WardNarrator.on_event) for topic 'vigil.alert.*'
+[WebServer] 2026-10-19 23:55:44,691 INFO services.event_bus: [EventBus] Registered subscription: on_event (services.sage_narrator_service.WardNarrator.on_event) for topic 'scribe.note.signed'
+[WebServer] 2026-10-19 23:55:44,691 INFO services.event_bus: [EventBus] Registered subscription: on_event (services.sage_narrator_service.WardNarrator.on_event) for topic 'bridge.emergency.flag'
+[WebServer] 2026-10-19 23:55:44,691 INFO orb.sage_narrator: [WardNarrator] subscribed to vigil.alert.*, scribe.note.signed, bridge.emergency.flag
+[WebServer] 2026-10-19 23:55:44,691 INFO services.event_bus: [EventBus] delivery replay poller started (every 45s)
+[WebServer] 2026-10-19 23:55:44,694 INFO orb: Sage mutation gate: 18 formulary terms registered
+[WebServer] 2026-10-19 23:55:44,705 INFO orb.interaction_db: Seeded 55 builtin drug interactions
+[WebServer] 2026-10-19 23:55:44,705 INFO orb: Shadow sweeper started (every 300s)
+[WebServer] 2026-10-19 23:55:44,715 INFO orb: Escalation sweep started (every 30s)
+[WebServer] 2026-10-19 23:55:44,719 INFO orb.watchdog: Loop watchdog armed — stall threshold 30s (python lane), dead-man 60s (GIL-free lane, re-armed every 15s). Evidence dir: /var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/watchdog
+[WebServer] 2026-10-19 23:55:44,724 INFO orb: [Mode: ingestion] Simulation bots disabled
+[WebServer] 2026-10-19 23:55:44,747 INFO orb.vitals_source: Vitals timestamps with no UTC offset will be read as IST (set ORB_HL7_DEFAULT_TZ to change). This hospital is UTC+05:30; reading an offset-less device timestamp as UTC would stamp every reading 5.5 h in the future.
+[WebServer] 2026-10-19 23:55:44,747 INFO orb: Vitals sources started: manual
+[WebServer] 2026-10-19 23:55:44,747 INFO orb: Ingestion endpoints active
+[WebServer] 2026-10-19 23:55:44,747 INFO orb: Mode: INGESTION
+[WebServer] 2026-10-19 23:55:44,747 INFO orb: API server ready on http://127.0.0.1:18000
+[WebServer] 2026-10-19 23:55:44,757 INFO services.llm_queue_service: [LLMQueue] P5 request queued (bg_active=0, queued=1)
+[WebServer] 2026-10-19 23:55:44,757 INFO services.llm_queue_service: [LLMQueue] P5 acquired BACKGROUND lane (bg=1, interactive=0, gate_refs=1)
+[WebServer]   ! Initializing clinical knowledge base (chunking & embedding...)
+[WebServer]   ! Error populating knowledge base: Cannot find an appropriate cached snapshot folder for the specified revision on the local disk and outgoing traffic has been disabled. To enable repo look-ups and downloads online, pass 'local_files_only=False' as input.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:18000 (Press CTRL+C to quit)
+[WebServer] 2026-10-19 23:55:44,799 INFO services.llm_queue_service: [LLMQueue] Released background lane after 41ms (bg=0, interactive=0, queued=0, gate_refs=0)
+[WebServer] 2026-10-19 23:55:44,799 WARNING orb: LLM warmup failed (non-fatal): All connection attempts failed
+[WebServer] 2026-10-19 23:55:44,815 INFO orb.vigil: [Vigil-CfC] No checkpoints — NEWS2-only (CfC overlay disabled).
+[WebServer] 2026-10-19 23:55:44,818 WARNING orb.forecast: No checkpoint at /private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb_e2e_uqlcjfw1/server/models/forecast_checkpoint.pt — using UNTRAINED model. Predictions will be flagged model_trained=false; run scripts/train_forecast.py once real data is available.
+[WebServer] 2026-10-19 23:55:44,845 INFO orb: CfC + forecast checkpoints pre-loaded
+[WebServer] INFO:     127.0.0.1:63891 - "GET /api/ready HTTP/1.1" 200 OK
+
+Running 2 tests using 1 worker
+
+(node:2977) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] INFO:     127.0.0.1:63894 - "GET / HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63894 - "GET /assets/index-COhrOhOA.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/rolldown-runtime-QTnfLwEv.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63896 - "GET /assets/vendor-i18n-BTHtdv-r.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63897 - "GET /assets/vendor-react-BuRA0kjX.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63899 - "GET /assets/client-D55Yetjm.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63898 - "GET /assets/vendor-socket-CbQsWyoH.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63896 - "GET /assets/vendor-markdown-D9xv0GKk.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63899 - "GET /registerSW.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63898 - "GET /assets/datetime-CRgqoLT1.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/index-CWQ1fhu7.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /sw.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /workbox-c44686f0.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /registerSW.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /pwa-maskable-512.png HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/inter-latin-wght-normal-Dx4kXJAl.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63896 - "GET /assets/jetbrains-mono-latin-wght-normal-B9CIFXIH.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63897 - "GET /pwa-512.png HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /pwa-192.png HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63896 - "GET /api/auth/device HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /index.html HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /icons.svg HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /favicon.svg HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /apple-touch-icon.png HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/writeGuard-BZxghisM.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/useVisiblePolling-DfZRBOaq.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/usePrintOnce-CyJLiV2l.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/useLocalOperations-CLdgsqWJ.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/useDataChanged-DJFxKPKv.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/specimens-Dx7ATRWi.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/shadowOutcome-CCRmem6q.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/roundQueue-BGmhvCE3.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/returns-BTRmS-HS.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/pharmacy-KgELmnCg.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/pharmacy-ENSOAKNI.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/pcmCapture.worklet-DHdzjtv_.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/payments-BvWwb-xx.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/opd-CNxB_vON.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/opd-BSo0oQCX.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/nurse-Bv7teWa4.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/money-hWCKG58I.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/medorders-DfRM2Ew4.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/medicationRouting-Bwqktjn4.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/master-C6rRv6RA.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/localOperationsUi-BS1IZDDo.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/localOperationsUi-0k31of3g.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/lab-620zTqS_.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/jetbrains-mono-vietnamese-wght-normal-Bt-aOZkq.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/jetbrains-mono-latin-ext-wght-normal-DBQx-q_a.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/jetbrains-mono-greek-wght-normal-Bw9x6K1M.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/jetbrains-mono-cyrillic-wght-normal-D73BlboJ.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/inter-vietnamese-wght-normal-CBcvBZtf.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/inter-latin-ext-wght-normal-DO1Apj_S.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/inter-greek-wght-normal-CkhJZR-_.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/inter-greek-ext-wght-normal-DlzME5K_.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/inter-cyrillic-wght-normal-DqGufNeO.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/inter-cyrillic-ext-wght-normal-BOeWTOD4.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/insightTime-CGhfOzFQ.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/housekeeping-BbPEzeKP.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/fraunces-vietnamese-wght-normal-CnvboYUG.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/fraunces-latin-wght-normal-ukD16Tqj.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/fraunces-latin-ext-wght-normal-Ca2vKHc0.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/endStay-Tj5NZiEl.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/endStay-COhuzWeE.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/domainTransport-DiBVtnUi.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/demographics-p3_gM7kx.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/code128-Z8FfcxNT.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/billing-Di4i26x7.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/WorkforcePanel-DrUT9XX7.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/WorkforcePanel-DDNKKpTe.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/WardObservationsPanel-CjboPFNK.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/WardObservationsPanel-0gu1Y9jA.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/VoidObservationButton-CVPB98t9.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/VoidObservationButton-CDOdHv7h.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/VigilPanel-Y3kc8tPy.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/VigilPanel-BGhOQER0.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/SurgicalSuitePanel-Ci2ESvNi.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/SurgicalSuitePanel-BQd-cTkK.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/SizedChart--0E9AL9u.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/ScribePanel-vYPuLseR.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/ScribePanel-BzLgjArN.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/SamplesSheet-DZ3pKKI6.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/SamplesSheet-BaTtaGlX.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/SagePanel-uxGbWhDU.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/SagePanel-DAo0HapY.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/SafetyAlertModal-DtXiguG3.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/SafetyAlertModal-DfwcBOlJ.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/RoundPanel-OvC4ugej.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/RoundPanel-DE8nIZNf.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/RevenueIntegrityPanel-dFCoMiFD.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/RevenueIntegrityPanel-DpsxFedy.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/ReportingPanel-DoU9qHrg.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/ReportingFinance-DPkLJ1Fw.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/ReportingFinance-CcFrm-eh.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/RelayPanel-CFV2WQiS.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/RelayPanel-C5uPFPSj.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/RecordGovernancePanel-Bbg33Uce.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/RecordGovernancePanel-BJj_iUzK.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/RadiologyPanel-BxjJVXrG.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/RadiationSafetyPanel-CtW4QDfb.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/QuarantineQueue-UpnwkPGL.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/QuarantineQueue-BnzzAONg.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/ProvenanceChip-SxECQPoQ.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63895 - "GET /assets/ProvenanceChip-NnqnbYti.js HTTP/1.1" 200 OK
+  ✓  1 [chromium] › e2e/08-live-audio.spec.ts:5:50 › built AudioWorklet captures PCM/VAD without speaker echo (silence) (2.7s)
+[WebServer] 2026-10-19 23:55:49,281 CRITICAL orb.bootstrap: SHIPPED DEFAULT CREDENTIALS FOUND: ADM001, DOC001, DOC002, DOC004, DOC005, DOC006, DOC007, NUR001, PHA001, anesthetist_1, anesthetist_2 (profile=dev, enforcement=off). This appliance must NOT be handed to a hospital in this state.
+[WebServer] 2026-10-19 23:55:49,281 WARNING orb.bootstrap: No administrator on this appliance has enrolled a TOTP factor. A single stolen password is full admin access to every chart. Enrol: server/.venv/bin/python server/scripts/create_admin.py --enroll-mfa --id <ID>
+[WebServer] INFO:     127.0.0.1:63903 - "GET / HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63903 - "GET /assets/index-COhrOhOA.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63907 - "GET /assets/vendor-socket-CbQsWyoH.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/rolldown-runtime-QTnfLwEv.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /assets/vendor-i18n-BTHtdv-r.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63906 - "GET /assets/vendor-react-BuRA0kjX.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63908 - "GET /assets/client-D55Yetjm.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /assets/index-CWQ1fhu7.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/vendor-markdown-D9xv0GKk.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63908 - "GET /assets/datetime-CRgqoLT1.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63907 - "GET /registerSW.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /sw.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /workbox-c44686f0.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /registerSW.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /pwa-maskable-512.png HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /pwa-512.png HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/jetbrains-mono-latin-wght-normal-B9CIFXIH.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63907 - "GET /assets/inter-latin-wght-normal-Dx4kXJAl.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /pwa-192.png HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63908 - "GET /api/auth/device HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /index.html HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /icons.svg HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /favicon.svg HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /apple-touch-icon.png HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /assets/writeGuard-BZxghisM.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /assets/useVisiblePolling-DfZRBOaq.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /assets/usePrintOnce-CyJLiV2l.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /assets/useLocalOperations-CLdgsqWJ.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /assets/useDataChanged-DJFxKPKv.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /assets/specimens-Dx7ATRWi.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63905 - "GET /assets/shadowOutcome-CCRmem6q.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/pcmCapture.worklet-DHdzjtv_.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/roundQueue-BGmhvCE3.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/returns-BTRmS-HS.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/pharmacy-KgELmnCg.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/pharmacy-ENSOAKNI.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/payments-BvWwb-xx.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/opd-CNxB_vON.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/opd-BSo0oQCX.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/nurse-Bv7teWa4.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/money-hWCKG58I.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/medorders-DfRM2Ew4.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/medicationRouting-Bwqktjn4.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/master-C6rRv6RA.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/localOperationsUi-BS1IZDDo.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/localOperationsUi-0k31of3g.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/lab-620zTqS_.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/jetbrains-mono-vietnamese-wght-normal-Bt-aOZkq.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/jetbrains-mono-latin-ext-wght-normal-DBQx-q_a.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/jetbrains-mono-greek-wght-normal-Bw9x6K1M.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/jetbrains-mono-cyrillic-wght-normal-D73BlboJ.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/inter-vietnamese-wght-normal-CBcvBZtf.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/inter-latin-ext-wght-normal-DO1Apj_S.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/inter-greek-wght-normal-CkhJZR-_.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/inter-greek-ext-wght-normal-DlzME5K_.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/inter-cyrillic-wght-normal-DqGufNeO.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/inter-cyrillic-ext-wght-normal-BOeWTOD4.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/insightTime-CGhfOzFQ.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/housekeeping-BbPEzeKP.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/fraunces-vietnamese-wght-normal-CnvboYUG.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/fraunces-latin-wght-normal-ukD16Tqj.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/fraunces-latin-ext-wght-normal-Ca2vKHc0.woff2 HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/endStay-Tj5NZiEl.css HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/endStay-COhuzWeE.js HTTP/1.1" 200 OK
+[WebServer] INFO:     127.0.0.1:63904 - "GET /assets/domainTransport-DiBVtnUi.js HTTP/1.1" 200 OK
+  ✓  2 [chromium] › e2e/08-live-audio.spec.ts:5:50 › built AudioWorklet captures PCM/VAD without speaker echo (stop) (874ms)
+[WebServer] INFO:     Shutting down
+[WebServer] INFO:     Waiting for application shutdown.
+[WebServer] 2026-10-19 23:55:50,384 INFO orb: ═══ Orb Hospital OS — Shutdown ═══
+[WebServer] INFO:     Application shutdown complete.
+[WebServer] INFO:     Finished server process [2679]
+
+  2 passed (51.8s)

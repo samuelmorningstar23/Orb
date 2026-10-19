@@ -12,14 +12,17 @@ const orbEnv = loadEnv('development', fileURLToPath(new URL('.', import.meta.url
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Orb has one HTML entry. The default **/*.html scan also traverses local
+  // worktrees and backups, which can exhaust the dev-server heap on an appliance.
+  optimizeDeps: { entries: ['index.html'] },
   // Belt and braces for the no-console lint rule: any console.log/info/debug
   // that slips into app code is dropped from the production bundle by the
   // minifier, so a clinical browser never prints them. warn and error stay.
-  esbuild: {
-    pure: ['console.log', 'console.info', 'console.debug'],
-  },
   build: {
-    rollupOptions: {
+    rolldownOptions: {
+      treeshake: {
+        manualPureFunctions: ['console.log', 'console.info', 'console.debug'],
+      },
       output: {
         // Split the big, rarely-changing vendor libraries into their own
         // long-cached chunks so an app-code change doesn't re-download them,
@@ -77,7 +80,15 @@ export default defineConfig({
     watch: {
       // The visual-audit harness writes screenshots/reports while the app is
       // being driven — watching them causes full page reloads mid-audit.
-      ignored: ['**/tests/visual/out*/**', '**/test-results/**', '**/playwright-report/**'],
+      ignored: [
+        '**/tests/visual/out*/**', '**/test-results/**', '**/playwright-report/**',
+        '**/.claude/**', '**/backups/**', '**/stale-backups/**', '**/_to_delete/**',
+        '**/server/.venv*/**', '**/server/uploads/**', '**/server/downtime_exports/**',
+        // Credentialed evaluation output/vendor trees are gitignored runtime
+        // data, not frontend input. Keep the evaluation harness source watched.
+        '**/server/eval/**/out/**', '**/server/eval/vigil_retro/vendor/**',
+        '**/server/ops/**', '**/docs/archive/**',
+      ],
     },
     proxy: {
       '/api': {

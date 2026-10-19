@@ -13,6 +13,7 @@ from pathlib import Path
 from config import LLM_MODEL, OLLAMA_KEEP_ALIVE
 from database import get_db, db_session
 from services.vital_charting import as_charted
+from services.inference_cache import InferenceCache
 
 logger = logging.getLogger("orb.vigil")
 
@@ -31,6 +32,7 @@ _cfc_models: dict = {}     # outcome -> loaded OrbVigilCfC
 _cfc_meta: dict = {}       # outcome -> {input_dim, feature_order, mean, std, horizons}
 _cfc_device = None
 _cfc_loaded = False
+_cfc_prediction_cache = InferenceCache[dict](max_entries=128)
 
 # Per-outcome checkpoint filenames (legacy single checkpoint maps to 'deterioration').
 _CFC_CHECKPOINTS = {
@@ -61,6 +63,7 @@ def _load_cfc_models() -> bool:
     if _cfc_loaded:
         return len(_cfc_models) > 0
     _cfc_loaded = True
+    _cfc_prediction_cache.clear()
 
     try:
         import torch
@@ -215,9 +218,25 @@ def compute_cfc_risk(patient_id: str) -> dict | None:
             )
             continue
         seq_len = vitals_t.shape[1]
-        with vram_guard(f"Vigil CfC:{outcome}"):
-            with torch.no_grad():
-                traj = model.predict_trajectory(vitals_t, dt_t)
+        # Reuse only identical model state AND freshly assembled full inputs.
+        # A latest-vitals ID or a TTL misses age/history corrections/readmissions.
+        # Tensor versions also invalidate after load_state_dict/in-place updates.
+        cache_key = (
+            patient_id, outcome, model,
+            tuple(p._version for p in model.parameters()),
+            tuple(b._version for b in model.buffers()), repr(meta),
+            str(vitals_t.dtype), tuple(vitals_t.shape),
+            vitals_t.detach().cpu().contiguous().numpy().tobytes(),
+            str(dt_t.dtype), tuple(dt_t.shape),
+            dt_t.detach().cpu().contiguous().numpy().tobytes(),
+        )
+
+        def predict():
+            with vram_guard(f"Vigil CfC:{outcome}"):
+                with torch.no_grad():
+                    return model.predict_trajectory(vitals_t, dt_t)
+
+        traj = _cfc_prediction_cache.get_or_compute(cache_key, predict)
         outcomes_out[outcome] = {
             "risk_by_horizon": traj["risk_by_horizon"],
             "peak_risk": traj["peak_risk"],

@@ -640,8 +640,9 @@ async def get_patient(
     # The CfC overlay runs torch/MPS inference (per outcome) synchronously;
     # offload it so a patient-card open doesn't block the asyncio event loop and
     # stall live telemetry / other requests once checkpoints exist.
-    # TODO (perf, cross-file): also serve the baseline from the precomputed
-    # risk_scores table written by the bot to avoid recomputing CfC per card open.
+    # CfC reuses bounded predictions only after freshly assembling the complete
+    # input sequence and checking model identity/state. Historical risk_scores
+    # do not carry enough provenance to substitute for the row shown here.
     import asyncio as _asyncio
     # Scoring switched off (ORB_SCORING_ENABLED off, or the Orb Ward Record
     # profile): no NEWS2, no band, no response line and no schedule worked out

@@ -218,9 +218,11 @@ async def _run_verification_async(
 
     except Exception as e:
         elapsed = round(time.time() - verify_start, 3)
+        logger.exception("Scribe verification failed", extra={"event": "scribe_verification_failed"})
         failed_payload = {
             "status": VERIFY_FAILED,
-            "error": str(e),
+            "error": "Verification could not be completed. Please retry.",
+            "code": "scribe_verification_failed",
             "started_at": started_at,
             "failed_at": datetime.now(timezone.utc).isoformat(),
             "elapsed_s": elapsed,
@@ -238,12 +240,12 @@ async def _run_verification_async(
             event_category="scribe",
             action_type="verification_failed",
             outcome="failure",
-            summary_message=f"Background verification failed for note {note_id}: {e}",
+            summary_message=f"Background verification failed for note {note_id}",
             actor_user_id=actor_id,
             patient_id=patient_id,
             target_type="scribe_note",
             target_id=str(note_id),
-            metadata={"note_id": note_id, "elapsed_s": elapsed, "error": str(e), "model": SCRIBE["verify"]["model"]},
+            metadata={"note_id": note_id, "elapsed_s": elapsed, "error_type": type(e).__name__, "model": SCRIBE["verify"]["model"]},
         )
 
 
@@ -429,36 +431,43 @@ async def transcribe_chunk(
         if db_hints:
             hints = f"{hints}, {db_hints}" if hints else db_hints
 
-    file_name = f"chunk_{uuid.uuid4().hex[:8]}.webm"
+    file_name = f"chunk_{uuid.uuid4().hex}.webm"
     file_path = os.path.join(str(UPLOAD_DIR), file_name)
 
-    content = await audio.read()
+    content = await audio.read(MAX_AUDIO_BYTES + 1)
     if len(content) < 100:
         # Too small to transcribe (silence or noise)
         return {"text": "", "chunk_index": chunk_index}
     if len(content) > MAX_AUDIO_BYTES:
-        return {"text": "", "chunk_index": chunk_index, "error": "chunk too large"}
+        raise HTTPException(
+            status_code=413,
+            detail=f"Audio exceeds maximum size of {MAX_AUDIO_BYTES // (1024 * 1024)} MB.",
+        )
 
     # Encrypt the PHI audio chunk at rest too (0o600), consistent with /transcribe
     # — even though the chunk is deleted immediately, a crash mid-transcription
     # must not orphan cleartext PHI in uploads/. ASR reads via a decrypted temp.
     from services.crypto_service import write_encrypted, materialize_plaintext
-    write_encrypted(file_path, content)
 
     try:
         def _run_chunk_asr():
-            with materialize_plaintext(file_path) as read_path:
-                return transcribe_audio(read_path, apply_correction=False, hints=hints)
+            # Own the entire file lifetime on the worker. Cancelling the await
+            # does not stop its thread: cleanup on the event loop could run
+            # before a still-writing worker publishes the file, orphaning PHI.
+            try:
+                write_encrypted(file_path, content)
+                with materialize_plaintext(file_path) as read_path:
+                    return transcribe_audio(read_path, apply_correction=False, hints=hints)
+            finally:
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
         text = await asyncio.to_thread(_run_chunk_asr)
         return {"text": text.strip(), "chunk_index": chunk_index}
-    except Exception as e:
-        return {"text": "", "chunk_index": chunk_index, "error": str(e)}
-    finally:
-        # Clean up chunk files immediately
-        try:
-            os.remove(file_path)
-        except OSError:
-            pass
+    except Exception:
+        logger.exception("Scribe audio chunk failed", extra={"event": "scribe_chunk_failed"})
+        raise HTTPException(status_code=500, detail="Chunk transcription failed.") from None
 
 
 # ═══════════════════════════════════════════════════

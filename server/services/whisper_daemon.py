@@ -17,8 +17,6 @@ import sys
 import json
 import time
 import signal
-import tempfile
-import subprocess
 from pathlib import Path
 
 # Add parent dirs to path
@@ -28,6 +26,7 @@ sys.path.insert(0, str(SERVER_DIR))
 from services.asr_model_files import (
     MLX_MODELS_DIR, SpeechModelNotInstalled, force_hub_offline, require_installed,
 )
+from services.audio_conversion import convert_to_wav as _convert_to_wav
 
 # Orb is offline: no Hugging Face lookup from this process, ever. Set before
 # anything imports huggingface_hub, which reads it once at import time.
@@ -46,25 +45,7 @@ _model_name = None
 
 def convert_to_wav(input_path: str) -> str:
     """Convert audio to 16kHz mono WAV using ffmpeg for best Whisper accuracy."""
-    if input_path.endswith(".wav"):
-        return input_path
-    wav_path = tempfile.mktemp(suffix=".wav")
-    try:
-        subprocess.run(
-            [
-                "ffmpeg", "-y", "-i", input_path,
-                "-ar", "16000",      # 16kHz sample rate (Whisper native)
-                "-ac", "1",          # mono
-                "-c:a", "pcm_s16le", # 16-bit PCM
-                wav_path,
-            ],
-            capture_output=True, timeout=30,
-        )
-        if os.path.exists(wav_path) and os.path.getsize(wav_path) > 100:
-            return wav_path
-    except Exception:
-        pass
-    return input_path
+    return _convert_to_wav(input_path, skip_wav=True)
 
 
 def load_model(model_name: str):

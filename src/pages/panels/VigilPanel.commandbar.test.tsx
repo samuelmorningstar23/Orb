@@ -250,7 +250,7 @@ beforeEach(() => {
 afterEach(() => {
   // A chart that failed to load renders an error screen with no bar on it, and
   // every "nothing is coloured" assertion would pass against it.
-  const failed = consoleError.mock.calls.some(c => String(c[0]).includes('Failed to load patient:'))
+  const failed = consoleError.mock.calls.some((c: unknown[]) => String(c[0]).includes('Failed to load patient:'))
   consoleError.mockRestore()
   expect(failed).toBe(false)
 })

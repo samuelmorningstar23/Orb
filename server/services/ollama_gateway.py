@@ -63,7 +63,8 @@ def _url(path: str) -> str:
     # Read at call time, not import time: tests point config.OLLAMA_BASE_URL at
     # a closed port to reproduce a dead daemon.
     import config
-    return f"{config.OLLAMA_BASE_URL}{path}"
+    from offline_policy import local_model_origin
+    return f"{local_model_origin(config.OLLAMA_BASE_URL)}{path}"
 
 
 async def _record(payload: dict, purpose: str, outcome: str, detail: str | None,
