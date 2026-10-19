@@ -449,7 +449,8 @@ def test_ward_pack_route_builds_a_missing_pack_on_request(tmp_path, monkeypatch)
     resp = client.get(f"/api/downtime/{pid}/ward-pack", headers=_auth(doc_a, "doctor"))
     assert resp.status_code == 200, resp.text
     assert _mrn(pid) in resp.text
-    assert os.path.exists(ds._ward_pack_path(tmp_path, ward, "latest"))
+    # Authenticated responses never publish a shared ward artifact.
+    assert not os.path.exists(ds._ward_pack_path(tmp_path, ward, "latest"))
 
 
 def test_ward_pack_route_404s_when_the_ward_has_no_pack_and_nobody_admitted(tmp_path, monkeypatch):

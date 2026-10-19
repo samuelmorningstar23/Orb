@@ -67,12 +67,14 @@ DRILL = REPO_ROOT / "scripts" / "restore-drill.sh"
 VERIFIER = REPO_ROOT / "scripts" / "lib" / "verify_restore.py"
 VENV_PY = REPO_ROOT / "server" / ".venv" / "bin" / "python"
 
+TEST_PYTHON = Path(sys.executable)
+
 TEST_KEY = "standby-test-key-not-the-real-one"
 
 sqlcipher = pytest.importorskip("sqlcipher3", reason="standby restore requires the SQLCipher driver")
 
 pytestmark = pytest.mark.skipif(
-    not SCRIPT.exists() or not VENV_PY.exists(),
+    not SCRIPT.exists(),
     reason="needs scripts/standby-restore.sh and the server venv",
 )
 
@@ -266,6 +268,7 @@ def _make_backup(path: Path, *, key: str = TEST_KEY, rows: int = 4,
 def _run(args, env_extra=None, *, port_free=True):
     """Invoke the script with a hermetic environment."""
     env = dict(os.environ)
+    env["ORB_PYTHON"] = str(TEST_PYTHON)
     env["ORB_DB_ENCRYPTION_KEY"] = TEST_KEY
     if port_free:
         # Point the primary-guard probe at a port nothing is listening on, so the
@@ -501,9 +504,44 @@ def test_media_archive_is_restored_alongside_the_database(standby, tmp_path):
     tar_path = standby["source"] / "orb-backup-20260801-020000-uploads.tar"
     with tarfile.open(tar_path, "w") as tar:
         tar.add(str(uploads_src), arcname="uploads")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("standby_backup_set", REPO_ROOT / "scripts/lib/backup_set.py")
+    backup_set = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(backup_set)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("ORB_DB_ENCRYPTION_KEY", TEST_KEY)
+        backup_set.seal(standby["source"] / "orb-backup-20260801-020000.db", tar_path)
 
     assert _run([], standby["env"]).returncode == 0
     assert (Path(standby["env"]["ORB_UPLOADS_DIR"]) / "scan.enc").exists()
+
+
+def test_unsafe_media_is_refused_before_any_database_or_upload_install(standby, tmp_path):
+    import io
+    import tarfile
+    import importlib.util
+    target = standby["target"]
+    target.write_bytes(b"prior standby generation")
+    uploads = Path(standby["env"]["ORB_UPLOADS_DIR"])
+    uploads.mkdir(parents=True, exist_ok=True)
+    (uploads / "prior.enc").write_bytes(b"prior media")
+    archive = standby["source"] / "orb-backup-20260801-020000-uploads.tar"
+    with tarfile.open(archive, "w") as tar:
+        member = tarfile.TarInfo("outside-upload-tree")
+        member.size = 5
+        tar.addfile(member, io.BytesIO(b"wrong"))
+    spec = importlib.util.spec_from_file_location("standby_bad_media", REPO_ROOT / "scripts/lib/backup_set.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("ORB_DB_ENCRYPTION_KEY", TEST_KEY)
+        module.seal(standby["source"] / "orb-backup-20260801-020000.db", archive)
+    result = _run([], standby["env"])
+    assert result.returncode == 2
+    assert target.read_bytes() == b"prior standby generation"
+    assert (uploads / "prior.enc").read_bytes() == b"prior media"
+    assert not (uploads.parent / "outside-upload-tree").exists()
+
 
 
 def test_missing_media_archive_warns_but_still_restores(standby):

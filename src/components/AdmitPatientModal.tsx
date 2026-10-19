@@ -721,7 +721,7 @@ export default function AdmitPatientModal({ onClose, onSuccess, existing }: Prop
                     <div className="admit-modal__grid">
                       <div className="admit-form-group" style={{ gridColumn: '1 / -1' }}>
                         <label>Full Name <span>*</span></label>
-                        <input type="text" className="admit-input" value={formData.name} onChange={e => handleChange('name', e.target.value)} required autoFocus />
+                        <input type="text" className="admit-input" value={formData.name} onChange={e => handleChange('name', e.target.value)} required data-autofocus />
                         {nameTooShort && <span className="admit-modal__error">Patient name must contain at least two letters.</span>}
                       </div>
                       <div className="admit-form-group">

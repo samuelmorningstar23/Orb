@@ -103,7 +103,7 @@ export function useFocusTrap<T extends HTMLElement>(
     // that already lives inside the container.
     if (!container.contains(document.activeElement)) {
       const focusable = getFocusable()
-      ;(focusable[0] ?? container).focus()
+      ;(container.querySelector<HTMLElement>('[data-autofocus]') ?? focusable[0] ?? container).focus()
     }
 
     const handleKeyDown = (e: KeyboardEvent) => {

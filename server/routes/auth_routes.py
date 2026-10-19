@@ -319,15 +319,15 @@ def consume_totp(user_id: str, secret: str, code: str) -> bool:
         return False
     db = get_db()
     try:
-        row = db.execute("SELECT totp_last_step FROM users WHERE id = ?", (user_id,)).fetchone()
-        last = row["totp_last_step"] if row and row["totp_last_step"] is not None else -1
-        if step <= last:
-            return False  # replay: this step was already consumed
-        db.execute("UPDATE users SET totp_last_step = ? WHERE id = ?", (step, user_id))
+        consumed = db.execute(
+            "UPDATE users SET totp_last_step = ? WHERE id = ? "
+            "AND (totp_last_step IS NULL OR totp_last_step < ?)",
+            (step, user_id, step),
+        ).rowcount == 1
         db.commit()
     finally:
         db.close()
-    return True
+    return consumed
 
 
 # ── MFA enrolment tickets ─────────────────────────────────────────────────────

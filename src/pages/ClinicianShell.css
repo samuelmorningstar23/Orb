@@ -1991,3 +1991,10 @@ button.orb-row:active {
 [data-theme="night"] .orb-list--rows > li + li .orb-row {
   border-top-color: var(--border-glass);
 }
+
+/* Account security remains reachable in the compact top bar. */
+@media (max-width: 768px) {
+  .shell__user-card { display: flex; padding: 0; background: transparent; border: 0; }
+  .shell__user-card .shell__user-avatar, .shell__user-card .shell__user-info { display: none; }
+  .shell__user-security { width: 44px; min-width: 44px; height: 44px; }
+}

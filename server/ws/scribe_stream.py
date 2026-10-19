@@ -201,6 +201,8 @@ async def handle_start_session(sid, data=None):
 @sio.on("scribe:audio_chunk")
 async def handle_audio_chunk(sid, data):
     """Receive a binary audio chunk from the client (PCM16, 16kHz mono)."""
+    if not await _require_authenticated(sid):
+        return
     session = _get_session(sid)
     if not session or not session["is_active"]:
         return
@@ -215,6 +217,8 @@ async def handle_audio_chunk(sid, data):
 @sio.on("scribe:end_utterance")
 async def handle_end_utterance(sid, data=None):
     """Client-side VAD detected end of speech — transcribe accumulated audio."""
+    if not await _require_authenticated(sid):
+        return
     session = _get_session(sid)
     if not session or not session["is_active"]:
         return
@@ -226,6 +230,8 @@ async def handle_end_utterance(sid, data=None):
 @sio.on("scribe:stop_session")
 async def handle_stop_session(sid, data=None):
     """Client ends the streaming session."""
+    if not await _require_authenticated(sid):
+        return
     session = _get_session(sid)
     if session:
         # Process any remaining audio
@@ -236,7 +242,6 @@ async def handle_stop_session(sid, data=None):
         logger.info("[ScribeStream] Session stopped: %s", sid)
 
 
-@sio.on("disconnect")
 async def handle_scribe_disconnect(sid):
     """Clean up session on disconnect."""
     if sid in _sessions:

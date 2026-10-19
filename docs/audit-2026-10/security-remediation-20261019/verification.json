@@ -1,0 +1,121 @@
+{
+  "date": "2026-10-19",
+  "scope": "SEC-01 through SEC-08 and UX-01 through UX-04; local working-tree remediation, no deployment",
+  "results": {
+    "security_restore": {
+      "passed": 185,
+      "skipped": 1,
+      "log": "security-restore-tests.log"
+    },
+    "compatibility": {
+      "passed": 928,
+      "log": "compatibility-tests.log"
+    },
+    "frontend": {
+      "passed": 239,
+      "files": 26,
+      "log": "frontend-tests.log"
+    },
+    "browser": {
+      "passed": 17,
+      "new_responsive_journeys": 6,
+      "viewports": [
+        390,
+        1280,
+        1440
+      ],
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "log": "browser-journeys.log"
+    },
+    "typecheck_build": "passed",
+    "targeted_eslint": "passed",
+    "shell_syntax": "passed",
+    "final_lens_delta": {
+      "passed": 711,
+      "log": "lens-final-delta-tests.log",
+      "scope": "Final registration-cancellation ownership change plus Lens, stream and event-loop discipline checks; overlaps other selections."
+    },
+    "scribe_save_scope_delta": {
+      "passed": 166,
+      "log": "scribe-save-scope-tests.log",
+      "scope": "Correct scope argument on initial Scribe save; authorized save, scope change during generation, background verifier and existing Scribe/media checks."
+    },
+    "selected_commit_smoke": {
+      "passed": 59,
+      "log": "selected-commit-tests.log",
+      "scope": "Security remediation, archive containment and malformed JWT checks on a fresh HEAD export with only selected commit changes overlaid."
+    },
+    "selected_restore_smoke": {
+      "passed": 4,
+      "deselected": 46,
+      "log": "selected-restore-tests.log",
+      "scope": "Fresh HEAD export plus selected commit; end-to-end good restore, authenticated media, invalid-media refusal before installation, and missing-media warning."
+    }
+  },
+  "source_sha256": {
+    "server/auth.py": "2cc690d37ed924e5ad225b06f77ba301b6e2fb3c8e1ab7cabed88a856a944bdf",
+    "server/routes/auth_routes.py": "a4664d8882918025085088087ff3c8f911d65c553f177d324bddbb89f7c22ad0",
+    "server/ws/realtime.py": "6e086f004bce4befe56bc975ef0f0c7e4e569b463ee8e5362c7e3bd92e92d3a9",
+    "server/ws/scribe_stream.py": "26f0bed26b349f560af8954d99931859f59d6308fe6bead00c2df702cdceb7d4",
+    "server/routes/scribe_routes.py": "4b9d71127e3b223690d9c0890734fca0c4f74dde9f2fefb6295fcc1a9c48f46d",
+    "server/services/scribe_service.py": "84be5c283b7195febde148754e490564e598470eca44797fecf57ee51dd30d90",
+    "server/routes/downtime_routes.py": "2d4a053b2a1156a0e60e1e79ab36c511eb17b490624a5fbc992cae9478c0605d",
+    "server/services/downtime_service.py": "48c6609524be2dc6e23d08884dad278b9867bbceea514a86a7f13b8cf140485d",
+    "server/routes/lens_routes.py": "2ee3583ebd1da72ead389fa9e17f5a17ee205d0e9428d78d2b24fd911d287405",
+    "server/services/discharge_service.py": "d2a595d1dfd309dff2167a5d7444b3ecaf24ee29d5badecafef3f0107811ba42",
+    "server/routes/vigil_routes.py": "759705791eca47f8902064bde11873b35fd2134585973d2a7fdd6eb63229122b",
+    "scripts/lib/backup_set.py": "db53240013878e4c6d119f925e0a09de08d7ef734119edc03cf4ba224a6b4365",
+    "scripts/backup.sh": "ab4f4929ce45c2568ce2e5be8a3ec2d00acb36d488361715a88bf5f642ed91a2",
+    "scripts/standby-restore.sh": "4b4094cea7b91d530ebadd2ec86d5e81f784ea0dd0dda5ca7978159a85c26c45",
+    "server/scripts/backup_db.py": "27d441c83fce772cc96abf772ef9c0428041985ad274a813eda94a30aa0f4402",
+    "src/components/AdmitPatientModal.tsx": "4ee661bb15d5007e050d8a8ce7ced45fd5af1d120e89f107c89915897cde3a1e",
+    "src/components/AdmitPatientModal.css": "4de1b23b28a2975972419fc30f29b5da68e7e4be33286520867229a2a0d202da",
+    "src/hooks/useFocusTrap.ts": "c4ab6f43d2f0c0ee632a3f468ffa4391daeb16e2d8ef3fcf914833b5b0362eca",
+    "src/pages/ClinicianShell.css": "8fca1de0822ab24025fdf65e1a26707447a4eb286b4044b5aaa9c9b84812029f",
+    "src/pages/panels/RecordGovernancePanel.css": "8e6ba7b70d8473ef5a8604e7dffeea93bb486afb34310a46824919145454ecee",
+    "server/tests/test_security_remediation.py": "4b22e43acd120eb3882567a334f57e8096c8a254c4b5c3b380b0cfce596f7fb6",
+    "server/tests/test_restore_archive_security.py": "62bab1912433d1c4e22bccea7862dccff39aa98cceb7edf39a9136c621dd2405",
+    "server/tests/test_warm_standby.py": "81df6c3f58d239096a5b9bcbe655437c3d64965c594da801ac40a08a0d0f204f",
+    "server/tests/test_downtime.py": "51958f59a29c9e4ac7f18b12bdb31454863fa208cae1ce58aaa84d4c73715440",
+    "e2e/07-security-ui.spec.ts": "af4d663d7697de8a77437dc6e77bb11fc0e62f30609f5413eecba36ffaddba94"
+  },
+  "screenshots": [
+    "docs/audit-2026-10/security-remediation-20261019/screenshots/07-security-ui-admission-f-22125-radiation-layout-1440-light-chromium/admission.png",
+    "docs/audit-2026-10/security-remediation-20261019/screenshots/07-security-ui-admission-f-22125-radiation-layout-1440-light-chromium/account-security.png",
+    "docs/audit-2026-10/security-remediation-20261019/screenshots/07-security-ui-admission-f-22125-radiation-layout-1440-light-chromium/radiation-safety.png",
+    "docs/audit-2026-10/security-remediation-20261019/screenshots/07-security-ui-admission-f-23b74-d-radiation-layout-390-dark-chromium/admission.png",
+    "docs/audit-2026-10/security-remediation-20261019/screenshots/07-security-ui-admission-f-23b74-d-radiation-layout-390-dark-chromium/account-security.png",
+    "docs/audit-2026-10/security-remediation-20261019/screenshots/07-security-ui-admission-f-23b74-d-radiation-layout-390-dark-chromium/radiation-safety.png",
+    "docs/audit-2026-10/security-remediation-20261019/screenshots/07-security-ui-admission-f-8f4f1--radiation-layout-390-light-chromium/admission.png",
+    "docs/audit-2026-10/security-remediation-20261019/screenshots/07-security-ui-admission-f-8f4f1--radiation-layout-390-light-chromium/account-security.png",
+    "docs/audit-2026-10/security-remediation-20261019/screenshots/07-security-ui-admission-f-8f4f1--radiation-layout-390-light-chromium/radiation-safety.png",
+    "docs/audit-2026-10/security-remediation-20261019/screenshots/07-security-ui-admission-f-913d7-radiation-layout-1280-light-chromium/admission.png",
+    "docs/audit-2026-10/security-remediation-20261019/screenshots/07-security-ui-admission-f-913d7-radiation-layout-1280-light-chromium/account-security.png",
+    "docs/audit-2026-10/security-remediation-20261019/screenshots/07-security-ui-admission-f-913d7-radiation-layout-1280-light-chromium/radiation-safety.png",
+    "docs/audit-2026-10/security-remediation-20261019/screenshots/07-security-ui-admission-f-9d881--radiation-layout-1440-dark-chromium/admission.png",
+    "docs/audit-2026-10/security-remediation-20261019/screenshots/07-security-ui-admission-f-9d881--radiation-layout-1440-dark-chromium/account-security.png",
+    "docs/audit-2026-10/security-remediation-20261019/screenshots/07-security-ui-admission-f-9d881--radiation-layout-1440-dark-chromium/radiation-safety.png",
+    "docs/audit-2026-10/security-remediation-20261019/screenshots/07-security-ui-admission-f-ae824--radiation-layout-1280-dark-chromium/admission.png",
+    "docs/audit-2026-10/security-remediation-20261019/screenshots/07-security-ui-admission-f-ae824--radiation-layout-1280-dark-chromium/account-security.png",
+    "docs/audit-2026-10/security-remediation-20261019/screenshots/07-security-ui-admission-f-ae824--radiation-layout-1280-dark-chromium/radiation-safety.png"
+  ],
+  "limits": [
+    "Selections overlap and are not a combined full-repository coverage count.",
+    "Tests use disposable copied application source, synthetic SQLite/SQLCipher records, private test media and loopback-only servers.",
+    "The full browser run copied source before the final recipient-snapshot refinement; the final socket delta is covered by the security/restore selection and compatibility run. Frontend assets are unchanged.",
+    "The shared application Python environment is preserved. The pinned PyPNG test dependency was installed in a temporary test-only directory.",
+    "No live database, .env, uploads, backups or model weights were opened or migrated; no inference, production deployment or clinical policy change.",
+    "Legacy database-only restoration retains its warning path. A media companion without a valid signed .set.json is rejected before installation.",
+    "Power-loss atomicity across database and media, real-site recovery, and the separately listed source-only assessment concerns are not certified by these checks.",
+    "Source hashes identify the final working tree. Earlier broad runs predate the final Lens cancellation refinement; the 711-check delta validates that final change without claiming another combined full-suite run.",
+    "The commit isolates security/UI hunks and their directly related backup prerequisites from ongoing feature edits. The 59-check exported-tree run verifies this isolated scope. Working-tree compatibility/browser counts retain their original scope."
+  ],
+  "summary_pdf": {
+    "path": "output/pdf/Orb_Work_Summary_2026-10-19.pdf",
+    "pages": 9,
+    "sha256": "0875adcf003775ed879654a9def2df71031206e6eadf50f5ee6dbb164a5b0230"
+  }
+}

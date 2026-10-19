@@ -23,7 +23,7 @@ from urllib.parse import urlsplit
 import config
 from database import db_session, run_db
 from config import CORS_ORIGINS, DEPLOYMENT_PROFILE
-from auth import decode_token, SESSION_COOKIE
+from auth import authenticate_session_token, SESSION_COOKIE
 from permissions import (
     department_scope, has_permission, PATIENT_READ_ALL, REGISTRATION_READ, VITALS_READ,
 )
@@ -133,8 +133,55 @@ def _origin_allowed(origin, environ=None) -> bool:
         return False
 
 
+class AuthorizedSocketServer(socketio.AsyncServer):
+    """Room membership is a subscription, never a durable authorization grant."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.session_principals = {}
+
+    async def _fresh(self, sid):
+        original = self.session_principals.get(sid)
+        if original is None:
+            return None
+        user = await run_db(_authenticate, {"token": original["_socket_token"]})
+        # Scope/role changes discard all old subscriptions. Reconnect derives
+        # new memberships from the current record rather than widening in place.
+        keys = ("id", "role", "department", "facility_id", "token_version")
+        if user is None or any(user.get(k) != original.get(k) for k in keys):
+            self.session_principals.pop(sid, None)
+            await self.disconnect(sid)
+            return None
+        return user
+
+    async def get_session(self, sid, namespace=None):
+        # Event handlers (including live Scribe) cannot act on stale identity.
+        if await self._fresh(sid) is None:
+            return None
+        return await super().get_session(sid, namespace=namespace)
+
+    async def emit(self, event, data=None, to=None, room=None, skip_sid=None,
+                   namespace=None, callback=None, ignore_queue=False):
+        namespace = namespace or "/"
+        # Snapshot recipients before awaits; disconnected peers disappear from
+        # the manager before the eventual broadcast. No auth TTL on PHI delivery.
+        recipients = list(self.manager.get_participants(namespace, to or room))
+        allowed = []
+        for sid, _ in recipients:
+            if await self._fresh(sid) is not None:
+                allowed.append(sid)
+        if not allowed:
+            return
+        # Send to the validated recipient snapshot, not the room. In particular,
+        # a disconnect callback may publish presence while the revoked sid is
+        # still in Socket.IO's pending-disconnect room membership.
+        return await super().emit(event, data, to=allowed, skip_sid=skip_sid,
+                                  namespace=namespace, callback=callback,
+                                  ignore_queue=ignore_queue)
+
+
+
 # Create Socket.IO server
-sio = socketio.AsyncServer(
+sio = AuthorizedSocketServer(
     async_mode="asgi",
     cors_allowed_origins=_origin_allowed,
     logger=False,
@@ -184,57 +231,10 @@ def _authenticate(auth, environ=None) -> dict | None:
     if isinstance(token, str) and token.lower().startswith("bearer "):
         token = token[7:].strip()
     try:
-        payload = decode_token(token)
+        user = authenticate_session_token(token)
     except Exception:
-        # decode_token raises HTTPException on expired/invalid — treat as reject
         return None
-    user_id = payload.get("sub")
-    if not user_id:
-        return None
-    # Discharge-access grants share the signing key but use sub='discharge_access';
-    # they must never be treated as a staff session.
-    if user_id == "discharge_access":
-        return None
-    try:
-        with db_session() as db:
-            row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-            # Bridge is for the admission only (ruling R029): the same verdict
-            # auth.get_current_user applies to every REST request.
-            portal = None
-            if row is not None and row["role"] == "patient":
-                from services.patient_portal_access import portal_access
-                portal = portal_access(db, row["id"])
-    except Exception as e:
-        logger.warning("WS auth DB lookup failed: %s", e)
-        return None
-    if not row:
-        return None
-    if portal is not None and not portal["open"]:
-        return None
-    user = dict(row)
-    # Mirror the REST layer's revocation checks (auth.get_current_user): a socket
-    # must not outlive a logout-everywhere / password-reset / deactivation. Without
-    # these a revoked or deactivated session kept streaming PHI (vitals, relay,
-    # scribe audio) until the 24h JWT expiry.
-    if "is_active" in user and user["is_active"] is not None and not user["is_active"]:
-        return None
-    # Session revocation — mirror auth.get_current_user EXACTLY. It treats an
-    # ABSENT tv claim as 0 (``payload.get("tv", 0)``) and an absent/NULL row
-    # value as 0, then rejects on any mismatch. The previous
-    # ``token_tv is not None and row_tv is not None`` guard SKIPPED the check for
-    # a validly-signed token that simply carried no tv claim, so such a token
-    # could outlive a logout / password-reset / deactivation on the socket until
-    # the 24h JWT expiry — the one revocation the REST layer closes. Real staff
-    # tokens always carry tv (auth.create_token), so treating absent-as-0 rejects
-    # nothing legitimate; a malformed tv fails closed.
-    try:
-        token_tv = int(payload.get("tv", 0))
-    except (TypeError, ValueError):
-        return None
-    row_tv = int(user.get("token_version") or 0)
-    if token_tv != row_tv:
-        return None
-    return user
+    return {**user, "_socket_token": token}
 
 
 # ── The outpatient queue nudge rooms (opd-9b) ────────────────────────────────
@@ -316,6 +316,7 @@ async def connect(sid, environ, auth=None):
     if user is None:
         logger.info("WS connection rejected (unauthenticated): %s", sid)
         return False
+    sio.session_principals[sid] = user
     await sio.save_session(sid, {
         "user_id": user["id"],
         "name": user["name"],
@@ -628,6 +629,11 @@ async def enter_patient(sid, data):
             "WS presence denied: user=%s patient=%s", session["user_id"], patient_id
         )
         return
+    from permissions import enforce_patient_scope
+    try:
+        await run_db(enforce_patient_scope, {**session, "id": session["user_id"]}, patient_id)
+    except Exception:
+        return
     await sio.enter_room(sid, f"patient-presence:{patient_id}")
     _presence.setdefault(patient_id, {})[sid] = {
         "user_id": session["user_id"],
@@ -653,7 +659,10 @@ async def leave_patient(sid, data):
 
 
 @sio.event
-async def disconnect(sid):
+async def disconnect(sid, reason=None):
+    sio.session_principals.pop(sid, None)
+    from ws.scribe_stream import handle_scribe_disconnect
+    await handle_scribe_disconnect(sid)
     logger.info("WS disconnected: %s", sid)
     # Drop this sid from any patient it was viewing and refresh those rosters so a
     # closed tab / dropped connection doesn't leave a ghost presence chip behind.

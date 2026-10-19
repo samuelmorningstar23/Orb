@@ -664,10 +664,14 @@ def generate_qr_code(patient_id: str, summary_url: str) -> str:
     qr.add_data(summary_url)
     qr.make(fit=True)
     
-    img = qr.make_image(fill_color="black", back_color="white")
-    filename = f"qr_{patient_id}_{uuid.uuid4().hex[:6]}.png"
+    img = qr.make_image(image_factory=PyPNGImage, fill_color="black", back_color="white")
+    from io import BytesIO
+    from services.crypto_service import write_encrypted
+    filename = f"qr_{uuid.uuid4().hex}.png"
     qr_path = str(UPLOAD_DIR / filename)
-    img.save(qr_path)
+    encoded = BytesIO()
+    img.save(encoded)
+    write_encrypted(qr_path, encoded.getvalue())
     
     return qr_path
 

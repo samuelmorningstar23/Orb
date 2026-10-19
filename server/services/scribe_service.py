@@ -6,6 +6,7 @@ Pipeline stages:
   3. Drafting     — Structured note generation (SOAP / discharge / handoff)
   4. Verification — Optional transcript-vs-note consistency check
 """
+from fastapi import HTTPException
 import asyncio
 import logging
 import os
@@ -889,6 +890,7 @@ def save_scribe_note(
     supersedes_note_id: Optional[int] = None,
     ai_generated: bool = True,
     db=None,
+    scope_user=None,
 ) -> int:
     """Save a scribe note to the database. New notes default to 'draft' status.
 
@@ -899,6 +901,8 @@ def save_scribe_note(
     structured_note = prune_placeholder_sections(structured_note)
 
     def _insert(conn) -> int:
+        if scope_user is not None:
+            _authorize_patient_write(conn, patient_id, scope_user)
         cursor = conn.execute(
             """INSERT INTO scribe_notes
                (patient_id, author_id, raw_transcript, structured_note, note_format,
@@ -913,7 +917,7 @@ def save_scribe_note(
 
     if db is not None:
         return _insert(db)
-    with db_session() as conn:
+    with db_session(immediate=scope_user is not None) as conn:
         note_id = _insert(conn)
     return note_id
 
@@ -953,7 +957,40 @@ def get_scribe_notes(
 # Note Lifecycle Operations
 # ═══════════════════════════════════════════════════
 
-def update_scribe_note_content(note_id: int, structured_note: str, editor_id: str) -> dict:
+def _authorize_patient_write(db, patient_id, user):
+    from permissions import department_scope, facility_scope, facility_denial, patient_in_scope
+    row = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+    if row is None or not row["is_active"]:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    current = dict(row)
+    dept, facilities = department_scope(current), facility_scope(current)
+    if patient_id and ((facilities is not None and facility_denial(db, patient_id, facilities)[0])
+                       or (dept is not None and not patient_in_scope(db, patient_id, dept))):
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+
+
+def _authorize_note_write(db, note_id: int, user: dict) -> None:
+    """Recheck ownership and current patient access inside the write transaction."""
+    from fastapi import HTTPException
+    from permissions import department_scope, facility_scope, facility_denial, patient_in_scope
+    actor = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+    note = db.execute("SELECT patient_id, author_id FROM scribe_notes WHERE id = ?", (note_id,)).fetchone()
+    if actor is None or not actor["is_active"] or note is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+    actor = dict(actor)
+    dept, facilities = department_scope(actor), facility_scope(actor)
+    pid = note["patient_id"]
+    if pid:
+        if ((facilities is not None and facility_denial(db, pid, facilities)[0])
+                or (dept is not None and not patient_in_scope(db, pid, dept))):
+            raise HTTPException(status_code=404, detail="Note not found")
+    elif dept is not None and note["author_id"] != actor["id"]:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+
+
+def update_scribe_note_content(note_id: int, structured_note: str, editor_id: str, *, scope_user=None) -> dict:
     """Update draft note content. Only allowed when status='draft'.
 
     Returns {"ok": True} or {"error": "reason"}.
@@ -961,7 +998,9 @@ def update_scribe_note_content(note_id: int, structured_note: str, editor_id: st
     from database import db_session
     from datetime import datetime, timezone
     try:
-        with db_session() as db:
+        with db_session(immediate=scope_user is not None) as db:
+            if scope_user is not None:
+                _authorize_note_write(db, note_id, scope_user)
             row = db.execute("SELECT status FROM scribe_notes WHERE id = ?", (note_id,)).fetchone()
             if not row:
                 return {"error": "Note not found"}
@@ -974,6 +1013,8 @@ def update_scribe_note_content(note_id: int, structured_note: str, editor_id: st
                 (structured_note, editor_id, now, note_id),
             )
         return {"ok": True}
+    except HTTPException:
+        raise
     except Exception as e:
         return {"error": str(e)}
 
@@ -981,7 +1022,7 @@ def update_scribe_note_content(note_id: int, structured_note: str, editor_id: st
 # The sign-gate is enforced in the route layer: routes/scribe_routes.py sign_note
 # blocks signing a note whose verification failed (verified=false / unverifiable /
 # high-severity warning) unless the signer passes acknowledge_unverified=true.
-def sign_scribe_note(note_id: int, signer_id: str) -> dict:
+def sign_scribe_note(note_id: int, signer_id: str, *, scope_user=None) -> dict:
     """Sign/finalize a draft note. Transitions draft → signed.
 
     If this note supersedes another signed note, marks the original as superseded.
@@ -990,7 +1031,9 @@ def sign_scribe_note(note_id: int, signer_id: str) -> dict:
     from database import db_session
     from datetime import datetime, timezone
     try:
-        with db_session() as db:
+        with db_session(immediate=scope_user is not None) as db:
+            if scope_user is not None:
+                _authorize_note_write(db, note_id, scope_user)
             row = db.execute(
                 "SELECT status, supersedes_note_id FROM scribe_notes WHERE id = ?", (note_id,)
             ).fetchone()
@@ -1047,11 +1090,13 @@ def sign_scribe_note(note_id: int, signer_id: str) -> dict:
             logger.debug("Event Bus publish failed: %s", bus_err)
 
         return {"ok": True, "superseded_note_id": superseded_id}
+    except HTTPException:
+        raise
     except Exception as e:
         return {"error": str(e)}
 
 
-def record_unverified_ack(note_id: int, signer_id: str, acknowledged_at: str) -> bool:
+def record_unverified_ack(note_id: int, signer_id: str, acknowledged_at: str, *, scope_user=None) -> bool:
     """Record WHO accepted a failed hallucination verdict on this note, and WHEN.
 
     Its own columns, not a key inside verification_json: the verification
@@ -1065,18 +1110,22 @@ def record_unverified_ack(note_id: int, signer_id: str, acknowledged_at: str) ->
     """
     from database import db_session
     try:
-        with db_session() as db:
+        with db_session(immediate=scope_user is not None) as db:
+            if scope_user is not None:
+                _authorize_note_write(db, note_id, scope_user)
             cur = db.execute(
                 "UPDATE scribe_notes SET unverified_ack_by = ?, unverified_ack_at = ? WHERE id = ?",
                 (signer_id, acknowledged_at, note_id),
             )
             return cur.rowcount == 1
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Error recording unverified-sign ack for note %s: %s", note_id, e)
         return False
 
 
-def reject_scribe_note(note_id: int, rejector_id: str, reason: str) -> dict:
+def reject_scribe_note(note_id: int, rejector_id: str, reason: str, *, scope_user=None) -> dict:
     """Reject a draft note. Transitions draft → rejected.
 
     Returns {"ok": True} or {"error": "reason"}.
@@ -1084,7 +1133,9 @@ def reject_scribe_note(note_id: int, rejector_id: str, reason: str) -> dict:
     from database import db_session
     from datetime import datetime, timezone
     try:
-        with db_session() as db:
+        with db_session(immediate=scope_user is not None) as db:
+            if scope_user is not None:
+                _authorize_note_write(db, note_id, scope_user)
             row = db.execute("SELECT status FROM scribe_notes WHERE id = ?", (note_id,)).fetchone()
             if not row:
                 return {"error": "Note not found"}
@@ -1099,6 +1150,8 @@ def reject_scribe_note(note_id: int, rejector_id: str, reason: str) -> dict:
                 (rejector_id, now, reason, note_id),
             )
         return {"ok": True}
+    except HTTPException:
+        raise
     except Exception as e:
         return {"error": str(e)}
 
@@ -1129,7 +1182,7 @@ def _verification_without_ack(verification_json: Optional[str]) -> Optional[str]
     return json.dumps(report)
 
 
-def create_revision_from_signed(original_note_id: int, editor_id: str) -> dict:
+def create_revision_from_signed(original_note_id: int, editor_id: str, *, scope_user=None) -> dict:
     """Create a new draft revision from a signed note.
 
     The original signed note remains signed until the new revision is itself signed.
@@ -1144,7 +1197,9 @@ def create_revision_from_signed(original_note_id: int, editor_id: str) -> dict:
     """
     from database import db_session
     try:
-        with db_session() as db:
+        with db_session(immediate=scope_user is not None) as db:
+            if scope_user is not None:
+                _authorize_note_write(db, original_note_id, scope_user)
             row = db.execute(
                 "SELECT * FROM scribe_notes WHERE id = ?", (original_note_id,)
             ).fetchone()
@@ -1176,10 +1231,12 @@ def create_revision_from_signed(original_note_id: int, editor_id: str) -> dict:
             # NOTE: original remains 'signed' — superseded only when new draft is signed
 
         return {"ok": True, "new_note_id": new_id, "version": new_version}
+    except HTTPException:
+        raise
     except Exception as e:
         return {"error": str(e)}
 
-def update_scribe_note_verification(note_id: int, verification_json: str, pipeline_meta_json: Optional[str] = None) -> bool:
+def update_scribe_note_verification(note_id: int, verification_json: str, pipeline_meta_json: Optional[str] = None, *, scope_user=None) -> bool:
     """Update an existing scribe note with verification results (and optionally pipeline meta).
 
     Uses db_session for safe transaction handling. Includes a state-transition
@@ -1195,7 +1252,9 @@ def update_scribe_note_verification(note_id: int, verification_json: str, pipeli
         except (json.JSONDecodeError, TypeError):
             incoming_status = ""
 
-        with db_session() as db:
+        with db_session(immediate=scope_user is not None) as db:
+            if scope_user is not None:
+                _authorize_note_write(db, note_id, scope_user)
             # Check current state to prevent invalid transitions
             row = db.execute(
                 "SELECT verification_json FROM scribe_notes WHERE id = ?", (note_id,)
@@ -1227,6 +1286,8 @@ def update_scribe_note_verification(note_id: int, verification_json: str, pipeli
                     (verification_json, note_id)
                 )
         return True
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Error updating scribe note verification for note %s: %s", note_id, e)
         return False

@@ -480,3 +480,21 @@ select.admit-input {
   font-size: 0.9375rem;
   text-align: right;
 }
+
+/* Keep form, review summary and actions usable on a ward phone. */
+.admit-modal__header, .admit-modal__footer, .admit-modal__tabs { flex-shrink: 0; }
+.admit-modal__scroll { min-height: 0; }
+.admit-modal__summary { flex-shrink: 0; box-sizing: border-box; }
+@media (max-width: 700px) {
+  .admit-modal-backdrop { padding: 12px; }
+  .admit-modal { height: 94dvh; max-height: 94dvh; }
+  .admit-modal__header, .admit-modal__footer { padding: 16px; }
+  .admit-modal__body { flex-direction: column; overflow-y: auto; }
+  .admit-modal__content { flex: none; overflow: visible; }
+  .admit-modal__scroll { flex: none; overflow: visible; padding: 16px; }
+  .admit-modal__tabs { padding: 0 8px; }
+  .admit-modal__grid { grid-template-columns: minmax(0, 1fr); }
+  .admit-modal__summary { width: 100%; overflow: visible; padding: 16px; border-left: 0; border-top: 1px solid var(--border-subtle); gap: 12px; }
+  .admit-modal__footer { flex-wrap: wrap; gap: 8px; }
+  .admit-modal__footer .admit-btn { padding: 10px 14px; }
+}

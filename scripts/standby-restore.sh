@@ -143,7 +143,7 @@ list_backups() { ls -1t "$SOURCE_DIR"/${PREFIX}*${SUFFIX} 2>/dev/null || true; }
 # ── Preconditions ────────────────────────────────────────────────────────────
 RESULT_STAGE="preconditions"
 
-PYTHON="$REPO_ROOT/server/.venv/bin/python"
+PYTHON="${ORB_PYTHON:-$REPO_ROOT/server/.venv/bin/python}"
 [ -x "$PYTHON" ] || PYTHON="$(command -v python3 || true)"
 [ -n "$PYTHON" ] && [ -x "$PYTHON" ] || die "no usable python interpreter found."
 "$PYTHON" -c 'import sqlcipher3' 2>/dev/null || \
@@ -239,8 +239,13 @@ NEED_KB="$(( (BYTES / 1024) * 2 ))"
 
 CANDIDATE="$SCRATCH/candidate.db"
 log "Verifying a scratch copy (the artefact itself is never opened) ..."
-cp -p "$ABS_TARGET" "$CANDIDATE"
-chmod 600 "$CANDIDATE"
+RESULT_STAGE="media_validate"
+"$PYTHON" "$REPO_ROOT/scripts/lib/backup_set.py" stage --backup "$ABS_TARGET" \
+    --uploads "$UPLOADS_DIR" --stage "$SCRATCH" || die "backup set/media validation failed; NOTHING installed." 2
+RESULT_STAGE="verify"
+if [ ! -d "$SCRATCH/uploads" ]; then
+    warn "no authenticated media companion — images/audio will be MISSING"
+fi
 
 VERIFY_RC=0
 # The checks live in scripts/lib/verify_restore.py, shared with backup.sh and
@@ -279,50 +284,11 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
     exit 0
 fi
 
-# ── Install atomically ───────────────────────────────────────────────────────
+# ── Install the validated pair, with rollback on installation failure ─────────
 RESULT_STAGE="install"
-mkdir -p "$(dirname "$ABS_DB")"
-
-# The staged copy MUST be on the same filesystem as the destination for `mv` to
-# be an atomic rename rather than a copy. Staging in $TMPDIR (a different volume
-# on macOS) would reintroduce the torn-write window this step exists to close.
-STAGED="$ABS_DB.incoming.$$"
-log "Staging verified copy alongside the target ..."
-cp -p "$ABS_TARGET" "$STAGED"
-chmod 600 "$STAGED"
-
-# One generation back. A standby that restores a subtly bad night over the only
-# good one is a standby that made things worse.
-if [ -f "$ABS_DB" ]; then
-    mv -f "$ABS_DB" "$ABS_DB.previous"
-    log "Kept the prior standby database as $(basename "$ABS_DB").previous"
-fi
-mv -f "$STAGED" "$ABS_DB"
-
-# Stale sidecars belong to the database that was here before. Leaving them can
-# make SQLite read a WAL that describes a different file.
-rm -f "$ABS_DB-wal" "$ABS_DB-shm"
-log "Installed $(basename "$ABS_TARGET") -> $ABS_DB"
-
-# ── Uploaded media ───────────────────────────────────────────────────────────
-# orb.db holds "see the chest X-ray"; uploads/ holds the X-ray. A standby with
-# only the database gives a clinician a chart full of references to images that
-# do not exist — a quiet kind of data loss that looks fine until somebody opens
-# a study. The tar's contents are already AES-256-GCM encrypted under
-# ORB_UPLOAD_ENCRYPTION_KEY (a DIFFERENT key from the database — the standby
-# needs BOTH).
-RESULT_STAGE="media"
-MEDIA_TAR="${ABS_TARGET%$SUFFIX}-uploads.tar"
-if [ -f "$MEDIA_TAR" ]; then
-    if tar -xf "$MEDIA_TAR" -C "$(dirname "$UPLOADS_DIR")" 2>/dev/null; then
-        log "Media restored from $(basename "$MEDIA_TAR")"
-    else
-        warn "could not unpack $MEDIA_TAR — DATABASE IS RESTORED, MEDIA IS NOT."
-    fi
-else
-    warn "no matching uploads archive beside the backup — images/audio will be MISSING"
-    warn "  on this standby. Check the primary is running backup.sh (not backup_db.py alone)."
-fi
+"$PYTHON" "$REPO_ROOT/scripts/lib/backup_set.py" install --stage "$SCRATCH" \
+    --database "$ABS_DB" --uploads "$UPLOADS_DIR" || die "restore installation failed; recovery generations retained." 2
+log "Installed verified database and available authenticated media; prior generation retained."
 
 RESULT_STAGE="done"
 write_receipt true "done" "restored" "$ABS_TARGET"

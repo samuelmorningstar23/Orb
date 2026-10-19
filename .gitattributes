@@ -1,0 +1,3 @@
+# Generated PDF artifacts are binary; preserve raw verification log whitespace.
+output/pdf/*.pdf binary
+docs/audit-2026-10/security-remediation-20261019/*.log -whitespace

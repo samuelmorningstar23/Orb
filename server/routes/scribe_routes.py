@@ -7,6 +7,8 @@ import asyncio
 import importlib.util
 import os
 import json
+import logging
+from contextlib import aclosing
 import time
 import uuid
 from typing import Optional
@@ -45,6 +47,7 @@ from config import UPLOAD_DIR, SCRIBE
 from services.model_switch import require_models_on
 
 router = APIRouter(prefix="/api/scribe", tags=["scribe"])
+logger = logging.getLogger("orb.scribe")
 
 # Upload size cap for audio (memory-exhaustion DoS guard; mirrors Lens's image cap).
 MAX_AUDIO_BYTES = 100 * 1024 * 1024  # 100 MB
@@ -484,6 +487,7 @@ async def structure(
     if format_type not in ("soap", "discharge", "handoff"):
         raise HTTPException(status_code=400, detail="Invalid format. Use: soap, discharge, handoff")
 
+    await run_db(enforce_patient_scope, user, patient_id)
     # Capture user context before the generator runs (safe to reference later)
     actor_id = user["id"]
 
@@ -493,11 +497,15 @@ async def structure(
         try:
             # ── Stage 3: Drafting (streaming) ──
             timer.start("draft")
-            async for token in structure_transcript_stream(transcript, format_type,
-                                                           patient_id=patient_id, user_id=actor_id):
-                full_response += token
-                yield f"data: {json.dumps({'content': token})}\n\n"
+            async with aclosing(structure_transcript_stream(
+                transcript, format_type, patient_id=patient_id, user_id=actor_id,
+            )) as tokens:
+                async for token in tokens:
+                    full_response += token
+                    yield f"data: {json.dumps({'content': token})}\n\n"
             timer.stop()
+            if not full_response.strip():
+                raise RuntimeError("Scribe model returned no draft")
 
             # ── Determine verification intent ──
             will_verify = request_verify and SCRIBE["verify"]["enabled"]
@@ -523,6 +531,7 @@ async def structure(
                 audio_path=data.get("audio_path"),
                 verification_json=initial_verification,
                 pipeline_meta_json=json.dumps(meta),
+                scope_user=user,
             )
 
             # ── Send done event immediately ──
@@ -554,8 +563,9 @@ async def structure(
                     )
                     _register_verification_task(note_id, task)
 
-        except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        except Exception:
+            logger.exception("Scribe drafting stream failed", extra={"event": "scribe_stream_failed"})
+            yield f"data: {json.dumps({'error': 'Note drafting failed. Please retry.', 'code': 'scribe_stream_failed', 'terminal': True})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -700,9 +710,7 @@ async def retry_verification(
     if not SCRIBE["verify"]["enabled"]:
         raise HTTPException(status_code=400, detail="Verification is disabled in server config")
 
-    note = await run_db(get_scribe_note_by_id, note_id)   # loads the whole note row
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
+    note = await run_db(_note_in_scope_or_404, note_id, user)
 
     # Guard: only retry from failed or not_requested states
     current_v = note.get("verification_json") or {}
@@ -727,6 +735,7 @@ async def retry_verification(
         update_scribe_note_verification,
         note_id=note_id,
         verification_json=json.dumps({"status": VERIFY_PENDING}),
+        scope_user=user,
     )
 
     # Dispatch background task
@@ -774,11 +783,9 @@ def edit_note(
     if not structured_note:
         raise HTTPException(status_code=400, detail="structured_note is required")
 
-    note = get_scribe_note_by_id(note_id)
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
+    note = _note_in_scope_or_404(note_id, user)
 
-    result = update_scribe_note_content(note_id, structured_note, user["id"])
+    result = update_scribe_note_content(note_id, structured_note, user["id"], scope_user=user)
     if result.get("error"):
         raise HTTPException(status_code=409, detail=result["error"])
 
@@ -840,9 +847,7 @@ def sign_note(
     This prevents a clinician from silently finalizing an AI note that failed the
     hallucination check.
     """
-    note = get_scribe_note_by_id(note_id)
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
+    note = _note_in_scope_or_404(note_id, user)
 
     body = body or {}
     acknowledged = bool(body.get("acknowledge_unverified"))
@@ -872,7 +877,7 @@ def sign_note(
         # erased or inherited. `reasons` goes on the hash chain below, which is
         # where an immutable record of WHY the override was needed belongs.
         if not record_unverified_ack(
-            note_id, user["id"], datetime.now(timezone.utc).isoformat()
+            note_id, user["id"], datetime.now(timezone.utc).isoformat(), scope_user=user
         ):
             raise HTTPException(
                 status_code=500,
@@ -880,7 +885,7 @@ def sign_note(
             )
 
     previous_status = note.get("status", "draft")
-    result = sign_scribe_note(note_id, user["id"])
+    result = sign_scribe_note(note_id, user["id"], scope_user=user)
     if result.get("error"):
         raise HTTPException(status_code=409, detail=result["error"])
 
@@ -942,12 +947,10 @@ def reject_note(
     if not reason:
         raise HTTPException(status_code=400, detail="Rejection reason is required")
 
-    note = get_scribe_note_by_id(note_id)
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
+    note = _note_in_scope_or_404(note_id, user)
 
     previous_status = note.get("status", "draft")
-    result = reject_scribe_note(note_id, user["id"], reason)
+    result = reject_scribe_note(note_id, user["id"], reason, scope_user=user)
     if result.get("error"):
         raise HTTPException(status_code=409, detail=result["error"])
 
@@ -978,11 +981,9 @@ def revise_note(
     user: dict = Depends(require_permission("scribe.edit_draft")),
 ):
     """Create a revised draft from a signed note. Original remains signed until revision is signed."""
-    note = get_scribe_note_by_id(note_id)
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
+    note = _note_in_scope_or_404(note_id, user)
 
-    result = create_revision_from_signed(note_id, user["id"])
+    result = create_revision_from_signed(note_id, user["id"], scope_user=user)
     if result.get("error"):
         raise HTTPException(status_code=409, detail=result["error"])
 

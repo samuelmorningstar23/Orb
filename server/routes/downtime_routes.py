@@ -115,7 +115,7 @@ def ward_pack(patient_id: str,
     anyone it still lacks is listed on its first page. The same artifact lives
     on local disk in downtime_exports/ so it stays retrievable with the app down."""
     try:
-        result = serve_ward_pack(patient_id, created_by=user.get("id", "auto"))
+        result = serve_ward_pack(patient_id, created_by=user.get("id", "auto"), user=user)
     except ValueError:
         raise HTTPException(status_code=404, detail="Patient not found")
     if result["captured"]:

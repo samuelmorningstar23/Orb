@@ -411,11 +411,15 @@ def create_token(
 
 def decode_token(token: str) -> dict:
     try:
+        # Orb supports no critical JWT header extensions. Libraries that
+        # ignore `crit` must not silently accept a policy they do not implement.
+        if jwt.get_unverified_header(token).get("crit"):
+            raise jwt.InvalidTokenError("Unsupported critical header")
         return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    except (jwt.InvalidTokenError, TypeError, ValueError, RecursionError, OverflowError):
+        raise HTTPException(status_code=401, detail="Invalid token") from None
 
 
 def _load_session_context(user_id: str, device_id: Optional[str]):
@@ -462,34 +466,14 @@ def _load_session_context(user_id: str, device_id: Optional[str]):
         return row, device, portal
 
 
-async def get_current_user(request: Request) -> dict:
-    """Dependency: extract and validate current user from the JWT, taken from the
-    Authorization header OR the HttpOnly session cookie."""
-    token, source = _extract_token(request)
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    # CSRF: a browser auto-sends the session cookie, so a cookie-authenticated
-    # state-changing request must additionally carry a valid double-submit token.
-    # Bearer auth (an explicit header a cross-site attacker can't forge) and safe
-    # methods are exempt. Enforced here — the single dependency every session-
-    # protected route passes through — so it never falsely blocks public or
-    # alt-auth endpoints that don't authenticate via the session cookie.
-    if source == "cookie" and request.method in UNSAFE_METHODS and not csrf_token_valid(request):
-        raise HTTPException(status_code=403, detail="CSRF token missing or invalid")
-
+def authenticate_session_token(token: str) -> dict:
+    """Authoritative HTTP/socket policy. Blocking; async callers use run_db."""
     payload = decode_token(token)
     user_id = payload.get("sub")
-    if not user_id:
+    if not user_id or user_id == "discharge_access":
         raise HTTPException(status_code=401, detail="Invalid token payload")
-
-    # Off the loop. This is the single highest-traffic blocking call in the
-    # process — every authenticated request pays it, and since encryption at
-    # rest each page read also costs HMAC-SHA512 + AES, so on the loop it
-    # serialises the whole API behind one SQLite lock.
     device_id = payload.get("did")
-    row, device_row, portal = await run_db(_load_session_context, user_id, device_id)
-
+    row, device_row, portal = _load_session_context(user_id, device_id)
     if not row:
         raise HTTPException(status_code=401, detail="User not found")
 
@@ -533,7 +517,11 @@ async def get_current_user(request: Request) -> dict:
     # previously-issued token for that user without a server-side blocklist.
     token_tv = payload.get("tv", 0)
     current_tv = user.get("token_version") or 0
-    if int(token_tv) != int(current_tv):
+    try:
+        matches = int(token_tv) == int(current_tv)
+    except (ValueError, TypeError):
+        matches = False
+    if not matches:
         raise HTTPException(status_code=401, detail="Session revoked; please log in again")
 
     # A patient's portal closes at the end of their discharge day (ruling R029).
@@ -543,6 +531,25 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail=portal["reason"])
 
     return user
+
+
+async def get_current_user(request: Request) -> dict:
+    """Dependency: extract and validate current user from the JWT, taken from the
+    Authorization header OR the HttpOnly session cookie."""
+    token, source = _extract_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    # CSRF: a browser auto-sends the session cookie, so a cookie-authenticated
+    # state-changing request must additionally carry a valid double-submit token.
+    # Bearer auth (an explicit header a cross-site attacker can't forge) and safe
+    # methods are exempt. Enforced here — the single dependency every session-
+    # protected route passes through — so it never falsely blocks public or
+    # alt-auth endpoints that don't authenticate via the session cookie.
+    if source == "cookie" and request.method in UNSAFE_METHODS and not csrf_token_valid(request):
+        raise HTTPException(status_code=403, detail="CSRF token missing or invalid")
+
+    return await run_db(authenticate_session_token, token)
 
 
 def require_role(*roles: str):

@@ -49,6 +49,7 @@
 #   ORB_BACKUP_RETAIN      (optional) how many to keep (default: 14).
 #   ORB_BACKUP_OFFSITE_DIR (optional) second destination; same as --offsite.
 #   ORB_BACKUP_MIN_BYTES   (optional) sanity floor (default: 1048576 = 1 MiB).
+#   ORB_PYTHON             (optional) absolute interpreter path (venv or CI runtime).
 #   ORB_BACKUP_REQUIRE_NONEMPTY (optional) comma-separated module groups that
 #                          must hold rows, e.g. "billing,payments" — set once a
 #                          module has gone live. See scripts/lib/verify_restore.py.
@@ -65,6 +66,7 @@
 # Exit codes: 0 ok · 1 precondition failed · 2 backup unverifiable (nothing rotated)
 #
 set -euo pipefail
+umask 077  # Archives and directories must be private from their first write.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -97,9 +99,8 @@ count_backups() { list_backups | wc -l | tr -d ' '; }
 
 # <dir>/orb-backup-STAMP.db -> <dir>/orb-backup-STAMP.verified.json
 receipt_for() { printf '%s.verified.json' "${1%$SUFFIX}"; }
-# True when the backup's receipt records a PASS. The verifier writes the JSON
-# itself (json.dumps), so the "ok": true token has one spelling.
-is_verified() { grep -Eq '"ok":[[:space:]]*true' "$(receipt_for "$1")" 2>/dev/null; }
+# True only for a passing receipt bound to this backup's name and size.
+is_verified() { "$PYTHON" -c 'import sys; sys.path.insert(0, sys.argv[1]); from scripts.backup_db import passing_receipt; from pathlib import Path; sys.exit(0 if passing_receipt(Path(sys.argv[2])) else 1)' "$REPO_ROOT/server" "$1"; }
 # Always exits 0 (an `if`, not `&&`): under pipefail a non-zero loop would abort
 # the assignment that counts these, and with it the run.
 list_verified() {
@@ -109,8 +110,10 @@ list_verified() {
 }
 
 # ── Preconditions ────────────────────────────────────────────────────────────
-PYTHON="$REPO_ROOT/server/.venv/bin/python"
-[ -x "$PYTHON" ] || PYTHON="$(command -v python3 || true)"
+PYTHON="${ORB_PYTHON:-$REPO_ROOT/server/.venv/bin/python}"
+if [ -z "${ORB_PYTHON:-}" ] && [ ! -x "$PYTHON" ]; then
+    PYTHON="$(command -v python3 || true)"
+fi
 [ -n "$PYTHON" ] && [ -x "$PYTHON" ] || die "no usable python interpreter found."
 
 # The venv matters: it is the only interpreter with sqlcipher3 installed. A bare
@@ -135,20 +138,25 @@ fi
 mkdir -p "$BACKUP_DIR"
 
 # ── Snapshot (SQLCipher-aware, consistent on a hot WAL database) ──────────────
-BEFORE_COUNT="$(count_backups)"
+# Hold the shared producer lock through verification, media/offsite copy and
+# rotation. CLI and admin producers use this same lock; macOS has no flock CLI.
+export ORB_BACKUP_RETAIN="$RETAIN" ORB_BACKUP_OFFSITE_DIR="$OFFSITE_DIR"
+if [ "${ORB_BACKUP_LOCK_HELD:-}" != "$BACKUP_DIR" ]; then
+    exec "$PYTHON" -c 'import os,sys; sys.path.insert(0,sys.argv[1]); from pathlib import Path; from scripts.backup_db import backup_set_lock; import subprocess
+with backup_set_lock(Path(sys.argv[2])):
+    env=dict(os.environ, ORB_BACKUP_LOCK_HELD=sys.argv[2])
+    raise SystemExit(subprocess.call(["/bin/bash",sys.argv[3],*sys.argv[4:]],env=env))' "$REPO_ROOT/server" "$BACKUP_DIR" "$0" "$@"
+fi
+case "$RETAIN" in ''|*[!0-9]*) die "retain must be a positive integer." ;; esac
+[ "$RETAIN" -ge 1 ] || die "retain must keep at least one verified backup."
 
 log "Snapshotting $DB_PATH -> $BACKUP_DIR ..."
-# --retain-days 0 disables backup_db.py's own pruning: rotation happens HERE,
-# and only after verification below. Two independent pruners would race.
-"$PYTHON" "$REPO_ROOT/server/scripts/backup_db.py" \
-    --db-path "$DB_PATH" --out-dir "$BACKUP_DIR" --retain-days 0 \
-    || die "snapshot failed — nothing written, nothing rotated." 2
-
-NEW_FILE="$(list_backups | head -n1)"
+# Capture THIS producer's path. A parallel writer or a same-second run must
+# never make us verify, remove or copy somebody else's newest file.
+NEW_FILE="$("$PYTHON" "$REPO_ROOT/server/scripts/backup_db.py" \
+    --db-path "$DB_PATH" --out-dir "$BACKUP_DIR" --retain-days 0 --snapshot-only --print-path)" \
+    || die "snapshot failed — nothing rotated." 2
 [ -n "$NEW_FILE" ] && [ -f "$NEW_FILE" ] || die "snapshot reported success but produced no file." 2
-
-AFTER_COUNT="$(count_backups)"
-[ "$AFTER_COUNT" -gt "$BEFORE_COUNT" ] || die "no NEW backup file appeared (found: $NEW_FILE)." 2
 
 # ── Verify BEFORE trusting or rotating ───────────────────────────────────────
 # Size floor first: it is the cheap check that would have caught the zero-byte
@@ -189,7 +197,7 @@ RECEIPT="$(receipt_for "$NEW_FILE")"
 "$PYTHON" "$VERIFIER" --db "$NEW_FILE" --prefix backup --schema-policy warn \
     --receipt "$RECEIPT" --backup-file "$(basename "$NEW_FILE")" \
     || die "verification FAILED: backup is unusable (see $(basename "$RECEIPT")). Nothing rotated." 2
-[ -f "$RECEIPT" ] || printf '[backup][warn] the verifier passed but wrote no receipt; the status page will call this backup unchecked.\n' >&2
+is_verified "$NEW_FILE" || die "verifier did not leave a matching passing receipt — nothing rotated." 2
 
 log "Verified: $(du -h "$NEW_FILE" | awk '{print $1}') encrypted backup with real clinical rows."
 chmod 600 "$NEW_FILE"
@@ -253,21 +261,33 @@ else
     fi
 fi
 
+# Authenticate database/media identity and exact bytes with the escrow key.
+SET_MANIFEST="${NEW_FILE%$SUFFIX}.set.json"
+if [ -n "$MEDIA_FILE" ]; then
+    "$PYTHON" "$REPO_ROOT/scripts/lib/backup_set.py" seal --backup "$NEW_FILE" --media "$MEDIA_FILE"
+else
+    "$PYTHON" "$REPO_ROOT/scripts/lib/backup_set.py" seal --backup "$NEW_FILE"
+fi
+
 # ── Off-box copy ─────────────────────────────────────────────────────────────
 # An on-appliance backup does not survive the appliance. This is the step that
 # turns "we have backups" into "we can come back from a dead Mac Studio".
 if [ -n "$OFFSITE_DIR" ]; then
     if [ -d "$OFFSITE_DIR" ]; then
-        cp -p "$NEW_FILE" "$OFFSITE_DIR/" && chmod 600 "$OFFSITE_DIR/$(basename "$NEW_FILE")"
+        copy_artifact() { "$PYTHON" -c 'import sys; sys.path.insert(0,sys.argv[1]); from pathlib import Path; from scripts.backup_db import copy_artifact; copy_artifact(Path(sys.argv[2]),Path(sys.argv[3]))' "$REPO_ROOT/server" "$1" "$OFFSITE_DIR"; }
+        copy_artifact "$NEW_FILE"
         log "Copied off-box -> $OFFSITE_DIR/$(basename "$NEW_FILE")"
         if [ -n "$MEDIA_FILE" ]; then
-            cp -p "$MEDIA_FILE" "$OFFSITE_DIR/" && chmod 600 "$OFFSITE_DIR/$(basename "$MEDIA_FILE")"
+            copy_artifact "$MEDIA_FILE"
             log "Copied off-box -> $OFFSITE_DIR/$(basename "$MEDIA_FILE")"
         fi
         if [ -n "$PACKS_FILE" ]; then
-            cp -p "$PACKS_FILE" "$OFFSITE_DIR/" && chmod 600 "$OFFSITE_DIR/$(basename "$PACKS_FILE")"
+            copy_artifact "$PACKS_FILE"
             log "Copied off-box -> $OFFSITE_DIR/$(basename "$PACKS_FILE")"
         fi
+        copy_artifact "$SET_MANIFEST"
+        # Publish the verdict last, after every available member copied.
+        copy_artifact "$RECEIPT"
     else
         # Loud, but not fatal: the local verified backup still exists.
         printf '[backup][warn] offsite dir not present (%s) — LOCAL COPY ONLY.\n' "$OFFSITE_DIR" >&2
@@ -277,29 +297,14 @@ else
 fi
 
 # ── Rotation: only now, and only ever among VERIFIED backups ─────────────────
-# NOTE: no `mapfile` here. macOS ships bash 3.2 (last GPLv2 release) and has no
-# mapfile builtin — the previous version used it, so on the Mac Studio appliance
-# this product actually ships on, rotation aborted every single run. Plain
-# newest-first listing with `tail -n +N` works on bash 3.2 and everywhere else.
-#
-# Only backups whose receipt says ok are counted and pruned. Counting every
+# The shared Python rotation works on macOS's bash 3.2 and validates receipts
+# again while holding the producer lock. Only verified sets are counted/pruned.
+# Counting every
 # file let failed snapshots (kept for the status page) fill the window and push
 # the last good backups out. A file with no receipt or a failing one is never
 # pruned here: delete it by hand once a newer verified backup exists.
+"$PYTHON" -c 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from scripts.backup_db import rotate_backups; n=rotate_backups(Path(sys.argv[2]),new_backup=Path(sys.argv[3]),retain_count=int(sys.argv[4])); print("[backup] Rotation: pruned",n,"verified set(s).")' "$REPO_ROOT/server" "$BACKUP_DIR" "$NEW_FILE" "$RETAIN"
 COUNT="$(list_verified | wc -l | tr -d ' ')"
-if [ "$COUNT" -gt "$RETAIN" ]; then
-    log "Rotating: keeping newest $RETAIN of $COUNT verified backup(s)."
-    list_verified | tail -n "+$((RETAIN + 1))" | while IFS= read -r old; do
-        rm -f "$old" && log "  pruned $(basename "$old")"
-        # Drop the matching media archive, ward packs and receipt with its
-        # database. Keeping orphaned media (or, worse, orphaned databases) is
-        # how a restore ends up with images from one night and a chart from
-        # another.
-        rm -f "${old%$SUFFIX}-uploads.tar" "${old%$SUFFIX}-ward-packs.tar.enc" "$(receipt_for "$old")"
-    done
-else
-    log "Rotation: $COUNT verified backup(s) present (<= $RETAIN), nothing to prune."
-fi
 UNVERIFIED="$(( $(count_backups) - COUNT ))"
 if [ "$UNVERIFIED" -gt 0 ]; then
     printf '[backup][warn] %s backup file(s) have no passing receipt and are never rotated; review them with ./scripts/orb.sh restore --list.\n' "$UNVERIFIED" >&2

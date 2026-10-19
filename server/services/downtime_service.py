@@ -1680,7 +1680,7 @@ def read_latest_ward_pack(patient_id: str) -> tuple[str, str | None]:
 
 
 def serve_ward_pack(patient_id: str, created_by: str = "auto",
-                    max_age_s: float | None = None) -> dict:
+                    max_age_s: float | None = None, *, user: dict | None = None) -> dict:
     """The ward pack for this patient's ward, current enough to print.
 
     The file on disk is served as it is only when it is younger than
@@ -1692,6 +1692,33 @@ def serve_ward_pack(patient_id: str, created_by: str = "auto",
     Returns {"ward", "html" (None when there is no pack at all), "rebuilt",
     "captured", "missing"}. Raises ValueError for an unknown patient id.
     """
+    if user is not None:
+        from fastapi import HTTPException
+        from permissions import enforce_patient_scope
+        enforce_patient_scope(user, patient_id)
+        with db_session() as db:
+            anchor = db.execute("SELECT ward FROM patients WHERE id = ?", (patient_id,)).fetchone()
+        if anchor is None:
+            raise ValueError("Patient not found")
+        ward = anchor["ward"] or _UNASSIGNED_WARD
+        rows, escalations = _admitted_for_packs(ward)
+        allowed = []
+        for row in rows:
+            try:
+                enforce_patient_scope(user, row["id"])
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+            else:
+                allowed.append(row)
+        groups, captured = _pack_items(allowed, escalations, created_by,
+                                       _WARD_PACK_MAX_AGE_S if max_age_s is None else max_age_s)
+        items = groups.get(ward, [])
+        # No disk cache shared across users. Existing durable packs stay for
+        # the explicitly offline operator workflow, never this authenticated read.
+        doc = _render_ward_pack(ward, items, _now_iso()) if items else None
+        return {"ward": ward, "html": doc, "rebuilt": bool(items),
+                "captured": captured, "missing": []}
     max_age = _WARD_PACK_MAX_AGE_S if max_age_s is None else max_age_s
     ward, doc = read_latest_ward_pack(patient_id)
     path = _ward_pack_path(fhir_self_export_dir(), ward, "latest")

@@ -1,0 +1,23 @@
+.record-governance { padding: 1.5rem; max-width: 90rem; margin: auto; color: var(--text-primary); }
+.record-governance nav { display: flex; flex-wrap: wrap; gap: .5rem; margin-block: 1rem; }
+.record-governance-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,24rem),1fr)); gap: 2rem; }
+.record-governance label { display: grid; gap: .35rem; margin-block: .8rem; color: var(--text-secondary); }
+.record-governance input,.record-governance select,.record-governance textarea { padding: .65rem; font: inherit; max-width: 100%; min-height: 44px; box-sizing: border-box; color: var(--text-primary); background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.record-governance textarea { min-height: 6rem; }
+.record-governance fieldset { border: 1px solid var(--border-subtle); padding: 1rem; min-width: 0; }
+.record-governance article { overflow-wrap: anywhere; }
+.record-governance button { padding: .55rem .8rem; min-height: 44px; font: inherit; cursor: pointer; color: var(--text-primary); background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.record-governance button:disabled { cursor: default; color: var(--btn-disabled-text); background: var(--btn-disabled-bg); border-color: var(--btn-disabled-border); }
+.record-governance :is(input,select,textarea,button):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.record-governance [role=alert] { color: var(--status-danger-text); }
+
+/* Grid children and native selects must shrink below their intrinsic text width. */
+.record-governance { min-width: 0; box-sizing: border-box; padding-bottom: 7rem; overflow-wrap: anywhere; }
+.record-governance-grid > * { min-width: 0; }
+.record-governance :is(form, label, fieldset) { min-width: 0; }
+.record-governance :is(input, select, textarea) { width: 100%; min-width: 0; }
+.record-governance button { max-width: 100%; overflow-wrap: anywhere; }
+@media (max-width: 768px) {
+  .record-governance { padding: 1rem 1rem 7rem; }
+  .record-governance-grid { grid-template-columns: minmax(0, 1fr); }
+}

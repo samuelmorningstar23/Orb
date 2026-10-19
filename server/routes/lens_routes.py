@@ -1,4 +1,9 @@
 """Orb Lens — Medical Image Analysis Routes"""
+import asyncio
+import anyio
+import logging
+from pathlib import Path
+from contextlib import aclosing
 import json
 import os
 import uuid
@@ -15,6 +20,7 @@ from services.lens_service import (LENS_DISCLAIMER_BANNER, MAX_REVIEWED_TEXT,
                                    get_lens_analyses, save_lens_analysis)
 
 router = APIRouter(prefix="/api/lens", tags=["lens"])
+logger = logging.getLogger("orb.lens")
 
 
 # ── Blocking DB bodies ────────────────────────────────────────────────────────
@@ -187,7 +193,7 @@ async def analyze_image(
     # ── Validate upload: extension allowlist + magic bytes + size cap ──
     # Read the body (FastAPI buffers large uploads to a spooled temp file). Cap
     # the size to prevent memory-exhaustion DoS.
-    content = await image.read()
+    content = await image.read(MAX_IMAGE_BYTES + 1)
     if not content:
         raise HTTPException(status_code=400, detail="Empty upload.")
     if len(content) > MAX_IMAGE_BYTES:
@@ -211,29 +217,6 @@ async def analyze_image(
             detail="Upload content is not a recognized image format.",
         )
 
-    # Use a SERVER-CHOSEN safe extension and a FULL uuid (128 bits, not the old
-    # brute-forceable 32-bit [:8]) so PHI filenames can't be enumerated.
-    filename = f"lens_{uuid.uuid4().hex}{detected_ext}"
-    image_path = str(UPLOAD_DIR / filename)
-
-    # Encrypt PHI image at rest (no-op passthrough if encryption is disabled).
-    from services.crypto_service import write_encrypted, materialize_plaintext
-    write_encrypted(image_path, content)
-
-    # SCOPING LAW — the patient is named in a FORM FIELD (2026-08-14).
-    # A form field is the third spelling of caller-named, and the one no guard
-    # was watching: this route attaches an uploaded PHI image to whatever
-    # patient the multipart body named, pulls that patient's name / age / sex /
-    # diagnosis into the prompt sent to the vision model, and (via the assign
-    # route below) posts the result into their Relay case room. Unscoped, it is
-    # both a write onto another ward's chart and a READ of their demographics
-    # back to the caller. (Since 2026-10-03 the row is saved unfiled whatever
-    # the form says, so the remaining exposure is that demographics read.)
-    #
-    # Blocking, and this is an `async def`, so it goes through run_db. Safe to
-    # call unconditionally — enforce_patient_scope returns immediately on an
-    # empty id, which is the un-attached "analyse this image with no patient"
-    # case this route also serves. 404, never 403.
     await run_db(enforce_patient_scope, user, patient_id)
 
     # Build patient context if provided
@@ -243,37 +226,88 @@ async def analyze_image(
         if patient:
             patient_context = f"Patient: {patient['name']}, Age: {patient['age']}, Sex: {patient['sex']}, Diagnosis: {patient['diagnosis']}"
 
-    async def stream_analysis():
-        full_response = ""
-        # Decrypt to a short-lived temp file the vision model can read by path
-        # (passthrough when encryption is off). Stored image_path stays encrypted.
-        with materialize_plaintext(image_path) as read_path:
-            async for chunk in analyze_image_stream(read_path, clinical_context or None, patient_context,
-                                                    patient_id=patient_id or None, user_id=user["id"]):
-                full_response += chunk
-                yield f"data: {chunk}\n\n"
-        
-        # Save analysis after streaming completes. ALWAYS UNFILED: a named
-        # patient only shapes the prompt. The read reaches a record through the
-        # assign route, with the text a clinician confirmed; saving it here with
-        # the patient filed a raw model draft straight onto the chart.
-        # Off the loop: save_lens_analysis opens its own session.
-        new_id = await run_db(
-            save_lens_analysis,
-            patient_id=None,
-            author_id=user["id"],
-            image_path=image_path,
-            image_type=image_type,
-            clinical_context=clinical_context or None,
-            analysis=full_response,
-        )
-        # Emit the concrete id of the row we just created so the client files the
-        # reviewed findings to THIS analysis (not the global newest one, which a
-        # concurrent analysis by another clinician could race).
-        yield f"data: {json.dumps({'analysis_id': new_id})}\n\n"
-        yield "data: [DONE]\n\n"
 
-    return StreamingResponse(stream_analysis(), media_type="text/event-stream")
+    # Use a SERVER-CHOSEN safe extension and a FULL uuid (128 bits, not the old
+    # brute-forceable 32-bit [:8]) so PHI filenames can't be enumerated.
+    filename = f"lens_{uuid.uuid4().hex}{detected_ext}"
+    image_path = str(UPLOAD_DIR / filename)
+
+    # Keep ownership through thread cancellation: a worker may finish its
+    # atomic publication after the request was cancelled.
+    from services.crypto_service import write_encrypted
+    write_task = asyncio.create_task(asyncio.to_thread(write_encrypted, image_path, content))
+    try:
+        await asyncio.shield(write_task)
+    except asyncio.CancelledError:
+        try:
+            with anyio.CancelScope(shield=True):
+                await write_task
+        finally:
+            Path(image_path).unlink(missing_ok=True)
+        raise
+    except Exception:
+        Path(image_path).unlink(missing_ok=True)
+        logger.exception("Lens image upload failed", extra={"event": "lens_upload_failed"})
+        raise HTTPException(status_code=500, detail="Image upload failed.") from None
+
+    registered = False
+
+    def cleanup_unregistered():
+        if not registered:
+            Path(image_path).unlink(missing_ok=True)
+
+    async def stream_analysis():
+        nonlocal registered
+        full_response = ""
+        try:
+            # The service decrypts and encodes in a worker. JSON token frames
+            # preserve newlines and distinguish model prose from control events.
+            async with aclosing(analyze_image_stream(
+                image_path, clinical_context or None, patient_context,
+                patient_id=patient_id or None, user_id=user["id"],
+            )) as chunks:
+                async for chunk in chunks:
+                    full_response += chunk
+                    yield f"data: {json.dumps({'content': chunk})}\n\n"
+
+            if not full_response.strip():
+                raise RuntimeError("Vision model returned no analysis")
+
+            # Always unfiled: only a completed read may be saved, and only the
+            # separate clinician-review step can file it onto a patient chart.
+            save_task = asyncio.create_task(run_db(
+                save_lens_analysis,
+                patient_id=None,
+                author_id=user["id"],
+                image_path=image_path,
+                image_type=image_type,
+                clinical_context=clinical_context or None,
+                analysis=full_response,
+            ))
+            try:
+                new_id = await asyncio.shield(save_task)
+            except asyncio.CancelledError:
+                # The DB executor keeps running after caller cancellation.
+                # Learn its durable outcome before deciding who owns the file.
+                with anyio.CancelScope(shield=True):
+                    await save_task
+                    registered = True
+                raise
+            registered = True
+            yield f"data: {json.dumps({'analysis_id': new_id})}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception:
+            # HTTP headers have already been sent. A typed terminal event must
+            # fail visibly without exposing paths, prompts or model exceptions.
+            logger.exception("Lens analysis stream failed", extra={"event": "lens_stream_failed"})
+            yield f"data: {json.dumps({'error': 'Image analysis failed. Please retry.', 'code': 'lens_stream_failed', 'terminal': True})}\n\n"
+        finally:
+            cleanup_unregistered()
+
+    # Also clean a response whose body iterator was never entered.
+    from starlette.background import BackgroundTask
+    return StreamingResponse(stream_analysis(), media_type="text/event-stream",
+                             background=BackgroundTask(cleanup_unregistered))
 
 
 @router.get("/analyses")

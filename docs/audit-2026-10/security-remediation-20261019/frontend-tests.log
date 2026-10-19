@@ -1,0 +1,9 @@
+
+ RUN  v4.1.11 /Users/samuelmorningstar/Documents/Projects/Orb
+
+
+ Test Files  26 passed (26)
+      Tests  239 passed (239)
+   Start at  23:13:08
+   Duration  8.13s (transform 7.83s, setup 2.20s, import 10.12s, tests 30.23s, environment 35.69s)
+

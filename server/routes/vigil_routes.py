@@ -4,7 +4,7 @@ import asyncio
 import sqlite3
 from db_backend import DBIntegrityError
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from auth import get_current_user
 from permissions import (
@@ -1131,7 +1131,13 @@ async def get_qr_code(
     summary = await run_db(_load_qr_path, patient_id)
     if not summary or not summary["qr_code_path"]:
         raise HTTPException(status_code=404, detail="QR code not found")
-    return FileResponse(summary["qr_code_path"], media_type="image/png")
+    from services.crypto_service import read_decrypted
+    from fastapi.responses import Response
+    try:
+        content = await run_db(read_decrypted, summary["qr_code_path"])
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="QR code not found") from None
+    return Response(content, media_type="image/png", headers={"Cache-Control": "no-store"})
 
 
 # The ghost door, retired (opd-1 part g, also adt-5's legacy-route item).
