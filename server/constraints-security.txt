@@ -1,0 +1,7 @@
+# Security pins for resolved HTTP dependencies. Constraints do not install or
+# activate optional clients; requirements-dev remains the slim runtime.
+# Starlette is coordinated with FastAPI>=0.133.0 (Starlette 1.x support).
+starlette==1.3.1
+# Requests and optional aiohttp/yarl clients bring these in when enabled.
+urllib3==2.8.0
+multidict==6.9.1

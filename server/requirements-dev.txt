@@ -1,33 +1,33 @@
 # Orb — slim dependency set for running the automated test suite (CI + local).
 #
-# Why a separate file: requirements.txt pulls Mac-/GPU-specific, slow-to-build
-# packages that the test suite does NOT import:
-#   - FlagEmbedding (BGE-M3 embeddings) → drags in transformers + a 2nd torch
-#   - lightning-whisper-mlx            → Apple-MLX only, won't install on Linux CI
-# Those are loaded lazily at runtime and are not exercised by tests/, so they are
-# intentionally omitted here. `torch` IS required: services/forecast_service.py
-# imports it at module load, and 5 tests import the full app via `from main`.
+# Why a separate file: lightning-whisper-mlx is Apple-MLX only and pins a
+# slow-to-build tokenizer, so it is intentionally omitted on Linux CI. The
+# direct Transformers inference adapter is included and tested with tiny
+# synthetic local models; no model weights or datasets are downloaded.
+# CPU-only torch is installed first by CI to avoid unnecessary CUDA packages.
+
+# Shared patched HTTP transitives; does not install optional packages.
+-c constraints-security.txt
 
 # Core app (kept in sync with requirements.txt)
-fastapi==0.115.12
+fastapi==0.133.0
 uvicorn[standard]==0.34.2
-python-socketio==5.12.1
-python-multipart==0.0.20
-pyjwt==2.10.1
-passlib[bcrypt]==1.7.4
-httpx==0.28.1
-sqlite-vec==0.1.6
-aiosqlite==0.21.0
-numpy==2.2.4
-torch==2.6.0
-
-# Test tooling
-pytest==8.3.4
-pytest-asyncio==0.25.3
-
-# Execute private-media and synthetic SQLCipher restore tests instead of skipping.
+python-socketio==5.16.4
+python-multipart==0.0.31
+pyjwt==2.15.1
 bcrypt==4.2.1
+# Exercise the real encryption and restore paths in CI instead of skipping them.
 cryptography==50.0.2
 qrcode==8.2
 pypng==0.20220715.0
 sqlcipher3-wheels==0.5.7
+httpx==0.28.1
+sqlite-vec==0.1.6
+aiosqlite==0.21.0
+numpy==2.2.4
+torch==2.14.1
+transformers==5.19.0
+
+# Test tooling
+pytest==9.0.3
+pytest-asyncio==1.3.0

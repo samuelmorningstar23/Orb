@@ -1,0 +1,3 @@
+# Keep newly created Python environments on the audited installer before
+# installing application packages. This is tooling, not a runtime dependency.
+pip==26.2.1
