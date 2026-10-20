@@ -55,7 +55,6 @@ EXCLUDED = {
     "backups",
     "ops",
     "adapters",
-    "dev_tools",
     "datasets",
     ".agents",
     ".codex",
