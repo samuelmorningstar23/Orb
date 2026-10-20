@@ -824,7 +824,7 @@ WARD_ORDER_PATTERNS = [
     rf"{_ORDER_HEAD}{order_wording.ESCALATE}(?:{_ANY_DRUG})\b",
     # 9. An order after a condition: "if grbs > 300 give actrapid 8 units sc".
     #    Not after a subject, which asks: "if we give lasix will her k drop".
-    rf"^(?:if|unless|once)\s+(?:[^.?!]|(?<=\d)\.(?=\d)){{1,40}}?[\s,]"
+    rf"^(?:if|unless|once|after|before)\s+(?:[^.?!]|(?<=\d)\.(?=\d)){{1,40}}?[\s,]"
     rf"(?<!\bwe\s)(?<!\bi\s)(?<!\byou\s)(?<!\bthey\s)(?<!\bshe\s)(?<!\bhe\s)"
     # Nor after a hypothetical or someone else's plan, which a modal or another
     # person's future puts in front of the verb: "if k drops below 3.5 we would
@@ -841,7 +841,8 @@ WARD_ORDER_PATTERNS = [
     #     tonight". "no lasix since yesterday" and "no lasix given today" report,
     #     so only a time still to come, a patient and a reason may follow.
     rf"^(?:no|nil)\s+(?:more\s+|further\s+)?(?:{_ANY_DRUG})"
-    rf"(?:\s+(?:today|tonight|now|for\s+now|for\s+(?:him|her|today|tonight)|from\s+now|"
+    rf"(?:\s+(?:today|tonight|now|for\s+now|for\s+(?:him|her|today|tonight)|"
+    rf"from\s+(?:today|tomorrow|tonight|now\s+on)|from\s+now|"
     rf"till\s+\S+(?:\s+\S+){{0,3}}))?"
     rf"(?:\s+for\s+(?:bed\s+|cot\s+)?[a-z]{{0,4}}-?\d{{1,4}})?"
     rf"(?:\s*,(?![^.?!]*\b(?:given|gave|received|charted|since|yesterday)\b)[^.?!]*)?\s*$",
@@ -1110,9 +1111,11 @@ def detect_mutation_intent(query: str) -> bool:
     # So is "we'll add spiro 25 od", ruled 20 October 2026; see
     # order_wording.INTENT_LEAD and pattern 11.
     intended = order_wording.after_intent_lead(q)
+    # "sister can you put a neb duolin for bed 2?": the request after a vocative.
+    rest_plain = order_wording.without_request(rest) if rest else ""
     if intended and _INTENT_ORDER_RE.match(intended):
         return True
-    for text in dict.fromkeys(t for t in (q, plain, planned, intended) if t):
+    for text in dict.fromkeys(t for t in (q, plain, planned, intended, rest_plain) if t):
         text_rest = order_wording.after_patient_reference(text)
         if (
             order_wording.line_signals(text, _is_gate_drug)

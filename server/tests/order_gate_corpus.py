@@ -3535,6 +3535,8 @@ KNOWN_TRIPS_HELDOUT3 = [
     'we will need to restart clexane after the biopsy',
     'we will wean norad in the morning',
     "we'll start insulin if sugars stay above 250",
+    # The same "we will" ruling with the subject dropped (20 October, set 5 work).
+    'will add kcl if k drops further',
     # The 20 October "continue" ruling: continuing a medicine is an order, read like a
     # plan line. Set 3 was written to the earlier rule that "continue X" is not an
     # order.
@@ -3564,37 +3566,15 @@ KNOWN_TRIPS_HELDOUT4 = [
     'continue the prbc at the same rate',
 ]
 
-# Set 5 (20 October 2026): typos ("insuin", "wil", "contnue", "amlodipin"), drug
-# classes the gate does not list ("beta blocker", "statin", "ATT",
-# "antiepileptics", "oral hypoglycemics"), and wordings it does not read yet
-# ("plan for tonight:", "no metformin from today", "x3d", "subah", "after the
-# culture is sent start ...").
+# Set 5 (20 October 2026): 25 missed when scored blind; the drug classes and
+# wordings among them were added the same day as families, so set 5 is no longer
+# held out. What is left is typos, left unread on purpose.
 KNOWN_MISSES_HELDOUT5 = [
     'hold amlodipin tonight, bp 96/60',
-    'stop ivf, taking orally well',
-    'hold all oral hypoglycemics till she is eating',
     'replace k with 40 meq kcl orally in divided dosses',
-    'hold the beta blocker, pt in shock',
-    "skip tonight's statin",
-    'after the culture is sent start meropenem 1 g q8h',
-    'no metformin from today',
-    'inj tranexamic acid 1 g iv tds',
     'inj cefoperazone sulbactum 1.5 g iv bd',
-    'inj polymyxin b 25 lakh units loading then 12.5 lakh units bd',
-    'ffp 2 units before the cvc insertion',
-    'inj ampicillin 50 mg/kg iv q8h and genta 4 mg/kg od',
-    'inj iron sucrose 200 mg in 100 ml ns alternate days x 5 doses',
-    'khane se pehle insuin 6 unit laga do',
-    'tab telma 40 subah ek',
-    'Rx: tab azee 500 od x3d, tab pcm 650 sos',
-    'plan for tonight: inj lasix 40 iv bd, fluid restirct 1.5 l',
     'we wil stop the vanco today',
-    'we shall start akt-4 tomorrow morning',
-    'will start inj meropenem from now',
     'pls contnue syp lactulose 15 ml hs',
-    'continue antiepileptics',
-    'continue ATT',
-    'sister can you put a neb duolin for bed 2?',
 ]
 KNOWN_TRIPS_HELDOUT5 = [
 ]

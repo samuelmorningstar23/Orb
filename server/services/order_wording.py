@@ -232,6 +232,44 @@ WARD_DRUG_NAMES = frozenset(
         "laxatives",
         "nsaids",
         "statins",
+        # Classes and short names blind set 5 missed, added as families (20
+        # October 2026): "hold the beta blocker", "continue ATT", "genta".
+        "statin",
+        "betablockers",
+        "aceinhibitors",
+        "ccbs",
+        "arbs",
+        "oralhypoglycemics",
+        "ppi",
+        "ppis",
+        "h2blockers",
+        "antiepileptics",
+        "antiepileptic",
+        "aeds",
+        "anticonvulsants",
+        "antipsychotics",
+        "antidepressants",
+        "benzodiazepines",
+        "benzos",
+        "opioids",
+        "antiemetics",
+        "antifungals",
+        "antivirals",
+        "bronchodilators",
+        "inhalers",
+        "vasopressors",
+        "pressors",
+        "inotropes",
+        "att",
+        "akt",
+        "haart",
+        "genta",
+        "ampi",
+        "amika",
+        "metro",
+        "polymyxin",
+        "polymyxinb",
+        "ivf",
     }
 )
 
@@ -256,7 +294,6 @@ LINE_ONLY_DRUG_WORDS = frozenset(
         "saline",
         "dextrose",
         "nacl",
-        "ivf",
         "antibiotics",
         "abx",
         "iron",
@@ -266,7 +303,6 @@ LINE_ONLY_DRUG_WORDS = frozenset(
         "prc",
         "magsulph",
         "slidingscale",
-        "akt",
         "inh",
         "insulin",
         "albumin",
@@ -276,7 +312,10 @@ LINE_ONLY_DRUG_WORDS = frozenset(
 #: Multi-word drug names the verb-led patterns should still see as one object.
 WARD_DRUG_PHRASES = (
     r"pip(?:er(?:acillin)?)?[\s/-]*taz(?:o(?:bactam)?)?|mag(?:nesium)?\.?\s+sulph(?:ate)?|"
-    r"hep(?:atitis)?\s+b\s+ig|iron\s+sucrose|vit(?:amin)?\s+k|packed\s+(?:red\s+)?cells?"
+    r"hep(?:atitis)?\s+b\s+ig|iron\s+sucrose|vit(?:amin)?\s+k|packed\s+(?:red\s+)?cells?|"
+    r"beta[\s-]?blockers?|ace[\s-]?inhibitors?|calcium\s+channel\s+blockers?|"
+    r"oral\s+hypoglyc(?:a)?emics?|h2[\s-]?blockers?|proton\s+pump\s+inhibitors?|anti[\s-]?tb|"
+    r"anti[\s-]?epileptics?|polymyxin(?:\s+b)?"
 )
 
 #: Blood products and fluids, objects only for the verbs that take them.
@@ -342,6 +381,7 @@ ROUTE = frozenset(
 )
 FREQ = frozenset(
     {
+        "altdays",
         "od",
         "bd",
         "bid",
@@ -365,6 +405,12 @@ FREQ = frozenset(
 URGENT = frozenset({"stat", "now", "immediately", "asap", "urgently", "abhi", "turant"})
 WHEN = frozenset(
     {
+        # Hindi times of day: "tab telma 40 subah ek"
+        "subah",
+        "shaam",
+        "sham",
+        "raat",
+        "dopahar",
         "now",
         "immediately",
         "asap",
@@ -438,8 +484,25 @@ UNIT = frozenset(
     }
 )
 DURATION_UNIT = frozenset(
-    {"min", "mins", "minute", "minutes", "h", "hr", "hrs", "hour", "hours", "days", "week", "weeks"}
+    {
+        "min",
+        "mins",
+        "minute",
+        "minutes",
+        "h",
+        "hr",
+        "hrs",
+        "hour",
+        "hours",
+        "days",
+        "week",
+        "weeks",
+        # "x 5 doses" is a duration; "pan 40 dose" is a lookup, so not "dose"
+        "doses",
+    }
 )
+#: "25 lakh units": the multiplier keeps the number a number.
+MULTIPLIER = frozenset({"lakh", "lakhs", "million", "thousand"})
 BLOOD = frozenset({"prbc", "prc", "ffp", "sdp", "rdp", "cryo", "platelets", "platelet"})
 ACTION = frozenset(
     {
@@ -504,6 +567,8 @@ ACTION = frozenset(
         # "continued" stays a report word ("lasix 40 iv bd continued").
         "continue",
         "cont",
+        # "put a neb duolin": set 5, 20 October 2026
+        "put",
     }
 )
 #: "she needs lasix 40 iv" is an order; "he really needs paracetamol for the
@@ -643,7 +708,25 @@ CONNECT = frozenset(
 )
 #: Formulation suffixes a brand carries: "pantop dsr", "ondem md", "magnex forte".
 FORMULATION = frozenset(
-    {"sr", "xr", "er", "cr", "dsr", "md", "forte", "plus", "duo", "xl", "ds", "lsr", "dt", "mr"}
+    {
+        "sr",
+        "xr",
+        "er",
+        "cr",
+        "dsr",
+        "md",
+        "forte",
+        "plus",
+        "duo",
+        "xl",
+        "ds",
+        "lsr",
+        "dt",
+        "mr",
+        # part of the name: "tranexamic acid", "valproate sodium"
+        "acid",
+        "sodium",
+    }
 )
 #: "stat dose of lasix" is an order; "augmentin iv dose" is a lookup.
 DOSE_OPENERS = frozenset(
@@ -849,7 +932,7 @@ DRUG_STATE = REPORT - frozenset(
     }
 )
 NUMBER = re.compile(
-    r"^(?:\d+(?:\.\d+)?|\d+-\d+-\d+|\d+/\d+|q\d+h|q\d+hrly|\d+hrly|x\d+|"
+    r"^(?:\d+(?:\.\d+)?|\d+-\d+-\d+|\d+/\d+|q\d+h|q\d+hrly|\d+hrly|x\d+d?|\d+d|"
     r"[a-z]{1,4}-\d{1,4}|b\d{1,3}|ek|do|teen|char)$"
 )
 
@@ -871,6 +954,19 @@ def normalise(q: str) -> str:
     q = re.sub(r"\bhep(?:atitis)?\s+b\s+ig\b", "hbig", q)
     q = re.sub(r"\bvit(?:amin)?\.?\s+k\b", "vitk", q)
     q = re.sub(r"\biron\s+sucrose\b", "ironsucrose", q)
+    q = re.sub(r"\bbeta[\s-]?blockers?\b", "betablockers", q)
+    q = re.sub(r"\bace[\s-]?inhibitors?\b", "aceinhibitors", q)
+    q = re.sub(r"\bcalcium\s+channel\s+blockers?\b", "ccbs", q)
+    q = re.sub(r"\boral\s+hypoglyc(?:a)?emics?(?:\s+(?:agents|drugs))?\b", "oralhypoglycemics", q)
+    q = re.sub(r"\bh2[\s-]?blockers?\b", "h2blockers", q)
+    q = re.sub(r"\bproton\s+pump\s+inhibitors?\b", "ppis", q)
+    q = re.sub(r"\banti[\s-]?tb(?:\s+(?:drugs|treatment|therapy))?\b", "att", q)
+    q = re.sub(r"\banti[\s-]?epileptics?\b", "antiepileptics", q)
+    q = re.sub(r"\bpolymyxin\s+b\b", "polymyxinb", q)
+    q = re.sub(
+        r"\b(?:on\s+)?alternate\s+days?\b|\balt\s+days?\b|\bevery\s+other\s+day\b", "altdays", q
+    )
+    q = re.sub(r"\bkhane\s+(?:se|ke)\s+pehle\b|\bkhali\s+pet\b", "meals", q)
     q = re.sub(r"\bsliding\s+scale\b", "slidingscale", q)
     q = re.sub(r"\bas\s+per\s+(?:slidingscale|protocol|scale)\b", "asper", q)
     q = re.sub(
@@ -949,7 +1045,7 @@ def line_signals(q: str, is_drug):
         if unknown == 0 and (
             (t in CONDITION and met())
             or (t in REASON and met())
-            or (t in ("before", "after", "then") and complete())
+            or (t in ("before", "after", "then") and met())
         ):
             veto = TAIL_VETO if t in CONDITION else (REPORT - {"before", "after"}) | TAIL_VETO
             if any(x in veto for x in toks[i:]):
@@ -985,6 +1081,9 @@ def line_signals(q: str, is_drug):
             has["act"] = True  # "lasix to 80", "lasix 40 -> 80"
         elif t in HINDI_STEM:
             pass  # a stem without an imperative ending orders nothing
+        elif t in MULTIPLIER and prev == "num":
+            i += 1
+            continue  # "25 lakh units": still the number
         elif t in UNIT and prev == "num":
             has["unit"] = True
         elif t in DURATION_UNIT and prev == "num":
@@ -1198,7 +1297,10 @@ def after_patient_reference(q: str) -> str:
 #: followed by a colon or a dash: "plan to start insulin" and "the plan is ..."
 #: are prose, and a plan with no medicine action reads nothing the line readers
 #: accept ("Plan: review in the evening").
-PLAN_HEADER = re.compile(r"^(?:plan|rx|orders?)\s*(?:for\s+today\s*)?[:\-\u2013\u2014]\s*")
+PLAN_HEADER = re.compile(
+    r"^(?:plan|rx|orders?)\s*(?:for\s+(?:today|tonight|now|tomorrow|the\s+(?:day|night))\s*)?"
+    r"[:\-\u2013\u2014]\s*"
+)
 
 
 def after_plan_header(q: str) -> str:
@@ -1216,8 +1318,8 @@ def after_plan_header(q: str) -> str:
 #: and nothing without a medicine action after it ("we'll review in the
 #: evening"); sage_service reads what follows with object-taking verbs only.
 INTENT_LEAD = re.compile(
-    r"^(?:we|i)(?:['\u2019]ll|\s+will|\s+shall|['\u2019]re\s+going\s+to|\s+are\s+going\s+to"
-    r"|['\u2019]m\s+going\s+to|\s+am\s+going\s+to)\s+(?:(?:now|also|just|then|first)\s+)?"
+    r"^(?:(?:we|i)(?:['\u2019]ll|\s+will|\s+shall|['\u2019]re\s+going\s+to|\s+are\s+going\s+to"
+    r"|['\u2019]m\s+going\s+to|\s+am\s+going\s+to)|will|shall)\s+(?:(?:now|also|just|then|first)\s+)?"
 )
 
 

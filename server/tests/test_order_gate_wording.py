@@ -255,6 +255,54 @@ def test_a_continue_line_is_read_like_a_plan_line(query, order):
     assert detect_mutation_intent(query) is order
 
 
+@pytest.mark.parametrize("query,order", [
+    # 20 October 2026: the drug classes and wordings blind set 5 missed, each
+    # added as a family rather than as the one sentence (so set 5 is no longer
+    # blind). Typos stay unread on purpose.
+    ("hold the beta blocker, pt in shock", True),
+    ("stop the ace inhibitor, creatinine rising", True),
+    ("hold calcium channel blockers today", True),
+    ("hold all oral hypoglycemics till she is eating", True),
+    ("stop the ppi", True),
+    ("skip tonight's statin", True),
+    ("continue antiepileptics", True),
+    ("continue ATT", True),
+    ("we shall start akt-4 tomorrow morning", True),
+    ("start anti tb treatment", True),
+    ("stop ivf, taking orally well", True),
+    ("inj tranexamic acid 1 g iv tds", True),
+    ("inj polymyxin b 25 lakh units loading then 12.5 lakh units bd", True),
+    ("inj ampicillin 50 mg/kg iv q8h and genta 4 mg/kg od", True),
+    ("inj iron sucrose 200 mg in 100 ml ns alternate days x 5 doses", True),
+    ("ffp 2 units before the cvc insertion", True),
+    ("after the culture is sent start meropenem 1 g q8h", True),
+    ("no metformin from today", True),
+    ("tab telma 40 subah ek", True),
+    ("Rx: tab azee 500 od x3d, tab pcm 650 sos", True),
+    ("plan for tonight: inj lasix 40 iv bd", True),
+    ("will start inj meropenem from now", True),
+    ("sister can you put a neb duolin for bed 2?", True),
+    # Reads beside the new words.
+    ("is she on a beta blocker", False),
+    ("beta blockers in heart failure", False),
+    ("statin intolerance", False),
+    ("on att for 2 months", False),
+    ("att completed last year", False),
+    ("after the transfusion her hb rose", False),
+    ("no metformin since yesterday", False),
+    ("plan for tonight: review the echo", False),
+    ("will review in the evening", False),
+    ("subah bp 90 tha", False),
+    ("alternate day dressing", False),
+    ("ivf conception, 32 weeks", False),
+    ("polymyxin b resistant klebsiella", False),
+    ("if we give genta will her creatinine rise", False),
+    ("pan 40 dose", False),
+])
+def test_the_classes_and_wordings_set_5_missed(query, order):
+    assert detect_mutation_intent(query) is order
+
+
 # ── Cost ──────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("text", [
