@@ -30,7 +30,9 @@ from services.knowledge_worker import (
 # ORB_KNOWLEDGE_INPROCESS=1 (tests / constrained envs) and for the worker
 # process itself.
 class _Embedder(Protocol):
-    def encode(self, texts: list[str], *, batch_size: int = 8, max_length: int = 512) -> dict[str, Any]: ...
+    def encode(
+        self, texts: list[str], *, batch_size: int = 8, max_length: int = 512
+    ) -> dict[str, Any]: ...
 
 
 _embed_model: _Embedder | None = None
