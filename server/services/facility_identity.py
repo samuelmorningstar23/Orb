@@ -570,11 +570,21 @@ def _utc_now() -> str:
 
 
 def supplier_snapshot(
-    db, *, patient_id: str | None = None, admission_id: str | None = None
+    db: Any,
+    *,
+    patient_id: str | None = None,
+    admission_id: str | None = None,
+    facility_id: int | None = None,
 ) -> tuple:
     """The six SNAPSHOT_COLUMNS values for a document numbered now, read from
-    the facility's live identity inside the caller's transaction."""
-    fid = document_facility_id(db, patient_id=patient_id, admission_id=admission_id)
+    the facility's live identity inside the caller's transaction. A document
+    that carries its own facility (multisite-7b) passes it as `facility_id`;
+    otherwise it is the patient's (document_facility_id)."""
+    fid = (
+        int(facility_id)
+        if facility_id is not None
+        else document_facility_id(db, patient_id=patient_id, admission_id=admission_id)
+    )
     block = identity_block(fid, db=db)
     return (
         fid,
@@ -628,7 +638,7 @@ def legacy_supplier_block() -> dict:
     }
 
 
-def supplier_block(row: dict, *, number_field: str, db=None) -> dict:
+def supplier_block(row: dict, *, number_field: str, db: Any = None) -> dict:
     """The supplier block a document prints. `row` is the invoices or payments
     row (SELECT *); `number_field` names its document number column.
 
@@ -650,8 +660,13 @@ def supplier_block(row: dict, *, number_field: str, db=None) -> dict:
     if db is None:
         with _db_session() as own:
             return supplier_block(row, number_field=number_field, db=own)
-    fid = document_facility_id(
-        db, patient_id=row.get("patient_id"), admission_id=row.get("admission_id")
+    # A draft that carries its own facility (multisite-7b) shows that one.
+    fid = (
+        int(row["facility_id"])
+        if row.get("facility_id") is not None
+        else document_facility_id(
+            db, patient_id=row.get("patient_id"), admission_id=row.get("admission_id")
+        )
     )
     block = identity_block(fid, db=db)
     return _block_from(

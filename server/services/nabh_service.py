@@ -123,7 +123,8 @@ from db_backend import DBIntegrityError  # sqlcipher3 raises its OWN hierarchy:
 # sqlcipher3.dbapi2.IntegrityError is NOT a subclass of sqlite3.IntegrityError,
 # so `except sqlite3.IntegrityError` is DEAD CODE whenever ORB_DB_ENCRYPTION_KEY
 # is set — i.e. in the shipping config. Guarded by tests/test_db_exception_aliases.
-from services.billing_masters import MAIN_FACILITY_ID, next_document_number
+from services import facility_stamp
+from services.billing_masters import MAIN_FACILITY_ID, SeriesNotSetUp, next_document_number
 from services.stay_times import stay_start_sql, summary_less_ends
 
 logger = logging.getLogger("orb.nabh")
@@ -518,6 +519,42 @@ def _canonical_ward(db: Any, ward: str | None) -> str | None:
     return text
 
 
+def _incident_facility(
+    db: Any,
+    *,
+    patient_id: str | None,
+    department: str | None,
+    ward: str | None,
+    reporter: str | None,
+) -> int:
+    """The facility an incident belongs to (multisite-7b, migration 75), first
+    that can be told: the patient's (their admission, else their latest
+    encounter), the department's in the departments master, the ward's in Bed
+    setup, then the reporting account's. An anonymous report passes no
+    reporter, so nothing about who reported it decides where it is filed.
+    Never refused: an incident nobody can place is filed at facility 1.
+    Facility 1, with nothing read, while only one facility is on record."""
+    return facility_stamp.resolve(
+        db,
+        (
+            (
+                "the patient",
+                lambda: (
+                    facility_stamp.patient_facility(db, patient_id=patient_id)
+                    if patient_id
+                    else None
+                ),
+            ),
+            ("the department", lambda: facility_stamp.department_facility(db, department)),
+            ("the ward", lambda: facility_stamp.ward_facility(db, ward=ward)),
+        ),
+        what="incident",
+        fallback=lambda: facility_stamp.account_facility(db, reporter),
+        agree=False,
+        refuse_unknown=False,
+    )
+
+
 def report_incident(
     *,
     incident_type: str,
@@ -562,6 +599,26 @@ def report_incident(
             "The time it happened is in the future. An incident is reported after it happens.",
         )
 
+    # The facility the incident belongs to (multisite-7b), read before an
+    # anonymous report drops the reporter: see _incident_facility.
+    if db is not None:
+        facility_id = _incident_facility(
+            db,
+            patient_id=patient_id,
+            department=department,
+            ward=ward,
+            reporter=None if is_anonymous else reported_by,
+        )
+    else:
+        with db_session() as conn:
+            facility_id = _incident_facility(
+                conn,
+                patient_id=patient_id,
+                department=department,
+                ward=ward,
+                reporter=None if is_anonymous else reported_by,
+            )
+
     if is_anonymous:
         # Belt. The CHECK constraint is the braces.
         reported_by = None
@@ -575,18 +632,25 @@ def report_incident(
     if externally_reportable is None:
         externally_reportable = severity in SENTINEL_SEVERITIES
 
-    # Facility 1's series (multisite-7a): an incident carries no facility until
-    # multisite-7b stamps one, and a report is never refused for want of a
-    # series at another facility.
-    reference = next_document_number("INC", facility_id=MAIN_FACILITY_ID)["number"]
+    # The incident facility's own INC series (multisite-7b). A report is never
+    # refused for want of a series: a facility that has none yet numbers from
+    # facility 1's, which keeps every reference unique, and the row still
+    # carries its own facility.
+    try:
+        reference = next_document_number("INC", facility_id=facility_id)["number"]
+    except SeriesNotSetUp:
+        logger.warning(
+            "facility %s has no incident series; incident numbered from facility 1's", facility_id
+        )
+        reference = next_document_number("INC", facility_id=MAIN_FACILITY_ID)["number"]
 
-    def _work(conn) -> dict:
+    def _work(conn: Any) -> dict:
         cur = conn.execute(
             "INSERT INTO nabh_incidents (reference, incident_type, severity, title, "
             "description, occurred_at, reported_at, reported_at_precision, ward, "
             "department, location, patient_id, is_anonymous, reported_by, reporter_role, "
-            "status, externally_reportable, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'reported', ?, ?, ?)",
+            "status, externally_reportable, created_at, updated_at, facility_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'reported', ?, ?, ?, ?)",
             (
                 reference,
                 incident_type,
@@ -606,6 +670,7 @@ def report_incident(
                 1 if externally_reportable else 0,
                 _iso(now),
                 _iso(now),
+                facility_id,
             ),
         )
         incident_id = int(cur.lastrowid)
@@ -3767,7 +3832,25 @@ def record_evidence_export(
     over the canonical JSON is what answers it. The digest is computed over the
     pack WITHOUT its own reference and digest fields, so it is reproducible from
     the returned document.
+
+    ONE FACILITY'S PACK (multisite-7b). NABH accredits each hospital on its
+    own, and the indicators and the register this pack is built from still
+    count the whole appliance. So while more than one facility is on record
+    the pack is refused (pack_spans_facilities) rather than handed to an
+    assessor under one facility's name; multisite-12 builds it per facility.
+    With one facility it is facility 1's, as it always was.
     """
+    if db is not None:
+        spans = facility_stamp.multi_facility(db)
+    else:
+        with db_session() as conn:
+            spans = facility_stamp.multi_facility(conn)
+    if spans:
+        raise NabhError(
+            "pack_spans_facilities",
+            "With more than one facility on record, an evidence pack has to cover one "
+            "facility, and Orb cannot build one per facility yet. No pack was made.",
+        )
     pack = build_evidence_pack(
         period_start=period_start,
         period_end=period_end,
@@ -3777,18 +3860,17 @@ def record_evidence_export(
         db=db,
     )
     digest = hashlib.sha256(_canonical_json(pack).encode("utf-8")).hexdigest()
-    # Facility 1's series (multisite-7a): the pack is hospital-wide until the
-    # NABH indicators run per facility.
+    # Facility 1's series: the only facility a pack can be made for (above).
     reference = next_document_number("NABHPACK", facility_id=MAIN_FACILITY_ID)["number"]
     summary = pack["indicator_summary"]
 
-    def _work(conn) -> dict:
+    def _work(conn: Any) -> dict:
         conn.execute(
             "INSERT INTO nabh_evidence_exports (reference, period_start, period_end, "
             "ward, generated_by, generated_at, include_patient_identifiers, "
             "indicator_count, reported_count, insufficient_count, not_collected_count, "
-            "incident_count, content_sha256, summary_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "incident_count, content_sha256, summary_json, created_at, facility_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 reference,
                 pack["period"]["start"],
@@ -3805,6 +3887,7 @@ def record_evidence_export(
                 digest,
                 json.dumps(summary),
                 _iso(_now()),
+                MAIN_FACILITY_ID,
             ),
         )
         return pack

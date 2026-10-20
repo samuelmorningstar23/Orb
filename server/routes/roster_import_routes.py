@@ -194,7 +194,7 @@ async def dry_run(
     header_line: int | None = _DRY_RUN_HEADER_LINE_DEFAULT,
     default_department: str | None = _DRY_RUN_DEFAULT_DEPARTMENT_DEFAULT,
     user: dict = _DRY_RUN_USER_DEFAULT,
-):
+) -> dict:
     """Report exactly what an import WOULD create, update and skip. Writes nothing.
 
     Also reports what would happen to each patient's ADMISSION — the row both
@@ -216,6 +216,9 @@ async def dry_run(
             update_existing=update_existing,
             header_line=header_line,
             default_department=default_department,
+            # multisite-4: whose facilities each row is checked against, read
+            # only while more than one facility is on record.
+            actor_user_id=user["id"],
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e

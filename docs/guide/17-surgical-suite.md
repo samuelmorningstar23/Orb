@@ -92,7 +92,7 @@ sequenceDiagram
     Panel->>Esc: acknowledgeEmergency → status=emergency_acknowledged
 ```
 
-Key subtlety: **`surgery_escalation_service.generate_surgical_prep_package_async` never emits a socket event.** The only code that emits `surgery:emergency_intake` is `sage_handoff_service` (`server/services/sage_handoff_service.py:837`, `:867`). So a case created purely through the escalation service's confirm path becomes ready silently, and the panel only discovers it via its 10-second fallback poll or the Tier-3 hydration poll, not push. The two "emergency package generators" (`generate_surgical_prep_package_async` here, and `generate_transfer_surgery_package_async` in Sage) now write the same honest template (`PREP_PACKAGE`, `server/services/surgery_escalation_service.py:187`) but still differ in notification behavior. Path 1 itself has had no production caller since `POST /api/relay/actions/{message_id}/execute` was removed on 2026-10-03 (`server/routes/relay_routes.py:949-954`); only tests call `confirm_surgery_prep` now. See Discrepancies.
+Key subtlety: **`surgery_escalation_service.generate_surgical_prep_package_async` never emits a socket event.** The only code that emits `surgery:emergency_intake` is `sage_handoff_service` (`server/services/sage_handoff_service.py:837`, `:867`). So a case created purely through the escalation service's confirm path becomes ready silently, and the panel only discovers it via its 10-second fallback poll or the Tier-3 hydration poll, not push. The two "emergency package generators" (`generate_surgical_prep_package_async` here, and `generate_transfer_surgery_package_async` in Sage) now write the same honest template (`PREP_PACKAGE`, `server/services/surgery_escalation_service.py:191`) but still differ in notification behavior. Path 1 itself has had no production caller since `POST /api/relay/actions/{message_id}/execute` was removed on 2026-10-03 (`server/routes/relay_routes.py:949-954`); only tests call `confirm_surgery_prep` now. See Discrepancies.
 
 ### Flow C: Active Cases: alert → confirm → start → complete
 
@@ -108,27 +108,27 @@ Key subtlety: **`surgery_escalation_service.generate_surgical_prep_package_async
 
 ### File: `server/services/surgery_service.py`
 
-#### get_weekly_schedule: `server/services/surgery_service.py:10`
+#### get_weekly_schedule: `server/services/surgery_service.py:11`
 **Signature:** `(surgeon_id: str, days: int = 14) -> list`
 **Does:** Returns a surgeon's upcoming surgeries grouped by date, each enriched with the patient's latest risk score.
 **How it works:**
-1. Computes `today` (UTC date) and `end_date = today + days` (`:12`).
-2. Runs one SQL join: `surgeries s` → `patients p`, plus a `LEFT JOIN risk_scores rs` correlated to the *latest* risk row per patient (`rs.timestamp = (SELECT MAX(...))`), filtered by `surgeon_id` and the date window, ordered by date then time (`:16`).
-3. Groups rows into a dict keyed by `scheduled_date`, building a `day_label` from Python's `weekday()` and an `is_today` flag (`:36`).
-4. Appends a trimmed surgery dict per row, defaulting `risk_level` to `"stable"` when there is no risk row (`:60`).
+1. Computes `today` (UTC date) and `end_date = today + days` (`:13`).
+2. Runs one SQL join: `surgeries s` → `patients p`, plus a `LEFT JOIN risk_scores rs` correlated to the *latest* risk row per patient (`rs.timestamp = (SELECT MAX(...))`), filtered by `surgeon_id` and the date window, ordered by date then time (`:17`).
+3. Groups rows into a dict keyed by `scheduled_date`, building a `day_label` from Python's `weekday()` and an `is_today` flag (`:37`).
+4. Appends a trimmed surgery dict per row, defaulting `risk_level` to `"stable"` when there is no risk row (`:61`).
 **Why it exists:** The panel's Tier 1/2 needs a compact, risk-tagged board without the heavy per-case fields.
 **Data in/out:** In: a surgeon id. Out: `[{date, day_label, is_today, surgeries: [{id, patient_name, procedure_name, risk_level, success_probability, ...}]}]`.
 **Talks to:** Reads `surgeries`, `patients`, `risk_scores`. **Note:** this function is *not* what the HTTP `/schedule` route calls, the route has its own inline query (see `get_surgery_schedule` route below). So `get_weekly_schedule` is effectively unused by the live path; treat it as legacy.
 **Change guide:** To widen the board window, callers pass `days`; but the *route* ignores this function, so changing it here has no UI effect, change `get_surgery_schedule` in `server/routes/surgery_routes.py:68` instead.
 **Gotchas:** The correlated-subquery "latest risk" pattern repeats verbatim in three places; if you change the risk-scoring table you must fix all of them. Date comparison is string-based on ISO dates (`today.isoformat()`), which only works because `YYYY-MM-DD` sorts lexicographically.
 
-#### get_surgery_detail: `server/services/surgery_service.py:68`
+#### get_surgery_detail: `server/services/surgery_service.py:69`
 **Signature:** `(surgery_id: str) -> dict | None`
 **Does:** Returns the full clinical package for one surgery, including imported Medicine-side context.
 **How it works:**
-1. Single joined SELECT (surgery + patient + latest risk) by id (`:71`); returns `None` if missing.
-2. `_parse_json` inner helper (`:89`) safely decodes the JSON-in-TEXT columns (`co_morbidities`, `surgical_checklist`, `instruments_required`, `staff_required`, `possible_complications`, `risk_drivers`), returning `[]` on any decode error.
-3. Calls `_assemble_patient_context(db, patient_id)` from `sage_service` (`:97`) to build the cross-department **handoff context** (meds/vitals/labs/scribe notes).
+1. Single joined SELECT (surgery + patient + latest risk) by id (`:72`); returns `None` if missing.
+2. `_parse_json` inner helper (`:106`) safely decodes the JSON-in-TEXT columns (`co_morbidities`, `surgical_checklist`, `instruments_required`, `staff_required`, `possible_complications`, `risk_drivers`), returning `[]` on any decode error.
+3. Calls `_assemble_patient_context(db, patient_id)` from `sage_service` (`:114`) to build the cross-department **handoff context** (meds/vitals/labs/scribe notes).
 4. Returns a flat dict merging surgery fields, patient demographics, parsed JSON arrays, and `imported_context`.
 **Why it exists:** Tier 3 needs everything in one call.
 **Data in/out:** Out: the `SurgeryFull` shape mirrored in the panel's TypeScript interface (`src/pages/panels/SurgicalSuitePanel.tsx:35`).
@@ -136,16 +136,16 @@ Key subtlety: **`surgery_escalation_service.generate_surgical_prep_package_async
 **Change guide:** To add a field to Tier 3, you must add it in the *route* handler (`server/routes/surgery_routes.py:162`), not here, because the route is what the client hits.
 **Gotchas:** Importing `_assemble_patient_context` inside the function (not at top) is deliberate to avoid a circular import with `sage_service`. The parsed `co_morbidities` here can differ from the route's, which prefers the `surgeries.co_morbidities` snapshot then falls back to `patient_profiles.comorbidities`.
 
-#### generate_risk_assessment: `server/services/surgery_service.py:140`
+#### generate_risk_assessment: `server/services/surgery_service.py:157`
 **Signature:** `async (surgery_id: str, detail: dict | None = None) -> async generator of SSE strings`
 **Does:** Streams a structured pre-operative risk assessment from MedGemma as SSE `data:` chunks; falls back to a static assessment if the LLM is unreachable.
 **How it works:**
-1. Uses the caller's `detail` if supplied, else loads it; if still missing, yields one `{'error': ...}` SSE frame and returns (`:154`). The optional `detail` argument exists so the route can load the case off the event loop and hand it in, rather than making this generator do blocking DB work.
-2. Builds a fixed clinical prompt (ASA class, surgical risk score, anaesthetic considerations, etc.) from the patient's data (`:158`).
-3. Acquires a slot on the shared `llm_queue` at `priority=2` (`:191`) so risk assessments yield to higher-priority LLM work, then streams `POST {OLLAMA_BASE_URL}/api/chat` (`:196`) with `stream: True` and `keep_alive` from config (`:202`).
-4. For each JSON line from Ollama, extracts `message.content` and yields it as `data: {"content": text}` (`:212`).
-5. On **any** exception (`:218`), yields a hand-written fallback assessment string (ASA III, computed risk from `success_probability`) (`:222-231`).
-6. Always yields a final `data: [DONE]` (`:233`).
+1. Uses the caller's `detail` if supplied, else loads it; if still missing, yields one `{'error': ...}` SSE frame and returns (`:171`). The optional `detail` argument exists so the route can load the case off the event loop and hand it in, rather than making this generator do blocking DB work.
+2. Builds a fixed clinical prompt (ASA class, surgical risk score, anaesthetic considerations, etc.) from the patient's data (`:175`).
+3. Acquires a slot on the shared `llm_queue` at `priority=2` (`:208`) so risk assessments yield to higher-priority LLM work, then streams `POST {OLLAMA_BASE_URL}/api/chat` (`:213`) with `stream: True` and `keep_alive` from config (`:219`).
+4. For each JSON line from Ollama, extracts `message.content` and yields it as `data: {"content": text}` (`:229`).
+5. On **any** exception (`:235`), yields a hand-written fallback assessment string (ASA III, computed risk from `success_probability`) (`:239-248`).
+6. Always yields a final `data: [DONE]` (`:250`).
 **Why it exists:** This is the *real* AI path in the subsystem, genuine local-LLM inference, unlike the hardcoded package generators.
 **On screen:** the Risk Assessment pane in the Tier-3 case detail. Text arrives token by token; the panel renders numbered `N.` lines and `key:` headings specially.
 **Data in/out:** Out: SSE frames consumed by `getSurgeryRiskAssessment` (`src/api/client.ts:1699`), which concatenates `content` deltas into the growing risk text.
@@ -153,21 +153,21 @@ Key subtlety: **`surgery_escalation_service.generate_surgical_prep_package_async
 **Change guide:** To change what the risk panel asks for, edit the prompt block at `:158`; keep the numbered/`key:` structure or the panel's formatting breaks. To make risk assessments preempt other LLM jobs, lower the `priority` number at `:191`.
 **Gotchas:** `llm_queue.release()` (`:216`) sits in a `finally` after a successful `acquire`, so a failure to acquire won't double-release. The fallback branch swallows the real exception (no logging), so an offline Ollama looks identical to a genuine bug. `success_probability` is referenced **only inside the fallback branch** (`:222`, `:228`), not the happy LLM path. `.get('success_probability', 95)` returns its default only when the key is *absent*, a stored `None` value is returned as-is, so `None < 85` (`:222`) would raise `TypeError` while building the fallback string, and that error is *not* re-caught (the `except` is already executing). Likewise `.get('success_probability', 'N/A')` (`:228`) renders a stored `None` as `None%`, not `N/A`.
 
-#### trigger_surgery_prep: `server/services/surgery_service.py:255`
+#### trigger_surgery_prep: `server/services/surgery_service.py:272`
 **Signature:** `(surgery_id, sender_id, sender_name, sender_role) -> dict`
 **Does:** Fires a structured "PREP FOR SURGERY" alert to the assigned team via Relay, de-duplicated within a 4-hour window.
 **How it works:**
 1. Loads detail; raises `ValueError` if missing.
-2. Resolves recipients: first from explicit `surgery_team_assignments` rows, else from `staff_required[].id`, else a narrow role fallback (`:269` and following).
-3. Builds a structured alert payload with `"type": "surgery_prep"` (`:299`), procedure, OR, time, risk, targets, `urgency: "critical"` (`:314`), title, action.
-4. Dedup check (`:319-331`): scans the last 4 hours of `alert` messages in `dept-surgery`; if a `surgery_prep` alert for this surgery already exists, returns `{"status": "duplicate"}`.
-5. Sends the alert to `dept-surgery` (departmental visibility, `:336`) and best-effort to the patient's case room (`:346-355`).
+2. Resolves recipients: first from explicit `surgery_team_assignments` rows, else from `staff_required[].id`, else a narrow role fallback (`:286` and following).
+3. Builds a structured alert payload with `"type": "surgery_prep"` (`:316`), procedure, OR, time, risk, targets, `urgency: "critical"` (`:331`), title, action.
+4. Dedup check (`:336-348`): scans the last 4 hours of `alert` messages in `dept-surgery`; if a `surgery_prep` alert for this surgery already exists, returns `{"status": "duplicate"}`.
+5. Sends the alert to `dept-surgery` (departmental visibility, `:353`) and best-effort to the patient's case room (`:363-372`).
 **Why it exists:** Wires the Tier-3 "Prep for Surgery" button (previously a 404) to the existing Relay messaging service.
 **On screen:** a red critical alert card in the Surgery department channel in Messages (Relay), and the same card in the patient's case room.
 **Data in/out:** Out: the `send_message` result for the dept channel, or a `duplicate` marker.
 **Talks to:** `services.relay_service.send_message` (guide 08-relay). Reads `surgery_team_assignments`, `messages`. Called by the `/{surgery_id}/prep` route.
-**Change guide:** To broaden who gets alerted, change the target resolution at `:269`; watch out that the role fallback is intentionally narrow (`get_user_alerts` only matches when role *and* department match) to avoid a hospital-wide broadcast. To change the dedup window, edit the `'-4 hours'` literal at `:324`.
-**Gotchas:** Two separate `db_session()` blocks (assignments lookup, then dedup), a race between them is harmless here. The case-room send looks the channel id up rather than deriving it (`:346`) and is wrapped in a bare `except: pass` because the case channel may not exist.
+**Change guide:** To broaden who gets alerted, change the target resolution at `:286`; watch out that the role fallback is intentionally narrow (`get_user_alerts` only matches when role *and* department match) to avoid a hospital-wide broadcast. To change the dedup window, edit the `'-4 hours'` literal at `:341`.
+**Gotchas:** Two separate `db_session()` blocks (assignments lookup, then dedup), a race between them is harmless here. The case-room send looks the channel id up rather than deriving it (`:363`) and is wrapped in a bare `except: pass` because the case channel may not exist.
 
 ---
 
@@ -198,7 +198,7 @@ Key subtlety: **`surgery_escalation_service.generate_surgical_prep_package_async
 2. Loads the prep row (raises if missing) and the patient (`:128-132`).
 3. Chooses a `surgery_id`: **only when `DEMO_MODE` is on** and the patient is `PAT007`, reuses the seeded `SURG-ALEX-EM` if present (`:142-145`); otherwise always a random `surg_<hex>`.
 4. Dates the case on the hospital calendar (`hospital_now`, `:151-154`), assigns the surgeon via `_resolve_emergency_surgeon` (`:161`), then for non-seeded ids inserts a `surgeries` row with `status='emergency_pending'`, OR `'OR-E (Emergency)'`, 120-min duration (`:163-169`).
-5. Marks the prep request `resolved` with `surgery_id`, `resolved_by`, `resolved_at` (`:171-177`).
+5. Marks the prep request `resolved` with `surgery_id`, `resolved_by`, `resolved_at` (`:198-204`).
 **Why it exists:** Separates "someone suggested surgery" from "a real OR case now exists", with replay-safety so a double-click can't create two cases.
 **On screen:** a new red card in the emergency banner at the top of the Surgical Suite panel, in `emergency_pending` state.
 **Data in/out:** Out: `{surgery_id, status: "created" | "already_created"}`.
@@ -206,46 +206,46 @@ Key subtlety: **`surgery_escalation_service.generate_surgical_prep_package_async
 **Change guide:** To route emergencies to a dedicated theatre, change `"OR-E (Emergency)"` at `:168`, the Tier-1 "Active Rooms" stat counts distinct `operating_room` values, so this changes analytics too.
 **Gotchas:** The `PAT007`/`SURG-ALEX-EM` special-case is demo scaffolding. It is now gated on `DEMO_MODE` (`:142`), the comment at `:137-140` explains why: ungated, a real hospital that happened to mint the patient id `PAT007` would have its emergency case silently redirected into a seeded demo row. `resolved_at` is set via SQL `CURRENT_TIMESTAMP` (naive UTC, `YYYY-MM-DD HH:MM:SS`, no timezone marker), unlike the timezone-aware ISO8601 timestamps elsewhere, a format inconsistency.
 
-#### _finalize_surgery: `server/services/surgery_escalation_service.py:214`
+#### _finalize_surgery: `server/services/surgery_escalation_service.py:219`
 **Signature:** `(surgery_id: str, data: dict, ai_status: str, reason: str = "") -> None`
 **Does:** Writes the whole prep package onto the surgery row and flips its status to `emergency_ready`.
-**How it works:** Builds `notes_payload = {"ai_package_status": ai_status}` (`:225`) then one `UPDATE surgeries SET …` (`:232`) covering every package column.
-**Why it exists:** Blocking DB work, kept at module scope rather than nested inside the async task so it can be handed to `run_db` and never run on the event loop (docstring at `:217`).
+**How it works:** Builds `notes_payload = {"ai_package_status": ai_status}` (`:230`) then one `UPDATE surgeries SET …` (`:237`) covering every package column.
+**Why it exists:** Blocking DB work, kept at module scope rather than nested inside the async task so it can be handed to `run_db` and never run on the event loop (docstring at `:222`).
 **Breaks if:** you call it directly from async code. It must go through `run_db`.
 
-#### _mark_generating: `server/services/surgery_escalation_service.py:257`
+#### _mark_generating: `server/services/surgery_escalation_service.py:262`
 **Signature:** `(surgery_id: str, prep_id: int) -> row`
-**Does:** Sets the case to `emergency_context_generating` and reads back the prep request's clinical context in the same transaction (`:266-268`).
-**Breaks if:** you split the `UPDATE` and the `SELECT` into two sessions, the docstring at `:260` is explicit that they stay in one.
+**Does:** Sets the case to `emergency_context_generating` and reads back the prep request's clinical context in the same transaction (`:271-273`).
+**Breaks if:** you split the `UPDATE` and the `SELECT` into two sessions, the docstring at `:265` is explicit that they stay in one.
 
-#### generate_surgical_prep_package_async: `server/services/surgery_escalation_service.py:274`
+#### generate_surgical_prep_package_async: `server/services/surgery_escalation_service.py:279`
 **Signature:** `async (surgery_id: str, prep_id: int) -> None`
 **Does:** Background task that writes the prep package and moves the case to `emergency_ready`, always within 60 s.
 **How it works:**
-1. The inner `_do_generation` (`:285`) calls `run_db(_mark_generating, …)` (`:290`) to set `emergency_context_generating`, then `run_db(_finalize_surgery, surgery_id, PREP_PACKAGE, "template")` (`:291`). No model is called and there is no simulated wait.
-2. `PREP_PACKAGE` (`:187-204`) is generic prep content that makes no claim about this patient: risk text "Pre-operative risk assessment pending clinical review.", standard complications, a six-step checklist, a standard tray, `success_probability` `None`, and staff rows reading "Assigned on arrival". Until 2026-10-02 this path stored a fixed "ASA IV, septic shock, 72.5% success" package with invented clinicians on every real case (comment at `:181-186`).
-3. The whole `_do_generation` runs under `asyncio.wait_for(..., timeout=60)` (`:296`); on any exception it finalizes with `FALLBACK_DATA` (`:208-211`, the same content with "Assessment unavailable" as the risk text) and `ai_status="failed"` (`:299`).
+1. The inner `_do_generation` (`:290`) calls `run_db(_mark_generating, …)` (`:295`) to set `emergency_context_generating`, then `run_db(_finalize_surgery, surgery_id, PREP_PACKAGE, "template")` (`:296`). No model is called and there is no simulated wait.
+2. `PREP_PACKAGE` (`:191-209`) is generic prep content that makes no claim about this patient: risk text "Pre-operative risk assessment pending clinical review.", standard complications, a six-step checklist, a standard tray, `success_probability` `None`, and staff rows reading "Assigned on arrival". Until 2026-10-02 this path stored a fixed "ASA IV, septic shock, 72.5% success" package with invented clinicians on every real case (comment at `:185-190`).
+3. The whole `_do_generation` runs under `asyncio.wait_for(..., timeout=60)` (`:301`); on any exception it finalizes with `FALLBACK_DATA` (`:213-216`, the same content with "Assessment unavailable" as the risk text) and `ai_status="failed"` (`:304`).
 **Why it exists:** Guarantees the Tier-3 case never shows blank panels: the checklist and prep list are there the moment the case opens.
 **On screen:** the emergency card moves from "pending" to a "generating" state and then to `emergency_ready`, at which point the risk/checklist/instruments/team panes fill in.
 **Data in/out:** Writes `risk_assessment`, `possible_complications`, `success_probability`, `surgical_checklist`, `instruments_required`, `staff_required`, `notes` (with `ai_package_status`), `status` on the surgery row.
 **Talks to:** `run_db` for every DB touch. It was scheduled via `background_tasks.add_task(...)` from the Relay execute-action handler, removed on 2026-10-03; it has no production caller now.
-**Change guide:** If MedGemma enrichment returns, the comment at `:286-289` says it belongs on the ambient tier, not the model serving interactive Sage, and its output must be marked as such; keep the `_finalize_surgery` contract so the UI's `ai_package_status` logic still works.
+**Change guide:** If MedGemma enrichment returns, the comment at `:291-294` says it belongs on the ambient tier, not the model serving interactive Sage, and its output must be marked as such; keep the `_finalize_surgery` contract so the UI's `ai_package_status` logic still works.
 **Gotchas:** It writes `ai_status="template"`, which the panel badges "Standard template" (`src/pages/panels/SurgicalSuitePanel.tsx:992`, which treats the older `generated` value the same way), never "AI Generated". It **does not emit any socket event**, so the panel is not pushed the completion, it relies on polling.
 
-#### get_emergency_queue: `server/services/surgery_escalation_service.py:302`
+#### get_emergency_queue: `server/services/surgery_escalation_service.py:307`
 **Signature:** `() -> list`
 **Does:** Returns all surgeries whose status starts with `emergency_`, with patient joins and parsed JSON fields.
-**How it works:** `SELECT ... WHERE s.status LIKE 'emergency_%' ORDER BY created_at DESC` (`:305-310`), then per-row parses the JSON columns (logging a warning on bad JSON).
+**How it works:** `SELECT ... WHERE s.status LIKE 'emergency_%' ORDER BY created_at DESC` (`:310-315`), then per-row parses the JSON columns (logging a warning on bad JSON).
 **Why it exists:** A service-level emergency listing.
 **Data in/out:** Out: list of surgery dicts.
 **Talks to:** Reads `surgeries`, `patients`. **Not used by the live route**, the `/emergency-queue` route has its own inline query with a *different* filter (`status IN ('emergency_pending','emergency_ready','emergency_context_generating')`, excluding `emergency_acknowledged`). So `LIKE 'emergency_%'` here would still show acknowledged cases; the route would not. This function is effectively dead.
 **Change guide:** If you unify queue logic, delete this and call the route's query, or vice-versa, but pick one, because they disagree on acknowledged cases.
 **Gotchas:** The two disagreeing definitions are a real bug surface: acknowledging an emergency removes it from the *route* queue but not from this function's.
 
-#### acknowledge_emergency: `server/services/surgery_escalation_service.py:329`
+#### acknowledge_emergency: `server/services/surgery_escalation_service.py:334`
 **Signature:** `(surgery_id: str) -> None`
 **Does:** Sets a surgery's status to `emergency_acknowledged`.
-**How it works:** One `UPDATE surgeries SET status='emergency_acknowledged'` (`:331`).
+**How it works:** One `UPDATE surgeries SET status='emergency_acknowledged'` (`:336`).
 **Why it exists:** Lets a clinician mark "I've seen this emergency" from the intake popup.
 **On screen:** the red emergency card disappears from the banner at the top of the Surgical Suite panel.
 **Talks to:** Writes `surgeries`. Called by the `/emergency/{id}/acknowledge` route.
@@ -551,15 +551,15 @@ row is inserted by hand. See Discrepancies.
 
 1. **The escalation "draft" origin is not wired.** `create_surgery_prep_request` (`server/services/surgery_escalation_service.py:27`) is the *only* code that INSERTs into `surgery_prep_requests`, yet nothing calls it (verified across the server, excluding docs). The UI that would post back the resulting `prep_id`/`idempotency_key`, `SurgeryActionCard`, **has been deleted from the repo**. The Relay `prep_surgery` confirm path that consumed such a row was removed with the execute-action route on 2026-10-03 (`server/routes/relay_routes.py:949-954`), so `create_surgery_prep_request`, `confirm_surgery_prep` and `generate_surgical_prep_package_async` are now reachable only from tests. The chat-driven escalation's server end survives as dead code; the client end is gone.
 
-2. **Resolved 2026-10-02: the prep package no longer passes as AI output.** `_do_generation` (`server/services/surgery_escalation_service.py:285`) used to sleep and write a hardcoded Hartmann's package finalised as `ai_package_status="generated"`, which the UI badged "AI Generated". It now writes the shared `PREP_PACKAGE` template as `"template"` (`:291`), and the panel badges both values "Standard template".
+2. **Resolved 2026-10-02: the prep package no longer passes as AI output.** `_do_generation` (`server/services/surgery_escalation_service.py:290`) used to sleep and write a hardcoded Hartmann's package finalised as `ai_package_status="generated"`, which the UI badged "AI Generated". It now writes the shared `PREP_PACKAGE` template as `"template"` (`:296`), and the panel badges both values "Standard template".
 
 3. **Two emergency package generators, only one notifies the UI.** This service's generator emits no socket event; the near-duplicate `generate_transfer_surgery_package_async` in `server/services/sage_handoff_service.py:827` does emit `surgery:emergency_intake` (at `:700` and `:730`). Cases created via the escalation-confirm path therefore reach `emergency_ready` silently and only surface through the panel's polls.
 
-4. **Two disagreeing emergency-queue definitions.** The route (`server/routes/surgery_routes.py:268`) filters `status IN ('emergency_pending','emergency_ready','emergency_context_generating')` (`:278`); the service `get_emergency_queue` (`server/services/surgery_escalation_service.py:302`) uses `LIKE 'emergency_%'` (`:309`), which also matches `emergency_acknowledged`/`emergency_staged`. The service function appears unused; the disagreement matters if it ever is.
+4. **Two disagreeing emergency-queue definitions.** The route (`server/routes/surgery_routes.py:268`) filters `status IN ('emergency_pending','emergency_ready','emergency_context_generating')` (`:278`); the service `get_emergency_queue` (`server/services/surgery_escalation_service.py:307`) uses `LIKE 'emergency_%'` (`:314`), which also matches `emergency_acknowledged`/`emergency_staged`. The service function appears unused; the disagreement matters if it ever is.
 
-5. **Two divergent case-detail assemblers.** `surgery_service.get_surgery_detail` (`server/services/surgery_service.py:68`) and the route handler (`server/routes/surgery_routes.py:162`) both build the Tier-3 object but from different sources (live `_assemble_patient_context` vs `notes`-embedded `imported_context`; comorbidities from the surgery snapshot vs `patient_profiles`). Only the route is live. Keeping them in sync is manual and error-prone.
+5. **Two divergent case-detail assemblers.** `surgery_service.get_surgery_detail` (`server/services/surgery_service.py:69`) and the route handler (`server/routes/surgery_routes.py:162`) both build the Tier-3 object but from different sources (live `_assemble_patient_context` vs `notes`-embedded `imported_context`; comorbidities from the surgery snapshot vs `patient_profiles`). Only the route is live. Keeping them in sync is manual and error-prone.
 
-6. **`get_weekly_schedule` is dead** (`server/services/surgery_service.py:10`) relative to the live board (the `get_surgery_schedule` route reimplements it), and the two use different date bounds (`< end_date` vs inclusive `BETWEEN`).
+6. **`get_weekly_schedule` is dead** (`server/services/surgery_service.py:11`) relative to the live board (the `get_surgery_schedule` route reimplements it), and the two use different date bounds (`< end_date` vs inclusive `BETWEEN`).
 
 7. **`surgery.prep` permission is granted but never enforced.** `server/permissions.py:99` defines `SURGERY_PREP`, and it is granted to two roles (`:233`, `:256`), but the `/prep` route gates on `surgery.write` (`server/routes/surgery_routes.py:960-962`). Nothing anywhere checks `surgery.prep`. Either wire it or drop it, as it stands, an administrator who removes `surgery.prep` from a role changes nothing, which is exactly the kind of silent no-op that erodes trust in the permission model.
 

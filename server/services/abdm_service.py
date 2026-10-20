@@ -87,6 +87,8 @@ from typing import Any
 from database import db_session
 from db_backend import DBIntegrityError
 
+from services import facility_stamp
+
 logger = logging.getLogger("orb.abdm")
 
 __all__ = [
@@ -1412,14 +1414,34 @@ def link_care_context(
                 f"(record #{existing['id']})."
             )
 
+        # The facility whose episode was linked (multisite-7b, migration 75):
+        # the admission's, when the link names one of this patient's
+        # admissions, else the patient's admission or latest encounter.
+        # Facility 1, with nothing read, while only one is on record.
+        patient_id = identity["patient_id"]
+        admission_ref = _clean(encounter_ref) if encounter_type == "admission" else None
+        facility_id = facility_stamp.resolve(
+            db,
+            (
+                (
+                    "the admission",
+                    lambda: facility_stamp.admission_facility(
+                        db, admission_ref, patient_id=patient_id
+                    ),
+                ),
+            ),
+            what="care context",
+            fallback=lambda: facility_stamp.patient_facility(db, patient_id=patient_id),
+        )
+
         try:
             cur = db.execute(
                 """INSERT INTO abdm_care_contexts
                      (abha_identity_id, patient_id, care_context_reference, display,
                       hi_type, encounter_type, encounter_ref, encounter_date, status,
                       linked_at, linked_by, link_method, link_reference, notes,
-                      recorded_by, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,'linked',?,?,?,?,?,?,?,?)""",
+                      recorded_by, created_at, updated_at, facility_id)
+                   VALUES (?,?,?,?,?,?,?,?,'linked',?,?,?,?,?,?,?,?,?)""",
                 (
                     int(identity_id),
                     identity["patient_id"],
@@ -1437,6 +1459,7 @@ def link_care_context(
                     recorded_by or who,
                     _utc_now_str(),
                     _utc_now_str(),
+                    facility_id,
                 ),
             )
         except DBIntegrityError as exc:

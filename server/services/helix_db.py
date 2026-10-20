@@ -54,7 +54,10 @@ CREATE TABLE IF NOT EXISTS helix_inventory_lots (
     vendor_id INTEGER,
     receipt_line_ref INTEGER,
     received_at TIMESTAMP,
-    created_at TIMESTAMP
+    created_at TIMESTAMP,
+    -- Migration 75 (multisite-7b): the facility the lot is held at; every
+    -- existing lot is facility 1. No CHECK, as above.
+    facility_id INTEGER NOT NULL DEFAULT 1
 );
 
 -- Helix: Patient Medication Orders (extended for full workflow)
@@ -118,7 +121,9 @@ CREATE TABLE IF NOT EXISTS helix_stock_movements (
     remarks TEXT,
     idempotency_key TEXT,
     occurred_at TEXT,
-    seq INTEGER
+    seq INTEGER,
+    -- Migration 75 (multisite-7b): the facility the movement happened at.
+    facility_id INTEGER NOT NULL DEFAULT 1
 );
 
 -- Helix: Transition Log (idempotency + audit)

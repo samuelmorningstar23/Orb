@@ -706,13 +706,27 @@ PATIENT_DEPARTMENT_SQL = (
 # facility or facility 1; a department the master does not list gets the empty
 # set and sees no patient.
 #
-# FACILITY_PATIENT_SQL is the facility of the patient's LATEST encounter: the
-# latest admission, picked with exactly PATIENT_DEPARTMENT_SQL's ordering so the
-# department and the facility always come from the same row, otherwise the
-# facility the patient was registered at. Ruling MS-R5 (a): a department-less
-# account sees the patients whose latest encounter is at its facility, the same
-# rule as ward staff, and never "any encounter, ever" (that would give a
-# permanent chart key to a patient now admitted elsewhere).
+# FACILITY_PATIENT_SQL is the facility of the patient's LATEST encounter
+# (multisite-4, W11-A, adds the outpatient visit and the booking):
+#   1. an ACTIVE admission, picked with exactly PATIENT_DEPARTMENT_SQL's
+#      ordering, so for an inpatient the department and the facility always
+#      come from the same row, and nothing an outpatient desk writes can take
+#      a patient on a ward out of that ward's scope;
+#   2. otherwise the newest of every admission, every OPD visit that was not
+#      cancelled and every appointment that was not cancelled, compared by
+#      julianday() of the instant each was recorded (admissions.created_at,
+#      opd_visits.registered_at, appointments.created_at, which are written in
+#      more than one spelling), an admission first on a tie;
+#   3. otherwise the facility the patient was registered at.
+# Ruling MS-R5 (a): a department-less account sees the patients whose latest
+# encounter is at its facility, the same rule as ward staff, and never "any
+# encounter, ever" (that would give a permanent chart key to a patient now
+# admitted elsewhere). So a patient discharged at one facility and then seen in
+# another facility's clinic belongs to the second. While all of a patient's
+# admissions are at one facility (the attribution invariant), every admission
+# in step 2 names the same facility. Only read with more than one facility on
+# record; opd_visits.facility_id and appointments.facility_id are migration
+# 74's.
 #
 # enforce_patient_scope and require_patient_access apply the facility scope
 # themselves, FIRST, so none of their call sites changes. A patient outside the
@@ -726,9 +740,18 @@ PATIENT_DEPARTMENT_SQL = (
 # multisite-10 gives it the facility argument in lockstep.
 
 FACILITY_PATIENT_SQL = (
-    "COALESCE((SELECT a.facility_id FROM admissions a WHERE a.patient_id = p.id "
-    " ORDER BY (a.status = 'active') DESC, a.created_at DESC, a.rowid DESC "
-    " LIMIT 1), p.registered_facility_id)"
+    "COALESCE("
+    "(SELECT a.facility_id FROM admissions a WHERE a.patient_id = p.id "
+    " AND a.status = 'active' ORDER BY a.created_at DESC, a.rowid DESC LIMIT 1), "
+    "(SELECT e.facility_id FROM ("
+    "SELECT a.facility_id AS facility_id, julianday(a.created_at) AS at, 0 AS kind, "
+    "a.rowid AS seq FROM admissions a WHERE a.patient_id = p.id "
+    "UNION ALL SELECT v.facility_id, julianday(v.registered_at), 1, v.rowid "
+    "FROM opd_visits v WHERE v.patient_id = p.id AND v.status != 'cancelled' "
+    "UNION ALL SELECT ap.facility_id, julianday(ap.created_at), 2, ap.rowid "
+    "FROM appointments ap WHERE ap.patient_id = p.id AND ap.status != 'cancelled'"
+    ") e ORDER BY e.at DESC, e.kind, e.seq DESC LIMIT 1), "
+    "p.registered_facility_id)"
 )
 
 

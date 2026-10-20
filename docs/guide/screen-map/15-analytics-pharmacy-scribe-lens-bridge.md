@@ -1074,7 +1074,7 @@ straight away." always renders.
 **API:** `GET /api/appointments/mine` on mount (`PatientShell.tsx:168`), `POST /api/appointments`
 with an `Idempotency-Key` header (line 181), `DELETE /api/appointments/{id}` (line 203).
 **Server:** `appointments_routes.my_appointments`
-(`server/routes/appointments_routes.py:236`), booked, not-past, own patient only;
+(`server/routes/appointments_routes.py:237`), booked, not-past, own patient only;
 `appointments_routes.book_appointment` (line 115), which resolves the patient from the login
 and **ignores any patient_id in the body** for a patient caller (line 130), dedupes on the
 idempotency key (line 169) **and** on an identical patient/date/time slot (line 183) returning

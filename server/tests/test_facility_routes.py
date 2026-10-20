@@ -208,11 +208,13 @@ def test_create_is_refused_with_its_reasons_and_never_succeeds(admin, switch_on)
         assert db.execute("SELECT COUNT(*) FROM facilities").fetchone()[0] == 1
 
 
-def test_the_fence_sentinel_alone_still_refuses(admin, switch_on, monkeypatch):
+def test_the_fence_list_alone_still_refuses(admin, switch_on, monkeypatch):
     """Everything else satisfied: a group-wide admin, facility 1's GSTIN and
-    the audit index. The sentinel '*' still refuses."""
+    the audit index. A blind list that is not empty (the generated one since
+    multisite-5b, like the sentinel '*' before it) still refuses."""
     uid, hdr = admin
-    assert facility_fence.FACILITY_BLIND_SURFACES == facility_fence.SENTINEL
+    blind = facility_fence.FACILITY_BLIND_SURFACES
+    assert blind and blind != facility_fence.SENTINEL
     with _gate_satisfied(uid):
         reasons = client.get("/api/facilities/create-check", headers=hdr).json()["reasons"]
         assert [r["code"] for r in reasons] == ["screens_not_ready"]
@@ -257,8 +259,10 @@ def test_behind_an_open_gate_create_validates_audits_and_closing_waits(admin, sw
                                                                        monkeypatch):
     """What the gate protects, exercised with the fence opened by hand (the
     product cannot do this yet): the new facility gets its audit epoch and an
-    audit row, the PAN rule applies, and it cannot be closed while Orb cannot
-    tell which outpatient visits and counters are its own."""
+    audit row, the PAN rule applies, and it cannot be closed while it has an
+    outpatient visit open (migration 74, multisite-4, gave visits their
+    facility; before it, no facility could be closed because Orb could not
+    tell which visits were its own)."""
     uid, hdr = admin
     monkeypatch.setattr(facility_fence, "FACILITY_BLIND_SURFACES", ())
     since = _max_audit_id()
@@ -280,11 +284,25 @@ def test_behind_an_open_gate_create_validates_audits_and_closing_waits(admin, sw
         dup = client.post("/api/facilities", headers=hdr, json={"code": "SAT1", "name": "Again"})
         assert dup.status_code == 400
         assert "code_taken" in {e["code"] for e in dup.json()["detail"]["errors"]}
-        closing = client.post(f"/api/facilities/{fid}/deactivate", headers=hdr,
-                              json={"reason": "Satellite closed"})
+        pid, vid = f"FRP{uuid.uuid4().hex[:6].upper()}", f"OPD-FR{uuid.uuid4().hex[:6].upper()}"
+        with db_session() as db:
+            db.execute("INSERT INTO patients (id, name, mrn, status) "
+                       "VALUES (?, 'Ysolde Farquharson', ?, 'registered')", (pid, f"MRN-{pid}"))
+            db.execute("INSERT INTO opd_visits (id, patient_id, department, visit_date, "
+                       "token_number, status, registered_at, facility_id) "
+                       "VALUES (?, ?, 'Satellite clinic', '2026-10-20', 1, 'waiting', ?, ?)",
+                       (vid, pid, datetime.now(timezone.utc).isoformat(), fid))
+        try:
+            closing = client.post(f"/api/facilities/{fid}/deactivate", headers=hdr,
+                                  json={"reason": "Satellite closed"})
+        finally:
+            with db_session() as db:
+                db.execute("DELETE FROM opd_visits WHERE id = ?", (vid,))
+                db.execute("DELETE FROM patients WHERE id = ?", (pid,))
         assert closing.status_code == 409, closing.text
         assert closing.json()["detail"]["error"] == "facility_has_open_work"
-        assert "opd_visits_unattributed" in {r["code"] for r in closing.json()["detail"]["reasons"]}
+        codes = {r["code"] for r in closing.json()["detail"]["reasons"]}
+        assert "open_opd_visits" in codes and "opd_visits_unattributed" not in codes
         no_reason = client.post(f"/api/facilities/{fid}/deactivate", headers=hdr, json={})
         assert no_reason.status_code == 400
 

@@ -106,7 +106,8 @@ from typing import Any, Literal, overload
 from database import db_session
 from db_backend import DBIntegrityError  # sqlcipher3 raises its OWN hierarchy:
 
-from services.billing_masters import MAIN_FACILITY_ID, next_document_number
+from services import facility_stamp
+from services.billing_masters import MAIN_FACILITY_ID, SeriesNotSetUp, next_document_number
 from services.money import (
     GST_TREATMENTS,
     QUANTITY_SCALE,
@@ -651,6 +652,31 @@ _DOC_SERIES = {
 }
 
 
+#: The numbered documents that carry their own facility (migration 75).
+_FACILITY_DOCUMENT_TABLES = frozenset({"indents", "purchase_orders", "goods_receipts"})
+
+
+def _procurement_facility(
+    db: Any,
+    *,
+    what: str,
+    sources: Sequence[tuple[str, Any]],
+    fallback: Any = None,
+    unknown_hint: str = "",
+) -> int:
+    """The facility a store, indent, purchase order or goods receipt belongs
+    to (multisite-7b, migration 75): the facility its sources name (the store,
+    the store asked, the indent, the order, the department), which must
+    agree, else `fallback`; refused in words when nothing names one.
+    Facility 1, with nothing read, while only one facility is on record."""
+    try:
+        return facility_stamp.resolve(
+            db, sources, what=what, fallback=fallback, unknown_hint=unknown_hint
+        )
+    except facility_stamp.FacilityStampError as exc:
+        raise ProcurementError(exc.message, code=exc.code) from exc
+
+
 def _stamp_document_number(kind: str, doc_id: int) -> str | None:
     """Allocate a document number and stamp it on a row that is ALREADY committed.
 
@@ -683,9 +709,10 @@ def _stamp_document_number(kind: str, doc_id: int) -> str | None:
     """
     table, column, series, domain = _DOC_SERIES[kind]
     domain_col = ", domain" if domain else ""
+    facility_col = ", facility_id" if table in _FACILITY_DOCUMENT_TABLES else ""
     with db_session() as db:
         row = db.execute(
-            f"SELECT {column} AS n{domain_col} FROM {table} WHERE id = ?", (doc_id,)
+            f"SELECT {column} AS n{domain_col}{facility_col} FROM {table} WHERE id = ?", (doc_id,)
         ).fetchone()
     if row is None:
         return None
@@ -700,11 +727,27 @@ def _stamp_document_number(kind: str, doc_id: int) -> str | None:
         return None
     if row["n"]:
         return str(row["n"])
+    # The series of the document's own facility (multisite-7b: indents, orders
+    # and receipts take their store's); the pharmacy-only documents carry no
+    # facility yet and number at facility 1. A facility with no series of its
+    # own leaves the document unnumbered, never numbered from facility 1's.
+    facility_id = (
+        int(row["facility_id"])
+        if facility_col and row["facility_id"] is not None
+        else MAIN_FACILITY_ID
+    )
     try:
-        # Facility 1's series (multisite-7a): stores, indents, orders and
-        # receipts carry no facility until multisite-7b stamps one from the
-        # store, so every stores and pharmacy document numbers there.
-        allocated = next_document_number(series, facility_id=MAIN_FACILITY_ID)
+        allocated = next_document_number(series, facility_id=facility_id)
+    except SeriesNotSetUp:
+        logger.error(
+            "%s %s is saved but unnumbered: facility %s has no %s series yet. An "
+            "administrator sets one up in Admin, Facilities, then it is stamped again.",
+            table,
+            doc_id,
+            facility_id,
+            series,
+        )
+        return None
     except Exception:
         logger.error(
             "could not allocate a %s number for %s %s — the document is saved and "
@@ -1076,7 +1119,7 @@ def upsert_store(
 
 
 def _upsert_store_core(
-    db,
+    db: Any,
     *,
     code: str,
     name: str,
@@ -1134,7 +1177,7 @@ def _upsert_store_core(
                 )
 
     existing = db.execute(
-        "SELECT name, pharmacy_kind FROM stores WHERE code = ?", (code,)
+        "SELECT name, pharmacy_kind, facility_id FROM stores WHERE code = ?", (code,)
     ).fetchone()
     if existing is not None:
         held_by_pharmacy = existing["pharmacy_kind"] is not None
@@ -1158,11 +1201,26 @@ def _upsert_store_core(
             )
     if create_only:
         _refuse_existing(db, "stores", code, "store")
+    # The facility the store is at (multisite-7b): its department's in the
+    # departments master, else its ward's in Bed setup, else its in-charge's
+    # account's. Written once; a store keeps it, and a department or ward at
+    # another facility is refused (stock is held where the patient is).
+    facility_id = _procurement_facility(
+        db,
+        what="store",
+        sources=(
+            ("the store as set up", facility_stamp.row_facility(existing)),
+            ("the department", lambda: facility_stamp.department_facility(db, department)),
+            ("the ward", lambda: facility_stamp.ward_facility(db, ward=ward)),
+        ),
+        fallback=lambda: facility_stamp.account_facility(db, incharge_user_id),
+        unknown_hint="Name its department.",
+    )
     try:
         db.execute(
             """INSERT INTO stores (code, name, store_type, department, ward,
-                   incharge_user_id, is_active, pharmacy_kind)
-               VALUES (?,?,?,?,?,?,?,?)
+                   incharge_user_id, is_active, pharmacy_kind, facility_id)
+               VALUES (?,?,?,?,?,?,?,?,?)
                ON CONFLICT(code) DO UPDATE SET
                    name = excluded.name,
                    store_type = excluded.store_type,
@@ -1179,6 +1237,7 @@ def _upsert_store_core(
                 incharge_user_id,
                 1 if is_active else 0,
                 kind,
+                facility_id,
             ),
         )
     except DBIntegrityError as exc:
@@ -1669,7 +1728,7 @@ def create_indent(
 
 
 def _create_indent_core(
-    db,
+    db: Any,
     *,
     store_code: str | None = None,
     department: str | None = None,
@@ -1683,7 +1742,7 @@ def _create_indent_core(
     domain: str = STORES_DOMAIN,
     indent_kind: str = "purchase",
     issuing_store_code: str | None = None,
-    resolve_line=None,
+    resolve_line: Any = None,
 ) -> int:
     """`create_indent` on the caller's connection. Returns the new indent id.
 
@@ -1708,14 +1767,14 @@ def _create_indent_core(
     parsed = _coerce_indent_lines(lines)
     required = _as_date_str(required_by, "required_by")
 
-    store_id = None
+    store_id = store = None
     if store_code:
         store = _store_row(db, store_code, domain)
         if not store:
             raise ProcurementError(f"no store with code {store_code!r}", code="not_found")
         store_id = store["id"]
 
-    issuing_store_id = None
+    issuing_store_id = issuing = None
     if indent_kind == "issue":
         issuing = _store_row(db, issuing_store_code, domain) if issuing_store_code else None
         if not issuing:
@@ -1728,6 +1787,21 @@ def _create_indent_core(
                 "a store cannot raise an issue indent on itself", code="bad_indent_kind"
             )
         issuing_store_id = issuing["id"]
+
+    # The facility the indent is raised at (multisite-7b): its store's, the
+    # store it asks (stock never crosses facilities on an indent), and its
+    # department's, which must agree; else the requester's account's.
+    facility_id = _procurement_facility(
+        db,
+        what="indent",
+        sources=(
+            ("the store", facility_stamp.row_facility(store)),
+            ("the store asked", facility_stamp.row_facility(issuing)),
+            ("the department", lambda: facility_stamp.department_facility(db, department)),
+        ),
+        fallback=lambda: facility_stamp.account_facility(db, requested_by),
+        unknown_hint="Name the store it is for.",
+    )
 
     resolved: list[tuple[IndentLineInput, dict]] = []
     for line in parsed:
@@ -1749,8 +1823,8 @@ def _create_indent_core(
     cur = db.execute(
         """INSERT INTO indents (indent_number, store_id, department, ward,
                priority, status, required_by, requested_by, remarks, domain,
-               indent_kind, issuing_store_id)
-           VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?)""",
+               indent_kind, issuing_store_id, facility_id)
+           VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             store_id,
             department,
@@ -1763,6 +1837,7 @@ def _create_indent_core(
             domain,
             indent_kind,
             issuing_store_id,
+            facility_id,
         ),
     )
     indent_id = cur.lastrowid
@@ -2176,7 +2251,7 @@ def create_purchase_order(
 
 
 def _create_purchase_order_core(
-    db,
+    db: Any,
     *,
     vendor_code: str,
     lines: Sequence[Any],
@@ -2192,7 +2267,7 @@ def _create_purchase_order_core(
     created_by: str | None = None,
     today: date | datetime | str,
     domain: str = STORES_DOMAIN,
-    resolve_line=None,
+    resolve_line: Any = None,
 ) -> int:
     """`create_purchase_order` on the caller's connection. Returns the new PO id.
 
@@ -2220,7 +2295,7 @@ def _create_purchase_order_core(
     if not vendor["is_active"]:
         raise ProcurementError(f"vendor {vendor['name']} is inactive", code="vendor_inactive")
 
-    store_id = None
+    store_id = store = indent = None
     if store_code:
         store = _store_row(db, store_code, domain)
         if not store:
@@ -2241,6 +2316,19 @@ def _create_purchase_order_core(
                 "transfer, not a purchase order",
                 code="indent_is_issue",
             )
+
+    # The facility the order buys for (multisite-7b): its store's and its
+    # indent's, which must agree; else the buyer's account's.
+    facility_id = _procurement_facility(
+        db,
+        what="purchase order",
+        sources=(
+            ("the store", facility_stamp.row_facility(store)),
+            ("the indent", facility_stamp.row_facility(indent)),
+        ),
+        fallback=lambda: facility_stamp.account_facility(db, created_by),
+        unknown_hint="Name the store it is for.",
+    )
 
     computed: list[tuple[POLineInput, dict, Any]] = []
     for line in parsed:
@@ -2302,8 +2390,8 @@ def _create_purchase_order_core(
                subtotal_paise, discount_paise, taxable_value_paise, cgst_paise,
                sgst_paise, igst_paise, tax_paise, other_charges_paise,
                rounding_adjustment_paise, total_paise, terms, created_by, remarks,
-               domain)
-           VALUES (NULL,?,?,?, 'draft', ?,?,?,?, ?,?,?,?,?,?,?,?,?,?, ?,?,?, ?)""",
+               domain, facility_id)
+           VALUES (NULL,?,?,?, 'draft', ?,?,?,?, ?,?,?,?,?,?,?,?,?,?, ?,?,?, ?,?)""",
         (
             vendor["id"],
             indent_id,
@@ -2326,6 +2414,7 @@ def _create_purchase_order_core(
             created_by,
             remarks,
             domain,
+            facility_id,
         ),
     )
     po_id = cur.lastrowid
@@ -2728,7 +2817,7 @@ def _goods_receipt_id_for_key(
 
 
 def _create_goods_receipt_core(
-    db,
+    db: Any,
     *,
     purchase_order_id: int,
     lines: Sequence[Any],
@@ -2803,6 +2892,18 @@ def _create_goods_receipt_core(
     ).fetchone()
     if other_half or (domain == PHARMACY_DOMAIN and _store_row(db, int(store_id), domain) is None):
         raise ProcurementError(f"no store with id {store_id}", code="not_found")
+    # The facility the goods arrive at (multisite-7b): the receiving store's,
+    # which must be the order's; an order of one facility is never received
+    # into another facility's store.
+    receiving_store = store_id
+    facility_id = _procurement_facility(
+        db,
+        what="goods receipt",
+        sources=(
+            ("the store", lambda: facility_stamp.store_facility(db, receiving_store)),
+            ("the purchase order", facility_stamp.row_facility(po)),
+        ),
+    )
 
     prepared: list[dict] = []
     for line in parsed:
@@ -2952,8 +3053,8 @@ def _create_goods_receipt_core(
                store_id, vendor_invoice_number, vendor_invoice_date,
                vendor_invoice_total_paise, status, qc_status, subtotal_paise,
                taxable_value_paise, cgst_paise, sgst_paise, igst_paise, tax_paise,
-               total_paise, received_by, idempotency_key, remarks, domain)
-           VALUES (NULL,?,?,?,?,?,?, 'draft', ?, ?,?,?,?,?,?,?, ?,?,?, ?)""",
+               total_paise, received_by, idempotency_key, remarks, domain, facility_id)
+           VALUES (NULL,?,?,?,?,?,?, 'draft', ?, ?,?,?,?,?,?,?, ?,?,?, ?,?)""",
         (
             purchase_order_id,
             po["vendor_id"],
@@ -2975,6 +3076,7 @@ def _create_goods_receipt_core(
             idempotency_key,
             remarks,
             po["domain"],
+            facility_id,
         ),
     )
     grn_id = cur.lastrowid

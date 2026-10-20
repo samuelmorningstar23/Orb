@@ -173,10 +173,14 @@ def confirm_surgery_prep(
         surgeon_id = _resolve_emergency_surgeon(db, prep["patient_id"], confirmed_by)
 
         if surgery_id != "SURG-ALEX-EM":
+            # multisite-4: the patient's facility (1 with one facility on record).
+            from services.surgery_service import surgery_facility_on
+
+            facility_id = surgery_facility_on(db, prep["patient_id"])
             db.execute(
-                """INSERT INTO surgeries 
-                   (id, patient_id, surgeon_id, procedure_name, diagnosis, scheduled_date, scheduled_time, estimated_duration_min, operating_room, status)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'emergency_pending')""",
+                """INSERT INTO surgeries
+                   (id, patient_id, surgeon_id, procedure_name, diagnosis, scheduled_date, scheduled_time, estimated_duration_min, operating_room, status, facility_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'emergency_pending', ?)""",
                 (
                     surgery_id,
                     prep["patient_id"],
@@ -187,6 +191,7 @@ def confirm_surgery_prep(
                     time_str,
                     120,
                     "OR-E (Emergency)",
+                    facility_id,
                 ),
             )
 

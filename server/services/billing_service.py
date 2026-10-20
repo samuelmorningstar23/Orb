@@ -675,6 +675,12 @@ def add_charge(
             raise BillingError(str(exc), code="invalid_amount") from exc
 
         text = _clean(description) or _clean(resolution.description) or service_code
+        # The facility the charge was incurred at (multisite-7b, migration 75):
+        # the admission's, else the patient's latest encounter; facility 1,
+        # with no statement run, while only one facility is on record.
+        facility_id = facility_identity.document_facility_id(
+            db, patient_id=patient_id, admission_id=admission_id
+        )
         # `rate_is_configured` is written as 1 unconditionally, and that is
         # correct BECAUSE of the refusal above: every path into this INSERT has
         # either resolved a configured rate or been handed one explicitly. There
@@ -687,8 +693,8 @@ def add_charge(
                   tariff_plan_id, ward_class, gross_paise, discount_paise, gst_treatment,
                   gst_rate_bp, taxable_value_paise, cgst_paise, sgst_paise, igst_paise,
                   total_paise, status, source, source_ref, service_date, charged_by,
-                  idempotency_key, notes)
-               VALUES (?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                  idempotency_key, notes, facility_id)
+               VALUES (?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 patient_id,
                 admission_id,
@@ -716,6 +722,7 @@ def add_charge(
                 charged_by,
                 idempotency_key,
                 notes,
+                facility_id,
             ),
         )
         charge_id = cur.lastrowid
@@ -2347,6 +2354,13 @@ def create_invoice(
             patient_share = apply_basis_points(totals.payable_paise, payer.copay_percent_bp)
             payer_share = totals.payable_paise - patient_share
 
+        # The facility that bills (multisite-7b, migration 75): the admission's,
+        # else the patient's latest encounter, the facility its supplier block
+        # and number are taken for. Facility 1, with no statement run, while
+        # only one facility is on record.
+        facility_id = facility_identity.document_facility_id(
+            db, patient_id=patient_id, admission_id=admission_id
+        )
         cur = db.execute(
             """INSERT INTO invoices
                  (patient_id, admission_id, encounter_type, payer_id, tariff_plan_id,
@@ -2355,8 +2369,8 @@ def create_invoice(
                   sgst_paise, igst_paise, tax_paise, total_paise,
                   rounding_adjustment_paise, payable_paise, amount_paid_paise,
                   balance_paise, patient_responsibility_paise, payer_responsibility_paise,
-                  period_from, period_to, idempotency_key, notes, created_by)
-               VALUES (?,?,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?)""",
+                  period_from, period_to, idempotency_key, notes, created_by, facility_id)
+               VALUES (?,?,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?)""",
             (
                 patient_id,
                 admission_id,
@@ -2384,6 +2398,7 @@ def create_invoice(
                 idempotency_key,
                 notes,
                 created_by,
+                facility_id,
             ),
         )
         invoice_id = int(cur.lastrowid)
@@ -2502,8 +2517,10 @@ def issue_invoice(invoice_id: int, *, actor: str | None = None) -> dict:
         # The supplier block is fixed in the SAME statement that assigns the
         # number (multisite-2, migration 72): a reprint after the hospital's
         # details change still shows what the invoice was issued with.
+        # It names the invoice's own facility (multisite-7b), the one it was
+        # raised at, whichever facility the patient has been seen at since.
         snapshot = facility_identity.supplier_snapshot(
-            db, patient_id=patient_id, admission_id=admission_id
+            db, patient_id=patient_id, admission_id=admission_id, facility_id=row["facility_id"]
         )
         updated = db.execute(
             "UPDATE invoices SET status = 'issued', invoice_number = ?, "
@@ -2706,10 +2723,15 @@ def create_credit_note(invoice_id: int, *, reason: str, actor: str | None = None
             ).fetchall()
         ]
         # The facility whose INV series numbers the note (multisite-7a): the
-        # one its supplier snapshot below is taken for. Facility 1 while only
-        # one is on record, with no statement run.
-        series_facility = facility_identity.document_facility_id(
-            db, patient_id=source["patient_id"], admission_id=source["admission_id"]
+        # invoice's own (multisite-7b), so the note is issued by the supplier
+        # that issued the bill; its supplier snapshot and its own facility_id
+        # below are that facility's too. Facility 1 while only one is on record.
+        series_facility = (
+            int(source["facility_id"])
+            if source.get("facility_id") is not None
+            else facility_identity.document_facility_id(
+                db, patient_id=source["patient_id"], admission_id=source["admission_id"]
+            )
         )
 
     if not lines:
@@ -2784,7 +2806,10 @@ def create_credit_note(invoice_id: int, *, reason: str, actor: str | None = None
         # A credit note is numbered here, so its supplier block is fixed here
         # too (multisite-2, migration 72), from the identity on record now.
         snapshot = facility_identity.supplier_snapshot(
-            db, patient_id=source["patient_id"], admission_id=source["admission_id"]
+            db,
+            patient_id=source["patient_id"],
+            admission_id=source["admission_id"],
+            facility_id=series_facility,
         )
         cur = db.execute(
             """INSERT INTO invoices
@@ -2794,10 +2819,10 @@ def create_credit_note(invoice_id: int, *, reason: str, actor: str | None = None
                   sgst_paise, igst_paise, tax_paise, total_paise,
                   rounding_adjustment_paise, payable_paise, amount_paid_paise,
                   balance_paise, supersedes_invoice_id, issued_at, issued_by,
-                  notes, created_by, """
+                  notes, created_by, facility_id, """
             + facility_identity.SNAPSHOT_COLUMNS_SQL
             + """)
-               VALUES (?,?,?,?,?,?,'credit_note','issued',?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,"""
+               VALUES (?,?,?,?,?,?,'credit_note','issued',?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,"""
             + facility_identity.SNAPSHOT_PLACEHOLDERS
             + ")",
             (
@@ -2825,6 +2850,7 @@ def create_credit_note(invoice_id: int, *, reason: str, actor: str | None = None
                 actor,
                 f"Credit note against invoice {source['invoice_number'] or invoice_id}: {cleaned}",
                 actor,
+                series_facility,
                 *snapshot,
             ),
         )

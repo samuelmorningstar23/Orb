@@ -226,9 +226,12 @@ def test_the_session_database_refuses_an_identity_change_edit():
 
 def test_the_front_desk_fallback_builds_the_migrations_shape(tmp_path):
     """ensure_frontdesk_schema shares migration 50's DDL: on an empty database
-    the lazy path and the runner produce the same opd_visits."""
+    the lazy path and the runner produce the same opd_visits. Migration 74
+    (multisite-4) adds facility_id, and the lazy path adds it right after."""
+    from migrations_his import m0074_facility_columns_encounters as m74
     lazy = sqlite3.connect(str(tmp_path / "lazy_only.db"))
     m50.ensure_opd_visits_on(lazy)
+    fd.ensure_opd_visit_facility_on(lazy)
     lazy.commit()
     with db_session() as db:
         runner = [tuple(r) for r in db.execute("PRAGMA table_info(opd_visits)")]
@@ -240,6 +243,7 @@ def test_the_front_desk_fallback_builds_the_migrations_shape(tmp_path):
         "SELECT sql FROM sqlite_master WHERE tbl_name='opd_visits' AND type='index' "
         "AND sql IS NOT NULL")) == runner_idx
     assert fd.ensure_opd_visits_on is m50.ensure_opd_visits_on
+    assert fd.ensure_opd_visit_facility_on is m74.ensure_opd_visit_facility_on
     lazy.close()
 
 
@@ -278,8 +282,9 @@ print("ORB_TEST_JSON:" + json.dumps({
     line = [ln for ln in proc.stdout.splitlines() if ln.startswith("ORB_TEST_JSON:")][-1]
     got = json.loads(line[len("ORB_TEST_JSON:"):])
     assert got["lazy_ran"] is False
+    # Migration 74 (multisite-4) appends the visit's facility.
     assert got["opd_cols"] == list(m50.OPD_VISITS_BASE_COLUMNS) + [
-        n for n, _ in m50.OPD_VISITS_ADDED_COLUMNS]
+        n for n, _ in m50.OPD_VISITS_ADDED_COLUMNS] + ["facility_id"]
     assert {"opd_visits", "patient_movements", *NEW_TABLES} <= set(got["tables"])
     assert {50, 51, 52} <= set(got["applied"])
 

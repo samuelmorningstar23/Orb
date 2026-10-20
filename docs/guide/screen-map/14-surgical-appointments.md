@@ -376,7 +376,7 @@ Also `:743` for the same badge on the Tier-2 heading.
 **Data from:** `day.is_today`, declared on the `DaySchedule` interface at `:31`.
 **Server:** **nothing supplies it.** `get_surgery_schedule` builds each day object with exactly three
 keys, `date`, `day_label`, `surgeries` (`server/routes/surgery_routes.py:109-113`). The only
-`is_today` in the entire server tree is `server/services/surgery_service.py:43`, inside
+`is_today` in the entire server tree is `server/services/surgery_service.py:44`, inside
 `get_weekly_schedule`, which no route, service or test calls (verified by repo-wide grep).
 **Change this →** as shipped, `day.is_today` is always `undefined`, so **the "Today" badge never
 appears on this screen, and neither does the `suite__day-card--today` treatment**, the clay border,
@@ -491,7 +491,7 @@ the text. The word is printed lowercase exactly as stored.
 ### Success probability: "94% success"
 **Rendered by:** `:782-784`.
 **Data from:** `surgeries.success_probability`, a REAL column (`server/database.py:314`), written by
-the escalation packagers, 72.5 at `server/services/surgery_escalation_service.py:280` and 78.5 at
+the escalation packagers, 72.5 at `server/services/surgery_escalation_service.py:285` and 78.5 at
 `server/services/sage_handoff_service.py:669`.
 **Change this →** three colour bands, all inline at `:782`: ≥95 green, ≥85 amber, below that red.
 The value is printed with no rounding and no unit conversion, so a row storing `0.85` renders
@@ -618,8 +618,8 @@ nothing otherwise (`:946`).
 **Data from:** `getAiPackageStatus` (`:130-136`), which JSON-parses `selectedSurgery.notes` and reads
 `.ai_package_status`, returning null on any parse failure.
 **Server:** only two values are ever written, `"generated"`
-(`server/services/surgery_escalation_service.py:320`, `server/services/sage_handoff_service.py:692`)
-and `"failed"` (`server/services/surgery_escalation_service.py:328`, the 60-second timeout path at
+(`server/services/surgery_escalation_service.py:325`, `server/services/sage_handoff_service.py:692`)
+and `"failed"` (`server/services/surgery_escalation_service.py:333`, the 60-second timeout path at
 `:325`). `"fallback"` and `"timeout"` are dead branches.
 **Change this →** green pill vs amber pill (`SurgicalSuitePanel.css:844-855`). The amber badge is
 reachable only by one route: open a case while it is still `emergency_context_generating`, then let
@@ -722,10 +722,10 @@ to signal it.
 **Rendered by:** heading at `:1077`; each member at `:1080-1088`, initial avatar (`:1082`), name
 (`:1084`), role (`:1085`).
 **Data from:** `selectedSurgery.staff_required`, the *package* roster written by the enrichment
-services (e.g. `server/services/surgery_escalation_service.py:308-317`), **not** the live
+services (e.g. `server/services/surgery_escalation_service.py:313-322`), **not** the live
 `surgery_team_assignments` rows. The two are different lists: this one has names and no statuses;
 the Active Cases chips have statuses and no names.
-**Change this →** `s.name.charAt(0)` (`:1082`) throws if an entry is a plain string rather than a
+**Change this →** `s.name.charAt(0)` (`:1156`) throws if an entry is a plain string rather than a
 `{role, name}` object, a shape the server tolerates elsewhere via
 `server/services/surgery_service.py::_staff_display_names` (`:235-252`). A string roster here would
 be caught by `PanelErrorBoundary` and show "This panel hit an error and couldn't be shown."

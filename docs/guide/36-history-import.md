@@ -151,7 +151,7 @@ sequenceDiagram
 
 #### `SOURCE_TAG`: `history_import_service.py:220`
 **Signature:** `str = "history_import"`
-**Does:** Written to the pre-existing `source` column on `medications`, `problem_list` and `observations` (`:2053`), and to `admissions.admission_source` (`:2051`).
+**Does:** Written to the pre-existing `source` column on `medications`, `problem_list` and `observations` (`:2056`), and to `admissions.admission_source` (`:2054`).
 **On screen:** nothing renders `source` today. It has one **real behavioural consequence**: `pharmacy_verification_service` queues a medication for pharmacist verification only when `source IN ('llm_extracted', 'agentic')` (`:29`, `:96`), and refuses to verify anything else (`:149`). So an imported historical drug is deliberately **not** placed in the pharmacist's queue.
 **Why that is right:** a discontinued drug from 2023 is not a live order awaiting a pharmacist. Putting a five-year migration into the verification queue would bury the handful of AI-extracted medications that genuinely need a human.
 **Breaks if you change it:** setting `SOURCE_TAG` to `"llm_extracted"` would dump the entire imported medication history into the pharmacy verification queue overnight. Removing the tag entirely makes an imported drug indistinguishable, in the one column anything actually reads, from a hand-entered one.
@@ -291,7 +291,7 @@ Copying the tolerance in either direction produces a bug: give `_detect_encoding
 **On screen:** decides everything downstream; a wrong answer here is a wrong import that reports success.
 **Why the bar is evidence and not optimism:** read a report title as the header and **every column lands in the wrong field**, so one patient's ward becomes another's diagnosis. A line is the header only if it names at least `_MIN_HEADER_HITS` (2) columns this record type recognises **exactly**.
 **How it works:** with `header_line` supplied, that line is used but still sanity-checked, out of range or blank is a `ValueError`, fewer than two named columns is a `ValueError`, and zero recognised columns is a **warning** telling the admin to check the mapping column by column (`:901-906`). Without it, the first 100 lines are scanned and the first line clearing the bar wins; the top five candidates are returned either way. Skipped preamble lines produce their own warning (`_preamble_issue`, `:946`).
-**When nothing clears the bar (`:934-941`):** `confident=False` plus an `error`-severity issue naming the best candidate and telling the admin to re-run with `header_line`. `plan`/`apply_import` then **refuse** (`:1719`); `sniff` deliberately does not, because it is the tool for picking the line.
+**When nothing clears the bar (`:934-941`):** `confident=False` plus an `error`-severity issue naming the best candidate and telling the admin to re-run with `header_line`. `plan`/`apply_import` then **refuse** (`:1722`); `sniff` deliberately does not, because it is the tool for picking the line.
 **Breaks if you change it:** lowering `_MIN_HEADER_HITS` to 1 lets a line containing the single word "Name" become the header. Making `plan` proceed on an unconfident header converts "Orb will not guess" into a silent column shift across the whole file.
 
 #### `_iter_rows`: `history_import_service.py:1576`
@@ -307,16 +307,16 @@ Copying the tolerance in either direction produces a bug: give `_detect_encoding
 **Signature:** dataclass with `line`, the three identifiers, `action` (`create|update|unchanged|fail`), `reason`, `patient_id`, `target_id`, `values`, `changes`, `issues`, `raw_text`
 **Does:** One row's plan. `fail(code, message, field, value)` sets the action, the reason **and** appends an `error`-severity issue in one call, then returns `self` so a normaliser can `return pr.fail(...)`.
 **On screen:** `to_dict` is the shape of every entry in the dry run's `rows` and `failures` arrays.
-**Breaks if you change it:** setting `action = "fail"` without going through `fail()` produces a rejected row with no issue attached, and `_reject_row` (`:1899`) then writes `"Row was not imported."` with no reason, a reject ledger entry that tells the hospital nothing.
+**Breaks if you change it:** setting `action = "fail"` without going through `fail()` produces a rejected row with no issue attached, and `_reject_row` (`:1902`) then writes `"Row was not imported."` with no reason, a reject ledger entry that tells the hospital nothing.
 
-#### `_Report`: `history_import_service.py:1703` (`add` at `:1078`, `note_file_issue` at `:1100`)
+#### `_Report`: `history_import_service.py:1706` (`add` at `:1078`, `note_file_issue` at `:1100`)
 **Signature:** `__init__(detail_limit, reject_limit)`
 **Does:** **Exact totals, capped detail.** `counts` and `issue_summary` accumulate over every row read; `rows` and `failures` stop at their limits and set a truncation flag.
 **On screen:** `counts` is the summary an admin reads before committing; `issue_summary` is the per-code histogram.
 **Why the asymmetry is the safety instrument:** a 200 000-row file cannot be returned over HTTP, so the *detail* has to be capped. The *counts* must not be, because "how many rows failed" is the number that decides whether to commit. Truncation is flagged explicitly rather than hidden, and commit persists the complete reject list regardless.
 **Breaks if you change it:** capping the counts alongside the detail turns "4 200 rows failed" into "200 rows failed", the precise silent-loss failure this module exists to prevent. Removing `rows_truncated`/`failures_truncated` makes a capped list indistinguishable from a complete one.
 
-#### `_Cells`: `history_import_service.py:1758` (`__call__` at `:1130`, `block` at `:1134`)
+#### `_Cells`: `history_import_service.py:1761` (`__call__` at `:1130`, `block` at `:1134`)
 **Signature:** `_Cells(raw: dict, mapping: dict)`; `cell(name) -> str`; `cell.block(name) -> str`
 **Does:** `cell(name)` is the ordinary single-line read, whitespace collapsed, `N/A`-style tokens treated as blank. `cell.block(name)` preserves line structure: each line is tidied, the breaks between them are kept, and runs of three or more blank lines are collapsed to two.
 **On screen:** `block` is what a discharge summary or admission note **looks like** in the chart.
@@ -324,7 +324,7 @@ Copying the tolerance in either direction produces a bug: give `_detect_encoding
 **Used by:** `_n_documents` for `content` (`:1445`), `_n_admissions` for `notes` (`:1274`), `_n_medications` for `notes` (`:1359`).
 **Breaks if you change it:** routing `content` through `cell()` instead of `cell.block()` flattens every imported clinical narrative, irreversibly, with no error and no warning.
 
-#### `_normalise`: `history_import_service.py:1797`
+#### `_normalise`: `history_import_service.py:1800`
 **Signature:** `(raw, mapping, rt, line, date_order) -> _PlannedRow`
 **Does:** CSV row → normalised Orb values + issues. **Touches no database.**
 **On screen:** nothing directly.
@@ -332,7 +332,7 @@ Copying the tolerance in either direction produces a bug: give `_detect_encoding
 **Why it is DB-free:** it is the half of the work that can run identically in the dry run and the apply pass without any transaction open, which is what makes `_execute`'s single code path possible.
 **Breaks if you change it:** adding a database lookup here puts a query on every row instead of every batch, and turns a 200 000-row plan into 200 000 round trips.
 
-#### `_n_patients`: `history_import_service.py:1822`
+#### `_n_patients`: `history_import_service.py:1825`
 **Signature:** `(pr, cell, line, date_order) -> None`
 **Does:** Normalises a demographics row.
 **On screen:** the patient's name, MRN, DOB, age, sex, phone, address and next-of-kin, and, decisively, their **status**.
@@ -340,7 +340,7 @@ Copying the tolerance in either direction produces a bug: give `_detect_encoding
 **The single most important line in the module is `:1218`, `pr.values["status"] = "discharged"`.** `patients.status` defaults to `'admitted'` in the schema. Without this line a five-year export puts **thousands of people who are not in the building** onto Vigil's patient board and the nurse shift board. There is deliberately **no way for the file to override it**: unlike every other default in this module, this one does not yield to the export's own statement, because a history import is by definition not about people who are here.
 **Breaks if you change it:** deleting `:1218` floods every ward board in the hospital on cutover day. Making it configurable gives somebody the option to do that.
 
-#### `_n_admissions`: `history_import_service.py:1896`
+#### `_n_admissions`: `history_import_service.py:1899`
 **Signature:** `(pr, cell, line, date_order) -> None`
 **Does:** Normalises a past encounter.
 **On screen:** the admission history on a patient chart, and length of stay.
@@ -349,14 +349,14 @@ Copying the tolerance in either direction produces a bug: give `_detect_encoding
 **The open-encounter rule (`:1266-1277`):** if the export's status is one of `_OPEN_ENCOUNTER_TOKENS`, the row still imports, as **discharged**, with a warning and an entry in `still_open_in_source`. The warning names the fix: *if this patient is genuinely on the ward today, put them there with the ROSTER import, which has the ward, bed and department discipline that a live admission needs.* `transferred`/`referred out` map to `transferred`; everything else to `discharged`.
 **Breaks if you change it:** honouring the export's "open" status opens live admissions for patients who left years ago, occupying beds on the capacity view. Dropping the `still_open_in_source` list removes the only signal that some of those encounters need a second, different action.
 
-#### `_n_diagnoses`: `history_import_service.py:1981`
+#### `_n_diagnoses`: `history_import_service.py:1984`
 **Signature:** `(pr, cell, line, date_order) -> None`
 **Does:** Normalises a problem-list entry.
 **On screen:** the patient's problem list, and specifically whether an imported diagnosis appears as a **current** problem.
 **The default (`:1308-1316`):** `problem_list.status` defaults to `'active'` in the schema. With no status column mapped, an imported diagnosis is filed **inactive**, with a warning that says why: *asserting an old diagnosis as a current problem is a claim the export never made.* If the file **does** carry a status, the file wins.
 **Breaks if you change it:** defaulting to `active` asserts, on the hospital's behalf, that every diagnosis anyone ever recorded is still true today.
 
-#### `_n_medications`: `history_import_service.py:2037`
+#### `_n_medications`: `history_import_service.py:2040`
 **Signature:** `(pr, cell, line, date_order) -> None`
 **Does:** Normalises a historical drug.
 **On screen:** the medication list, the interaction check, and the discharge summary.
@@ -365,7 +365,7 @@ Copying the tolerance in either direction produces a bug: give `_detect_encoding
 **Why that is a safety issue and not a display one:** a drug the patient stopped in 2023 arriving as `active` is screened against today's prescriptions and handed over at discharge **as a current medication**.
 **Breaks if you change it:** defaulting to `active` puts the entire historical pharmacy of every imported patient onto their current medication list. Dropping a dose-less drug instead of writing `UNKNOWN` loses the exposure record that allergy and interaction history is built on.
 
-#### `_n_results`: `history_import_service.py:2119`
+#### `_n_results`: `history_import_service.py:2122`
 **Signature:** `(pr, cell, line, date_order) -> None`
 **Does:** Normalises a lab result or observation.
 **On screen:** the results view and the numeric trend graphs.
@@ -373,7 +373,7 @@ Copying the tolerance in either direction produces a bug: give `_detect_encoding
 **Status defaults to `final`** when the column is absent, the only place in this module where the silent default is the *assertive* one, because a result held in a legacy archive has by definition already been reported.
 **Breaks if you change it:** dropping value-less results loses the record that the test happened. Defaulting the observation date to the import date puts the entire imported history on today's timeline.
 
-#### `_n_documents`: `history_import_service.py:2199`
+#### `_n_documents`: `history_import_service.py:2202`
 **Signature:** `(pr, cell, line, date_order) -> None`
 **Does:** Normalises a clinical note, summary or report.
 **On screen:** the document's title and body in the chart.
@@ -382,24 +382,24 @@ Copying the tolerance in either direction produces a bug: give `_detect_encoding
 **`doc_type` defaults to `imported_document`** (`:1457`), *honest about what it is*.
 **Breaks if you change it:** importing empty documents fills the chart with entries that assert an absence of content the source never asserted.
 
-#### `_WRITABLE`: `history_import_service.py:2247`
+#### `_WRITABLE`: `history_import_service.py:2250`
 **Signature:** `dict[str, tuple[str, ...]]`
 **Does:** The columns each record type may write, beyond `patient_id` and the three provenance columns. It is also the diff list `_classify` compares against.
 **On screen:** nothing.
 **Why an explicit allow-list:** it is what stops a normaliser accidentally writing a column that is not its business, and it is what bounds the update path, an update only ever touches columns in this tuple.
 **Breaks if you change it:** adding a column here without adding it to the normaliser is inert; adding it to the normaliser without adding it here means the value is computed, reported in the dry run's `values`, and then **silently not written**, the worst kind of divergence between the plan and the result.
 
-#### `_Resolver`: `history_import_service.py:2290`
+#### `_Resolver`: `history_import_service.py:2293`
 **Signature:** `_Resolver(db, source_system, rt)`; `prefetch(rows)` (`:1523`), `resolve_patient(pr)` (`:1576`), `check_user(pr, key)` (`:1608`)
 **Does:** Per-**batch** database lookups, shared by the dry run and the apply pass. Four maps: `xref`, `by_mrn`, `existing`, `known_users`.
 **On screen:** nothing.
 **Why three of the four are cleared every batch (`:1524-1526`), this is a real bug, fixed.** They look like caches and were written as ones, growing for the whole run. `by_mrn` holds a full `SELECT *` patients row per MRN, so a 50 000-row rehearsal peaked at **316 MB of RSS** and the 200 000-row cap would have reached roughly a gigabyte, exactly the "must not exhaust memory" promise the streaming exists for, broken by the lookup layer instead of the parser. Measured 2026-08-07.
-**Why clearing them costs nothing:** `prefetch` queries for precisely what the current batch needs, and because the apply pass runs in **one transaction**, a patient written in an earlier batch is visible to that query. Rows created *within* the batch being processed are folded in incrementally by `_write_patient` (`:2099-2103`). So clearing costs one repeated lookup in the rare case where the same patient appears in two batches.
+**Why clearing them costs nothing:** `prefetch` queries for precisely what the current batch needs, and because the apply pass runs in **one transaction**, a patient written in an earlier batch is visible to that query. Rows created *within* the batch being processed are folded in incrementally by `_write_patient` (`:2102-2106`). So clearing costs one repeated lookup in the rare case where the same patient appears in two batches.
 **Why `known_users` is deliberately not cleared (`:1521-1523`):** a hospital has hundreds of staff, not hundreds of thousands. It is bounded by the user table.
 **`prefetch` batches its `IN` clauses through `_chunks` (`:1633`, 400 at a time)** to stay under SQLite's parameter limit.
 **Breaks if you change it:** removing the `clear()` calls reinstates the 316 MB-and-climbing behaviour, which fails as an OOM at the end of a long transaction. Clearing `known_users` too adds a users query per batch for no benefit.
 
-#### `_Resolver.resolve_patient`: `history_import_service.py:2380`
+#### `_Resolver.resolve_patient`: `history_import_service.py:2389`
 **Signature:** `(pr) -> str | None`
 **Does:** Resolves a **child** row's Orb patient id from the legacy patient id (via the xref), the MRN, or both.
 **On screen:** whose chart the record lands in.
@@ -407,14 +407,14 @@ Copying the tolerance in either direction produces a bug: give `_detect_encoding
 **When neither resolves (`:1599`):** the row fails with a message naming both identifiers and telling the admin to import the **patients** file for this source system first.
 **Breaks if you change it:** preferring one identifier over the other on a conflict attaches clinical records, results, diagnoses, drugs, to the wrong patient, permanently and silently. This is the single most dangerous change available in the module.
 
-#### `_Resolver.check_user`: `history_import_service.py:2416`
+#### `_Resolver.check_user`: `history_import_service.py:2425`
 **Signature:** `(pr, key) -> None`
 **Does:** If `attending_doctor_id` or `author_id` names someone who is not an Orb user, **drops the value** and warns.
 **On screen:** the attending doctor on an imported admission, and the author on an imported document, both blank when the legacy id is unknown.
 **Why it never creates a user:** *Orb does not create staff accounts from a clinical export.* The warning names the fix: create the user, then re-run the import to attach them. Because the import is idempotent, the re-run is safe and will fill the hole.
 **Breaks if you change it:** writing the raw legacy id into `attending_doctor_id` produces a foreign-key-looking column full of values that point at nothing, which every join then silently drops.
 
-#### `plan` / `apply_import`: `history_import_service.py:2446` / `:1663`
+#### `plan` / `apply_import`: `history_import_service.py:2455` / `:1663`
 **Signature:** both take `(source, record_type, mapping, *, source_system, …)`; `apply_import` additionally requires `actor_user_id` and accepts `source_filename` and `note`
 **Does:** The two public entry points. `plan` is the dry run and writes nothing; `apply_import` writes in one transaction.
 **On screen:** the dry-run report and the commit summary.
@@ -422,56 +422,56 @@ Copying the tolerance in either direction produces a bug: give `_detect_encoding
 **Why both delegate to one `_execute`:** so the plan the admin approved and the plan that executes cannot drift.
 **Breaks if you change it:** giving `apply_import` its own copy of the engine is how the dry run and the commit start disagreeing, the exact failure the shared path exists to prevent.
 
-#### `_execute`: `history_import_service.py:2522`
+#### `_execute`: `history_import_service.py:2537`
 **Signature:** `(source, record_type, mapping, *, source_system, date_order, header_line, detail_limit, reject_limit, write, actor_user_id, source_filename=None, note=None) -> dict`
 **Does:** The shared streaming engine.
 **On screen:** its return dict **is** the API response for both dry-run and commit.
-**Up-front refusals (`:1687-1728`), all before a single row is read:** unknown record type; blank `source_system` (*it names the system these records came from and is half of the idempotency key, so an import without one could never be re-run safely nor traced back*); a `date_order` outside `auto|dmy|mdy`; unknown target fields; missing required fields; a child type with neither patient identifier mapped; an unconfident header; and a mapped column not present in the file.
-**The write path:** `_open_run` first with zero counts (`:1760`), then batches, then `_flush_rejects` + `_record_run` (`:1861-1863`), all inside one `db_session`.
-**`note_reject` only buffers when writing (`:1765-1777`)**, a dry run's failure detail is the capped `report.failures`, and accumulating every reject as well would break the memory promise in the most likely failure case there is: **a mis-mapped column makes every row in the file fail at once.**
-**In-file duplicate detection (`:1812-1823`):** the first row with a given `external_id` wins; every later one is rejected naming the first line. *The rows were NOT merged, because two records sharing an id in the export is a defect in the export and guessing which one is current would be a clinical decision.*
-**The zero-rows guard (`:1836-1847`) is subtle and important.** "0 created, 0 failed" otherwise renders as a **clean success**, which is the silent-failure class this whole module exists to prevent, arrived at from the other end. An empty export, a header line picked one row too low, or a filter left on in the old system all land there. So a file with a header and no data rows produces an `error`-severity `no_data_rows` issue.
+**Up-front refusals (`:1690-1731`), all before a single row is read:** unknown record type; blank `source_system` (*it names the system these records came from and is half of the idempotency key, so an import without one could never be re-run safely nor traced back*); a `date_order` outside `auto|dmy|mdy`; unknown target fields; missing required fields; a child type with neither patient identifier mapped; an unconfident header; and a mapped column not present in the file.
+**The write path:** `_open_run` first with zero counts (`:1763`), then batches, then `_flush_rejects` + `_record_run` (`:1864-1866`), all inside one `db_session`.
+**`note_reject` only buffers when writing (`:1768-1780`)**, a dry run's failure detail is the capped `report.failures`, and accumulating every reject as well would break the memory promise in the most likely failure case there is: **a mis-mapped column makes every row in the file fail at once.**
+**In-file duplicate detection (`:1815-1826`):** the first row with a given `external_id` wins; every later one is rejected naming the first line. *The rows were NOT merged, because two records sharing an id in the export is a defect in the export and guessing which one is current would be a clinical decision.*
+**The zero-rows guard (`:1839-1850`) is subtle and important.** "0 created, 0 failed" otherwise renders as a **clean success**, which is the silent-failure class this whole module exists to prevent, arrived at from the other end. An empty export, a header line picked one row too low, or a filter left on in the old system all land there. So a file with a header and no data rows produces an `error`-severity `no_data_rows` issue.
 **Breaks if you change it:** moving the header/mapping validation after the row loop wastes a full pass before failing. Buffering rejects during a dry run reintroduces the OOM-on-total-failure case. Removing the `no_data_rows` guard makes "the import did nothing" indistinguishable from "the import succeeded".
 
-#### `_reject_row`: `history_import_service.py:2775`
+#### `_reject_row`: `history_import_service.py:2796`
 **Signature:** `(pr) -> dict`
 **Does:** Flattens a failed `_PlannedRow` into a reject-ledger row, preferring the first `error`-severity issue for the field and message.
 **On screen:** every row of `GET /history-import/runs/{id}/rejects`.
 **Breaks if you change it:** dropping `raw_row` removes the verbatim line, which is the thing that lets an admin fix the export without opening it side by side with the ledger. Keeping it means the ledger holds PHI, which is why the endpoint is admin-only and audited.
 
-#### `_classify`: `history_import_service.py:2797`
+#### `_classify`: `history_import_service.py:2818`
 **Signature:** `(pr, resolver, rt, source_system) -> None`
 **Does:** Decides `create` / `update` / `unchanged` / `fail` for one normalised child row.
 **On screen:** the per-row `action` in the dry run, and the created/updated counts.
-**How an update is bounded (`:1928-1930`):** the existing-row lookup is on `(import_source_system, import_external_id)`, so an update here **can only ever touch a row this source system previously wrote**. It can never modify Orb-native clinical data. That single fact is what makes the update path safe enough to have at all.
+**How an update is bounded (`:1931-1933`):** the existing-row lookup is on `(import_source_system, import_external_id)`, so an update here **can only ever touch a row this source system previously wrote**. It can never modify Orb-native clinical data. That single fact is what makes the update path safe enough to have at all.
 **How the diff works:** for each column in `_WRITABLE`, compare the current value with `_same` (`roster_import.py:1318`); collect the differences into `changes`; `update` if there are any, `unchanged` otherwise.
 **Breaks if you change it:** looking the existing row up by anything other than the provenance pair, by MRN, by name, by a natural key, makes a re-import capable of overwriting rows Orb wrote itself.
 
-#### `_classify_patient`: `history_import_service.py:2835`
+#### `_classify_patient`: `history_import_service.py:2856`
 **Signature:** `(pr, resolver, source_system) -> None`
 **Does:** Matches a patient row on the legacy id first, then MRN, and **fills holes only**.
 **On screen:** whether a demographics import creates a patient or quietly enriches one Orb already has.
-**Two conflict failures, both about the same underlying mess:** a legacy id already mapped to one Orb patient while the row's MRN names a **different** one (`:1957`), and a legacy id already mapped while the row gives an MRN Orb **does not hold** (`:1965`), *importing it would either rename an existing patient or split one person across two records.* Both refuse: *Orb will not merge or choose; reconcile them in the export.*
-**Fill-holes-only (`:1981-1995`):** an existing non-NULL, non-blank value is **kept**, and the difference is reported as a `kept_orb_value` warning naming the fields. *The live record is fresher than the export, and an import must never revert a correction made in Orb.*
+**Two conflict failures, both about the same underlying mess:** a legacy id already mapped to one Orb patient while the row's MRN names a **different** one (`:1960`), and a legacy id already mapped while the row gives an MRN Orb **does not hold** (`:1968`), *importing it would either rename an existing patient or split one person across two records.* Both refuse: *Orb will not merge or choose; reconcile them in the export.*
+**Fill-holes-only (`:1984-1998`):** an existing non-NULL, non-blank value is **kept**, and the difference is reported as a `kept_orb_value` warning naming the fields. *The live record is fresher than the export, and an import must never revert a correction made in Orb.*
 **Why that direction:** the alternative, legacy wins, means a migration silently reverts a name a clinician corrected in Orb last week, with no error, no warning and no record. A migration that fails loudly is better than one that quietly regresses the record.
 **Breaks if you change it:** making the legacy value win turns every re-run into a regression of every correction made since the last one. Dropping the `kept_orb_value` warning hides the fact that the two systems disagree at all, which is information the records team needs.
 
-#### `_write_row`: `history_import_service.py:2905`
+#### `_write_row`: `history_import_service.py:3036`
 **Signature:** `(db, pr, resolver, rt, source_system, run_id, actor_user_id, written) -> None`
 **Does:** Writes one child row, `UPDATE` of only the changed columns, or `INSERT` with the allow-listed columns plus `patient_id` plus the three provenance columns.
 **On screen:** the imported clinical record itself.
-**`admissions` gets `admitted_by = actor_user_id` and `admission_source = SOURCE_TAG` (`:2042-2051`); `diagnoses`/`medications`/`results` get `source = SOURCE_TAG` (`:2052-2053`).**
-**A real bug, fixed, documented at `:2033-2038`:** an "Imported from X by run Y" banner used to be prefixed onto `admitting_notes` here. It has been removed. The provenance columns already say it, and pushing generated text into a **clinical free-text field broke idempotency**, the next run compared the file's plain note against the stored banner+note, found a difference, and **reported an update on every single re-run, forever**.
+**`admissions` gets `admitted_by = actor_user_id` and `admission_source = SOURCE_TAG` (`:2045-2054`); `diagnoses`/`medications`/`results` get `source = SOURCE_TAG` (`:2055-2056`).**
+**A real bug, fixed, documented at `:2036-2041`:** an "Imported from X by run Y" banner used to be prefixed onto `admitting_notes` here. It has been removed. The provenance columns already say it, and pushing generated text into a **clinical free-text field broke idempotency**, the next run compared the file's plain note against the stored banner+note, found a difference, and **reported an update on every single re-run, forever**.
 **The general lesson worth carrying:** anything derived that you write into a field the importer also *reads back for comparison* destroys idempotency. Provenance belongs in provenance columns.
 **Breaks if you change it:** writing any generated text into a `_WRITABLE` column reintroduces the perpetual-update bug. Updating a column not in `_WRITABLE` bypasses the diff entirely, so the dry run would not have shown it.
 
-#### `_write_patient`: `history_import_service.py:2962`
+#### `_write_patient`: `history_import_service.py:3097`
 **Signature:** `(db, pr, resolver, source_system, run_id, written) -> None`
 **Does:** Creates or updates a patient, then writes the cross-system mapping.
 **On screen:** the patient record, and, through the xref, every child record that resolves to them.
-**The xref is written **either way** (`:2089-2098`), whether the patient was created here or already existed.** Child records resolve through it in both cases, **and an Orb-native row must not be stamped with import provenance to make that work.** That is exactly why the mapping cannot live in `patients.import_external_id` alone: stamping an Orb-native patient row with import provenance would be a lie about where that row came from, but the mapping still has to exist. `created_by_import` records which case it was.
+**The xref is written **either way** (`:2092-2101`), whether the patient was created here or already existed.** Child records resolve through it in both cases, **and an Orb-native row must not be stamped with import provenance to make that work.** That is exactly why the mapping cannot live in `patients.import_external_id` alone: stamping an Orb-native patient row with import provenance would be a lie about where that row came from, but the mapping still has to exist. `created_by_import` records which case it was.
 **`INSERT OR IGNORE`** on the xref makes a re-run a no-op against the `UNIQUE(source_system, external_patient_id)` index.
-**The resolver fold-in (`:2099-2103`)** adds the just-written patient to `xref` and `by_mrn` so later rows **in the same batch** resolve without another query.
+**The resolver fold-in (`:2102-2106`)** adds the just-written patient to `xref` and `by_mrn` so later rows **in the same batch** resolve without another query.
 **Breaks if you change it:** writing the xref only for created patients breaks every child record belonging to a patient Orb already had, they would all fail with `unknown_patient` unless the file also carried the MRN. Stamping matched patients with `import_source_system` makes an Orb-native patient claim to have come from the old system.
 
 #### `_open_run` / `_flush_rejects` / `_record_run`: `:2106` / `:2128` / `:2150`
@@ -482,22 +482,22 @@ Copying the tolerance in either direction produces a bug: give `_detect_encoding
 **Why `_flush_rejects` never caps (`:2131-2134`):** the HTTP response caps its reject detail; this does not. *A migration that silently drops 4% of records is a catastrophe found months later by a clinician looking for something that is simply not there, this table is the complete work list that makes that impossible to miss.*
 **Breaks if you change it:** capping the reject writes destroys the only complete record of what did not come across. Opening the run row outside the transaction would leave orphan ledger rows for runs that rolled back.
 
-#### `sniff`: `history_import_service.py:3130`
+#### `sniff`: `history_import_service.py:3274`
 **Signature:** `(source, record_type, *, header_line: int | None = None) -> dict`
 **Does:** Inspects an upload without importing anything. **Reads no patient data** from the database.
 **On screen:** the wizard's preview step, delimiter, headers, header line and confidence, up to five candidate header lines, the suggested mapping, unmapped headers, missing required fields, five sample rows, the SHA-256 and the byte count.
-**Why it never refuses on an ambiguous header (`:2181-2183`):** unlike `plan`, this is the tool an admin uses to **see** the candidates and pick one, so it always answers, with `header_confident: false` when it could not decide.
-**Two header warnings it adds (`:2191-2199`):** blank column names (unmappable) and duplicate column names (*only the LAST column with each name is readable*, because `_iter_rows` builds a dict keyed by header).
-**Sample rows skip rejected rows (`:2208-2210`):** *a rejected row's columns are by definition in the wrong places; showing them would teach the admin the wrong shape.*
+**Why it never refuses on an ambiguous header (`:2184-2186`):** unlike `plan`, this is the tool an admin uses to **see** the candidates and pick one, so it always answers, with `header_confident: false` when it could not decide.
+**Two header warnings it adds (`:2194-2202`):** blank column names (unmappable) and duplicate column names (*only the LAST column with each name is readable*, because `_iter_rows` builds a dict keyed by header).
+**Sample rows skip rejected rows (`:2211-2213`):** *a rejected row's columns are by definition in the wrong places; showing them would teach the admin the wrong shape.*
 **Breaks if you change it:** making `sniff` refuse on an ambiguous header removes the only way to discover the right `header_line`. Including rejected rows in the samples shows the admin a column layout that does not exist.
 
-#### `list_runs`: `history_import_service.py:3197`
+#### `list_runs`: `history_import_service.py:3341`
 **Signature:** `(limit: int = 50, record_type: str | None = None) -> list[dict]`
 **Does:** Applied-import history, newest first, with `mapping_json` and `summary_json` decoded. **Dry runs are not recorded.**
 **On screen:** would be the import-history table. Nothing renders it.
-**Breaks if you change it:** recording dry runs here would fill the ledger with runs that wrote nothing and make "what has been imported into this hospital" unanswerable at a glance. The JSON decode is defensive (`:2249-2252`), a corrupt column yields `None` rather than a 500.
+**Breaks if you change it:** recording dry runs here would fill the ledger with runs that wrote nothing and make "what has been imported into this hospital" unanswerable at a glance. The JSON decode is defensive (`:2252-2255`), a corrupt column yields `None` rather than a 500.
 
-#### `list_rejects`: `history_import_service.py:3221`
+#### `list_rejects`: `history_import_service.py:3372`
 **Signature:** `(run_id: str, limit: int = 500, offset: int = 0) -> dict`
 **Does:** The **complete, durable** list of rows a run did not import, **paged** rather than capped, plus a `by_code` histogram.
 **On screen:** would be the work list the hospital gets back from a migration. Nothing renders it.

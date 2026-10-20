@@ -413,10 +413,10 @@ The section header states them in the order they matter, and every call site bel
 **How it works, in the order the steps must happen:**
 1. `get_turn_row` → 404 if unknown (`:2455-2457`).
 2. `enforce_patient_scope(user, row["patient_id"])` on the **stored** patient, **before** anything is reconstructed. 404, never 403, *"because a 403 confirms that a turn about that patient exists"* (`:2380-2383`, `permissions.py:318-319`).
-3. `replay(turn_id)`, a second 404 if it raced a retention prune (`:2464-2465`).
-4. `log_phi_read(..., action_type="sage_provenance_replay", target_type="sage_provenance_turn", ...)`, **fail-closed** (`:2467-2476`). The `phi_access` category is in `_FAIL_CLOSED_CATEGORIES`, so if the row cannot be persisted this raises and **the PHI is not returned** (`permissions.py:347-351`).
+3. `replay(turn_id)`, a second 404 if it raced a retention prune (`:3936-3938`).
+4. `log_phi_read(..., action_type="sage_provenance_replay", target_type="sage_provenance_turn", ...)`, **fail-closed** (`:3940-3954`). The `phi_access` category is in `_FAIL_CLOSED_CATEGORIES`, so if the row cannot be persisted this raises and **the PHI is not returned** (`permissions.py:347-351`).
 5. Return the record.
-**Why the docstring's one sentence matters:** *"The chart in this response is a snapshot, not a live read: it is what the model was shown, which is the only thing that can answer 'why did it say that?' months later"* (`:2449-2451`).
+**Why the docstring's one sentence matters:** *"The chart in this response is a snapshot, not a live read: it is what the model was shown, which is the only thing that can answer 'why did it say that?' months later"* (`:3912-3914`).
 **Breaks if you change it:** move `log_phi_read` after the `return` (or wrap it in a `try/except`) and a chart snapshot leaves the building with no trace, which is the precise failure `permissions.py:342-345` records as having gone unnoticed until 2026-08-05. Reorder steps 2 and 3 and the scope check runs on an already-assembled chart. `test_sage_provenance.py:467`, `:473`, `:483` and `:508` pin the clinician refusal, the auditor success, the 404-not-403 and the audit row respectively.
 **Gotchas:** it is a plain `def`, deliberately, FastAPI threadpools those, so the decrypt-and-decompress never touches the event loop (`:2386-2387`, pinned by `test_sage_provenance.py:453`).
 

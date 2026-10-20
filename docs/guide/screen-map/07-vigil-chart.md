@@ -1053,7 +1053,7 @@ surfaces each failure differently:
   (`permissions.py:487-499`).
 - **Discharge without `discharge.generate`** → a browser `alert` (`:656`).
 - **Adding a med without `medication.write`** → the red `medError` box in the Add Medication modal
-  (`:1939`).
+  (`:2989-2993`).
 - **Adding a note without `patient.write`** → a browser `alert` (`:698`).
 - **Care bundle actions without `alert.read`** → the red error line in the bundle card footer
   (`CareBundleTimer.tsx:388`).

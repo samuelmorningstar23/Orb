@@ -1373,16 +1373,34 @@ def create_claim(
     # be the outermost one (a nested frame is only a SAVEPOINT and cannot be
     # upgraded).
     #
-    # From the claims series of the patient's facility (multisite-7a): the
-    # admission's, else the latest encounter's; facility 1 while only one is
-    # on record. A facility with no claims series of its own is refused.
-    from services import facility_identity
+    # From the claims series of the claim's facility (multisite-7a, 7b), which
+    # the claim row carries too: the bill's when the claim names one, else the
+    # admission's, else the patient's latest encounter; facility 1 while only
+    # one is on record. A bill and an admission at different facilities are
+    # refused, and so is a facility with no claims series of its own.
+    from services import facility_stamp
     from services.billing_masters import SeriesNotSetUp
 
     with db_session() as db:
-        claim_facility = facility_identity.document_facility_id(
-            db, patient_id=patient_id, admission_id=admission_id
-        )
+        try:
+            claim_facility = facility_stamp.resolve(
+                db,
+                (
+                    ("the bill", lambda: facility_stamp.invoice_facility(db, invoice_id)),
+                    (
+                        "the admission",
+                        lambda: facility_stamp.admission_facility(
+                            db, admission_id, patient_id=patient_id
+                        ),
+                    ),
+                ),
+                what="claim",
+                fallback=lambda: facility_stamp.patient_facility(
+                    db, patient_id=patient_id, admission_id=admission_id
+                ),
+            )
+        except facility_stamp.FacilityStampError as exc:
+            raise ClaimError(exc.message) from exc
     try:
         number = next_document_number("CLM", facility_id=claim_facility)
     except SeriesNotSetUp as exc:
@@ -1405,6 +1423,7 @@ def create_claim(
             notes=notes,
             created_by=created_by,
             key=key,
+            facility_id=claim_facility,
         )
     except DBIntegrityError:
         # Two requests with the same key raced past the lookup above; the unique
@@ -1459,8 +1478,10 @@ def _insert_claim(
     notes: str | None,
     created_by: str | None,
     key: str | None,
+    facility_id: int,
 ) -> int:
-    """Write the claim row and its 'created' event in one transaction."""
+    """Write the claim row and its 'created' event in one transaction.
+    `facility_id` is the facility whose series numbered it (multisite-7b)."""
     with db_session() as db:
         patient = db.execute("SELECT id, name FROM patients WHERE id = ?", (patient_id,)).fetchone()
         if patient is None:
@@ -1519,8 +1540,8 @@ def _insert_claim(
             """INSERT INTO claims
                  (claim_number, patient_id, admission_id, invoice_id, payer_id, policy_id,
                   claim_type, package_code, preauth_status, claimed_paise, status,
-                  created_by, notes, idempotency_key)
-               VALUES (?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?, ?)""",
+                  created_by, notes, idempotency_key, facility_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?, ?, ?)""",
             (
                 number["number"],
                 patient_id,
@@ -1535,6 +1556,7 @@ def _insert_claim(
                 created_by,
                 _clean(notes),
                 key,
+                int(facility_id),
             ),
         )
         claim_id = int(cursor.lastrowid)

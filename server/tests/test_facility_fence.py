@@ -9,7 +9,9 @@ Pinned here:
   * the route groups: /api, /uploads and /socket.io are fenced; signing in,
     health, facility identity and the operations page are never fenced; the
     built screens are never fenced; a crafted spelling of an open prefix is;
-  * FACILITY_BLIND_SURFACES ships as the sentinel '*';
+  * the sentinel '*' (how FACILITY_BLIND_SURFACES shipped until multisite-5b)
+    fences every patient screen; the generated list that replaced it is
+    pinned in test_facility_sql_registry.py;
   * one facility: patient routes answer as before, with no facilities query
     per request while the answer is cached;
   * a second row inserted by SQL: patient routes answer 503 within 30 s (the
@@ -106,7 +108,16 @@ def test_signin_health_identity_ops_and_the_screens_are_never_fenced(path):
     assert F.is_fenced(path) is False
 
 
-def test_the_blind_list_ships_as_the_sentinel():
+@pytest.fixture()
+def the_sentinel(monkeypatch):
+    """The list as it shipped until multisite-5b (20 October 2026) replaced the
+    sentinel with the generated list, which tests/test_facility_sql_registry.py
+    pins. The fence still honours the sentinel."""
+    monkeypatch.setattr(F, "FACILITY_BLIND_SURFACES", F.SENTINEL)
+
+
+@pytest.mark.usefixtures("the_sentinel")
+def test_the_sentinel_fences_every_patient_screen():
     assert F.FACILITY_BLIND_SURFACES == F.SENTINEL == "*"
     assert F.describe() == {"every_patient_screen": True, "blind_surfaces": ["all"],
                             "always_open": ["/api/auth", "/api/health", "/api/facilities",

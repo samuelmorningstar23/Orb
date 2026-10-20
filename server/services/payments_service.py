@@ -82,7 +82,7 @@ from typing import Any, Literal, overload
 
 from database import db_session
 
-from services import facility_identity
+from services import facility_identity, facility_stamp
 from services.billing_masters import (
     MAIN_FACILITY_ID,
     SeriesNotSetUp,
@@ -287,6 +287,8 @@ IMMUTABLE_PAYMENT_FIELDS: frozenset[str] = frozenset(
         # Who issued it, fixed when the number was assigned (migration 72, whose
         # trigger refuses any later change).
         *facility_identity.SNAPSHOT_COLUMNS,
+        # The facility it was taken at (migration 75, multisite-7b).
+        "facility_id",
     }
 )
 
@@ -380,19 +382,26 @@ _SERIES_WORDS = {"RCPT": "receipt", "REF": "refund"}
 
 
 def _next_number(
-    series_code: str, *, patient_id: str | None, admission_id: str | None = None
+    series_code: str,
+    *,
+    patient_id: str | None,
+    admission_id: str | None = None,
+    facility_id: int | None = None,
 ) -> dict:
     """The next number of the series of the facility the document belongs to
-    (multisite-7a): the facility its supplier snapshot is taken for, which is
-    facility 1 while only one is on record. The answer adds `facility_id`.
+    (multisite-7a): `facility_id` when the caller has resolved it
+    (_money_facility, multisite-7b), else the patient's; the facility its
+    supplier snapshot is taken for, which is facility 1 while only one is on
+    record. The answer adds `facility_id`.
 
     A facility other than 1 that has no series of its own yet is refused in
     words before anything is written, never numbered from facility 1's
     series."""
-    with db_session() as db:
-        facility_id = facility_identity.document_facility_id(
-            db, patient_id=patient_id, admission_id=admission_id
-        )
+    if facility_id is None:
+        with db_session() as db:
+            facility_id = facility_identity.document_facility_id(
+                db, patient_id=patient_id, admission_id=admission_id
+            )
     try:
         doc = next_document_number(series_code, facility_id=facility_id)
     except SeriesNotSetUp as exc:
@@ -403,6 +412,41 @@ def _next_number(
         ) from exc
     doc["facility_id"] = facility_id
     return doc
+
+
+def _money_facility(
+    db: Any,
+    *,
+    what: str,
+    patient_id: str | None,
+    admission_id: str | None = None,
+    sources: Sequence[tuple[str, Any]] = (),
+) -> int:
+    """The facility a receipt, refund or deposit entry belongs to
+    (multisite-7b, migration 75), and so the facility whose series numbers it
+    and whose identity its supplier block carries.
+
+    `sources` are (label, row) pairs in priority order: the counter session
+    the money crosses, the bill it pays, the receipt or refund it reverses or
+    settles (a row already read, or a callable that looks the facility up).
+    They must agree (a counter of one facility never takes money for another
+    facility's bill); with none of them, the patient's facility (the
+    admission's, else the latest encounter's). Facility 1, with nothing read,
+    while only one facility is on record."""
+    try:
+        return facility_stamp.resolve(
+            db,
+            tuple(
+                (label, row if callable(row) else facility_stamp.row_facility(row))
+                for label, row in sources
+            ),
+            what=what,
+            fallback=lambda: facility_stamp.patient_facility(
+                db, patient_id=patient_id, admission_id=admission_id
+            ),
+        )
+    except facility_stamp.FacilityStampError as exc:
+        raise PaymentError(exc.message) from exc
 
 
 # ── Views (what a screen and an API response receive) ────────────────────────
@@ -898,20 +942,24 @@ def _deposit_balance(db, patient_id: str, admission_id: str | None = None) -> in
 
 
 def _insert_deposit(
-    db,
+    db: Any,
     *,
     patient_id: str,
     movement: str,
     amount_paise: int,
+    facility_id: int,
     admission_id: str | None = None,
     payment_id: int | None = None,
     invoice_id: int | None = None,
     created_by: str | None = None,
     notes: str | None = None,
 ) -> int:
+    """One deposit-ledger entry, at the facility of the receipt that moves it
+    (multisite-7b): required, so no entry is ever left to the column default."""
     cur = db.execute(
         "INSERT INTO patient_deposits (patient_id, admission_id, movement, amount_paise, "
-        "payment_id, invoice_id, created_by, created_at, notes) VALUES (?,?,?,?,?,?,?,?,?)",
+        "payment_id, invoice_id, created_by, created_at, notes, facility_id) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
         (
             patient_id,
             admission_id,
@@ -922,6 +970,7 @@ def _insert_deposit(
             created_by,
             _utc_now_str(),
             notes,
+            int(facility_id),
         ),
     )
     return int(cur.lastrowid)
@@ -1153,12 +1202,25 @@ def record_payment(
                 view["replayed"] = True
                 return view
         _require_registered_patient(db, patient_id)
+        bill = session = None
         if invoice_id is not None:
-            _allocatable_invoice(db, int(invoice_id), patient_id)
+            bill = _allocatable_invoice(db, int(invoice_id), patient_id)
         if counter_session_id is not None:
-            _require_open_session(db, counter_session_id)
+            session = _require_open_session(db, counter_session_id)
+        # The counter's facility, else the bill's, else the patient's
+        # (multisite-7b); a counter and a bill at different facilities are
+        # refused here, before a number is drawn.
+        facility_id = _money_facility(
+            db,
+            what="receipt",
+            patient_id=patient_id,
+            admission_id=admission_id,
+            sources=(("the counter", session), ("the bill", bill)),
+        )
 
-    doc = _next_number("RCPT", patient_id=patient_id, admission_id=admission_id)
+    doc = _next_number(
+        "RCPT", patient_id=patient_id, admission_id=admission_id, facility_id=facility_id
+    )
     now = _utc_now_str()
 
     with db_session(immediate=True) as db:
@@ -1184,8 +1246,10 @@ def record_payment(
             "INSERT INTO payments (receipt_number, patient_id, admission_id, invoice_id, "
             "payer_id, direction, amount_paise, method, reference_no, bank_name, "
             "instrument_date, purpose, status, counter_session_id, received_by, "
-            "received_at, idempotency_key, notes, " + facility_identity.SNAPSHOT_COLUMNS_SQL + ") "
-            "VALUES (?,?,?,?,?,'in',?,?,?,?,?,?,'received',?,?,?,?,?,"
+            "received_at, idempotency_key, notes, facility_id, "
+            + facility_identity.SNAPSHOT_COLUMNS_SQL
+            + ") "
+            "VALUES (?,?,?,?,?,'in',?,?,?,?,?,?,'received',?,?,?,?,?,?,"
             + facility_identity.SNAPSHOT_PLACEHOLDERS
             + ")",
             (
@@ -1205,8 +1269,12 @@ def record_payment(
                 now,
                 idempotency_key,
                 notes,
+                doc["facility_id"],
                 *facility_identity.supplier_snapshot(
-                    db, patient_id=patient_id, admission_id=admission_id
+                    db,
+                    patient_id=patient_id,
+                    admission_id=admission_id,
+                    facility_id=doc["facility_id"],
                 ),
             ),
         )
@@ -1227,6 +1295,7 @@ def record_payment(
                 admission_id=admission_id,
                 movement="deposit",
                 amount_paise=advance,
+                facility_id=doc["facility_id"],
                 payment_id=payment_id,
                 invoice_id=invoice_id,
                 created_by=received_by,
@@ -1445,6 +1514,14 @@ def reverse_payment(payment_id: int, *, reason: str, reversed_by: str) -> dict:
         if row is None:
             raise PaymentError(f"payment {payment_id} does not exist")
         original = _row(row)
+        # A reversal is the receipt's own facility's document (multisite-7b).
+        facility_id = _money_facility(
+            db,
+            what="reversal",
+            patient_id=original["patient_id"],
+            admission_id=original["admission_id"],
+            sources=(("the receipt", original),),
+        )
     if original["direction"] != "in":
         raise PaymentError(
             "only a money-IN receipt can be reversed; money out is corrected by "
@@ -1463,7 +1540,10 @@ def reverse_payment(payment_id: int, *, reason: str, reversed_by: str) -> dict:
         )
 
     doc = _next_number(
-        "RCPT", patient_id=original["patient_id"], admission_id=original["admission_id"]
+        "RCPT",
+        patient_id=original["patient_id"],
+        admission_id=original["admission_id"],
+        facility_id=facility_id,
     )
     now = _utc_now_str()
 
@@ -1483,10 +1563,10 @@ def reverse_payment(payment_id: int, *, reason: str, reversed_by: str) -> dict:
             "INSERT INTO payments (receipt_number, patient_id, admission_id, invoice_id, "
             "payer_id, direction, amount_paise, method, reference_no, bank_name, "
             "instrument_date, purpose, status, counter_session_id, "
-            "reversal_of_payment_id, received_by, received_at, notes, "
+            "reversal_of_payment_id, received_by, received_at, notes, facility_id, "
             + facility_identity.SNAPSHOT_COLUMNS_SQL
             + ") "
-            "VALUES (?,?,?,?,?,'out',?,?,?,?,?,?,'received',?,?,?,?,?,"
+            "VALUES (?,?,?,?,?,'out',?,?,?,?,?,?,'received',?,?,?,?,?,?,"
             + facility_identity.SNAPSHOT_PLACEHOLDERS
             + ")",
             (
@@ -1506,8 +1586,12 @@ def reverse_payment(payment_id: int, *, reason: str, reversed_by: str) -> dict:
                 reversed_by,
                 now,
                 f"Reversal of receipt {current['receipt_number']}: {reason}",
+                doc["facility_id"],
                 *facility_identity.supplier_snapshot(
-                    db, patient_id=current["patient_id"], admission_id=current["admission_id"]
+                    db,
+                    patient_id=current["patient_id"],
+                    admission_id=current["admission_id"],
+                    facility_id=doc["facility_id"],
                 ),
             ),
         )
@@ -1550,6 +1634,7 @@ def reverse_payment(payment_id: int, *, reason: str, reversed_by: str) -> dict:
                 admission_id=current["admission_id"],
                 movement="refund",
                 amount_paise=-advance_created,
+                facility_id=doc["facility_id"],
                 payment_id=reversal_id,
                 created_by=reversed_by,
                 notes=f"reversal of receipt {current['receipt_number']}",
@@ -1632,9 +1717,18 @@ def apply_deposit_to_invoice(
     # never settle another patient's bill, and a refusal must leave no gap in
     # the series), then again under the write lock for a balance that moved.
     with db_session() as db:
-        check(db)
+        # The receipt is the bill's facility's (multisite-7b).
+        facility_id = _money_facility(
+            db,
+            what="receipt",
+            patient_id=patient_id,
+            admission_id=admission_id,
+            sources=(("the bill", check(db)),),
+        )
 
-    doc = _next_number("RCPT", patient_id=patient_id, admission_id=admission_id)
+    doc = _next_number(
+        "RCPT", patient_id=patient_id, admission_id=admission_id, facility_id=facility_id
+    )
     now = _utc_now_str()
 
     with db_session(immediate=True) as db:
@@ -1643,9 +1737,8 @@ def apply_deposit_to_invoice(
         cur = db.execute(
             "INSERT INTO payments (receipt_number, patient_id, admission_id, invoice_id, "
             "direction, amount_paise, method, purpose, status, received_by, received_at, notes, "
-            + facility_identity.SNAPSHOT_COLUMNS_SQL
-            + ") "
-            "VALUES (?,?,?,?,'in',?,'adjustment','settlement','received',?,?,?,"
+            "facility_id, " + facility_identity.SNAPSHOT_COLUMNS_SQL + ") "
+            "VALUES (?,?,?,?,'in',?,'adjustment','settlement','received',?,?,?,?,"
             + facility_identity.SNAPSHOT_PLACEHOLDERS
             + ")",
             (
@@ -1657,8 +1750,12 @@ def apply_deposit_to_invoice(
                 applied_by,
                 now,
                 notes or "advance applied to invoice",
+                doc["facility_id"],
                 *facility_identity.supplier_snapshot(
-                    db, patient_id=patient_id, admission_id=admission_id
+                    db,
+                    patient_id=patient_id,
+                    admission_id=admission_id,
+                    facility_id=doc["facility_id"],
                 ),
             ),
         )
@@ -1674,6 +1771,7 @@ def apply_deposit_to_invoice(
             admission_id=admission_id,
             movement="apply",
             amount_paise=-amount,
+            facility_id=doc["facility_id"],
             payment_id=payment_id,
             invoice_id=int(invoice_id),
             created_by=applied_by,
@@ -1911,8 +2009,22 @@ def request_refund(
             invoice_id=invoice_id,
             admission_id=admission_id,
         )
+        # The refund is the facility's that took the money (multisite-7b): the
+        # receipt's, else the bill's, else the patient's.
+        facility_id = _money_facility(
+            db,
+            what="refund",
+            patient_id=patient_id,
+            admission_id=admission_id,
+            sources=(
+                ("the receipt", lambda: facility_stamp.payment_facility(db, payment_id)),
+                ("the bill", lambda: facility_stamp.invoice_facility(db, invoice_id)),
+            ),
+        )
 
-    doc = _next_number("REF", patient_id=patient_id, admission_id=admission_id)
+    doc = _next_number(
+        "REF", patient_id=patient_id, admission_id=admission_id, facility_id=facility_id
+    )
     now = _utc_now_str()
 
     with db_session(immediate=True) as db:
@@ -1937,7 +2049,8 @@ def request_refund(
         cur = db.execute(
             "INSERT INTO refunds (refund_number, patient_id, admission_id, invoice_id, "
             "payment_id, amount_paise, reason_code, reason, status, requested_by, "
-            "requested_at, idempotency_key) VALUES (?,?,?,?,?,?,?,?,'requested',?,?,?)",
+            "requested_at, idempotency_key, facility_id) "
+            "VALUES (?,?,?,?,?,?,?,?,'requested',?,?,?,?)",
             (
                 doc["number"],
                 patient_id,
@@ -1950,6 +2063,7 @@ def request_refund(
                 requested_by,
                 now,
                 idempotency_key,
+                doc["facility_id"],
             ),
         )
         refund_id = int(cur.lastrowid)
@@ -2066,12 +2180,23 @@ def pay_refund(
         if row is None:
             raise PaymentError(f"refund {refund_id} does not exist")
         refund = _row(row)
+        facility_id = None
         # Before the receipt number is drawn, as record_payment does: a closed
         # counter session, or an advance already spent, must not leave a gap
         # in the series. Both are checked again under the write lock below.
         if refund["status"] == "approved":
+            session = None
             if counter_session_id is not None:
-                _require_open_session(db, counter_session_id)
+                session = _require_open_session(db, counter_session_id)
+            # The refund's facility pays it out (multisite-7b), at one of its
+            # own counters: a counter of another facility is refused.
+            facility_id = _money_facility(
+                db,
+                what="refund payment",
+                patient_id=refund["patient_id"],
+                admission_id=refund["admission_id"],
+                sources=(("the refund", refund), ("the counter", session)),
+            )
             if refund["payment_id"] is None and refund["invoice_id"] is None:
                 held = _deposit_balance(db, refund["patient_id"], refund["admission_id"])
                 if int(refund["amount_paise"]) > held:
@@ -2084,7 +2209,12 @@ def pay_refund(
             f"refund {refund_id} is {refund['status']}; only an approved refund can be paid"
         )
 
-    doc = _next_number("RCPT", patient_id=refund["patient_id"], admission_id=refund["admission_id"])
+    doc = _next_number(
+        "RCPT",
+        patient_id=refund["patient_id"],
+        admission_id=refund["admission_id"],
+        facility_id=facility_id,
+    )
     now = _utc_now_str()
     amount = int(refund["amount_paise"])
 
@@ -2120,10 +2250,10 @@ def pay_refund(
         cur = db.execute(
             "INSERT INTO payments (receipt_number, patient_id, admission_id, invoice_id, "
             "direction, amount_paise, method, reference_no, purpose, status, "
-            "counter_session_id, refund_id, received_by, received_at, notes, "
+            "counter_session_id, refund_id, received_by, received_at, notes, facility_id, "
             + facility_identity.SNAPSHOT_COLUMNS_SQL
             + ") "
-            "VALUES (?,?,?,?,'out',?,?,?,'refund','received',?,?,?,?,?,"
+            "VALUES (?,?,?,?,'out',?,?,?,'refund','received',?,?,?,?,?,?,"
             + facility_identity.SNAPSHOT_PLACEHOLDERS
             + ")",
             (
@@ -2139,8 +2269,12 @@ def pay_refund(
                 paid_by,
                 now,
                 f"Refund {current['refund_number']}: {current['reason']}",
+                doc["facility_id"],
                 *facility_identity.supplier_snapshot(
-                    db, patient_id=current["patient_id"], admission_id=current["admission_id"]
+                    db,
+                    patient_id=current["patient_id"],
+                    admission_id=current["admission_id"],
+                    facility_id=doc["facility_id"],
                 ),
             ),
         )
@@ -2153,6 +2287,7 @@ def pay_refund(
                 admission_id=current["admission_id"],
                 movement="refund",
                 amount_paise=-amount,
+                facility_id=doc["facility_id"],
                 payment_id=payment_id,
                 created_by=paid_by,
                 notes=f"refund {current['refund_number']}",
@@ -2498,10 +2633,22 @@ def open_counter_session(
                 f"counter {counter_code} already has an open session "
                 f"(#{int(open_row['id'])}); close it before opening another"
             )
+        # A till belongs to the facility of the cashier who opens it
+        # (multisite-7b), and every receipt taken at it is that facility's.
+        try:
+            facility_id = facility_stamp.resolve(
+                db,
+                (("the account", lambda: facility_stamp.account_facility(db, opened_by)),),
+                what="counter session",
+                unknown_hint="Open the counter from an account placed at a facility.",
+            )
+        except facility_stamp.FacilityStampError as exc:
+            raise PaymentError(exc.message) from exc
         cur = db.execute(
             "INSERT INTO cash_counter_sessions (counter_code, shift_label, opened_by, "
-            "opened_at, opening_float_paise, status) VALUES (?,?,?,?,?,'open')",
-            (counter_code, shift_label, opened_by, _utc_now_str(), opening),
+            "opened_at, opening_float_paise, status, facility_id) "
+            "VALUES (?,?,?,?,?,'open',?)",
+            (counter_code, shift_label, opened_by, _utc_now_str(), opening, facility_id),
         )
         session_id = int(cur.lastrowid)
         row = _row(

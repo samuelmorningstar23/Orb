@@ -7,7 +7,7 @@ cross-module coordination layer without overloading the Stage 3 Relay actions.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from services.medorders.ai_lanes import SageBinding
@@ -938,7 +938,7 @@ def _transfer_through_adt_on(
     return canonical, covering
 
 
-def _dispatch_to_transfer(action: dict, actor_id: str, db) -> tuple:
+def _dispatch_to_transfer(action: dict, actor_id: str, db: Any) -> tuple:
     """Dispatches a transfer action, updating the active admission and setting up a surgical case,
     on ``db`` (never commits). Returns ``(surgery_id, needs_package)``: True when a NEW
     case was booked, whose prep package the caller starts after the commit
@@ -1040,13 +1040,18 @@ def _dispatch_to_transfer(action: dict, actor_id: str, db) -> tuple:
     # title, so every transfer was booked as an operation nobody ordered.
     procedure_name = _procedure_from_target(raw_target, known_depts)
 
+    # multisite-4: the patient's facility (1 with one facility on record).
+    from services.surgery_service import surgery_facility_on
+
+    facility_id = surgery_facility_on(db, patient_id)
+
     # Explicit column/value alignment — every column has a matching placeholder.
     db.execute(
         """INSERT INTO surgeries
            (id, patient_id, surgeon_id, procedure_name, diagnosis,
             scheduled_date, scheduled_time, estimated_duration_min, operating_room,
-            status, co_morbidities)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'emergency_pending', ?)""",
+            status, co_morbidities, facility_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'emergency_pending', ?, ?)""",
         (
             surgery_id,
             patient_id,
@@ -1058,6 +1063,7 @@ def _dispatch_to_transfer(action: dict, actor_id: str, db) -> tuple:
             120,
             "OR-E (Emergency)",
             co_morbidities_json,
+            facility_id,
         ),
     )
 

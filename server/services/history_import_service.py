@@ -1675,6 +1675,9 @@ class _PlannedRow:
     changes: dict[str, dict] = field(default_factory=dict)
     issues: list[Issue] = field(default_factory=list)
     raw_text: str = ""
+    # multisite-4: the facility an admission this row creates is at, set by
+    # _check_facility only while more than one facility is on record.
+    facility_id: int | None = None
 
     def fail(
         self, code: str, message: str, field_name: str | None = None, value: str | None = None
@@ -2309,7 +2312,7 @@ class _Resolver:
     staff, not hundreds of thousands, so it is bounded by the user table.
     """
 
-    def __init__(self, db, source_system: str, rt: RecordType):
+    def __init__(self, db: Any, source_system: str, rt: RecordType) -> None:
         self.db = db
         self.source_system = source_system
         self.rt = rt
@@ -2317,12 +2320,18 @@ class _Resolver:
         self.by_mrn: dict[str, Any] = {}  # mrn -> patients row
         self.existing: dict[str, Any] = {}  # external_id -> target row
         self.known_users: dict[str, str] = {}
+        # multisite-4: None while one facility is on record, else the run's
+        # {actor, scope, run_facility} (_facility_context), and per batch
+        # each patient's facility as _check_facility read it.
+        self.facility: dict | None = None
+        self.patient_facility: dict[str, int] = {}
 
     # ── batch prefetch ───────────────────────────────────────────────────
     def prefetch(self, rows: list[_PlannedRow]) -> None:
         self.xref.clear()
         self.by_mrn.clear()
         self.existing.clear()
+        self.patient_facility.clear()
         ext_patients = {
             r.external_patient_id
             for r in rows
@@ -2453,6 +2462,7 @@ def plan(
     header_line: int | None = None,
     detail_limit: int = DEFAULT_DETAIL_LIMIT,
     reject_limit: int = DEFAULT_REJECT_LIMIT,
+    actor_user_id: str | None = None,
 ) -> dict:
     """DRY RUN. Reports exactly what an import would do. Writes NOTHING.
 
@@ -2463,6 +2473,11 @@ def plan(
     ``failures`` are capped at ``detail_limit``/``reject_limit`` because a
     200 000-row file cannot come back over HTTP; truncation is flagged rather
     than hidden, and commit persists the complete reject list regardless.
+
+    ``actor_user_id`` is the account running the dry run. It is read only
+    while more than one facility is on record (multisite-4, see
+    _check_facility), and then it is required, so the dry run fails the same
+    rows the commit would.
     """
     return _execute(
         source,
@@ -2474,7 +2489,7 @@ def plan(
         detail_limit=detail_limit,
         reject_limit=reject_limit,
         write=False,
-        actor_user_id=None,
+        actor_user_id=actor_user_id,
     )
 
 
@@ -2589,9 +2604,12 @@ def _execute(
     started = datetime.now(UTC).isoformat()
     seen_external: dict[str, int] = {}
     written = {"created": 0, "updated": 0}
+    # multisite-4: None while one facility is on record (nothing is read).
+    facility = _facility_context(actor_user_id)
 
     with db_session() as db:
         resolver = _Resolver(db, source_system, rt)
+        resolver.facility = facility
         batch: list[_PlannedRow] = []
         reject_buffer: list[dict] = []
 
@@ -2612,6 +2630,7 @@ def _execute(
                 date_order=date_order,
                 note=note,
                 started=started,
+                facility_id=facility["run_facility"] if facility else 1,
             )
 
         def note_reject(pr: _PlannedRow) -> None:
@@ -2634,6 +2653,8 @@ def _execute(
             resolver.prefetch(batch)
             for pr in batch:
                 _classify(pr, resolver, rt, source_system)
+                if facility is not None:
+                    _check_facility(pr, resolver, rt)
                 if write and pr.action in ("create", "update"):
                     _write_row(
                         db,
@@ -2898,12 +2919,122 @@ def _classify_patient(pr: _PlannedRow, resolver: _Resolver, source_system: str) 
 
 
 # ══════════════════════════════════════════════════════════════════════════
+#  Facilities (multisite-4, W11-A)
+# ══════════════════════════════════════════════════════════════════════════
+# While more than one facility is on record a history import runs AT a
+# facility: the importing account's (facility_service.user_facility_id). The
+# run row, every patient it creates (registered_facility_id) and every past
+# admission it creates (facility_id) carry that facility, or for an admission
+# whose department the departments master lists, the department's facility.
+# A row FAILS, with the reason in the reject ledger like any other failure,
+# when it would:
+#   * write anything for a patient whose latest encounter
+#     (permissions.FACILITY_PATIENT_SQL) is outside the account's facility
+#     scope, or create anything at all from an account whose scope is empty
+#     (facility_scope);
+#   * create a past admission at another facility than the one the patient's
+#     admissions are at, which would split the patient across two facilities
+#     (cross_facility_move_refused; ruling MS-R3 stays at (c), refuse).
+# A failed row shows no patient id and no current values, because the patient
+# may be another facility's. With one facility on record none of this reads
+# anything and the import is exactly as before.
+
+FACILITY_SCOPE_WORDS = (
+    "This record belongs to a patient at a facility your account does not work at, "
+    "so it was NOT imported. Import it from an account at that facility."
+)
+CROSS_FACILITY_WORDS = (
+    "This patient's admissions are at another facility of the group, and Orb keeps "
+    "each patient's admissions at one facility until moving a patient between "
+    "facilities is supported. The past admission was NOT imported."
+)
+
+
+def _facility_context(actor_user_id: str | None) -> dict | None:
+    """None while one facility is on record. Otherwise {actor, scope,
+    run_facility} for the importing account. ValueError with no account,
+    because whose facilities to check cannot be guessed."""
+    from services import facility_service
+
+    if not facility_service.multi_facility_data():
+        return None
+    if not (actor_user_id or "").strip():
+        raise ValueError(
+            "More than one facility is on record, so the account running the import is "
+            "needed to check each record's facility. Nothing was planned."
+        )
+    with db_session() as db:
+        found = db.execute(
+            "SELECT id, role, department FROM users WHERE id = ?", (actor_user_id,)
+        ).fetchone()
+    actor = (
+        dict(found)
+        if found is not None
+        else {"id": actor_user_id, "role": None, "department": None}
+    )
+    return {
+        "actor": actor,
+        "scope": facility_service.facility_scope_for(actor),
+        "run_facility": facility_service.user_facility_id(actor)
+        or facility_service.MAIN_FACILITY_ID,
+    }
+
+
+def _fail_for_facility(pr: _PlannedRow, code: str, message: str) -> None:
+    pr.fail(
+        code, message, "mrn" if pr.mrn else "external_patient_id", pr.mrn or pr.external_patient_id
+    )
+    pr.patient_id = None
+    pr.target_id = None
+    pr.changes = {}
+
+
+def _check_facility(pr: _PlannedRow, resolver: _Resolver, rt: RecordType) -> None:
+    """Fail the row for its facility (see the block comment above), or stamp
+    the facility a past admission it creates is at. Called only while more
+    than one facility is on record, after _classify."""
+    from services.facility_identity import document_facility_id
+    from services.frontdesk_service import department_facility_on, patient_facility_ids_on
+
+    if pr.action not in ("create", "update", "unchanged"):
+        return
+    ctx = resolver.facility
+    if ctx is None:
+        # One facility on record: flush() does not call this then.
+        return
+    scope = ctx["scope"]
+    db = resolver.db
+    if scope is not None and not scope:
+        _fail_for_facility(pr, "facility_scope", FACILITY_SCOPE_WORDS)
+        return
+    if pr.patient_id and scope is not None:
+        current = resolver.patient_facility.get(pr.patient_id)
+        if current is None:
+            current = document_facility_id(db, patient_id=pr.patient_id)
+            resolver.patient_facility[pr.patient_id] = current
+        if current not in scope:
+            _fail_for_facility(pr, "facility_scope", FACILITY_SCOPE_WORDS)
+            return
+    if rt.name != "admissions" or pr.action != "create":
+        return
+    department = pr.values.get("department")
+    target = (department_facility_on(db, department) if department else None) or ctx["run_facility"]
+    if scope is not None and target not in scope:
+        _fail_for_facility(pr, "facility_scope", FACILITY_SCOPE_WORDS)
+        return
+    if pr.patient_id and patient_facility_ids_on(db, pr.patient_id) - {target}:
+        _fail_for_facility(pr, "cross_facility_move_refused", CROSS_FACILITY_WORDS)
+        return
+    pr.facility_id = target
+
+
+# ══════════════════════════════════════════════════════════════════════════
 #  Writing
 # ══════════════════════════════════════════════════════════════════════════
 
 
 def _write_row(
-    db,
+    db: Any,
     pr: _PlannedRow,
     resolver: _Resolver,
     rt: RecordType,
@@ -2943,6 +3074,10 @@ def _write_row(
         # compared the file's plain note against the stored banner+note, found a
         # difference, and reported an update on every single re-run forever.
         insert_values["admission_source"] = SOURCE_TAG
+        if resolver.facility is not None:
+            # multisite-4: _check_facility's facility; the column's default,
+            # 1, stands while one facility is on record.
+            insert_values["facility_id"] = pr.facility_id or resolver.facility["run_facility"]
     elif rt.name in ("diagnoses", "medications", "results"):
         insert_values["source"] = SOURCE_TAG
 
@@ -2960,7 +3095,7 @@ def _write_row(
 
 
 def _write_patient(
-    db,
+    db: Any,
     pr: _PlannedRow,
     resolver: _Resolver,
     source_system: str,
@@ -2975,6 +3110,9 @@ def _write_patient(
                 columns[column] = pr.values[column]
         # Rule 1: historical patients are NOT in the building.
         columns["status"] = "discharged"
+        if resolver.facility is not None:
+            # multisite-4: registered at the facility the run is at.
+            columns["registered_facility_id"] = resolver.facility["run_facility"]
         columns["import_source_system"] = source_system
         columns["import_external_id"] = pr.external_id
         columns["import_run_id"] = run_id
@@ -3015,7 +3153,7 @@ def _write_patient(
 
 
 def _open_run(
-    db,
+    db: Any,
     *,
     run_id: str,
     rt: RecordType,
@@ -3027,6 +3165,7 @@ def _open_run(
     date_order: str,
     note: str | None,
     started: str,
+    facility_id: int = 1,
 ) -> None:
     """Open the run ledger row with zero counts, before any row is processed.
 
@@ -3035,12 +3174,16 @@ def _open_run(
     until _record_run fills it in — and because both happen in ONE transaction,
     a NULL finished_at is never observable: either the whole run committed or
     none of it did.
+
+    ``facility_id`` (migration 74) is the facility the run is at: 1 while one
+    facility is on record.
     """
     db.execute(
         """INSERT INTO history_import_runs
                (id, record_type, source_system, actor_user_id, source_filename,
-                source_sha256, source_bytes, mapping_json, date_order, note, started_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                source_sha256, source_bytes, mapping_json, date_order, note, started_at,
+                facility_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             run_id,
             rt.name,
@@ -3053,6 +3196,7 @@ def _open_run(
             date_order,
             note,
             started,
+            facility_id,
         ),
     )
 
@@ -3195,7 +3339,11 @@ def sniff(source: Any, record_type: str, *, header_line: int | None = None) -> d
 
 
 def list_runs(limit: int = 50, record_type: str | None = None) -> list[dict]:
-    """Applied-import history, newest first. Dry runs are not recorded."""
+    """Applied-import history, newest first. Dry runs are not recorded. Each
+    run's facility (migration 74) is listed only while more than one facility
+    is on record, so the list is exactly as before on a one-facility appliance."""
+    from services import facility_service
+
     limit = max(1, min(int(limit), 500))
     sql = "SELECT * FROM history_import_runs"
     params: list[Any] = []
@@ -3206,9 +3354,12 @@ def list_runs(limit: int = 50, record_type: str | None = None) -> list[dict]:
     params.append(limit)
     with db_session() as db:
         rows = db.execute(sql, tuple(params)).fetchall()
+        multi = facility_service.multi_facility_data(db=db)
     out = []
     for r in rows:
         d = dict(r)
+        if not multi:
+            d.pop("facility_id", None)
         for jf in ("mapping_json", "summary_json"):
             try:
                 d[jf] = json.loads(d[jf]) if d.get(jf) else None

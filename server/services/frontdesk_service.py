@@ -94,6 +94,7 @@ from migrations_his.m0051_adt_movement_ledger import (
     ADDED_COLUMNS as _LEDGER_ADDED_COLUMNS,
 )
 from migrations_his.m0051_adt_movement_ledger import ensure_ledger_on
+from migrations_his.m0074_facility_columns_encounters import ensure_opd_visit_facility_on
 
 from services.billing_masters import resolve_patient_payer
 from services.hospital_time import hospital_timezone, hospital_today
@@ -191,7 +192,9 @@ _COVERING_ROLES = ("doctor", "clinician", "nurse")
 #: of every visit and movement it returns, so those migrations change no
 #: existing screen; the increments that write them extend the API under their
 #: own feature switches.
-_VISIT_COLUMNS_NOT_IN_API: frozenset[str] = frozenset(name for name, _ in OPD_VISITS_ADDED_COLUMNS)
+_VISIT_COLUMNS_NOT_IN_API: frozenset[str] = frozenset(
+    name for name, _ in OPD_VISITS_ADDED_COLUMNS
+) | {"facility_id"}  # migration 74 (multisite-4): the visit's facility
 _MOVEMENT_COLUMNS_NOT_IN_API: frozenset[str] = frozenset(_LEDGER_ADDED_COLUMNS)
 
 _schema_ready = False
@@ -221,6 +224,9 @@ def ensure_frontdesk_schema(force: bool = False) -> None:
             return
         with db_session() as db:
             ensure_opd_visits_on(db)
+            # Migration 74's opd_visits.facility_id, so the lazy shape is the
+            # runner's shape (multisite-4).
+            ensure_opd_visit_facility_on(db)
             ensure_ledger_on(db, rebuild=False)
             # Register the code this module charges against as a PRICE-LIST row,
             # unpriced. Without this row the contract is invisible: the billing
@@ -465,6 +471,43 @@ def patient_facility_ids_on(db, patient_id: str) -> set:
             (patient_id,),
         ).fetchall()
     }
+
+
+#: register_opd_visit's refusal for a clinic no facility owns (multi-facility
+#: data only; the covering list already leaves such a clinic out).
+CLINIC_WITHOUT_FACILITY_WORDS = (
+    "No facility of the group lists that clinic, so a visit there would be on "
+    "nobody's queue. Nothing was saved. Ask an administrator to add it to the "
+    "departments list."
+)
+
+
+def opd_visit_facility_on(db: Any, department: str) -> int:
+    """The facility an outpatient visit to `department` is at (multisite-4,
+    migration 74's opd_visits.facility_id). Facility 1 while one facility is
+    on record (nothing beyond the cached count is read). Otherwise the
+    facility that owns the clinic in the departments master: under ruling
+    MS-R4 (a) a department name is unique across the group and owned by one
+    facility, so the clinic decides, never the desk. FrontDeskError when no
+    active master row owns it."""
+    from services import facility_service
+
+    if not facility_service.multi_facility_data(db=db):
+        return facility_service.MAIN_FACILITY_ID
+    owner = department_facility_on(db, department)
+    if owner is None:
+        raise FrontDeskError(CLINIC_WITHOUT_FACILITY_WORDS)
+    return owner
+
+
+def department_facility_on(db: Any, department: str | None) -> int | None:
+    """The facility owning an ACTIVE departments master row for `department`
+    (ignoring case and outer spaces), read on the caller's connection rather
+    than from the scope maps' 30 s cache; None when no active row lists it."""
+    owner = _department_master_on(db).get((department or "").strip().casefold())
+    if owner is None or not owner[1]:
+        return None
+    return owner[0]
 
 
 def audit_cross_facility_refusal(
@@ -990,6 +1033,8 @@ def register_opd_visit(
                 )
             doctor_name = drow["name"]
 
+        # multisite-4: the clinic's facility (1 with one facility on record).
+        facility_id = opd_visit_facility_on(db, canonical_dept)
         visit_id = f"OPD-{uuid.uuid4().hex[:8].upper()}"
         token = _next_token(db, visit_date=day, department=canonical_dept, doctor_id=doctor)
         now = _now()
@@ -997,8 +1042,8 @@ def register_opd_visit(
             """INSERT INTO opd_visits (
                     id, patient_id, department, doctor_id, doctor_name, visit_date,
                     token_number, visit_type, chief_complaint, status, appointment_id,
-                    registered_by, registered_at, notes, idempotency_key
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?, ?, ?, ?)""",
+                    registered_by, registered_at, notes, idempotency_key, facility_id
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?, ?, ?, ?, ?)""",
             (
                 visit_id,
                 patient_id,
@@ -1014,6 +1059,7 @@ def register_opd_visit(
                 now,
                 note,
                 idem,
+                facility_id,
             ),
         )
         if self_registered:

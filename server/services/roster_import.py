@@ -1327,6 +1327,8 @@ def plan(
     update_existing: bool = True,
     header_line: int | None = None,
     default_department: str | None = None,
+    actor_user_id: str | None = None,
+    facility_refusals: list | None = None,
 ) -> dict:
     """Build the full import plan. Reads the DB; writes NOTHING.
 
@@ -1339,6 +1341,13 @@ def plan(
     ``default_department`` is the clinical service written to every admission
     that has no department column of its own; see the module docstring for why
     that column decides who can see the patient.
+
+    ``actor_user_id`` is the account running the import. It is read only while
+    more than one facility is on record (multisite-4, see _check_facilities),
+    and then it is required. ``facility_refusals``, when given, receives one
+    record per row refused for its facility, with the patient and facility
+    ids the audit rows need (apply_import writes them); the plan itself never
+    shows them.
     """
     issues: list[Issue] = []
 
@@ -1525,6 +1534,16 @@ def plan(
         _plan_admission(pr, row, open_admissions.get(row["id"]), default_department)
         _plan_allergies(pr, row, charted)
 
+    # multisite-4: with more than one facility on record, a row that would
+    # put a patient's admissions at two facilities, or reach outside the
+    # importing account's facilities, is refused here, in the dry run, so
+    # Apply (which re-plans) refuses the same rows. One facility on record:
+    # nothing here reads anything and the plan is exactly as before.
+    facility = _facility_context(actor_user_id)
+    facility_refused = (
+        _check_facilities(planned, facility, facility_refusals) if facility is not None else None
+    )
+
     # adt-16 (ORB_ADT_STRICT_LOCATIONS, ruling F104): with strict locations on,
     # a place bed setup does not hold is rejected here, in the dry run, so the
     # admin sees every reject before Apply (which re-plans, so it rejects the
@@ -1565,8 +1584,17 @@ def plan(
         "counts": counts,
         "rows": [p.to_dict() for p in planned],
         "file_issues": [i.to_dict() for i in issues],
-        "absent_from_roster": _absent_from_roster(planned, mrns_in_file),
+        "absent_from_roster": _absent_from_roster(
+            planned, mrns_in_file, scope=facility["scope"] if facility else None
+        ),
     }
+    if facility is not None and facility_refused is not None:
+        # Present only with more than one facility on record: every row
+        # refused for its facility, with the words, and the facility the run
+        # is at.
+        counts["facility_refusals"] = len(facility_refused)
+        out["facility_refusals"] = facility_refused
+        out["facility_id"] = facility["run_facility"]
     if location_rejects is not None:
         # Present only with strict locations on: every row whose place bed
         # setup does not hold, with the words, so the dry run lists them.
@@ -1691,6 +1719,301 @@ def _reject_unlisted_places(planned: list[PlannedRow]) -> list[dict]:
                 }
             )
     return rejects
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  Facilities (multisite-4, W11-A): one facility per patient
+# ══════════════════════════════════════════════════════════════════════════
+# Orb works out which facility a chart belongs to from the patient's
+# encounters (permissions.FACILITY_PATIENT_SQL), and that is exact only while
+# all of a patient's admissions are at one facility (the attribution
+# invariant; the operations status page counts patients that break it, and
+# the count must stay 0). So while more than one facility is on record every
+# roster row is checked in the plan, before anything is written, and a row is
+# REFUSED (an 'error' issue, the whole row skipped, listed under
+# facility_refusals, and at Apply one authorization
+# 'cross_facility_move_refused' row each) when it would:
+#   * open an admission, or move an open one, into a department the
+#     departments master does not list: no facility owns it, so the patient
+#     would be on nobody's board (department_not_listed);
+#   * re-admit an MRN whose admissions are at another facility, or move an
+#     open admission into another facility's department. Ruling MS-R3 stays
+#     at (c), refuse, until it and R009 are ruled
+#     (patient_at_another_facility);
+#   * open or move an admission at a facility outside the importing account's
+#     facility scope, or change a patient whose latest encounter is outside it
+#     (actor_outside_facility).
+# A refused row writes nothing, not even the patient's other fields: a
+# patient row naming a place of one facility while the admission stays at
+# another is the split this guard exists to prevent. The row shows no
+# patient id, no current values and no charted allergies, because the
+# patient may be another facility's. With one facility on record none of this
+# reads anything.
+
+FACILITY_REFUSAL_WORDS = {
+    "department_not_listed": (
+        "No facility of the group lists the department {department!r}, so a "
+        "patient admitted there would be on nobody's board. The row was not "
+        "imported. Add the department to the departments list, or correct the "
+        "file."
+    ),
+    "patient_at_another_facility": (
+        "MRN '{mrn}' has admissions at another facility of the group. Orb does "
+        "not move a patient between facilities yet, so the row was not "
+        "imported and nothing was changed for this patient."
+    ),
+    "actor_outside_facility": (
+        "This row belongs to a facility your account does not work at, so it "
+        "was not imported. Import it from an account at that facility."
+    ),
+}
+
+#: department_not_listed for a row that names no department at all.
+NO_DEPARTMENT_WORDS = (
+    "This row names no department, and with more than one facility on record "
+    "Orb cannot tell which facility would admit the patient. The row was not "
+    "imported. Map a department column or give a default department."
+)
+
+#: Which field each refusal points at in the row's issue.
+_FACILITY_REFUSAL_FIELD = {
+    "department_not_listed": "department",
+    "patient_at_another_facility": "mrn",
+    "actor_outside_facility": "mrn",
+}
+
+#: The lane name on the audit rows (frontdesk_service.audit_cross_facility_refusal).
+FACILITY_AUDIT_LANE = "roster_import"
+
+
+def _facility_context(actor_user_id: str | None) -> dict | None:
+    """None while one facility is on record. Otherwise the importing account
+    and its facilities: {actor, scope, run_facility}. A plan with no account
+    is refused (ValueError), because whose facilities to check cannot be
+    guessed."""
+    from services import facility_service
+
+    if not facility_service.multi_facility_data():
+        return None
+    if not actor_user_id:
+        raise ValueError(
+            "More than one facility is on record, so the account running the "
+            "import is needed to check each row's facility. Nothing was planned."
+        )
+    with db_session() as db:
+        found = db.execute(
+            "SELECT id, role, department FROM users WHERE id = ?", (actor_user_id,)
+        ).fetchone()
+    actor = (
+        dict(found)
+        if found is not None
+        else {"id": actor_user_id, "role": None, "department": None}
+    )
+    return {
+        "actor": actor,
+        "scope": facility_service.facility_scope_for(actor),
+        "run_facility": facility_service.user_facility_id(actor),
+    }
+
+
+def _refuse_for_facility(
+    pr: PlannedRow,
+    cause: str,
+    *,
+    department: str | None,
+    to_facility: int | None,
+    held: set,
+    sink: list | None,
+    refused: list,
+) -> None:
+    if cause == "department_not_listed" and not department:
+        words = NO_DEPARTMENT_WORDS
+    else:
+        words = FACILITY_REFUSAL_WORDS[cause].format(department=department, mrn=pr.mrn)
+    field_name = _FACILITY_REFUSAL_FIELD[cause]
+    if sink is not None:
+        sink.append(
+            {
+                "line": pr.line,
+                "mrn": pr.mrn,
+                "cause": cause,
+                "patient_id": pr.patient_id,
+                "admission_id": pr.admission.get("admission_id"),
+                "to_department": department,
+                "to_facility_id": to_facility,
+                "from_facility_ids": sorted(held),
+            }
+        )
+    pr.action = "skip"
+    pr.reason = cause
+    pr.patient_id = None
+    pr.changes = {}
+    pr.allergies = {}
+    pr.admission = {"action": "rejected", "refusal": {"code": cause, "message": words}}
+    pr.issues.append(
+        Issue(
+            pr.line,
+            cause,
+            "error",
+            words,
+            field_name,
+            department if field_name == "department" else pr.mrn,
+        )
+    )
+    refused.append({"line": pr.line, "mrn": pr.mrn, "code": cause, "message": words})
+
+
+def _check_facilities(planned: list[PlannedRow], facility: dict, sink: list | None) -> list[dict]:
+    """Refuse every row that would break the attribution invariant or reach
+    outside the importing account's facilities (see the block comment above).
+    Stamps the facility on each admission the plan opens. Returns the refused
+    rows {line, mrn, code, message} for the dry run. Reads only."""
+    from services.facility_identity import document_facility_id
+    from services.frontdesk_service import department_facility_on, patient_facility_ids_on
+
+    scope = facility["scope"]
+    refused: list[dict] = []
+    with db_session() as db:
+        for pr in planned:
+            if pr.action == "skip":
+                continue
+            adm = pr.admission or {}
+            action = adm.get("action")
+            changes = adm.get("changes") or {}
+            department, to_facility = None, None
+            if action == "create":
+                department = adm.get("department")
+            elif action == "update" and "department" in changes:
+                department = changes["department"].get("to")
+            if department is not None or action == "create":
+                to_facility = department_facility_on(db, department)
+                if to_facility is None:
+                    held = patient_facility_ids_on(db, pr.patient_id) if pr.patient_id else set()
+                    _refuse_for_facility(
+                        pr,
+                        "department_not_listed",
+                        department=department,
+                        to_facility=None,
+                        held=held,
+                        sink=sink,
+                        refused=refused,
+                    )
+                    continue
+            held = patient_facility_ids_on(db, pr.patient_id) if pr.patient_id else set()
+            if to_facility is not None and held - {to_facility}:
+                _refuse_for_facility(
+                    pr,
+                    "patient_at_another_facility",
+                    department=department,
+                    to_facility=to_facility,
+                    held=held,
+                    sink=sink,
+                    refused=refused,
+                )
+                continue
+            if scope is not None:
+                # An empty scope (an account whose department no facility
+                # owns) imports nothing at all.
+                outside = not scope or (to_facility is not None and to_facility not in scope)
+                if not outside and pr.patient_id:
+                    outside = document_facility_id(db, patient_id=pr.patient_id) not in scope
+                if outside:
+                    _refuse_for_facility(
+                        pr,
+                        "actor_outside_facility",
+                        department=department,
+                        to_facility=to_facility,
+                        held=held,
+                        sink=sink,
+                        refused=refused,
+                    )
+                    continue
+            if action == "create":
+                adm["facility_id"] = to_facility
+    return refused
+
+
+def _audit_facility_refusals(refusals: list[dict], actor_user_id: str | None) -> None:
+    """One authorization 'cross_facility_move_refused' row per refused row
+    (frontdesk_service.audit_cross_facility_refusal, lane 'roster_import'),
+    each on a connection of its own, never inside the import's transaction.
+    Fail-soft, like every authorization row: the rows were refused whatever
+    the audit says."""
+    from services.frontdesk_service import audit_cross_facility_refusal
+
+    actor_role = None
+    if actor_user_id:
+        with db_session() as db:
+            found = db.execute("SELECT role FROM users WHERE id = ?", (actor_user_id,)).fetchone()
+        actor_role = found["role"] if found else None
+    for item in refusals:
+        audit_cross_facility_refusal(
+            lane=FACILITY_AUDIT_LANE,
+            cause=item["cause"],
+            patient_id=item.get("patient_id"),
+            actor_id=actor_user_id,
+            actor_role=actor_role,
+            to_department=item.get("to_department"),
+            to_facility_id=item.get("to_facility_id"),
+            from_facility_ids=item.get("from_facility_ids") or (),
+            admission_id=item.get("admission_id"),
+        )
+
+
+def _overtaken_by_another_facility(db: Any, row: dict, result: dict, sink: list) -> bool:
+    """Inside apply_import's transaction, before a row that re-admits an
+    existing patient writes anything: True (and the row refused, recorded in
+    `sink` for its audit row after the commit) when an admission at another
+    facility appeared for the patient after the plan was made."""
+    from services.frontdesk_service import patient_facility_ids_on
+
+    adm = row.get("admission") or {}
+    if row.get("action") == "skip" or adm.get("action") != "create" or not row.get("patient_id"):
+        return False
+    to_facility = adm.get("facility_id")
+    held = patient_facility_ids_on(db, row["patient_id"])
+    if to_facility is None or not (held - {to_facility}):
+        return False
+    words = FACILITY_REFUSAL_WORDS["patient_at_another_facility"].format(
+        department=adm.get("department"), mrn=row.get("mrn")
+    )
+    sink.append(
+        {
+            "line": row.get("line"),
+            "mrn": row.get("mrn"),
+            "cause": "patient_at_another_facility",
+            "patient_id": row["patient_id"],
+            "admission_id": None,
+            "to_department": adm.get("department"),
+            "to_facility_id": to_facility,
+            "from_facility_ids": sorted(held),
+        }
+    )
+    row.update(
+        action="skip",
+        reason="patient_at_another_facility",
+        patient_id=None,
+        changes={},
+        allergies={},
+        admission={
+            "action": "rejected",
+            "refusal": {"code": "patient_at_another_facility", "message": words},
+        },
+    )
+    row.setdefault("issues", []).append(
+        Issue(
+            row.get("line"), "patient_at_another_facility", "error", words, "mrn", row.get("mrn")
+        ).to_dict()
+    )
+    result.setdefault("facility_refusals", []).append(
+        {
+            "line": row.get("line"),
+            "mrn": row.get("mrn"),
+            "code": "patient_at_another_facility",
+            "message": words,
+        }
+    )
+    return True
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1937,7 +2260,9 @@ def _load_allergies(patient_ids: list[str]) -> dict[str, dict[str, str]]:
     return out
 
 
-def _absent_from_roster(planned: list[PlannedRow], mrns_in_file: set[str]) -> dict:
+def _absent_from_roster(
+    planned: list[PlannedRow], mrns_in_file: set[str], *, scope: frozenset | None = None
+) -> dict:
     """Patients on the ward per Orb but missing from this file. REPORTED ONLY.
 
     Deliberately not acted on. A partial export — one ward, a filtered report, a
@@ -1945,6 +2270,11 @@ def _absent_from_roster(planned: list[PlannedRow], mrns_in_file: set[str]) -> di
     board while reporting a successful import, which is the failure this whole
     module exists to avoid. Scoped to the wards the file actually covers so a
     single-ward roster does not accuse the rest of the hospital of absence.
+
+    `scope` (multisite-4) is the importing account's facility scope while more
+    than one facility is on record: a patient whose latest encounter is at a
+    facility outside it is left off the list. None lists every patient, as
+    before.
     """
     wards = sorted({p.values["ward"] for p in planned if p.values.get("ward")})[:400]
     note = (
@@ -1966,7 +2296,11 @@ def _absent_from_roster(planned: list[PlannedRow], mrns_in_file: set[str]) -> di
                 ORDER BY p.ward, p.bed""",
             tuple(wards),
         ).fetchall()
-    absent = [dict(r) for r in rows if r["mrn"] not in mrns_in_file]
+        absent = [dict(r) for r in rows if r["mrn"] not in mrns_in_file]
+        if scope is not None:
+            from services.facility_identity import document_facility_id
+
+            absent = [r for r in absent if document_facility_id(db, patient_id=r["id"]) in scope]
     return {"wards": wards, "patients": absent[:200], "count": len(absent), "note": note}
 
 
@@ -2256,8 +2590,21 @@ def apply_import(
     a ward or bed bed setup does not hold (the whole row is skipped with an
     error) and refuses a move to one (update_refused, the rest of the row
     applies); the dry run lists both under location_rejects. Off: unchanged.
+
+    MORE THAN ONE FACILITY ON RECORD (multisite-4): the plan refuses every row
+    that would put a patient's admissions at two facilities or reach outside
+    the importing account's facilities (see _check_facilities), and each
+    refusal is audited here before the transaction opens. Each admission
+    opened is at its department's facility, a patient the import creates is
+    registered there (or at the run's facility when no admission is opened),
+    and the run row carries the run's facility. A re-admission that another
+    facility's admission overtook between the plan and the write is refused
+    inside the transaction, and audited after it. One facility: unchanged.
     """
+    from services import facility_service
+
     adt = adt_on()
+    refusals: list[dict] = []
     result = plan(
         content,
         mapping,
@@ -2265,7 +2612,15 @@ def apply_import(
         update_existing=update_existing,
         header_line=header_line,
         default_department=default_department,
+        actor_user_id=actor_user_id,
+        facility_refusals=refusals,
     )
+    multi = "facility_refusals" in result
+    run_facility = (
+        result.get("facility_id") if multi else None
+    ) or facility_service.MAIN_FACILITY_ID
+    if refusals:
+        _audit_facility_refusals(refusals, actor_user_id)
 
     # ORB_ADT on: what the ADT writer needs, read BEFORE the immediate session
     # (each opens a session of its own): the departments with clinical cover,
@@ -2302,6 +2657,7 @@ def apply_import(
     close_refused: list[str] = []
     update_refused: list[str] = []
     allergies_charted = 0
+    late_refusals: list[dict] = []
 
     with db_session(immediate=adt) as db:
         actor_role = None
@@ -2311,12 +2667,19 @@ def apply_import(
             ).fetchone()
             actor_role = role_row["role"] if role_row else None
         for row in result["rows"]:
+            if multi and _overtaken_by_another_facility(db, row, result, late_refusals):
+                continue
             if row["action"] == "create":
                 patient_id = f"PAT-{uuid.uuid4().hex[:8].upper()}"
                 values = dict(row["values"])
                 values.setdefault("status", "admitted")
                 cols = ["id", "mrn"] + [c for c in _WRITABLE if c in values]
                 params = [patient_id, row["mrn"]] + [values[c] for c in cols[2:]]
+                if multi:
+                    # multisite-4: registered at the facility admitting them,
+                    # else at the facility the run is at.
+                    cols.append("registered_facility_id")
+                    params.append((row.get("admission") or {}).get("facility_id") or run_facility)
                 db.execute(
                     f"INSERT INTO patients ({', '.join(cols)}) "
                     f"VALUES ({', '.join('?' * len(cols))})",
@@ -2388,8 +2751,8 @@ def apply_import(
                     """INSERT INTO admissions
                            (id, patient_id, admitted_by, admission_source, department,
                             ward, bed, attending_doctor_id, initial_diagnosis,
-                            admitting_notes, status, created_at)
-                       VALUES (?, ?, ?, 'roster_import', ?, ?, ?, ?, ?, ?, 'active', ?)""",
+                            admitting_notes, status, created_at, facility_id)
+                       VALUES (?, ?, ?, 'roster_import', ?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
                     (
                         admission_id,
                         patient_id,
@@ -2402,6 +2765,9 @@ def apply_import(
                         f"Opened by roster import {run_id}"
                         + (f" from '{source_filename}'." if source_filename else "."),
                         adm.get("admitted_at"),
+                        # multisite-4: the department's facility (the plan's
+                        # _check_facilities); 1 with one facility on record.
+                        adm.get("facility_id") or facility_service.MAIN_FACILITY_ID,
                     ),
                 )
                 adm["admission_id"] = admission_id
@@ -2500,12 +2866,15 @@ def apply_import(
         if adt:
             admissions["close_refused"] = len(close_refused)
             admissions["update_refused"] = len(update_refused)
+        if multi:
+            admissions["facility_refused"] = len(result["facility_refusals"])
         db.execute(
             """INSERT INTO roster_import_runs
                    (id, actor_user_id, source_filename, mapping_json, date_order,
                     update_existing, rows_total, rows_created, rows_updated,
-                    rows_unchanged, rows_skipped, issue_count, summary_json, note, started_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    rows_unchanged, rows_skipped, issue_count, summary_json, note, started_at,
+                    facility_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 run_id,
                 actor_user_id,
@@ -2528,8 +2897,14 @@ def apply_import(
                 ),
                 note,
                 started,
+                run_facility,
             ),
         )
+
+    if late_refusals:
+        # Refused inside the transaction above; audited now that it has
+        # committed, on a connection of their own.
+        _audit_facility_refusals(late_refusals, actor_user_id)
 
     if adt and (admissions_updated or admissions_closed):
         # adt-7: the beds' housekeeping records follow, best-effort; a
@@ -2548,16 +2923,23 @@ def apply_import(
 
 
 def list_runs(limit: int = 50) -> list[dict]:
-    """Import history, newest first."""
+    """Import history, newest first. Each run's facility (migration 74) is
+    listed only while more than one facility is on record, so the list is
+    exactly as before on a one-facility appliance."""
+    from services import facility_service
+
     limit = max(1, min(int(limit), 500))
     with db_session() as db:
         rows = db.execute(
             "SELECT * FROM roster_import_runs ORDER BY started_at DESC, rowid DESC LIMIT ?",
             (limit,),
         ).fetchall()
+        multi = facility_service.multi_facility_data(db=db)
     out = []
     for r in rows:
         d = dict(r)
+        if not multi:
+            d.pop("facility_id", None)
         for jf in ("mapping_json", "summary_json"):
             try:
                 d[jf] = json.loads(d[jf]) if d.get(jf) else None

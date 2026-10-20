@@ -497,7 +497,8 @@ def test_migration_49_creates_exactly_what_helix_schema_creates(tmp_path):
     HELIX_SCHEMA stays in step with every later migration that adds a Helix
     column (services/helix_db.init_helix_db), so the frozen 49 shape is
     compared after those migrations have run on top of it: 54, the pharmacy
-    store schema, and 61, the medication-order store's supply link. Their
+    store schema, 61, the medication-order store's supply link, and 75, the
+    facility of a lot and a movement (multisite-7b). Their
     non-Helix parts are skipped on this Helix-only file. Migration 61's index
     on the link is the one Helix index HELIX_SCHEMA deliberately lacks (it is
     created by the migration and by a column-guarded step of init_helix_db)."""
@@ -507,12 +508,14 @@ def test_migration_49_creates_exactly_what_helix_schema_creates(tmp_path):
     from migrations_his.m0054_pharmacy_store_schema import MIGRATION as M54
     from migrations_his.m0061_med_order_store import HELIX_MED_ORDER_INDEX
     from migrations_his.m0061_med_order_store import MIGRATION as M61
+    from migrations_his.m0075_facility_columns_admin import MIGRATION as M75
     from services.helix_db import HELIX_SCHEMA
 
     by_runner = sqlite3.connect(str(tmp_path / "runner.db"))
     M49.apply(by_runner)
     M54.apply(by_runner)
     M61.apply(by_runner)
+    M75.apply(by_runner)
     by_runner.commit()
     by_schema = sqlite3.connect(str(tmp_path / "schema.db"))
     by_schema.executescript(HELIX_SCHEMA)

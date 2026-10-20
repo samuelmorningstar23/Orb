@@ -129,6 +129,7 @@ from typing import Any, Literal, overload
 from database import db_session
 from db_backend import DBIntegrityError  # sqlcipher3 raises its OWN hierarchy:
 
+from services import facility_stamp
 from services.hospital_time import hospital_today
 from services.money import assert_non_negative_paise, format_inr_or_unset
 
@@ -591,14 +592,20 @@ def upsert_asset(
                     "to edit it.",
                     code="already_exists",
                 )
+        facility_id = _asset_facility(
+            db, asset_tag=asset_tag, department=department, ward=ward, actor=actor
+        )
+        # facility_id is written once, when the machine is registered, and is
+        # never in the update list below (multisite-7b).
         db.execute(
             """INSERT INTO biomedical_assets (
                    asset_tag, name, category, manufacturer, model, serial_number,
                    department, ward, location_detail, criticality, status,
                    purchase_date, commissioned_date, purchase_cost_paise,
                    cost_is_configured, warranty_expiry_date, vendor_id,
-                   produces_clinical_readings, notes, is_active, created_by)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   produces_clinical_readings, notes, is_active, created_by,
+                   facility_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(asset_tag) DO UPDATE SET
                    name = excluded.name,
                    category = excluded.category,
@@ -644,12 +651,47 @@ def upsert_asset(
                 _clean(notes, field_name="notes"),
                 1 if is_active else 0,
                 actor,
+                facility_id,
             ),
         )
         row = db.execute(
             "SELECT * FROM biomedical_assets WHERE asset_tag = ?", (asset_tag,)
         ).fetchone()
     return _asset_view(_row(row))
+
+
+def _asset_facility(
+    db: Any, *, asset_tag: str, department: str | None, ward: str | None, actor: str | None
+) -> int:
+    """The facility a machine is registered at (multisite-7b, migration 75):
+    its department's in the departments master, else its ward's in Bed
+    setup, else the facility of the account registering it. A machine on the
+    register keeps its facility: a department or ward at another facility is
+    refused, because moving equipment between facilities is not supported
+    yet. Facility 1, with nothing read, while only one facility is on record."""
+
+    def registered() -> int | None:
+        prior = db.execute(
+            "SELECT facility_id FROM biomedical_assets WHERE asset_tag = ?", (asset_tag,)
+        ).fetchone()
+        return None if prior is None or prior[0] is None else int(prior[0])
+
+    dept = _clean(department, field_name="department")
+    ward_text = _clean(ward, field_name="ward")
+    try:
+        return facility_stamp.resolve(
+            db,
+            (
+                ("the machine as registered", registered),
+                ("the department", lambda: facility_stamp.department_facility(db, dept)),
+                ("the ward", lambda: facility_stamp.ward_facility(db, ward=ward_text)),
+            ),
+            what="machine",
+            fallback=lambda: facility_stamp.account_facility(db, actor),
+            unknown_hint="Name its department.",
+        )
+    except facility_stamp.FacilityStampError as exc:
+        raise BiomedicalError(exc.message, code=exc.code) from exc
 
 
 def _asset_view(row: dict, today: date | None = None) -> dict:

@@ -882,7 +882,7 @@ server query at `:165-176` was written for **does not exist on screen yet**.
 three-step wizard: preview → dry run → commit. All three POST the **same file**;
 the commit recomputes the plan server-side from the uploaded bytes
 (`src/pages/panels/admin/RosterImport.tsx:10-20`,
-`server/routes/roster_import_routes.py:211-221`).
+`server/routes/roster_import_routes.py:211-224`).
 
 ### "Roster import" heading and hint
 **Rendered by:** `RosterImport.tsx:218-224`, "Load a ward list from CSV.
@@ -1013,12 +1013,12 @@ different one.
 **Rendered by:** `RosterImport.tsx:463-469`. Disabled while busy or while the
 dry run is stale; label becomes "Applying…".
 **API:** `POST /api/admin/roster-import/commit` →
-`server/routes/roster_import_routes.py:199-255` → `roster_import.apply_import`
-(`server/services/roster_import.py:1479`). One transaction; writes the admission
+`server/routes/roster_import_routes.py:199-258` → `roster_import.apply_import`
+(`server/services/roster_import.py:1488`). One transaction; writes the admission
 alongside the patient.
 **Change this →** A DB constraint violation returns **409** with "Import
 rejected by a database constraint and NOTHING was written: …"
-(`roster_import_routes.py:233-241`), which lands in the error block at
+(`roster_import_routes.py:236-244`), which lands in the error block at
 `RosterImport.tsx:376-380`. Success writes an audit row
 `roster_import_committed` and refreshes the history table (`:195-196`).
 
@@ -1033,8 +1033,8 @@ Rows · Note**. The Rows cell is the compact form `{c}c · {u}u · {n}= · {s}s`
 (`:511`).
 **Data from:** `listRosterRuns(20)` (`:90`) → `GET
 /api/admin/roster-import/runs?limit=20` →
-`server/routes/roster_import_routes.py:260-266` → `roster_import.list_runs`
-(`server/services/roster_import.py:1636`).
+`server/routes/roster_import_routes.py:263-269` → `roster_import.list_runs`
+(`server/services/roster_import.py:1664`).
 **Change this →** Empty state: "No imports yet" / "Applied imports appear here.
 Dry runs are not recorded." A failure to load the history is **swallowed
 silently** (`RosterImport.tsx:91-94`) so it can never block an import, the

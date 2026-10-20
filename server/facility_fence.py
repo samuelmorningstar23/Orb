@@ -16,12 +16,17 @@ makes an unfinished screen an outage, never a disclosure:
     of the refusals in between, because the audit table is append-only and a
     ward browser polls).
 
-FACILITY_BLIND_SURFACES is the list of route prefixes not yet swept. It ships
-as the sentinel '*': every patient route is fenced, so a facility inserted by
-SQL before the scope core exists turns screens into 503s, not leaks, and the
-create gate (multisite-2) refuses a second facility while the sentinel stands.
-multisite-5b replaces it with the list generated from the SQL-site registry,
-and the list only ever shrinks.
+FACILITY_BLIND_SURFACES is the list of route prefixes not yet swept. It
+shipped as the sentinel '*' (every patient route fenced). Since multisite-5b
+(20 October 2026) it is the list generated from the SQL-site registry
+(server/tests/facility_sql_sites/, `python -m tests.facility_sql_sites`),
+which tests/test_facility_sql_registry.py pins equal to the registry's blind
+route groups, and the list only ever shrinks. FACILITY_CLEARED_SURFACES are
+the groups the registry has cleared. While the blind list is not empty, a path
+under no blind, cleared or open prefix (a route group added after the registry
+was generated) is fenced as well: a screen nobody has classified is an
+unfinished one. The create gate (multisite-2) refuses a second facility while
+the blind list is not empty.
 
 What is never fenced (OPEN_SURFACES): signing in and the session (/api/auth),
 liveness and the switch board (/api/health), facility identity
@@ -49,9 +54,72 @@ logger = logging.getLogger("orb.facility_fence")
 #: The sentinel: every fenced root is blind.
 SENTINEL = "*"
 
-#: Route prefixes not yet swept for facility scope, or SENTINEL for all of
-#: them. multisite-5b replaces the sentinel with the generated list.
-FACILITY_BLIND_SURFACES = SENTINEL
+#: Route prefixes not yet swept for facility scope (SENTINEL until
+#: multisite-5b). Generated from the route group rows of the SQL-site registry
+#: (server/tests/facility_sql_sites/<area>.py, SURFACES); each owning sweep
+#: removes the groups it clears. Do not edit by hand: change the rows and
+#: regenerate (`python -m tests.facility_sql_sites` from server/).
+FACILITY_BLIND_SURFACES = (
+    "/api/abdm",
+    "/api/admin",
+    "/api/admissions",
+    "/api/adt",
+    "/api/appointments",
+    "/api/audit",
+    "/api/billing",
+    "/api/biomedical",
+    "/api/bridge",
+    "/api/bundles",
+    "/api/capacity-sim",
+    "/api/chart",
+    "/api/coding",
+    "/api/command-center",
+    "/api/consent",
+    "/api/dietary",
+    "/api/discharge-access",
+    "/api/downtime",
+    "/api/emar",
+    "/api/fhir",
+    "/api/flight-recorder",
+    "/api/forecast",
+    "/api/frontdesk",
+    "/api/helix",
+    "/api/housekeeping",
+    "/api/ingest",
+    "/api/ipass",
+    "/api/lab",
+    "/api/lens",
+    "/api/medorders",
+    "/api/nabh",
+    "/api/nurse",
+    "/api/opd",
+    "/api/orders",
+    "/api/patients",
+    "/api/payer",
+    "/api/payments",
+    "/api/pharmacy",
+    "/api/pharmacy-store",
+    "/api/procurement",
+    "/api/registration",
+    "/api/relay",
+    "/api/sage",
+    "/api/schedule",
+    "/api/scribe",
+    "/api/search",
+    "/api/surgery",
+    "/api/vigil",
+    "/api/ward-record",
+    "/api/workforce",
+    "/socket.io",
+    "/uploads",
+)
+
+#: Route prefixes the registry has cleared: swept (each facility's patients
+#: kept apart) or carrying no patient data. Generated like the blind list.
+FACILITY_CLEARED_SURFACES = ("/api/pulse",)
+
+#: Of the cleared prefixes, those that carry no patient data at all.
+NO_PATIENT_DATA_SURFACES = ("/api/pulse",)
 
 #: The roots the fence looks at. Anything else (the screens and their files)
 #: carries no patient data.
@@ -101,25 +169,55 @@ def surface_of(path: str) -> str:
     return "/" + "/".join(parts[:2]) if parts else "/"
 
 
-def is_fenced(path: str, roots: tuple = FENCED_ROOTS, blind=None) -> bool:
-    """Would this path be refused while more than one facility is on record?"""
+def is_fenced(
+    path: str,
+    roots: tuple = FENCED_ROOTS,
+    blind: tuple[str, ...] | str | None = None,
+    cleared: tuple[str, ...] | None = None,
+) -> bool:
+    """Would this path be refused while more than one facility is on record?
+
+    Open prefixes never are; blind prefixes always are. With the fence's own
+    lists (blind left None), while the blind list is not empty a path under
+    no cleared prefix is refused too, so a route group added after the
+    registry was generated fails closed (a crafted spelling counts as under
+    none); an empty blind list means the sweep is finished and nothing is
+    held shut. A caller that passes its own blind list fences only what it
+    names, unless it passes a cleared list too."""
     path = path or "/"
     if not any(_under(path, root) for root in roots):
         return False
     if not _odd(path) and any(_under(path, p) for p in OPEN_SURFACES):
         return False
-    blind = FACILITY_BLIND_SURFACES if blind is None else blind
+    if blind is None:
+        blind = FACILITY_BLIND_SURFACES
+        if cleared is None:
+            cleared = FACILITY_CLEARED_SURFACES
     if blind == SENTINEL:
         return True
-    return any(_under(path, p) for p in blind)
+    if any(_under(path, p) for p in blind):
+        return True
+    if not blind or cleared is None:
+        return False
+    return _odd(path) or not any(_under(path, p) for p in cleared)
 
 
 def describe() -> dict:
-    """The fence as the operations status page prints it."""
+    """The fence as the operations status page prints it. every_patient_screen
+    is true while no route group carrying patient data has been cleared."""
     blind = FACILITY_BLIND_SURFACES
+    if blind == SENTINEL:
+        return {
+            "every_patient_screen": True,
+            "blind_surfaces": ["all"],
+            "always_open": list(OPEN_SURFACES),
+        }
+    cleared = sorted(FACILITY_CLEARED_SURFACES)
     return {
-        "every_patient_screen": blind == SENTINEL,
-        "blind_surfaces": ["all"] if blind == SENTINEL else sorted(blind),
+        "every_patient_screen": bool(blind) and set(cleared) <= set(NO_PATIENT_DATA_SURFACES),
+        "blind_surfaces": sorted(blind),
+        "cleared_surfaces": cleared,
+        "unlisted_surfaces_fenced": bool(blind),
         "always_open": list(OPEN_SURFACES),
     }
 

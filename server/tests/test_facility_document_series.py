@@ -9,8 +9,8 @@
      facility numbers from its own row and never borrows facility 1's.
   3. The callers: a receipt, a refund, a claim and a credit note of a second
      facility's patient are numbered from that facility's series (and refused
-     in words while it has none); stores, kitchen and NABH documents keep
-     facility 1's.
+     in words while it has none); stores, kitchen and NABH documents take
+     their own facility's since multisite-7b (test_facility_admin_stamping.py).
   4. The prefix rule, on set-up and on edit: no prefix may equal, or begin
      with, or be the beginning of, another facility's prefix for the same
      register (or another series writing the same number column), and none
@@ -395,17 +395,18 @@ def test_a_second_facilitys_claim_uses_its_claim_series(second_facility):
 def test_facility_ones_patients_and_unattributed_documents_keep_facility_ones_series(
         second_facility):
     """With two facilities on record, a facility 1 patient's receipt still
-    numbers from facility 1, and so do documents with no facility yet."""
+    numbers from facility 1. Stores, kitchen and NABH documents now number
+    from their own facility's series (multisite-7b, migration 75); that is
+    pinned in tests/test_facility_admin_stamping.py."""
     pid = _patient_at(1)
     before = _row("RCPT")["next_number"]
     receipt = ps.record_payment(patient_id=pid, amount_paise=rupees("100"), method="cash",
                                 purpose="advance", received_by="clerk-ds")
     assert receipt["receipt_number"].startswith(_row("RCPT")["prefix"])
     assert _row("RCPT")["next_number"] == before + 1
-    import inspect
-    from services import dietary_service, nabh_service, procurement_service
-    for module in (procurement_service, dietary_service, nabh_service):
-        assert "facility_id=MAIN_FACILITY_ID" in inspect.getsource(module)
+    with db_session() as db:
+        assert db.execute("SELECT facility_id FROM payments WHERE id = ?",
+                          (receipt["id"],)).fetchone()[0] == 1
 
 
 def test_the_print_reads_the_configured_flag_of_the_suppliers_facility(second_facility):

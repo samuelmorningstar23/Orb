@@ -111,7 +111,8 @@ from typing import Any
 from database import db_session
 from db_backend import DBIntegrityError
 
-from services.billing_masters import MAIN_FACILITY_ID, next_document_number
+from services import facility_stamp
+from services.billing_masters import SeriesNotSetUp, next_document_number
 from services.hospital_time import hospital_now, hospital_today
 
 logger = logging.getLogger("orb.dietary")
@@ -1149,6 +1150,25 @@ def _live_indent_for_plan(db, plan_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+def _kitchen_indent_facility(db: Any, *, ward: str | None, raised_by: str | None) -> int:
+    """The facility a kitchen indent is raised for (multisite-7b, migration
+    75): its ward's in Bed setup (through the ward's department), else the
+    facility of the account raising it; refused in words when neither can be
+    told. Facility 1, with nothing read, while only one facility is on
+    record."""
+    try:
+        return facility_stamp.resolve(
+            db,
+            (("the ward", lambda: facility_stamp.ward_facility(db, ward=ward)),),
+            what="kitchen indent",
+            fallback=lambda: facility_stamp.account_facility(db, raised_by),
+            unknown_hint="Set the ward up in Bed setup, or raise it from an account "
+            "of that facility.",
+        )
+    except facility_stamp.FacilityStampError as exc:
+        raise KitchenIndentError(exc.message) from exc
+
+
 def raise_kitchen_indent(*, meal_plan_id: int, raised_by: str, notes: str | None = None) -> dict:
     """Turn a LOCKED plan into the requisition the kitchen cooks against.
 
@@ -1180,12 +1200,13 @@ def raise_kitchen_indent(*, meal_plan_id: int, raised_by: str, notes: str | None
             (int(meal_plan_id),),
         ).fetchall()
         total = sum(int(r["meal_count"]) for r in lines)
+        facility_id = _kitchen_indent_facility(db, ward=plan["ward"], raised_by=raised_by)
 
         cur = db.execute(
             """INSERT INTO kitchen_indents (
                 meal_plan_id, service_date, meal_service, ward, status, total_meals,
-                raised_by, raised_at, notes
-            ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?)""",
+                raised_by, raised_at, notes, facility_id
+            ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)""",
             (
                 int(meal_plan_id),
                 plan["service_date"],
@@ -1195,6 +1216,7 @@ def raise_kitchen_indent(*, meal_plan_id: int, raised_by: str, notes: str | None
                 (raised_by or "").strip() or None,
                 _stored_ts(hospital_now()),
                 (notes or "").strip() or None,
+                facility_id,
             ),
         )
         indent_id = int(cur.lastrowid)
@@ -1227,7 +1249,8 @@ def issue_kitchen_indent(indent_id: int, *, issued_by: str) -> dict:
     """
     with db_session() as db:
         row = db.execute(
-            "SELECT id, status FROM kitchen_indents WHERE id = ?", (int(indent_id),)
+            "SELECT id, status, facility_id FROM kitchen_indents WHERE id = ?",
+            (int(indent_id),),
         ).fetchone()
         if row is None:
             raise KitchenIndentError(f"kitchen indent {indent_id} not found")
@@ -1237,13 +1260,20 @@ def issue_kitchen_indent(indent_id: int, *, issued_by: str) -> dict:
             raise KitchenIndentError(
                 f"kitchen indent {indent_id} is {row['status']} and cannot be issued"
             )
+        facility_id = int(row["facility_id"])
 
     # OUTSIDE the session above on purpose: next_document_number takes its own
     # `db_session(immediate=True)`, and nesting a second immediate write session
     # inside one we are holding is how this codebase has deadlocked before.
-    # Facility 1's series (multisite-7a): a kitchen indent carries no facility
-    # until multisite-7b stamps one.
-    allocated = next_document_number("KIND", facility_id=MAIN_FACILITY_ID)
+    # The KIND series of the indent's own facility (multisite-7b); a facility
+    # with none yet is refused in words, never numbered from facility 1's.
+    try:
+        allocated = next_document_number("KIND", facility_id=facility_id)
+    except SeriesNotSetUp as exc:
+        raise KitchenIndentError(
+            "This facility has no kitchen indent number series yet, so the indent was not "
+            "issued. An administrator sets one up in Admin, Facilities."
+        ) from exc
 
     with db_session(immediate=True) as db:
         # `AND status = 'draft'` makes a racing second issue a NO-OP rather than a

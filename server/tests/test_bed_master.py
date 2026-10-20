@@ -137,7 +137,8 @@ def test_migration_53_is_ledgered_on_the_session_db_with_its_tables_and_columns(
         ward_cols = {r[1] for r in db.execute("PRAGMA table_info(wards)").fetchall()}
     assert 53 in ledger
     assert MASTER_TABLES <= tables
-    assert cols[-5:] == NEW_UNIT_COLUMNS
+    # Migration 75 (multisite-7b) appends facility_id after the bed master's five.
+    assert cols[-6:] == NEW_UNIT_COLUMNS + ["facility_id"]
     assert {"facility_code", "code", "department", "cleaning_tracked", "register_complete",
             "register_complete_at", "register_complete_by", "ledger_complete_from"} <= ward_cols
 

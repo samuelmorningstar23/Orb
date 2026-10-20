@@ -6,6 +6,7 @@ Provides surgical schedule queries, detail retrieval, and MedGemma risk assessme
 import json
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from database import db_session
 
@@ -81,6 +82,22 @@ def turnaround_minutes(started_at, completed_at) -> float | None:
         )
         return None
     return round(delta, 1)
+
+
+def surgery_facility_on(db: Any, patient_id: str) -> int:
+    """The facility a new operation for this patient is booked at
+    (multisite-4, migration 74's surgeries.facility_id), for every writer of
+    a surgeries row to put in its INSERT.
+
+    Facility 1 while one facility is on record (nothing beyond the cached
+    count is read). Otherwise the facility of the patient's current encounter
+    (permissions.FACILITY_PATIENT_SQL: an active admission first), because
+    the theatre that takes the case is the one where the patient is. Read on
+    the writer's own connection; surgeries are not an encounter that
+    FACILITY_PATIENT_SQL reads, so the order does not matter."""
+    from services.facility_identity import document_facility_id
+
+    return document_facility_id(db, patient_id=patient_id)
 
 
 def get_weekly_schedule(surgeon_id: str, days: int = 14) -> list:

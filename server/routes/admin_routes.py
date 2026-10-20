@@ -1114,7 +1114,7 @@ async def history_import_dry_run(
     date_order: str = _HISTORY_IMPORT_DRY_RUN_DATE_ORDER_DEFAULT,
     header_line: int | None = _HISTORY_IMPORT_DRY_RUN_HEADER_LINE_DEFAULT,
     user: dict = _HISTORY_IMPORT_DRY_RUN_USER_DEFAULT,
-):
+) -> dict:
     """Report exactly what an import WOULD create, update and skip. Writes nothing.
 
     ``counts`` and ``issue_summary`` are exact over every row read. ``rows`` and
@@ -1133,6 +1133,9 @@ async def history_import_dry_run(
             source_system=source_system,
             date_order=date_order,
             header_line=header_line,
+            # multisite-4: whose facilities each record is checked against,
+            # read only while more than one facility is on record.
+            actor_user_id=user["id"],
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e

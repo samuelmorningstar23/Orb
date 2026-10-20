@@ -469,7 +469,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **How it works:** `asyncio.get_running_loop().create_task(...)` (`:820`); with no running loop it logs a WARNING and the case stays at `emergency_pending`.
 **Why it exists:** the adapter now runs inside the confirm's transaction, off the event loop, where `get_running_loop()` fails; and a task started before the commit could look for a case that is not there yet. The transition endpoint calls this after `run_db` returns, on the loop (`server/routes/relay_routes.py:466`); `create_and_dispatch_handoff` calls it after its own commit. Pinned by `test_transfer_confirm_still_schedules_the_prep_package`.
 
-#### `_alert_assigned_team`: `server/services/sage_handoff_service.py:1092`
+#### `_alert_assigned_team`: `server/services/sage_handoff_service.py:1098`
 **Signature:** `(db, surgery_id, patient_id) → None`
 **Does:** persist targeted `surgical_alert` messages for the surgeon + one nurse + one anaesthetist.
 **How it works:** finds the case-room channel; builds a roster (surgeon real id, first nurse, first anaes-department/name user); wipes and re-inserts `surgery_team_assignments` (idempotent) with status `alerted`; inserts one `surgical_alert` message per member carrying a JSON payload with `target_user_id`.
@@ -478,7 +478,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** the Relay `surgical_alert` renderer; live delivery is done separately by `emit_team_alerts_live`.
 **Gotchas:** persistence only, nothing is pushed live from here.
 
-#### `emit_team_alerts_live`: `server/services/sage_handoff_service.py:1176`
+#### `emit_team_alerts_live`: `server/services/sage_handoff_service.py:1182`
 **Signature:** `async (surgery_id, patient_id) → None`
 **Does:** push each `surgical_alert` for this surgery over sockets, both to the case-room room and to each target user's personal room `user:<id>`.
 **How it works:** reads the recent `surgical_alert` messages off the loop (`_load_alert_rows`, `:889`), filters to this surgery, serialises each row with `relay_service._message_row_to_dict` (`:928`), the same serializer the history endpoint uses, so the live copy carries `is_bot` and `source`, and `sio.emit("message:new", …, room=…)` to the channel and the `user:<id>` room (`:930-933`). A **socket room** is a named group the server can broadcast to; `user:<id>` is a per-user room so an alert reaches that clinician on any device.
@@ -487,7 +487,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `ws.realtime.sio` (guide 06-realtime); called by the Relay transition handler *after* dispatch (`server/routes/relay_routes.py:472`).
 **Gotchas:** emits `message:new` (the same event normal chat uses) so existing clients render it with no new handler. A failed emit is logged, never raised.
 
-#### `generate_transfer_surgery_package_async`: `server/services/sage_handoff_service.py:1266`
+#### `generate_transfer_surgery_package_async`: `server/services/sage_handoff_service.py:1272`
 **Signature:** `async (surgery_id) → None`
 **Does:** flip the surgery to `emergency_context_generating`, write the shared prep-package template (risk assessment, complications, checklist, instruments, staff) and set `emergency_ready`, emitting `surgery:emergency_intake` before and after.
 **How it works:** `_mark_generating` (`:942`) flips the status in one transaction, then `_persist_package` (`:958`) writes `PREP_PACKAGE` from `surgery_escalation_service` with `notes.ai_package_status = "template"` (`:1004-1007`, `:1010-1015`). There is no wait and no model call. If the write fails, the case is finalised with `FALLBACK_DATA` and status `failed` (`:1021-1022`) rather than left behind a spinner.
@@ -560,6 +560,6 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 5. **`HandoffPrintView` no longer prints a percentage.** It used to render `risk.score * 100` as "45% - ELEVATED" for a NEWS2 of 9, an index that read as a probability, and "0% - STABLE" for a patient with no observations. Since 2026-10-02 it prints the NEWS2 description or "NEWS2 not recorded" (`src/components/HandoffPrintView.tsx:41`, `:125`).
 6. ~~**`getRecentHandoffs` / `GET /recent` are unused by the UI.**~~ Closed. The nurse handover sheet now calls `getRecentHandoffs` (`src/pages/panels/nurse/HandoverSheet.tsx:142`) alongside `getIpassDraft` and `saveIpass`; the endpoint stays tested server-side (`test_get_recent_handoffs_returns_saved_note`).
 7. **Unused import.** `import uuid` in `ipass_routes.py:9` is never referenced (the correlation id is an f-string). Harmless dead import.
-8. **`generate_transfer_surgery_package_async` writes a template, not AI output.** Resolved as a safety issue on 2026-10-02: it used to write a hard-coded "ASA IV, septic shock" risk text, `success_probability = 78.5` and invented staff names over the team `_alert_assigned_team` assigned. It now writes the shared `PREP_PACKAGE` (`server/services/surgery_escalation_service.py:187`), which makes no patient claim and stamps `ai_package_status = "template"`. The function name still says "generate"; nothing is generated.
+8. **`generate_transfer_surgery_package_async` writes a template, not AI output.** Resolved as a safety issue on 2026-10-02: it used to write a hard-coded "ASA IV, septic shock" risk text, `success_probability = 78.5` and invented staff names over the team `_alert_assigned_team` assigned. It now writes the shared `PREP_PACKAGE` (`server/services/surgery_escalation_service.py:191`), which makes no patient claim and stamps `ai_package_status = "template"`. The function name still says "generate"; nothing is generated.
 9. **Misleading comment in `_dispatch_to_transfer`.** The comment at `sage_handoff_service.py:881-882` says the seeded-surgery reuse happens "regardless of patient id," but the query is scoped `WHERE patient_id = ?`. The code (patient-scoped) is the safe behaviour; the comment is wrong.
 10. **Save persists client-supplied content.** `save_draft` stores whatever `content` the browser posts rather than re-deriving it server-side, so a tampered client could persist arbitrary handoff text. It is gated by `scribe.create_draft` and audited, but the server does not re-validate the draft.

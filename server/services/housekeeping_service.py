@@ -103,6 +103,9 @@ from database import db_session
 from db_backend import DBIntegrityError
 from migrations import HOUSEKEEPING_INDEXES, HOUSEKEEPING_TABLES
 from migrations_his.m0053_adt_bed_master import add_housekeeping_unit_columns
+from migrations_his.m0075_facility_columns_admin import add_facility_columns
+
+from services import facility_stamp
 
 logger = logging.getLogger("orb.housekeeping")
 
@@ -271,7 +274,9 @@ def ensure_housekeeping_schema(force: bool = False) -> None:
     The bed master columns (ward_id, room_id, bed_class, is_temporary,
     retired_at; migration 53) are added by the same PRAGMA-guarded function the
     migration uses, so a table this path creates, or one it created before
-    migration 53 existed, can never be left in the old shape.
+    migration 53 existed, can never be left in the old shape. facility_id
+    (migration 75, multisite-7b) is added the same way, by migration 75's own
+    function.
     """
     global _schema_ready
     if _schema_ready and not force:
@@ -285,6 +290,7 @@ def ensure_housekeeping_schema(force: bool = False) -> None:
             for statement in HOUSEKEEPING_INDEXES:
                 db.execute(statement)
             add_housekeeping_unit_columns(db)
+            add_facility_columns(db, tables=("housekeeping_units",))
         _schema_ready = True
 
 
@@ -509,6 +515,37 @@ def register_unit(
         )
 
 
+def _unit_facility(
+    db: Any,
+    *,
+    ward_id: str | None,
+    ward_name: str | None,
+    actor_user_id: str | None,
+    existing: Any = None,
+) -> int:
+    """The facility a housekeeping unit sits at (multisite-7b, migration 75):
+    the facility of its ward in Bed setup (through the ward's department),
+    else of the account registering it. A unit already on the register keeps
+    its facility, and a ward at another facility is refused. Facility 1, with
+    nothing read, while only one facility is on record."""
+    try:
+        return facility_stamp.resolve(
+            db,
+            (
+                ("the unit", facility_stamp.row_facility(existing)),
+                (
+                    "the ward",
+                    lambda: facility_stamp.ward_facility(db, ward_id=ward_id, ward=ward_name),
+                ),
+            ),
+            what="housekeeping unit",
+            fallback=lambda: facility_stamp.account_facility(db, actor_user_id),
+            unknown_hint="Register it on a ward set up in Bed setup.",
+        )
+    except facility_stamp.FacilityStampError as exc:
+        raise HousekeepingError(exc.message) from exc
+
+
 def master_unit_code(ward_code: str, bed_label: str) -> str:
     """The unit code of a bed the bed master registers: '<ward code>/<bed label>'.
 
@@ -527,7 +564,7 @@ def _has_ward_id(row) -> str | None:
 
 
 def register_unit_on(
-    db,
+    db: Any,
     *,
     unit_code: str | None = None,
     ward: str | None = None,
@@ -626,6 +663,9 @@ def register_unit_on(
         raise UnitManagedByBedSetup(
             f"{code} is a bed set up in Bed setup, so it is changed there. Nothing was changed."
         )
+    facility_id = _unit_facility(
+        db, ward_id=ward_id, ward_name=ward_name, actor_user_id=actor_user_id, existing=existing
+    )
     if existing:
         db.execute(
             """UPDATE housekeeping_units
@@ -656,8 +696,9 @@ def register_unit_on(
         db.execute(
             """INSERT INTO housekeeping_units
                    (id, unit_code, ward, room, bed_label, unit_type, is_isolation_room,
-                    state, state_since, is_active, notes, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)""",
+                    state, state_since, is_active, notes, created_at, updated_at,
+                    facility_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)""",
             (
                 unit_id,
                 code,
@@ -671,6 +712,7 @@ def register_unit_on(
                 _clean(notes),
                 now,
                 now,
+                facility_id,
             ),
         )
     else:
@@ -678,8 +720,8 @@ def register_unit_on(
             """INSERT INTO housekeeping_units
                    (id, unit_code, ward, room, bed_label, unit_type, is_isolation_room,
                     state, state_since, is_active, notes, created_at, updated_at,
-                    ward_id, room_id, bed_class, is_temporary)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)""",
+                    ward_id, room_id, bed_class, is_temporary, facility_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 unit_id,
                 code,
@@ -697,6 +739,7 @@ def register_unit_on(
                 room_id,
                 _clean(bed_class, _MAX_LABEL),
                 1 if is_temporary else 0,
+                facility_id,
             ),
         )
     # The register's first event. Without it a unit created directly as
@@ -778,7 +821,7 @@ def update_master_bed_on(
 
 
 def adopt_unit_on(
-    db,
+    db: Any,
     unit_id: str,
     *,
     ward_id: str,
@@ -808,6 +851,9 @@ def adopt_unit_on(
     ward_row = db.execute("SELECT id, code FROM wards WHERE id = ?", (ward_id,)).fetchone()
     if ward_row is None:
         raise HousekeepingError("No ward with that id is set up in Bed setup")
+    # A bed keeps its facility: one typed in at one facility is never adopted
+    # onto another facility's ward (multisite-7b).
+    _unit_facility(db, ward_id=ward_id, ward_name=None, actor_user_id=None, existing=unit)
     room_text = None
     if room_id is not None:
         room_row = db.execute(

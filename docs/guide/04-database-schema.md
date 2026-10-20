@@ -22,7 +22,7 @@ graph LR
     CLEAN[cleanup_data.py] -.raw sqlite3.-> ORB
 ```
 
-**Neighbors:** `main.py` calls `init_db()` at startup (`server/main.py:134`, see the server-boot guide); every route and service imports the connection helpers; the auth subsystem (see guide 03-auth-rbac) consumes the `users` columns (`password_hash`, `pin_hash`, `totp_*`, `token_version`) this layer creates; the audit service (`server/services/audit_service.py`) writes the hash chain that `verify_audit_chain()` re-checks (though in practice the live verifier is a mirror, `flight_recorder_service.verify_chain()`, see Discrepancies); the Helix pharmacy subsystem creates its own six `helix_*` tables in `server/services/helix_db.py:9-68` (documented in the Helix guide, seeded by `seed_helix.py` which the reset script invokes).
+**Neighbors:** `main.py` calls `init_db()` at startup (`server/main.py:134`, see the server-boot guide); every route and service imports the connection helpers; the auth subsystem (see guide 03-auth-rbac) consumes the `users` columns (`password_hash`, `pin_hash`, `totp_*`, `token_version`) this layer creates; the audit service (`server/services/audit_service.py`) writes the hash chain that `verify_audit_chain()` re-checks (though in practice the live verifier is a mirror, `flight_recorder_service.verify_chain()`, see Discrepancies); the Helix pharmacy subsystem creates its own six `helix_*` tables in `server/services/helix_db.py:9-71` (documented in the Helix guide, seeded by `seed_helix.py` which the reset script invokes).
 
 ## File map
 
@@ -338,7 +338,7 @@ The migration ledger: `version` (INTEGER PK), `applied_at` (default now), `note`
 #### `model_registry`: `server/database.py:802`
 Governance/"honesty layer" for every ML surface: `id`, `model_key`* (`vigil_cfc`/`forecast_lstm`/`sage_llm`…), `version`*, `task`, `training_data` (lineage), `validated` (0/1, externally validated?), `validation_metrics` (JSON), `calibration_stats` (JSON), `is_active`, `checkpoint_present` (is a trained checkpoint actually on disk?), `notes`, `registered_at`; `UNIQUE(model_key, version)` (`server/database.py:802`).
 
-> **Tables NOT owned by this file:** the six `helix_*` pharmacy tables are created in `server/services/helix_db.py:9-68` (Helix guide) and the `clinical_knowledge_vec` vector virtual table in `server/services/clinical_knowledge.py:636` (Sage/RAG guide), all inside the same `orb.db` file.
+> **Tables NOT owned by this file:** the six `helix_*` pharmacy tables are created in `server/services/helix_db.py:9-71` (Helix guide) and the `clinical_knowledge_vec` vector virtual table in `server/services/clinical_knowledge.py:636` (Sage/RAG guide), all inside the same `orb.db` file.
 
 ---
 

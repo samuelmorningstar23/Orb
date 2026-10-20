@@ -62,6 +62,7 @@ import sqlite3
 import uuid
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
+from typing import Any
 
 import config
 from auth import get_current_user
@@ -308,6 +309,32 @@ def default_slot_for(parsed_date: date) -> str | None:
     return f"{hour:02d}:{minute:02d}"
 
 
+def _appointment_facility_on(
+    db: Any, *, patient_id: str, department: str | None, fallback: int | None = None
+) -> int:
+    """The facility a new booking is at (multisite-4, migration 74's
+    appointments.facility_id), worked out on the booking's own connection
+    BEFORE its row is written. Facility 1 while one facility is on record.
+    Otherwise the facility owning the booking's clinic in the departments
+    master (ruling MS-R4 (a)); for a booking that names no listed clinic (a
+    patient's own request, a booking before OPD mode), `fallback` (the booking
+    a reschedule replaces) or the facility of the patient's latest encounter,
+    so such a booking never moves the patient to another facility."""
+    from services.facility_identity import document_facility_id
+    from services.frontdesk_service import department_facility_on
+
+    from services import facility_service
+
+    if not facility_service.multi_facility_data(db=db):
+        return facility_service.MAIN_FACILITY_ID
+    owner = department_facility_on(db, department) if department else None
+    if owner is not None:
+        return owner
+    if fallback is not None:
+        return int(fallback)
+    return document_facility_id(db, patient_id=patient_id)
+
+
 def persist_appointment(
     *,
     patient_id: str,
@@ -385,12 +412,14 @@ def persist_appointment(
             return _serialize(duplicate), False
 
         appt_id = str(uuid.uuid4())
+        facility_id = _appointment_facility_on(db, patient_id=patient_id, department=department)
         try:
             db.execute(
                 """INSERT INTO appointments
                        (id, patient_id, booked_by_user_id, scheduled_date, scheduled_time,
-                        appointment_type, reason, status, idempotency_key, origin, department)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?)""",
+                        appointment_type, reason, status, idempotency_key, origin, department,
+                        facility_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?, ?)""",
                 (
                     appt_id,
                     patient_id,
@@ -402,6 +431,7 @@ def persist_appointment(
                     idem,
                     origin,
                     department,
+                    facility_id,
                 ),
             )
         except DBIntegrityError:
@@ -635,7 +665,7 @@ def _slot_offer(doctor_id: str, scheduled_date: str, scheduled_time: str) -> dic
 
 
 def _book_slot_on(
-    db,
+    db: Any,
     *,
     patient_id: str,
     booked_by: str,
@@ -647,7 +677,7 @@ def _book_slot_on(
     offer: dict,
     idem: str | None,
     rescheduled_from_id: str | None = None,
-):
+) -> tuple[Any, bool]:
     """Write one booking into a doctor's slot on the caller's (immediate)
     transaction. Returns (row, created).
 
@@ -704,13 +734,16 @@ def _book_slot_on(
             "slot_full", "That slot is fully booked. Choose another.", capacity=capacity
         )
     appt_id = str(uuid.uuid4())
+    facility_id = _appointment_facility_on(
+        db, patient_id=patient_id, department=session["department"]
+    )
     try:
         db.execute(
             """INSERT INTO appointments
                    (id, patient_id, booked_by_user_id, scheduled_date, scheduled_time,
                     appointment_type, reason, status, idempotency_key, origin, department,
-                    doctor_id, session_id, slot_position, rescheduled_from_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?, ?, ?, ?, ?)""",
+                    doctor_id, session_id, slot_position, rescheduled_from_id, facility_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 appt_id,
                 patient_id,
@@ -726,6 +759,7 @@ def _book_slot_on(
                 session["session_id"],
                 position,
                 rescheduled_from_id,
+                facility_id,
             ),
         )
     except DBIntegrityError:
@@ -1843,7 +1877,7 @@ def reschedule_appointment(
     request: Request,
     idempotency_key: str | None = _RESCHEDULE_APPOINTMENT_IDEMPOTENCY_KEY_DEFAULT,
     user: dict = _RESCHEDULE_APPOINTMENT_USER_DEFAULT,
-):
+) -> dict[str, Any]:
     """Move a booking to another day or slot as a NEW row that points at the
     old one (rescheduled_from_id). The old row is kept: an open booking is
     cancelled with the reason, a no-show stays a no-show. One live successor
@@ -1941,12 +1975,18 @@ def reschedule_appointment(
                     "This patient already has an appointment at that time.",
                 )
             new_id = str(uuid.uuid4())
+            facility_id = _appointment_facility_on(
+                db,
+                patient_id=old["patient_id"],
+                department=department,
+                fallback=_row_get(old, "facility_id"),
+            )
             db.execute(
                 """INSERT INTO appointments
                        (id, patient_id, booked_by_user_id, scheduled_date, scheduled_time,
                         appointment_type, reason, status, idempotency_key, origin, department,
-                        rescheduled_from_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?, ?)""",
+                        rescheduled_from_id, facility_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?, ?, ?)""",
                 (
                     new_id,
                     old["patient_id"],
@@ -1959,6 +1999,7 @@ def reschedule_appointment(
                     ORIGIN_STAFF,
                     department,
                     appointment_id,
+                    facility_id,
                 ),
             )
             new_row = db.execute("SELECT * FROM appointments WHERE id = ?", (new_id,)).fetchone()

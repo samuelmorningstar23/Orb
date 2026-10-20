@@ -276,7 +276,7 @@ Router declared with `prefix="/api/pharmacy"` and tag `"Pharmacy Verification"` 
 #### `get_pending`: `server/routes/pharmacy_routes.py:49`
 **Signature:** `GET /api/pharmacy/pending`, dep `require_permission("helix.read")` → `{ "pending": [...] }`
 **Does:** Returns the verification queue.
-**How it works:** The `Depends(require_permission("helix.read"))` runs first: it resolves the JWT to a user, checks the user's role grants `helix.read`, and 403s otherwise (`server/permissions.py:828-836`). On success it returns the authenticated `user` dict, and the handler returns `{"pending": pharmacy.list_pending_verification()}`.
+**How it works:** The `Depends(require_permission("helix.read"))` runs first: it resolves the JWT to a user, checks the user's role grants `helix.read`, and 403s otherwise (`server/permissions.py:851-859`). On success it returns the authenticated `user` dict, and the handler returns `{"pending": pharmacy.list_pending_verification()}`.
 **Why it exists:** The read endpoint behind the queue. Uses `helix.read` (not a dedicated `pharmacy.read`) because pharmacy verification is scoped as part of the Helix pharmacist permission family.
 **Data in/out:** none → `{"pending": PendingMedication[]}`.
 **Talks to:** Calls `list_pending_verification`. Called by `getPendingVerifications` (`src/api/pharmacy.ts:99`).
