@@ -31,3 +31,6 @@ transformers==5.19.0
 # Test tooling
 pytest==9.0.3
 pytest-asyncio==1.3.0
+# tools/backend-quality/run_backend.py measures branch coverage in every shard, so a
+# fresh environment built from this file alone can run the acceptance suite.
+coverage==7.16.2
