@@ -24,6 +24,13 @@ Every second facility here is removed in teardown with the cache invalidated
 series get their prefix, suffix, digits and configured flag back. Counters
 are never moved back: a counter that went backwards would reissue numbers
 other tests already hold.
+
+The module runs on a database of its own (conftest's isolated_module_database,
+21 October 2026). Three tests here register a patient at a second facility and
+the receipt or claim they issue keeps that patient row after the facility is
+removed; on the shared session database those rows read as records naming a
+facility not on record, and test_multisite_spine's one-facility checks failed
+whenever the acceptance runner put the two files in one shard.
 """
 import sqlite3
 import uuid
@@ -50,6 +57,13 @@ SEEDED = ("INV", "RCPT", "REF", "CLM", "IND", "PO", "GRN", "KIND", "INC", "NABHP
 
 
 # ── fixtures ─────────────────────────────────────────────────────────────────
+
+@pytest.fixture(scope="module", autouse=True)
+def _own_census(isolated_module_database):
+    """This module's own database (see the module docstring): the patients it
+    registers at a second facility, and every number it issues, stay here."""
+    return isolated_module_database
+
 
 @pytest.fixture(autouse=True)
 def _series_restored():
