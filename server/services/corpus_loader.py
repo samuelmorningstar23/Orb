@@ -20,7 +20,7 @@ for idempotency + provenance without touching the shared retrieval schema.
 
 Graceful degradation (embedded vs lexical-only)
 -----------------------------------------------
-The real BGE-M3 embedder (``FlagEmbedding``) is a ~2 GB optional dependency. When it is
+The real BGE-M3 embedder (local ``Transformers``) has ~2 GB of optional weights. When it is
 installed we compute + store a dense vector per chunk (embedded mode). When it is NOT
 installed we still index every chunk in FTS5 and store it WITHOUT a vector row
 (lexical-only mode) — ``search_guidelines`` then retrieves it via its BM25/lexical path.
@@ -47,7 +47,6 @@ fast-path). This loader never edits clinical_knowledge.py — it only reuses its
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import logging
 import os
@@ -78,13 +77,15 @@ def _real_embedder_available() -> bool:
     """True only if the REAL BGE-M3 embedder can be used.
 
     ``clinical_knowledge._get_embedder`` falls back to a zero-vector mock when
-    ``FlagEmbedding`` is missing or ``ORB_SKIP_KNOWLEDGE_BASE`` is set — zero
+    ``Transformers`` is missing or ``ORB_SKIP_KNOWLEDGE_BASE`` is set — zero
     vectors are useless for dense retrieval, so we treat those cases as
     "embeddings unavailable" and store chunks lexical-only.
     """
     if os.getenv("ORB_SKIP_KNOWLEDGE_BASE", "").lower() in ("1", "true", "yes"):
         return False
-    return importlib.util.find_spec("FlagEmbedding") is not None
+    from services.local_transformers import dependencies_available
+
+    return dependencies_available()
 
 
 def _embed_composites(texts: list[str]) -> list[bytes]:
@@ -622,7 +623,7 @@ def load_directory(path, default_trust_tier: int = 3) -> dict[str, Any]:
         len(files),
         directory,
         mode,
-        "" if embed else " (BGE-M3/FlagEmbedding unavailable — FTS lexical index only)",
+        "" if embed else " (local BGE-M3 unavailable — FTS lexical index only)",
     )
 
     per_file: list[dict[str, Any]] = []

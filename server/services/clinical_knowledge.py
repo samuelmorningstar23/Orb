@@ -30,7 +30,7 @@ from services.knowledge_worker import (
 # ORB_KNOWLEDGE_INPROCESS=1 (tests / constrained envs) and for the worker
 # process itself.
 class _Embedder(Protocol):
-    def encode(self, texts: list[str], **kwargs: Any) -> dict[str, Any]: ...
+    def encode(self, texts: list[str], *, batch_size: int = 8, max_length: int = 512) -> dict[str, Any]: ...
 
 
 _embed_model: _Embedder | None = None
@@ -54,26 +54,6 @@ def _use_isolated() -> bool:
 # settings. The lock also prevents two threads double-loading the ~2 GB model.
 # Reentrant so a nested acquire (init inside a guarded call site) cannot deadlock.
 _MODEL_LOCK = threading.RLock()
-
-
-def _local_snapshot_or_name(model_name: str) -> str:
-    """Resolve `model_name` to its fully-cached local HF snapshot path, if any.
-
-    FlagEmbedding's constructors call snapshot_download() on every init, which
-    revalidates etags against Hugging Face even when every file is already on
-    disk. On a throttled/blocked network those requests can hang with no
-    timeout — wedging Sage's first query and the test suite. Handing the
-    constructor a local *path* skips the hub entirely. Falls back to the plain
-    name when the model isn't cached; with HF_HUB_OFFLINE=1 (set in config.py,
-    Orb is strictly offline) that fails fast instead of downloading, and search
-    degrades to lexical-only until the model is installed.
-    """
-    try:
-        from huggingface_hub import snapshot_download
-
-        return snapshot_download(model_name, local_files_only=True)
-    except Exception:
-        return model_name
 
 
 def _get_embedder():
@@ -116,18 +96,14 @@ def _get_embedder():
                 )
                 return _embed_model
             try:
-                from FlagEmbedding import BGEM3FlagModel
+                from services.local_transformers import LocalDenseEmbedder
 
-                _resolved = _local_snapshot_or_name(EMBEDDING_MODEL)
-                try:
-                    _embed_model = BGEM3FlagModel(_resolved, use_fp16=True)
-                except Exception:
-                    if _resolved == EMBEDDING_MODEL:
-                        raise
-                    _embed_model = BGEM3FlagModel(EMBEDDING_MODEL, use_fp16=True)
+                _embed_model = LocalDenseEmbedder(
+                    EMBEDDING_MODEL, use_fp16=True, dimension=EMBEDDING_DIM
+                )
                 print("  ✓ Clinical knowledge embedder loaded")
             except ImportError:
-                # Fallback mock for environments without FlagEmbedding but where schema init is needed
+                # Preserve schema-only environments without the optional ML SDK.
                 class _FallbackEmbedder:
                     def encode(self, texts: list[str], **kwargs: Any) -> dict[str, Any]:
                         return {
@@ -135,7 +111,7 @@ def _get_embedder():
                         }
 
                 _embed_model = _FallbackEmbedder()
-                print("  ! Clinical knowledge embedder mocked (FlagEmbedding missing)")
+                print("  ! Clinical knowledge embedder mocked (Transformers missing)")
     return _embed_model
 
 
@@ -779,8 +755,8 @@ def init_knowledge_base():
 # second-stage reranker before the top-`limit` are returned. Two paths:
 #
 #   1. Cross-encoder (preferred, if the model is installed) — a query/passage
-#      relevance model (sentence-transformers CrossEncoder or FlagEmbedding
-#      FlagReranker). Gated behind availability; NEVER loads a 2GB model just to
+#      relevance model (local Transformers sequence classifier).
+#      Gated behind availability; NEVER loads a 2GB model just to
 #      check, and degrades silently to (2) when absent.
 #   2. Lexical/heuristic reranker (always available, used today) — scores each
 #      candidate on term coverage + BM25-style lexical overlap saturation +
@@ -900,39 +876,18 @@ def _get_cross_encoder():
                 return None
 
             model_name = os.getenv("SAGE_RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
-            # Try FlagEmbedding's FlagReranker first (pairs with the BGE-M3 embedder), then
-            # sentence-transformers CrossEncoder. Only import when the package is present.
             try:
-                import importlib.util
+                from services.local_transformers import LocalReranker, dependencies_available
 
-                if importlib.util.find_spec("FlagEmbedding") is not None:
-                    from FlagEmbedding import FlagReranker  # type: ignore
-
-                    _resolved = _local_snapshot_or_name(model_name)
-                    try:
-                        reranker = FlagReranker(_resolved, use_fp16=True)
-                    except Exception:
-                        if _resolved == model_name:
-                            raise
-                        reranker = FlagReranker(model_name, use_fp16=True)
+                if dependencies_available():
+                    reranker = LocalReranker(model_name, use_fp16=True)
 
                     def _score(pairs):
                         out = reranker.compute_score(pairs, normalize=True)
                         return out if isinstance(out, list) else [out]
 
                     _cross_encoder = _score
-                    print("  ✓ Sage cross-encoder reranker loaded (FlagReranker)")
-                    return _cross_encoder
-                if importlib.util.find_spec("sentence_transformers") is not None:
-                    from sentence_transformers import CrossEncoder  # type: ignore
-
-                    ce = CrossEncoder(_local_snapshot_or_name(model_name))
-
-                    def _score(pairs):
-                        return list(ce.predict(pairs))
-
-                    _cross_encoder = _score
-                    print("  ✓ Sage cross-encoder reranker loaded (CrossEncoder)")
+                    print("  ✓ Sage cross-encoder reranker loaded (local Transformers)")
                     return _cross_encoder
             except Exception as e:  # pragma: no cover - depends on optional heavy deps
                 print(f"  ! Cross-encoder reranker unavailable ({e}); using lexical reranker")
@@ -1079,7 +1034,7 @@ def rerank_results(
                         [expanded, f"{c.get('title', '')}\n{c.get('content', '')}"]
                         for c in candidates
                     ]
-                    # FlagReranker tokenizes queries and passages at DIFFERENT max
+                    # The reranker tokenizes queries and passages at DIFFERENT max
                     # lengths, mutating the shared Rust tokenizer's truncation config
                     # twice per batch — concurrent scoring from the query and warm
                     # paths raises "Already borrowed" or silently truncates wrongly.

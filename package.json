@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -16,7 +19,8 @@
     "check:contrast": "node scripts/check-contrast.mjs",
     "check:docs": "python3 scripts/check-doc-citations.py",
     "check:docs:fix": "python3 scripts/check-doc-citations.py --fix",
-    "check": "npm run check:contrast && npm run check:docs && tsc --noEmit"
+    "check:types": "tsc -b",
+    "check": "npm run check:contrast && npm run check:docs && npm run check:types"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.2.9",
@@ -24,14 +28,14 @@
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@fontsource-variable/manrope": "^5.2.8",
     "@fontsource-variable/space-grotesk": "^5.2.10",
-    "dompurify": "^3.4.11",
+    "dompurify": "^3.4.16",
     "i18next": "^26.3.4",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-i18next": "^17.0.8",
     "react-is": "^19.2.5",
     "react-markdown": "^10.1.0",
-    "react-router-dom": "^7.13.2",
+    "react-router-dom": "^7.18.2",
     "recharts": "^3.8.1",
     "remark-gfm": "^4.0.1",
     "socket.io-client": "^4.8.3"
@@ -54,6 +58,6 @@
     "typescript-eslint": "^8.57.0",
     "vite": "^8.0.1",
     "vite-plugin-pwa": "^1.2.0",
-    "vitest": "^3.2.6"
+    "vitest": "^4.1.11"
   }
 }

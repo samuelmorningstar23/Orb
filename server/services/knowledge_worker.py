@@ -187,35 +187,13 @@ def _worker_init() -> None:
         pass
 
 
-def _local_snapshot_or_name(model_name: str) -> str:
-    """Resolve to the fully-cached local HF snapshot path when available.
-
-    Same rationale as clinical_knowledge._local_snapshot_or_name (duplicated so
-    the child never imports server app modules): FlagEmbedding revalidates hub
-    etags on every constructor call, which hangs on blocked networks; a local
-    path skips the hub entirely.
-    """
-    try:
-        from huggingface_hub import snapshot_download
-
-        return snapshot_download(model_name, local_files_only=True)
-    except Exception:
-        return model_name
-
-
 def _worker_get_embedder():
     global _w_embedder
     if _w_embedder is None:
-        from FlagEmbedding import BGEM3FlagModel
+        from services.local_transformers import LocalDenseEmbedder
 
         model_name = os.getenv("ORB_EMBEDDING_MODEL", "BAAI/bge-m3")
-        resolved = _local_snapshot_or_name(model_name)
-        try:
-            _w_embedder = BGEM3FlagModel(resolved, use_fp16=True)
-        except Exception:
-            if resolved == model_name:
-                raise
-            _w_embedder = BGEM3FlagModel(model_name, use_fp16=True)
+        _w_embedder = LocalDenseEmbedder(model_name, use_fp16=True)
     return _w_embedder
 
 
@@ -224,15 +202,9 @@ def _worker_get_reranker():
     if _w_reranker is None:
         model_name = os.getenv("SAGE_RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
         try:
-            from FlagEmbedding import FlagReranker
+            from services.local_transformers import LocalReranker
 
-            resolved = _local_snapshot_or_name(model_name)
-            try:
-                rr = FlagReranker(resolved, use_fp16=True)
-            except Exception:
-                if resolved == model_name:
-                    raise
-                rr = FlagReranker(model_name, use_fp16=True)
+            rr = LocalReranker(model_name, use_fp16=True)
 
             def _score(pairs):
                 out = rr.compute_score(pairs, normalize=True)
@@ -240,17 +212,7 @@ def _worker_get_reranker():
 
             _w_reranker = _score
         except Exception:
-            try:
-                from sentence_transformers import CrossEncoder
-
-                ce = CrossEncoder(_local_snapshot_or_name(model_name))
-
-                def _score(pairs):
-                    return [float(s) for s in ce.predict(pairs)]
-
-                _w_reranker = _score
-            except Exception:
-                _w_reranker = False  # definitively unavailable in this env
+            _w_reranker = False  # definitively unavailable in this env
     return _w_reranker or None
 
 

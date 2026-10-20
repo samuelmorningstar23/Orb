@@ -16,6 +16,7 @@ Usage:
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -33,20 +34,24 @@ def convert_vigil_cfc(checkpoint_path: str, output_dir: str) -> str:
     """
     import coremltools as ct
     import torch
-    from models.vigil_cfc import OrbVigilCfC
+    from models.vigil_cfc import HORIZONS_HOURS, PRODUCTION_FEATURE_ORDER, OrbVigilCfC
 
     print("\n━━━ Converting Vigil CfC LNN ━━━")
 
     # Load checkpoint
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     hidden_dim = checkpoint.get("hidden_dim", 64)
-    input_dim = checkpoint.get("input_dim", 7)
+    input_dim = checkpoint.get("input_dim", len(PRODUCTION_FEATURE_ORDER))
+    horizons = tuple(checkpoint.get("horizons", HORIZONS_HOURS))
+    outcome = checkpoint.get("outcome", "deterioration")
 
     print(f"  Input dim: {input_dim}, Hidden dim: {hidden_dim}")
     print(f"  Epoch: {checkpoint.get('epoch', '?')}, Val AUC: {checkpoint.get('val_auc', 0):.4f}")
 
     # Instantiate and load weights
-    model = OrbVigilCfC(input_dim=input_dim, hidden_dim=hidden_dim)
+    model = OrbVigilCfC(
+        input_dim=input_dim, hidden_dim=hidden_dim, horizons=horizons, outcome=outcome
+    )
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
 
@@ -76,18 +81,22 @@ def convert_vigil_cfc(checkpoint_path: str, output_dir: str) -> str:
     # Add metadata
     mlmodel.author = "Orb Hospital OS"
     mlmodel.short_description = (
-        "CfC Liquid Neural Network for patient deterioration risk prediction. "
+        f"CfC Liquid Neural Network for {outcome} risk prediction. "
         f"Input: {input_dim} vitals features × {seq_len} timesteps + continuous Δt. "
-        "Output: Sepsis/deterioration probability (0.0-1.0)."
+        f"Output: {len(horizons)} probabilities in horizon order {horizons} hours."
     )
+    feature_order = checkpoint.get("feature_order")
     mlmodel.input_description["vitals"] = (
-        "Z-score normalized vitals sequence (1, 24, 7). "
-        "Features: [HR, SpO2, Temp, SBP, MAP, DBP, RR]."
+        f"Normalized feature sequence (1, {seq_len}, {input_dim}), using the checkpoint's training order and statistics."
     )
     mlmodel.input_description["dt"] = "Elapsed hours between observations (1, 24, 1)."
     mlmodel.output_description["risk_probability"] = (
-        "Deterioration probability (1, 1). Range: 0.0 (stable) to 1.0 (critical)."
+        f"{outcome} probabilities (1, {len(horizons)}), in horizon order {horizons} hours. Range: 0.0-1.0."
     )
+    mlmodel.user_defined_metadata["orb.outcome"] = str(outcome)
+    mlmodel.user_defined_metadata["orb.horizons_hours"] = json.dumps(horizons)
+    if feature_order is not None:
+        mlmodel.user_defined_metadata["orb.feature_order"] = json.dumps(feature_order)
 
     # Save
     output_path = Path(output_dir) / "vigil_cfc.mlpackage"
