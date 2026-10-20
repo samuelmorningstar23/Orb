@@ -2965,7 +2965,6 @@ KNOWN_MISSES_HELDOUT2 = [
     'correct sodium slowly with 3% saline at 30 ml/hr',
     'sister, the 2 pm piptaz can go now',
     'nbm so iv pan instead of oral',
-    "we'll add spiro 25 od",
 ]
 KNOWN_MISSES_HELDOUT3 = [
     'neb wth duolin q6h',
@@ -3018,8 +3017,19 @@ KNOWN_TRIPS_HELDOUT3 = [
     'give or hold the morning amlodipine, bp 104/70',
     'OHA: glimepiride 2 mg + metformin 1 g bd',
     'plan: switch to oral antibiotics tomorrow',
+    # Ruled 20 October 2026 (Samuel): a first-person "we will" line that names a
+    # medicine action is read like a plan line, so it is an order. Sets 3 and 4
+    # were written to the earlier rule that "we will" is a plan, not an order,
+    # which is why their authors filed these as reads.
+    'we will add amlodipine if bp stays high',
+    'we will need to restart clexane after the biopsy',
+    'we will wean norad in the morning',
+    "we'll start insulin if sugars stay above 250",
 ]
 KNOWN_TRIPS_HELDOUT4 = [
     'start the round from bed 1',
     'give the family an update about the transfusion',
+    # The 20 October "we will" ruling, as in set 3.
+    'we will give 1 unit prbc after dialysis',
+    'we will hold heparin on the morning of surgery',
 ]

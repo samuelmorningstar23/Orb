@@ -159,6 +159,52 @@ def test_a_plan_line_is_read_like_the_order_under_it(query, order):
     assert detect_mutation_intent(query) is order
 
 
+@pytest.mark.parametrize("query,order", [
+    # Ruled 20 October 2026 (Samuel): "we'll add" is read like a plan line. A
+    # first-person statement of what the team will do to a medicine is an order;
+    # the singular ("I'll start ...") and Indian English "we shall" carry the
+    # same risk. Advice, a hypothetical, someone else's plan, the past, a
+    # question and anything without a medicine action stay reads.
+    ("we'll add spiro 25 od", True),
+    ("we will add spironolactone 25 mg od", True),
+    ("we shall start inj ceftriaxone 1 g iv od", True),
+    ("we'll stop the heparin before surgery", True),
+    ("we'll stop the metformin since her creatinine is rising", True),
+    ("we'll increase lasix to 40 bd", True),
+    ("we're going to start pip-taz 4.5 g q8h", True),
+    ("we are going to switch to oral antibiotics tomorrow", True),
+    ("we'll also add pantoprazole 40 iv od", True),
+    ("we'll start her on insulin sliding scale", True),
+    ("we will transfuse 2 units prbc", True),
+    ("we’ll hold the ramipril tonight", True),
+    ("I'll start ceftriaxone 1 g iv od", True),
+    ("i will add pcm 1 g iv q6h", True),
+    ("we should stop the heparin soon", False),
+    ("we would add spiro if k is low", False),
+    ("they'll start ceftriaxone in the icu", False),
+    ("we added spiro yesterday", False),
+    ("we've started ceftriaxone", False),
+    ("we have started ceftriaxone this morning", False),
+    ("we'll add spiro?", False),
+    ("should we add spiro?", False),
+    ("will we need to stop metformin", False),
+    ("we'll see how she does", False),
+    ("we'll review in the evening", False),
+    ("we'll discuss adding spiro with the consultant", False),
+    ("we'll start the round from bed 1", False),
+    ("we'll update the family after the round", False),
+    ("we'll give the family an update", False),
+    ("we'll give a summary at handover", False),
+    ("we'll repeat the potassium at 6 pm", False),
+    ("we'll continue lasix 40 bd", False),
+    ("we'll check the potassium", False),
+    ("i'll check the drug chart", False),
+    ("well, the lasix seems to be working", False),
+])
+def test_a_we_will_line_is_read_like_a_plan_line(query, order):
+    assert detect_mutation_intent(query) is order
+
+
 # ── Cost ──────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("text", [

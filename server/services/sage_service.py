@@ -842,6 +842,15 @@ WARD_ORDER_PATTERNS = [
 
 _WARD_ORDER_RE = [re.compile(p) for p in WARD_ORDER_PATTERNS]
 
+# 11 (20 October 2026). After a first-person "we'll" or "I will"
+# (order_wording.INTENT_LEAD): an order verb and a named therapy, in a gap that
+# stops at a comma. Not the bare verbs of patterns 3 and 4, which would make
+# "we'll start the round from bed 1" an order.
+_INTENT_ORDER_RE = re.compile(
+    rf"^(?:{_ADD_VERBS}|{_STOP_VERBS}|{_CHANGE_VERBS}|{order_wording.WARD_VERBS})\b"
+    rf"[^.?!,]{{0,48}}?\b{_ANY_THERAPY}\b"
+)
+
 # An utterance that ASKS. Leading discourse filler is skipped; the test is on the
 # grammatical lead as well as the question mark, because "when to stop heparin"
 # is a question with no mark at all.
@@ -1085,7 +1094,12 @@ def detect_mutation_intent(query: str) -> bool:
     # A plan line is read as the order under it ("Plan: inj ceftriaxone 2 g iv
     # od"), decided 20 October 2026; see order_wording.PLAN_HEADER.
     planned = order_wording.after_plan_header(q)
-    for text in dict.fromkeys(t for t in (q, plain, planned) if t):
+    # So is "we'll add spiro 25 od", ruled 20 October 2026; see
+    # order_wording.INTENT_LEAD and pattern 11.
+    intended = order_wording.after_intent_lead(q)
+    if intended and _INTENT_ORDER_RE.match(intended):
+        return True
+    for text in dict.fromkeys(t for t in (q, plain, planned, intended) if t):
         text_rest = order_wording.after_patient_reference(text)
         if (
             order_wording.line_signals(text, _is_gate_drug)

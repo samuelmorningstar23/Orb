@@ -1131,12 +1131,32 @@ def after_patient_reference(q: str) -> str:
 #: followed by a colon or a dash: "plan to start insulin" and "the plan is ..."
 #: are prose, and a plan with no medicine action reads nothing the line readers
 #: accept ("Plan: review in the evening").
-PLAN_HEADER = re.compile(r"^(?:plan|rx|orders?)\s*(?:for\s+today\s*)?[:\-–—]\s*")
+PLAN_HEADER = re.compile(r"^(?:plan|rx|orders?)\s*(?:for\s+today\s*)?[:\-\u2013\u2014]\s*")
 
 
 def after_plan_header(q: str) -> str:
     """What follows a leading plan header, or "" when there is none."""
     m = PLAN_HEADER.match(q)
+    return q[m.end() :] if m else ""
+
+
+#: "we'll add spiro 25 od", "we are going to start ceftriaxone", "I'll stop the
+#: metformin", "we shall start inj ceftriaxone". Ruled 20 October 2026 (Samuel):
+#: read like a plan line, because a first-person statement of what the team
+#: will do to a medicine is an order on a ward, and a model answering it can say
+#: the drug was given. Not advice ("we should"), a hypothetical ("we would"),
+#: someone else's plan ("they'll"), the past ("we've started") or a question,
+#: and nothing without a medicine action after it ("we'll review in the
+#: evening"); sage_service reads what follows with object-taking verbs only.
+INTENT_LEAD = re.compile(
+    r"^(?:we|i)(?:['\u2019]ll|\s+will|\s+shall|['\u2019]re\s+going\s+to|\s+are\s+going\s+to"
+    r"|['\u2019]m\s+going\s+to|\s+am\s+going\s+to)\s+(?:(?:now|also|just|then|first)\s+)?"
+)
+
+
+def after_intent_lead(q: str) -> str:
+    """What follows a leading "we'll" or "I will", or "" when there is none."""
+    m = INTENT_LEAD.match(q)
     return q[m.end() :] if m else ""
 
 
