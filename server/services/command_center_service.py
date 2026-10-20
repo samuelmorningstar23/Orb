@@ -34,6 +34,7 @@ from typing import Any
 
 from database import db_session
 
+from services import hospital_time
 from services.facility_filter import column_clause, patient_clause
 from services.forecast_service import (
     WARD_CAPACITY,
@@ -372,9 +373,14 @@ def _downtime_readiness(patients: list[dict]) -> dict:
 
 
 def _or_today(facility_ids: frozenset[int] | None = None) -> dict:
-    """Today's operating-room load (UTC calendar day), at `facility_ids` (the
-    case's own surgeries.facility_id; None: every facility)."""
-    today = _now().date().isoformat()
+    """Today's operating-room load, at `facility_ids` (the case's own
+    surgeries.facility_id; None: every facility).
+
+    Today is the hospital's calendar day (services.hospital_time), because
+    surgeries.scheduled_date is a ward calendar date. The UTC date is still
+    yesterday between 00:00 and 05:30 IST, so the board showed yesterday's
+    theatre list to the night team."""
+    today = hospital_time.hospital_today().isoformat()
     fac_sql, fac_args = column_clause("s.facility_id", facility_ids)
     with db_session() as db:
         rows = db.execute(

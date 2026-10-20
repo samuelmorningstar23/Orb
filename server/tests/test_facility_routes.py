@@ -307,6 +307,30 @@ def test_behind_an_open_gate_create_validates_audits_and_closing_waits(admin, sw
         assert no_reason.status_code == 400
 
 
+def test_the_facility_created_row_carries_the_request(admin, switch_on, monkeypatch):
+    """Wave 15 fix-4: POST /api/facilities passed no request to the audit
+    write, so the facility_created row named the actor but recorded no user
+    agent or client address. It now carries the request's path, method,
+    client address and user agent, the fields department_master records."""
+    uid, hdr = admin
+    monkeypatch.setattr(facility_fence, "FACILITY_BLIND_SURFACES", ())
+    agent = "Orb Facilities screen (route test)"
+    since = _max_audit_id()
+    with _gate_satisfied(uid):
+        made = client.post("/api/facilities", headers={**hdr, "User-Agent": agent},
+                           json={"code": "NORTH2", "name": "Northfield Satellite"})
+        assert made.status_code == 200, made.text
+    rows = _audit_rows("facility_created", since)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["target_id"] == str(made.json()["id"])
+    assert row["actor_user_id"] == uid
+    assert row["user_agent"] == agent
+    assert row["ip_address"] == "testclient"
+    assert row["request_path"] == "/api/facilities"
+    assert row["http_method"] == "POST"
+
+
 # ── 3. Validation ────────────────────────────────────────────────────────────
 
 def _errors(resp) -> dict:

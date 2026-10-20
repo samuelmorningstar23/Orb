@@ -361,8 +361,8 @@ left of the timestamp (line 135) and the page keeps showing stale numbers rather
 **API:** `GET /api/command-center/` (`CommandCenter.tsx:97`).
 **Server:** `command_center_routes.get_house_snapshot`
 (`server/routes/command_center_routes.py:68`) → `command_center_service.house_snapshot`
-(`server/services/command_center_service.py:367`) → `_census_and_acuity`
-(`command_center_service.py:124`).
+(`server/services/command_center_service.py:368`) → `_census_and_acuity`
+(`command_center_service.py:125`).
 **Change this →** the tile's colour class comes from `pctTone` (line 24): green under 75%,
 amber 75–89%, red at 90%+. The bar width is clamped to 100% so an over-capacity ward cannot
 overflow the tile.
@@ -371,14 +371,14 @@ overflow the tile.
 **Where:** second tile; sub-line "N elevated · N stable".
 **Rendered by:** `CommandCenter.tsx:235-243`.
 **Data from:** `snap.acuity.critical / elevated / stable`, tallied in `_census_and_acuity`
-(`command_center_service.py:135-141`).
+(`command_center_service.py:136-142`).
 **Change this →** the tile is red whenever `critical > 0` and green otherwise (line 152), 
 there is no amber middle state on this one.
 
 ### KPI tile: "Sepsis Bundle Compliance"
 **Where:** third tile; sub-line "N/N bundles on track".
 **Rendered by:** `CommandCenter.tsx:218-222`.
-**Server:** `command_center_service._bundles` (`command_center_service.py:231`) →
+**Server:** `command_center_service._bundles` (`command_center_service.py:232`) →
 `sepsis_bundle_service.get_active_bundles`. "Compliant" means the bundle's `on_track` flag is
 set, nothing has breached its 1-hour target (line 210).
 **Change this →** `complianceTone` (line 30) inverts the usual direction: **high is good**
@@ -389,8 +389,8 @@ set, nothing has breached its 1-hour target (line 210).
 **Where:** fourth tile; sub-line "N/N snapshots · oldest 3.2h".
 **Rendered by:** `CommandCenter.tsx:224-243`; the button at lines 170–179.
 **Data from:** `snap.downtime_readiness`, from `command_center_service._downtime_readiness`
-(`command_center_service.py:268`). "Recent" means a snapshot newer than
-`DOWNTIME_RECENT_WINDOW_MIN` = 24 hours (`command_center_service.py:70`). The age string is
+(`command_center_service.py:269`). "Recent" means a snapshot newer than
+`DOWNTIME_RECENT_WINDOW_MIN` = 24 hours (`command_center_service.py:71`). The age string is
 formatted by `ageLabel` (`CommandCenter.tsx:77`): minutes under an hour, hours under a day,
 then days.
 **API (button):** `POST /api/downtime/capture-all` (`CommandCenter.tsx:127`).
@@ -403,7 +403,7 @@ Tone thresholds are `readinessTone` (line 36): ≥80 green, ≥50 amber, below r
 ### Ward Acuity Heatmap
 **Where:** the large card on the left of the grid below the KPIs.
 **Rendered by:** `CommandCenter.tsx:304-355`; the per-ward cell `.map` at line 199.
-**Data from:** `snap.acuity.heatmap` (one row per ward from `command_center_service.py:154`),
+**Data from:** `snap.acuity.heatmap` (one row per ward from `command_center_service.py:155`),
 cross-referenced against `census.by_ward` for the occupancy line (line 200).
 **Change this →** each cell shows the ward name, `occupied/capacity` (or `, ` if that ward is
 missing from the census), a three-segment stacked bar whose segment widths are the raw
@@ -418,7 +418,7 @@ with the exact three counts (line 207).
 **Where:** card to the right of the heatmap, with a count badge in its header.
 **Rendered by:** `CommandCenter.tsx:318-342`; the count at line 232, rows at 238–250.
 **Data from:** `snap.deteriorations`.
-**Server:** `command_center_service._deteriorations` (`command_center_service.py:177`), every
+**Server:** `command_center_service._deteriorations` (`command_center_service.py:178`), every
 patient at `critical` or `elevated`, annotated with a live NEWS2 from their latest vitals via
 `vigil_service.compute_news2` (line 177), sorted critical-first then by NEWS2 descending
 (line 199). **The route then filters this list to the caller's department**
@@ -434,7 +434,7 @@ or their level dropping to `stable` removes the row and decrements the header co
 **Where:** the third card in the grid, three big numbers side by side.
 **Rendered by:** `CommandCenter.tsx:345-363`: "+N projected admissions",
 "N/N projected occupancy", "N% projected utilization".
-**Server:** `command_center_service._forecast` (`command_center_service.py:315`), which calls
+**Server:** `command_center_service._forecast` (`command_center_service.py:316`), which calls
 `forecast_service.predict_hospital_flow(days_ahead=1)` and reads day 1 out of it, the same
 cached model that drives the Forecast screen.
 **Change this →** the utilization percentage is the only toned number here: `pctTone` again,
@@ -445,7 +445,7 @@ capacity the component falls back to the census's capacity (line 264).
 **Where:** the last card in the grid.
 **Rendered by:** `CommandCenter.tsx:415-442`; columns `Time | Procedure | Patient | OR |
 Status` at line 288, rows at 291–299.
-**Server:** `command_center_service._or_today` (`command_center_service.py:308`), surgeries
+**Server:** `command_center_service._or_today` (`command_center_service.py:309`), surgeries
 whose `scheduled_date` is today (UTC), left-joined to patients for the name, ordered by time.
 **Change this →** every cell falls back to `, ` when null. The status cell renders
 `status.replace(/_/g,' ')` as its label and takes its colour class from the **first
@@ -462,7 +462,7 @@ underneath and a Retry button.
 **Change this →** this only replaces the page when there is **no** snapshot at all. Once one
 has loaded, later failures degrade to the "reconnecting…" chip described above. Note that
 `house_snapshot()` never raises, each section falls back to zeros with an `error` note
-(`command_center_service.py:380-402`), so this screen is far more likely to show
+(`command_center_service.py:386-408`), so this screen is far more likely to show
 zeroed tiles than this error page.
 
 ---

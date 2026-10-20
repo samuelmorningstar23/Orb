@@ -607,7 +607,7 @@ implementation of the RCP NEWS2 table in the product; `escalation_service.py:34-
 second scorer is how two screens come to disagree about the same patient, and
 `nurse_shift_service.py:681` says the same. It is called by `bot_service.py:200`,
 `ingestion_service.py` (via `_persist_risk_score`, `:264-272`), `nurse_shift_service.py:386`,
-`downtime_service.py:187`, `escalation_service.py:1694`, `command_center_service.py:205` and
+`downtime_service.py:187`, `escalation_service.py:1694`, `command_center_service.py:206` and
 `sage_service.py:1711`, so a threshold edit lands on the board, the nurse shift board, the
 downtime pack, escalation and Sage's answers simultaneously.
 

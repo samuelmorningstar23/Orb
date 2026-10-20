@@ -14,7 +14,7 @@ Pulse was rebuilt on 6 October 2026 (ruling R030 in `docs/RULINGS_NEEDED_2026-10
 
 **Key design choices to remember.**
 
-- **Consistent numbers.** Command Center reuses the *same* hardcoded bed capacities (`WARD_CAPACITY`) and ward-normalization helper (`_normalize_ward`) that the Forecast pillar uses, so occupancy math never disagrees across the platform (`server/services/command_center_service.py:39-47`).
+- **Consistent numbers.** Command Center reuses the *same* hardcoded bed capacities (`WARD_CAPACITY`) and ward-normalization helper (`_normalize_ward`) that the Forecast pillar uses, so occupancy math never disagrees across the platform (`server/services/command_center_service.py:40-48`).
 - **Degrade, never crash.** Every board section is wrapped in its own `try/except`; a failing subsystem returns zeros plus an `error` note and the rest of the board still renders (`server/services/command_center_service.py:8-14`).
 - **Poll, not push.** Neither surface uses sockets. Command Center polls every 20 s (`src/components/command/CommandCenter.tsx:42`). Pulse has no live feed to poll: it reads `GET /api/pulse/season`, which answers from the calendar on the appliance.
 
@@ -71,7 +71,7 @@ Neighbor guides referenced below: **Auth & RBAC** (the `require_permission` gate
 2. `CommandCenter` mounts, calls `load()` once, then sets a 20-second `setInterval` (`src/components/command/CommandCenter.tsx:110-116`).
 3. `load()` calls `apiFetch<HouseSnapshot>('/command-center/')` (`src/components/command/CommandCenter.tsx:95-97`). `apiFetch` prefixes `/api`, attaches the JWT bearer header, and throws typed errors on non-2xx (`src/api/client.ts:195-260`).
 4. The route handler `get_house_snapshot` runs the `require_permission("forecast.read")` dependency first; if the role lacks it, a 403 is raised and audited *before* any work (`server/routes/command_center_routes.py:68`, `server/permissions.py:386-448`).
-5. `house_snapshot()` reads the admitted-patient list once, then builds seven sections, each guarded by its own `try/except`, and returns a plain dict (`server/services/command_center_service.py:469-585`).
+5. `house_snapshot()` reads the admitted-patient list once, then builds seven sections, each guarded by its own `try/except`, and returns a plain dict (`server/services/command_center_service.py:475-591`).
 6. The component stores the snapshot, stamps `lastUpdated`, and renders. On a fetch error it keeps the *last* snapshot and shows a small "reconnecting…" note; it only shows the full error screen when there is no snapshot yet (`src/components/command/CommandCenter.tsx:95-117`).
 
 ```mermaid
@@ -110,9 +110,9 @@ sequenceDiagram
 
 ### command_center_service.py
 
-Module constants: `WARD_CAPACITY`, `TOTAL_CAPACITY`, `_normalize_ward` are **imported** from `forecast_service` (`server/services/command_center_service.py:42-47`) so numbers stay consistent. `DOWNTIME_RECENT_WINDOW_MIN = 24*60` defines "fresh" for downtime snapshots (`:50`). `WARD_CAPACITY` itself is `{"ICU":8,"W1":8,"W2":8,"W3":8}` → `TOTAL_CAPACITY = 32` (`server/services/forecast_service.py:58-67`).
+Module constants: `WARD_CAPACITY`, `TOTAL_CAPACITY`, `_normalize_ward` are **imported** from `forecast_service` (`server/services/command_center_service.py:43-48`) so numbers stay consistent. `DOWNTIME_RECENT_WINDOW_MIN = 24*60` defines "fresh" for downtime snapshots (`:51`). `WARD_CAPACITY` itself is `{"ICU":8,"W1":8,"W2":8,"W3":8}` → `TOTAL_CAPACITY = 32` (`server/services/forecast_service.py:58-67`).
 
-#### _now / _now_iso: `server/services/command_center_service.py:53` / `:58`
+#### _now / _now_iso: `server/services/command_center_service.py:54` / `:59`
 **Signature:** `() → datetime` / `() → str`
 **Does:** Return the current UTC time (as a tz-aware `datetime`, or its ISO-8601 string).
 **How it works:** `datetime.now(timezone.utc)`; `_now_iso` calls `.isoformat()`.
@@ -122,7 +122,7 @@ Module constants: `WARD_CAPACITY`, `TOTAL_CAPACITY`, `_normalize_ward` are **imp
 **Change guide:** To display local time instead of UTC, do NOT change these, keep the server in UTC and convert in the client (`CommandCenter.tsx` already calls `toLocaleTimeString`). Changing the server clock would desync age comparisons against DB timestamps (which are UTC).
 **Gotchas:** none noteworthy.
 
-#### _parse_ts: `server/services/command_center_service.py:78`
+#### _parse_ts: `server/services/command_center_service.py:79`
 **Signature:** `(ts) → datetime | None`
 **Does:** Parse a stored timestamp string into a tz-aware UTC `datetime`, tolerating a trailing `Z` and naive values.
 **How it works:** 1) falsy → `None`; 2) `datetime.fromisoformat` after replacing `Z` with `+00:00`; 3) if the parsed value is naive, stamp it UTC; 4) on `ValueError`/`TypeError` return `None`.
@@ -131,17 +131,17 @@ Module constants: `WARD_CAPACITY`, `TOTAL_CAPACITY`, `_normalize_ward` are **imp
 **Talks to:** `_downtime_readiness`.
 **Gotchas:** A naive DB timestamp is *assumed* UTC. If any writer stored local time, ages would be wrong, but Orb writes UTC everywhere.
 
-#### _admitted_with_acuity: `server/services/command_center_service.py:90`
+#### _admitted_with_acuity: `server/services/command_center_service.py:91`
 **Signature:** `() → list[dict]`
 **Does:** Return every admitted patient with their latest risk level, in one SQL query.
 **How it works:** 1) `SELECT p.id,name,ward,bed` plus a correlated subquery for the latest `risk_scores.level` ordered by `timestamp DESC, id DESC LIMIT 1`, filtered on `status='admitted'`, ordered by ward/bed; 2) for each row, default a missing level to `"stable"` so acuity buckets always sum to the census; 3) attach `norm_ward = _normalize_ward(ward)`.
 **Why it exists:** This single list feeds four sections (census, acuity, deteriorations, downtime), so it is read once and passed down.
 **Data in/out:** none → `[{id,name,ward,bed,level,norm_ward}]`.
 **Talks to:** reads `patients` + `risk_scores`; imports `_normalize_ward` (Forecast). Called by `house_snapshot`.
-**Change guide:** To include *discharged* patients on the board, change the `WHERE p.status='admitted'` clause (`:83`); knock-on: census/occupancy would exceed capacity and every downstream percentage would inflate. To rank acuity by a different field, change the subquery's `ORDER BY` (`:81`).
+**Change guide:** To include *discharged* patients on the board, change the `WHERE p.status='admitted'` clause (`:84`); knock-on: census/occupancy would exceed capacity and every downstream percentage would inflate. To rank acuity by a different field, change the subquery's `ORDER BY` (`:82`).
 **Gotchas:** The subquery ties by `timestamp` then `id`; if two risk rows share a timestamp the higher `id` wins. Parameterized query, no injection risk.
 
-#### _census_and_acuity: `server/services/command_center_service.py:127`
+#### _census_and_acuity: `server/services/command_center_service.py:128`
 **Signature:** `(patients: list[dict]) → tuple[dict, dict]`
 **Does:** Build both the census (occupancy vs capacity) and acuity (counts + heatmap) sections in one pass.
 **How it works:** 1) initialise per-ward occupancy and per-ward acuity tallies keyed by the canonical `WARD_CAPACITY` wards, plus a totals bucket; 2) for each patient, coerce an unknown level to `"stable"`, increment the total for that level, and if the ward is canonical increment ward occupancy + ward acuity; 3) build `by_ward` with `occupancy_pct = occupied/capacity*100`; 4) build `heatmap` (per-ward critical/elevated/stable counts); 5) build the `census` dict (`total_admitted`, `total_capacity`, `occupancy_pct`, `by_ward`) and `acuity` dict (totals + heatmap).
@@ -151,7 +151,7 @@ Module constants: `WARD_CAPACITY`, `TOTAL_CAPACITY`, `_normalize_ward` are **imp
 **Change guide:** To add a fifth ward "W4", add it to `WARD_CAPACITY` in `server/services/forecast_service.py:58`, the heatmap, census, empty fallbacks and Forecast pillar all pick it up automatically (they iterate `WARD_CAPACITY`). Worked example: adding `"W4":10` makes `TOTAL_CAPACITY=42`, adds a heatmap cell, and `_normalize_ward` must also learn to map "Ward 4" → "W4" or those patients fall through to `W1`.
 **Gotchas:** `totals[lvl]` is incremented for *all* patients but `ward_acuity[w][lvl]` only when `w in ward_occ`. Because `_normalize_ward` always returns a canonical ward, the two always agree; if that guarantee ever broke, the top-line acuity totals could exceed the heatmap sum. `occupancy_pct` can exceed 100 % if a ward is over-bedded, the frontend bar clamps to 100 % but the number is shown raw.
 
-#### _deteriorations: `server/services/command_center_service.py:178`
+#### _deteriorations: `server/services/command_center_service.py:179`
 **Signature:** `(patients: list[dict]) → list[dict]`
 **Does:** Build the active-deterioration list: every critical/elevated patient, annotated with a live NEWS2 from their latest vitals, sorted critical-first then NEWS2-descending.
 **How it works:** 1) filter to `level in ("critical","elevated")`; empty → `[]`; 2) for each, read the latest `vitals` row and the patient's `on_scale_2` flag, then call `compute_news2(...)` (Vigil) to get `raw_news2`; 3) a per-patient `try/except` logs and skips a bad row so one patient can't blank the list; 4) sort by `rank{critical:0, elevated:1}` then by `-news2` (None sorts last).
@@ -161,17 +161,17 @@ Module constants: `WARD_CAPACITY`, `TOTAL_CAPACITY`, `_normalize_ward` are **imp
 **Change guide:** To also show "stable" patients trending up, widen the filter at `:141`, but then the list stops being a *deterioration* list and the KPI card's meaning changes. To change tie-breaking, edit the sort key at `:184`.
 **Gotchas:** NEWS2 is `None` when a patient has no vitals yet; the sort treats `None` as `-1` so those sink to the bottom of their level group. The `consciousness` default is `"alert"` and `on_oxygen`/`on_scale_2` are coerced to bool, a missing vitals column silently scores as the healthy default.
 
-#### _bundles: `server/services/command_center_service.py:294`
+#### _bundles: `server/services/command_center_service.py:295`
 **Signature:** `() → dict`
 **Does:** Summarise active sepsis/deterioration care bundles and their 1-hour compliance.
 **How it works:** 1) `get_active_bundles()` (sepsis service) returns active bundles, each already decorated with `on_track`; 2) `active = len`; `compliant = count(on_track)`; 3) `compliance_pct = round(100*compliant/active)` or `100` when there are no bundles.
 **Why it exists:** One headline "are we meeting the sepsis 1-hour bundle?" number for the KPI row.
 **Data in/out:** none → `{active, compliant, compliance_pct}`.
 **Talks to:** `sepsis_bundle_service.get_active_bundles` (`server/services/sepsis_bundle_service.py:104`), which reads `care_bundles`. `on_track` there means *zero elements breached their target minutes* (`:162`).
-**Change guide:** To make compliance stricter, change what `on_track` means in the sepsis service, not here. Worked example: today an empty board reports 100 % compliance (green); if you'd rather show "n/a", special-case `active==0` here at `:196`.
+**Change guide:** To make compliance stricter, change what `on_track` means in the sepsis service, not here. Worked example: today an empty board reports 100 % compliance (green); if you'd rather show "n/a", special-case `active==0` here at `:308`.
 **Gotchas:** With no active bundles the metric is a *vacuous* 100 %, the frontend `complianceTone` paints that green (`src/components/command/CommandCenter.tsx:72-76`), which can read as "great" when it actually means "nothing happening."
 
-#### _forecast: `server/services/command_center_service.py:256`
+#### _forecast: `server/services/command_center_service.py:257`
 **Signature:** `() → dict`
 **Does:** Produce the next-24h admission + occupancy projection by delegating to the Forecast pillar.
 **How it works:** 1) `predict_hospital_flow(days_ahead=1)`; 2) take `daily_forecasts[0]`; 3) map its `predicted_admissions`/`predicted_occupancy`/`occupancy_pct` into `projected_admissions_24h`/`projected_occupancy`/`projected_occupancy_pct`, with `current_occupancy`/`total_capacity` fallbacks from the flow summary.
@@ -181,7 +181,7 @@ Module constants: `WARD_CAPACITY`, `TOTAL_CAPACITY`, `_normalize_ward` are **imp
 **Change guide:** To show a 48-hour outlook, call `predict_hospital_flow(days_ahead=2)` and read `daily_forecasts[1]`; watch out, the Forecast model applies demo-placeholder discharge smoothing (`server/services/forecast_service.py:760-766`), so multi-day numbers are heuristic, not model-grade.
 **Gotchas:** If `daily_forecasts` is empty, `first={}` and every field falls back to `0`/summary values rather than raising.
 
-#### _downtime_readiness: `server/services/command_center_service.py:277`
+#### _downtime_readiness: `server/services/command_center_service.py:278`
 **Signature:** `(patients: list[dict]) → dict`
 **Does:** Count how many admitted patients have a *fresh* (≤24 h) local downtime snapshot, and report the staleness of the oldest.
 **How it works:** for each patient, `get_latest_snapshot(id)`; parse its `created_at`; if age ≤ `DOWNTIME_RECENT_WINDOW_MIN` count it "recent"; track the maximum age; return `{patients_with_recent_snapshot, total, pct, oldest_snapshot_age_min}`.
@@ -191,7 +191,7 @@ Module constants: `WARD_CAPACITY`, `TOTAL_CAPACITY`, `_normalize_ward` are **imp
 **Change guide:** To tighten "fresh" to 12 hours, change `DOWNTIME_RECENT_WINDOW_MIN` at `:38`; knock-on: `readinessTone` thresholds in the client (`src/components/command/CommandCenter.tsx:64-68`) may need retuning so the KPI colour still reads sensibly.
 **Gotchas:** A per-patient snapshot lookup means N queries for N patients (no batch), fine for a 32-bed demo, a hotspot at real scale. `oldest_snapshot_age_min` is `None` when no patient has any snapshot.
 
-#### _or_today: `server/services/command_center_service.py:374`
+#### _or_today: `server/services/command_center_service.py:375`
 **Signature:** `() → dict`
 **Does:** List today's operating-room cases (UTC calendar day).
 **How it works:** compute today's `date().isoformat()`; `SELECT` from `surgeries` left-joined to `patients` where `scheduled_date = today`, ordered by `scheduled_time`; shape each row; return `{count, cases}`.
@@ -201,14 +201,14 @@ Module constants: `WARD_CAPACITY`, `TOTAL_CAPACITY`, `_normalize_ward` are **imp
 **Change guide:** "Today" is a **UTC** calendar day. For a hospital in IST (+5:30), late-evening cases can land on the wrong board day, to fix, compute the day in the deployment's local timezone here at `:262`.
 **Gotchas:** LEFT JOIN means a surgery with an unknown `patient_id` still shows (patient_name null → ", " in the UI). Parameterized query.
 
-#### _empty_census / _empty_acuity: `server/services/command_center_service.py:339` / `:351`
+#### _empty_census / _empty_acuity: `server/services/command_center_service.py:340` / `:352`
 **Signature:** `() → dict`
 **Does:** Return the all-zeros census/acuity shapes (one row per canonical ward) used when a builder raises.
 **Why it exists:** Guarantees the board renders a full, correctly-shaped skeleton even on total failure, the "degrade, never crash" contract.
 **Talks to:** used in `house_snapshot`'s census/acuity `except` branch; asserted by `test_empty_db_path_returns_zeros_without_crashing:116-117`.
 **Gotchas:** none noteworthy.
 
-#### house_snapshot: `server/services/command_center_service.py:377`
+#### house_snapshot: `server/services/command_center_service.py:475`
 **Signature:** `() → dict`
 **Does:** Assemble the full house-wide snapshot; never raises.
 **How it works:** 1) start `{"generated_at": _now_iso()}`; 2) read the admitted-patient list (on failure → `[]` + `patients_error`); 3) build census+acuity, deteriorations, bundles, forecast, downtime_readiness, or_today, **each in its own try/except** that logs and substitutes that section's zero shape plus an `error` key; 4) return the dict.
@@ -386,5 +386,5 @@ The header trigger and panel. It calls `fetchPulseSeason()` and renders the "Thi
 5. **Resolved 6 October 2026 (Pulse rebuild): no geocode, no location of any kind.** **Client-side geocode bypasses the "all ingestion logged" story.** `PulseWidget` calls `nominatim.openstreetmap.org` directly from the browser (`src/components/PulseWidget.tsx:83-85`); that outbound request is not captured by the server's `_pulse_log`. Only coordinates are sent (no patient data), so the privacy contract holds, but the audit-log claim of covering *every* external pull has this gap.
 6. **Resolved 6 October 2026 (Pulse rebuild): the stored location is gone.** **Unguarded `JSON.parse` of `localStorage`.** The `location` state initializer parses `orb_pulse_location` with no try/catch (`src/components/PulseWidget.tsx:51-54`); a corrupted value would throw during render.
 7. **Resolved 6 October 2026 (Pulse rebuild): no caches, and the location is the hospital's, from `site.toml`.** **Process-global Pulse caches ignore per-user location.** The weather/AQI caches are module-level singletons keyed by nothing (`:47-51`); once user A caches Mumbai weather, user B requesting London within the TTL receives Mumbai's cached reading until it expires. Fine for a single-site deployment, wrong for multi-location use.
-8. **Vacuous 100 % sepsis compliance.** With no active bundles, `_bundles` reports `compliance_pct=100` (`server/services/command_center_service.py:225`), which the KPI paints green, this reads as "excellent" when it actually means "nothing is being tracked."
+8. **Vacuous 100 % sepsis compliance.** With no active bundles, `_bundles` reports `compliance_pct=100` (`server/services/command_center_service.py:226`), which the KPI paints green, this reads as "excellent" when it actually means "nothing is being tracked."
 9. **UTC "today" for the OR board.** `_or_today` uses the UTC calendar day (`:262`); for a hospital in a non-UTC timezone, late-evening cases can appear on the wrong board day.

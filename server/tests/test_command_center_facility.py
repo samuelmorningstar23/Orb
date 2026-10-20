@@ -37,7 +37,7 @@ the test env, never the shipping .env.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -50,10 +50,17 @@ from services import audit_facility
 from services import command_center_service as cc
 from services import facility_service as FS
 from services import forecast_service as fs
+from services import hospital_time
 from services import nabh_service as nabh
 from services.clinical_time import utc_iso_now
 
 pytestmark = pytest.mark.usefixtures("isolated_module_database")
+
+# The hospital clock for the whole module (wave 15 fix-1): the seed's surgical
+# day and the Command Center's OR today are both the hospital's day at this
+# instant, so the module passes at any hour, 00:00 to 05:30 IST included,
+# when the UTC date is still yesterday.
+CLOCK = datetime.now(UTC)
 
 TAG = uuid.uuid4().hex[:6].upper()
 F2 = 9663
@@ -83,7 +90,11 @@ def world(isolated_module_database):
     now = utc_iso_now()
     # Ten minutes ago, for rows the NABH windows read: they compare whole seconds.
     earlier = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
-    today = date.today().isoformat()
+    # A surgical case's scheduled_date is a ward calendar date: the hospital's
+    # day at CLOCK. An admission date is an instant, as admission writes it.
+    with pytest.MonkeyPatch.context() as clock:
+        clock.setattr(hospital_time, "_utc_now", lambda: CLOCK)
+        today = hospital_time.hospital_today().isoformat()
     users = {
         "f1_admin": ("admin", None),
         "f2_admin": ("admin", None),
@@ -137,7 +148,7 @@ def world(isolated_module_database):
                 "INSERT INTO patients (id, name, mrn, age, sex, ward, bed, diagnosis, status, "
                 "admission_date, registered_facility_id) "
                 "VALUES (?, ?, ?, 61, 'M', ?, 'B-2', 'Prandel fever', 'admitted', ?, ?)",
-                (pid, name, f"MRN{pid}", ward, today, fid),
+                (pid, name, f"MRN{pid}", ward, earlier, fid),
             )
             db.execute(
                 "INSERT INTO admissions (id, patient_id, admitted_by, department, ward, bed, "
@@ -195,7 +206,9 @@ def world(isolated_module_database):
 @pytest.fixture(autouse=True)
 def _fresh(monkeypatch):
     """The ward map is this module's three wards, the flow forecast is not
-    cached between tests, and the facility caches start empty."""
+    cached between tests, the facility caches start empty, and the hospital
+    clock reads CLOCK, the instant the seed's surgical day was taken at."""
+    monkeypatch.setattr(hospital_time, "_utc_now", lambda: CLOCK)
     saved = dict(fs.WARD_CAPACITY)
     fs.WARD_CAPACITY.clear()
     fs.WARD_CAPACITY.update({W1: 6, W2: 4, W_UNPLACED: 3})

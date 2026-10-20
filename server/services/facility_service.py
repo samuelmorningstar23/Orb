@@ -328,15 +328,27 @@ _FACILITY_ID_COLUMNS = (
     ("user_facilities", "facility_id", "staff facility rows"),
 )
 
-#: (table, column, extra WHERE, label): where department names are in use.
-_DEPARTMENT_USES = (
-    ("users", "department", "AND COALESCE(is_active, 1) = 1", "staff accounts"),
-    ("admissions", "department", "", "admissions"),
-    ("wards", "department", "", "wards"),
+#: (table, column, extra WHERE clauses, label): where department names are in
+#: use. Each clause names the column it needs and is left out on a table
+#: without that column. A patient portal login (role 'patient') is not a staff
+#: account: admission writes the patient's ward into its department column,
+#: so a ward name there is not a department in use.
+_DEPARTMENT_USES: tuple[tuple[str, str, tuple[tuple[str, str], ...], str], ...] = (
+    (
+        "users",
+        "department",
+        (
+            ("is_active", "AND COALESCE(is_active, 1) = 1"),
+            ("role", "AND COALESCE(role, '') != 'patient'"),
+        ),
+        "staff accounts",
+    ),
+    ("admissions", "department", (), "admissions"),
+    ("wards", "department", (), "wards"),
 )
 
 
-def facility_report(db) -> dict:
+def facility_report(db: Any) -> dict:
     """Facts for the operations status page. Counts and department names only.
 
     Keys: facilities (count), active_facilities, facility_one_problem,
@@ -378,12 +390,11 @@ def facility_report(db) -> dict:
             master[name.strip().casefold()] = name
     report["department_master"] = len(master)
 
-    for table, column, extra, label in _DEPARTMENT_USES:
+    for table, column, clauses, label in _DEPARTMENT_USES:
         cols = _columns(db, table)
         if column not in cols:
             continue
-        if "is_active" not in cols:
-            extra = ""
+        extra = " ".join(clause for needed, clause in clauses if needed in cols)
         rows = db.execute(
             f"SELECT {column} AS name, COUNT(*) AS n FROM {table} "
             f"WHERE {column} IS NOT NULL AND TRIM({column}) != '' {extra} "

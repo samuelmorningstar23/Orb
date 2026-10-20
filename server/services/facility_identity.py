@@ -779,9 +779,22 @@ def get_view(facility_id: int, user: dict, *, db=None) -> dict:
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-def _audit(db, *, action: str, user: dict, facility: dict, summary: str, metadata: dict) -> None:
+def _audit(
+    db: Any,
+    *,
+    action: str,
+    user: dict,
+    facility: dict,
+    summary: str,
+    metadata: dict,
+    request_meta: dict | None = None,
+) -> None:
+    """One site_admin row. `request_meta` is the request's path, method,
+    client address and user agent (services.facility_documents.request_meta),
+    as department_master records them; None records the actor only."""
     from services.audit_service import log_audit_event
 
+    meta = request_meta or {}
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
         event_category="site_admin",
@@ -793,6 +806,10 @@ def _audit(db, *, action: str, user: dict, facility: dict, summary: str, metadat
         actor_role=(user or {}).get("role"),
         target_type="facility",
         target_id=str(facility["id"]),
+        request_path=meta.get("request_path"),
+        http_method=meta.get("http_method"),
+        ip_address=meta.get("ip_address"),
+        user_agent=meta.get("user_agent"),
         metadata={"facility_id": int(facility["id"]), "code": facility.get("code"), **metadata},
     )
 
@@ -986,13 +1003,17 @@ def can_create_facility(user: dict, *, db=None) -> list[dict]:
     return reasons
 
 
-def create_facility(body: dict, *, user: dict, db=None) -> dict:
+def create_facility(
+    body: dict, *, user: dict, db: Any = None, request_meta: dict | None = None
+) -> dict:
     """Add a facility. Refused (409, with the reasons) unless can_create_facility
     is empty; then the code (2 to 12 capital letters or digits, unique) and
-    the name are required, and every identity rule applies."""
+    the name are required, and every identity rule applies. `request_meta`
+    (the route's request, services.facility_documents.request_meta) goes on
+    the facility_created row."""
     if db is None:
         with _db_session(immediate=True) as own:
-            result = create_facility(body, user=user, db=own)
+            result = create_facility(body, user=user, db=own, request_meta=request_meta)
         _forget_caches()
         return result
     reasons = can_create_facility(user, db=db)
@@ -1055,6 +1076,7 @@ def create_facility(body: dict, *, user: dict, db=None) -> dict:
         facility=row,
         summary=f"Facility {row.get('code')} added: {row.get('name')}",
         metadata={"fields": {f: cleaned[f] for f in fields}, "audit_epoch_id": epoch},
+        request_meta=request_meta,
     )
     return facility_view(row, user=user, db=db)
 

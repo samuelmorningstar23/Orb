@@ -38,6 +38,7 @@ departments wait for the Facilities screen (see the wave report).
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from database import db_session
 
@@ -230,19 +231,28 @@ def canonical_name(name, *, db=None) -> str | None:
     return None if row is None else row["name"]
 
 
-def department_references(db, name: str) -> list[dict]:
+def department_references(db: Any, name: str) -> list[dict]:
     """Where a department name is in use: [{where, column}] for every table
     with a department column holding it (case and outer spaces ignored), plus
     Relay department rooms. The one rule a department's facility hangs on, so
-    every such column in the schema is read, not a list kept by hand."""
+    every such column in the schema is read, not a list kept by hand.
+
+    Virtual tables are passed over before they are described. The knowledge
+    corpus's vec0 table cannot even be described on a connection that has not
+    loaded sqlite-vec (every ordinary db_session), so the scan raised "no such
+    module: vec0" and no department could move on an appliance holding the
+    corpus. Orb's virtual tables are the corpus's search indexes, which hold
+    clinical reference material, never a record naming a department. The
+    ordinary tables a virtual table keeps its data in are still read."""
     wanted = name.strip().lower()
     found: list[dict] = []
     tables = [
         r[0]
         for r in db.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "SELECT name, sql FROM sqlite_master WHERE type = 'table' "
             "AND name NOT LIKE 'sqlite_%' AND name != 'departments' ORDER BY name"
         ).fetchall()
+        if not str(r[1] or "").lstrip().upper().startswith("CREATE VIRTUAL TABLE")
     ]
     for table in tables:
         columns = [r[1] for r in db.execute(f'PRAGMA table_info("{table}")').fetchall()]

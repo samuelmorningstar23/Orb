@@ -42,7 +42,7 @@ stay free of patient data for that reason.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from permissions import FACILITY_MANAGE, FACILITY_READ, require_permission
 from pydantic import BaseModel, ConfigDict
 
@@ -207,16 +207,23 @@ _CREATE_FACILITY_USER_DEFAULT = Depends(require_permission(FACILITY_MANAGE))
 
 @router.post("")
 def create_facility(
+    request: Request,
     body: FacilityIdentityBody = _CREATE_FACILITY_BODY_DEFAULT,
     _gate: None = _CREATE_FACILITY_GATE_DEFAULT,
     user: dict = _CREATE_FACILITY_USER_DEFAULT,
-):
+) -> dict:
     """Add a facility: 404 with the switch off, 409 with the reasons while the
-    create gate refuses (always, while the facility fence holds '*')."""
-    from services import facility_identity
+    create gate refuses (always, while the facility fence holds '*'). The
+    facility_created row carries the request's path, method, client address
+    and user agent."""
+    from services import facility_documents, facility_identity
 
     try:
-        return facility_identity.create_facility(body.model_dump(exclude_unset=True), user=user)
+        return facility_identity.create_facility(
+            body.model_dump(exclude_unset=True),
+            user=user,
+            request_meta=facility_documents.request_meta(request),
+        )
     except facility_identity.FacilityIdentityError as exc:
         raise _refused(exc) from exc
 

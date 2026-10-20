@@ -22,7 +22,7 @@ graph LR
     CFC["vigil_cfc.py + trainer"] -.->|.pt checkpoints| VS
 ```
 
-Consumers outside this guide: the I-PASS handoff generator calls `get_patient_risk`/`get_vitals_trend` (`server/services/ipass_service.py:27`), the downtime snapshot and command center recompute NEWS2 directly (`server/services/downtime_service.py:28`, `server/services/command_center_service.py:166`), admission and ingestion write `risk_scores` rows from `compute_news2` (`server/services/admission_service.py:233`, `server/services/ingestion_service.py:934`), and the command center reads active bundles (`server/services/command_center_service.py:219-221`).
+Consumers outside this guide: the I-PASS handoff generator calls `get_patient_risk`/`get_vitals_trend` (`server/services/ipass_service.py:27`), the downtime snapshot and command center recompute NEWS2 directly (`server/services/downtime_service.py:28`, `server/services/command_center_service.py:167`), admission and ingestion write `risk_scores` rows from `compute_news2` (`server/services/admission_service.py:233`, `server/services/ingestion_service.py:934`), and the command center reads active bundles (`server/services/command_center_service.py:220-222`).
 
 ## File map
 
@@ -261,7 +261,7 @@ Bundle status state machine: `active → completed` (automatic, all elements sta
 **Divergences from the official RCP NEWS2 to know about:** (a) the official score has four escalation bands (0 / 1–4 / 5–6 / ≥7, plus "3 in any single parameter"); the code collapses them into three labels `stable/elevated/critical`. (b) Official ACVPU scores 3 only for **new** confusion; the code cannot distinguish chronic confusion, so any non-alert value scores 3 (line 309). The parameter point tables themselves match the RCP reference (asserted band-by-band in `server/tests/test_news2.py`).
 **Why it exists:** Rule-based, auditable, and instantly available, the "Phase 1" displayed risk while the CfC ensemble matures (`server/services/vigil_service.py:351-357`).
 **Data in/out:** scalar vitals in, dict out (shape kept compatible with the legacy MEWS output, docstring line 237).
-**Talks to:** called by `get_patient_risk` (line 376), the vitals bot (`server/services/bot_service.py:199`), ingestion (`server/services/ingestion_service.py:934`), downtime snapshots (`server/services/downtime_service.py:182`), command center (`server/services/command_center_service.py:189`), admission (`server/services/admission_service.py:233`), and the test suite.
+**Talks to:** called by `get_patient_risk` (line 376), the vitals bot (`server/services/bot_service.py:199`), ingestion (`server/services/ingestion_service.py:934`), downtime snapshots (`server/services/downtime_service.py:182`), command center (`server/services/command_center_service.py:190`), admission (`server/services/admission_service.py:233`), and the test suite.
 **Change guide (worked example, tighten the critical band to ≥6):** change `if score >= 7` at line 313 to `>= 6`. Knock-on effects: `maybe_autostart` still fires at raw ≥ 7 (`server/services/sepsis_bundle_service.py:187`) so bundles would lag the new critical band, decide whether to lower it too; the alert bridge keys off `level` so alert volume rises (`server/services/bot_service.py:275-276`); update `test_band_critical_at_seven` (`server/tests/test_news2.py:184-188`). Footgun: do NOT touch the normalized `score` divisor thinking it changes escalation, bands come from the raw integer only.
 **Gotchas:** `on_oxygen` +2 applies in both scales (line 279); Scale 2 selection comes from the DB flag `patients.on_scale_2` (migration at `server/database.py:1167-1169`), which every scoring lane now reads, the simulator included (`server/services/bot_service.py:252`, fixed 2026-10-02, see Discrepancies #5).
 
@@ -337,7 +337,7 @@ UTC-aware `datetime.now(timezone.utc)` and its `isoformat()`. All bundle timesta
 ### get_active_bundles / get_bundles_for_patient: `server/services/sepsis_bundle_service.py:104` / `:110`
 **Signature:** `() → list[dict]` (all active, oldest first) / `(patient_id, active_only=False) → list[dict]` (newest first).
 **Does:** Decorated list reads.
-**Talks to:** `active_bundles` and `patient_bundles` routes; the command center wallboard calls `get_active_bundles` directly (`server/services/command_center_service.py:219-221`).
+**Talks to:** `active_bundles` and `patient_bundles` routes; the command center wallboard calls `get_active_bundles` directly (`server/services/command_center_service.py:220-222`).
 **Gotchas:** `active_only` appends a constant SQL fragment, not user input, parameterization is preserved.
 
 ### _parse: `server/services/sepsis_bundle_service.py:120`
