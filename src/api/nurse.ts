@@ -191,6 +191,9 @@ export interface ObservationInput {
   consciousness?: string | null;
   /** null when the box is empty: stored empty, never as on air. */
   on_oxygen?: boolean | null;
+  /** The pain score written on the sheet, a whole number from 0 to 10
+   *  (migration 87). null is a blank box. Stored with the set, never scored. */
+  pain_score?: number | null;
   /** Stamped when the nurse hits Save; also the server-side dedupe key. For
    *  the ward clerk it is the time written on the paper sheet. */
   taken_at?: string;
@@ -202,7 +205,8 @@ export interface ObservationInput {
 /** The readings that can be marked illegible (nurse_shift_service.ILLEGIBLE_FIELDS). */
 export type IllegibleField =
   | 'heart_rate' | 'systolic_bp' | 'diastolic_bp' | 'spo2'
-  | 'temperature' | 'respiratory_rate' | 'consciousness' | 'on_oxygen';
+  | 'temperature' | 'respiratory_rate' | 'consciousness' | 'on_oxygen'
+  | 'pain_score';
 
 export interface ObservationPreview {
   news2: News2;
@@ -358,6 +362,8 @@ export interface OwnCopy {
     spo2: number | null;
     consciousness: string | null;
     on_oxygen: boolean | null;
+    /** Absent on a copy read from a database without migration 87. */
+    pain_score?: number | null;
   };
   /** True once it is marked entered in error. */
   voided: boolean;

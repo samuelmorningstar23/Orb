@@ -68,6 +68,9 @@ export interface DowntimeVitals {
   respiratory_rate?: number | null;
   consciousness?: string | null;
   on_oxygen?: number | null;
+  /** The sheet's pain score, 0 to 10 (migration 87). Absent in a snapshot
+   *  captured before the column existed. */
+  pain_score?: number | null;
 }
 
 export interface DowntimeNews2 {

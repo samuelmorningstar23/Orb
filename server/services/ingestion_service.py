@@ -1508,6 +1508,9 @@ async def _insert_vitals(
         # must read before presenting this as a complete NEWS2.
         "consciousness": consciousness or "alert",
         "on_oxygen": bool(on_oxygen),
+        # A monitor or interface feed carries no pain score (migration 87); the
+        # key is on the wire so every lane sends the one shape.
+        "pain_score": None,
         "risk": risk,
         "source": source_label,
     }

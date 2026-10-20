@@ -892,6 +892,9 @@ function barScore(risk: { breakdown?: unknown } | null | undefined, vital: News2
   return { row, points: p >= 3 ? 3 : p >= 2 ? 2 : p >= 1 ? 1 : 0 }
 }
 
+/** A cell NEWS2 never scores (the pain score): no row, no points, no chip. */
+const NO_BAR_SCORE: BarScore = { row: null, points: null }
+
 /** The scored number's status TEXT token: danger for 3, warn for 1 and 2. */
 function scoredClass(s: BarScore): string {
   return s.points === 3 ? ' command-bar__vital-scored--danger'
@@ -1865,6 +1868,19 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
             <span className={`command-bar__vital-value${scoredClass(rrScore)}`}>{vitalWhole(latest.respiratory_rate)}</span>
             <span className="command-bar__vital-unit">rpm</span>
             {renderSparkline('RR', 'respiratory_rate')}
+          </div>
+          {/* The sheet's pain score (migration 87): shown and trended with the
+              set, never scored, so it has no points chip and no colour. */}
+          <div
+            className="command-bar__vital"
+            role="group"
+            tabIndex={0}
+            aria-label={`Pain score ${vitalWhole(latest.pain_score, 'not recorded')} out of 10${trendAria('pain_score', 'pain trend')}`}
+          >
+            <BarCellHead label="PAIN" score={NO_BAR_SCORE} />
+            <span className="command-bar__vital-value">{vitalWhole(latest.pain_score)}</span>
+            <span className="command-bar__vital-unit">/10</span>
+            {renderSparkline('PAIN', 'pain_score')}
           </div>
         </div>
 

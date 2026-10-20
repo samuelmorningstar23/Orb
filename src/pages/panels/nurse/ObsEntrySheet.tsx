@@ -75,6 +75,12 @@ import News2Badge from '../../../components/News2Badge'
  *     both before she can save (the server refuses her set otherwise). The
  *     clerk also gets "Not recorded on the sheet", and a box she leaves empty
  *     is sent empty.
+ *
+ *  7. THE PAIN SCORE (21 October 2026, founding ward item 1). The sheet's
+ *     last box: a whole number from 0 to 10, stored with the set and never
+ *     scored. It shows no points chip because it is not a NEWS2 parameter,
+ *     and it is sent as null when the box is blank, so the rounds file counts
+ *     it as a blank like any other reading. The clerk can tick it illegible.
  */
 
 /** What the sheet needs to know about the patient. The shift board passes its
@@ -103,7 +109,7 @@ interface Props {
 
 type FieldKey =
   | 'respiratory_rate' | 'spo2' | 'systolic_bp' | 'diastolic_bp'
-  | 'heart_rate' | 'temperature'
+  | 'heart_rate' | 'temperature' | 'pain_score'
 
 interface FieldSpec {
   key: FieldKey
@@ -117,6 +123,8 @@ interface FieldSpec {
    *  scored it, "SpO2 (Scale 2)" for a patient on Scale 2. Matching "SpO2" alone
    *  hid the chip on exactly the patients whose SpO2 points differ. */
   scoreParams: string[]
+  /** Whole numbers only (the pain rating scale has no half points). */
+  integer?: boolean
 }
 
 // Ordered the way a set of obs is actually taken at the bedside, which is also
@@ -128,6 +136,9 @@ const FIELDS: FieldSpec[] = [
   { key: 'diastolic_bp', label: 'Diastolic BP', unit: 'mmHg', min: 10, max: 200, step: '1', scoreParams: [] },
   { key: 'heart_rate', label: 'Heart rate', unit: 'bpm', min: 10, max: 300, step: '1', scoreParams: ['Heart rate'] },
   { key: 'temperature', label: 'Temperature', unit: '°C', min: 25, max: 45, step: '0.1', scoreParams: ['Temperature'] },
+  // Last, as on the sheet. No scoreParams: the pain score is never a NEWS2
+  // parameter, so no points chip can ever appear beside it.
+  { key: 'pain_score', label: 'Pain score', unit: '0 to 10', min: 0, max: 10, step: '1', scoreParams: [], integer: true },
 ]
 
 const ACVPU: { value: string; label: string; hint: string }[] = [
@@ -152,7 +163,7 @@ type DraftValues = Record<FieldKey, string>
 
 const EMPTY: DraftValues = {
   respiratory_rate: '', spo2: '', systolic_bp: '', diastolic_bp: '',
-  heart_rate: '', temperature: '',
+  heart_rate: '', temperature: '', pain_score: '',
 }
 
 interface Draft extends DraftEnvelope {
@@ -229,7 +240,9 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
   // restore is part of the first render rather than a post-mount effect that
   // would briefly show the nurse an empty form they might start retyping.
   const [restored] = useState<Draft | null>(() => readDraft(patient.patient_id, ownerId))
-  const [values, setValues] = useState<DraftValues>(restored?.values ?? EMPTY)
+  // A draft saved before the pain box existed has no key for it: it comes
+  // back blank rather than undefined.
+  const [values, setValues] = useState<DraftValues>(restored ? { ...EMPTY, ...restored.values } : EMPTY)
   // Nothing preselected: null until a choice is made (point 6 above).
   const [consciousness, setConsciousness] = useState<string | null>(restored?.consciousness ?? null)
   const [oxygen, setOxygen] = useState<OxygenChoice | null>(restored?.oxygen ?? null)
@@ -293,7 +306,8 @@ export default function ObsEntrySheet({ patient, offline, onClose, onRecorded }:
       if (raw === '') continue
       const n = Number(raw)
       if (!Number.isFinite(n)) errs[f.key] = 'Numbers only'
-      else if (n < f.min || n > f.max) errs[f.key] = `${f.min}–${f.max} ${f.unit}`
+      else if (n < f.min || n > f.max) errs[f.key] = f.integer ? `A whole number from ${f.min} to ${f.max}` : `${f.min}–${f.max} ${f.unit}`
+      else if (f.integer && !Number.isInteger(n)) errs[f.key] = `A whole number from ${f.min} to ${f.max}`
     }
     return errs
   }, [values])

@@ -70,6 +70,10 @@ class ObservationRequest(BaseModel):
     # otherwise); the ward clerk may send None for a box the sheet left empty.
     consciousness: str | None = None
     on_oxygen: bool | None = None
+    # The pain score written on the observation sheet, a whole number from 0
+    # to 10 (migration 87). None is a blank box, stored empty. It is stored
+    # with the set and never scored: no band, alert or schedule reads it.
+    pain_score: int | None = None
     # Stamped client-side when the nurse hits Save. Doubles as the dedupe key
     # for an offline replay — see nurse_shift_service.record_observation.
     # For the ward clerk it is the time written on the paper sheet.

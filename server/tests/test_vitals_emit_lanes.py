@@ -60,6 +60,9 @@ DEPT = "Vitals Emit Test Ward"
 WIRE_KEYS = {
     "patient_id", "timestamp", "heart_rate", "systolic_bp", "diastolic_bp",
     "spo2", "temperature", "respiratory_rate", "consciousness", "on_oxygen",
+    # The sheet's pain score (migration 87): the nurse lane carries it, the
+    # monitor and simulator lanes send null.
+    "pain_score",
     "risk", "source",
 }
 

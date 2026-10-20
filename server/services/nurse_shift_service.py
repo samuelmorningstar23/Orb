@@ -52,6 +52,7 @@ import logging
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from database import db_session
 
@@ -103,6 +104,7 @@ ILLEGIBLE_FIELDS = (
     "respiratory_rate",
     "consciousness",
     "on_oxygen",
+    "pain_score",
 )
 
 # THE READINGS THAT RESET THE OBS-DUE CLOCK: a set a person took (SourceKind
@@ -138,6 +140,16 @@ OBS_RANGES: dict[str, tuple[float, float, str]] = {
 
 # ACVPU. 'alert' scores 0; every other level is a new-onset 3-pointer in NEWS2.
 ACVPU_LEVELS = ("alert", "confusion", "voice", "pain", "unresponsive")
+
+# The pain score (migration 87): the 0 to 10 numeric rating written on the
+# ward's observation sheet beside the vital signs, stored with the set as a
+# whole number. It is NOT in OBS_RANGES on purpose: that table is the NEWS2
+# readings, and the pain score is never scored. compute_news2 reads the seven
+# NEWS2 parameters by name, so this field changes no band, no alert and no
+# schedule. A blank box is stored NULL and the rounds file counts it as a
+# blank like any other missing reading.
+PAIN_SCORE_FIELD = "pain_score"
+PAIN_SCORE_RANGE = (0, 10)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1073,6 +1085,23 @@ def normalise_illegible(illegible) -> tuple[str, ...]:
     return tuple(f for f in ILLEGIBLE_FIELDS if f in names)
 
 
+def clean_pain_score(raw: object) -> int:
+    """A pain score as the sheet writes it: a whole number from 0 to 10.
+
+    Raises ValueError naming the field, as the other readings do. A half point
+    ("7.5") is refused rather than rounded: the numeric rating scale has no
+    half points, and a rounded score would disagree with the paper sheet.
+    """
+    lo, hi = PAIN_SCORE_RANGE
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"pain_score must be a whole number from {lo} to {hi}") from None
+    if value != int(value) or not (lo <= value <= hi):
+        raise ValueError(f"pain_score must be a whole number from {lo} to {hi}")
+    return int(value)
+
+
 def _clean_obs(obs: dict, illegible: tuple[str, ...] = ()) -> dict:
     """Validate and coerce a submitted observation set.
 
@@ -1102,6 +1131,14 @@ def _clean_obs(obs: dict, illegible: tuple[str, ...] = ()) -> dict:
             raise ValueError(f"{field} must be between {lo:g} and {hi:g} {unit}")
         cleaned[field] = value
 
+    # The pain score rides beside the readings: blank or illegible is None,
+    # anything else must be a whole number from 0 to 10 (clean_pain_score).
+    raw_pain = obs.get(PAIN_SCORE_FIELD)
+    if PAIN_SCORE_FIELD in illegible or raw_pain is None or raw_pain == "":
+        cleaned[PAIN_SCORE_FIELD] = None
+    else:
+        cleaned[PAIN_SCORE_FIELD] = clean_pain_score(raw_pain)
+
     # An EMPTY consciousness or oxygen box stays empty (None), never alert and
     # never on air (Orb Ward Record, 9 October 2026). The scorer reads None as
     # "not assessed": it adds no points and labels the set incomplete, a
@@ -1126,6 +1163,7 @@ def _clean_obs(obs: dict, illegible: tuple[str, ...] = ()) -> dict:
     if (
         not illegible
         and all(cleaned[f] is None for f in OBS_RANGES)
+        and cleaned[PAIN_SCORE_FIELD] is None
         and cleaned["consciousness"] is None
         and cleaned["on_oxygen"] is None
     ):
@@ -1211,6 +1249,11 @@ def _same_reading(row, cleaned: dict) -> bool:
     for field in OBS_RANGES:
         if not _num_eq(row[field], cleaned[field]):
             return False
+    # The pain score is part of the set: a resubmission that adds or changes
+    # it is a correction, not a replay. A row stored before migration 87 has
+    # no column and reads None, as a blank box does.
+    if not _num_eq(_row_get(row, PAIN_SCORE_FIELD), cleaned[PAIN_SCORE_FIELD]):
+        return False
     if cleaned["consciousness"] is None:
         # Left empty or marked illegible: only a row that also stored no ACVPU
         # matches.
@@ -1226,6 +1269,14 @@ def _same_reading(row, cleaned: dict) -> bool:
     if row["on_oxygen"] is None:
         return False
     return bool(row["on_oxygen"]) == bool(cleaned["on_oxygen"])
+
+
+def _row_get(row: Any, key: str) -> Any:
+    """`row[key]` for a sqlite3.Row or a dict, None when the column is absent."""
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return None
 
 
 def _shadow_alert_dropped(episode_id, patient_id: str, level: str, reason: str) -> None:
@@ -1715,7 +1766,8 @@ def _record_observation_txn(
         if taken_at:
             existing = db.execute(
                 """SELECT id, timestamp, heart_rate, systolic_bp, diastolic_bp, spo2,
-                          temperature, respiratory_rate, consciousness, on_oxygen
+                          temperature, respiratory_rate, consciousness, on_oxygen,
+                          pain_score
                      FROM vitals
                     WHERE patient_id = ? AND source = ? AND timestamp = ?
                     ORDER BY id DESC LIMIT 1""",
@@ -1768,8 +1820,8 @@ def _record_observation_txn(
             """INSERT INTO vitals
                    (patient_id, timestamp, heart_rate, systolic_bp, diastolic_bp,
                     spo2, temperature, respiratory_rate, consciousness, on_oxygen,
-                    source, entered_at, illegible)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    source, entered_at, illegible, pain_score)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 patient_id,
                 stored_at,
@@ -1784,6 +1836,8 @@ def _record_observation_txn(
                 source,
                 entered_at,
                 illegible_text,
+                # Migration 87: the sheet's pain score, stored and never scored.
+                cleaned[PAIN_SCORE_FIELD],
             ),
         )
         vitals_id = cur.lastrowid
@@ -1851,6 +1905,7 @@ def _record_observation_txn(
                 **{k: cleaned[k] for k in OBS_RANGES},
                 "consciousness": cleaned["consciousness"],
                 "on_oxygen": cleaned["on_oxygen"],
+                PAIN_SCORE_FIELD: cleaned[PAIN_SCORE_FIELD],
             },
         )
 
@@ -2230,6 +2285,7 @@ _OWN_COPY_READINGS = (
     "spo2",
     "consciousness",
     "on_oxygen",
+    "pain_score",
 )
 
 

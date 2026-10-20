@@ -814,6 +814,9 @@ async def get_patient(
                 "spo2": v["spo2"],
                 "temperature": v["temperature"],
                 "respiratory_rate": v["respiratory_rate"],
+                # The sheet's pain score (migration 87), shown and trended on
+                # the bar beside the vital signs, never scored.
+                "pain_score": _row_pain_score(v),
                 # Provenance, so the chart can say a row is simulated.
                 "source": _row_source(v),
             }
@@ -885,6 +888,7 @@ async def get_patient_vitals(
             "spo2": v["spo2"],
             "temperature": v["temperature"],
             "respiratory_rate": v["respiratory_rate"],
+            "pain_score": _row_pain_score(v),
             "source": _row_source(v),
         }
         for v in vitals
@@ -894,6 +898,13 @@ async def get_patient_vitals(
 def _row_source(row) -> str | None:
     """`vitals.source` of a row, or None on a database that predates it."""
     return row["source"] if "source" in row.keys() else None
+
+
+def _row_pain_score(row) -> int | None:
+    """`vitals.pain_score` of a row (migration 87), or None on a database that
+    predates the column."""
+    value = row["pain_score"] if "pain_score" in row.keys() else None
+    return None if value is None else int(value)
 
 
 _GET_VITALS_FEED_USER_DEFAULT = Depends(require_permission("vitals.read"))

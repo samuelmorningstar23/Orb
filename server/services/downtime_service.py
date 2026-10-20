@@ -193,7 +193,8 @@ def capture_snapshot(patient_id: str, created_by: str = "auto") -> dict:
         # id DESC: on a same-timestamp tie the later write (a correction) is the latest.
         vrow = db.execute(
             """SELECT timestamp, heart_rate, systolic_bp, diastolic_bp, spo2,
-                      temperature, respiratory_rate, consciousness, on_oxygen
+                      temperature, respiratory_rate, consciousness, on_oxygen,
+                      pain_score
                FROM vitals
                WHERE patient_id = ? AND voided_at IS NULL
                ORDER BY timestamp DESC, id DESC LIMIT 1""",
@@ -1536,9 +1537,12 @@ def _render_vitals_news2(snap: dict) -> str:
     spo2 = _v("spo2", unit="%") + (" on O₂" if lv.get("on_oxygen") else "")
     if scale_2:
         spo2 += _SCALE_2_SPO2
+    # The pain score (migration 87) prints beside the set, never beside the
+    # band: it is on the sheet and it is not a NEWS2 parameter. A snapshot
+    # captured before the column existed has no key and prints the dash.
     return (
         "<table><thead><tr><th>HR</th><th>BP</th><th>SpO₂</th><th>RR</th>"
-        "<th>Temp</th><th>ACVPU</th>"
+        "<th>Temp</th><th>ACVPU</th><th>Pain</th>"
         + ("<th>NEWS2</th>" if scoring else "")
         + "<th>Recorded</th></tr></thead>"
         "<tbody><tr>"
@@ -1548,6 +1552,7 @@ def _render_vitals_news2(snap: dict) -> str:
         f"<td>{_v('respiratory_rate')}</td>"
         f"<td>{_v('temperature', 1)}</td>"
         f"<td>{_e(lv.get('consciousness'))}</td>"
+        f"<td>{_e(charted_text(lv.get('pain_score'), unit='/10', missing=''))}</td>"
         + (f"<td><b>{band}</b></td>" if scoring else "")
         + f"<td>{_e(_when(lv.get('timestamp')))}</td>"
         "</tr></tbody></table>"

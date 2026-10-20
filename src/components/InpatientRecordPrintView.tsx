@@ -37,6 +37,8 @@ export interface RecordVitals {
   spo2?: number | null;
   temperature?: number | null;
   respiratory_rate?: number | null;
+  /** The sheet's pain score, 0 to 10 (migration 87). Printed with the set. */
+  pain_score?: number | null;
 }
 
 /** A stored date or timestamp in the clinical form, or "Not recorded". A
@@ -64,6 +66,7 @@ function vitalsLine(v: RecordVitals | null | undefined): string {
     `SpO2 ${vitalWhole(v.spo2, '--')}%`,
     `Temp ${vitalTemperature(v.temperature, '--')}°C`,
     `RR ${vitalWhole(v.respiratory_rate, '--')}/min`,
+    `Pain ${vitalWhole(v.pain_score, '--')}/10`,
   ].join(', ') + `. Recorded ${recordedDate(v.timestamp ?? null)}.`;
 }
 

@@ -331,6 +331,9 @@ def _next_reading(db, pid: str, latest: dict, now_ts, *, on_scale_2: bool):
             # row keeps NULL, which is what scoring and carry-forward read.
             "consciousness": consciousness or "alert",
             "on_oxygen": bool(on_oxygen),
+            # No pain score on a simulated set (migration 87): the wire key is
+            # shared with the nurse lane, which carries the sheet's score.
+            "pain_score": None,
             "risk": risk,
         },
     )

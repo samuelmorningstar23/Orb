@@ -448,6 +448,7 @@ function DowntimeModeBody({ patientId: patientIdProp }: DowntimeModeProps) {
                   <div className="dt-vital"><span className="dt-vital__v">{vitalWhole(snap.latest_vitals.respiratory_rate)}</span><span className="dt-vital__k">RR (/min)</span></div>
                   <div className="dt-vital"><span className="dt-vital__v">{vitalTemperature(snap.latest_vitals.temperature)}</span><span className="dt-vital__k">Temp (°C)</span></div>
                   <div className="dt-vital"><span className="dt-vital__v">{snap.latest_vitals.consciousness ? consciousnessText(snap.latest_vitals.consciousness) : '—'}</span><span className="dt-vital__k">ACVPU</span></div>
+                  <div className="dt-vital"><span className="dt-vital__v">{vitalWhole(snap.latest_vitals.pain_score)}</span><span className="dt-vital__k">Pain (0 to 10)</span></div>
                 </div>
                 <div className="dt-meta">Recorded {fmt(snap.latest_vitals.timestamp)}</div>
                 {scoringEnabled && snap.news2?.drivers && snap.news2.drivers.length > 0 && (

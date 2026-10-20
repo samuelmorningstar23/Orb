@@ -777,6 +777,9 @@ def vitals_update_payload(row, risk: dict | None, *, source: str) -> dict:
         "respiratory_rate": _get("respiratory_rate"),
         "consciousness": _get("consciousness") or "alert",
         "on_oxygen": bool(_get("on_oxygen")),
+        # The sheet's pain score (migration 87), null when the box was blank or
+        # the lane cannot carry one (a monitor, the simulator). Never scored.
+        "pain_score": _get("pain_score"),
         "risk": risk,
         "source": source,
     }

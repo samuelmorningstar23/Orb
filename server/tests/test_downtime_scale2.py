@@ -76,9 +76,9 @@ def _snap(news2: dict | None, **vitals) -> dict:
 # here moves on every patient's printed page.
 _SCALE_1_ROW = (
     "<table><thead><tr><th>HR</th><th>BP</th><th>SpO₂</th><th>RR</th>"
-    "<th>Temp</th><th>ACVPU</th><th>NEWS2</th><th>Recorded</th></tr></thead>"
+    "<th>Temp</th><th>ACVPU</th><th>Pain</th><th>NEWS2</th><th>Recorded</th></tr></thead>"
     "<tbody><tr><td>80</td><td>125/75</td><td>90%</td><td>16</td><td>37.0</td>"
-    "<td>alert</td><td><b>3 (elevated)</b></td><td>2 Oct 2026, 13:30 IST</td>"
+    "<td>alert</td><td>—</td><td><b>3 (elevated)</b></td><td>2 Oct 2026, 13:30 IST</td>"
     "</tr></tbody></table>"
 )
 

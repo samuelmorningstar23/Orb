@@ -616,7 +616,12 @@ def _stay_segments(
 
 #: The readings the Ward Record copies from the paper sheet and the file checks
 #: for blanks, in the order the file lists them. Diastolic pressure is copied
-#: but is not one of the readings a blank is counted for (spec, step 2).
+#: but is not one of the readings a blank is counted for (spec, step 2). The
+#: pain score (migration 87) is a reading like the rest: a blank box counts as
+#: a blank, an illegible one as illegible. A database without that column
+#: counts nothing for it and the file's header says so. The file names it
+#: "Pain (0 to 10)": the rounds file carries no score word of any kind, so
+#: nobody mistakes a reading on the sheet for a NEWS2 figure.
 READINGS: tuple[tuple[str, str], ...] = (
     ("respiratory_rate", "Respiratory rate"),
     ("spo2", "Oxygen saturation"),
@@ -625,8 +630,12 @@ READINGS: tuple[tuple[str, str], ...] = (
     ("temperature", "Temperature"),
     ("consciousness", "Consciousness"),
     ("on_oxygen", "Air or oxygen"),
+    ("pain_score", "Pain (0 to 10)"),
 )
 _READING_KEYS = tuple(k for k, _ in READINGS)
+#: The vitals columns a migration added, reported in the file so a reader
+#: knows which counts this system could make.
+_OPTIONAL_VITALS_COLUMNS = ("entered_at", "illegible", "voided_at", "pain_score")
 
 
 def _counted_source(label: Any) -> bool:
@@ -871,6 +880,9 @@ def compute_rounds(
         tz = _hospital_tz()
         shifts, shift_source = ward_shifts()
         cols = _table_columns(conn, "vitals")
+        # Only a reading this database stores can be blank: a column a
+        # migration has not added yet is absent, not empty.
+        counted_keys = tuple(k for k in _READING_KEYS if k in cols)
         segments, notes = _stay_segments(
             conn, setting["ward"], period["start"], period["end"], moment
         )
@@ -949,7 +961,7 @@ def compute_rounds(
                 sets_counted += 1
                 row["sets"] += 1
                 tot["sets"] += 1
-                for field in _READING_KEYS:
+                for field in counted_keys:
                     if field in s["_illegible"]:
                         illegible[field] += 1
                         row["illegible_readings"] += 1
@@ -1019,6 +1031,7 @@ def compute_rounds(
                     "illegible": illegible[field],
                 }
                 for field, name in READINGS
+                if field in counted_keys
             ],
             "entry_lag": {
                 "by_shift": lag_rows,
@@ -1030,7 +1043,7 @@ def compute_rounds(
             "patients": len(labels),
             "sets_counted": sets_counted,
             "stays_with_unknown_end": unknown_ends,
-            "vitals_columns": {c: c in cols for c in ("entered_at", "illegible", "voided_at")},
+            "vitals_columns": {c: c in cols for c in _OPTIONAL_VITALS_COLUMNS},
         }
 
     if db is not None:
@@ -1127,6 +1140,8 @@ def header_lines(
         )
     if not data["vitals_columns"].get("illegible"):
         lines.append(("Illegible readings", "this system does not record illegible readings yet"))
+    if not data["vitals_columns"].get("pain_score"):
+        lines.append(("Pain (0 to 10)", "this system does not record a pain rating yet"))
     return lines
 
 

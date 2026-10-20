@@ -141,7 +141,9 @@ def test_a_clerk_set_with_no_acvpu_stores_null_and_the_rounds_file_counts_it_bla
     assert blank["consciousness"] == 1
     assert blank["on_oxygen"] == 1
     assert blank["heart_rate"] == 0
-    assert data["totals"]["blank_readings"] == 2
+    # The pain box (migration 87) was left empty too, so it is the third blank.
+    assert blank["pain_score"] == 1
+    assert data["totals"]["blank_readings"] == 3
     labels = [label for label, _ in ward_record_service.header_lines(
         data, reference="WR-T", generated_at="now", generated_by="T")]
     assert "Consciousness and air or oxygen" not in labels

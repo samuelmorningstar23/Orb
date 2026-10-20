@@ -79,6 +79,7 @@ function readingsText(r: OwnCopy['readings']): string {
     `SpO2 ${vitalWhole(r.spo2, blank)}`,
     acvpu,
     air,
+    `Pain ${vitalWhole(r.pain_score, blank)}`,
   ].join(' · ')
 }
 

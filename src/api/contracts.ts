@@ -118,6 +118,9 @@ export interface ChartVitalsRow {
   spo2: number | null;
   temperature: number | null;
   respiratory_rate: number | null;
+  /** The sheet's pain score, 0 to 10 (migration 87). Absent on a row from a
+   *  database without the column; null when the box was blank. Never scored. */
+  pain_score?: number | null;
   source: string | null;
 }
 
